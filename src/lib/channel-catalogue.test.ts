@@ -8,10 +8,12 @@ import {
   buildChannelCatalogue,
   parseAcquisitionChannel,
   channelStepCatalogue,
+  salesFunnelCatalogue,
   MalformedAcquisitionChannelError,
   type CatalogueFeatureRow,
 } from "./channel-catalogue.js";
-import { CHANNEL_STEP_KEYS } from "./acquisition-channels.js";
+import { CHANNEL_STEP_KEYS, funnelStepKeys } from "./acquisition-channels.js";
+import { SALES_FUNNELS, SALES_FUNNEL_KEYS } from "./sales-funnels.js";
 
 const CHANNEL = {
   family: "outbound_one_to_one",
@@ -114,6 +116,8 @@ describe("building the public catalogue", () => {
       "sales_meetings_from_website",
       "website_purchases",
       "form_magnet",
+      "sales_from_conversation",
+      "sales_from_website",
     ]);
     // A funnel arrives with its funnel, so a row renders without the consumer knowing the catalogue.
     expect(channel.salesFunnels[0].steps).toEqual([
@@ -131,6 +135,8 @@ describe("building the public catalogue", () => {
       ["sales_meetings_from_website", null, 30, "channel"],
       ["website_purchases", null, 30, "channel"],
       ["form_magnet", null, 30, "channel"],
+      ["sales_from_conversation", null, 30, "channel"],
+      ["sales_from_website", null, 30, "channel"],
     ]);
     // The bare field is GONE — two grains under one word on one payload is what it cost to remove.
     expect(channel.salesFunnels.every((f) => !("minimumCommitmentDays" in f))).toBe(true);
@@ -138,14 +144,48 @@ describe("building the public catalogue", () => {
     expect(channel.terms.minimumCommitmentDays).toBe(CHANNEL.terms.minimumCommitmentDays);
   });
 
-  it("a channel producing only an on-platform step publishes an EMPTY funnel list, and still publishes", () => {
-    // No deployed funnel starts from a platform form yet. The channel is still bookable and still
-    // listed with its terms; what it cannot do today is be PAIRED, and it says that as an empty list.
+  it("A CHANNEL DELIVERING AN AD STEP SELLS ITS AD FUNNEL — the production is no longer dead", () => {
+    // This used to publish an EMPTY funnel list: the step was spelled `in_ad_form_submission` and no
+    // deployed funnel started on that spelling, so the channel's whole lead-form production sold
+    // nothing. brand-service now starts `lead_forms_from_ads` on exactly the step the ad delivers.
     const [channel] = buildChannelCatalogue([
-      row({ acquisitionChannel: { ...CHANNEL, stepTransitions: [{ from: null, to: "in_ad_form_submission" }] } }),
+      row({ acquisitionChannel: { ...CHANNEL, stepTransitions: [{ from: null, to: "lead_form_submitted" }] } }),
+    ]);
+    expect(channel.salesFunnels.map((f) => f.key)).toEqual(["lead_forms_from_ads"]);
+    expect(channel.terms).toEqual(CHANNEL.terms);
+
+    const [meetings] = buildChannelCatalogue([
+      row({ acquisitionChannel: { ...CHANNEL, stepTransitions: [{ from: null, to: "meeting_booked" }] } }),
+    ]);
+    expect(meetings.salesFunnels.map((f) => f.key)).toEqual(["sales_meetings_from_ads"]);
+  });
+
+  it("a step no deployed funnel takes still publishes the channel, and says so as an EMPTY funnel list", () => {
+    // The honest empty answer still exists — it simply no longer fires for the ad steps. A channel
+    // whose only leg is one no funnel has is bookable, listed with its terms, and pairable with nothing.
+    const [channel] = buildChannelCatalogue([
+      row({ acquisitionChannel: { ...CHANNEL, stepTransitions: [{ from: "signup", to: "meeting_attended" }] } }),
     ]);
     expect(channel.salesFunnels).toEqual([]);
     expect(channel.terms).toEqual(CHANNEL.terms);
+  });
+
+  it("THE JOIN NEEDS NO TRANSLATION TABLE — a produced step names its funnels by token match", () => {
+    // AC: `funnels.filter(f => f.entryStep.key === step.key)` is the whole answer, from ONE read.
+    const funnels = salesFunnelCatalogue();
+    expect(funnels.map((f) => f.key)).toEqual([...SALES_FUNNEL_KEYS]);
+    for (const funnel of funnels) {
+      expect(funnel.entryStep.key, funnel.key).toBe(funnelStepKeys(funnel.key)[0]);
+      expect(funnel.entryLegKey, funnel.key).toBe(`start_to_${funnel.entryStep.key}`);
+      expect(funnel.steps, funnel.key).toEqual(SALES_FUNNELS[funnel.key].steps);
+      expect(funnel.name, funnel.key).toBe(SALES_FUNNELS[funnel.key].name);
+    }
+    expect(funnels.filter((f) => f.entryStep.key === "lead_form_submitted").map((f) => f.key)).toEqual([
+      "lead_forms_from_ads",
+    ]);
+    expect(funnels.filter((f) => f.entryStep.key === "meeting_booked").map((f) => f.key)).toEqual([
+      "sales_meetings_from_ads",
+    ]);
   });
 
   it("a malformed row fails the whole read rather than quietly vanishing from the price list", () => {
@@ -198,6 +238,7 @@ describe("building the public catalogue", () => {
     expect(channel.salesFunnels.map((f) => f.key)).toEqual([
       "sales_meetings_from_conversation",
       "sales_meetings_from_website",
+      "sales_meetings_from_ads",
     ]);
     // A customer-operated channel spends none of the platform's money, and the zero is the statement.
     expect(channel.operatedBy).toBe("customer");

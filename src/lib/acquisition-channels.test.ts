@@ -22,7 +22,7 @@ import {
   CHANNEL_FAMILIES,
   type ChannelStepTransition,
 } from "./acquisition-channels.js";
-import { SALES_FUNNELS, SALES_FUNNEL_KEYS } from "./sales-funnels.js";
+import { SALES_FUNNELS, SALES_FUNNEL_KEYS, type SalesFunnelKey } from "./sales-funnels.js";
 
 describe("the steps a channel can move a lead between", () => {
   it("spans EVERY step of every funnel, not only the ones a funnel can start from", () => {
@@ -35,9 +35,8 @@ describe("the steps a channel can move a lead between", () => {
       "meeting_attended",
       "signup",
       "form_filled",
+      "lead_form_submitted",
       "paid_client",
-      "in_ad_form_submission",
-      "in_ad_booked_meeting",
     ]);
     for (const key of CHANNEL_STEP_KEYS) {
       expect(CHANNEL_STEPS[key].key).toBe(key);
@@ -58,22 +57,33 @@ describe("the steps a channel can move a lead between", () => {
   it("tolerates separator and case variance on the way IN, and names nothing it does not know", () => {
     expect(matchChannelStepKey("Website Visit")).toBe("website_visit");
     expect(matchChannelStepKey("Meeting Attended")).toBe("meeting_attended");
-    expect(matchChannelStepKey("in-ad-form-submission")).toBe("in_ad_form_submission");
-    // The pre-rename `platform_*` spelling is GONE, not aliased. It shipped for minutes, no consumer
-    // outside the cluster ever read it, and every row is rewritten by the boot seed — so two names for
-    // one step is a second vocabulary bought for nothing.
+    expect(matchChannelStepKey("Lead form submitted")).toBe("lead_form_submitted");
+    // The pre-rename `platform_*` and `in_ad_*` spellings are GONE, not aliased. Neither had a consumer
+    // outside the cluster, every row is rewritten by the boot seed, and two names for one step is a
+    // second vocabulary bought for nothing — which is exactly what the rename was closing.
     expect(matchChannelStepKey("platform_form_submission")).toBeNull();
+    expect(matchChannelStepKey("in_ad_form_submission")).toBeNull();
+    expect(matchChannelStepKey("in_ad_booked_meeting")).toBeNull();
     expect(matchChannelStepKey("carrier pigeon")).toBeNull();
   });
 
-  it("keeps the `in_ad_` prefix apart from the SITE steps it would otherwise collide with", () => {
-    // "Form filled" and "Meeting booked" are real INTERNAL steps of deployed funnels, reached on the
-    // brand's own site. What an ad produces is an ENTRY step reached without ever getting there, so the
-    // two pairs of names must stay distinct — which is the whole reason the prefix exists.
+  it("A CHANNEL'S PRODUCED STEP IS A FUNNEL'S FIRST STEP, in the SAME token — that is the whole join", () => {
+    // AC: a consumer answers "which funnels does this outcome lead into" with a token match against
+    // the funnel catalogue, with no translation table of its own. It only works because a channel's
+    // produced step and the funnel's entry step are the SAME key.
+    for (const key of SALES_FUNNEL_KEYS) {
+      const entry = funnelStepKeys(key)[0]!;
+      expect(matchChannelStepKey(entry), key).toBe(entry);
+      expect(sellableFunnelsFor(producesFromNothing(entry)), key).toContain(key);
+    }
+    // And the two ad-delivered steps are the two that could NOT be joined before: a lead form filled
+    // inside the ad is its own step (never "Form filled", which happens on the brand's site), while a
+    // meeting booked inside the ad is the SAME step the other meeting funnels reach — brand-service's
+    // own decision, mirrored here rather than second-guessed.
     expect(matchChannelStepKey("form_filled")).toBe("form_filled");
-    expect(matchChannelStepKey("in_ad_form_submission")).toBe("in_ad_form_submission");
-    expect(matchChannelStepKey("meeting_booked")).toBe("meeting_booked");
-    expect(matchChannelStepKey("in_ad_booked_meeting")).toBe("in_ad_booked_meeting");
+    expect(matchChannelStepKey("lead_form_submitted")).toBe("lead_form_submitted");
+    expect(funnelStepKeys("lead_forms_from_ads")[0]).toBe("lead_form_submitted");
+    expect(funnelStepKeys("sales_meetings_from_ads")[0]).toBe("meeting_booked");
   });
 });
 
@@ -134,7 +144,10 @@ describe("from nothing is the SPECIAL case, written as one", () => {
 
 describe("which pairings are possible", () => {
   it("a channel that opens a conversation sells the conversation funnel, and ONLY that one", () => {
-    expect(sellableFunnelsFor(producesFromNothing("conversation"))).toEqual(["sales_meetings_from_conversation"]);
+    expect(sellableFunnelsFor(producesFromNothing("conversation"))).toEqual([
+      "sales_meetings_from_conversation",
+      "sales_from_conversation",
+    ]);
   });
 
   it("a channel that sends a website visit sells every click-driven funnel", () => {
@@ -142,25 +155,48 @@ describe("which pairings are possible", () => {
       "sales_meetings_from_website",
       "website_purchases",
       "form_magnet",
+      "sales_from_website",
     ]);
   });
 
-  it("a channel that does both sells all four, in the catalogue's own order", () => {
-    expect(sellableFunnelsFor(producesFromNothing("conversation", "website_visit"))).toEqual([...SALES_FUNNEL_KEYS]);
-    // Order is the catalogue's, not the order the channel happens to list its legs in.
-    expect(sellableFunnelsFor(producesFromNothing("website_visit", "conversation"))).toEqual([...SALES_FUNNEL_KEYS]);
-  });
-
-  it("a step no deployed funnel starts from sells NOTHING yet, and says so as an empty list", () => {
-    // brand-service ships the in-ad funnels in parallel. Until it does, a channel producing only those
-    // sells through none of the declared four — and the moment the mirror gains the funnel, it starts
-    // selling with no change here.
-    expect(sellableFunnelsFor(producesFromNothing("in_ad_form_submission"))).toEqual([]);
-    expect(sellableFunnelsFor(producesFromNothing("in_ad_booked_meeting"))).toEqual([]);
-    expect(sellableFunnelsFor(producesFromNothing("website_visit", "in_ad_form_submission"))).toEqual([
+  it("a channel that does both sells every funnel a click or a reply enters, in the catalogue's own order", () => {
+    const bothChannels: SalesFunnelKey[] = [
+      "sales_meetings_from_conversation",
       "sales_meetings_from_website",
       "website_purchases",
       "form_magnet",
+      "sales_from_conversation",
+      "sales_from_website",
+    ];
+    expect(sellableFunnelsFor(producesFromNothing("conversation", "website_visit"))).toEqual(bothChannels);
+    // Order is the catalogue's, not the order the channel happens to list its legs in.
+    expect(sellableFunnelsFor(producesFromNothing("website_visit", "conversation"))).toEqual(bothChannels);
+    // The two AD funnels are NOT in there, and that is the join working rather than a gap: neither a
+    // conversation nor a website visit is their first step.
+    expect(bothChannels).not.toContain("sales_meetings_from_ads");
+    expect(bothChannels).not.toContain("lead_forms_from_ads");
+  });
+
+  it("AN AD-DELIVERED STEP SELLS ITS OWN FUNNEL — the step a channel produces IS the funnel's first step", () => {
+    // These two used to sell NOTHING, because the steps were spelled `in_ad_*` and no funnel started on
+    // that spelling. brand-service now starts a funnel on exactly the step the ad DELIVERS, so the join
+    // is a plain token match and the production is no longer dead.
+    expect(sellableFunnelsFor(producesFromNothing("lead_form_submitted"))).toEqual(["lead_forms_from_ads"]);
+    expect(sellableFunnelsFor(producesFromNothing("meeting_booked"))).toEqual(["sales_meetings_from_ads"]);
+
+    // And producing a booked meeting FROM NOTHING does not make a channel able to sell the two meeting
+    // funnels whose meeting is reached FROM a conversation or a website visit — the entry leg and the
+    // internal leg are different legs, so no false pairing appears.
+    expect(sellableFunnelsFor(producesFromNothing("meeting_booked"))).not.toContain("sales_meetings_from_conversation");
+    expect(sellableFunnelsFor(producesFromNothing("meeting_booked"))).not.toContain("sales_meetings_from_website");
+
+    // An ad platform that sends visits AND hosts the form sells both families at once.
+    expect(sellableFunnelsFor(producesFromNothing("website_visit", "lead_form_submitted"))).toEqual([
+      "sales_meetings_from_website",
+      "website_purchases",
+      "form_magnet",
+      "lead_forms_from_ads",
+      "sales_from_website",
     ]);
   });
 
@@ -173,14 +209,17 @@ describe("which pairings are possible", () => {
     expect(sellableFunnelsFor([{ from: "website_visit", to: "meeting_booked" }])).toEqual([
       "sales_meetings_from_website",
     ]);
-    // The two meeting funnels share every leg AFTER the meeting is booked, so one leg sells both.
+    // The THREE meeting funnels share every leg AFTER the meeting is booked, so one leg sells all of
+    // them — the ad funnel included, which is exactly what "a funnel is a way of READING legs" means.
     expect(sellableFunnelsFor([{ from: "meeting_booked", to: "meeting_attended" }])).toEqual([
       "sales_meetings_from_conversation",
       "sales_meetings_from_website",
+      "sales_meetings_from_ads",
     ]);
     expect(sellableFunnelsFor([{ from: "meeting_attended", to: "paid_client" }])).toEqual([
       "sales_meetings_from_conversation",
       "sales_meetings_from_website",
+      "sales_meetings_from_ads",
     ]);
     // And the two self-serve funnels close through their own milestone.
     expect(sellableFunnelsFor([{ from: "signup", to: "paid_client" }])).toEqual(["website_purchases"]);
@@ -198,5 +237,54 @@ describe("which pairings are possible", () => {
   it("names four families and two operators, and no more", () => {
     expect([...CHANNEL_FAMILIES]).toEqual(["outbound_one_to_one", "paid_reach", "earned", "conversion"]);
     expect([...CHANNEL_OPERATORS]).toEqual(["platform", "customer"]);
+  });
+});
+
+describe("what a VISITOR reads on a step", () => {
+  // The onboarding's first screen renders one card per producible step, titled with the step's label
+  // and explained with its description, to somebody who has not signed up. So these are customer copy.
+
+  it("names the step a buyer's ANSWER produces the way every funnel that starts on it names it", () => {
+    // The case that shipped wrong. `conversation` published "Conversation" while the funnels it opens
+    // published "Positive reply", so a consumer joining a produced step to a funnel's first rung BY
+    // LABEL matched nothing at all — and the banned word was the title of a pre-signup card.
+    expect(CHANNEL_STEPS.conversation.label).toBe("Positive reply");
+    expect(SALES_FUNNELS.sales_meetings_from_conversation.steps[0]).toBe(CHANNEL_STEPS.conversation.label);
+    expect(SALES_FUNNELS.sales_from_conversation.steps[0]).toBe(CHANNEL_STEPS.conversation.label);
+  });
+
+  it("states EVERY step in the funnels' own wording, so the join by LABEL is a lookup", () => {
+    // The general invariant behind the case above: a step's published label IS the string
+    // brand-service's funnels use for that rung, for all eight. A step whose label drifts off the
+    // mirror silently breaks the join for its own funnels and nothing else notices.
+    for (const key of CHANNEL_STEP_KEYS) {
+      expect(FUNNEL_STEP_LABEL_TO_KEY[CHANNEL_STEPS[key].label]).toBe(key);
+    }
+  });
+
+  it("carries the banned word in NO step label and NO step description", () => {
+    // The owner banned it fleet-wide: the two entry outcomes are a positive reply and a website visit.
+    // This is the STEP vocabulary only — a channel legitimately describes a phone call in plain English.
+    for (const key of CHANNEL_STEP_KEYS) {
+      expect(CHANNEL_STEPS[key].label.toLowerCase()).not.toContain("conversation");
+      expect(CHANNEL_STEPS[key].description.toLowerCase()).not.toContain("conversation");
+    }
+  });
+
+  it("keeps every step KEY exactly where it was, so no consumer join by key breaks", () => {
+    // Only what a person reads moved. The keys are referenced by stored rows, by every leg identifier
+    // and by every consumer that already joined on them.
+    expect([...CHANNEL_STEP_KEYS]).toEqual([
+      "conversation",
+      "website_visit",
+      "meeting_booked",
+      "meeting_attended",
+      "signup",
+      "form_filled",
+      "lead_form_submitted",
+      "paid_client",
+    ]);
+    expect(matchChannelStepKey("conversation")).toBe("conversation");
+    expect(CHANNEL_STEPS.conversation.key).toBe("conversation");
   });
 });

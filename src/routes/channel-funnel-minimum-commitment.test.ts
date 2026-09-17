@@ -37,12 +37,14 @@ const app = (await import("../index.js")).default;
 const { __resetChannelCatalogueCache } = await import("./public.js");
 
 const CONVERSATION = "sales_meetings_from_conversation";
-const OTHER_FUNNELS = ["sales_meetings_from_website", "website_purchases", "form_magnet"];
+// Every other funnel a conversation or a website visit enters. The two AD funnels are absent because
+// neither of these channels delivers their first step, which is the join doing its job.
+const OTHER_FUNNELS = ["sales_meetings_from_website", "website_purchases", "form_magnet", "sales_from_conversation", "sales_from_website"];
 
 const FAST_CHANNEL = "fast-cold-email-outreach";
 const SLOW_CHANNEL = "slow-seo-outreach";
 
-/** Two channels selling the SAME four funnels, differing only in how long each must run. */
+/** Two channels selling the SAME funnels, differing only in how long each must run. */
 const channelBlob = (minimumCommitmentDays: number) => ({
   family: "outbound_one_to_one",
   operatedBy: "platform",
@@ -122,6 +124,64 @@ describe("the public catalogue states ONE composed minimum run length per pair",
     expect(bySlug.get(SLOW_CHANNEL)!.terms.minimumCommitmentDays).toBe(90);
   });
 
+  it("GET /public/channels — publishes EVERY declared funnel, each naming the step it starts on", async () => {
+    // AC: the catalogue publishes all eight funnels with brand-service's own names and chains, and a
+    // consumer answers "which funnels does this outcome lead into" from THIS payload alone.
+    mockRows();
+    const res = await request(app).get("/public/channels");
+    expect(res.status).toBe(200);
+
+    const funnels = res.body.funnels as Array<{
+      key: string;
+      name: string;
+      steps: string[];
+      entryStep: { key: string; label: string };
+      entryLegKey: string;
+    }>;
+    expect(funnels.map((f) => f.key)).toEqual([
+      "sales_meetings_from_conversation",
+      "sales_meetings_from_website",
+      "website_purchases",
+      "form_magnet",
+      "sales_from_conversation",
+      "sales_meetings_from_ads",
+      "lead_forms_from_ads",
+      "sales_from_website",
+    ]);
+    // brand-service's OWN names, including the two that MOVED on funnels we already mirrored.
+    expect(funnels.find((f) => f.key === "sales_meetings_from_conversation")!.name).toBe("Sales Meeting from Positive Reply");
+    expect(funnels.find((f) => f.key === "website_purchases")!.name).toBe("Signups");
+    expect(funnels.find((f) => f.key === "sales_from_website")!.name).toBe("Website Purchase");
+    // …and no customer-facing name says "conversation".
+    for (const funnel of funnels) expect(funnel.name.toLowerCase(), funnel.key).not.toContain("conversation");
+
+    // THE JOIN, done the way a consumer would do it — a token match, no translation table.
+    const startedBy = (stepKey: string) => funnels.filter((f) => f.entryStep.key === stepKey).map((f) => f.key);
+    expect(startedBy("lead_form_submitted")).toEqual(["lead_forms_from_ads"]);
+    expect(startedBy("meeting_booked")).toEqual(["sales_meetings_from_ads"]);
+    expect(startedBy("conversation")).toEqual(["sales_meetings_from_conversation", "sales_from_conversation"]);
+
+    // Every produced step of every published channel starts at least one funnel that channel sells —
+    // no channel publishes a production that leads nowhere.
+    for (const channel of res.body.channels as Array<{ slug: string; producibleSteps: Array<{ key: string }>; salesFunnels: Array<{ key: string }> }>) {
+      const sold = new Set(channel.salesFunnels.map((f) => f.key));
+      for (const produced of channel.producibleSteps) {
+        expect(startedBy(produced.key), `${channel.slug} → ${produced.key}`).not.toEqual([]);
+        expect(
+          startedBy(produced.key).some((key) => sold.has(key)),
+          `${channel.slug} produces ${produced.key} but sells none of the funnels it starts`,
+        ).toBe(true);
+      }
+    }
+
+    // The entry LEG key is served too, so the same join can be keyed on the leg vocabulary.
+    const legKeys = new Set((res.body.legs as Array<{ legKey: string }>).map((l) => l.legKey));
+    for (const funnel of funnels) {
+      expect(funnel.entryLegKey, funnel.key).toBe(`start_to_${funnel.entryStep.key}`);
+      expect(legKeys.has(funnel.entryLegKey), funnel.key).toBe(true);
+    }
+  });
+
   it("GET /public/channels — the bare `minimumCommitmentDays` is GONE from every funnel entry", async () => {
     mockRows();
     const res = await request(app).get("/public/channels");
@@ -148,7 +208,10 @@ describe("the public catalogue states ONE composed minimum run length per pair",
     }
 
     const rows = pairs.body.pairs as PairRow[];
-    expect(rows).toHaveLength(8);
+    // One row per (channel × funnel it sells) — derived rather than pinned, so a funnel added to the
+    // catalogue widens both sides of this check together instead of failing it.
+    expect(rows).toHaveLength(entryOf.size);
+    expect(rows.length).toBe(2 * (OTHER_FUNNELS.length + 1));
     for (const row of rows) {
       const entry = entryOf.get(`${row.channelSlug}::${row.funnelKey}`)!;
       expect(entry, `${row.channelSlug}::${row.funnelKey}`).toBeDefined();

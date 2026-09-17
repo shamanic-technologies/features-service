@@ -84,6 +84,7 @@ import {
   buildChannelCatalogue,
   channelStepCatalogue,
   funnelLegCatalogue,
+  salesFunnelCatalogue,
   type PublicChannel,
 } from "../lib/channel-catalogue.js";
 import { pricePair, type PairResult } from "../lib/channel-funnel-economics.js";
@@ -2698,6 +2699,11 @@ async function loadPublishedChannels(): Promise<PublicChannel[]> {
 
 interface ChannelCataloguePayload {
   channels: PublicChannel[];
+  /** EVERY declared sales funnel, mirrored from brand-service, whether or not a channel sells it today.
+   *  Each states the STEP IT STARTS ON in the same vocabulary a channel's `producibleSteps` use, so
+   *  "which funnels does this outcome lead into" is a lookup in this payload rather than a translation
+   *  table the consumer keeps (and lets go stale). */
+  funnels: ReturnType<typeof salesFunnelCatalogue>;
   /** The LEG vocabulary — every leg of every declared funnel, each with its ONE canonical
    *  identifier, the two steps it connects, and the funnels it is a leg of. Performance is measured
    *  per leg and a campaign is bought per leg, so this is the list a consumer keys on; the funnels
@@ -2717,6 +2723,7 @@ export async function handlePublicChannels(res: import("express").Response): Pro
     label: "acquisition-channel catalogue",
     compute: async () => ({
       channels: await loadPublishedChannels(),
+      funnels: salesFunnelCatalogue(),
       legs: funnelLegCatalogue(),
       steps: channelStepCatalogue(),
     }),

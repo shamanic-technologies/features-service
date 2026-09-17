@@ -233,6 +233,10 @@ function resolveLeg(input: LearningCampaignInput, economics: SalesEconomics | nu
   const funnelKey = stated && containing.includes(stated) ? stated : containing[0]!;
 
   const driver = FUNNEL_DRIVER[funnelKey];
+  // NO COUNTED SIGNAL ENTERS THIS FUNNEL — an ad delivers its first step, so there is no observation to
+  // count outcomes from and no unit cost to price them with. Unmeasurable, stated as such, never
+  // answered off the click or reply evidence of the funnels that share this leg.
+  if (driver == null) return null;
   // AN ENTRY LEG NEEDS NO RATE — the driver signal IS its outcome, so it is counted and priced for a
   // brand that has declared nothing at all. Only a deeper leg needs the ladder, and without one it is
   // unpriceable rather than zero.

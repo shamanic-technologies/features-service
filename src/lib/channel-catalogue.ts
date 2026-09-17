@@ -22,6 +22,7 @@ import {
   matchChannelStepKey,
   producibleStepsOf,
   sellableFunnelsFor,
+  SALES_FUNNEL_ENTRY_STEP,
   type ChannelFamily,
   type ChannelOperator,
   type ChannelStepKey,
@@ -29,7 +30,7 @@ import {
   type AcquisitionChannel,
 } from "./acquisition-channels.js";
 import { legKeyFor, FUNNEL_LEGS, type FunnelLegDef } from "./funnel-legs.js";
-import { SALES_FUNNELS, type SalesFunnelKey } from "./sales-funnels.js";
+import { SALES_FUNNELS, SALES_FUNNEL_KEYS, type SalesFunnelKey } from "./sales-funnels.js";
 import { composeMinimumCommitment, minimumCommitmentDaysFor, type ComposedMinimumCommitment } from "./funnel-commercial-terms.js";
 
 /** A feature row, narrowed to what the catalogue reads. */
@@ -245,4 +246,47 @@ export function funnelLegCatalogue(): FunnelLegDef[] {
 /** The step vocabulary itself, published beside the channels so a consumer never has to hardcode it. */
 export function channelStepCatalogue(): ChannelStepDefWire[] {
   return CHANNEL_STEP_KEYS.map(stepWire);
+}
+
+/** One sales funnel, published in its own right rather than only nested inside the channels that sell
+ *  it — so the list is complete whether or not a channel happens to sell a given funnel today, and so
+ *  the STEP A FUNNEL STARTS ON is readable without walking anybody's legs. */
+export interface PublicSalesFunnel {
+  key: SalesFunnelKey;
+  /** brand-service's own name for it. Customer-facing; the KEY is the wire token and never moves. */
+  name: string;
+  /** The funnel, in order, in brand-service's own wording. */
+  steps: readonly string[];
+  /**
+   * The step this funnel STARTS on, as a step of the shared vocabulary.
+   *
+   * This is the join a consumer needs and the one it could not make before: "which funnels does this
+   * producible step lead into" is `funnels.filter(f => f.entryStep.key === step.key)`, with no local
+   * translation table and no string to compose. A channel's `producibleSteps` are spelled in exactly
+   * these tokens, which is what makes the match a lookup rather than a guess.
+   */
+  entryStep: ChannelStepDefWire;
+  /** The entry leg's canonical identifier, so a consumer can key the same join on the leg vocabulary
+   *  it already uses for everything else instead of composing `start_to_<step>` itself. */
+  entryLegKey: string;
+}
+
+/**
+ * Every declared sales funnel, in the catalogue's canonical order, mirrored from brand-service.
+ *
+ * Published beside the channels because the channel list alone cannot answer "what is the catalogue":
+ * a funnel no channel currently sells would simply be invisible, and a consumer would read its absence
+ * as a statement we never made.
+ */
+export function salesFunnelCatalogue(): PublicSalesFunnel[] {
+  return SALES_FUNNEL_KEYS.map((key) => {
+    const entryStepKey = SALES_FUNNEL_ENTRY_STEP[key];
+    return {
+      key,
+      name: SALES_FUNNELS[key].name,
+      steps: SALES_FUNNELS[key].steps,
+      entryStep: stepWire(entryStepKey),
+      entryLegKey: legKeyFor({ from: null, to: entryStepKey }),
+    };
+  });
 }

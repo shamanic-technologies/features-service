@@ -505,10 +505,13 @@ export function addUtcDays(iso: string, delta: number): string {
  *   exactly as the reply-driven goal was: its link-light copy yields incidental, artificially-low click
  *   rates that dilute the fleet CPC.
  * - **signup** — `website_purchases` (visit → signup → paid: the signup is that funnel's own step).
- * - **formSubmission** — `form_magnet`.
+ * - **formSubmission** — `form_magnet` ALONE. `lead_forms_from_ads` is deliberately NOT here: its form
+ *   is hosted by the advertising platform and is never the website form submission this outcome counts,
+ *   so a brand selling it produces spend with no matching outcome and would dilute the ratio.
  * - **meetingBooked** — BOTH meeting funnels. They are priced apart everywhere it matters (each on its own
  *   channel); this bucket only asks whose spend bought meetings, and both did.
- * - **websitePurchase** — `website_purchases`.
+ * - **websitePurchase** — `website_purchases` and `sales_from_website`, the two funnels whose buyer pays
+ *   on the brand's own site (with a signup in between, and with nothing in between).
  * - **sales** — every funnel: each one terminates in a paying client, which is what this objective prices.
  * - **whatsappConversation** — EMPTY, and deliberately so. Its outcome needs a WhatsApp link in the email,
  *   which no declared funnel expresses, so there is no honest way to identify those brands now that the
@@ -521,13 +524,22 @@ export function addUtcDays(iso: string, delta: number): string {
  * produced clicks AND signups.
  */
 export const OBJECTIVE_FUNNEL_BUCKET: Record<Goal, readonly SalesFunnelKey[]> = {
-  websiteVisit: ["sales_meetings_from_website", "website_purchases", "form_magnet"],
-  positiveReply: ["sales_meetings_from_conversation"],
+  websiteVisit: ["sales_meetings_from_website", "website_purchases", "form_magnet", "sales_from_website"],
+  positiveReply: ["sales_meetings_from_conversation", "sales_from_conversation"],
   signup: ["website_purchases"],
   formSubmission: ["form_magnet"],
-  meetingBooked: ["sales_meetings_from_conversation", "sales_meetings_from_website"],
-  websitePurchase: ["website_purchases"],
-  sales: ["sales_meetings_from_conversation", "sales_meetings_from_website", "website_purchases", "form_magnet"],
+  meetingBooked: ["sales_meetings_from_conversation", "sales_meetings_from_website", "sales_meetings_from_ads"],
+  websitePurchase: ["website_purchases", "sales_from_website"],
+  sales: [
+    "sales_meetings_from_conversation",
+    "sales_meetings_from_website",
+    "website_purchases",
+    "form_magnet",
+    "sales_from_conversation",
+    "sales_meetings_from_ads",
+    "lead_forms_from_ads",
+    "sales_from_website",
+  ],
   whatsappConversation: [],
 };
 

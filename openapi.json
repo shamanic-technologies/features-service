@@ -88,10 +88,14 @@
                 "sales_meetings_from_conversation",
                 "sales_meetings_from_website",
                 "website_purchases",
-                "form_magnet"
+                "form_magnet",
+                "sales_from_conversation",
+                "sales_meetings_from_ads",
+                "lead_forms_from_ads",
+                "sales_from_website"
               ]
             },
-            "description": "WHICH SALES FUNNELS THIS FEATURE MAY BE SOLD THROUGH, in brand-service's own funnel keys. A product statement about the feature, owned by this service: the dashboard offers only valid (funnel, feature) pairs from it and campaign-service refuses to provision a pair that is not in it. ALWAYS PRESENT, so an absent answer can never be mistaken for 'all of them' — a feature that sells through no sales funnel states `[]` (every non-sales feature: PR, hiring, VC, accelerators, AI visibility, press kit, outlet discovery, expert quotes) and one that sells through every declared funnel states all four keys explicitly. A shorter list is a real restriction, not a gap: the feedback-request cold email states `sales_meetings_from_conversation` alone, because its offer buys a conversation and has no website step to sell."
+            "description": "WHICH SALES FUNNELS THIS FEATURE MAY BE SOLD THROUGH, in brand-service's own funnel keys. A product statement about the feature, owned by this service: the dashboard offers only valid (funnel, feature) pairs from it and campaign-service refuses to provision a pair that is not in it. ALWAYS PRESENT, so an absent answer can never be mistaken for 'all of them' — a feature that sells through no sales funnel states `[]` (every non-sales feature: PR, hiring, VC, accelerators, AI visibility, press kit, outlet discovery, expert quotes) and one that sells through every declared funnel states every one of those keys explicitly. A shorter list is a real restriction, not a gap: the feedback-request cold email states `sales_meetings_from_conversation` alone, because its offer buys a conversation and has no website step to sell."
           },
           "supersededBySlug": {
             "type": "string",
@@ -2117,7 +2121,11 @@
                   "sales_meetings_from_conversation",
                   "sales_meetings_from_website",
                   "website_purchases",
-                  "form_magnet"
+                  "form_magnet",
+                  "sales_from_conversation",
+                  "sales_meetings_from_ads",
+                  "lead_forms_from_ads",
+                  "sales_from_website"
                 ],
                 "description": "The sales funnel these rungs belong to."
               },
@@ -2346,6 +2354,116 @@
               "undatedOutcomes"
             ],
             "description": "WHAT ONE OUTCOME HAS COST THIS SCOPE, DAY BY DAY — the dated twin of the cost-per-outcome the `outcomes` block states as a scalar, so a customer can see whether it is getting cheaper and how fast. BOTH legs are CUMULATIVE since the scope's first day, for the reason roiHistory gives: spend on a day buys outcomes that land weeks later, so a period-grain ratio oscillates between 0 and absurd and describes nothing actionable. The outcome is the scope's OWN leg's step, resolved ONCE by the same leader resolution learningPhase uses. MEASURED on both legs and divided by nobody downstream — the spend is runs' dated COMMITTED buckets (the basis outcomes.committedSpentCents rides) and the outcomes are the same deduped leads outcomes.recipientsClicked / recipientsRepliesPositive count, so the FINAL point IS that block's cpcCents/cpprCents divided by the leg's own rate, to the sub-cent rounding roiHistory's terminal ROI also carries (runs returns fractional cents per group and each grouping rounds once: measured in prod 2026-09-17, $7.9740 against a served $7.9735, both rendering $7.97). NOT learningPhase.expectedCostPerOutcomeUsd, which answers a different question — that one is pooled over the cells that OBSERVED an outcome because its job is to found a spend target and exploration spend must not price into it; this is the OBSERVED accounting figure, every dollar spent over every outcome produced. OVERVIEW ONLY, the same gate roiHistory and spend ride: null on the lensed (?lens=) read, absent on the lean (?groupBy=) groups. NULL also when the scope names no priceable outcome step (no campaign, no leg stated, a rate the brand never declared) or the dated-spend read degraded — learningPhase.unmeasuredReason beside it names which, so no reason vocabulary is duplicated. Null means 'we could not measure this', never 'it cost nothing'. (features-service#980)"
+          },
+          "conversionRateHistory": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "outcomeStep": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "enum": [
+                      "conversation",
+                      "website_visit",
+                      "meeting_booked",
+                      "meeting_attended",
+                      "signup",
+                      "form_filled",
+                      "paid_client",
+                      "in_ad_form_submission",
+                      "in_ad_booked_meeting"
+                    ]
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "key",
+                  "label",
+                  "description"
+                ],
+                "description": "The step EVERY count here is denominated in — the scope's own leg's toStep, named by this service rather than chosen by the caller, and the byte-same step costPerOutcomeHistory.outcomeStep and learningPhase.outcomeStep report (one leader resolution serves all three, so three curves on one screen can never be measuring different steps). A consumer labels the chart with it and never picks a noun."
+              },
+              "legKey": {
+                "type": "string",
+                "description": "The leg that step closes, canonical."
+              },
+              "outcomeObserved": {
+                "type": "boolean",
+                "description": "TRUE ⟺ the counts are raw OBSERVATIONS (an ENTRY leg, whose driver signal IS its outcome). FALSE ⟺ each day's count is the observed driver walked forward through the funnel's declared rates, so it is fractional."
+              },
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "description": "UTC calendar day (YYYY-MM-DD) this point describes."
+                    },
+                    "cumulativeContacted": {
+                      "type": "number",
+                      "description": "REACH — every distinct lead this scope emailed from its first day up to and including this one, bounces and unsubscribes INCLUDED. The identical base funnelSteps.contactedRecipients states, and for the identical reason: a bounce is a real loss at the very first rung and it was paid for, so a rate that divided by the survivors would hide the people this campaign bought and never reached."
+                    },
+                    "cumulativeOutcomes": {
+                      "type": "number",
+                      "description": "Every outcome of this leg's step DATED up to and including this day. Fractional on a deeper leg, where the count is the observed driver signal walked forward through the funnel's own declared rates (outcomeObserved says which you are reading)."
+                    },
+                    "conversionRatePct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "100 x cumulativeOutcomes / cumulativeContacted. NULL ONLY when nobody has been reached yet — there is no denominator, so there is no rate. A `0` here is a MEASUREMENT: people were reached and nobody converted, which is exactly the period a customer asking 'is this working' needs to see. That null rule is deliberately the OPPOSITE of costPerOutcomeHistory.costPerOutcomeUsd, which nulls at 0 outcomes because a cost per nothing cannot be divided at all — the two must not be harmonised."
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "cumulativeContacted",
+                    "cumulativeOutcomes",
+                    "conversionRatePct"
+                  ]
+                },
+                "description": "One point per UTC day that reached somebody or dated an outcome, ascending. BOTH legs are CUMULATIVE since the scope's first day, for the reason roiHistory gives: outreach on a day earns conversions days or weeks later, so a period-grain rate oscillates between 0 and absurd and describes nothing. Days with neither are absent (never fabricated). Empty when the scope has reached nobody and dated no outcome."
+              },
+              "datedContacted": {
+                "type": "number",
+                "description": "The curve's final cumulative population — the part of the scope's whole reach it describes."
+              },
+              "undatedContacted": {
+                "type": "number",
+                "description": "Leads this scope reached whose outreach carries NO timestamp, so they sit on no day. Reported rather than dated or dropped: datedContacted + undatedContacted is the scope's whole reach."
+              },
+              "datedOutcomes": {
+                "type": "number",
+                "description": "The curve's final cumulative outcome count."
+              },
+              "undatedOutcomes": {
+                "type": "number",
+                "description": "Outcomes whose driver signal carries NO timestamp, so they sit on no day. datedOutcomes + undatedOutcomes is the scope's whole count."
+              },
+              "scopeConversionRatePct": {
+                "type": "number",
+                "nullable": true,
+                "description": "THE WHOLE SCOPE'S RATE — every outcome over everybody reached, dated or not — SERVED so no consumer ever divides two of our figures. It reconciles with the outcomes block above it by construction: it IS 100 x (the leg's rate) x outcomes.recipientsClicked / outcomes.recipientsContacted (or recipientsRepliesPositive on a reply-driven funnel), one deduped person set counted once, and on an ENTRY leg it is also the funnelSteps rung for that same leg, which converts from Contacted. The curve's LAST point covers the DATED population alone, so it equals this figure exactly when nothing is undated and legitimately differs otherwise — undatedContacted and undatedOutcomes state that difference rather than hiding it, and neither leg is ever floored onto the other. NULL only when the scope has reached nobody."
+              }
+            },
+            "required": [
+              "outcomeStep",
+              "legKey",
+              "outcomeObserved",
+              "daily",
+              "datedContacted",
+              "undatedContacted",
+              "datedOutcomes",
+              "undatedOutcomes",
+              "scopeConversionRatePct"
+            ],
+            "description": "WHAT SHARE OF THE PEOPLE THIS SCOPE REACHED HAVE CONVERTED, DAY BY DAY — the dated twin of the conversion rate the outcomes block states as a scalar, and the third curve of the campaign Overview beside roiHistory and costPerOutcomeHistory. BOTH legs are CUMULATIVE since the scope's first day, for the reason roiHistory gives: outreach on a day earns conversions weeks later, so a period-grain rate oscillates between 0 and absurd and describes nothing actionable. The outcome is the scope's OWN leg's step, resolved ONCE by the same leader resolution learningPhase and costPerOutcomeHistory use, so the three curves can never be denominated in different things; the denominator is REACH, the identical base funnelSteps.contactedRecipients states. BOTH legs come off the SAME leads[] rows of the SAME campaign-scoped snapshot — no producer is re-asked and nothing is narrowed — so a campaign-scoped read divides that campaign's own population by CONSTRUCTION and can never borrow its brand's. scopeConversionRatePct is the whole scope's rate including the undated and reconciles with the outcomes block; the curve's last point covers the dated population alone, and undatedContacted / undatedOutcomes state the difference. A point's rate is null ONLY when nobody has been reached yet; a measured 0 means people were reached and nobody converted. OVERVIEW ONLY, the same gate roiHistory and spend ride: null on the lensed (?lens=) read, absent on the lean (?groupBy=) groups. NULL also when the scope names no priceable outcome step (no campaign, no leg stated, a rate the brand never declared) — learningPhase.unmeasuredReason beside it names which, so no reason vocabulary is duplicated. (features-service#992)"
           },
           "learningPhase": {
             "type": "object",
@@ -2628,6 +2746,7 @@
           "outcomeCauses",
           "funnelSteps",
           "costPerOutcomeHistory",
+          "conversionRateHistory",
           "learningPhase"
         ]
       },
@@ -3221,7 +3340,11 @@
               "sales_meetings_from_conversation",
               "sales_meetings_from_website",
               "website_purchases",
-              "form_magnet"
+              "form_magnet",
+              "sales_from_conversation",
+              "sales_meetings_from_ads",
+              "lead_forms_from_ads",
+              "sales_from_website"
             ],
             "description": "The SALES FUNNEL this projection was priced on — present ONLY when the request named one via `?funnel=`. It is the authoritative answer to what was priced: the two meeting funnels carry the SAME `goal`/`objective` echo and DIFFERENT numbers, which is why the goal was retired as an identity. Absent on a goal-keyed request, so an existing consumer reads a byte-identical body."
           },
@@ -3310,7 +3433,11 @@
                     "sales_meetings_from_conversation",
                     "sales_meetings_from_website",
                     "website_purchases",
-                    "form_magnet"
+                    "form_magnet",
+                    "sales_from_conversation",
+                    "sales_meetings_from_ads",
+                    "lead_forms_from_ads",
+                    "sales_from_website"
                   ]
                 },
                 "description": "Every DECLARED funnel of this brand containing the leg — what the pick chose between. Their figures overlap on the shared leg and must never be summed."
@@ -3321,7 +3448,11 @@
                   "sales_meetings_from_conversation",
                   "sales_meetings_from_website",
                   "website_purchases",
-                  "form_magnet"
+                  "form_magnet",
+                  "sales_from_conversation",
+                  "sales_meetings_from_ads",
+                  "lead_forms_from_ads",
+                  "sales_from_website"
                 ],
                 "description": "The funnel the numbers on this body were priced through. Equals `funnelKey`, so a leg-keyed answer and the same brand's `?funnel=` answer for that funnel are the same body."
               },
@@ -4360,7 +4491,11 @@
                     "sales_meetings_from_conversation",
                     "sales_meetings_from_website",
                     "website_purchases",
-                    "form_magnet"
+                    "form_magnet",
+                    "sales_from_conversation",
+                    "sales_meetings_from_ads",
+                    "lead_forms_from_ads",
+                    "sales_from_website"
                   ],
                   "description": "brand-service's key for the funnel — the SAME key billing funds and campaign-service paces on, so a customer can map a rank straight onto a budget, AND the only field that identifies what was priced. The two meeting funnels differ here and nowhere else in this shape: same goal echo, different numbers."
                 },
@@ -4498,7 +4633,11 @@
                   "sales_meetings_from_conversation",
                   "sales_meetings_from_website",
                   "website_purchases",
-                  "form_magnet"
+                  "form_magnet",
+                  "sales_from_conversation",
+                  "sales_meetings_from_ads",
+                  "lead_forms_from_ads",
+                  "sales_from_website"
                 ]
               },
               "name": {
@@ -4607,7 +4746,11 @@
                   "sales_meetings_from_conversation",
                   "sales_meetings_from_website",
                   "website_purchases",
-                  "form_magnet"
+                  "form_magnet",
+                  "sales_from_conversation",
+                  "sales_meetings_from_ads",
+                  "lead_forms_from_ads",
+                  "sales_from_website"
                 ],
                 "description": "The recommended funnel's key — the unambiguous half of this compatibility view, added beside the lossy `goal` so a consumer can migrate off it without a second endpoint. Null ⟺ status = unrankable."
               },
@@ -7544,7 +7687,11 @@
                   "sales_meetings_from_conversation",
                   "sales_meetings_from_website",
                   "website_purchases",
-                  "form_magnet"
+                  "form_magnet",
+                  "sales_from_conversation",
+                  "sales_meetings_from_ads",
+                  "lead_forms_from_ads",
+                  "sales_from_website"
                 ],
                 "description": "The sales funnel these rungs belong to."
               },
@@ -7773,6 +7920,116 @@
               "undatedOutcomes"
             ],
             "description": "WHAT ONE OUTCOME HAS COST THIS SCOPE, DAY BY DAY — the dated twin of the cost-per-outcome the `outcomes` block states as a scalar, so a customer can see whether it is getting cheaper and how fast. BOTH legs are CUMULATIVE since the scope's first day, for the reason roiHistory gives: spend on a day buys outcomes that land weeks later, so a period-grain ratio oscillates between 0 and absurd and describes nothing actionable. The outcome is the scope's OWN leg's step, resolved ONCE by the same leader resolution learningPhase uses. MEASURED on both legs and divided by nobody downstream — the spend is runs' dated COMMITTED buckets (the basis outcomes.committedSpentCents rides) and the outcomes are the same deduped leads outcomes.recipientsClicked / recipientsRepliesPositive count, so the FINAL point IS that block's cpcCents/cpprCents divided by the leg's own rate, to the sub-cent rounding roiHistory's terminal ROI also carries (runs returns fractional cents per group and each grouping rounds once: measured in prod 2026-09-17, $7.9740 against a served $7.9735, both rendering $7.97). NOT learningPhase.expectedCostPerOutcomeUsd, which answers a different question — that one is pooled over the cells that OBSERVED an outcome because its job is to found a spend target and exploration spend must not price into it; this is the OBSERVED accounting figure, every dollar spent over every outcome produced. OVERVIEW ONLY, the same gate roiHistory and spend ride: null on the lensed (?lens=) read, absent on the lean (?groupBy=) groups. NULL also when the scope names no priceable outcome step (no campaign, no leg stated, a rate the brand never declared) or the dated-spend read degraded — learningPhase.unmeasuredReason beside it names which, so no reason vocabulary is duplicated. Null means 'we could not measure this', never 'it cost nothing'. (features-service#980)"
+          },
+          "conversionRateHistory": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "outcomeStep": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "enum": [
+                      "conversation",
+                      "website_visit",
+                      "meeting_booked",
+                      "meeting_attended",
+                      "signup",
+                      "form_filled",
+                      "paid_client",
+                      "in_ad_form_submission",
+                      "in_ad_booked_meeting"
+                    ]
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "key",
+                  "label",
+                  "description"
+                ],
+                "description": "The step EVERY count here is denominated in — the scope's own leg's toStep, named by this service rather than chosen by the caller, and the byte-same step costPerOutcomeHistory.outcomeStep and learningPhase.outcomeStep report (one leader resolution serves all three, so three curves on one screen can never be measuring different steps). A consumer labels the chart with it and never picks a noun."
+              },
+              "legKey": {
+                "type": "string",
+                "description": "The leg that step closes, canonical."
+              },
+              "outcomeObserved": {
+                "type": "boolean",
+                "description": "TRUE ⟺ the counts are raw OBSERVATIONS (an ENTRY leg, whose driver signal IS its outcome). FALSE ⟺ each day's count is the observed driver walked forward through the funnel's declared rates, so it is fractional."
+              },
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "description": "UTC calendar day (YYYY-MM-DD) this point describes."
+                    },
+                    "cumulativeContacted": {
+                      "type": "number",
+                      "description": "REACH — every distinct lead this scope emailed from its first day up to and including this one, bounces and unsubscribes INCLUDED. The identical base funnelSteps.contactedRecipients states, and for the identical reason: a bounce is a real loss at the very first rung and it was paid for, so a rate that divided by the survivors would hide the people this campaign bought and never reached."
+                    },
+                    "cumulativeOutcomes": {
+                      "type": "number",
+                      "description": "Every outcome of this leg's step DATED up to and including this day. Fractional on a deeper leg, where the count is the observed driver signal walked forward through the funnel's own declared rates (outcomeObserved says which you are reading)."
+                    },
+                    "conversionRatePct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "100 x cumulativeOutcomes / cumulativeContacted. NULL ONLY when nobody has been reached yet — there is no denominator, so there is no rate. A `0` here is a MEASUREMENT: people were reached and nobody converted, which is exactly the period a customer asking 'is this working' needs to see. That null rule is deliberately the OPPOSITE of costPerOutcomeHistory.costPerOutcomeUsd, which nulls at 0 outcomes because a cost per nothing cannot be divided at all — the two must not be harmonised."
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "cumulativeContacted",
+                    "cumulativeOutcomes",
+                    "conversionRatePct"
+                  ]
+                },
+                "description": "One point per UTC day that reached somebody or dated an outcome, ascending. BOTH legs are CUMULATIVE since the scope's first day, for the reason roiHistory gives: outreach on a day earns conversions days or weeks later, so a period-grain rate oscillates between 0 and absurd and describes nothing. Days with neither are absent (never fabricated). Empty when the scope has reached nobody and dated no outcome."
+              },
+              "datedContacted": {
+                "type": "number",
+                "description": "The curve's final cumulative population — the part of the scope's whole reach it describes."
+              },
+              "undatedContacted": {
+                "type": "number",
+                "description": "Leads this scope reached whose outreach carries NO timestamp, so they sit on no day. Reported rather than dated or dropped: datedContacted + undatedContacted is the scope's whole reach."
+              },
+              "datedOutcomes": {
+                "type": "number",
+                "description": "The curve's final cumulative outcome count."
+              },
+              "undatedOutcomes": {
+                "type": "number",
+                "description": "Outcomes whose driver signal carries NO timestamp, so they sit on no day. datedOutcomes + undatedOutcomes is the scope's whole count."
+              },
+              "scopeConversionRatePct": {
+                "type": "number",
+                "nullable": true,
+                "description": "THE WHOLE SCOPE'S RATE — every outcome over everybody reached, dated or not — SERVED so no consumer ever divides two of our figures. It reconciles with the outcomes block above it by construction: it IS 100 x (the leg's rate) x outcomes.recipientsClicked / outcomes.recipientsContacted (or recipientsRepliesPositive on a reply-driven funnel), one deduped person set counted once, and on an ENTRY leg it is also the funnelSteps rung for that same leg, which converts from Contacted. The curve's LAST point covers the DATED population alone, so it equals this figure exactly when nothing is undated and legitimately differs otherwise — undatedContacted and undatedOutcomes state that difference rather than hiding it, and neither leg is ever floored onto the other. NULL only when the scope has reached nobody."
+              }
+            },
+            "required": [
+              "outcomeStep",
+              "legKey",
+              "outcomeObserved",
+              "daily",
+              "datedContacted",
+              "undatedContacted",
+              "datedOutcomes",
+              "undatedOutcomes",
+              "scopeConversionRatePct"
+            ],
+            "description": "WHAT SHARE OF THE PEOPLE THIS SCOPE REACHED HAVE CONVERTED, DAY BY DAY — the dated twin of the conversion rate the outcomes block states as a scalar, and the third curve of the campaign Overview beside roiHistory and costPerOutcomeHistory. BOTH legs are CUMULATIVE since the scope's first day, for the reason roiHistory gives: outreach on a day earns conversions weeks later, so a period-grain rate oscillates between 0 and absurd and describes nothing actionable. The outcome is the scope's OWN leg's step, resolved ONCE by the same leader resolution learningPhase and costPerOutcomeHistory use, so the three curves can never be denominated in different things; the denominator is REACH, the identical base funnelSteps.contactedRecipients states. BOTH legs come off the SAME leads[] rows of the SAME campaign-scoped snapshot — no producer is re-asked and nothing is narrowed — so a campaign-scoped read divides that campaign's own population by CONSTRUCTION and can never borrow its brand's. scopeConversionRatePct is the whole scope's rate including the undated and reconciles with the outcomes block; the curve's last point covers the dated population alone, and undatedContacted / undatedOutcomes state the difference. A point's rate is null ONLY when nobody has been reached yet; a measured 0 means people were reached and nobody converted. OVERVIEW ONLY, the same gate roiHistory and spend ride: null on the lensed (?lens=) read, absent on the lean (?groupBy=) groups. NULL also when the scope names no priceable outcome step (no campaign, no leg stated, a rate the brand never declared) — learningPhase.unmeasuredReason beside it names which, so no reason vocabulary is duplicated. (features-service#992)"
           },
           "learningPhase": {
             "type": "object",
@@ -8154,6 +8411,7 @@
           "outcomeCauses",
           "funnelSteps",
           "costPerOutcomeHistory",
+          "conversionRateHistory",
           "learningPhase",
           "offerId",
           "brandId",
@@ -10626,7 +10884,11 @@
                   "sales_meetings_from_conversation",
                   "sales_meetings_from_website",
                   "website_purchases",
-                  "form_magnet"
+                  "form_magnet",
+                  "sales_from_conversation",
+                  "sales_meetings_from_ads",
+                  "lead_forms_from_ads",
+                  "sales_from_website"
                 ],
                 "description": "The sales funnel these rungs belong to."
               },
@@ -10855,6 +11117,116 @@
               "undatedOutcomes"
             ],
             "description": "WHAT ONE OUTCOME HAS COST THIS SCOPE, DAY BY DAY — the dated twin of the cost-per-outcome the `outcomes` block states as a scalar, so a customer can see whether it is getting cheaper and how fast. BOTH legs are CUMULATIVE since the scope's first day, for the reason roiHistory gives: spend on a day buys outcomes that land weeks later, so a period-grain ratio oscillates between 0 and absurd and describes nothing actionable. The outcome is the scope's OWN leg's step, resolved ONCE by the same leader resolution learningPhase uses. MEASURED on both legs and divided by nobody downstream — the spend is runs' dated COMMITTED buckets (the basis outcomes.committedSpentCents rides) and the outcomes are the same deduped leads outcomes.recipientsClicked / recipientsRepliesPositive count, so the FINAL point IS that block's cpcCents/cpprCents divided by the leg's own rate, to the sub-cent rounding roiHistory's terminal ROI also carries (runs returns fractional cents per group and each grouping rounds once: measured in prod 2026-09-17, $7.9740 against a served $7.9735, both rendering $7.97). NOT learningPhase.expectedCostPerOutcomeUsd, which answers a different question — that one is pooled over the cells that OBSERVED an outcome because its job is to found a spend target and exploration spend must not price into it; this is the OBSERVED accounting figure, every dollar spent over every outcome produced. OVERVIEW ONLY, the same gate roiHistory and spend ride: null on the lensed (?lens=) read, absent on the lean (?groupBy=) groups. NULL also when the scope names no priceable outcome step (no campaign, no leg stated, a rate the brand never declared) or the dated-spend read degraded — learningPhase.unmeasuredReason beside it names which, so no reason vocabulary is duplicated. Null means 'we could not measure this', never 'it cost nothing'. (features-service#980)"
+          },
+          "conversionRateHistory": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "outcomeStep": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "enum": [
+                      "conversation",
+                      "website_visit",
+                      "meeting_booked",
+                      "meeting_attended",
+                      "signup",
+                      "form_filled",
+                      "paid_client",
+                      "in_ad_form_submission",
+                      "in_ad_booked_meeting"
+                    ]
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "key",
+                  "label",
+                  "description"
+                ],
+                "description": "The step EVERY count here is denominated in — the scope's own leg's toStep, named by this service rather than chosen by the caller, and the byte-same step costPerOutcomeHistory.outcomeStep and learningPhase.outcomeStep report (one leader resolution serves all three, so three curves on one screen can never be measuring different steps). A consumer labels the chart with it and never picks a noun."
+              },
+              "legKey": {
+                "type": "string",
+                "description": "The leg that step closes, canonical."
+              },
+              "outcomeObserved": {
+                "type": "boolean",
+                "description": "TRUE ⟺ the counts are raw OBSERVATIONS (an ENTRY leg, whose driver signal IS its outcome). FALSE ⟺ each day's count is the observed driver walked forward through the funnel's declared rates, so it is fractional."
+              },
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "description": "UTC calendar day (YYYY-MM-DD) this point describes."
+                    },
+                    "cumulativeContacted": {
+                      "type": "number",
+                      "description": "REACH — every distinct lead this scope emailed from its first day up to and including this one, bounces and unsubscribes INCLUDED. The identical base funnelSteps.contactedRecipients states, and for the identical reason: a bounce is a real loss at the very first rung and it was paid for, so a rate that divided by the survivors would hide the people this campaign bought and never reached."
+                    },
+                    "cumulativeOutcomes": {
+                      "type": "number",
+                      "description": "Every outcome of this leg's step DATED up to and including this day. Fractional on a deeper leg, where the count is the observed driver signal walked forward through the funnel's own declared rates (outcomeObserved says which you are reading)."
+                    },
+                    "conversionRatePct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "100 x cumulativeOutcomes / cumulativeContacted. NULL ONLY when nobody has been reached yet — there is no denominator, so there is no rate. A `0` here is a MEASUREMENT: people were reached and nobody converted, which is exactly the period a customer asking 'is this working' needs to see. That null rule is deliberately the OPPOSITE of costPerOutcomeHistory.costPerOutcomeUsd, which nulls at 0 outcomes because a cost per nothing cannot be divided at all — the two must not be harmonised."
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "cumulativeContacted",
+                    "cumulativeOutcomes",
+                    "conversionRatePct"
+                  ]
+                },
+                "description": "One point per UTC day that reached somebody or dated an outcome, ascending. BOTH legs are CUMULATIVE since the scope's first day, for the reason roiHistory gives: outreach on a day earns conversions days or weeks later, so a period-grain rate oscillates between 0 and absurd and describes nothing. Days with neither are absent (never fabricated). Empty when the scope has reached nobody and dated no outcome."
+              },
+              "datedContacted": {
+                "type": "number",
+                "description": "The curve's final cumulative population — the part of the scope's whole reach it describes."
+              },
+              "undatedContacted": {
+                "type": "number",
+                "description": "Leads this scope reached whose outreach carries NO timestamp, so they sit on no day. Reported rather than dated or dropped: datedContacted + undatedContacted is the scope's whole reach."
+              },
+              "datedOutcomes": {
+                "type": "number",
+                "description": "The curve's final cumulative outcome count."
+              },
+              "undatedOutcomes": {
+                "type": "number",
+                "description": "Outcomes whose driver signal carries NO timestamp, so they sit on no day. datedOutcomes + undatedOutcomes is the scope's whole count."
+              },
+              "scopeConversionRatePct": {
+                "type": "number",
+                "nullable": true,
+                "description": "THE WHOLE SCOPE'S RATE — every outcome over everybody reached, dated or not — SERVED so no consumer ever divides two of our figures. It reconciles with the outcomes block above it by construction: it IS 100 x (the leg's rate) x outcomes.recipientsClicked / outcomes.recipientsContacted (or recipientsRepliesPositive on a reply-driven funnel), one deduped person set counted once, and on an ENTRY leg it is also the funnelSteps rung for that same leg, which converts from Contacted. The curve's LAST point covers the DATED population alone, so it equals this figure exactly when nothing is undated and legitimately differs otherwise — undatedContacted and undatedOutcomes state that difference rather than hiding it, and neither leg is ever floored onto the other. NULL only when the scope has reached nobody."
+              }
+            },
+            "required": [
+              "outcomeStep",
+              "legKey",
+              "outcomeObserved",
+              "daily",
+              "datedContacted",
+              "undatedContacted",
+              "datedOutcomes",
+              "undatedOutcomes",
+              "scopeConversionRatePct"
+            ],
+            "description": "WHAT SHARE OF THE PEOPLE THIS SCOPE REACHED HAVE CONVERTED, DAY BY DAY — the dated twin of the conversion rate the outcomes block states as a scalar, and the third curve of the campaign Overview beside roiHistory and costPerOutcomeHistory. BOTH legs are CUMULATIVE since the scope's first day, for the reason roiHistory gives: outreach on a day earns conversions weeks later, so a period-grain rate oscillates between 0 and absurd and describes nothing actionable. The outcome is the scope's OWN leg's step, resolved ONCE by the same leader resolution learningPhase and costPerOutcomeHistory use, so the three curves can never be denominated in different things; the denominator is REACH, the identical base funnelSteps.contactedRecipients states. BOTH legs come off the SAME leads[] rows of the SAME campaign-scoped snapshot — no producer is re-asked and nothing is narrowed — so a campaign-scoped read divides that campaign's own population by CONSTRUCTION and can never borrow its brand's. scopeConversionRatePct is the whole scope's rate including the undated and reconciles with the outcomes block; the curve's last point covers the dated population alone, and undatedContacted / undatedOutcomes state the difference. A point's rate is null ONLY when nobody has been reached yet; a measured 0 means people were reached and nobody converted. OVERVIEW ONLY, the same gate roiHistory and spend ride: null on the lensed (?lens=) read, absent on the lean (?groupBy=) groups. NULL also when the scope names no priceable outcome step (no campaign, no leg stated, a rate the brand never declared) — learningPhase.unmeasuredReason beside it names which, so no reason vocabulary is duplicated. (features-service#992)"
           },
           "learningPhase": {
             "type": "object",
@@ -11405,6 +11777,7 @@
           "outcomeCauses",
           "funnelSteps",
           "costPerOutcomeHistory",
+          "conversionRateHistory",
           "learningPhase",
           "offerId",
           "brandId",
@@ -13498,7 +13871,11 @@
                   "sales_meetings_from_conversation",
                   "sales_meetings_from_website",
                   "website_purchases",
-                  "form_magnet"
+                  "form_magnet",
+                  "sales_from_conversation",
+                  "sales_meetings_from_ads",
+                  "lead_forms_from_ads",
+                  "sales_from_website"
                 ],
                 "description": "The sales funnel these rungs belong to."
               },
@@ -13727,6 +14104,116 @@
               "undatedOutcomes"
             ],
             "description": "WHAT ONE OUTCOME HAS COST THIS SCOPE, DAY BY DAY — the dated twin of the cost-per-outcome the `outcomes` block states as a scalar, so a customer can see whether it is getting cheaper and how fast. BOTH legs are CUMULATIVE since the scope's first day, for the reason roiHistory gives: spend on a day buys outcomes that land weeks later, so a period-grain ratio oscillates between 0 and absurd and describes nothing actionable. The outcome is the scope's OWN leg's step, resolved ONCE by the same leader resolution learningPhase uses. MEASURED on both legs and divided by nobody downstream — the spend is runs' dated COMMITTED buckets (the basis outcomes.committedSpentCents rides) and the outcomes are the same deduped leads outcomes.recipientsClicked / recipientsRepliesPositive count, so the FINAL point IS that block's cpcCents/cpprCents divided by the leg's own rate, to the sub-cent rounding roiHistory's terminal ROI also carries (runs returns fractional cents per group and each grouping rounds once: measured in prod 2026-09-17, $7.9740 against a served $7.9735, both rendering $7.97). NOT learningPhase.expectedCostPerOutcomeUsd, which answers a different question — that one is pooled over the cells that OBSERVED an outcome because its job is to found a spend target and exploration spend must not price into it; this is the OBSERVED accounting figure, every dollar spent over every outcome produced. OVERVIEW ONLY, the same gate roiHistory and spend ride: null on the lensed (?lens=) read, absent on the lean (?groupBy=) groups. NULL also when the scope names no priceable outcome step (no campaign, no leg stated, a rate the brand never declared) or the dated-spend read degraded — learningPhase.unmeasuredReason beside it names which, so no reason vocabulary is duplicated. Null means 'we could not measure this', never 'it cost nothing'. (features-service#980)"
+          },
+          "conversionRateHistory": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "outcomeStep": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "enum": [
+                      "conversation",
+                      "website_visit",
+                      "meeting_booked",
+                      "meeting_attended",
+                      "signup",
+                      "form_filled",
+                      "paid_client",
+                      "in_ad_form_submission",
+                      "in_ad_booked_meeting"
+                    ]
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "key",
+                  "label",
+                  "description"
+                ],
+                "description": "The step EVERY count here is denominated in — the scope's own leg's toStep, named by this service rather than chosen by the caller, and the byte-same step costPerOutcomeHistory.outcomeStep and learningPhase.outcomeStep report (one leader resolution serves all three, so three curves on one screen can never be measuring different steps). A consumer labels the chart with it and never picks a noun."
+              },
+              "legKey": {
+                "type": "string",
+                "description": "The leg that step closes, canonical."
+              },
+              "outcomeObserved": {
+                "type": "boolean",
+                "description": "TRUE ⟺ the counts are raw OBSERVATIONS (an ENTRY leg, whose driver signal IS its outcome). FALSE ⟺ each day's count is the observed driver walked forward through the funnel's declared rates, so it is fractional."
+              },
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "description": "UTC calendar day (YYYY-MM-DD) this point describes."
+                    },
+                    "cumulativeContacted": {
+                      "type": "number",
+                      "description": "REACH — every distinct lead this scope emailed from its first day up to and including this one, bounces and unsubscribes INCLUDED. The identical base funnelSteps.contactedRecipients states, and for the identical reason: a bounce is a real loss at the very first rung and it was paid for, so a rate that divided by the survivors would hide the people this campaign bought and never reached."
+                    },
+                    "cumulativeOutcomes": {
+                      "type": "number",
+                      "description": "Every outcome of this leg's step DATED up to and including this day. Fractional on a deeper leg, where the count is the observed driver signal walked forward through the funnel's own declared rates (outcomeObserved says which you are reading)."
+                    },
+                    "conversionRatePct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "100 x cumulativeOutcomes / cumulativeContacted. NULL ONLY when nobody has been reached yet — there is no denominator, so there is no rate. A `0` here is a MEASUREMENT: people were reached and nobody converted, which is exactly the period a customer asking 'is this working' needs to see. That null rule is deliberately the OPPOSITE of costPerOutcomeHistory.costPerOutcomeUsd, which nulls at 0 outcomes because a cost per nothing cannot be divided at all — the two must not be harmonised."
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "cumulativeContacted",
+                    "cumulativeOutcomes",
+                    "conversionRatePct"
+                  ]
+                },
+                "description": "One point per UTC day that reached somebody or dated an outcome, ascending. BOTH legs are CUMULATIVE since the scope's first day, for the reason roiHistory gives: outreach on a day earns conversions days or weeks later, so a period-grain rate oscillates between 0 and absurd and describes nothing. Days with neither are absent (never fabricated). Empty when the scope has reached nobody and dated no outcome."
+              },
+              "datedContacted": {
+                "type": "number",
+                "description": "The curve's final cumulative population — the part of the scope's whole reach it describes."
+              },
+              "undatedContacted": {
+                "type": "number",
+                "description": "Leads this scope reached whose outreach carries NO timestamp, so they sit on no day. Reported rather than dated or dropped: datedContacted + undatedContacted is the scope's whole reach."
+              },
+              "datedOutcomes": {
+                "type": "number",
+                "description": "The curve's final cumulative outcome count."
+              },
+              "undatedOutcomes": {
+                "type": "number",
+                "description": "Outcomes whose driver signal carries NO timestamp, so they sit on no day. datedOutcomes + undatedOutcomes is the scope's whole count."
+              },
+              "scopeConversionRatePct": {
+                "type": "number",
+                "nullable": true,
+                "description": "THE WHOLE SCOPE'S RATE — every outcome over everybody reached, dated or not — SERVED so no consumer ever divides two of our figures. It reconciles with the outcomes block above it by construction: it IS 100 x (the leg's rate) x outcomes.recipientsClicked / outcomes.recipientsContacted (or recipientsRepliesPositive on a reply-driven funnel), one deduped person set counted once, and on an ENTRY leg it is also the funnelSteps rung for that same leg, which converts from Contacted. The curve's LAST point covers the DATED population alone, so it equals this figure exactly when nothing is undated and legitimately differs otherwise — undatedContacted and undatedOutcomes state that difference rather than hiding it, and neither leg is ever floored onto the other. NULL only when the scope has reached nobody."
+              }
+            },
+            "required": [
+              "outcomeStep",
+              "legKey",
+              "outcomeObserved",
+              "daily",
+              "datedContacted",
+              "undatedContacted",
+              "datedOutcomes",
+              "undatedOutcomes",
+              "scopeConversionRatePct"
+            ],
+            "description": "WHAT SHARE OF THE PEOPLE THIS SCOPE REACHED HAVE CONVERTED, DAY BY DAY — the dated twin of the conversion rate the outcomes block states as a scalar, and the third curve of the campaign Overview beside roiHistory and costPerOutcomeHistory. BOTH legs are CUMULATIVE since the scope's first day, for the reason roiHistory gives: outreach on a day earns conversions weeks later, so a period-grain rate oscillates between 0 and absurd and describes nothing actionable. The outcome is the scope's OWN leg's step, resolved ONCE by the same leader resolution learningPhase and costPerOutcomeHistory use, so the three curves can never be denominated in different things; the denominator is REACH, the identical base funnelSteps.contactedRecipients states. BOTH legs come off the SAME leads[] rows of the SAME campaign-scoped snapshot — no producer is re-asked and nothing is narrowed — so a campaign-scoped read divides that campaign's own population by CONSTRUCTION and can never borrow its brand's. scopeConversionRatePct is the whole scope's rate including the undated and reconciles with the outcomes block; the curve's last point covers the dated population alone, and undatedContacted / undatedOutcomes state the difference. A point's rate is null ONLY when nobody has been reached yet; a measured 0 means people were reached and nobody converted. OVERVIEW ONLY, the same gate roiHistory and spend ride: null on the lensed (?lens=) read, absent on the lean (?groupBy=) groups. NULL also when the scope names no priceable outcome step (no campaign, no leg stated, a rate the brand never declared) — learningPhase.unmeasuredReason beside it names which, so no reason vocabulary is duplicated. (features-service#992)"
           },
           "learningPhase": {
             "type": "object",
@@ -14105,6 +14592,7 @@
           "outcomeCauses",
           "funnelSteps",
           "costPerOutcomeHistory",
+          "conversionRateHistory",
           "learningPhase",
           "brandId",
           "channels"
@@ -15530,7 +16018,11 @@
                       "sales_meetings_from_conversation",
                       "sales_meetings_from_website",
                       "website_purchases",
-                      "form_magnet"
+                      "form_magnet",
+                      "sales_from_conversation",
+                      "sales_meetings_from_ads",
+                      "lead_forms_from_ads",
+                      "sales_from_website"
                     ]
                   },
                   "description": "The SALES FUNNELS this (org, brand) DECLARED it sells through, catalogue order. Replaces the retired optimizationGoal, which was a single NOT NULL server-defaulted column and therefore read 'website purchases' for brands that had chosen nothing. `[]` when the declaration is missing or unreadable — a producer gap surfaced, never a substituted funnel (every funnel-keyed field on the row then reads null)."
@@ -15542,7 +16034,11 @@
                     "sales_meetings_from_conversation",
                     "sales_meetings_from_website",
                     "website_purchases",
-                    "form_magnet"
+                    "form_magnet",
+                    "sales_from_conversation",
+                    "sales_meetings_from_ads",
+                    "lead_forms_from_ads",
+                    "sales_from_website"
                   ],
                   "description": "The ONE funnel the single-valued fields on this row (conversion tracker, best audience, best workflow) are computed on: the brand's first declared funnel in catalogue order. A deterministic pick over the brand's OWN declarations — not a default. null when nothing is declared."
                 },
@@ -17227,7 +17723,11 @@
                 "sales_meetings_from_conversation",
                 "sales_meetings_from_website",
                 "website_purchases",
-                "form_magnet"
+                "form_magnet",
+                "sales_from_conversation",
+                "sales_meetings_from_ads",
+                "lead_forms_from_ads",
+                "sales_from_website"
               ]
             },
             "description": "EVERY declared sales funnel this leg is a leg of, in catalogue order. Usually several — an ENTRY leg feeds every funnel that contains it AT ONCE, since nobody can buy traffic that travels down only one of them. Their figures therefore overlap and must never be summed."
@@ -17483,6 +17983,82 @@
               "$ref": "#/components/schemas/PublicAcquisitionChannel"
             }
           },
+          "funnels": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "enum": [
+                    "sales_meetings_from_conversation",
+                    "sales_meetings_from_website",
+                    "website_purchases",
+                    "form_magnet",
+                    "sales_from_conversation",
+                    "sales_meetings_from_ads",
+                    "lead_forms_from_ads",
+                    "sales_from_website"
+                  ],
+                  "description": "The wire token. NEVER renamed — billing ceilings and live brand declarations reference it — while `name` is the only one of the two a customer reads. `website_purchases` reads 'Signups' and that mismatch is deliberate, not drift."
+                },
+                "name": {
+                  "type": "string",
+                  "description": "brand-service's own customer-facing name for the funnel."
+                },
+                "steps": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "The funnel in order, in brand-service's own wording, ending at the SALE ('Paid client')."
+                },
+                "entryStep": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "enum": [
+                        "conversation",
+                        "website_visit",
+                        "meeting_booked",
+                        "meeting_attended",
+                        "signup",
+                        "form_filled",
+                        "paid_client",
+                        "in_ad_form_submission",
+                        "in_ad_booked_meeting"
+                      ]
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "label",
+                    "description"
+                  ],
+                  "description": "The step this funnel STARTS on. Spelled in the shared step vocabulary, so it joins directly against a channel's `producibleSteps`. An ad funnel starts on the step the ad DELIVERS (a booked meeting, a lead form submitted) — the click before it is not a step anybody buys."
+                },
+                "entryLegKey": {
+                  "type": "string",
+                  "description": "The entry leg's canonical identifier, so the same join can be keyed on the leg vocabulary rather than on a `start_to_<step>` string the consumer composes itself."
+                }
+              },
+              "required": [
+                "key",
+                "name",
+                "steps",
+                "entryStep",
+                "entryLegKey"
+              ]
+            },
+            "description": "EVERY declared sales funnel, mirrored from brand-service, in the catalogue's canonical order and whether or not a channel sells it today — so a funnel's absence from a channel's list is readable as a restriction rather than as a catalogue we never published. Each states the STEP IT STARTS ON in the SAME vocabulary a channel's `producibleSteps` use, which is what makes 'which funnels does this outcome lead into' a lookup in this payload (`funnels.filter(f => f.entryStep.key === step.key)`) instead of a translation table the consumer keeps and lets go stale."
+          },
           "legs": {
             "type": "array",
             "items": {
@@ -17527,6 +18103,7 @@
         },
         "required": [
           "channels",
+          "funnels",
           "legs",
           "steps"
         ]
@@ -17694,9 +18271,10 @@
                     "enum": [
                       "no_spend_recorded",
                       "no_entry_step_produced",
-                      "no_economics_declared"
+                      "no_economics_declared",
+                      "entry_step_not_measured"
                     ],
-                    "description": "Which INGREDIENT is missing. A pair we have not measured enough SAYS SO rather than returning a figure or an empty value a consumer would have to interpret."
+                    "description": "Which INGREDIENT is missing. A pair we have not measured enough SAYS SO rather than returning a figure or an empty value a consumer would have to interpret. `entry_step_not_measured` is the ad funnels' answer and is distinct from `no_entry_step_produced`: their first step is DELIVERED by the advertising platform (a meeting booked inside the ad, a lead form filled inside it) and no signal this fleet counts observes it, so the channel may well be producing the step — we simply have no unit cost to carry down the funnel, and saying so beats pricing an ad-delivered step against click or reply evidence the funnel never buys."
                   }
                 },
                 "required": [
@@ -17877,10 +18455,14 @@
                                 "sales_meetings_from_conversation",
                                 "sales_meetings_from_website",
                                 "website_purchases",
-                                "form_magnet"
+                                "form_magnet",
+                                "sales_from_conversation",
+                                "sales_meetings_from_ads",
+                                "lead_forms_from_ads",
+                                "sales_from_website"
                               ]
                             },
-                            "description": "WHICH SALES FUNNELS THIS FEATURE MAY BE SOLD THROUGH, in brand-service's own funnel keys. A product statement about the feature, owned by this service: the dashboard offers only valid (funnel, feature) pairs from it and campaign-service refuses to provision a pair that is not in it. ALWAYS PRESENT, so an absent answer can never be mistaken for 'all of them' — a feature that sells through no sales funnel states `[]` (every non-sales feature: PR, hiring, VC, accelerators, AI visibility, press kit, outlet discovery, expert quotes) and one that sells through every declared funnel states all four keys explicitly. A shorter list is a real restriction, not a gap: the feedback-request cold email states `sales_meetings_from_conversation` alone, because its offer buys a conversation and has no website step to sell."
+                            "description": "WHICH SALES FUNNELS THIS FEATURE MAY BE SOLD THROUGH, in brand-service's own funnel keys. A product statement about the feature, owned by this service: the dashboard offers only valid (funnel, feature) pairs from it and campaign-service refuses to provision a pair that is not in it. ALWAYS PRESENT, so an absent answer can never be mistaken for 'all of them' — a feature that sells through no sales funnel states `[]` (every non-sales feature: PR, hiring, VC, accelerators, AI visibility, press kit, outlet discovery, expert quotes) and one that sells through every declared funnel states every one of those keys explicitly. A shorter list is a real restriction, not a gap: the feedback-request cold email states `sales_meetings_from_conversation` alone, because its offer buys a conversation and has no website step to sell."
                           },
                           "supersededBySlug": {
                             "type": "string",
@@ -18059,10 +18641,14 @@
                               "sales_meetings_from_conversation",
                               "sales_meetings_from_website",
                               "website_purchases",
-                              "form_magnet"
+                              "form_magnet",
+                              "sales_from_conversation",
+                              "sales_meetings_from_ads",
+                              "lead_forms_from_ads",
+                              "sales_from_website"
                             ]
                           },
-                          "description": "WHICH SALES FUNNELS THIS FEATURE MAY BE SOLD THROUGH, in brand-service's own funnel keys. A product statement about the feature, owned by this service: the dashboard offers only valid (funnel, feature) pairs from it and campaign-service refuses to provision a pair that is not in it. ALWAYS PRESENT, so an absent answer can never be mistaken for 'all of them' — a feature that sells through no sales funnel states `[]` (every non-sales feature: PR, hiring, VC, accelerators, AI visibility, press kit, outlet discovery, expert quotes) and one that sells through every declared funnel states all four keys explicitly. A shorter list is a real restriction, not a gap: the feedback-request cold email states `sales_meetings_from_conversation` alone, because its offer buys a conversation and has no website step to sell."
+                          "description": "WHICH SALES FUNNELS THIS FEATURE MAY BE SOLD THROUGH, in brand-service's own funnel keys. A product statement about the feature, owned by this service: the dashboard offers only valid (funnel, feature) pairs from it and campaign-service refuses to provision a pair that is not in it. ALWAYS PRESENT, so an absent answer can never be mistaken for 'all of them' — a feature that sells through no sales funnel states `[]` (every non-sales feature: PR, hiring, VC, accelerators, AI visibility, press kit, outlet discovery, expert quotes) and one that sells through every declared funnel states every one of those keys explicitly. A shorter list is a real restriction, not a gap: the feedback-request cold email states `sales_meetings_from_conversation` alone, because its offer buys a conversation and has no website step to sell."
                         },
                         "supersededBySlug": {
                           "type": "string",
@@ -19101,10 +19687,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "The SALES FUNNEL the spend block's cost-per-outcome columns are priced on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`) from one bought with a click onto the site (`sales_meetings_from_website`). Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases, form_magnet; the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever. Omitted → the brand's FIRST DECLARED funnel in catalogue order (a deterministic pick over the brand's own declarations, never a default funnel); a brand that has declared nothing keeps OBSERVED columns (null at 0 outcomes), never a substituted funnel. A value the brand never declared is ignored in favour of that same pick. An unrecognised value is a 400."
+              "description": "The SALES FUNNEL the spend block's cost-per-outcome columns are priced on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`) from one bought with a click onto the site (`sales_meetings_from_website`). Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases, form_magnet, sales_from_conversation (positive reply → paid client), sales_meetings_from_ads (meeting booked inside an ad → attended → paid client), lead_forms_from_ads (lead form filled inside an ad → paid client), sales_from_website (website visit → paid client); the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever. Omitted → the brand's FIRST DECLARED funnel in catalogue order (a deterministic pick over the brand's own declarations, never a default funnel); a brand that has declared nothing keeps OBSERVED columns (null at 0 outcomes), never a substituted funnel. A value the brand never declared is ignored in favour of that same pick. An unrecognised value is a 400."
             },
             "required": false,
-            "description": "The SALES FUNNEL the spend block's cost-per-outcome columns are priced on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`) from one bought with a click onto the site (`sales_meetings_from_website`). Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases, form_magnet; the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever. Omitted → the brand's FIRST DECLARED funnel in catalogue order (a deterministic pick over the brand's own declarations, never a default funnel); a brand that has declared nothing keeps OBSERVED columns (null at 0 outcomes), never a substituted funnel. A value the brand never declared is ignored in favour of that same pick. An unrecognised value is a 400.",
+            "description": "The SALES FUNNEL the spend block's cost-per-outcome columns are priced on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`) from one bought with a click onto the site (`sales_meetings_from_website`). Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases, form_magnet, sales_from_conversation (positive reply → paid client), sales_meetings_from_ads (meeting booked inside an ad → attended → paid client), lead_forms_from_ads (lead form filled inside an ad → paid client), sales_from_website (website visit → paid client); the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever. Omitted → the brand's FIRST DECLARED funnel in catalogue order (a deterministic pick over the brand's own declarations, never a default funnel); a brand that has declared nothing keeps OBSERVED columns (null at 0 outcomes), never a substituted funnel. A value the brand never declared is ignored in favour of that same pick. An unrecognised value is a 400.",
             "name": "funnel",
             "in": "query"
           },
@@ -19330,10 +19916,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "The SALES FUNNEL to price on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`, priced replyUsd / replyToMeetingPct) from one bought with a click onto the site (`sales_meetings_from_website`, priced clickUsd / visitToMeetingPct). A goal cannot express that difference: both echo `meetingBooked`, and a goal-keyed request funnels from BOTH channels. Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases (visit → signup → paid), form_magnet (visit → form → paid); the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever and resolve to the canonical key. WINS over `goal`/`objective` when both are sent. A funnel the brand never DECLARED is a 404 (reason='funnel_not_declared') — 'we could not estimate this' and 'it costs zero' are different statements. An unrecognised value is a 400, never a silent fall back to the goal."
+              "description": "The SALES FUNNEL to price on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`, priced replyUsd / replyToMeetingPct) from one bought with a click onto the site (`sales_meetings_from_website`, priced clickUsd / visitToMeetingPct). A goal cannot express that difference: both echo `meetingBooked`, and a goal-keyed request funnels from BOTH channels. Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases (visit → signup → paid), form_magnet (visit → form → paid), sales_from_conversation (reply → paid), sales_meetings_from_ads (meeting booked in the ad → attended → paid), lead_forms_from_ads (lead form filled in the ad → paid), sales_from_website (visit → paid); the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever and resolve to the canonical key. WINS over `goal`/`objective` when both are sent. A funnel the brand never DECLARED is a 404 (reason='funnel_not_declared') — 'we could not estimate this' and 'it costs zero' are different statements. An unrecognised value is a 400, never a silent fall back to the goal."
             },
             "required": false,
-            "description": "The SALES FUNNEL to price on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`, priced replyUsd / replyToMeetingPct) from one bought with a click onto the site (`sales_meetings_from_website`, priced clickUsd / visitToMeetingPct). A goal cannot express that difference: both echo `meetingBooked`, and a goal-keyed request funnels from BOTH channels. Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases (visit → signup → paid), form_magnet (visit → form → paid); the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever and resolve to the canonical key. WINS over `goal`/`objective` when both are sent. A funnel the brand never DECLARED is a 404 (reason='funnel_not_declared') — 'we could not estimate this' and 'it costs zero' are different statements. An unrecognised value is a 400, never a silent fall back to the goal.",
+            "description": "The SALES FUNNEL to price on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`, priced replyUsd / replyToMeetingPct) from one bought with a click onto the site (`sales_meetings_from_website`, priced clickUsd / visitToMeetingPct). A goal cannot express that difference: both echo `meetingBooked`, and a goal-keyed request funnels from BOTH channels. Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases (visit → signup → paid), form_magnet (visit → form → paid), sales_from_conversation (reply → paid), sales_meetings_from_ads (meeting booked in the ad → attended → paid), lead_forms_from_ads (lead form filled in the ad → paid), sales_from_website (visit → paid); the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever and resolve to the canonical key. WINS over `goal`/`objective` when both are sent. A funnel the brand never DECLARED is a 404 (reason='funnel_not_declared') — 'we could not estimate this' and 'it costs zero' are different statements. An unrecognised value is a 400, never a silent fall back to the goal.",
             "name": "funnel",
             "in": "query"
           },
@@ -19480,7 +20066,11 @@
                         "sales_meetings_from_conversation",
                         "sales_meetings_from_website",
                         "website_purchases",
-                        "form_magnet"
+                        "form_magnet",
+                        "sales_from_conversation",
+                        "sales_meetings_from_ads",
+                        "lead_forms_from_ads",
+                        "sales_from_website"
                       ],
                       "description": "The SALES FUNNEL this projection was priced on — present ONLY when the request named one via `?funnel=`. It is the authoritative answer to what was priced: the two meeting funnels carry the SAME `goal`/`objective` echo and DIFFERENT numbers, which is why the goal was retired as an identity. Absent on a goal-keyed request, so an existing consumer reads a byte-identical body."
                     },
@@ -19569,7 +20159,11 @@
                               "sales_meetings_from_conversation",
                               "sales_meetings_from_website",
                               "website_purchases",
-                              "form_magnet"
+                              "form_magnet",
+                              "sales_from_conversation",
+                              "sales_meetings_from_ads",
+                              "lead_forms_from_ads",
+                              "sales_from_website"
                             ]
                           },
                           "description": "Every DECLARED funnel of this brand containing the leg — what the pick chose between. Their figures overlap on the shared leg and must never be summed."
@@ -19580,7 +20174,11 @@
                             "sales_meetings_from_conversation",
                             "sales_meetings_from_website",
                             "website_purchases",
-                            "form_magnet"
+                            "form_magnet",
+                            "sales_from_conversation",
+                            "sales_meetings_from_ads",
+                            "lead_forms_from_ads",
+                            "sales_from_website"
                           ],
                           "description": "The funnel the numbers on this body were priced through. Equals `funnelKey`, so a leg-keyed answer and the same brand's `?funnel=` answer for that funnel are the same body."
                         },
@@ -20806,7 +21404,11 @@
                               "sales_meetings_from_conversation",
                               "sales_meetings_from_website",
                               "website_purchases",
-                              "form_magnet"
+                              "form_magnet",
+                              "sales_from_conversation",
+                              "sales_meetings_from_ads",
+                              "lead_forms_from_ads",
+                              "sales_from_website"
                             ],
                             "description": "brand-service's key for the funnel — the SAME key billing funds and campaign-service paces on, so a customer can map a rank straight onto a budget, AND the only field that identifies what was priced. The two meeting funnels differ here and nowhere else in this shape: same goal echo, different numbers."
                           },
@@ -20944,7 +21546,11 @@
                             "sales_meetings_from_conversation",
                             "sales_meetings_from_website",
                             "website_purchases",
-                            "form_magnet"
+                            "form_magnet",
+                            "sales_from_conversation",
+                            "sales_meetings_from_ads",
+                            "lead_forms_from_ads",
+                            "sales_from_website"
                           ]
                         },
                         "name": {
@@ -21053,7 +21659,11 @@
                             "sales_meetings_from_conversation",
                             "sales_meetings_from_website",
                             "website_purchases",
-                            "form_magnet"
+                            "form_magnet",
+                            "sales_from_conversation",
+                            "sales_meetings_from_ads",
+                            "lead_forms_from_ads",
+                            "sales_from_website"
                           ],
                           "description": "The recommended funnel's key — the unambiguous half of this compatibility view, added beside the lossy `goal` so a consumer can migrate off it without a second endpoint. Null ⟺ status = unrankable."
                         },
@@ -22497,10 +23107,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "The SALES FUNNEL to price the cost columns on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`) from one bought with a click onto the site (`sales_meetings_from_website`); both echo `meetingBooked`, so a goal cannot. Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases, form_magnet; the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever. `funnel` is the CANONICAL parameter for a SINGLE-FUNNEL read (a campaign genuinely sells one funnel): name it and nothing else. OMIT it entirely for the BRAND-LEVEL read, where the brand sells through every funnel it declared and the answer is combined over the declared set. It decides the COST basis — including the fleet-backed floor parent every per-audience cost cascades against, so this surface and /workflow-projection?funnel= stay the same number by construction. A funnel the brand never DECLARED is a 404 (reason='funnel_not_declared'); an unrecognised value is a 400, never a silent fall back to the goal."
+              "description": "The SALES FUNNEL to price the cost columns on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`) from one bought with a click onto the site (`sales_meetings_from_website`); both echo `meetingBooked`, so a goal cannot. Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases, form_magnet, sales_from_conversation (positive reply → paid client), sales_meetings_from_ads (meeting booked inside an ad → attended → paid client), lead_forms_from_ads (lead form filled inside an ad → paid client), sales_from_website (website visit → paid client); the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever. `funnel` is the CANONICAL parameter for a SINGLE-FUNNEL read (a campaign genuinely sells one funnel): name it and nothing else. OMIT it entirely for the BRAND-LEVEL read, where the brand sells through every funnel it declared and the answer is combined over the declared set. It decides the COST basis — including the fleet-backed floor parent every per-audience cost cascades against, so this surface and /workflow-projection?funnel= stay the same number by construction. A funnel the brand never DECLARED is a 404 (reason='funnel_not_declared'); an unrecognised value is a 400, never a silent fall back to the goal."
             },
             "required": false,
-            "description": "The SALES FUNNEL to price the cost columns on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`) from one bought with a click onto the site (`sales_meetings_from_website`); both echo `meetingBooked`, so a goal cannot. Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases, form_magnet; the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever. `funnel` is the CANONICAL parameter for a SINGLE-FUNNEL read (a campaign genuinely sells one funnel): name it and nothing else. OMIT it entirely for the BRAND-LEVEL read, where the brand sells through every funnel it declared and the answer is combined over the declared set. It decides the COST basis — including the fleet-backed floor parent every per-audience cost cascades against, so this surface and /workflow-projection?funnel= stay the same number by construction. A funnel the brand never DECLARED is a 404 (reason='funnel_not_declared'); an unrecognised value is a 400, never a silent fall back to the goal.",
+            "description": "The SALES FUNNEL to price the cost columns on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`) from one bought with a click onto the site (`sales_meetings_from_website`); both echo `meetingBooked`, so a goal cannot. Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases, form_magnet, sales_from_conversation (positive reply → paid client), sales_meetings_from_ads (meeting booked inside an ad → attended → paid client), lead_forms_from_ads (lead form filled inside an ad → paid client), sales_from_website (website visit → paid client); the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever. `funnel` is the CANONICAL parameter for a SINGLE-FUNNEL read (a campaign genuinely sells one funnel): name it and nothing else. OMIT it entirely for the BRAND-LEVEL read, where the brand sells through every funnel it declared and the answer is combined over the declared set. It decides the COST basis — including the fleet-backed floor parent every per-audience cost cascades against, so this surface and /workflow-projection?funnel= stay the same number by construction. A funnel the brand never DECLARED is a 404 (reason='funnel_not_declared'); an unrecognised value is a 400, never a silent fall back to the goal.",
             "name": "funnel",
             "in": "query"
           },
@@ -25617,10 +26227,14 @@
                                 "sales_meetings_from_conversation",
                                 "sales_meetings_from_website",
                                 "website_purchases",
-                                "form_magnet"
+                                "form_magnet",
+                                "sales_from_conversation",
+                                "sales_meetings_from_ads",
+                                "lead_forms_from_ads",
+                                "sales_from_website"
                               ]
                             },
-                            "description": "WHICH SALES FUNNELS THIS FEATURE MAY BE SOLD THROUGH, in brand-service's own funnel keys. A product statement about the feature, owned by this service: the dashboard offers only valid (funnel, feature) pairs from it and campaign-service refuses to provision a pair that is not in it. ALWAYS PRESENT, so an absent answer can never be mistaken for 'all of them' — a feature that sells through no sales funnel states `[]` (every non-sales feature: PR, hiring, VC, accelerators, AI visibility, press kit, outlet discovery, expert quotes) and one that sells through every declared funnel states all four keys explicitly. A shorter list is a real restriction, not a gap: the feedback-request cold email states `sales_meetings_from_conversation` alone, because its offer buys a conversation and has no website step to sell."
+                            "description": "WHICH SALES FUNNELS THIS FEATURE MAY BE SOLD THROUGH, in brand-service's own funnel keys. A product statement about the feature, owned by this service: the dashboard offers only valid (funnel, feature) pairs from it and campaign-service refuses to provision a pair that is not in it. ALWAYS PRESENT, so an absent answer can never be mistaken for 'all of them' — a feature that sells through no sales funnel states `[]` (every non-sales feature: PR, hiring, VC, accelerators, AI visibility, press kit, outlet discovery, expert quotes) and one that sells through every declared funnel states every one of those keys explicitly. A shorter list is a real restriction, not a gap: the feedback-request cold email states `sales_meetings_from_conversation` alone, because its offer buys a conversation and has no website step to sell."
                           },
                           "supersededBySlug": {
                             "type": "string",
@@ -27452,7 +28066,7 @@
     "/public/channels": {
       "get": {
         "summary": "Every acquisition channel, its commercial terms and what it can produce (public, no auth)",
-        "description": "The published acquisition-channel catalogue: every channel a customer can book, the commercial terms they commit to before anything is measured (daily operating cost whatever the volume, minimum commitment in days, upper bound on how long until it starts producing), which LEG of a funnel it performs (the step it moves a lead FROM and the step it moves it TO), who operates it, and the sales funnels that follow from those legs, each carrying `effectiveMinimumCommitmentDays` — the pair's MINIMUM RUN LENGTH, already composed against the channel's own term, plus `governedBy` saying which side produced it — so a payment screen renders ONE figure and never combines two of ours. That figure is a run length before the result is judgeable, NOT a lock-in: nothing enforces it and the only thing a buyer commits to is the daily operating cost. A funnel is sellable LEG BY LEG rather than only end to end, so the catalogue publishes channels for the internal steps a human performs — the ones a specialist of ours runs and the ones the customer runs themselves. An internal leg is published once per OPERATOR, and the channel's NAME says which: our AI, our agency by hand, or the customer's own team. A daily operating cost of 0 means only that no standing day-rate is charged for the channel — it does NOT imply the customer operates it, since an automated channel meters its real cost per run instead; `operatedBy` is the field that says who is on it. NO customer identity anywhere in the path — the marketing site is generated from this and must never be able to drift from what we actually charge. Every published channel is BOOKABLE: there is no availability or coming-soon flag to consult, and a channel we are slower to deliver says so through its own terms. Each offering appears EXACTLY ONCE, under the slug that is current: a feature whose slug has been RETIRED (it names its successor in `supersededBySlug` on the authenticated feature row) is not listed here and returns no pair on /public/channel-funnel-economics, while every authenticated per-brand and per-campaign read of it keeps working unchanged.",
+        "description": "The published acquisition-channel catalogue: every channel a customer can book, the commercial terms they commit to before anything is measured (daily operating cost whatever the volume, minimum commitment in days, upper bound on how long until it starts producing), which LEG of a funnel it performs (the step it moves a lead FROM and the step it moves it TO), who operates it, and the sales funnels that follow from those legs (with `funnels` listing EVERY declared funnel in its own right, each stating the STEP IT STARTS ON in the same vocabulary a channel's `producibleSteps` use, so a consumer answers 'which funnels does this outcome lead into' from one read with no translation table of its own), each carrying `effectiveMinimumCommitmentDays` — the pair's MINIMUM RUN LENGTH, already composed against the channel's own term, plus `governedBy` saying which side produced it — so a payment screen renders ONE figure and never combines two of ours. That figure is a run length before the result is judgeable, NOT a lock-in: nothing enforces it and the only thing a buyer commits to is the daily operating cost. A funnel is sellable LEG BY LEG rather than only end to end, so the catalogue publishes channels for the internal steps a human performs — the ones a specialist of ours runs and the ones the customer runs themselves. An internal leg is published once per OPERATOR, and the channel's NAME says which: our AI, our agency by hand, or the customer's own team. A daily operating cost of 0 means only that no standing day-rate is charged for the channel — it does NOT imply the customer operates it, since an automated channel meters its real cost per run instead; `operatedBy` is the field that says who is on it. NO customer identity anywhere in the path — the marketing site is generated from this and must never be able to drift from what we actually charge. Every published channel is BOOKABLE: there is no availability or coming-soon flag to consult, and a channel we are slower to deliver says so through its own terms. Each offering appears EXACTLY ONCE, under the slug that is current: a feature whose slug has been RETIRED (it names its successor in `supersededBySlug` on the authenticated feature row) is not listed here and returns no pair on /public/channel-funnel-economics, while every authenticated per-brand and per-campaign read of it keeps working unchanged.",
         "tags": [
           "Public"
         ],
@@ -28260,7 +28874,11 @@
                               "sales_meetings_from_conversation",
                               "sales_meetings_from_website",
                               "website_purchases",
-                              "form_magnet"
+                              "form_magnet",
+                              "sales_from_conversation",
+                              "sales_meetings_from_ads",
+                              "lead_forms_from_ads",
+                              "sales_from_website"
                             ],
                             "description": "The sales funnel, in brand-service's own canonical vocabulary."
                           },

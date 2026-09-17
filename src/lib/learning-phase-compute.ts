@@ -34,7 +34,7 @@ import {
   type LearningPhase,
   type ResolvedLeg,
 } from "./learning-phase.js";
-import type { CostPerOutcomeTerms } from "./cost-per-outcome-history.js";
+import type { ScopeOutcomeTerms } from "./cost-per-outcome-history.js";
 import type { SalesEconomics } from "./funnel-registry.js";
 import type { Pricing } from "./pricing.js";
 
@@ -49,11 +49,11 @@ import type { Pricing } from "./pricing.js";
  */
 export interface LearningPhaseResult {
   phase: LearningPhase;
-  outcomeTerms: CostPerOutcomeTerms | null;
+  outcomeTerms: ScopeOutcomeTerms | null;
 }
 
 /** The leader's resolved leg, as the curve needs it. Null when it carries no declared rate. */
-function outcomeTermsOf(leg: ResolvedLeg | null): CostPerOutcomeTerms | null {
+function outcomeTermsOf(leg: ResolvedLeg | null): ScopeOutcomeTerms | null {
   if (!leg || leg.rateFromDriver == null || leg.rateFromDriver <= 0) return null;
   return {
     legKey: leg.legKey,

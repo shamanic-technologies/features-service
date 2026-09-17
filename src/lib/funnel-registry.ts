@@ -490,6 +490,35 @@ const FUNNEL_LADDERS: Record<SalesFunnelKey, (e: SalesEconomics) => LadderRung[]
       CLOSE_WIN,
     ];
   },
+  // The sale closes INSIDE the conversation — no meeting is ever booked — so the reply is priced on the
+  // brand's own reply→paid rate and NOT through `replyToMeetingPct × meetingToClosePct`, which would
+  // route it through a step this funnel does not have. A brand that never declared that rate leaves the
+  // rung absent, never at 0.
+  sales_from_conversation: (e) => [
+    { tag: "reply", signal: "positiveReply", pClose: declaredRate(e.replyToPaidClientPct), engagementRoute: true },
+    CLOSE_WIN,
+  ],
+  // The buyer lands and PAYS, with nothing in between, so the visit is priced on the DIRECT visit→paid
+  // rate alone. `clickCloseViaMeeting` would add the meeting route, which this funnel does not contain.
+  sales_from_website: (e) => [
+    { tag: "visit", signal: "clicked", pClose: declaredRate(e.visitToClosePct), engagementRoute: true },
+    CLOSE_WIN,
+  ],
+  // An ad DELIVERS the booked meeting, so this funnel has no engagement route at all: neither a counted
+  // click nor a counted reply buys its first step, and pricing one off either would charge an
+  // ad-delivered meeting against evidence the funnel never buys. What it DOES price is every rung a
+  // lead can actually stand on once the meeting exists — the same two rungs the other meeting funnels
+  // price, on the same rates.
+  sales_meetings_from_ads: (e) => [
+    { tag: "meeting", signal: "meeting", pClose: bookedClose(e) },
+    { tag: "meetingAttended", signal: "meetingAttended", pClose: attendedClose(e) },
+    CLOSE_WIN,
+  ],
+  // Same shape, one rung shorter, and its ONE intermediate step has no signal anywhere in the fleet: a
+  // form filled inside an ad unit is not the website form `formSubmission` observes, and nothing else
+  // sees it. So the ladder is the terminal alone — an honest "we price the sale and nothing before it"
+  // rather than a rung priced off a signal that describes a different form.
+  lead_forms_from_ads: () => [CLOSE_WIN],
 };
 
 /**
@@ -584,6 +613,14 @@ export const FUNNEL_LEG_SIGNALS: Record<SalesFunnelKey, readonly string[]> = {
   sales_meetings_from_website: ["clicked", "meeting", "meetingAttended", "closeWin"],
   website_purchases: ["clicked", "signup", "closeWin"],
   form_magnet: ["clicked", "formSubmission", "closeWin"],
+  sales_from_conversation: ["positiveReply", "closeWin"],
+  sales_from_website: ["clicked", "closeWin"],
+  // The ad-delivered first step is not a signal anything in the fleet counts, so it is absent here
+  // rather than mapped onto a lookalike: `meeting` is the meeting BOOKED from a conversation or a
+  // visit, and `formSubmission` is the form filled on the brand's own site. Listing either would make a
+  // lead who never touched this funnel price it.
+  sales_meetings_from_ads: ["meeting", "meetingAttended", "closeWin"],
+  lead_forms_from_ads: ["closeWin"],
 };
 
 /**

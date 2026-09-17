@@ -21,7 +21,7 @@ export const features = pgTable(
      * an invalid one). Values are brand-service's own funnel keys; no funnel is invented here.
      *
      * ALWAYS STATED, so absence can never be mistaken for "all of them": a feature that sells through
-     * no sales funnel states `[]`, and one that sells through every declared funnel states all four
+     * no sales funnel states `[]`, and one that sells through every declared funnel states all of those
      * keys explicitly. A consumer reading a shorter list than the catalogue's is reading a real
      * restriction, not a gap. NOT NULL with a `[]` default, so an unseeded row reads "none" — the safe
      * side of that distinction, since offering nothing is recoverable and offering nonsense is not.

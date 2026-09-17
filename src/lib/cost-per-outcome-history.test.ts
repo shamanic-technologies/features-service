@@ -10,14 +10,14 @@
  * that charted a day-grain ratio or priced an outcome-less day at $0.
  */
 import { describe, it, expect } from "vitest";
-import { buildCostPerOutcomeHistory, type CostPerOutcomeTerms } from "./cost-per-outcome-history.js";
+import { buildCostPerOutcomeHistory, type ScopeOutcomeTerms } from "./cost-per-outcome-history.js";
 import type { SignalSeries } from "./revenue-engine.js";
 
 const VISIT_STEP = { key: "website_visit", label: "Website visit", description: "A buyer lands on the brand's own website." } as const;
 const MEETING_STEP = { key: "meeting_booked", label: "Meeting booked", description: "A meeting is on the calendar." } as const;
 
 /** The reported campaign's entry leg: the click IS the outcome, so the rate is 1. */
-const ENTRY: CostPerOutcomeTerms = {
+const ENTRY: ScopeOutcomeTerms = {
   legKey: "start_to_website_visit",
   outcomeStep: VISIT_STEP,
   driver: "click",
@@ -26,7 +26,7 @@ const ENTRY: CostPerOutcomeTerms = {
 };
 
 /** The SAME driver signal, one rung deeper: 20% of visits book, so the count is a fifth and the price five times. */
-const DEEPER: CostPerOutcomeTerms = {
+const DEEPER: ScopeOutcomeTerms = {
   legKey: "website_visit_to_meeting_booked",
   outcomeStep: MEETING_STEP,
   driver: "click",

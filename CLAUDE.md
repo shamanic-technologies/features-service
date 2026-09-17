@@ -548,6 +548,76 @@ directly above it. One screen, two numbers for one statistic.
   all-null learning series, both named degrades, the lens and grouped shapes, and the rest of the
   body BYTE-EQUAL with the block stripped. (Set 2026-09-17, features-service#980.)
 
+## A RATE NOBODY COULD PLOT — `conversionRateHistory`, the dated twin of the conversion figure, CUMULATIVE on both legs, and it costs NO producer read
+
+The campaign Overview could state what share of a campaign's outreach converts RIGHT NOW and nothing
+about whether it is getting better. Both ingredients were already on the body — `recipientsContacted`
+carries the dated population and the per-signal series carry the dated driver counts — and what no
+consumer could obtain is the two joined. The ban on dividing two served figures in the browser is not
+a style objection here: a lead carrying NO timestamp on either leg is in the scope's totals while
+sitting on no day, so a browser-side cumulative sum divides two differently-sized populations and the
+curve's last point stops agreeing with the rate printed inches above it.
+
+- **BOTH LEGS ARE CUMULATIVE, for the reason `roiHistory` states one section up.** Outreach on a day
+  earns conversions days or weeks later, so `that day's outcomes ÷ that day's contacted` oscillates
+  between 0 and absurd and describes nothing — on the reported campaign, 2026-09-14 alone reads
+  **16.9%** against a cumulative **6.4%**, and 2026-09-12 reads **0%** on 52 people nobody had asked
+  about yet. The cumulative form is the one that converges.
+- **THE OUTCOME IS THE SCOPE'S OWN LEG'S STEP, AND THIS SERVICE NAMES IT.** The byte-same
+  `ScopeOutcomeTerms` (renamed from `CostPerOutcomeTerms` when a second curve started reading it) that
+  `costPerOutcomeHistory` is denominated in, resolved ONCE by the leader resolution `learningPhase`
+  uses — so the three curves a consumer stacks on one screen can never be measuring different steps.
+  An ENTRY leg's count is a raw OBSERVATION (rate 1); a deeper leg's is that observation walked
+  forward through the funnel's own declared rates, so it is fractional, and `outcomeObserved` says
+  which a consumer is reading.
+- **THE DENOMINATOR IS REACH, the identical base `funnelSteps.contactedRecipients` states**, bounces
+  and unsubscribes INCLUDED and for the identical reason: a bounce is a real loss at the very first
+  rung and it was paid for, so a rate that quietly divided by the survivors would hide the people the
+  campaign bought and never reached.
+- **IT RECONCILES THREE WAYS ROUND, EXACTLY.** `scopeConversionRatePct` is the whole scope's rate —
+  every outcome over everybody reached, dated or not — and it IS
+  `100 × rateFromDriver × outcomes.recipientsClicked ÷ outcomes.recipientsContacted` for the same
+  body, one deduped person set counted once, AND on an entry leg it is the `funnelSteps` rung for that
+  same leg, which converts from `Contacted`. Measured in prod 2026-09-17, brand `6e21bb6c…` / campaign
+  `9e28ba26…` / leg `start_to_website_visit`: **143 visits on 2,808 reached = 5.0925925925%**, byte-equal
+  to the served rung, with **no residual at all** — unlike the sibling spend curve, whose two legs come
+  from different groupings and therefore round twice. Nothing here is corrected onto anything.
+- **THE CURVE'S LAST POINT COVERS THE DATED POPULATION ALONE, and the difference is STATED rather than
+  hidden.** `undatedContacted` and `undatedOutcomes` ride the block, the same treatment
+  `roiHistory.undatedPipelineUsd` gets, so `dated + undated` is the scope's whole reach and its whole
+  count. **Do NOT "fix" the gap by flooring one leg onto the other** — that would be a correction
+  dressed as a reconciliation.
+- **A MEASURED 0 IS NOT A MISSING ANSWER, AND THIS NULL RULE IS THE OPPOSITE OF THE COST CURVE'S.**
+  `conversionRatePct` is NULL only when the cumulative population is still 0 — no denominator, no
+  rate. A day with people reached and nobody converted is a **measured `0`**, because "nobody
+  converted" is a real answer and nulling it would hide the exact period a customer is asking about.
+  `costPerOutcomeHistory` nulls at 0 OUTCOMES because a cost per nothing cannot be divided at all. The
+  two rules look inconsistent side by side and are not; **do NOT harmonise them.**
+- **IT COSTS NO PRODUCER READ, and that is what makes its SCOPE correct by construction.** Both legs
+  are the `leads[]` rows already in hand off the SAME campaign-scoped snapshot — there is nothing to
+  re-ask and nothing to narrow — so a campaign-scoped read can never divide its brand's population.
+  That is the defect `costPerOutcomeHistory`'s spend leg shipped with and needed a follow-up fan-out to
+  fix; here it is unreachable. It also survives a degraded dated-spend read that nulls both sibling
+  curves, so a consumer never has to explain one blank chart beside two populated ones.
+- **NULL when the scope names no priceable outcome step** (no campaign, no leg stated, a rate the brand
+  never declared). No reason vocabulary is duplicated on the block: `learningPhase.unmeasuredReason`
+  sits beside it and already names which ingredient is missing.
+- **OVERVIEW ONLY, the same gate `roiHistory` and `spend` ride** — absent from the lean `?groupBy=`
+  groups, and null on the lensed `?lens=` read for a reason of its own: both of this curve's legs WOULD
+  be the lensed subset, but the lens short-circuits before the leg is ever resolved, so there is no
+  step to denominate it in. A lens is a lead filter, not a leg. **ONE request, no second read**: it
+  rides the body a consumer already polls.
+- Guards: `src/lib/conversion-rate-history.test.ts` + `src/routes/conversion-rate-history.test.ts` —
+  ONE fixture carrying the reported campaign's own 70 reach days and 39 click days verbatim, beside a
+  SECOND campaign of the same brand on another funnel (500 reached, 5 visits) so every scoping case
+  asserts a DIVERGENCE rather than a tautology: the campaign reads **143/2,808** where its brand reads
+  **148/3,308**, and an implementation dividing the brand's population under the campaign's name prints
+  the second number for both. Every other case asserts a divergence too — the cumulative curve against
+  the per-day rate it must not chart, a deeper leg a fifth as often on IDENTICAL evidence, the served
+  scalar against the dated last point when part of the population is undated, the measured 0 beside the
+  cost curve's null on the same fixture, and the rest of the body BYTE-EQUAL with the block stripped.
+  (Set 2026-09-17, features-service#992.)
+
 ## THE TIER OF THE MODEL WRITING THE EMAIL IS A PROPERTY OF THE LEG, NOT OF THE WORKFLOW — `modelEligibility`, stated on every row and acted on by nobody here
 
 We measured, fleet-wide, that the CAPABILITY TIER of the model a workflow writes its content with
@@ -2302,11 +2372,11 @@ per funded (funnel, channel) pair, so the catalogue was the only thing in the wa
   against `origin/main` before shipping: 40 feature rows, zero drift. Cold email and CRM email still all
   four, the feedback request still `sales_meetings_from_conversation` alone, a non-channel still `[]`.
 - **THE STEP VOCABULARY IS NOW THE UNION OF EVERY FUNNEL'S STEPS, not the entry subset**
-  (`CHANNEL_STEP_KEYS`, nine): a channel performing an internal leg has to name the step it moves a lead
+  (`CHANNEL_STEP_KEYS`, eight): a channel performing an internal leg has to name the step it moves a lead
   OUT of, and that step is never one a funnel starts at. `meeting_booked` / `meeting_attended` / `signup`
-  / `form_filled` / `paid_client` joined the four that were there. This is precisely why the `in_ad_`
-  prefix was load-bearing all along — `form_filled` and `meeting_booked` are now real keys in the same
-  list, so the shorter spellings would COLLIDE outright.
+  / `form_filled` / `paid_client` joined the four that were there, and `lead_form_submitted` came with
+  the ad funnels. (The `in_ad_` prefix this bullet used to defend is GONE — see the ad-step section
+  below.)
 - **`operatedBy` SAYS WHO PUTS THE HOURS IN, AND A ZERO DAILY COST DOES NOT IMPLY THE CUSTOMER RUNS IT
   (supersedes the zero-means-customer wording of #837).** A leg can be run by our SOFTWARE, by US BY
   HAND, or by the CUSTOMER (`operatedBy` distinguishes only `platform` from `customer`; the channel's
@@ -2368,6 +2438,71 @@ per funded (funnel, channel) pair, so the catalogue was the only thing in the wa
   `src/seed/acquisition-channel-catalogue.test.ts` (the three legs of a meeting funnel as three products;
   the ours-vs-theirs pairs agreeing on legs and disagreeing on price). (Set 2026-08-27.)
 
+## THE FUNNEL MIRROR IS BRAND-SERVICE'S, EIGHT FUNNELS NOW — two NAMES moved on funnels we already had, and the ad-delivered steps got their funnels
+
+This service's `src/lib/sales-funnels.ts` is a MIRROR: brand-service owns the sales-funnel catalogue and
+everything here conforms to what it DEPLOYS. It had drifted — brand-service deploys eight funnels and
+this carried four — so half its catalogue was unsellable through channels that could already produce
+the steps those funnels start on.
+
+Verified in the prod container 2026-09-17 (brand-service v0.79.1) before mirroring, not read off a doc.
+
+- **THE FOUR ORIGINALS ARE UNCHANGED IN KEY AND CHAIN, AND TWO NAMES MOVED.** A KEY is a wire token
+  billing ceilings and live brand declarations reference, so it is frozen the moment anything declares
+  it; a NAME is the only one of the two a customer reads. `sales_meetings_from_conversation` now reads
+  **"Sales Meeting from Positive Reply"** (the word "conversation" is banned from every customer-facing
+  name in the fleet) and `website_purchases` reads **"Signups"** — a deliberate key/name mismatch,
+  because that funnel's middle rung IS a signup and "Website Purchase" now names `sales_from_website`,
+  the funnel that really does go visit → purchase. Guarded: no published name contains "conversation".
+- **THE FOUR ADDED HAVE ZERO BRAND DECLARATIONS IN PROD**, so nothing that exists today changes shape
+  or price. `sales_from_conversation` (reply → paid) and `sales_from_website` (visit → paid) are the two
+  SINGLE-STEP funnels; `sales_meetings_from_ads` (meeting booked → attended → paid) and
+  `lead_forms_from_ads` (lead form submitted → paid) are the two whose first step an ad DELIVERS.
+- **THE TWO SINGLE-STEP FUNNELS ROUTE ONTO THE TWO SINGLE-STEP GOALS THIS SERVICE ALREADY PRICES** —
+  `replyUsd / replyToPaidClientPct` and `clickUsd / visitToPaidClientPct`. They are NOT priced through a
+  meeting: on the guard fixture the meeting route reads four times cheaper, through a step these funnels
+  do not contain. Their MILESTONE is the SALE, mirrored from brand-service, because the funnel has no
+  stage before it — a stand-in borrowed from another funnel would price a rung that does not exist.
+- **AN AD FUNNEL IS UNPRICEABLE FROM OUR EVIDENCE, AND EVERY SURFACE SAYS SO RATHER THAN GUESSING.** A
+  grain observes exactly two counted signals, a click and a positive reply, and neither buys a step the
+  advertising platform delivered. So `meetingChannel: "none"` (the new `PricingChannel` third state)
+  masks BOTH unit costs away, `FUNNEL_DRIVER` is `null`, the leg walk and the learning countdown return
+  "we cannot answer", and `/public/channel-funnel-economics` answers a NAMED
+  **`entry_step_not_measured`**. That is deliberately DISTINCT from `no_entry_step_produced`: the
+  channel may well be producing the step — we simply do not measure it — and a figure there would be
+  the price of a click or a reply under an ad's name. **Do NOT "fix" it by falling back to the
+  unmasked both-channel costs**; that is the blend the per-funnel pricing exists to prevent.
+- **`lead_forms_from_ads` IS ABSENT FROM THE `formSubmission` COST BUCKET ON PURPOSE.** Its form is
+  hosted by the ad platform and is never the WEBSITE form submission that outcome counts, so including
+  it would add spend to the denominator with no matching outcome. Same reasoning keeps both ad funnels
+  out of every engagement bucket. `sales_from_website` DOES join the CPC and websitePurchase buckets,
+  and `sales_from_conversation` the reply bucket, because a click and a reply genuinely enter them.
+- **`lead_forms_from_ads` PRICES ONLY ITS TERMINAL in the revenue engine**, because its one
+  intermediate step has no signal anywhere in the fleet. Listing `formSubmission` there would make a
+  lead who filled a form on the brand's OWN site price a funnel it never touched.
+- **THE CONVERSION TRACKER IS ASKED FOR ONLY WHERE IT CAN SEE THE CONVERSION.** `sales_from_website`
+  joins `TRACKER_NEEDED_FUNNELS` (the buyer pays on the client's own site); the ad funnels do NOT — their
+  conversion happens inside the ad platform, so asking for a tracker would be asking for the wrong
+  thing — and every funnel the tracker cannot count answers `null`, never a measured 0.
+- **THE `in_ad_` STEP PREFIX IS GONE** — see the ad-step bullet in the channel-catalogue section below
+  for why, and for what it makes possible.
+- **`/public/channels` PUBLISHES THE FUNNEL CATALOGUE IN ITS OWN RIGHT** (`funnels[]`), not only nested
+  inside the channels that sell it: a funnel no channel currently sells would otherwise be invisible and
+  a consumer would read its absence as a statement we never made. Each entry carries `entryStep` in the
+  SAME vocabulary a channel's `producibleSteps` use plus `entryLegKey`, so
+  `funnels.filter(f => f.entryStep.key === step.key)` is the whole answer to "which funnels does this
+  outcome lead into" — from ONE read, with no translation table a consumer keeps and lets go stale.
+- Guards: `declared-funnels.test.ts` (the eight keys in brand-service's order, its own names and chains
+  pinned, no name saying "conversation"), `channel-funnel-economics.test.ts` (each ad funnel's named
+  unmeasured reason beside `no_entry_step_produced` on the SAME fixture; each single-step funnel's sale
+  priced on the DIRECT rate and asserted NOT to equal the meeting route's figure; and the four originals
+  pinned to the cent, so a change to the shared pricing path cannot move a live brand unnoticed),
+  `funnel-registry.test.ts` (the new ladders, the ad funnels carrying no engagement route, an undeclared
+  rate leaving a rung absent rather than at 0), `acquisition-channel-catalogue.test.ts` (every published
+  channel's every produced step starts a funnel that channel sells, and the ten ad channels named one by
+  one), and `channel-funnel-minimum-commitment.test.ts` (the eight funnels on the wire and the join done
+  the way a consumer would do it). (Set 2026-09-17, features-service#994.)
+
 ## A CHANNEL PUBLISHES ITS COMMERCIAL TERMS AND WHAT IT CAN PRODUCE; WHICH FUNNELS IT SELLS THROUGH IS DERIVED, NEVER A SECOND LIST
 
 An acquisition channel IS a feature slug — still no channel table, still no channel concept, and none
@@ -2395,22 +2530,25 @@ are published, all bookable from day one, and a public marketing site is generat
   `minimumCommitmentDays`. Guard: the blob's key set is exactly `{family, producibleSteps, terms}` and
   `maxDaysToFirstProduction ≤ minimumCommitmentDays` (we never sell a booking that ends before it can
   produce).
-- **THE TWO IN-AD STEPS ARE STATED BEFORE THEIR FUNNELS EXIST, ON PURPOSE.**
-  `in_ad_form_submission` and `in_ad_booked_meeting` are produced INSIDE THE AD UNIT rather than on the
-  brand's site, and no deployed funnel starts from either yet (brand-service ships them in parallel).
-  A channel producing only those sells through nothing TODAY and starts selling the moment the funnel
-  mirror gains the funnel, with no change here. What a channel can produce is a fact about the channel,
-  not about what we happen to sell through it.
-  **THE `in_ad_` PREFIX IS LOAD-BEARING — do not shorten it to `form_submission` / `booked_meeting`.**
-  "Form filled" and "Meeting booked" ALREADY exist in the deployed catalogue as INTERMEDIATE steps
-  (`form_magnet` step 2, both meeting funnels' milestone), reached through a click or a reply onto the
-  brand's site; an ad produces an ENTRY step reached without ever getting there, so the bare names
-  invite a consumer to read such a channel as able to START `form_magnet`, which it cannot. Since the
-  leg-by-leg change those two are LITERAL KEYS in `CHANNEL_STEP_KEYS` (`form_filled`, `meeting_booked`),
-  so the shorter spellings would now collide outright rather than merely mislead. `platform_`
-  (the first spelling, renamed 2026-08-19) is wrong because `platform` is this fleet's word for OUR OWN
-  platform, and `ad_` alone reads as "attributed to an ad" — i.e. filled on the brand's site after the
-  click, the very reading the prefix blocks.
+- **AN AD-DELIVERED STEP IS SPELLED AS THE FUNNEL STEP IT IS — the `in_ad_` prefix is GONE, not
+  shortened (supersedes the load-bearing-prefix rule of #837).** Two keys used to be
+  `in_ad_form_submission` and `in_ad_booked_meeting`, and the prefix existed for exactly one reason: no
+  deployed funnel started on what an ad delivers, so naming them after the funnel steps they resemble
+  would have read as a claim they could START `form_magnet` or a meeting funnel. brand-service has since
+  decided the opposite way round and it OWNS this vocabulary: **an ad CLICK is not a rung anybody buys,
+  so the step the channel DELIVERS *is* the funnel's first step.** `sales_meetings_from_ads` starts on
+  `Meeting booked` — the same step, with nothing before it — and `lead_forms_from_ads` on
+  `Lead form submitted`, a step of its own distinct from a form filled on the brand's own site. So the
+  two keys are now **`meeting_booked`** and **`lead_form_submitted`**, and `platform_*` / `in_ad_*` are
+  refused on the way in rather than aliased.
+  **THAT EQUALITY IS WHAT MAKES THE JOIN A LOOKUP.** A consumer answers "which funnels does this
+  producible step lead into" by matching a channel's produced step against a funnel's FIRST step; while
+  the two were spelled differently the match found nothing and the consumer needed a translation table
+  of its own, which goes stale the day brand-service moves. It creates NO false pairing: an ad channel
+  states `{from: null, to: "meeting_booked"}`, which is the ENTRY leg of `sales_meetings_from_ads` and is
+  not any leg of the other two meeting funnels (whose meeting is reached FROM a conversation or a visit).
+  **Cost of the old spelling, measured:** eight ad channels published a lead-form production and two
+  published a booked-meeting production that sold NOTHING for as long as they existed.
 - **THE PRE-EXISTING SLUGS DID NOT MOVE.** `sales-cold-email-outreach` and `sales-crm-email-outreach`
   keep the legacy `sales-` prefix because live campaigns, live budgets and the cost ledger reference
   them. And no NEW slug ends in `-cold-email-outreach`: that suffix is what `coldEmailOutreachSlugs`
@@ -2453,14 +2591,29 @@ from what we actually charge and actually measured.
   catalogue. The step vocabulary rides the payload under `steps` (renamed from `producibleSteps` when it
   widened past the entry subset; the gateway does not proxy `/public/*`, so it had no outside consumer)
   so nothing hardcodes it.
-- **THE `conversation` STEP IS LABELLED "Conversation", AND "Sales interest" IS NOT ITS NAME.** Sales
-  interest is the CATEGORY every entry signal belongs to — a positive reply, a website visit, a form
-  filled inside an ad are all a buyer showing interest — so putting that phrase on ONE step names the
-  category as if it were the member, and leaves its siblings unreadable beside it. The label is the
-  specific thing that happened: the buyer answered. Shipped as "Sales interest" in #879 on a brief that
-  said the product used that wording everywhere, and reverted the same day
-  (Kevin: *"SalesInterest is something else than conversation. It can be any interest, like positive
-  reply, website visit, etc"*). The wire token was never touched. (Set 2026-09-02.)
+- **THE `conversation` STEP IS LABELLED "Positive reply" — the funnels' OWN wording — AND "Sales
+  interest" IS STILL NOT ITS NAME (supersedes the "Conversation" label of #879/#885).** These strings
+  are CUSTOMER COPY: the onboarding's first screen renders one card per producible step to a SIGNED-OUT
+  visitor, titled with the label and explained with the description. Two reasons the label moved, and
+  the first is not cosmetic. **The join was broken.** `FUNNEL_STEP_LABEL_TO_KEY` maps brand-service's
+  own rung wording onto our key, and every funnel that starts on this step publishes **"Positive
+  reply"** while the step itself published "Conversation" — so a consumer joining a channel's produced
+  step to a funnel's first rung BY LABEL matched nothing, for the one step the two services disagreed
+  about. **And the word is banned fleet-wide** (owner, 2026-09-17: *"Les outcomes / steps sont PR | WV.
+  Un Sales Interest SI = PR | WV. Conversations est a bannir."*), so the banned word was the title of a
+  pre-signup card. brand-service had already conformed; this catalogue had not. "Sales interest" stays
+  wrong for the reason #885 gave and the owner restates: it is the CATEGORY both entry outcomes belong
+  to (PR **and** WV), so putting it on ONE of them names the category as if it were the member.
+  **THE KEY IS UNTOUCHED** — `conversation`, every `start_to_conversation` leg, every stored row and
+  every consumer join by key resolve exactly as before; only what a person reads moved. **Ordinary
+  English about a MEDIUM is a different sense and was deliberately left alone** — a phone channel still
+  describes opening the conversation on a call, and a blanket replace across the ~79 occurrences in the
+  published payload yields sentences nobody wrote. Guards: the `what a VISITOR reads on a step` suite in
+  `acquisition-channels.test.ts` pins the label against the funnels' own first rung (so the two can
+  never drift apart again), asserts the SAME mirror invariant for ALL EIGHT steps, bans the word from
+  every step label and description, and pins the key list — a suite that only checked "a label came
+  back" would pass on the spelling this replaces. (Set 2026-09-02, relabelled 2026-09-17,
+  features-service#996.)
 - **`/public/channel-funnel-economics`** serves ONE ROW PER PAIR — the grain the marketing site prints.
   A customer buys a PAIR, and the same funnel costs a very different amount through a phone channel than
   through paid search, so a brand-level or channel-level aggregate cannot answer it. `?channelSlug=`

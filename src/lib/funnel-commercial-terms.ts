@@ -42,12 +42,20 @@ import { SALES_FUNNEL_KEYS, type SalesFunnelKey } from "./sales-funnels.js";
  *  Every funnel is `null` today, measured rather than assumed: the shortest channel in the catalogue
  *  states 30 days and `sales_meetings_from_conversation` — the one a conversation-bought funnel would
  *  need longest for — is judgeable in 30. So no funnel exceeds the channel it is sold through, and
- *  stating a figure equal to the channel's would publish a term that can never govern. */
+ *  stating a figure equal to the channel's would publish a term that can never govern. The four funnels
+ *  added when brand-service widened its catalogue are `null` for the same reason and NOT because nobody
+ *  got round to them: each of them is SHORTER than the four originals (an ad delivers its first step on
+ *  day one, and a sale closed straight out of a reply skips the meeting entirely), so none can exceed
+ *  the 30 days its channel already states. */
 export const FUNNEL_MINIMUM_COMMITMENT_DAYS: Record<SalesFunnelKey, number | null> = {
   sales_meetings_from_conversation: null,
   sales_meetings_from_website: null,
   website_purchases: null,
   form_magnet: null,
+  sales_from_conversation: null,
+  sales_meetings_from_ads: null,
+  lead_forms_from_ads: null,
+  sales_from_website: null,
 };
 
 const isPositiveInt = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v > 0;
