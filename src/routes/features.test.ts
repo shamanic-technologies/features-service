@@ -17,7 +17,8 @@ vi.mock("../db/index.js", () => ({
   sql: {},
 }));
 
-vi.mock("../lib/brand-client.js", () => ({
+vi.mock("../lib/brand-client.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   extractBrandFields: (...args: unknown[]) => mockExtractBrandFields(...args),
 }));
 
@@ -45,6 +46,7 @@ process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
 process.env.NODE_ENV = "test";
 
 const app = (await import("../index.js")).default;
+const { BrandFieldExtractionError } = await import("../lib/brand-client.js");
 
 const AUTH_HEADERS = {
   "x-api-key": "test-key",
@@ -254,5 +256,127 @@ describe("POST /features/:featureSlug/prefill", () => {
   it("requires authentication", async () => {
     const res = await request(app).post("/features/pr-cold-email-outreach/prefill");
     expect(res.status).toBe(401);
+  });
+
+  // ── WHICH OFFER the channel is being started for ──────────────────────────────
+  //
+  // A brand selling two offers could not start a channel at all: the prefill asked brand-service for
+  // fields describing ONE proposition, brand-service refused (409 SEVERAL_OFFERS) rather than guess,
+  // and the refusal reached the dashboard as a bare 502. Every case below asserts the DIVERGENCE
+  // between naming an offer and naming none — a suite that only checked "a 200 came back" would pass
+  // on an implementation that ignored the parameter entirely.
+  describe("offerId", () => {
+    const OFFER_ID = "832126f3-0000-4000-8000-000000000001";
+
+    it("forwards the named offer to brand-service, and a several-offer brand answers 200", async () => {
+      mockFindFirst.mockResolvedValueOnce(FEATURE_WITH_INPUTS);
+      mockExtractBrandFields.mockResolvedValueOnce({
+        suggestedAngles: { value: "Product-led angle", byBrand: {} },
+        spokesperson: { value: "Jane Doe, CEO", byBrand: {} },
+      });
+
+      const res = await request(app)
+        .post("/features/pr-cold-email-outreach/prefill?format=text")
+        .set(PREFILL_HEADERS)
+        .send({ offerId: OFFER_ID });
+
+      expect(res.status).toBe(200);
+      expect(res.body.prefilled.prAngle).toBe("Product-led angle");
+      // Third argument, so the identity headers are byte-unchanged.
+      expect(mockExtractBrandFields.mock.calls[0][2]).toBe(OFFER_ID);
+    });
+
+    it("names NOTHING downstream when the caller named none — the single-offer path is unchanged", async () => {
+      mockFindFirst.mockResolvedValueOnce(FEATURE_WITH_INPUTS);
+      mockExtractBrandFields.mockResolvedValueOnce({
+        suggestedAngles: { value: "Series B", byBrand: {} },
+        spokesperson: { value: null, byBrand: {} },
+      });
+
+      const res = await request(app)
+        .post("/features/pr-cold-email-outreach/prefill?format=text")
+        .set(PREFILL_HEADERS);
+
+      expect(res.status).toBe(200);
+      expect(mockExtractBrandFields.mock.calls[0][2]).toBeUndefined();
+    });
+
+    it("an empty body is the same as no body — still no offer named", async () => {
+      mockFindFirst.mockResolvedValueOnce(FEATURE_WITH_INPUTS);
+      mockExtractBrandFields.mockResolvedValueOnce({ suggestedAngles: { value: "x", byBrand: {} } });
+
+      const res = await request(app)
+        .post("/features/pr-cold-email-outreach/prefill?format=text")
+        .set(PREFILL_HEADERS)
+        .send({});
+
+      expect(res.status).toBe(200);
+      expect(mockExtractBrandFields.mock.calls[0][2]).toBeUndefined();
+    });
+
+    it("serves the several-offers refusal as a 409 carrying the offers, never a 502 and never a guess", async () => {
+      mockFindFirst.mockResolvedValueOnce(FEATURE_WITH_INPUTS);
+      const offers = [
+        { offerId: "832126f3-0000-4000-8000-000000000001", name: "Product-led" },
+        { offerId: "5a2868bb-0000-4000-8000-000000000002", name: "Sales-led" },
+      ];
+      mockExtractBrandFields.mockRejectedValueOnce(
+        new BrandFieldExtractionError("This brand sells several offers; name one.", 409, "SEVERAL_OFFERS", offers),
+      );
+
+      const res = await request(app)
+        .post("/features/pr-cold-email-outreach/prefill?format=text")
+        .set(PREFILL_HEADERS);
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe("several_offers");
+      expect(res.body.error).toBe("This brand sells several offers; name one.");
+      expect(res.body.offers).toEqual(offers);
+    });
+
+    it("serves an unknown offer as a 404 with brand-service's own sentence", async () => {
+      mockFindFirst.mockResolvedValueOnce(FEATURE_WITH_INPUTS);
+      mockExtractBrandFields.mockRejectedValueOnce(
+        new BrandFieldExtractionError("Offer not found for this brand", 404, "OFFER_NOT_FOUND", []),
+      );
+
+      const res = await request(app)
+        .post("/features/pr-cold-email-outreach/prefill?format=text")
+        .set(PREFILL_HEADERS)
+        .send({ offerId: OFFER_ID });
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe("Offer not found for this brand");
+      expect(res.body.code).toBe("offer_not_found");
+    });
+
+    it("every other brand-service failure is still a 502", async () => {
+      mockFindFirst.mockResolvedValueOnce(FEATURE_WITH_INPUTS);
+      mockExtractBrandFields.mockRejectedValueOnce(
+        new BrandFieldExtractionError("brand-service extract-fields failed (500): boom", 500, null, []),
+      );
+
+      const res = await request(app)
+        .post("/features/pr-cold-email-outreach/prefill?format=text")
+        .set(PREFILL_HEADERS);
+
+      expect(res.status).toBe(502);
+      expect(res.body.error).toMatch(/brand-service/);
+    });
+
+    it("refuses a malformed offerId rather than dropping it — a dropped value re-enters the 409 silently", async () => {
+      mockFindFirst.mockResolvedValue(FEATURE_WITH_INPUTS);
+
+      for (const bad of ["not-a-uuid", 42, { id: OFFER_ID }]) {
+        const res = await request(app)
+          .post("/features/pr-cold-email-outreach/prefill?format=text")
+          .set(PREFILL_HEADERS)
+          .send({ offerId: bad });
+
+        expect(res.status).toBe(400);
+        expect(res.body.code).toBe("offer_id_unrecognised");
+      }
+      expect(mockExtractBrandFields).not.toHaveBeenCalled();
+    });
   });
 });

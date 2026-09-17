@@ -798,6 +798,54 @@
           "prefilled"
         ]
       },
+      "PrefillRequest": {
+        "type": "object",
+        "properties": {
+          "offerId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "WHICH offer this channel is being started for — the offer whose confirmed fields ground the extraction. The user-facing inputs describe ONE value proposition, so a brand selling two things has two right answers and only the caller knows which it means. OPTIONAL: omit it and a brand with a single offer behaves exactly as before, while a brand holding SEVERAL answers 409 `several_offers` (carrying the offers) until one is named. An id naming no offer of this brand is a 404. Never defaulted here, and never resolved to 'the first offer'."
+          }
+        }
+      },
+      "PrefillSeveralOffersResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "several_offers"
+            ]
+          },
+          "offers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "offerId": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string",
+                  "nullable": true
+                }
+              },
+              "required": [
+                "offerId",
+                "name"
+              ]
+            }
+          }
+        },
+        "required": [
+          "error",
+          "code",
+          "offers"
+        ]
+      },
       "FeatureRevenueResponse": {
         "type": "object",
         "properties": {
@@ -18192,7 +18240,7 @@
     "/features/{featureSlug}/prefill": {
       "post": {
         "summary": "Pre-fill feature inputs from brand data",
-        "description": "Calls brand-service to extract field values for the feature's inputs. Returns pre-filled values keyed by input key. Requires x-brand-id header. Use ?format=text for flattened strings, ?format=full for structured values with per-brand breakdown.",
+        "description": "Calls brand-service to extract field values for the feature's inputs. Returns pre-filled values keyed by input key. Requires x-brand-id header. Use ?format=text for flattened strings, ?format=full for structured values with per-brand breakdown. Send `offerId` in the BODY to say which offer the channel is being started for — required only for a brand holding SEVERAL offers, which otherwise answers 409 `several_offers` listing them.",
         "tags": [
           "Features"
         ],
@@ -18263,6 +18311,23 @@
             "in": "header"
           }
         ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "offerId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "WHICH offer this channel is being started for — the offer whose confirmed fields ground the extraction. The user-facing inputs describe ONE value proposition, so a brand selling two things has two right answers and only the caller knows which it means. OPTIONAL: omit it and a brand with a single offer behaves exactly as before, while a brand holding SEVERAL answers 409 `several_offers` (carrying the offers) until one is named. An id naming no offer of this brand is a 404. Never defaulted here, and never resolved to 'the first offer'."
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Pre-filled input values",
@@ -18302,7 +18367,7 @@
             }
           },
           "400": {
-            "description": "Missing x-brand-id or invalid format",
+            "description": "Missing x-brand-id, invalid format, or malformed offerId",
             "content": {
               "application/json": {
                 "schema": {
@@ -18320,7 +18385,7 @@
             }
           },
           "404": {
-            "description": "Feature not found",
+            "description": "Feature not found, or the named offer is not an offer of this brand",
             "content": {
               "application/json": {
                 "schema": {
@@ -18332,6 +18397,51 @@
                   },
                   "required": [
                     "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The brand sells SEVERAL offers and the request named none. Not a fault: name one of the returned `offers` and retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string",
+                      "enum": [
+                        "several_offers"
+                      ]
+                    },
+                    "offers": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "offerId": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "offerId",
+                          "name"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "code",
+                    "offers"
                   ]
                 }
               }
