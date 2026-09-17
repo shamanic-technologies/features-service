@@ -455,6 +455,20 @@ directly above it. One screen, two numbers for one statistic.
   survived every suite and every probe until a multi-identity brand was read. The honest cleanup is a
   `groupBy=campaignId` on runs' timeseries, which would make the whole fan-out one call; it does not
   exist today, and the fan-out ships meanwhile.
+- **THE FAN-OUT RECONCILES EXACTLY AGAINST RUNS, AND THE RESIDUAL YOU CAN SEE IS THIS SERVICE'S OWN
+  PER-GROUP ROUNDING — MEASURED, NOT ASSUMED.** Verified against prod on the reported identity
+  (2026-09-17, 51 members, 59 cost groups): the 51 dated reads sum to **36,946.3540¢** and runs'
+  untimed `groupBy=workflowSlug,campaignId` sums to **36,946.3540¢** — the SAME figure to ten
+  decimals, i.e. the fan-out loses nothing and runs' sum-equals-untimed-total invariant holds across
+  it. What differs is what THIS service does afterwards: `fetchRunsCostCents` rounds once per group
+  (→ **$369.49**) and `fetchSpendBreakdown` rounds once per COST NAME (→ **$369.32**, which is what
+  `costEconomics.committedCostUsd` states), while the curve carries the unrounded **$369.46**. So a
+  campaign-scoped body legitimately shows a curve terminating up to a few cents from the invested
+  figure above it — **0.046% here, and the CURVE is the more accurate of the two**. That is the
+  identical property the workflow and offer grains already document, one grouping over; the
+  cost-per-outcome curve still lands on the served `cpcCents` **to the cent** ($4.56 both ways), which
+  is the reconciliation a reader actually sees. **Do NOT "fix" it by rounding the curve onto
+  `committedCostUsd`** — that would floor the exact leg onto the approximate one.
 - **`undatedOutcomes` IS STATED, NEVER DATED AND NEVER DROPPED** — the same treatment
   `roiHistory.undatedPipelineUsd` gets, and the whole reason the join had to happen here.
   `datedOutcomes + undatedOutcomes` is the scope's whole count, so a consumer can always tell how
