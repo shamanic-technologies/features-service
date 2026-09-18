@@ -614,6 +614,12 @@ export const FUNNEL_LEG_SIGNALS: Record<SalesFunnelKey, readonly string[]> = {
   website_purchases: ["clicked", "signup", "closeWin"],
   form_magnet: ["clicked", "formSubmission", "closeWin"],
   sales_from_conversation: ["positiveReply", "closeWin"],
+  // The PURCHASE rung is absent on purpose rather than mapped onto a lookalike: nothing in the fleet
+  // counts a checkout on the brand's own site (lead-service's tracker counts `signup`,
+  // `form_submission`, `meeting_booked` and the terminal `sale`), so there is no signal that buys it.
+  // Listing `closeWin` twice would make the sale price the purchase, and listing `signup` would make a
+  // lead who created an account price a funnel that has no signup step. Absent, like the ad funnels'
+  // delivered first steps.
   sales_from_website: ["clicked", "closeWin"],
   // The ad-delivered first step is not a signal anything in the fleet counts, so it is absent here
   // rather than mapped onto a lookalike: `meeting` is the meeting BOOKED from a conversation or a

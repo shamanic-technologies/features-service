@@ -125,6 +125,45 @@ describe("the form legs after the two form steps merged", () => {
     expect(funnelsContainingLeg("form_submitted_to_paid_client")).toEqual(["form_magnet", "lead_forms_from_ads"]);
   });
 
+  it("splits the website-purchase funnel into a visit leg and a purchase leg", () => {
+    // The purchase is a rung of its own, so the single `website_visit_to_paid_client` leg that funnel
+    // shipped with becomes TWO. Each case asserts the DIVERGENCE from that old shape, so a suite that
+    // only checked "some legs came back" would pass on the un-split funnel this replaces.
+    expect(legKeysOfFunnel("sales_from_website")).toEqual([
+      "start_to_website_visit",
+      "website_visit_to_purchase",
+      "purchase_to_paid_client",
+    ]);
+    expect(FUNNEL_LEG_KEYS).not.toContain("website_visit_to_paid_client");
+
+    // Both new legs belong to this funnel ALONE — no other declared funnel has a purchase step, so
+    // buying either buys this funnel and nothing else.
+    expect(funnelsContainingLeg("website_visit_to_purchase")).toEqual(["sales_from_website"]);
+    expect(funnelsContainingLeg("purchase_to_paid_client")).toEqual(["sales_from_website"]);
+
+    // ...while its ENTRY leg is still the shared one every website funnel is entered on, which is what
+    // keeps every channel that produces a website visit selling this funnel.
+    expect(funnelsContainingLeg("start_to_website_visit")).toEqual([
+      "sales_meetings_from_website",
+      "website_purchases",
+      "form_magnet",
+      "sales_from_website",
+    ]);
+
+    const leg = funnelLeg("website_visit_to_purchase");
+    expect(leg?.fromStep?.key).toBe("website_visit");
+    expect(leg?.toStep.key).toBe("purchase");
+    expect(leg?.toStep.label).toBe("Purchase");
+  });
+
+  it("gives the RETIRED visit-to-sale leg no alias, because there is no honest single target", () => {
+    // The work it named is now two legs, so aliasing it onto either would silently re-key a budget or
+    // a campaign onto half of what it bought. Safe only because nothing references it: checked against
+    // prod 2026-09-18, billing's `brand_funnel_daily_budgets` and campaign-service's `campaigns` carry
+    // ZERO rows on it. Unresolvable is the loud answer; a guess would be the quiet one.
+    expect(matchFunnelLegKey("website_visit_to_paid_client")).toBeNull();
+  });
+
   it("still RESOLVES every retired leg spelling, so a stored campaign or budget keeps working", () => {
     // Each case asserts the retired spelling lands on the CANONICAL leg, never on itself: the fleet
     // keys budgets and campaigns on a leg key, and those rows do not stop existing because the step

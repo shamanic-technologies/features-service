@@ -105,6 +105,7 @@ export const CHANNEL_STEP_KEYS = [
   "meeting_attended",
   "signup",
   "form_submitted",
+  "purchase",
   "paid_client",
 ] as const;
 
@@ -181,6 +182,22 @@ export const CHANNEL_STEPS: Record<ChannelStepKey, ChannelStepDef> = {
     description:
       "A buyer fills a form and hands over their details — on the brand's own site, or on a form hosted by the ad platform.",
   },
+  purchase: {
+    key: "purchase",
+    // The rung a DTC / e-commerce buyer stands on, and the fourth outcome a visitor can buy alongside
+    // a booked meeting, a signup and a submitted form. It is NOT a duplicate of `paid_client`: this is
+    // the checkout the buyer completes on the brand's own site, while `paid_client` is the SALE every
+    // funnel terminates in — the two coincide on a first order and diverge the moment a funnel wants
+    // to say anything about what happens after it.
+    //
+    // ⚠️ NO RATE PRICES IT TODAY, and that is stated rather than papered over. `SalesEconomics` carries
+    // no visit→purchase or purchase→paid field, so the arrows brand-service states for this rung map to
+    // no named rate here and every leg-keyed figure denominated in it answers NULL (see
+    // `leg-outcome.ts`). Null is "we have no rate for this arrow", which is a real answer; substituting
+    // `visitToClosePct` would price a purchase at the price of the whole funnel it sits inside.
+    label: "Purchase",
+    description: "A buyer completes a checkout on the brand's own site and pays for the order.",
+  },
   paid_client: {
     key: "paid_client",
     label: "Paid client",
@@ -249,6 +266,7 @@ export const FUNNEL_STEP_LABEL_TO_KEY: Record<string, ChannelStepKey> = {
   "Meeting attended": "meeting_attended",
   Signup: "signup",
   "Form submitted": "form_submitted",
+  Purchase: "purchase",
   // brand-service's OWN deployed wording for the two rungs this service now serves as one step. It
   // keeps its catalogue; we keep reading it. A funnel whose wording changes still fails loudly, because
   // only these exact strings resolve.

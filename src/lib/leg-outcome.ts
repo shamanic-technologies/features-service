@@ -145,6 +145,12 @@ export function legOutcomeTerms(
         if (outcomeStep === "paid_client") return chain(econ.r2pc);
         return null;
       case "sales_from_website":
+        // The sale is priced on the brand's own DIRECT visit→paid rate, which SPANS the purchase rung
+        // exactly as `meetingToClosePct` spans the show-up rung — so inserting the purchase moved no
+        // number here. The PURCHASE itself falls through to `null`: `SalesEconomics` states no
+        // visit→purchase rate, so the walk to it is unpriceable, and answering it with `v2pc` would
+        // price a checkout at the price of the whole funnel it sits inside. Null is "we have no rate
+        // for this arrow", never 0 and never a borrowed one.
         if (outcomeStep === "paid_client") return chain(econ.v2pc);
         return null;
       // Unreachable: both answer `null` on `FUNNEL_DRIVER` and the walk returns before it gets here.

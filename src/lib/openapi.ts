@@ -539,6 +539,7 @@ const channelStepSchema = z.object({
     "meeting_attended",
     "signup",
     "form_submitted",
+    "purchase",
     "paid_client",
   ]),
   label: z.string(),

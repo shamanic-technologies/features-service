@@ -2372,7 +2372,7 @@ per funded (funnel, channel) pair, so the catalogue was the only thing in the wa
   against `origin/main` before shipping: 40 feature rows, zero drift. Cold email and CRM email still all
   four, the feedback request still `sales_meetings_from_conversation` alone, a non-channel still `[]`.
 - **THE STEP VOCABULARY IS NOW THE UNION OF EVERY FUNNEL'S STEPS, not the entry subset**
-  (`CHANNEL_STEP_KEYS`, eight): a channel performing an internal leg has to name the step it moves a lead
+  (`CHANNEL_STEP_KEYS`, NINE since the purchase rung): a channel performing an internal leg has to name the step it moves a lead
   OUT of, and that step is never one a funnel starts at. `meeting_booked` / `meeting_attended` / `signup`
   / `form_filled` / `paid_client` joined the four that were there, and `lead_form_submitted` came with
   the ad funnels. (The `in_ad_` prefix this bullet used to defend is GONE — see the ad-step section
@@ -2438,6 +2438,70 @@ per funded (funnel, channel) pair, so the catalogue was the only thing in the wa
   `src/seed/acquisition-channel-catalogue.test.ts` (the three legs of a meeting funnel as three products;
   the ours-vs-theirs pairs agreeing on legs and disagreeing on price). (Set 2026-08-27.)
 
+## A PURCHASE IS A RUNG, NOT THE SALE WEARING A SECOND NAME — `purchase` joins the step vocabulary, the website-purchase funnel gains it, and NOTHING PRICES IT
+
+The owner is simplifying the outcomes a visitor can buy to four: a booked meeting, a signup, a
+submitted form, and a **Purchase** (DTC / e-commerce). The first three were steps of the catalogue and
+the fourth was not, so no consumer could offer or draw it: the one funnel that goes to the sale off the
+website (`sales_from_website`, "Website Purchase") shipped on 2026-09-17 as **visit → paid client**,
+with nothing in between. A funnel named after a purchase had no purchase in it.
+
+- **`purchase` IS ITS OWN STEP, AND IT IS NOT `paid_client`.** It is the checkout a buyer completes on
+  the brand's own site; `paid_client` is the SALE every funnel terminates in. They coincide on a first
+  order and diverge the moment a funnel wants to say anything about what comes after it, which is
+  exactly why the vocabulary needs both — and why every guard asserts the DIVERGENCE (different label,
+  different description) rather than "a step came back".
+- **ONE FUNNEL MOVED AND SEVEN DID NOT.** `sales_from_website` reads **Website visit → Purchase → Paid
+  client**; the other seven keep the chains they published, pinned one by one on the served payload.
+  It is still ENTERED on a website visit, so every channel producing one still sells it — the rung was
+  INSERTED, not prefixed.
+- **NOTHING PRICES THE RUNG, AND THAT IS STATED RATHER THAN PAPERED OVER.** `SalesEconomics` carries no
+  visit→purchase or purchase→paid field, so the two new arrows resolve to no named rate:
+  `leg-outcome.ts` answers `null` for a leg denominated in the purchase, `FUNNEL_LEG_SIGNALS` lists no
+  signal for it (nothing in the fleet counts a checkout — lead-service's tracker counts `signup`,
+  `form_submission`, `meeting_booked` and the terminal `sale`), and `/public/channel-funnel-economics`
+  states `rate_not_declared` on that step. **Do NOT "fix" any of those with `visitToClosePct`**: that
+  rate is the price of the WHOLE funnel, so printing it under the middle rung says a checkout costs
+  what a paying client costs. Null is "we have no rate for this arrow", never 0 and never borrowed.
+- **THE SALE'S PRICE DID NOT MOVE, BY CONSTRUCTION.** `visitToClosePct` is the DIRECT self-serve close
+  and SPANS the purchase rung — the identical multi-hop shape `meetingToClosePct` already has over the
+  show-up rung — so the terminal is still `clickUsd / visitToPaidClientPct` and is asserted to the cent
+  against the two-step era's own figure.
+- **INSERTING A RUNG INTO A FUNNEL PRICED BY INDEX IS THE WHOLE HAZARD, and it fired.**
+  `pricePair`'s two-step branch read `def.steps[0]` / `def.steps[1]`, so the moment the funnel had three
+  steps the SALE's price printed under **Purchase** and the "Paid client" rung vanished from the payload
+  entirely. Nothing threw; the body was well-formed and said a checkout costs $200. `sales_from_website`
+  has its own case now. The guard asserts the divergence (middle rung null, sale $200), so a suite that
+  only counted three steps would pass on the bug.
+- **THE MILESTONE MOVED TO `Purchase`**, by the rule `FUNNEL_MILESTONE_STEP` itself states — the step a
+  funnel is NAMED after. It named the sale only while the purchase was folded inside it.
+  `sales_from_conversation`, whose only stage genuinely IS the sale, still names the sale.
+- **`website_visit_to_paid_client` IS A RETIRED LEG WITH NO ALIAS, AND THAT ABSENCE WAS MEASURED.** The
+  split mints `website_visit_to_purchase` + `purchase_to_paid_client` and removes the single leg the
+  funnel shipped with the day before. It gets no legacy mapping because there is no honest single
+  target — the work it named is now two legs, and aliasing onto either would silently re-key a budget or
+  a campaign onto half of what it bought. Safe only because nothing references it: checked against prod
+  2026-09-18, `billing_service.brand_funnel_daily_budgets` and `campaign_service.campaigns` carry ZERO
+  rows on it (the only leg keys in either are `start_to_website_visit`, `start_to_conversation` and
+  `conversation_to_meeting_booked`). If that stops being true the answer is a migration by the service
+  that owns the row, never a guess here. The three FORM leg aliases beside it stay, forever.
+- **THE MIRROR LEADS brand-service HERE, AND THAT IS THE ONE THING TO WATCH.** brand-service OWNS the
+  funnel catalogue and its deployed `sales_from_website` still reads `['Website visit', 'Paid client']`
+  with `milestoneStep: 'Paid client'` (read from `distribute-brand-service-1` on 2026-09-18, v0.79.1) —
+  a sibling ship adds the rung there. The spellings chosen here are the ones the join needs
+  (`FUNNEL_STEP_LABEL_TO_KEY["Purchase"] → purchase`); if brand-service deploys a different LABEL, the
+  fix is an entry in that map and in `matchChannelStepKey`, exactly as "Form filled" and "Lead form
+  submitted" are already carried — never a rename of the KEY, which the fleet joins on.
+- Guards: the purchase blocks in `acquisition-channels.test.ts` (the step told apart from the sale, the
+  producer label resolving, exactly one funnel carrying it, the funnel's three legs, the other seven
+  unchanged), `funnel-legs.test.ts` (the split into two legs owned by this funnel alone, the shared
+  entry leg intact, the retired key unresolvable), `channel-funnel-economics.test.ts` (the middle rung
+  null while the sale carries $200 — the index-slide bug — plus the milestone and the unchanged
+  terminal), and `channel-funnel-minimum-commitment.test.ts` (the whole AC read off the served
+  `/public/channels` body: `steps`, the funnel's three rungs, both legs present and the retired one
+  absent, the seven unmoved chains, and the channel still selling it). (Set 2026-09-18,
+  features-service#1007.)
+
 ## THE FUNNEL MIRROR IS BRAND-SERVICE'S, EIGHT FUNNELS NOW — two NAMES moved on funnels we already had, and the ad-delivered steps got their funnels
 
 This service's `src/lib/sales-funnels.ts` is a MIRROR: brand-service owns the sales-funnel catalogue and
@@ -2455,14 +2519,19 @@ Verified in the prod container 2026-09-17 (brand-service v0.79.1) before mirrori
   because that funnel's middle rung IS a signup and "Website Purchase" now names `sales_from_website`,
   the funnel that really does go visit → purchase. Guarded: no published name contains "conversation".
 - **THE FOUR ADDED HAVE ZERO BRAND DECLARATIONS IN PROD**, so nothing that exists today changes shape
-  or price. `sales_from_conversation` (reply → paid) and `sales_from_website` (visit → paid) are the two
-  SINGLE-STEP funnels; `sales_meetings_from_ads` (meeting booked → attended → paid) and
-  `lead_forms_from_ads` (form submitted → paid) are the two whose first step an ad DELIVERS.
-- **THE TWO SINGLE-STEP FUNNELS ROUTE ONTO THE TWO SINGLE-STEP GOALS THIS SERVICE ALREADY PRICES** —
+  or price. `sales_from_conversation` (reply → paid) and `sales_from_website` (visit → **purchase** →
+  paid, see the section below — it shipped as visit → paid and gained its middle rung the next day)
+  are the two the buyer reaches WITHOUT a meeting; `sales_meetings_from_ads` (meeting booked →
+  attended → paid) and `lead_forms_from_ads` (form submitted → paid) are the two whose first step an
+  ad DELIVERS.
+- **BOTH DIRECT FUNNELS ROUTE ONTO THE TWO SINGLE-STEP GOALS THIS SERVICE ALREADY PRICES** —
   `replyUsd / replyToPaidClientPct` and `clickUsd / visitToPaidClientPct`. They are NOT priced through a
   meeting: on the guard fixture the meeting route reads four times cheaper, through a step these funnels
-  do not contain. Their MILESTONE is the SALE, mirrored from brand-service, because the funnel has no
-  stage before it — a stand-in borrowed from another funnel would price a rung that does not exist.
+  do not contain. `sales_from_conversation`'s MILESTONE is the SALE, mirrored from brand-service,
+  because that funnel has no stage before it — a stand-in borrowed from another funnel would price a
+  rung that does not exist. `sales_from_website`'s milestone MOVED to **Purchase** when it gained one
+  (supersedes the "their milestone is the SALE" wording, which was right only while the purchase was
+  folded inside the sale).
 - **AN AD FUNNEL IS UNPRICEABLE FROM OUR EVIDENCE, AND EVERY SURFACE SAYS SO RATHER THAN GUESSING.** A
   grain observes exactly two counted signals, a click and a positive reply, and neither buys a step the
   advertising platform delivered. So `meetingChannel: "none"` (the new `PricingChannel` third state)
