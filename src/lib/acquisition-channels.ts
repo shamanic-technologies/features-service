@@ -180,7 +180,7 @@ export const CHANNEL_STEPS: Record<ChannelStepKey, ChannelStepDef> = {
     // moved.
     label: "Form submitted",
     description:
-      "A buyer fills a form and hands over their details — on the brand's own site, or on a form hosted by the ad platform.",
+      "A buyer fills a form and hands over their details, either on the brand's own site or on a form hosted by the ad platform.",
   },
   purchase: {
     key: "purchase",
