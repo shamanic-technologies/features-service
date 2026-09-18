@@ -177,7 +177,7 @@ export const SALES_FUNNELS: Record<SalesFunnelKey, SalesFunnelDef> = {
     // byte-unchanged is the terminal: `visitToClosePct` is the DIRECT self-serve close and spans the
     // purchase leg, exactly as `meetingToClosePct` spans the show-up leg, so the sale is still priced
     // on it and no brand's number moves.
-    steps: ["Website visit", "Purchase", "Paid client"],
+    steps: ["Website visit", "Direct purchase", "Paid client"],
     // Click-driven by construction, like the two other website funnels, so its own math names its
     // channel. Unchanged by the inserted rung: the funnel is still ENTERED on a website visit.
     meetingChannel: null,

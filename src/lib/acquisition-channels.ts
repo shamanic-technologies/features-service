@@ -195,8 +195,10 @@ export const CHANNEL_STEPS: Record<ChannelStepKey, ChannelStepDef> = {
     // no named rate here and every leg-keyed figure denominated in it answers NULL (see
     // `leg-outcome.ts`). Null is "we have no rate for this arrow", which is a real answer; substituting
     // `visitToClosePct` would price a purchase at the price of the whole funnel it sits inside.
-    label: "Purchase",
-    description: "A buyer completes a checkout on the brand's own site and pays for the order.",
+    // "Direct" is the whole distinction a buyer reads on the outcome screen: this is the checkout
+    // paid on the spot with no account created first, as against a signup that may pay later.
+    label: "Direct purchase",
+    description: "A buyer pays at checkout on the brand's own site. No account needed.",
   },
   paid_client: {
     key: "paid_client",
@@ -266,6 +268,8 @@ export const FUNNEL_STEP_LABEL_TO_KEY: Record<string, ChannelStepKey> = {
   "Meeting attended": "meeting_attended",
   Signup: "signup",
   "Form submitted": "form_submitted",
+  "Direct purchase": "purchase",
+  // brand-service still spells the rung "Purchase"; both resolve.
   Purchase: "purchase",
   // brand-service's OWN deployed wording for the two rungs this service now serves as one step. It
   // keeps its catalogue; we keep reading it. A funnel whose wording changes still fails loudly, because
