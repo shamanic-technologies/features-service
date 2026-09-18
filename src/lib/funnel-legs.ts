@@ -112,6 +112,17 @@ export const FUNNEL_LEG_KEYS: string[] = FUNNEL_LEGS.map((a) => a.legKey);
  */
 const LEGACY_FUNNEL_LEG_KEYS: Record<string, string> = {
   website_visit_to_form_filled: "website_visit_to_form_submitted",
+  // ⚠️ `website_visit_to_paid_client` IS DELIBERATELY ABSENT, AND ITS ABSENCE WAS MEASURED.
+  //
+  // `sales_from_website` shipped on 2026-09-17 as visit -> paid client, minting that leg; the purchase
+  // rung (2026-09-18) splits it into `website_visit_to_purchase` + `purchase_to_paid_client`, so the
+  // old key names no leg any more. It gets no alias because there is no honest single target — the
+  // work it described is now two legs, and picking either would silently re-key a budget or a campaign
+  // onto half of what it bought. That is only safe because nothing references it: checked against prod
+  // 2026-09-18, `billing_service.brand_funnel_daily_budgets` and `campaign_service.campaigns` carry
+  // ZERO rows on it (the only leg keys in either are `start_to_website_visit`, `start_to_conversation`
+  // and `conversation_to_meeting_booked`). If that ever stops being true the answer is a migration by
+  // the service that owns the row, never a guess here.
   form_filled_to_paid_client: "form_submitted_to_paid_client",
   start_to_lead_form_submitted: "start_to_form_submitted",
   lead_form_submitted_to_paid_client: "form_submitted_to_paid_client",

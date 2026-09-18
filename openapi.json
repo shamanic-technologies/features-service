@@ -2277,6 +2277,7 @@
                       "meeting_attended",
                       "signup",
                       "form_submitted",
+                      "purchase",
                       "paid_client"
                     ]
                   },
@@ -2369,6 +2370,7 @@
                       "meeting_attended",
                       "signup",
                       "form_submitted",
+                      "purchase",
                       "paid_client"
                     ]
                   },
@@ -2517,6 +2519,7 @@
                       "meeting_attended",
                       "signup",
                       "form_submitted",
+                      "purchase",
                       "paid_client"
                     ]
                   },
@@ -2644,6 +2647,7 @@
                             "meeting_attended",
                             "signup",
                             "form_submitted",
+                            "purchase",
                             "paid_client"
                           ]
                         },
@@ -7835,6 +7839,7 @@
                       "meeting_attended",
                       "signup",
                       "form_submitted",
+                      "purchase",
                       "paid_client"
                     ]
                   },
@@ -7927,6 +7932,7 @@
                       "meeting_attended",
                       "signup",
                       "form_submitted",
+                      "purchase",
                       "paid_client"
                     ]
                   },
@@ -8075,6 +8081,7 @@
                       "meeting_attended",
                       "signup",
                       "form_submitted",
+                      "purchase",
                       "paid_client"
                     ]
                   },
@@ -8202,6 +8209,7 @@
                             "meeting_attended",
                             "signup",
                             "form_submitted",
+                            "purchase",
                             "paid_client"
                           ]
                         },
@@ -11024,6 +11032,7 @@
                       "meeting_attended",
                       "signup",
                       "form_submitted",
+                      "purchase",
                       "paid_client"
                     ]
                   },
@@ -11116,6 +11125,7 @@
                       "meeting_attended",
                       "signup",
                       "form_submitted",
+                      "purchase",
                       "paid_client"
                     ]
                   },
@@ -11264,6 +11274,7 @@
                       "meeting_attended",
                       "signup",
                       "form_submitted",
+                      "purchase",
                       "paid_client"
                     ]
                   },
@@ -11391,6 +11402,7 @@
                             "meeting_attended",
                             "signup",
                             "form_submitted",
+                            "purchase",
                             "paid_client"
                           ]
                         },
@@ -14003,6 +14015,7 @@
                       "meeting_attended",
                       "signup",
                       "form_submitted",
+                      "purchase",
                       "paid_client"
                     ]
                   },
@@ -14095,6 +14108,7 @@
                       "meeting_attended",
                       "signup",
                       "form_submitted",
+                      "purchase",
                       "paid_client"
                     ]
                   },
@@ -14243,6 +14257,7 @@
                       "meeting_attended",
                       "signup",
                       "form_submitted",
+                      "purchase",
                       "paid_client"
                     ]
                   },
@@ -14370,6 +14385,7 @@
                             "meeting_attended",
                             "signup",
                             "form_submitted",
+                            "purchase",
                             "paid_client"
                           ]
                         },
@@ -17633,6 +17649,7 @@
                   "meeting_attended",
                   "signup",
                   "form_submitted",
+                  "purchase",
                   "paid_client"
                 ]
               },
@@ -17662,6 +17679,7 @@
                   "meeting_attended",
                   "signup",
                   "form_submitted",
+                  "purchase",
                   "paid_client"
                 ]
               },
@@ -17784,6 +17802,7 @@
                         "meeting_attended",
                         "signup",
                         "form_submitted",
+                        "purchase",
                         "paid_client"
                       ]
                     },
@@ -17813,6 +17832,7 @@
                         "meeting_attended",
                         "signup",
                         "form_submitted",
+                        "purchase",
                         "paid_client"
                       ]
                     },
@@ -17853,6 +17873,7 @@
                     "meeting_attended",
                     "signup",
                     "form_submitted",
+                    "purchase",
                     "paid_client"
                   ]
                 },
@@ -17983,6 +18004,7 @@
                         "meeting_attended",
                         "signup",
                         "form_submitted",
+                        "purchase",
                         "paid_client"
                       ]
                     },
@@ -18036,6 +18058,7 @@
                     "meeting_attended",
                     "signup",
                     "form_submitted",
+                    "purchase",
                     "paid_client"
                   ]
                 },

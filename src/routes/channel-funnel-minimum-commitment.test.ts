@@ -182,6 +182,56 @@ describe("the public catalogue states ONE composed minimum run length per pair",
     }
   });
 
+  it("GET /public/channels — publishes the PURCHASE step, and the website-purchase funnel's three rungs", async () => {
+    // AC, read exactly as a consumer reads it: the step vocabulary carries the purchase, the funnel
+    // that goes to the sale has it in the MIDDLE, and both its arrows are in the leg vocabulary.
+    mockRows();
+    const res = await request(app).get("/public/channels");
+    expect(res.status).toBe(200);
+
+    const steps = res.body.steps as Array<{ key: string; label: string; description: string }>;
+    const purchase = steps.find((s) => s.key === "purchase");
+    expect(purchase).toBeDefined();
+    expect(purchase!.label).toBe("Purchase");
+    // It is its own rung, not the sale under a second name — asserted as a DIVERGENCE, so a suite
+    // that only checked "a step came back" would pass on an implementation that aliased the two.
+    const paid = steps.find((s) => s.key === "paid_client")!;
+    expect(purchase!.label).not.toBe(paid.label);
+    expect(purchase!.description).not.toBe(paid.description);
+
+    const funnels = res.body.funnels as Array<{ key: string; steps: string[]; entryStep: { key: string } }>;
+    const web = funnels.find((f) => f.key === "sales_from_website")!;
+    expect(web.steps).toEqual(["Website visit", "Purchase", "Paid client"]);
+    // Still ENTERED on a website visit, which is what keeps every channel producing one selling it.
+    expect(web.entryStep.key).toBe("website_visit");
+
+    const legKeys = new Set((res.body.legs as Array<{ legKey: string }>).map((l) => l.legKey));
+    expect(legKeys.has("website_visit_to_purchase")).toBe(true);
+    expect(legKeys.has("purchase_to_paid_client")).toBe(true);
+    // ...and the single leg it replaced is gone rather than published beside them.
+    expect(legKeys.has("website_visit_to_paid_client")).toBe(false);
+
+    const byLeg = new Map((res.body.legs as Array<{ legKey: string; funnelKeys: string[] }>).map((l) => [l.legKey, l]));
+    expect(byLeg.get("website_visit_to_purchase")!.funnelKeys).toEqual(["sales_from_website"]);
+    expect(byLeg.get("purchase_to_paid_client")!.funnelKeys).toEqual(["sales_from_website"]);
+
+    // NO OTHER FUNNEL MOVED — the remaining seven keep the chains they published before.
+    const chainOf = (key: string) => funnels.find((f) => f.key === key)!.steps;
+    expect(chainOf("website_purchases")).toEqual(["Website visit", "Signup", "Paid client"]);
+    expect(chainOf("form_magnet")).toEqual(["Website visit", "Form submitted", "Paid client"]);
+    expect(chainOf("sales_from_conversation")).toEqual(["Positive reply", "Paid client"]);
+    expect(chainOf("sales_meetings_from_conversation")).toEqual(["Positive reply", "Meeting booked", "Meeting attended", "Paid client"]);
+    expect(chainOf("sales_meetings_from_website")).toEqual(["Website visit", "Meeting booked", "Meeting attended", "Paid client"]);
+    expect(chainOf("sales_meetings_from_ads")).toEqual(["Meeting booked", "Meeting attended", "Paid client"]);
+    expect(chainOf("lead_forms_from_ads")).toEqual(["Form submitted", "Paid client"]);
+
+    // The channel that sells it STILL sells it — the AC's third clause, read off the payload.
+    const channels = res.body.channels as Array<{ slug: string; salesFunnels: Array<{ key: string }> }>;
+    const sellers = channels.filter((c) => c.salesFunnels.some((f) => f.key === "sales_from_website"));
+    expect(sellers.length).toBeGreaterThan(0);
+    expect(sellers.map((c) => c.slug)).toContain(FAST_CHANNEL);
+  });
+
   it("GET /public/channels — the bare `minimumCommitmentDays` is GONE from every funnel entry", async () => {
     mockRows();
     const res = await request(app).get("/public/channels");

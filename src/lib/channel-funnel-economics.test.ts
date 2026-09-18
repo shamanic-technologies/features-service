@@ -233,13 +233,15 @@ describe("the funnels brand-service added when the ad channels opened", () => {
     });
   });
 
-  it("a SINGLE-STEP funnel prices its sale on the brand's own DIRECT rate, never through a meeting", () => {
-    // Website visit → paid client, with nothing in between: $2 a visit at a 1% direct close = $200.
-    // The meeting route (v2m 10% × m2c 40% = 4%) would have read $50 — four times cheaper, through a
-    // step this funnel does not contain.
+  it("a DIRECT funnel prices its sale on the brand's own DIRECT rate, never through a meeting", () => {
+    // Website visit → PURCHASE → paid client: $2 a visit at a 1% direct close = $200. The meeting
+    // route (v2m 10% × m2c 40% = 4%) would have read $50 — four times cheaper, through a step this
+    // funnel does not contain. `visitToClosePct` SPANS the purchase rung, exactly as
+    // `meetingToClosePct` spans the show-up rung, so the sale's price did not move when the rung was
+    // inserted — asserted to the cent against the two-step era's own figure.
     const web = pricePair(input({ funnelKey: "sales_from_website" }));
     if (!web.measured) throw new Error("unreachable");
-    expect(web.economics.steps.map((x) => x.step)).toEqual(["Website visit", "Paid client"]);
+    expect(web.economics.steps.map((x) => x.step)).toEqual(["Website visit", "Purchase", "Paid client"]);
     expect(web.economics.steps[0].costPerStepUsd).toBe(2);
     expect(web.economics.costPerSaleUsd).toBeCloseTo(200, 6);
     expect(web.economics.costPerSaleUsd).not.toBeCloseTo(50, 6);
@@ -255,12 +257,35 @@ describe("the funnels brand-service added when the ad channels opened", () => {
     expect(reply.economics.costPerSaleUsd).not.toBeCloseTo(50, 6);
   });
 
-  it("a single-step funnel names the SALE as its milestone — that is the only stage it has", () => {
-    expect(FUNNEL_MILESTONE_STEP.sales_from_website).toBe("Paid client");
+  it("the PURCHASE rung carries no price and says why — never the sale's price under the middle rung", () => {
+    // The whole hazard of inserting a rung into a funnel priced BY INDEX: the terminal's figure slides
+    // up one and prints under the step before it, which is what the two-step branch did to this funnel
+    // before it got a case of its own. Asserted as a DIVERGENCE — the middle rung is null while the
+    // SALE carries the $200 — so a suite that only checked "three steps came back" would pass on it.
+    const web = pricePair(input({ funnelKey: "sales_from_website" }));
+    if (!web.measured) throw new Error("unreachable");
+    const [visit, purchase, sale] = web.economics.steps;
+    expect(purchase.step).toBe("Purchase");
+    expect(purchase.costPerStepUsd).toBeNull();
+    expect(purchase.unpricedReason).toBe("rate_not_declared");
+    expect(sale.step).toBe("Paid client");
+    expect(sale.costPerStepUsd).toBeCloseTo(200, 6);
+    // ...and it is not the entry price either: a checkout does not cost what a click costs.
+    expect(purchase.costPerStepUsd).not.toBe(visit.costPerStepUsd);
+  });
+
+  it("a funnel names the step it is NAMED after — Website Purchase names the purchase", () => {
+    // It named the SALE while the purchase was folded inside it; it has a stage before the sale now,
+    // and that stage is the one the funnel is literally called after.
+    expect(FUNNEL_MILESTONE_STEP.sales_from_website).toBe("Purchase");
+    // The funnel whose ONLY stage genuinely is the sale still names the sale.
     expect(FUNNEL_MILESTONE_STEP.sales_from_conversation).toBe("Paid client");
     const web = pricePair(input({ funnelKey: "sales_from_website" }));
     if (!web.measured) throw new Error("unreachable");
-    expect(web.economics.steps.map((x) => x.milestone)).toEqual([false, true]);
+    expect(web.economics.steps.map((x) => x.milestone)).toEqual([false, true, false]);
+    const reply = pricePair(input({ funnelKey: "sales_from_conversation" }));
+    if (!reply.measured) throw new Error("unreachable");
+    expect(reply.economics.steps.map((x) => x.milestone)).toEqual([false, true]);
   });
 
   it("the FOUR ORIGINAL funnels price exactly as they did — the widening only ADDED", () => {

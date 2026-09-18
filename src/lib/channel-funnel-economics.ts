@@ -111,7 +111,11 @@ export const FUNNEL_MILESTONE_STEP: Record<SalesFunnelKey, string> = {
   // A funnel whose ONLY stage is the sale names the sale — that genuinely is the moment it is named
   // after, not a stand-in for a missing step. Mirrored from brand-service's own `milestoneStep`.
   sales_from_conversation: "Paid client",
-  sales_from_website: "Paid client",
+  // ...and `sales_from_website` stopped being one of those on 2026-09-18. It now has a stage before
+  // the sale, and it is the stage the funnel is literally named after: "Website Purchase". So the rule
+  // this map states gives "Purchase" rather than the terminal it named while the purchase was folded
+  // inside the sale.
+  sales_from_website: "Purchase",
 };
 
 /** A funnel is bought through ONE channel; the other one's evidence is masked away so it cannot dilute
@@ -214,11 +218,28 @@ export function pricePair(input: PricePairInput): PairResult {
       priced(def.steps[1], isMilestone(def.steps[1]), p.costPerFormSubmissionUsd, "rate_is_zero"),
       priced(def.steps[2], isMilestone(def.steps[2]), costPerSaleUsd, "rate_is_zero"),
     ];
+  } else if (funnelKey === "sales_from_website") {
+    // Visit -> PURCHASE -> paid client. The sale is still priced on the brand's own DIRECT
+    // `visitToPaidClientPct`, which SPANS the purchase rung exactly as `meetingToClosePct` spans the
+    // show-up rung — so this figure is byte-unchanged from when the funnel had two steps.
+    //
+    // The PURCHASE rung carries NO price and says why. `SalesEconomics` states no visit→purchase rate,
+    // so there is nothing to carry the entry spend to; pricing it at `costPerSaleUsd` would print the
+    // price of the whole funnel under the middle rung (which is exactly what the two-step branch did
+    // to it by index before this case existed), and pricing it at the entry unit cost would say a
+    // checkout costs what a click costs. `rate_not_declared` is the same honest answer the attended
+    // meeting rung gives for the same reason.
+    costPerSaleUsd = p.costPerVisitPaidClientUsd;
+    steps = [
+      priced(def.steps[0], isMilestone(def.steps[0]), entryUnitCost, "rate_is_zero"),
+      priced(def.steps[1], isMilestone(def.steps[1]), null, "rate_not_declared"),
+      priced(def.steps[2], isMilestone(def.steps[2]), costPerSaleUsd, "rate_not_declared"),
+    ];
   } else {
-    // The two SINGLE-STEP funnels: the entry step IS the produced step and the sale is one arrow away,
-    // priced on the brand's own DIRECT rate (`visitToPaidClientPct` / `replyToPaidClientPct`) rather
-    // than through a meeting these funnels do not contain. The two ad funnels never reach here — they
-    // short-circuit on `entry_step_not_measured` above.
+    // The ONE remaining single-step funnel, `sales_from_conversation`: the entry step IS the produced
+    // step and the sale is one arrow away, priced on the brand's own DIRECT rate
+    // (`replyToPaidClientPct` / `visitToPaidClientPct`) rather than through a meeting it does not
+    // contain. The two ad funnels never reach here — they short-circuit on `entry_step_not_measured`.
     costPerSaleUsd = entryChannel === "reply" ? p.costPerReplyPaidClientUsd : p.costPerVisitPaidClientUsd;
     steps = [
       priced(def.steps[0], isMilestone(def.steps[0]), entryUnitCost, "rate_is_zero"),

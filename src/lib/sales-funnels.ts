@@ -164,9 +164,22 @@ export const SALES_FUNNELS: Record<SalesFunnelKey, SalesFunnelDef> = {
   sales_from_website: {
     key: "sales_from_website",
     name: "Website Purchase",
-    steps: ["Website visit", "Paid client"],
-    // The buyer lands and PAYS, with nothing in between. Click-driven by construction, like the two
-    // other website funnels, so its own math names its channel.
+    // THE PURCHASE IS A RUNG OF ITS OWN. This funnel shipped on 2026-09-17 as two steps — the buyer
+    // landed and PAID, with nothing in between — and a DTC / e-commerce brand has one thing in
+    // between: the order they complete on the site. The owner's decision (2026-09-18) is that a
+    // visitor can buy four outcomes, and Purchase is the fourth beside a booked meeting, a signup and
+    // a submitted form. So the funnel reads visit -> purchase -> paid client, and the purchase is a
+    // step somebody can sell a leg into rather than a moment folded inside the sale.
+    //
+    // ⚠️ IT IS NOT PRICED, AND NOTHING FABRICATES A RATE FOR IT. `SalesEconomics` carries no
+    // visit→purchase or purchase→paid field, so the two new arrows resolve to no named rate and every
+    // leg-keyed figure denominated in the purchase answers NULL (`leg-outcome.ts`). What DOES stay
+    // byte-unchanged is the terminal: `visitToClosePct` is the DIRECT self-serve close and spans the
+    // purchase leg, exactly as `meetingToClosePct` spans the show-up leg, so the sale is still priced
+    // on it and no brand's number moves.
+    steps: ["Website visit", "Purchase", "Paid client"],
+    // Click-driven by construction, like the two other website funnels, so its own math names its
+    // channel. Unchanged by the inserted rung: the funnel is still ENTERED on a website visit.
     meetingChannel: null,
   },
 };
