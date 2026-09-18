@@ -162,12 +162,42 @@ describe("only the arrows THIS funnel has are asked for", () => {
     ).toEqual({ visitToSignupPct: 12, signupToPaidClientPct: 25 });
   });
 
-  it("a form funnel answers for its own two arrows", () => {
+  it("a form funnel answers for its own two arrows — in the PRODUCER's wording, which is not ours", () => {
+    // ⚠️ THE REGRESSION GUARD FOR THE ONE-FORM-STEP COLLAPSE. brand-service serves the form magnet's
+    // middle rung as "Form filled"; this service's mirror now spells it "Form submitted", because the
+    // fleet has ONE form step. Both sides of this walk are STRINGS, so without the fold in
+    // `normaliseStep` the walk finds no leg, returns NO_RATE, and a brand that STATED these rates
+    // silently falls back to its named ones. Nothing errors and neither side alone goes red.
     expect(
       statedLegRates("form_magnet", [
         leg("Website visit", "Form filled", 8, "stated_arrow"),
         leg("Form filled", "Paid client", 5, "stated_arrow"),
       ]),
     ).toEqual({ visitToFormSubmissionPct: 8, formSubmissionToPaidClientPct: 5 });
+
+    // …and OUR wording answers identically, so a producer that later conforms moves no figure.
+    expect(
+      statedLegRates("form_magnet", [
+        leg("Website visit", "Form submitted", 8, "stated_arrow"),
+        leg("Form submitted", "Paid client", 5, "stated_arrow"),
+      ]),
+    ).toEqual({ visitToFormSubmissionPct: 8, formSubmissionToPaidClientPct: 5 });
+
+    // A funnel MIXING the two wordings is still one chain, not a broken one: they name the same step.
+    expect(
+      statedLegRates("form_magnet", [
+        leg("Website visit", "Form filled", 8, "stated_arrow"),
+        leg("Form submitted", "Paid client", 5, "stated_arrow"),
+      ]),
+    ).toEqual({ visitToFormSubmissionPct: 8, formSubmissionToPaidClientPct: 5 });
+
+    // The path walk itself resolves across the two wordings, in either direction.
+    expect(
+      legPathRate(
+        [leg("Website visit", "Form filled", 50, "stated_arrow"), leg("Form filled", "Paid client", 10, "stated_arrow")],
+        "Website visit",
+        "Form submitted",
+      ).ratePct,
+    ).toBeCloseTo(50, 10);
   });
 });

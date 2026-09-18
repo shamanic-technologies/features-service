@@ -298,7 +298,7 @@ describe("what each channel can produce, and what follows from it", () => {
 
   it("all four PRODUCED kinds are in play — including the two an ad DELIVERS", () => {
     const produced = new Set(channels.flatMap((c) => producibleStepsOf(c.acquisitionChannel!.stepTransitions)));
-    for (const key of ["conversation", "website_visit", "lead_form_submitted", "meeting_booked"]) {
+    for (const key of ["conversation", "website_visit", "form_filled", "meeting_booked"]) {
       expect([...produced], key).toContain(key);
     }
   });
@@ -427,9 +427,19 @@ describe("A FUNNEL IS SOLD LEG BY LEG — a channel states where it picks a lead
     ]);
   });
 
-  it("closing a self-serve lead sells the two self-serve funnels, and neither meeting funnel", () => {
-    expect(bySlug("agency-signup-conversion")!.salesFunnels).toEqual(["website_purchases", "form_magnet"]);
-    expect(bySlug("your-team-signup-conversion")!.salesFunnels).toEqual(["website_purchases", "form_magnet"]);
+  it("closing a self-serve lead sells every self-serve funnel it closes, and no meeting funnel", () => {
+    // `lead_forms_from_ads` joined the list when the fleet collapsed its two form steps into one: its
+    // closing leg IS `form_filled → paid_client`, the form magnet's own. A human turning a submitted
+    // form into a paying client does the identical work whichever funnel put the form there, so the
+    // channel genuinely sells both — and still neither meeting funnel, which is what this pins.
+    const selfServeClose = ["website_purchases", "form_magnet", "lead_forms_from_ads"];
+    expect(bySlug("agency-signup-conversion")!.salesFunnels).toEqual(selfServeClose);
+    expect(bySlug("your-team-signup-conversion")!.salesFunnels).toEqual(selfServeClose);
+    for (const slug of ["agency-signup-conversion", "your-team-signup-conversion"]) {
+      expect(bySlug(slug)!.salesFunnels, slug).not.toContain("sales_meetings_from_conversation");
+      expect(bySlug(slug)!.salesFunnels, slug).not.toContain("sales_meetings_from_website");
+      expect(bySlug(slug)!.salesFunnels, slug).not.toContain("sales_meetings_from_ads");
+    }
   });
 
   it("a channel that performs only an internal leg produces NOTHING, and that is a real answer", () => {

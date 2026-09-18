@@ -79,15 +79,38 @@ import { SALES_FUNNELS, SALES_FUNNEL_KEYS, type SalesFunnelKey } from "./sales-f
  *
  * Two keys used to be spelled `in_ad_form_submission` and `in_ad_booked_meeting`. The prefix existed
  * for one reason: no funnel in the catalogue started on what an ad delivers, so naming those steps
- * after the funnel steps they resemble ("Form filled", "Meeting booked") would have read as a claim
+ * after the funnel steps they resemble ("Form submitted", "Meeting booked") would have read as a claim
  * they could START `form_magnet` or a meeting funnel, which they cannot.
  *
  * brand-service has since decided the opposite way round, and it owns this vocabulary: an ad CLICK is
  * not a rung anybody buys, so the step the channel DELIVERS *is* the funnel's first step.
  * `sales_meetings_from_ads` starts on `Meeting booked` — the same step, with nothing before it — and
- * `lead_forms_from_ads` starts on its own form step, distinct from a form filled on the brand's own
- * site. So the two keys are now `meeting_booked` (the step already in this list) and
- * `lead_form_submitted`.
+ * `lead_forms_from_ads` starts on `form_filled`, the SAME form step the form magnet has. So the two
+ * keys are now `meeting_booked` and `form_filled`, both of them steps that were already in this list.
+ *
+ * ── THERE IS ONE FORM STEP, AND WHO HOSTS THE FORM IS NOT A DIFFERENT STEP ───────────────────────
+ *
+ * For one day this catalogue published TWO form steps — `form_filled` ("Form filled", the middle rung
+ * of the form magnet) and `lead_form_submitted` ("Form submitted", the entry rung of the ad lead-form
+ * funnel) — on the reasoning that a form hosted by the ad platform is a different thing from a form on
+ * the brand's own site because the buyer never reaches the brand. The owner has ruled that the
+ * distinction has no meaning in this system: a buyer handing over their details on a form is ONE step,
+ * wherever the form is hosted. What differs is the CHANNEL that performed the leg, which is already
+ * stated by the channel, so a second step said it twice.
+ *
+ * So `lead_form_submitted` is RETIRED and `form_filled` is what survives. Which of the two keys lived
+ * was decided on what is STORED rather than on which word reads better: the form magnet's legs
+ * (`website_visit_to_form_filled`, `form_filled_to_paid_client`) are live — brands declare rates on
+ * them, billing holds per-leg ceilings on them, campaigns are keyed on them and this service's own
+ * Gold `scope_key`s carry them — while `lead_forms_from_ads` shipped the day before with no brand
+ * declaration, no campaign and no budget row anywhere. Keeping `form_filled` therefore moves NO stored
+ * key that anything reads. The LABEL is the owner's word ("Form submitted"), which makes this the same
+ * deliberate key/label mismatch `website_purchases` → "Signups" already carries: a key is a wire token
+ * nobody renders and is never renamed, a label is what a person reads.
+ *
+ * The retired spelling is accepted FOREVER on the way in — `matchChannelStepKey("lead_form_submitted")`
+ * and the two leg keys it minted both resolve onto the survivor — so no stored row and no caller that
+ * still says yesterday's word reads a different figure. Nothing EMITS it.
  *
  * THAT IS WHAT MAKES THE JOIN WORK, and it is the whole point. A consumer answers "which funnels does
  * this producible step lead into" by matching a channel's produced step against a funnel's FIRST step.
@@ -106,7 +129,6 @@ export const CHANNEL_STEP_KEYS = [
   "meeting_attended",
   "signup",
   "form_filled",
-  "lead_form_submitted",
   "paid_client",
 ] as const;
 
@@ -163,24 +185,13 @@ export const CHANNEL_STEPS: Record<ChannelStepKey, ChannelStepDef> = {
   },
   form_filled: {
     key: "form_filled",
-    label: "Form filled",
-    description: "A buyer fills a form on the brand's own site and hands over their details.",
-  },
-  lead_form_submitted: {
-    key: "lead_form_submitted",
-    // "Form submitted", and deliberately NOT "Form filled": this form is hosted by the advertising
-    // platform (Meta Lead Ads, LinkedIn Lead Gen Forms, TikTok lead forms) and the buyer never reaches
-    // the brand's site, so it is a step of its own rather than the same one under a second name. The
-    // DESCRIPTION is what keeps the two apart for a reader, which is why it names the host explicitly.
-    //
-    // brand-service spells this rung "Lead form submitted"; the owner read that on the onboarding's
-    // first screen — a pre-signup card titled with this label — and asked for the shorter wording. The
-    // KEY is untouched (`lead_form_submitted`), and the funnel's own `steps[0]` moved with the label so
-    // the label→key join below stays a lookup. This funnel has no brand declaration in production and
-    // no leg rate is keyed on its steps (`RATE_FOR_STEP_PAIR` names neither of them), so nothing is
-    // matched against brand-service's wording at run time.
+    // THE ONE FORM STEP. The label is the owner's word and deliberately not the key's — see the
+    // header. The description says WHEREVER on purpose: it is the same step whether the form sits on
+    // the brand's own site (the form magnet's middle rung) or inside the ad unit (the ad lead-form
+    // funnel's entry rung), because what a buyer did is identical and only the channel differs.
     label: "Form submitted",
-    description: "A buyer fills a form hosted by the ad platform, without ever reaching the brand's site.",
+    description:
+      "A buyer hands over their details on a form — on the brand's own site, or on one hosted by the ad platform.",
   },
   paid_client: {
     key: "paid_client",
@@ -192,9 +203,20 @@ export const CHANNEL_STEPS: Record<ChannelStepKey, ChannelStepDef> = {
 const isChannelStepKey = (value: string): value is ChannelStepKey =>
   (CHANNEL_STEP_KEYS as readonly string[]).includes(value);
 
+/**
+ * Every RETIRED step spelling, resolved to the key that survives it. Accepted FOREVER on the way in —
+ * a stored `stepTransitions` blob, a caller, or a fixture that still says yesterday's word keeps
+ * resolving to the same step and therefore reads the same figure. Nothing ever EMITS one of these.
+ */
+export const RETIRED_CHANNEL_STEP_KEYS: Record<string, ChannelStepKey> = {
+  // ONE form step: who hosts the form is the channel's business, not a second step. See the header.
+  lead_form_submitted: "form_filled",
+};
+
 export function matchChannelStepKey(raw: string): ChannelStepKey | null {
   const normalised = raw.trim().toLowerCase().replace(/[\s-]+/g, "_");
-  return isChannelStepKey(normalised) ? normalised : null;
+  if (isChannelStepKey(normalised)) return normalised;
+  return RETIRED_CHANNEL_STEP_KEYS[normalised] ?? null;
 }
 
 // ── A transition: the leg a channel performs ────────────────────────────────────────────────────────
@@ -238,8 +260,12 @@ export const FUNNEL_STEP_LABEL_TO_KEY: Record<string, ChannelStepKey> = {
   "Meeting booked": "meeting_booked",
   "Meeting attended": "meeting_attended",
   Signup: "signup",
+  // BOTH wordings name the ONE form step, and both are kept on purpose. "Form submitted" is what this
+  // service's own mirror and the buyer-facing label now say; "Form filled" is what brand-service still
+  // spells the form magnet's middle rung, and a mirror that stopped resolving the producer's own word
+  // would silently drop that funnel's leg. Neither is emitted from here — this map is read, not served.
+  "Form submitted": "form_filled",
   "Form filled": "form_filled",
-  "Form submitted": "lead_form_submitted",
   "Paid client": "paid_client",
 };
 

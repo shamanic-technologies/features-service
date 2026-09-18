@@ -387,7 +387,7 @@ const SALES_MILESTONES: readonly FunnelMilestone[] = [
  * Every leg used to be priced from ONE brand-wide expression, and that expression was built out of the
  * meeting route: a website visit was worth `orP(visitToClose, visitToMeeting × meetingToClose)`
  * whatever funnel the brand sells. For the two meeting funnels and the website-purchase funnel that is
- * the right number, and it stays byte-identical below. For FORM MAGNET — `Website visit → Form filled
+ * the right number, and it stays byte-identical below. For FORM MAGNET — `Website visit → Form submitted
  * → Paid client` — it was an answer about a funnel with no meeting step in it: prod 2026-09-11, a brand
  * declaring 25% visit→form and 20% form→paid (so a visit is worth 5% of its $30 lifetime revenue,
  * $1.50) was priced at 1.24375% = $0.373 per visit, off a brand-wide 0.5% self-serve + 3% × 25%
@@ -593,7 +593,7 @@ const salesFunnel: FunnelDefinition = {
  * Read straight off `SALES_FUNNELS[key].steps`, one entry per step that a lead signal can evidence:
  *
  *   Positive reply   → `positiveReply`    Website visit → `clicked`
- *   Meeting booked   → `meeting`          Signup        → `signup`   Form filled → `formSubmission`
+ *   Meeting booked   → `meeting`          Signup        → `signup`   Form submitted → `formSubmission`
  *   Meeting attended → `meetingAttended`  Paid client   → `closeWin`
  *
  * "Meeting attended" USED to have no signal of its own — nothing in the fleet could observe somebody

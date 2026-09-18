@@ -395,7 +395,7 @@ describe("GET /public/stats/showcase-funnels", () => {
     expect(ops.funnels[0].steps.map((s) => s.label)).toEqual([
       "Contacted",
       "Website visit",
-      "Form filled",
+      "Form submitted",
       "Paid client",
     ]);
     expect(ops.funnels[0].steps[1].peopleReached).toBe(1);
@@ -403,7 +403,7 @@ describe("GET /public/stats/showcase-funnels", () => {
     // the same flag the spend block is, so a cheaper read would leave this rung permanently
     // unmeasurable — a gate excluding the very funnel this brand sells. The tracker answered with an
     // EMPTY set here, which is a measured 0 and a different statement from "we have no figure".
-    expect(ops.funnels[0].steps[2].label).toBe("Form filled");
+    expect(ops.funnels[0].steps[2].label).toBe("Form submitted");
     expect(ops.funnels[0].steps[2].peopleReached).toBe(0);
     // The other brand's chain is a different shape entirely.
     expect(brandOf(body, DOC).funnels[0].steps).toHaveLength(5);
@@ -577,7 +577,7 @@ describe("GET /public/stats/showcase-funnels", () => {
     expect(ops.steps.map((s) => [s.label, s.costPerReachUsd])).toEqual([
       ["Contacted", 50],
       ["Website visit", 100],
-      ["Form filled", null],
+      ["Form submitted", null],
       ["Paid client", null],
     ]);
 

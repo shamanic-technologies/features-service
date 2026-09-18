@@ -439,7 +439,7 @@ describe("a funnel read step by step", () => {
     expect(purchases.steps.map((s) => s.recipientsReached)).toEqual([1, 1, 1]);
 
     const form = (await funnelRevenue(FORM)).body.funnelSteps as Breakdown;
-    expect(form.steps.map((s) => s.step)).toEqual(["Website visit", "Form filled", "Paid client"]);
+    expect(form.steps.map((s) => s.step)).toEqual(["Website visit", "Form submitted", "Paid client"]);
     expect(form.steps.map((s) => s.leadField)).toEqual(["clicked", "formSubmission", "purchased"]);
     expect(form.steps.map((s) => s.recipientsReached)).toEqual([1, 1, 1]);
   });

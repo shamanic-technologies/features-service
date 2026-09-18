@@ -71,7 +71,7 @@ describe("funnel legs", () => {
     ]);
     // And a leg only one funnel has stays that way — both of them the entry leg of an AD funnel, whose
     // first step the advertising platform DELIVERS.
-    expect(funnelsContainingLeg("start_to_lead_form_submitted")).toEqual(["lead_forms_from_ads"]);
+    expect(funnelsContainingLeg("start_to_form_filled")).toEqual(["lead_forms_from_ads"]);
     expect(funnelsContainingLeg("start_to_meeting_booked")).toEqual(["sales_meetings_from_ads"]);
   });
 
@@ -109,5 +109,23 @@ describe("funnel legs", () => {
     // Well-formed and still unknown: nothing is inferred from the shape of the string.
     expect(matchFunnelLegKey("signup_to_meeting_attended")).toBeNull();
     expect(matchFunnelLegKey("whatever")).toBeNull();
+  });
+
+  it("every leg key a RETIRED step spelling minted still resolves, onto the leg that survived it", () => {
+    // Retiring a step key retires every leg key it was a side of. `lead_form_submitted` collapsed onto
+    // `form_filled` — there is ONE form step — which retired both legs of `lead_forms_from_ads`. A
+    // caller, a stored campaign row or a per-leg budget ceiling that still names yesterday's leg must
+    // read the SAME leg, or a historical figure moves. Each case asserts the DIVERGENCE between the
+    // retired spelling and the survivor, so a suite that only checked "a key came back" would pass on
+    // an implementation that resolved neither.
+    expect(matchFunnelLegKey("start_to_lead_form_submitted")).toBe("start_to_form_filled");
+    expect(matchFunnelLegKey("lead_form_submitted_to_paid_client")).toBe("form_filled_to_paid_client");
+    expect(matchFunnelLegKey(" Start-To-Lead-Form-Submitted ")).toBe("start_to_form_filled");
+    // The form magnet's own legs never moved — that is WHY this key is the one that survived.
+    expect(matchFunnelLegKey("website_visit_to_form_filled")).toBe("website_visit_to_form_filled");
+    expect(matchFunnelLegKey("form_filled_to_paid_client")).toBe("form_filled_to_paid_client");
+    // …and the retired spelling is never EMITTED: the published vocabulary carries only survivors.
+    expect(FUNNEL_LEG_KEYS.some((key) => key.includes("lead_form_submitted"))).toBe(false);
+    expect(FUNNEL_LEG_KEYS).toContain("start_to_form_filled");
   });
 });

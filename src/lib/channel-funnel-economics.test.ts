@@ -157,7 +157,7 @@ describe("a measured pair prices every step of its own funnel", () => {
     const result = pricePair(input({ funnelKey: "form_magnet" }));
     if (!result.measured) throw new Error("unreachable");
     const { steps, costPerSaleUsd } = result.economics;
-    expect(steps.map((s) => s.step)).toEqual(["Website visit", "Form filled", "Paid client"]);
+    expect(steps.map((s) => s.step)).toEqual(["Website visit", "Form submitted", "Paid client"]);
     expect(steps[1].costPerStepUsd).toBeCloseTo(10, 10); // clickUsd / v2fs = 2 / 0.2
     expect(costPerSaleUsd).toBeCloseTo(100, 10); // / fs2pc = 10 / 0.1
   });

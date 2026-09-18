@@ -35,7 +35,6 @@ describe("the steps a channel can move a lead between", () => {
       "meeting_attended",
       "signup",
       "form_filled",
-      "lead_form_submitted",
       "paid_client",
     ]);
     for (const key of CHANNEL_STEP_KEYS) {
@@ -57,7 +56,11 @@ describe("the steps a channel can move a lead between", () => {
   it("tolerates separator and case variance on the way IN, and names nothing it does not know", () => {
     expect(matchChannelStepKey("Website Visit")).toBe("website_visit");
     expect(matchChannelStepKey("Meeting Attended")).toBe("meeting_attended");
-    expect(matchChannelStepKey("Lead form submitted")).toBe("lead_form_submitted");
+    // The RETIRED form spelling still resolves, onto the ONE form step that survived it. That is not
+    // the same call as the `in_ad_*` rename below: those were renamed before anything stored them, this
+    // one was published and may sit in a stored blob, a campaign row or a budget ceiling.
+    expect(matchChannelStepKey("lead_form_submitted")).toBe("form_filled");
+    expect(matchChannelStepKey("Lead form submitted")).toBe("form_filled");
     // The pre-rename `platform_*` and `in_ad_*` spellings are GONE, not aliased. Neither had a consumer
     // outside the cluster, every row is rewritten by the boot seed, and two names for one step is a
     // second vocabulary bought for nothing — which is exactly what the rename was closing.
@@ -76,13 +79,12 @@ describe("the steps a channel can move a lead between", () => {
       expect(matchChannelStepKey(entry), key).toBe(entry);
       expect(sellableFunnelsFor(producesFromNothing(entry)), key).toContain(key);
     }
-    // And the two ad-delivered steps are the two that could NOT be joined before: a lead form filled
-    // inside the ad is its own step (never "Form filled", which happens on the brand's site), while a
-    // meeting booked inside the ad is the SAME step the other meeting funnels reach — brand-service's
-    // own decision, mirrored here rather than second-guessed.
+    // And the two ad-delivered steps are the two that could NOT be joined before. BOTH of them are now
+    // steps this catalogue already had: a form filled inside the ad is the SAME `form_filled` step the
+    // form magnet walks through, and a meeting booked inside the ad is the SAME step the other meeting
+    // funnels reach.
     expect(matchChannelStepKey("form_filled")).toBe("form_filled");
-    expect(matchChannelStepKey("lead_form_submitted")).toBe("lead_form_submitted");
-    expect(funnelStepKeys("lead_forms_from_ads")[0]).toBe("lead_form_submitted");
+    expect(funnelStepKeys("lead_forms_from_ads")[0]).toBe("form_filled");
     expect(funnelStepKeys("sales_meetings_from_ads")[0]).toBe("meeting_booked");
   });
 });
@@ -181,7 +183,9 @@ describe("which pairings are possible", () => {
     // These two used to sell NOTHING, because the steps were spelled `in_ad_*` and no funnel started on
     // that spelling. brand-service now starts a funnel on exactly the step the ad DELIVERS, so the join
     // is a plain token match and the production is no longer dead.
-    expect(sellableFunnelsFor(producesFromNothing("lead_form_submitted"))).toEqual(["lead_forms_from_ads"]);
+    // Producing the form step FROM NOTHING sells the ad lead-form funnel — and ONLY that one: the form
+    // magnet reaches its form FROM a website visit, so its own form leg is a different leg.
+    expect(sellableFunnelsFor(producesFromNothing("form_filled"))).toEqual(["lead_forms_from_ads"]);
     expect(sellableFunnelsFor(producesFromNothing("meeting_booked"))).toEqual(["sales_meetings_from_ads"]);
 
     // And producing a booked meeting FROM NOTHING does not make a channel able to sell the two meeting
@@ -191,7 +195,7 @@ describe("which pairings are possible", () => {
     expect(sellableFunnelsFor(producesFromNothing("meeting_booked"))).not.toContain("sales_meetings_from_website");
 
     // An ad platform that sends visits AND hosts the form sells both families at once.
-    expect(sellableFunnelsFor(producesFromNothing("website_visit", "lead_form_submitted"))).toEqual([
+    expect(sellableFunnelsFor(producesFromNothing("website_visit", "form_filled"))).toEqual([
       "sales_meetings_from_website",
       "website_purchases",
       "form_magnet",
@@ -221,9 +225,20 @@ describe("which pairings are possible", () => {
       "sales_meetings_from_website",
       "sales_meetings_from_ads",
     ]);
-    // And the two self-serve funnels close through their own milestone.
+    // And the two self-serve funnels close through their own milestone. The FORM close spans THREE now
+    // and that is the collapse behaving correctly rather than a false pairing: with one form step, the
+    // form magnet's closing leg and the ad lead-form funnel's closing leg are the SAME leg — somebody
+    // who turns a submitted form into a paying client does the identical work whichever funnel put the
+    // form there. Same overlap the two meeting funnels already have on their tail legs.
     expect(sellableFunnelsFor([{ from: "signup", to: "paid_client" }])).toEqual(["website_purchases"]);
-    expect(sellableFunnelsFor([{ from: "form_filled", to: "paid_client" }])).toEqual(["form_magnet"]);
+    expect(sellableFunnelsFor([{ from: "form_filled", to: "paid_client" }])).toEqual([
+      "form_magnet",
+      "lead_forms_from_ads",
+    ]);
+    // …while the two funnels' ENTRY legs stay distinct, so nothing about where the form came from is
+    // lost: the form magnet reaches it FROM a website visit, the ad funnel lands on it from nothing.
+    expect(sellableFunnelsFor([{ from: "website_visit", to: "form_filled" }])).toEqual(["form_magnet"]);
+    expect(sellableFunnelsFor(producesFromNothing("form_filled"))).toEqual(["lead_forms_from_ads"]);
   });
 
   it("a leg no funnel takes sells nothing, even between two steps that both exist", () => {
@@ -253,32 +268,59 @@ describe("what a VISITOR reads on a step", () => {
     expect(SALES_FUNNELS.sales_from_conversation.steps[0]).toBe(CHANNEL_STEPS.conversation.label);
   });
 
-  it("names the ad-hosted form step \"Form submitted\", and keeps it apart from a form on the brand's own site", () => {
-    // The owner read "Lead form submitted" as a pre-signup card title and asked for the shorter
-    // wording. Every case here asserts the DIVERGENCE between the two form steps, so a suite that only
-    // checked "a label came back" would pass on an implementation that collapsed them into one name.
-    expect(CHANNEL_STEPS.lead_form_submitted.label).toBe("Form submitted");
-    expect(CHANNEL_STEPS.form_filled.label).toBe("Form filled");
-    expect(CHANNEL_STEPS.lead_form_submitted.label).not.toBe(CHANNEL_STEPS.form_filled.label);
-    // The description is what tells a reader which form is which, so it must still name the host.
-    expect(CHANNEL_STEPS.lead_form_submitted.description).toContain("ad platform");
-    expect(CHANNEL_STEPS.form_filled.description).toContain("brand's own site");
-    // The funnel's first rung moved WITH the label — that is what keeps the label -> key join a lookup.
-    expect(SALES_FUNNELS.lead_forms_from_ads.steps[0]).toBe("Form submitted");
-    expect(FUNNEL_STEP_LABEL_TO_KEY["Form submitted"]).toBe("lead_form_submitted");
+  it("publishes exactly ONE form step, labelled \"Form submitted\", and BOTH form funnels walk through it", () => {
+    // THE GUARD. The owner ruled that a form hosted by the ad platform and a form on the brand's own
+    // site are one step: what a buyer did is identical and only the CHANNEL differs, which the channel
+    // already says. Every case here asserts the COLLAPSE — a suite that only checked "a label came
+    // back" would pass on the two-step implementation this replaces.
+    const formSteps = CHANNEL_STEP_KEYS.filter(
+      (key) => /form/i.test(key) || /form/i.test(CHANNEL_STEPS[key].label),
+    );
+    expect(formSteps).toEqual(["form_filled"]);
+    expect(CHANNEL_STEPS.form_filled.label).toBe("Form submitted");
+
+    // The RETIRED key never comes back into the catalogue, under any spelling.
+    expect((CHANNEL_STEP_KEYS as readonly string[])).not.toContain("lead_form_submitted");
+    expect(Object.keys(CHANNEL_STEPS)).not.toContain("lead_form_submitted");
+    expect(Object.values(CHANNEL_STEPS).map((s) => s.label)).not.toContain("Form filled");
+
+    // …and is still ACCEPTED on the way in, resolving onto the survivor, so a stored blob or a caller
+    // that still says yesterday's word reads the SAME step and therefore the same figure.
+    expect(matchChannelStepKey("lead_form_submitted")).toBe("form_filled");
+
+    // BOTH funnels walk through it: the form magnet reaches it from a website visit, the ad funnel
+    // lands on it from nothing. Same step, two legs.
+    expect(funnelStepKeys("form_magnet")).toEqual(["website_visit", "form_filled", "paid_client"]);
+    expect(funnelStepKeys("lead_forms_from_ads")).toEqual(["form_filled", "paid_client"]);
+    expect(SALES_FUNNELS.form_magnet.steps).toEqual(["Website visit", "Form submitted", "Paid client"]);
+    expect(SALES_FUNNELS.lead_forms_from_ads.steps).toEqual(["Form submitted", "Paid client"]);
+
+    // The label join resolves BOTH wordings onto the one key — brand-service still spells the form
+    // magnet's middle rung "Form filled", and a mirror that stopped resolving the producer's own word
+    // would silently drop that funnel's leg.
+    expect(FUNNEL_STEP_LABEL_TO_KEY["Form submitted"]).toBe("form_filled");
+    expect(FUNNEL_STEP_LABEL_TO_KEY["Form filled"]).toBe("form_filled");
     expect(FUNNEL_STEP_LABEL_TO_KEY["Lead form submitted"]).toBeUndefined();
-    // Only the words moved: the key, the leg identifier and the funnel's own name are untouched.
-    expect(CHANNEL_STEPS.lead_form_submitted.key).toBe("lead_form_submitted");
-    expect(funnelStepKeys("lead_forms_from_ads")[0]).toBe("lead_form_submitted");
+
+    // Only the words moved: the surviving key, its legs and the funnels' own names are untouched.
+    expect(CHANNEL_STEPS.form_filled.key).toBe("form_filled");
     expect(SALES_FUNNELS.lead_forms_from_ads.name).toBe("Lead Form from Ads");
+    expect(SALES_FUNNELS.form_magnet.name).toBe("Form Magnet");
   });
 
   it("states EVERY step in the funnels' own wording, so the join by LABEL is a lookup", () => {
-    // The general invariant behind the case above: a step's published label IS the string
-    // brand-service's funnels use for that rung, for all eight. A step whose label drifts off the
-    // mirror silently breaks the join for its own funnels and nothing else notices.
+    // The general invariant behind the case above: a step's published label resolves back to its own
+    // key, for every one of them. A step whose label drifts off the mirror silently breaks the join
+    // for its own funnels and nothing else notices.
     for (const key of CHANNEL_STEP_KEYS) {
       expect(FUNNEL_STEP_LABEL_TO_KEY[CHANNEL_STEPS[key].label]).toBe(key);
+    }
+    // And every rung of every deployed funnel resolves too — the mirror can never carry a wording this
+    // catalogue cannot name, which is what `funnelStepKeys` fails loud on.
+    for (const funnelKey of SALES_FUNNEL_KEYS) {
+      for (const label of SALES_FUNNELS[funnelKey].steps) {
+        expect(FUNNEL_STEP_LABEL_TO_KEY[label], `${funnelKey}: ${label}`).toBeDefined();
+      }
     }
   });
 
@@ -301,7 +343,6 @@ describe("what a VISITOR reads on a step", () => {
       "meeting_attended",
       "signup",
       "form_filled",
-      "lead_form_submitted",
       "paid_client",
     ]);
     expect(matchChannelStepKey("conversation")).toBe("conversation");

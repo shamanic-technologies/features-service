@@ -44,12 +44,12 @@ const CONVERSATION_AND_VISIT = producesFromNothing("conversation", "website_visi
 const CONVERSATION_ONLY = producesFromNothing("conversation");
 const VISIT_ONLY = producesFromNothing("website_visit");
 // An ad platform that also hosts the form the buyer fills without leaving it. The delivered step IS
-// `lead_forms_from_ads`' first step, so stating it sells that funnel — which it could not do while the
-// step carried a spelling no funnel started on.
-const VISIT_AND_LEAD_FORM = producesFromNothing("website_visit", "lead_form_submitted");
+// `lead_forms_from_ads`' first step, so stating it sells that funnel. It is the SAME `form_filled` step
+// the form magnet walks through — who hosts the form is the channel's business, not a second step.
+const VISIT_AND_LEAD_FORM = producesFromNothing("website_visit", "form_filled");
 // …and the two platforms that can also take the booking straight from the creative, which is
 // `sales_meetings_from_ads`' first step.
-const VISIT_AND_AD_DELIVERED_STEPS = producesFromNothing("website_visit", "lead_form_submitted", "meeting_booked");
+const VISIT_AND_AD_DELIVERED_STEPS = producesFromNothing("website_visit", "form_filled", "meeting_booked");
 
 /**
  * THE LEGS A HUMAN PERFORMS, once a lead is already on a funnel.

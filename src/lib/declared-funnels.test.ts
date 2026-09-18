@@ -53,11 +53,18 @@ describe("the funnel key is the whole vocabulary", () => {
     expect(SALES_FUNNELS.lead_forms_from_ads.steps).toEqual(["Form submitted", "Paid client"]);
     expect(SALES_FUNNELS.sales_from_website.steps).toEqual(["Website visit", "Paid client"]);
 
-    // The four originals are UNCHANGED in chain — only two names moved.
+    // The four originals are UNCHANGED in chain — only two names moved, and the form magnet's middle
+    // rung now spells the ONE form step. That is the ONE rung where this mirror deliberately DIVERGES
+    // from brand-service's own wording ("Form filled"), because the fleet has a single form step and
+    // the two funnels that walk through it must spell it identically. Safe because nothing matches the
+    // producer's step STRINGS without folding the two spellings onto each other first — pinned in
+    // `funnel-leg-rates.test.ts`.
     expect(SALES_FUNNELS.sales_meetings_from_conversation.steps).toEqual(["Positive reply", "Meeting booked", "Meeting attended", "Paid client"]);
     expect(SALES_FUNNELS.sales_meetings_from_website.steps).toEqual(["Website visit", "Meeting booked", "Meeting attended", "Paid client"]);
     expect(SALES_FUNNELS.website_purchases.steps).toEqual(["Website visit", "Signup", "Paid client"]);
-    expect(SALES_FUNNELS.form_magnet.steps).toEqual(["Website visit", "Form filled", "Paid client"]);
+    expect(SALES_FUNNELS.form_magnet.steps).toEqual(["Website visit", "Form submitted", "Paid client"]);
+    // ONE form step: both form funnels spell their form rung the same way.
+    expect(SALES_FUNNELS.form_magnet.steps[1]).toBe(SALES_FUNNELS.lead_forms_from_ads.steps[0]);
 
     // Every funnel terminates in the SALE, under the one label the fleet renders for it.
     for (const key of SALES_FUNNEL_KEYS) {

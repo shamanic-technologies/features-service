@@ -38,6 +38,7 @@
  */
 import {
   CHANNEL_STEPS,
+  RETIRED_CHANNEL_STEP_KEYS,
   funnelLegs,
   type ChannelStepDef,
   type ChannelStepKey,
@@ -102,15 +103,41 @@ const LEGS_BY_KEY: Map<string, FunnelLegDef> = new Map(FUNNEL_LEGS.map((a) => [a
 export const FUNNEL_LEG_KEYS: string[] = FUNNEL_LEGS.map((a) => a.legKey);
 
 /**
+ * Every leg key a RETIRED step spelling minted, resolved to the leg that survives it.
+ *
+ * A leg key is `<from>_to_<to>` over step keys, so retiring a step key retires every leg key it was a
+ * side of. `lead_form_submitted` collapsed onto `form_filled` (there is ONE form step — see
+ * `acquisition-channels.ts`), which retired the two legs of `lead_forms_from_ads`. Both are accepted
+ * FOREVER on the way in and neither is ever emitted: a caller, a stored campaign row or a budget
+ * ceiling that still names yesterday's leg resolves to the surviving one and therefore reads the same
+ * figure. Derived from the survivors rather than written out, so a future step retirement adds one
+ * line to `RETIRED_CHANNEL_STEP_KEYS` and nothing here.
+ */
+const RETIRED_LEG_KEYS: Map<string, string> = new Map(
+  FUNNEL_LEGS.flatMap((leg) => {
+    const retiredSpellings = (canonical: string): string[] =>
+      Object.entries(RETIRED_CHANNEL_STEP_KEYS)
+        .filter(([, survivor]) => survivor === canonical)
+        .map(([retired]) => retired);
+    const froms = [leg.fromStep?.key ?? "start", ...retiredSpellings(leg.fromStep?.key ?? "")];
+    const tos = [leg.toStep.key, ...retiredSpellings(leg.toStep.key)];
+    const out: Array<[string, string]> = [];
+    for (const from of froms) for (const to of tos) out.push([`${from}_to_${to}`, leg.legKey]);
+    return out.filter(([spelling]) => spelling !== leg.legKey);
+  }),
+);
+
+/**
  * Resolve a caller's spelling to a known leg, tolerating case and separator variance the same way
- * every other vocabulary here does. `null` for a word naming no leg — every caller FAILS LOUD on
- * that rather than guessing one, because guessing would price a leg the caller never asked for.
+ * every other vocabulary here does, plus every leg key a retired step spelling minted. `null` for a
+ * word naming no leg — every caller FAILS LOUD on that rather than guessing one, because guessing
+ * would price a leg the caller never asked for.
  *
  * It is a LOOKUP, never a parse: an unknown `a_to_b` that happens to be well-formed is still unknown.
  */
 export function matchFunnelLegKey(raw: string): string | null {
   const normalised = raw.trim().toLowerCase().replace(/[\s-]+/g, "_");
-  return LEGS_BY_KEY.get(normalised)?.legKey ?? null;
+  return LEGS_BY_KEY.get(normalised)?.legKey ?? RETIRED_LEG_KEYS.get(normalised) ?? null;
 }
 
 /** The leg itself, or null when nothing names it. */

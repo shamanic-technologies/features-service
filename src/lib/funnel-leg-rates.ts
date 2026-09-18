@@ -72,7 +72,28 @@ export interface DeclaredFunnelLeg {
 /** A leg whose rate a human stated FOR THAT LEG, rather than one derived from a named rate. */
 const isStated = (leg: DeclaredFunnelLeg): boolean => leg.provenance.startsWith("stated");
 
-const normaliseStep = (label: string): string => label.trim().toLowerCase().replace(/[\s_-]+/g, " ");
+/**
+ * Every RETIRED wording of a step, folded onto the ONE token that names it — applied AFTER case and
+ * separator variance, so this table only ever holds genuinely different WORDS.
+ *
+ * ⚠️ THIS IS LOAD-BEARING FOR A LIVE BRAND'S DECLARED RATES, not tidiness. The fleet collapsed its two
+ * form steps into one and this service's mirror now spells the form magnet's middle rung "Form
+ * submitted", while brand-service still serves that funnel's `arrows[]` spelling it "Form filled".
+ * Both sides of every comparison in this module are STRINGS — `legPathRate` keys the producer's legs
+ * on their own `fromStep`, and `statedLegRates` looks each `RATE_FOR_STEP_PAIR` up in our mirror's
+ * `steps` — so without this fold the walk would find no leg, return `NO_RATE`, and a brand that stated
+ * a per-leg visit→form or form→paid rate would SILENTLY fall back to its named rate. Nothing errors
+ * and no test of either side alone goes red; the figure just quietly moves.
+ */
+const RETIRED_STEP_WORDING: Record<string, string> = {
+  "form filled": "form submitted",
+  "lead form submitted": "form submitted",
+};
+
+const normaliseStep = (label: string): string => {
+  const normalised = label.trim().toLowerCase().replace(/[\s_-]+/g, " ");
+  return RETIRED_STEP_WORDING[normalised] ?? normalised;
+};
 
 /**
  * Read a declared funnel's legs off the producer's payload.
@@ -184,8 +205,8 @@ const RATE_FOR_STEP_PAIR: ReadonlyArray<{ from: string; to: string; key: string 
   { from: "Meeting booked", to: "Paid client", key: "meetingToClosePct" },
   { from: "Website visit", to: "Signup", key: "visitToSignupPct" },
   { from: "Signup", to: "Paid client", key: "signupToPaidClientPct" },
-  { from: "Website visit", to: "Form filled", key: "visitToFormSubmissionPct" },
-  { from: "Form filled", to: "Paid client", key: "formSubmissionToPaidClientPct" },
+  { from: "Website visit", to: "Form submitted", key: "visitToFormSubmissionPct" },
+  { from: "Form submitted", to: "Paid client", key: "formSubmissionToPaidClientPct" },
 ];
 
 /**

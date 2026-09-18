@@ -130,7 +130,14 @@ export const SALES_FUNNELS: Record<SalesFunnelKey, SalesFunnelDef> = {
   form_magnet: {
     key: "form_magnet",
     name: "Form Magnet",
-    steps: ["Website visit", "Form filled", "Paid client"],
+    // "Form submitted", not brand-service's own "Form filled": the fleet has ONE form step now (see
+    // `acquisition-channels.ts`), so the two funnels that walk through it must spell it identically or
+    // the label→key join would read them as two steps again. This is the one rung where the mirror
+    // deliberately DIVERGES from the producer's wording, and it is safe because nothing matches the
+    // producer's step STRINGS without normalising the two spellings onto each other first
+    // (`normaliseStep` in `funnel-leg-rates.ts`, which is what keeps this brand's declared per-leg
+    // form rates resolving).
+    steps: ["Website visit", "Form submitted", "Paid client"],
     meetingChannel: null,
   },
   sales_from_conversation: {
@@ -153,6 +160,9 @@ export const SALES_FUNNELS: Record<SalesFunnelKey, SalesFunnelDef> = {
   lead_forms_from_ads: {
     key: "lead_forms_from_ads",
     name: "Lead Form from Ads",
+    // The SAME step the form magnet walks through. A form hosted by the ad platform and a form on the
+    // brand's own site are one step; only the channel that performed the leg differs, and the channel
+    // already says so.
     steps: ["Form submitted", "Paid client"],
     // Same as the ad meeting funnel: the form is filled inside the ad unit, so the step is delivered
     // rather than observed.
