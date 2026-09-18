@@ -241,7 +241,7 @@ describe("the funnels brand-service added when the ad channels opened", () => {
     // inserted — asserted to the cent against the two-step era's own figure.
     const web = pricePair(input({ funnelKey: "sales_from_website" }));
     if (!web.measured) throw new Error("unreachable");
-    expect(web.economics.steps.map((x) => x.step)).toEqual(["Website visit", "Purchase", "Paid client"]);
+    expect(web.economics.steps.map((x) => x.step)).toEqual(["Website visit", "Direct purchase", "Paid client"]);
     expect(web.economics.steps[0].costPerStepUsd).toBe(2);
     expect(web.economics.costPerSaleUsd).toBeCloseTo(200, 6);
     expect(web.economics.costPerSaleUsd).not.toBeCloseTo(50, 6);
@@ -265,7 +265,7 @@ describe("the funnels brand-service added when the ad channels opened", () => {
     const web = pricePair(input({ funnelKey: "sales_from_website" }));
     if (!web.measured) throw new Error("unreachable");
     const [visit, purchase, sale] = web.economics.steps;
-    expect(purchase.step).toBe("Purchase");
+    expect(purchase.step).toBe("Direct purchase");
     expect(purchase.costPerStepUsd).toBeNull();
     expect(purchase.unpricedReason).toBe("rate_not_declared");
     expect(sale.step).toBe("Paid client");
@@ -277,7 +277,7 @@ describe("the funnels brand-service added when the ad channels opened", () => {
   it("a funnel names the step it is NAMED after — Website Purchase names the purchase", () => {
     // It named the SALE while the purchase was folded inside it; it has a stage before the sale now,
     // and that stage is the one the funnel is literally called after.
-    expect(FUNNEL_MILESTONE_STEP.sales_from_website).toBe("Purchase");
+    expect(FUNNEL_MILESTONE_STEP.sales_from_website).toBe("Direct purchase");
     // The funnel whose ONLY stage genuinely is the sale still names the sale.
     expect(FUNNEL_MILESTONE_STEP.sales_from_conversation).toBe("Paid client");
     const web = pricePair(input({ funnelKey: "sales_from_website" }));

@@ -327,12 +327,13 @@ describe("what a VISITOR reads on a step", () => {
     // back" would pass on an implementation that aliased the two.
     expect(matchChannelStepKey("purchase")).toBe("purchase");
     expect(matchChannelStepKey("Purchase")).toBe("purchase");
-    expect(CHANNEL_STEPS.purchase.label).toBe("Purchase");
+    expect(CHANNEL_STEPS.purchase.label).toBe("Direct purchase");
     expect(CHANNEL_STEPS.purchase.label).not.toBe(CHANNEL_STEPS.paid_client.label);
     expect(CHANNEL_STEPS.purchase.description).not.toBe(CHANNEL_STEPS.paid_client.description);
     // brand-service's own wording for the rung resolves onto it, which is what lets a funnel be read
     // as a list of legs at all — a label that did not resolve would throw rather than lose a leg.
     expect(FUNNEL_STEP_LABEL_TO_KEY["Purchase"]).toBe("purchase");
+    expect(FUNNEL_STEP_LABEL_TO_KEY["Direct purchase"]).toBe("purchase");
     // It is a step of exactly ONE deployed funnel today; no other funnel gained a rung.
     const carrying = SALES_FUNNEL_KEYS.filter((key) => funnelStepKeys(key).includes("purchase"));
     expect(carrying).toEqual(["sales_from_website"]);

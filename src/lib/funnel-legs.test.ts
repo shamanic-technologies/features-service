@@ -153,7 +153,7 @@ describe("the form legs after the two form steps merged", () => {
     const leg = funnelLeg("website_visit_to_purchase");
     expect(leg?.fromStep?.key).toBe("website_visit");
     expect(leg?.toStep.key).toBe("purchase");
-    expect(leg?.toStep.label).toBe("Purchase");
+    expect(leg?.toStep.label).toBe("Direct purchase");
   });
 
   it("gives the RETIRED visit-to-sale leg no alias, because there is no honest single target", () => {
