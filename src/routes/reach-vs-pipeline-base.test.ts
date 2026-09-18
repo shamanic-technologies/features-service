@@ -97,7 +97,7 @@ const ALL_DECLARED = [
   declaredFunnel(CONVERSATION, ["Positive reply", "Meeting booked", "Meeting attended", "Paid client"]),
   declaredFunnel(WEBSITE, ["Website visit", "Meeting booked", "Meeting attended", "Paid client"]),
   declaredFunnel(PURCHASES, ["Website visit", "Signup", "Paid client"]),
-  declaredFunnel(FORM, ["Website visit", "Form filled", "Paid client"]),
+  declaredFunnel(FORM, ["Website visit", "Form submitted", "Paid client"]),
 ];
 
 const emailOf = (leadId: string) => `${leadId}@x.com`;

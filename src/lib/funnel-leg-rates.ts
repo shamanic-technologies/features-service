@@ -72,7 +72,20 @@ export interface DeclaredFunnelLeg {
 /** A leg whose rate a human stated FOR THAT LEG, rather than one derived from a named rate. */
 const isStated = (leg: DeclaredFunnelLeg): boolean => leg.provenance.startsWith("stated");
 
-const normaliseStep = (label: string): string => label.trim().toLowerCase().replace(/[\s_-]+/g, " ");
+/**
+ * A step label, in the one shape both vocabularies can be compared in.
+ *
+ * ⚠️ The alias is load-bearing rather than cosmetic: this service serves ONE form step
+ * (`CHANNEL_STEPS.form_submitted`) while brand-service's deployed catalogue still spells the
+ * `form_magnet` rung "Form filled" and the ad rung "Lead form submitted" — and it OWNS that
+ * vocabulary. A brand's declared ARROWS arrive under ITS wording, so without this fold a rate a
+ * customer has already stated on a "Form filled" arrow would stop resolving and the funnel would
+ * silently fall back to its named rate. Read-side only; nothing here rewrites what the producer says.
+ */
+const normaliseStep = (label: string): string => {
+  const flat = label.trim().toLowerCase().replace(/[\s_-]+/g, " ");
+  return flat === "form filled" || flat === "lead form submitted" ? "form submitted" : flat;
+};
 
 /**
  * Read a declared funnel's legs off the producer's payload.
@@ -184,8 +197,8 @@ const RATE_FOR_STEP_PAIR: ReadonlyArray<{ from: string; to: string; key: string 
   { from: "Meeting booked", to: "Paid client", key: "meetingToClosePct" },
   { from: "Website visit", to: "Signup", key: "visitToSignupPct" },
   { from: "Signup", to: "Paid client", key: "signupToPaidClientPct" },
-  { from: "Website visit", to: "Form filled", key: "visitToFormSubmissionPct" },
-  { from: "Form filled", to: "Paid client", key: "formSubmissionToPaidClientPct" },
+  { from: "Website visit", to: "Form submitted", key: "visitToFormSubmissionPct" },
+  { from: "Form submitted", to: "Paid client", key: "formSubmissionToPaidClientPct" },
 ];
 
 /**

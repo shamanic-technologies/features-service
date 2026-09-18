@@ -99,7 +99,7 @@ const ALL_DECLARED = [
   declaredFunnel(CONVERSATION, ["Positive reply", "Meeting booked", "Meeting attended", "Paid client"]),
   declaredFunnel(WEBSITE, ["Website visit", "Meeting booked", "Meeting attended", "Paid client"]),
   declaredFunnel(PURCHASES, ["Website visit", "Signup", "Paid client"]),
-  declaredFunnel(FORM, ["Website visit", "Form filled", "Paid client"]),
+  declaredFunnel(FORM, ["Website visit", "Form submitted", "Paid client"]),
 ];
 
 const emailOf = (leadId: string) => `${leadId}@x.com`;
@@ -439,7 +439,7 @@ describe("a funnel read step by step", () => {
     expect(purchases.steps.map((s) => s.recipientsReached)).toEqual([1, 1, 1]);
 
     const form = (await funnelRevenue(FORM)).body.funnelSteps as Breakdown;
-    expect(form.steps.map((s) => s.step)).toEqual(["Website visit", "Form filled", "Paid client"]);
+    expect(form.steps.map((s) => s.step)).toEqual(["Website visit", "Form submitted", "Paid client"]);
     expect(form.steps.map((s) => s.leadField)).toEqual(["clicked", "formSubmission", "purchased"]);
     expect(form.steps.map((s) => s.recipientsReached)).toEqual([1, 1, 1]);
   });

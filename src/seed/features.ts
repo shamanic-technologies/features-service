@@ -46,10 +46,10 @@ const VISIT_ONLY = producesFromNothing("website_visit");
 // An ad platform that also hosts the form the buyer fills without leaving it. The delivered step IS
 // `lead_forms_from_ads`' first step, so stating it sells that funnel — which it could not do while the
 // step carried a spelling no funnel started on.
-const VISIT_AND_LEAD_FORM = producesFromNothing("website_visit", "lead_form_submitted");
+const VISIT_AND_LEAD_FORM = producesFromNothing("website_visit", "form_submitted");
 // …and the two platforms that can also take the booking straight from the creative, which is
 // `sales_meetings_from_ads`' first step.
-const VISIT_AND_AD_DELIVERED_STEPS = producesFromNothing("website_visit", "lead_form_submitted", "meeting_booked");
+const VISIT_AND_AD_DELIVERED_STEPS = producesFromNothing("website_visit", "form_submitted", "meeting_booked");
 
 /**
  * THE LEGS A HUMAN PERFORMS, once a lead is already on a funnel.
@@ -73,7 +73,7 @@ const GETS_THE_MEETING_HELD: readonly ChannelStepTransition[] = [{ from: "meetin
 const CLOSES_THE_MEETING: readonly ChannelStepTransition[] = [{ from: "meeting_attended", to: "paid_client" }];
 const CONVERTS_THE_SELF_SERVE_LEAD: readonly ChannelStepTransition[] = [
   { from: "signup", to: "paid_client" },
-  { from: "form_filled", to: "paid_client" },
+  { from: "form_submitted", to: "paid_client" },
 ];
 
 /** Commercial terms, written the way they are set: a daily operating cost in whole cents, a minimum

@@ -105,7 +105,7 @@ export const FUNNEL_MILESTONE_STEP: Record<SalesFunnelKey, string> = {
   sales_meetings_from_conversation: "Meeting booked",
   sales_meetings_from_website: "Meeting booked",
   website_purchases: "Signup",
-  form_magnet: "Form filled",
+  form_magnet: "Form submitted",
   sales_meetings_from_ads: "Meeting booked",
   lead_forms_from_ads: "Form submitted",
   // A funnel whose ONLY stage is the sale names the sale — that genuinely is the moment it is named

@@ -387,7 +387,7 @@ const SALES_MILESTONES: readonly FunnelMilestone[] = [
  * Every leg used to be priced from ONE brand-wide expression, and that expression was built out of the
  * meeting route: a website visit was worth `orP(visitToClose, visitToMeeting × meetingToClose)`
  * whatever funnel the brand sells. For the two meeting funnels and the website-purchase funnel that is
- * the right number, and it stays byte-identical below. For FORM MAGNET — `Website visit → Form filled
+ * the right number, and it stays byte-identical below. For FORM MAGNET — `Website visit → Form submitted
  * → Paid client` — it was an answer about a funnel with no meeting step in it: prod 2026-09-11, a brand
  * declaring 25% visit→form and 20% form→paid (so a visit is worth 5% of its $30 lifetime revenue,
  * $1.50) was priced at 1.24375% = $0.373 per visit, off a brand-wide 0.5% self-serve + 3% × 25%
@@ -403,7 +403,7 @@ const SALES_MILESTONES: readonly FunnelMilestone[] = [
  *   sales_meetings_from_conversation  reply = r2m·m2c   meeting = m2c   attended = m_att   closeWin = 1
  *   sales_meetings_from_website       visit = orP(v2c, v2m·m2c)   meeting = m2c   attended = m_att
  *   website_purchases                 visit = orP(v2c, v2m·m2c)
- *   form_magnet                       visit = v2fs·fs2pc          formFilled = fs2pc
+ *   form_magnet                       visit = v2fs·fs2pc          formSubmitted = fs2pc
  *
  * The first three are TODAY'S expressions, written out per funnel rather than changed — deliberately.
  * brand-service's brand-wide `visitToClosePct` ALREADY composes the signup chain for essentially every
@@ -479,14 +479,14 @@ const FUNNEL_LADDERS: Record<SalesFunnelKey, (e: SalesEconomics) => LadderRung[]
   ],
   form_magnet: (e) => {
     // The funnel's own two arrows, and nothing else: a form magnet has no meeting step, so the meeting
-    // route must not price its visit. `formFilled` is a rung a lead actually STANDS on — an OBSERVED
+    // route must not price its visit. `formSubmitted` is a rung a lead actually STANDS on — an OBSERVED
     // POSITION, so it EXTINGUISHES the click route rather than combining with it (the click was
     // forecasting exactly the form that has now been filled).
     const v2fs = declaredRate(e.visitToFormSubmissionPct);
     const fs2pc = declaredRate(e.formSubmissionToPaidClientPct);
     return [
       { tag: "visit", signal: "clicked", pClose: chainRate(v2fs, fs2pc), engagementRoute: true },
-      { tag: "formFilled", signal: "formSubmission", pClose: fs2pc },
+      { tag: "formSubmitted", signal: "formSubmission", pClose: fs2pc },
       CLOSE_WIN,
     ];
   },
@@ -593,7 +593,7 @@ const salesFunnel: FunnelDefinition = {
  * Read straight off `SALES_FUNNELS[key].steps`, one entry per step that a lead signal can evidence:
  *
  *   Positive reply   → `positiveReply`    Website visit → `clicked`
- *   Meeting booked   → `meeting`          Signup        → `signup`   Form filled → `formSubmission`
+ *   Meeting booked   → `meeting`          Signup        → `signup`   Form submitted → `formSubmission`
  *   Meeting attended → `meetingAttended`  Paid client   → `closeWin`
  *
  * "Meeting attended" USED to have no signal of its own — nothing in the fleet could observe somebody

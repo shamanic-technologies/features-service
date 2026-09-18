@@ -157,7 +157,7 @@ describe("the public catalogue states ONE composed minimum run length per pair",
 
     // THE JOIN, done the way a consumer would do it — a token match, no translation table.
     const startedBy = (stepKey: string) => funnels.filter((f) => f.entryStep.key === stepKey).map((f) => f.key);
-    expect(startedBy("lead_form_submitted")).toEqual(["lead_forms_from_ads"]);
+    expect(startedBy("form_submitted")).toEqual(["lead_forms_from_ads"]);
     expect(startedBy("meeting_booked")).toEqual(["sales_meetings_from_ads"]);
     expect(startedBy("conversation")).toEqual(["sales_meetings_from_conversation", "sales_from_conversation"]);
 

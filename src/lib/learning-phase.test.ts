@@ -220,7 +220,7 @@ describe("a campaign is measured on its OWN leg's step", () => {
       economics: { ...ECONOMICS, visitToFormSubmissionPct: undefined },
     });
     const deeper = build({
-      campaigns: [campaign({ legKey: "website_visit_to_form_filled", funnelKey: "form_magnet", observed: { clicks: 4, replies: 0 } })],
+      campaigns: [campaign({ legKey: "website_visit_to_form_submitted", funnelKey: "form_magnet", observed: { clicks: 4, replies: 0 } })],
       leadingCells: [{ spentUsd: 310.73, clicks: 4, replies: 0 }],
       economics: { ...ECONOMICS, visitToFormSubmissionPct: undefined },
     });
@@ -228,7 +228,7 @@ describe("a campaign is measured on its OWN leg's step", () => {
     expect(entry.outcomesObserved).toBe(4);
     expect(entry.expectedCostPerOutcomeUsd).toBeCloseTo(310.73 / 4, 6);
 
-    expect(deeper.outcomeStep!.key).toBe("form_filled");
+    expect(deeper.outcomeStep!.key).toBe("form_submitted");
     expect(deeper.status).toBe("unmeasured");
     expect(deeper.unmeasuredReason).toBe("leg_unpriceable");
     expect(deeper.outcomesObserved).toBeNull();

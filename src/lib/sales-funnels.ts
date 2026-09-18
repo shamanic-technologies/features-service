@@ -130,7 +130,10 @@ export const SALES_FUNNELS: Record<SalesFunnelKey, SalesFunnelDef> = {
   form_magnet: {
     key: "form_magnet",
     name: "Form Magnet",
-    steps: ["Website visit", "Form filled", "Paid client"],
+    // ONE form step across the whole catalogue (see `CHANNEL_STEPS.form_submitted`). brand-service's
+    // deployed catalogue still spells this rung "Form filled"; its wording stays resolvable on the way
+    // IN, so a rate a brand stated on a "Form filled" arrow is not lost. Only what we publish moved.
+    steps: ["Website visit", "Form submitted", "Paid client"],
     meetingChannel: null,
   },
   sales_from_conversation: {
