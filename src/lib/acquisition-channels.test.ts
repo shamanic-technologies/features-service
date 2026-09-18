@@ -371,4 +371,26 @@ describe("what a VISITOR reads on a step", () => {
     expect(matchChannelStepKey("conversation")).toBe("conversation");
     expect(CHANNEL_STEPS.conversation.key).toBe("conversation");
   });
+
+  it("publishes NO em-dash in any step or funnel a customer reads", () => {
+    // This catalogue is CUSTOMER COPY, not developer documentation: the signed-out onboarding renders
+    // one card per producible step, titled with the step's label and explained with its description,
+    // and draws each funnel under its own name with its own rungs. A consumer prints those strings
+    // VERBATIM, so it has no place to strip anything — the ban has to hold where the string is
+    // written, which is here.
+    //
+    // An em-dash (U+2014) is the fleet's top AI tell and is banned from every customer-facing surface;
+    // one shipped on `form_submitted.description` and reached the outcome card for a day. Asserting
+    // against the RUNTIME catalogue rather than this file's source is deliberate — the comments around
+    // it say "em-dash" and use one, and a source-substring guard would fail on its own explanation.
+    const EM_DASH = "\u2014";
+    for (const key of CHANNEL_STEP_KEYS) {
+      expect(CHANNEL_STEPS[key].label).not.toContain(EM_DASH);
+      expect(CHANNEL_STEPS[key].description).not.toContain(EM_DASH);
+    }
+    for (const key of SALES_FUNNEL_KEYS) {
+      expect(SALES_FUNNELS[key].name).not.toContain(EM_DASH);
+      for (const step of SALES_FUNNELS[key].steps) expect(step).not.toContain(EM_DASH);
+    }
+  });
 });
