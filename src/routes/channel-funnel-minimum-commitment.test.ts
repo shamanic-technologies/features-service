@@ -192,7 +192,7 @@ describe("the public catalogue states ONE composed minimum run length per pair",
     const steps = res.body.steps as Array<{ key: string; label: string; description: string }>;
     const purchase = steps.find((s) => s.key === "purchase");
     expect(purchase).toBeDefined();
-    expect(purchase!.label).toBe("Purchase");
+    expect(purchase!.label).toBe("Direct purchase");
     // It is its own rung, not the sale under a second name — asserted as a DIVERGENCE, so a suite
     // that only checked "a step came back" would pass on an implementation that aliased the two.
     const paid = steps.find((s) => s.key === "paid_client")!;
@@ -201,7 +201,7 @@ describe("the public catalogue states ONE composed minimum run length per pair",
 
     const funnels = res.body.funnels as Array<{ key: string; steps: string[]; entryStep: { key: string } }>;
     const web = funnels.find((f) => f.key === "sales_from_website")!;
-    expect(web.steps).toEqual(["Website visit", "Purchase", "Paid client"]);
+    expect(web.steps).toEqual(["Website visit", "Direct purchase", "Paid client"]);
     // Still ENTERED on a website visit, which is what keeps every channel producing one selling it.
     expect(web.entryStep.key).toBe("website_visit");
 

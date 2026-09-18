@@ -113,9 +113,9 @@ export const FUNNEL_MILESTONE_STEP: Record<SalesFunnelKey, string> = {
   sales_from_conversation: "Paid client",
   // ...and `sales_from_website` stopped being one of those on 2026-09-18. It now has a stage before
   // the sale, and it is the stage the funnel is literally named after: "Website Purchase". So the rule
-  // this map states gives "Purchase" rather than the terminal it named while the purchase was folded
+  // this map states gives "Direct purchase" rather than the terminal it named while the purchase was folded
   // inside the sale.
-  sales_from_website: "Purchase",
+  sales_from_website: "Direct purchase",
 };
 
 /** A funnel is bought through ONE channel; the other one's evidence is masked away so it cannot dilute
