@@ -135,7 +135,7 @@ export function legOutcomeTerms(
         if (outcomeStep === "paid_client") return chain(econ.v2s, econ.s2pc);
         return null;
       case "form_magnet":
-        if (outcomeStep === "form_filled") return chain(econ.v2fs);
+        if (outcomeStep === "form_submitted") return chain(econ.v2fs);
         if (outcomeStep === "paid_client") return chain(econ.v2fs, econ.fs2pc);
         return null;
       // Both single-step funnels: the entry leg is handled above (`outcomeObserved`), so the only step

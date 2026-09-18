@@ -102,6 +102,22 @@ const LEGS_BY_KEY: Map<string, FunnelLegDef> = new Map(FUNNEL_LEGS.map((a) => [a
 export const FUNNEL_LEG_KEYS: string[] = FUNNEL_LEGS.map((a) => a.legKey);
 
 /**
+ * Every pre-merge spelling of a leg that touched a FORM step, resolved to its canonical key.
+ *
+ * `form_filled` and `lead_form_submitted` were two steps until 2026-09-18 and are now the single
+ * `form_submitted`, so the three legs they sat on were minted under other names. Stored rows elsewhere
+ * in the fleet key budgets and campaigns on a leg key, and a campaign that named one of these does not
+ * stop existing because the vocabulary merged — so these are accepted FOREVER on the way IN, and NEVER
+ * emitted. `FUNNEL_LEG_KEYS` publishes the canonical names alone.
+ */
+const LEGACY_FUNNEL_LEG_KEYS: Record<string, string> = {
+  website_visit_to_form_filled: "website_visit_to_form_submitted",
+  form_filled_to_paid_client: "form_submitted_to_paid_client",
+  start_to_lead_form_submitted: "start_to_form_submitted",
+  lead_form_submitted_to_paid_client: "form_submitted_to_paid_client",
+};
+
+/**
  * Resolve a caller's spelling to a known leg, tolerating case and separator variance the same way
  * every other vocabulary here does. `null` for a word naming no leg — every caller FAILS LOUD on
  * that rather than guessing one, because guessing would price a leg the caller never asked for.
@@ -110,7 +126,10 @@ export const FUNNEL_LEG_KEYS: string[] = FUNNEL_LEGS.map((a) => a.legKey);
  */
 export function matchFunnelLegKey(raw: string): string | null {
   const normalised = raw.trim().toLowerCase().replace(/[\s-]+/g, "_");
-  return LEGS_BY_KEY.get(normalised)?.legKey ?? null;
+  const direct = LEGS_BY_KEY.get(normalised);
+  if (direct) return direct.legKey;
+  const legacy = LEGACY_FUNNEL_LEG_KEYS[normalised];
+  return legacy != null && LEGS_BY_KEY.has(legacy) ? legacy : null;
 }
 
 /** The leg itself, or null when nothing names it. */

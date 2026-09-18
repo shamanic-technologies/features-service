@@ -40,7 +40,7 @@ describe("legOutcomeTerms", () => {
   it("each of the four funnels prices its own middle rung, and none borrows another's route", () => {
     expect(legOutcomeTerms("website_purchases", "signup", ECON, 1)!.rateFromDriver).toBeCloseTo(0.04, 10);
     expect(legOutcomeTerms("website_purchases", "paid_client", ECON, 1)!.rateFromDriver).toBeCloseTo(0.02, 10);
-    expect(legOutcomeTerms("form_magnet", "form_filled", ECON, 1)!.rateFromDriver).toBeCloseTo(0.1, 10);
+    expect(legOutcomeTerms("form_magnet", "form_submitted", ECON, 1)!.rateFromDriver).toBeCloseTo(0.1, 10);
     expect(legOutcomeTerms("form_magnet", "paid_client", ECON, 1)!.rateFromDriver).toBeCloseTo(0.025, 10);
     // A meeting is not a step of either self-serve funnel, so there is nothing to price.
     expect(legOutcomeTerms("website_purchases", "meeting_booked", ECON, 1)).toBeNull();
@@ -49,10 +49,10 @@ describe("legOutcomeTerms", () => {
 
   it("a rate the brand never declared makes the walk UNPRICEABLE — null, never 0 and never a default", () => {
     const { v2fs, ...noFormRate } = ECON;
-    expect(legOutcomeTerms("form_magnet", "form_filled", noFormRate, 1)!.rateFromDriver).toBeNull();
+    expect(legOutcomeTerms("form_magnet", "form_submitted", noFormRate, 1)!.rateFromDriver).toBeNull();
     expect(legOutcomeTerms("form_magnet", "paid_client", noFormRate, 1)!.rateFromDriver).toBeNull();
     // A DECLARED zero is a real answer and passes through as 0.
-    expect(legOutcomeTerms("form_magnet", "form_filled", { ...ECON, v2fs: 0 }, 1)!.rateFromDriver).toBe(0);
+    expect(legOutcomeTerms("form_magnet", "form_submitted", { ...ECON, v2fs: 0 }, 1)!.rateFromDriver).toBe(0);
   });
 });
 
@@ -87,7 +87,7 @@ describe("grainLegOutcome", () => {
 
   it("an unpriceable walk nulls the cost AND the count rather than reading zero", () => {
     const { v2fs, ...noFormRate } = ECON;
-    const unpriceable = legOutcomeTerms("form_magnet", "form_filled", noFormRate, 1)!;
+    const unpriceable = legOutcomeTerms("form_magnet", "form_submitted", noFormRate, 1)!;
     expect(grainLegOutcome(unpriceable, { spentUsd: 100, driverUnitCostUsd: 10, driverObserved: 10 })).toMatchObject({
       costPerOutcomeUsd: null,
       outcomeCount: null,

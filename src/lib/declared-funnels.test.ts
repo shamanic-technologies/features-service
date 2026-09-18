@@ -57,7 +57,7 @@ describe("the funnel key is the whole vocabulary", () => {
     expect(SALES_FUNNELS.sales_meetings_from_conversation.steps).toEqual(["Positive reply", "Meeting booked", "Meeting attended", "Paid client"]);
     expect(SALES_FUNNELS.sales_meetings_from_website.steps).toEqual(["Website visit", "Meeting booked", "Meeting attended", "Paid client"]);
     expect(SALES_FUNNELS.website_purchases.steps).toEqual(["Website visit", "Signup", "Paid client"]);
-    expect(SALES_FUNNELS.form_magnet.steps).toEqual(["Website visit", "Form filled", "Paid client"]);
+    expect(SALES_FUNNELS.form_magnet.steps).toEqual(["Website visit", "Form submitted", "Paid client"]);
 
     // Every funnel terminates in the SALE, under the one label the fleet renders for it.
     for (const key of SALES_FUNNEL_KEYS) {

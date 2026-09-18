@@ -149,7 +149,7 @@ describe("building the public catalogue", () => {
     // deployed funnel started on that spelling, so the channel's whole lead-form production sold
     // nothing. brand-service now starts `lead_forms_from_ads` on exactly the step the ad delivers.
     const [channel] = buildChannelCatalogue([
-      row({ acquisitionChannel: { ...CHANNEL, stepTransitions: [{ from: null, to: "lead_form_submitted" }] } }),
+      row({ acquisitionChannel: { ...CHANNEL, stepTransitions: [{ from: null, to: "form_submitted" }] } }),
     ]);
     expect(channel.salesFunnels.map((f) => f.key)).toEqual(["lead_forms_from_ads"]);
     expect(channel.terms).toEqual(CHANNEL.terms);
@@ -180,7 +180,7 @@ describe("building the public catalogue", () => {
       expect(funnel.steps, funnel.key).toEqual(SALES_FUNNELS[funnel.key].steps);
       expect(funnel.name, funnel.key).toBe(SALES_FUNNELS[funnel.key].name);
     }
-    expect(funnels.filter((f) => f.entryStep.key === "lead_form_submitted").map((f) => f.key)).toEqual([
+    expect(funnels.filter((f) => f.entryStep.key === "form_submitted").map((f) => f.key)).toEqual([
       "lead_forms_from_ads",
     ]);
     expect(funnels.filter((f) => f.entryStep.key === "meeting_booked").map((f) => f.key)).toEqual([

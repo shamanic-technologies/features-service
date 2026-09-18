@@ -85,9 +85,8 @@ import { SALES_FUNNELS, SALES_FUNNEL_KEYS, type SalesFunnelKey } from "./sales-f
  * brand-service has since decided the opposite way round, and it owns this vocabulary: an ad CLICK is
  * not a rung anybody buys, so the step the channel DELIVERS *is* the funnel's first step.
  * `sales_meetings_from_ads` starts on `Meeting booked` — the same step, with nothing before it — and
- * `lead_forms_from_ads` starts on its own form step, distinct from a form filled on the brand's own
- * site. So the two keys are now `meeting_booked` (the step already in this list) and
- * `lead_form_submitted`.
+ * `lead_forms_from_ads` starts on the ONE form step this catalogue has. So the two keys are now
+ * `meeting_booked` and `form_submitted`, both already in this list.
  *
  * THAT IS WHAT MAKES THE JOIN WORK, and it is the whole point. A consumer answers "which funnels does
  * this producible step lead into" by matching a channel's produced step against a funnel's FIRST step.
@@ -105,8 +104,7 @@ export const CHANNEL_STEP_KEYS = [
   "meeting_booked",
   "meeting_attended",
   "signup",
-  "form_filled",
-  "lead_form_submitted",
+  "form_submitted",
   "paid_client",
 ] as const;
 
@@ -161,26 +159,27 @@ export const CHANNEL_STEPS: Record<ChannelStepKey, ChannelStepDef> = {
     label: "Signup",
     description: "A buyer creates an account on the brand's own product, without paying yet.",
   },
-  form_filled: {
-    key: "form_filled",
-    label: "Form filled",
-    description: "A buyer fills a form on the brand's own site and hands over their details.",
-  },
-  lead_form_submitted: {
-    key: "lead_form_submitted",
-    // "Form submitted", and deliberately NOT "Form filled": this form is hosted by the advertising
-    // platform (Meta Lead Ads, LinkedIn Lead Gen Forms, TikTok lead forms) and the buyer never reaches
-    // the brand's site, so it is a step of its own rather than the same one under a second name. The
-    // DESCRIPTION is what keeps the two apart for a reader, which is why it names the host explicitly.
+  form_submitted: {
+    key: "form_submitted",
+    // ONE form step for the whole system, and the owner's decision (2026-09-18): "Tu vires Form filled
+    // de partout, ca n'a aucun sens, on laisse juste Form Submitted dans notre systeme."
     //
-    // brand-service spells this rung "Lead form submitted"; the owner read that on the onboarding's
-    // first screen — a pre-signup card titled with this label — and asked for the shorter wording. The
-    // KEY is untouched (`lead_form_submitted`), and the funnel's own `steps[0]` moved with the label so
-    // the label→key join below stays a lookup. This funnel has no brand declaration in production and
-    // no leg rate is keyed on its steps (`RATE_FOR_STEP_PAIR` names neither of them), so nothing is
-    // matched against brand-service's wording at run time.
+    // There used to be two — `form_filled` (a form on the brand's OWN site, the middle rung of
+    // `form_magnet`) and `lead_form_submitted` (a form hosted by the ad platform, the first rung of
+    // `lead_forms_from_ads`). They are the same thing a buyer DOES, and a signed-out visitor reading
+    // the onboarding's first screen saw two near-identical cards with no way to tell why they were two.
+    // So the distinction that survives is the FUNNEL, which already says where the form lives: a form
+    // magnet reaches it through a website visit, an ad funnel delivers it with nothing before it.
+    //
+    // ⚠️ brand-service still spells the `form_magnet` rung "Form filled" and the ad rung "Lead form
+    // submitted" in its deployed catalogue, and it OWNS that vocabulary. Nothing here asks it to move:
+    // both spellings stay resolvable on the way IN (`matchChannelStepKey`, `FUNNEL_STEP_LABEL_TO_KEY`,
+    // and the step-label normaliser `funnel-leg-rates.ts` walks a declared funnel's arrows with), so a
+    // rate a brand has already STATED on a "Form filled" arrow still resolves. Only what we PUBLISH
+    // moved.
     label: "Form submitted",
-    description: "A buyer fills a form hosted by the ad platform, without ever reaching the brand's site.",
+    description:
+      "A buyer fills a form and hands over their details — on the brand's own site, or on a form hosted by the ad platform.",
   },
   paid_client: {
     key: "paid_client",
@@ -192,9 +191,20 @@ export const CHANNEL_STEPS: Record<ChannelStepKey, ChannelStepDef> = {
 const isChannelStepKey = (value: string): value is ChannelStepKey =>
   (CHANNEL_STEP_KEYS as readonly string[]).includes(value);
 
+/**
+ * Every pre-merge spelling of the ONE form step, resolved to it. Accepted FOREVER on the way IN — a
+ * stored channel blob, a consumer sending yesterday's word, or brand-service's own wording all keep
+ * working — and never emitted on the way out. Same input tolerance `matchSalesFunnelKey` keeps.
+ */
+const LEGACY_CHANNEL_STEP_KEYS: Record<string, ChannelStepKey> = {
+  form_filled: "form_submitted",
+  lead_form_submitted: "form_submitted",
+};
+
 export function matchChannelStepKey(raw: string): ChannelStepKey | null {
   const normalised = raw.trim().toLowerCase().replace(/[\s-]+/g, "_");
-  return isChannelStepKey(normalised) ? normalised : null;
+  if (isChannelStepKey(normalised)) return normalised;
+  return LEGACY_CHANNEL_STEP_KEYS[normalised] ?? null;
 }
 
 // ── A transition: the leg a channel performs ────────────────────────────────────────────────────────
@@ -238,8 +248,12 @@ export const FUNNEL_STEP_LABEL_TO_KEY: Record<string, ChannelStepKey> = {
   "Meeting booked": "meeting_booked",
   "Meeting attended": "meeting_attended",
   Signup: "signup",
-  "Form filled": "form_filled",
-  "Form submitted": "lead_form_submitted",
+  "Form submitted": "form_submitted",
+  // brand-service's OWN deployed wording for the two rungs this service now serves as one step. It
+  // keeps its catalogue; we keep reading it. A funnel whose wording changes still fails loudly, because
+  // only these exact strings resolve.
+  "Form filled": "form_submitted",
+  "Lead form submitted": "form_submitted",
   "Paid client": "paid_client",
 };
 

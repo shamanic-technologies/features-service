@@ -861,7 +861,7 @@ page was rendering a CONFIGURATION where a reader expects a FACT.
 
 ## A FUNNEL IS PRICED ON THE RATES IT DECLARES — each funnel states its OWN ladder, and the rung in the MIDDLE of one is worth more than the rung below it
 
-A brand selling FORM MAGNET (`Website visit → Form filled → Paid client`) read its funnel Overview and
+A brand selling FORM MAGNET (`Website visit → Form submitted → Paid client`) read its funnel Overview and
 was told it loses money on a funnel that makes money. Prod 2026-09-11, brand `c992c378…` / offer
 `622cb535…` / org `f74660b1…`: brand-service serves that funnel a **$30 lifetime revenue, 25%
 visit→form and 20% form→paid**, both `stated_arrow` — so a website visit is worth **5% × $30 = $1.50**.
@@ -2457,7 +2457,7 @@ Verified in the prod container 2026-09-17 (brand-service v0.79.1) before mirrori
 - **THE FOUR ADDED HAVE ZERO BRAND DECLARATIONS IN PROD**, so nothing that exists today changes shape
   or price. `sales_from_conversation` (reply → paid) and `sales_from_website` (visit → paid) are the two
   SINGLE-STEP funnels; `sales_meetings_from_ads` (meeting booked → attended → paid) and
-  `lead_forms_from_ads` (lead form submitted → paid) are the two whose first step an ad DELIVERS.
+  `lead_forms_from_ads` (form submitted → paid) are the two whose first step an ad DELIVERS.
 - **THE TWO SINGLE-STEP FUNNELS ROUTE ONTO THE TWO SINGLE-STEP GOALS THIS SERVICE ALREADY PRICES** —
   `replyUsd / replyToPaidClientPct` and `clickUsd / visitToPaidClientPct`. They are NOT priced through a
   meeting: on the guard fixture the meeting route reads four times cheaper, through a step these funnels
@@ -2614,57 +2614,42 @@ from what we actually charge and actually measured.
   every step label and description, and pins the key list — a suite that only checked "a label came
   back" would pass on the spelling this replaces. (Set 2026-09-02, relabelled 2026-09-17,
   features-service#996.)
-- **THE AD-HOSTED FORM STEP READS "Form submitted", AND THE DESCRIPTION IS WHAT KEEPS IT APART FROM
-  "Form filled".** Same surface and same reason as the bullet above: the onboarding's first screen
-  titles a pre-signup card with this label, the owner read brand-service's "Lead form submitted" there
-  and asked for the shorter wording. So this is the ONE step whose published label deliberately DIVERGES
-  from brand-service's own rung wording, and the divergence is safe in a way the general mirror rule is
-  not: nothing matches brand-service's step STRINGS at run time for this funnel (`RATE_FOR_STEP_PAIR`
-  names neither of its two steps, and `lead_forms_from_ads` has no brand declaration in production), so
-  no declared rate can be lost to it. **The KEY is untouched** — `lead_form_submitted`, every
-  `start_to_lead_form_submitted` leg, every stored row and every consumer join by key resolve exactly as
-  before. `SALES_FUNNELS.lead_forms_from_ads.steps[0]` and `FUNNEL_MILESTONE_STEP` moved WITH the label,
-  which is what keeps `FUNNEL_STEP_LABEL_TO_KEY` a lookup rather than a translation table. **Do NOT
-  collapse it onto `form_filled`**: that form is filled on the brand's OWN site, this one is hosted by
-  the ad platform and the buyer never reaches the brand at all — two steps, two descriptions, and the
-  description is the only place a reader can tell them apart now that both labels say "Form". Guard: the
-  `names the ad-hosted form step "Form submitted"` case in `acquisition-channels.test.ts`, where every
-  assertion states the DIVERGENCE between the two form steps — a suite that only checked "a label came
-  back" would pass on an implementation that gave them one name. (Set 2026-09-17,
-  features-service#999.)
-- **`/public/channel-funnel-economics`** serves ONE ROW PER PAIR — the grain the marketing site prints.
-  A customer buys a PAIR, and the same funnel costs a very different amount through a phone channel than
-  through paid search, so a brand-level or channel-level aggregate cannot answer it. `?channelSlug=`
-  narrows; an unknown slug is a 404, never an empty pair list (which would read as "sells through
-  nothing").
-- **NOT ENOUGH DATA IS AN ANSWER AND IT NAMES THE MISSING INGREDIENT** — `measured: false` with
-  `no_spend_recorded` / `no_entry_step_produced` / `no_economics_declared`, checked in that order so a
-  fresh channel says the plain thing. The same rule runs one level down: a STEP whose rate nobody
-  declared reads `costPerStepUsd: null` with its own `unpricedReason`, never 0. **"Meeting attended" is
-  permanently unpriced** — brand-service folds the show-up rate into booked→paid
-  (`meetingFunnelCloseRate`), so pricing it would assert a 100% show-up rate, the exact bug that
-  composition exists to prevent.
-- **A FUNNEL IS PRICED THROUGH ITS OWN CHANNEL**, via the same `projectOutcomeCosts` + channel mask every
-  other cost surface uses, and `returnPerDollar` is the IDENTICAL definition `/funnel-ranking` ranks a
-  brand's declared funnels on. So a public per-pair figure and a customer's own dashboard can never
-  print two prices for one funnel. Evidence is the SAME cross-org per-brand dataset
-  (`getFunnelBucketDatasetCached`) the other public cost surfaces read, so a channel nobody has run yet
-  reaches "not enough data" by the data being absent, never by a special case.
-- Both ride `LIFETIME_AGGREGATE_WINDOWS` through `servedPublicCached` (15 min fresh / 6 h stale,
-  single-flighted), like every other cross-org surface. A malformed stored channel blob FAILS the whole
-  read (`MalformedAcquisitionChannelError`) rather than half-publishing: a price list that silently
-  degrades would publish terms nobody set.
-- **The api-service gateway does NOT proxy these yet** — `/public/*` needs an EXPLICIT per-route proxy
-  there (no wildcard), so a consumer outside the cluster needs that follow-up before it can read them.
-- Vocabulary, owner-fixed: the terminal thing a customer buys is a **SALE**, each stage of a funnel is a
-  **STEP**, the step a funnel is named after is its **MILESTONE**. "Outcome" is deprecated (it named a
-  retired per-brand optimization goal) and nothing new here uses it.
-- Guards: `src/lib/acquisition-channels.test.ts` (the join, and the entry-step mirror pinned against the
-  funnel's own first step), `src/seed/acquisition-channel-catalogue.test.ts` (every named channel present,
-  slugs unmoved, no availability flag, terms whole and self-consistent, `salesFunnels` derived, the
-  cold-email family unwidened), `src/lib/channel-catalogue.test.ts` (fail-loud parsing) and
-  `src/lib/channel-funnel-economics.test.ts` (the three unmeasured reasons, per-funnel pricing, the
-  permanently-unpriced attended step, no false $0). (Set 2026-08-19.)
+- **THERE IS ONE FORM STEP, IT READS "Form submitted", AND BOTH RETIRED SPELLINGS STAY RESOLVABLE ON
+  THE WAY IN (supersedes the two-step split of #999 and of the ad-step bullet above).** Until
+  2026-09-18 this catalogue published TWO: `form_filled` ("Form filled", a form on the brand's OWN
+  site, the middle rung of `form_magnet`) and `lead_form_submitted` ("Form submitted", a form hosted
+  by the ad platform, the first rung of `lead_forms_from_ads`). The DESCRIPTION was the only thing
+  telling them apart, and the surface that renders them is the onboarding's first screen — a
+  pre-signup card per producible step — so a signed-out visitor read two near-identical outcomes with
+  no way to see why they were two. Owner, verbatim: *"Tu vires Form filled de partout, ca n'a aucun
+  sens, on laisse juste Form Submitted dans notre systeme."* The surviving key is **`form_submitted`**
+  — a rename of both, not a preference for one — and its description covers BOTH homes in one
+  sentence, because ONE step has to.
+  **THE DISTINCTION THAT SURVIVES IS THE FUNNEL, and it is the honest one:** `form_magnet` reaches the
+  form THROUGH a website visit, `lead_forms_from_ads` is DELIVERED it with nothing before it. Where
+  the form is hosted is a fact about how the lead ARRIVED, not about the leg somebody performs — which
+  is why `{from: "form_submitted", to: "paid_client"}` now sells BOTH form funnels (the two
+  `*-signup-conversion` channels gained `lead_forms_from_ads`), and that is the merge behaving as
+  intended rather than a false pairing.
+  ⚠️ **brand-service still spells the two rungs "Form filled" and "Lead form submitted" in its
+  DEPLOYED catalogue, and it OWNS that vocabulary — nothing here asks it to move.** So three read
+  paths stay tolerant, FOREVER, and none of them ever EMITS a retired spelling: `matchChannelStepKey`
+  (a stored channel blob, a consumer sending yesterday's key), `FUNNEL_STEP_LABEL_TO_KEY` (both
+  producer labels resolve to the one key), and — the load-bearing one — `normaliseStep` in
+  `funnel-leg-rates.ts`, which folds "form filled" onto "form submitted" so **a rate a customer has
+  already STATED on a "Form filled" arrow still prices**. Without that fold the funnel would silently
+  fall back to its named rate, which is the one failure this merge must not cause.
+  `matchFunnelLegKey` carries the same tolerance one grain up — `website_visit_to_form_filled`,
+  `form_filled_to_paid_client`, `start_to_lead_form_submitted` and
+  `lead_form_submitted_to_paid_client` all resolve to the two canonical legs, because the fleet keys
+  budgets and campaigns on a leg key and those rows do not stop existing because the vocabulary
+  merged. **Do NOT "simplify" by deleting either tolerance, and do NOT publish `form_filled` as a
+  hidden alias** — resolvable is not published, and that is the whole shape. The internal ladder tag
+  moved with it (`formFilled` → `formSubmitted`); the SIGNAL name `formSubmission` is a different
+  vocabulary (what email/tracker evidence counts) and is untouched. Guards: the merge suite and the
+  retired-spelling suite in `acquisition-channels.test.ts` (every case asserts the MERGE, so a suite
+  that only checked "a label came back" would pass on the two-step implementation this replaces) plus
+  the form-leg block in `funnel-legs.test.ts`. (Set 2026-09-18, features-service#1002.)
 
 ## A MINIMUM COMMITMENT IS A RUN LENGTH, NOT A LOCK-IN — and the pair publishes ONE composed figure, never two halves a browser has to `max()`
 
@@ -5217,7 +5202,7 @@ contract through the platform-global open/click/reply rates.
 - **A conversion leg prices a brand only when one of the funnels being priced contains it** —
   `FUNNEL_LEG_SIGNALS` + `restrictPathsToDeclaredLegs` (`funnel-registry.ts`), read straight off
   `SALES_FUNNELS[key].steps`: Positive reply→`positiveReply`, Website visit→`clicked`, Meeting
-  booked→`meeting`, Signup→`signup`, Form filled→`formSubmission`, Paid client→`closeWin`. So a website
+  booked→`meeting`, Signup→`signup`, Form submitted→`formSubmission`, Paid client→`closeWin`. So a website
   visit prices a brand that declared a website-led funnel and prices NOTHING for one that declared only
   the conversation funnel. "Meeting attended" needs no entry (it is folded into the booked→paid rate by
   `meetingFunnelCloseRate`); `signup`/`formSubmission` are listed because they ARE legs, and no path

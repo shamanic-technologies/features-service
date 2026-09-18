@@ -71,7 +71,7 @@ describe("funnel legs", () => {
     ]);
     // And a leg only one funnel has stays that way — both of them the entry leg of an AD funnel, whose
     // first step the advertising platform DELIVERS.
-    expect(funnelsContainingLeg("start_to_lead_form_submitted")).toEqual(["lead_forms_from_ads"]);
+    expect(funnelsContainingLeg("start_to_form_submitted")).toEqual(["lead_forms_from_ads"]);
     expect(funnelsContainingLeg("start_to_meeting_booked")).toEqual(["sales_meetings_from_ads"]);
   });
 
@@ -109,5 +109,33 @@ describe("funnel legs", () => {
     // Well-formed and still unknown: nothing is inferred from the shape of the string.
     expect(matchFunnelLegKey("signup_to_meeting_attended")).toBeNull();
     expect(matchFunnelLegKey("whatever")).toBeNull();
+  });
+});
+
+describe("the form legs after the two form steps merged", () => {
+  it("publishes ONE form leg per funnel, named for the single step", () => {
+    expect(FUNNEL_LEG_KEYS).toContain("website_visit_to_form_submitted");
+    expect(FUNNEL_LEG_KEYS).toContain("form_submitted_to_paid_client");
+    expect(FUNNEL_LEG_KEYS).toContain("start_to_form_submitted");
+    for (const key of FUNNEL_LEG_KEYS) {
+      expect(key).not.toContain("form_filled");
+      expect(key).not.toContain("lead_form_submitted");
+    }
+    // The leg a form funnel closes through belongs to BOTH form funnels now — one step, so one leg.
+    expect(funnelsContainingLeg("form_submitted_to_paid_client")).toEqual(["form_magnet", "lead_forms_from_ads"]);
+  });
+
+  it("still RESOLVES every retired leg spelling, so a stored campaign or budget keeps working", () => {
+    // Each case asserts the retired spelling lands on the CANONICAL leg, never on itself: the fleet
+    // keys budgets and campaigns on a leg key, and those rows do not stop existing because the step
+    // vocabulary merged. Accepted on the way IN forever, emitted never.
+    expect(matchFunnelLegKey("website_visit_to_form_filled")).toBe("website_visit_to_form_submitted");
+    expect(matchFunnelLegKey("form_filled_to_paid_client")).toBe("form_submitted_to_paid_client");
+    expect(matchFunnelLegKey("start_to_lead_form_submitted")).toBe("start_to_form_submitted");
+    expect(matchFunnelLegKey("lead_form_submitted_to_paid_client")).toBe("form_submitted_to_paid_client");
+    // Case and separator variance rides the same path a canonical key gets.
+    expect(matchFunnelLegKey("Website Visit To Form Filled")).toBe("website_visit_to_form_submitted");
+    // A well-formed word naming no leg is still unknown — this is a LOOKUP, not a parse.
+    expect(matchFunnelLegKey("form_filled_to_signup")).toBeNull();
   });
 });

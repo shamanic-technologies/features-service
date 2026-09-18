@@ -2276,10 +2276,8 @@
                       "meeting_booked",
                       "meeting_attended",
                       "signup",
-                      "form_filled",
-                      "paid_client",
-                      "in_ad_form_submission",
-                      "in_ad_booked_meeting"
+                      "form_submitted",
+                      "paid_client"
                     ]
                   },
                   "label": {
@@ -2370,10 +2368,8 @@
                       "meeting_booked",
                       "meeting_attended",
                       "signup",
-                      "form_filled",
-                      "paid_client",
-                      "in_ad_form_submission",
-                      "in_ad_booked_meeting"
+                      "form_submitted",
+                      "paid_client"
                     ]
                   },
                   "label": {
@@ -2520,10 +2516,8 @@
                       "meeting_booked",
                       "meeting_attended",
                       "signup",
-                      "form_filled",
-                      "paid_client",
-                      "in_ad_form_submission",
-                      "in_ad_booked_meeting"
+                      "form_submitted",
+                      "paid_client"
                     ]
                   },
                   "label": {
@@ -2649,10 +2643,8 @@
                             "meeting_booked",
                             "meeting_attended",
                             "signup",
-                            "form_filled",
-                            "paid_client",
-                            "in_ad_form_submission",
-                            "in_ad_booked_meeting"
+                            "form_submitted",
+                            "paid_client"
                           ]
                         },
                         "label": {
@@ -7842,10 +7834,8 @@
                       "meeting_booked",
                       "meeting_attended",
                       "signup",
-                      "form_filled",
-                      "paid_client",
-                      "in_ad_form_submission",
-                      "in_ad_booked_meeting"
+                      "form_submitted",
+                      "paid_client"
                     ]
                   },
                   "label": {
@@ -7936,10 +7926,8 @@
                       "meeting_booked",
                       "meeting_attended",
                       "signup",
-                      "form_filled",
-                      "paid_client",
-                      "in_ad_form_submission",
-                      "in_ad_booked_meeting"
+                      "form_submitted",
+                      "paid_client"
                     ]
                   },
                   "label": {
@@ -8086,10 +8074,8 @@
                       "meeting_booked",
                       "meeting_attended",
                       "signup",
-                      "form_filled",
-                      "paid_client",
-                      "in_ad_form_submission",
-                      "in_ad_booked_meeting"
+                      "form_submitted",
+                      "paid_client"
                     ]
                   },
                   "label": {
@@ -8215,10 +8201,8 @@
                             "meeting_booked",
                             "meeting_attended",
                             "signup",
-                            "form_filled",
-                            "paid_client",
-                            "in_ad_form_submission",
-                            "in_ad_booked_meeting"
+                            "form_submitted",
+                            "paid_client"
                           ]
                         },
                         "label": {
@@ -11039,10 +11023,8 @@
                       "meeting_booked",
                       "meeting_attended",
                       "signup",
-                      "form_filled",
-                      "paid_client",
-                      "in_ad_form_submission",
-                      "in_ad_booked_meeting"
+                      "form_submitted",
+                      "paid_client"
                     ]
                   },
                   "label": {
@@ -11133,10 +11115,8 @@
                       "meeting_booked",
                       "meeting_attended",
                       "signup",
-                      "form_filled",
-                      "paid_client",
-                      "in_ad_form_submission",
-                      "in_ad_booked_meeting"
+                      "form_submitted",
+                      "paid_client"
                     ]
                   },
                   "label": {
@@ -11283,10 +11263,8 @@
                       "meeting_booked",
                       "meeting_attended",
                       "signup",
-                      "form_filled",
-                      "paid_client",
-                      "in_ad_form_submission",
-                      "in_ad_booked_meeting"
+                      "form_submitted",
+                      "paid_client"
                     ]
                   },
                   "label": {
@@ -11412,10 +11390,8 @@
                             "meeting_booked",
                             "meeting_attended",
                             "signup",
-                            "form_filled",
-                            "paid_client",
-                            "in_ad_form_submission",
-                            "in_ad_booked_meeting"
+                            "form_submitted",
+                            "paid_client"
                           ]
                         },
                         "label": {
@@ -14026,10 +14002,8 @@
                       "meeting_booked",
                       "meeting_attended",
                       "signup",
-                      "form_filled",
-                      "paid_client",
-                      "in_ad_form_submission",
-                      "in_ad_booked_meeting"
+                      "form_submitted",
+                      "paid_client"
                     ]
                   },
                   "label": {
@@ -14120,10 +14094,8 @@
                       "meeting_booked",
                       "meeting_attended",
                       "signup",
-                      "form_filled",
-                      "paid_client",
-                      "in_ad_form_submission",
-                      "in_ad_booked_meeting"
+                      "form_submitted",
+                      "paid_client"
                     ]
                   },
                   "label": {
@@ -14270,10 +14242,8 @@
                       "meeting_booked",
                       "meeting_attended",
                       "signup",
-                      "form_filled",
-                      "paid_client",
-                      "in_ad_form_submission",
-                      "in_ad_booked_meeting"
+                      "form_submitted",
+                      "paid_client"
                     ]
                   },
                   "label": {
@@ -14399,10 +14369,8 @@
                             "meeting_booked",
                             "meeting_attended",
                             "signup",
-                            "form_filled",
-                            "paid_client",
-                            "in_ad_form_submission",
-                            "in_ad_booked_meeting"
+                            "form_submitted",
+                            "paid_client"
                           ]
                         },
                         "label": {
@@ -17664,10 +17632,8 @@
                   "meeting_booked",
                   "meeting_attended",
                   "signup",
-                  "form_filled",
-                  "paid_client",
-                  "in_ad_form_submission",
-                  "in_ad_booked_meeting"
+                  "form_submitted",
+                  "paid_client"
                 ]
               },
               "label": {
@@ -17695,10 +17661,8 @@
                   "meeting_booked",
                   "meeting_attended",
                   "signup",
-                  "form_filled",
-                  "paid_client",
-                  "in_ad_form_submission",
-                  "in_ad_booked_meeting"
+                  "form_submitted",
+                  "paid_client"
                 ]
               },
               "label": {
@@ -17819,10 +17783,8 @@
                         "meeting_booked",
                         "meeting_attended",
                         "signup",
-                        "form_filled",
-                        "paid_client",
-                        "in_ad_form_submission",
-                        "in_ad_booked_meeting"
+                        "form_submitted",
+                        "paid_client"
                       ]
                     },
                     "label": {
@@ -17850,10 +17812,8 @@
                         "meeting_booked",
                         "meeting_attended",
                         "signup",
-                        "form_filled",
-                        "paid_client",
-                        "in_ad_form_submission",
-                        "in_ad_booked_meeting"
+                        "form_submitted",
+                        "paid_client"
                       ]
                     },
                     "label": {
@@ -17892,10 +17852,8 @@
                     "meeting_booked",
                     "meeting_attended",
                     "signup",
-                    "form_filled",
-                    "paid_client",
-                    "in_ad_form_submission",
-                    "in_ad_booked_meeting"
+                    "form_submitted",
+                    "paid_client"
                   ]
                 },
                 "label": {
@@ -18024,10 +17982,8 @@
                         "meeting_booked",
                         "meeting_attended",
                         "signup",
-                        "form_filled",
-                        "paid_client",
-                        "in_ad_form_submission",
-                        "in_ad_booked_meeting"
+                        "form_submitted",
+                        "paid_client"
                       ]
                     },
                     "label": {
@@ -18079,10 +18035,8 @@
                     "meeting_booked",
                     "meeting_attended",
                     "signup",
-                    "form_filled",
-                    "paid_client",
-                    "in_ad_form_submission",
-                    "in_ad_booked_meeting"
+                    "form_submitted",
+                    "paid_client"
                   ]
                 },
                 "label": {
@@ -19926,10 +19880,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "ONE LEG of a sales funnel — the leg a budget is being put behind — named with its single canonical identifier (`start_to_conversation`, `conversation_to_meeting_booked`, `meeting_booked_to_meeting_attended`, `meeting_attended_to_paid_client`, `start_to_website_visit`, `website_visit_to_meeting_booked`, `website_visit_to_signup`, `signup_to_paid_client`, `website_visit_to_form_filled`, `form_filled_to_paid_client`; case and separators tolerated). NO sales funnel is named alongside it, which is the point: one leg belongs to several funnels, so a campaign can no longer be identified by one. THE FUNNEL IS CHOSEN HERE — the brand's BEST-RETURNING declared funnel that contains the leg, on the IDENTICAL returnPerDollar basis /funnel-ranking ranks funnels on, so a leg yields ONE answer whichever funnel the caller had in mind and the two surfaces can never name different funnels. NOT the cheapest: a dollar buys a paying client through whichever route converts best, so the cheap leg of a funnel worth little loses to the dear leg of one worth a lot. The pick and what it rests on are stated back on `leg`. Sending BOTH `leg` and `funnel` is a 400 (reason='leg_and_funnel'); an unrecognised leg is a 400 (reason='leg_unrecognised'); a leg no declared funnel of this brand contains is a 404 (reason='leg_not_declared')."
+              "description": "ONE LEG of a sales funnel — the leg a budget is being put behind — named with its single canonical identifier (`start_to_conversation`, `conversation_to_meeting_booked`, `meeting_booked_to_meeting_attended`, `meeting_attended_to_paid_client`, `start_to_website_visit`, `website_visit_to_meeting_booked`, `website_visit_to_signup`, `signup_to_paid_client`, `website_visit_to_form_submitted`, `form_submitted_to_paid_client`; case and separators tolerated). NO sales funnel is named alongside it, which is the point: one leg belongs to several funnels, so a campaign can no longer be identified by one. THE FUNNEL IS CHOSEN HERE — the brand's BEST-RETURNING declared funnel that contains the leg, on the IDENTICAL returnPerDollar basis /funnel-ranking ranks funnels on, so a leg yields ONE answer whichever funnel the caller had in mind and the two surfaces can never name different funnels. NOT the cheapest: a dollar buys a paying client through whichever route converts best, so the cheap leg of a funnel worth little loses to the dear leg of one worth a lot. The pick and what it rests on are stated back on `leg`. Sending BOTH `leg` and `funnel` is a 400 (reason='leg_and_funnel'); an unrecognised leg is a 400 (reason='leg_unrecognised'); a leg no declared funnel of this brand contains is a 404 (reason='leg_not_declared')."
             },
             "required": false,
-            "description": "ONE LEG of a sales funnel — the leg a budget is being put behind — named with its single canonical identifier (`start_to_conversation`, `conversation_to_meeting_booked`, `meeting_booked_to_meeting_attended`, `meeting_attended_to_paid_client`, `start_to_website_visit`, `website_visit_to_meeting_booked`, `website_visit_to_signup`, `signup_to_paid_client`, `website_visit_to_form_filled`, `form_filled_to_paid_client`; case and separators tolerated). NO sales funnel is named alongside it, which is the point: one leg belongs to several funnels, so a campaign can no longer be identified by one. THE FUNNEL IS CHOSEN HERE — the brand's BEST-RETURNING declared funnel that contains the leg, on the IDENTICAL returnPerDollar basis /funnel-ranking ranks funnels on, so a leg yields ONE answer whichever funnel the caller had in mind and the two surfaces can never name different funnels. NOT the cheapest: a dollar buys a paying client through whichever route converts best, so the cheap leg of a funnel worth little loses to the dear leg of one worth a lot. The pick and what it rests on are stated back on `leg`. Sending BOTH `leg` and `funnel` is a 400 (reason='leg_and_funnel'); an unrecognised leg is a 400 (reason='leg_unrecognised'); a leg no declared funnel of this brand contains is a 404 (reason='leg_not_declared').",
+            "description": "ONE LEG of a sales funnel — the leg a budget is being put behind — named with its single canonical identifier (`start_to_conversation`, `conversation_to_meeting_booked`, `meeting_booked_to_meeting_attended`, `meeting_attended_to_paid_client`, `start_to_website_visit`, `website_visit_to_meeting_booked`, `website_visit_to_signup`, `signup_to_paid_client`, `website_visit_to_form_submitted`, `form_submitted_to_paid_client`; case and separators tolerated). NO sales funnel is named alongside it, which is the point: one leg belongs to several funnels, so a campaign can no longer be identified by one. THE FUNNEL IS CHOSEN HERE — the brand's BEST-RETURNING declared funnel that contains the leg, on the IDENTICAL returnPerDollar basis /funnel-ranking ranks funnels on, so a leg yields ONE answer whichever funnel the caller had in mind and the two surfaces can never name different funnels. NOT the cheapest: a dollar buys a paying client through whichever route converts best, so the cheap leg of a funnel worth little loses to the dear leg of one worth a lot. The pick and what it rests on are stated back on `leg`. Sending BOTH `leg` and `funnel` is a 400 (reason='leg_and_funnel'); an unrecognised leg is a 400 (reason='leg_unrecognised'); a leg no declared funnel of this brand contains is a 404 (reason='leg_not_declared').",
             "name": "leg",
             "in": "query"
           },
