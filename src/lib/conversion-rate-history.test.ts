@@ -20,7 +20,7 @@ import type { ScopeOutcomeTerms } from "./cost-per-outcome-history.js";
 import type { SignalSeries } from "./revenue-engine.js";
 
 const VISIT_STEP = { key: "website_visit", label: "Website visit", description: "A buyer lands on the brand's own website." } as const;
-const FORM_STEP = { key: "form_filled", label: "Form filled", description: "A buyer fills the brand's form." } as const;
+const FORM_STEP = { key: "form_submitted", label: "Form submitted", description: "A buyer fills the brand's form." } as const;
 
 /** The reported campaign's entry leg: the click IS the outcome, so the rate is 1 and the count raw. */
 const ENTRY: ScopeOutcomeTerms = {
@@ -33,7 +33,7 @@ const ENTRY: ScopeOutcomeTerms = {
 
 /** The SAME driver signal one rung deeper: 20% of visits fill the form, so the rate is a fifth. */
 const DEEPER: ScopeOutcomeTerms = {
-  legKey: "website_visit_to_form_filled",
+  legKey: "website_visit_to_form_submitted",
   outcomeStep: FORM_STEP,
   driver: "click",
   rateFromDriver: 0.2,

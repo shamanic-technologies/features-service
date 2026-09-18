@@ -86,7 +86,7 @@ const WEBSITE_FUNNEL = {
 const FORM_FUNNEL = {
   funnelKey: "form_magnet",
   name: "Form Magnet",
-  steps: ["Website visit", "Form filled", "Paid client"],
+  steps: ["Website visit", "Form submitted", "Paid client"],
   rates: { visitToFormSubmissionPct: 10, formSubmissionToPaidClientPct: 10 },
   lifetimeRevenueUsd: 500,
   destinationUrl: null,

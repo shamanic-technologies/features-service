@@ -165,8 +165,8 @@ describe("only the arrows THIS funnel has are asked for", () => {
   it("a form funnel answers for its own two arrows", () => {
     expect(
       statedLegRates("form_magnet", [
-        leg("Website visit", "Form filled", 8, "stated_arrow"),
-        leg("Form filled", "Paid client", 5, "stated_arrow"),
+        leg("Website visit", "Form submitted", 8, "stated_arrow"),
+        leg("Form submitted", "Paid client", 5, "stated_arrow"),
       ]),
     ).toEqual({ visitToFormSubmissionPct: 8, formSubmissionToPaidClientPct: 5 });
   });

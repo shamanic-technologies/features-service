@@ -54,7 +54,7 @@ const app = (await import("../index.js")).default;
 const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
 const SALES = "sales-cold-email-outreach";
 const VISIT_LEG = "start_to_website_visit";
-const FORM_LEG = "website_visit_to_form_filled";
+const FORM_LEG = "website_visit_to_form_submitted";
 const FUNNEL = "form_magnet";
 
 function feature(slug: string): Record<string, unknown> {
@@ -461,7 +461,7 @@ describe("what share of this campaign's outreach converts, day by day", () => {
     mockFetch({ legKey: FORM_LEG });
     const deeper = (await body()).conversionRateHistory;
 
-    expect(deeper.outcomeStep.key).toBe("form_filled");
+    expect(deeper.outcomeStep.key).toBe("form_submitted");
     expect(deeper.outcomeObserved).toBe(false);
     expect(deeper.datedOutcomes).toBeCloseTo(CLICK_TOTAL * 0.2, 9);
     // THE DIVERGENCE: same people, same clicks, a fifth the rate. An implementation charting the

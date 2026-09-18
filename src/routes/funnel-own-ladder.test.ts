@@ -96,9 +96,9 @@ const declaredFunnel = (over: Record<string, unknown> = {}): Record<string, unkn
   funnelKey: "form_magnet",
   active: true,
   name: "Form Magnet",
-  steps: ["Website visit", "Form filled", "Paid client"],
+  steps: ["Website visit", "Form submitted", "Paid client"],
   rates: {},
-  arrows: [arrow("Website visit", "Form filled", 25), arrow("Form filled", "Paid client", 20)],
+  arrows: [arrow("Website visit", "Form submitted", 25), arrow("Form submitted", "Paid client", 20)],
   lifetimeRevenueUsd: 30,
   destinationUrl: null,
   bookingUrl: null,
@@ -251,7 +251,7 @@ describe("a funnel is priced on the rates IT declares, not on a route it does no
     // The form is an OBSERVED POSITION: it EXTINGUISHES the click that was forecasting it, rather than
     // combining with it. 6.00, never orP(1.50, 6.00).
     expect(byId.lf.expectedRevenueUsd).toBeLessThan(FORM_VISIT_USD + FORM_FILLED_USD);
-    expect(byId.lf.tags).toContain("formFilled");
+    expect(byId.lf.tags).toContain("formSubmitted");
   });
 
   it("a rate the brand never declared stays ABSENT — the rung prices at nothing, never at 0%-as-a-number and never a substitute", async () => {
@@ -273,7 +273,7 @@ describe("a funnel is priced on the rates IT declares, not on a route it does no
       economics: ECONOMICS,
       leads: visitors(1),
       salesFunnels: [
-        declaredFunnel({ arrows: [arrow("Website visit", "Form filled", 25), arrow("Form filled", "Paid client", null)] }),
+        declaredFunnel({ arrows: [arrow("Website visit", "Form submitted", 25), arrow("Form submitted", "Paid client", null)] }),
       ],
     });
     const res = await read();
