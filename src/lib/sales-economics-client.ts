@@ -2,6 +2,15 @@ import { createHash } from "node:crypto";
 import type { SalesEconomics } from "./funnel-registry.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 
+/**
+ * The org does not hold this brand: brand-service answered 403 (the brand belongs to another
+ * org) OR 404 (the brand no longer exists at all). Both mean a feature membership this
+ * service holds is STALE, and every fleet-wide fan-out skips the brand rather than failing
+ * the whole read on it. A deleted brand's membership row outlives the brand, so a 404 here
+ * is the ordinary case after a teardown, not an outage: measured 2026-09-18, one deleted
+ * brand's `Brand not found` inside a `Promise.all` took `workflow-cost-per-outcome` down
+ * for every caller (the public read, the admin Workflow page, the homepage's price).
+ */
 export class BrandOwnershipError extends Error {
   constructor(
     readonly brandId: string,
@@ -50,7 +59,7 @@ export async function fetchSalesEconomics(
 
   if (!response.ok) {
     const text = await response.text();
-    if (response.status === 403) {
+    if (response.status === 403 || response.status === 404) {
       throw new BrandOwnershipError(brandId, headers.orgId, `brand-service sales-economics failed (${response.status}): ${text}`);
     }
     throw new Error(`brand-service sales-economics failed (${response.status}): ${text}`);
@@ -168,7 +177,7 @@ export async function fetchEffectiveEconomics(
 
   if (!response.ok) {
     const text = await response.text();
-    if (response.status === 403) {
+    if (response.status === 403 || response.status === 404) {
       throw new BrandOwnershipError(brandId, headers.orgId, `brand-service sales-economics-effective failed (${response.status}): ${text}`);
     }
     throw new Error(`brand-service sales-economics-effective failed (${response.status}): ${text}`);
