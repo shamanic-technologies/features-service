@@ -35,6 +35,7 @@ describe("the steps a channel can move a lead between", () => {
       "meeting_attended",
       "signup",
       "form_submitted",
+      "purchase",
       "paid_client",
     ]);
     for (const key of CHANNEL_STEP_KEYS) {
@@ -320,6 +321,40 @@ describe("what a VISITOR reads on a step", () => {
     }
   });
 
+  it("carries the PURCHASE step, and it is its own rung rather than the sale wearing a second name", () => {
+    // The fourth outcome a visitor can buy, beside a booked meeting, a signup and a submitted form.
+    // Every case asserts the DIVERGENCE from `paid_client`, so a suite that only checked "a step came
+    // back" would pass on an implementation that aliased the two.
+    expect(matchChannelStepKey("purchase")).toBe("purchase");
+    expect(matchChannelStepKey("Purchase")).toBe("purchase");
+    expect(CHANNEL_STEPS.purchase.label).toBe("Purchase");
+    expect(CHANNEL_STEPS.purchase.label).not.toBe(CHANNEL_STEPS.paid_client.label);
+    expect(CHANNEL_STEPS.purchase.description).not.toBe(CHANNEL_STEPS.paid_client.description);
+    // brand-service's own wording for the rung resolves onto it, which is what lets a funnel be read
+    // as a list of legs at all — a label that did not resolve would throw rather than lose a leg.
+    expect(FUNNEL_STEP_LABEL_TO_KEY["Purchase"]).toBe("purchase");
+    // It is a step of exactly ONE deployed funnel today; no other funnel gained a rung.
+    const carrying = SALES_FUNNEL_KEYS.filter((key) => funnelStepKeys(key).includes("purchase"));
+    expect(carrying).toEqual(["sales_from_website"]);
+  });
+
+  it("reads the website-purchase funnel as visit -> purchase -> paid client", () => {
+    expect(funnelStepKeys("sales_from_website")).toEqual(["website_visit", "purchase", "paid_client"]);
+    expect(funnelLegs("sales_from_website")).toEqual([
+      { from: null, to: "website_visit" },
+      { from: "website_visit", to: "purchase" },
+      { from: "purchase", to: "paid_client" },
+    ]);
+    // It is still ENTERED on a website visit, so every channel that produces one still sells it —
+    // the rung was inserted, not prefixed.
+    expect(SALES_FUNNEL_ENTRY_STEP.sales_from_website).toBe("website_visit");
+    expect(sellableFunnelsFor(producesFromNothing("website_visit"))).toContain("sales_from_website");
+    // ...and the OTHER seven funnels are byte-unchanged in shape.
+    expect(funnelStepKeys("website_purchases")).toEqual(["website_visit", "signup", "paid_client"]);
+    expect(funnelStepKeys("form_magnet")).toEqual(["website_visit", "form_submitted", "paid_client"]);
+    expect(funnelStepKeys("sales_from_conversation")).toEqual(["conversation", "paid_client"]);
+  });
+
   it("keeps every step KEY exactly where it was, so no consumer join by key breaks", () => {
     // Only what a person reads moved. The keys are referenced by stored rows, by every leg identifier
     // and by every consumer that already joined on them.
@@ -330,6 +365,7 @@ describe("what a VISITOR reads on a step", () => {
       "meeting_attended",
       "signup",
       "form_submitted",
+      "purchase",
       "paid_client",
     ]);
     expect(matchChannelStepKey("conversation")).toBe("conversation");

@@ -51,7 +51,7 @@ describe("the funnel key is the whole vocabulary", () => {
     expect(SALES_FUNNELS.sales_from_conversation.steps).toEqual(["Positive reply", "Paid client"]);
     expect(SALES_FUNNELS.sales_meetings_from_ads.steps).toEqual(["Meeting booked", "Meeting attended", "Paid client"]);
     expect(SALES_FUNNELS.lead_forms_from_ads.steps).toEqual(["Form submitted", "Paid client"]);
-    expect(SALES_FUNNELS.sales_from_website.steps).toEqual(["Website visit", "Paid client"]);
+    expect(SALES_FUNNELS.sales_from_website.steps).toEqual(["Website visit", "Purchase", "Paid client"]);
 
     // The four originals are UNCHANGED in chain — only two names moved.
     expect(SALES_FUNNELS.sales_meetings_from_conversation.steps).toEqual(["Positive reply", "Meeting booked", "Meeting attended", "Paid client"]);
