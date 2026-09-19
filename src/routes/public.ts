@@ -46,6 +46,7 @@ import { fetchFleetEmailsSentByDay, fetchFleetSendingForecast } from "../lib/sen
 import { aggregateFleetNewSequences } from "../lib/send-forecast-aggregate.js";
 import {
   buildSendForecast,
+  observedDailyThroughput,
   coldEmailOutreachSlugs,
   utcDateRange,
   addUtcDays,
@@ -2424,6 +2425,9 @@ export async function handleSendForecast(daysParam: string | undefined, res: imp
       dates,
       todayIso,
       dailyCapacity: sending.dailyCapacity,
+      // What the fleet ACTUALLY sends on a sending day, measured from series 1 — the capacity above
+      // is only the ceiling it is bounded by. See send-forecast-compute.ts.
+      observedThroughput: observedDailyThroughput(actualByDay, todayIso),
       totalNewPerDay: fleet.totalNewPerDay,
       todayNewOverride: fleet.todayNewOverride,
       actualByDay,
