@@ -2105,6 +2105,8 @@ registry.registerPath({
 const sendForecastDaySchema = z.object({
   date: z.string().describe("UTC calendar day (YYYY-MM-DD)."),
   isToday: z.boolean(),
+  createdActual: z.number().nullable().describe("Sequences the fleet CREATED that day (one per lead launched) - the budget's own output, on its own calendar. Past days and today-so-far; null on future days. NOT an email count."),
+  createdProjected: z.number().nullable().describe("Sequences the budget will create that day, EVERY day including weekends. Today is scaled to the remaining budget. null on past days."),
   actualSent: z.number().nullable().describe("Past real emails sent that day (email-grain, follow-ups included). null on future days."),
   inFlightSent: z.number().nullable().describe("Follow-ups for sequences launched before today that GO OUT that day (drained from the provisioned queue under the fleet's daily capacity). null on past days; a measured 0 on a day the fleet sends nothing."),
   forecastNew: z.number().nullable().describe("Emails from NEW (today-onward) budget-driven sequences that GO OUT that day, D0/D3/D10 model, drained under the remaining capacity. null on past days; a measured 0 on a day the fleet sends nothing."),
@@ -2118,7 +2120,10 @@ const sendForecastResponseSchema = z.object({
     remainingTodayUsd: z.number().describe("Sum of remaining budget today over active brands (USD)."),
     followupModel: z.string().describe("The send cadence model, e.g. 'D0/D3/D10'."),
     activeBrandCount: z.number(),
-    totalNewSequencesPerDay: z.number().describe("Fleet new sequences/day at full budget (sum over active brands of budget divided by the feature's POOLED realized cost per outreach). Launched only on sending days."),
+    totalNewSequencesPerDay: z.number().describe("Fleet new sequences/day at full budget (sum over active brands of budget divided by the feature's POOLED realized cost per outreach). Launched every day, weekends included."),
+    observedDailyThroughput: z.number().nullable().describe("The fleet's measured send rate on a sending day - the median of its recent ones. null when nothing has been measured."),
+    queuedEmails: z.number().describe("Emails already provisioned and waiting to go out: the gap creation has opened over sending."),
+    queuedSendingDays: z.number().nullable().describe("Sending days that queue takes to clear at the measured rate. null when the rate is unmeasured."),
   }),
 });
 
@@ -2129,7 +2134,7 @@ registry.registerPath({
   path: "/internal/stats/send-forecast",
   summary: "Global fleet email send forecast per day (internal, api-key; staff-gated at api-service)",
   description:
-    "Cross-org, fleet-wide projection of how many outreach emails will be SENT per calendar day over a past+future window. " +
+    "Cross-org, fleet-wide answer to TWO questions that are routinely confused for one: how many sequences the budget CREATES per day (`createdActual` / `createdProjected`, sequence-grain, SEVEN days a week) and how many emails physically GO OUT per day (the send series, email-grain, Monday-Friday). They are different processes on different calendars and the gap between them is `summary.queuedEmails`. Render them as two charts; a single series cannot carry both, and a send-only view draws a weekend as an empty day while the fleet spent its budget creating hundreds of sequences. " +
     "Modelled as a QUEUE THAT DRAINS: volume becomes DUE on a day and goes out on the first day the fleet has room for it. " +
     "Stacks three EMAIL-grain series: actualSent (past real email_sent events, follow-ups included, from email-gateway groupBy=day), " +
     "inFlightSent (follow-ups provisioned for sequences launched before today, relayed via email-gateway, drained under capacity), " +

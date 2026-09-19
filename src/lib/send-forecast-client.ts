@@ -17,17 +17,35 @@ function emailGatewayConfig(): { url: string; apiKey: string } {
 }
 
 /**
- * Series 1 — PAST real emails sent per UTC day, fleet-wide (cross-org), EMAIL-GRAIN.
+ * PAST per-UTC-day fleet actuals (cross-org) — BOTH of the two things that happen to an outreach
+ * email, on ONE `GET /public/stats?groupBy=day` call.
  *
- * Reads email-gateway `GET /public/stats?groupBy=day` and takes `broadcast.emailStats.sent` per day
- * group — that is `COUNT(email_sent events)` (follow-ups INCLUDED), bucketed by real send timestamp.
- * NOT `recipientStats.contacted` (which is campaign-created = initials only, the funnel grain) — the
- * forecast stacks email-grain series, so the past actual must be email-grain too.
+ * `sentByDay` is EMAIL-grain: `broadcast.emailStats.sent` = COUNT(email_sent events), follow-ups
+ * INCLUDED, bucketed by the real SEND timestamp.
+ *
+ * `createdByDay` is SEQUENCE-grain: `broadcast.recipientStats.contacted` = campaign-created, i.e.
+ * the initial touch only — one per lead launched that day.
+ *
+ * ⚠️ These are TWO DIFFERENT PROCESSES ON TWO DIFFERENT CALENDARS and the forecast must never merge
+ * them. Creation is budget-driven and runs SEVEN days a week; sending is throughput-driven and runs
+ * Monday-Friday. Measured 2026-09-19: Sat 2026-09-12 created 801 sequences and sent 0; Sun 09-13
+ * created 756 and sent 0; the following Monday created 787 and sent 2,489. A chart that shows only
+ * the send series draws a weekend as an empty day, hiding a day on which the fleet spent its budget
+ * creating 800 sequences. This file used to read only `emailStats.sent` and explicitly discard
+ * `recipientStats.contacted` as "the funnel grain" — it is not a grain mismatch, it is the other half
+ * of the picture.
  *
  * Scoped to the cold-email outreach feature set so it matches the instantly cold-email fleet the
- * other two series describe.
+ * other series describe.
  */
-export async function fetchFleetEmailsSentByDay(featureSlugsCsv: string): Promise<Map<string, number>> {
+export interface FleetDailyActuals {
+  /** Emails SENT that day (email-grain, follow-ups included). */
+  sentByDay: Map<string, number>;
+  /** Sequences CREATED that day (one per lead launched). */
+  createdByDay: Map<string, number>;
+}
+
+export async function fetchFleetEmailsSentByDay(featureSlugsCsv: string): Promise<FleetDailyActuals> {
   const { url, apiKey } = emailGatewayConfig();
   const params = new URLSearchParams({ type: "broadcast", groupBy: "day", featureSlugs: featureSlugsCsv, timezone: "UTC" });
 
@@ -38,21 +56,33 @@ export async function fetchFleetEmailsSentByDay(featureSlugsCsv: string): Promis
   }
 
   const data = (await response.json()) as {
-    groups?: Array<{ key?: string; broadcast?: { emailStats?: { sent?: number } } }>;
+    groups?: Array<{
+      key?: string;
+      broadcast?: { emailStats?: { sent?: number }; recipientStats?: { contacted?: number } };
+    }>;
   };
   if (!Array.isArray(data.groups)) {
     throw new Error("[features-service] email-gateway /public/stats day broadcast returned no groups array");
   }
 
-  const byDay = new Map<string, number>();
+  const sentByDay = new Map<string, number>();
+  const createdByDay = new Map<string, number>();
   for (const group of data.groups) {
     const sent = group.broadcast?.emailStats?.sent;
     if (typeof group.key !== "string" || typeof sent !== "number" || !Number.isFinite(sent)) {
       throw new Error(`[features-service] email-gateway day group ${group.key} missing numeric emailStats.sent`);
     }
-    if (sent > 0) byDay.set(group.key, sent);
+    const created = group.broadcast?.recipientStats?.contacted;
+    if (typeof created !== "number" || !Number.isFinite(created)) {
+      throw new Error(`[features-service] email-gateway day group ${group.key} missing numeric recipientStats.contacted`);
+    }
+    // A day with none of a thing is absent rather than zero, so a median over "days it happened"
+    // is not dragged down by days it did not. The two series are set INDEPENDENTLY: a weekend has
+    // creations and no sends, which is the whole point.
+    if (sent > 0) sentByDay.set(group.key, sent);
+    if (created > 0) createdByDay.set(group.key, created);
   }
-  return byDay;
+  return { sentByDay, createdByDay };
 }
 
 /**
