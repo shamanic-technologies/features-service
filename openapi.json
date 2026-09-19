@@ -15697,6 +15697,16 @@
                 "isToday": {
                   "type": "boolean"
                 },
+                "createdActual": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Sequences the fleet CREATED that day (one per lead launched) - the budget's own output, on its own calendar. Past days and today-so-far; null on future days. NOT an email count."
+                },
+                "createdProjected": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Sequences the budget will create that day, EVERY day including weekends. Today is scaled to the remaining budget. null on past days."
+                },
                 "actualSent": {
                   "type": "number",
                   "nullable": true,
@@ -15721,6 +15731,8 @@
               "required": [
                 "date",
                 "isToday",
+                "createdActual",
+                "createdProjected",
                 "actualSent",
                 "inFlightSent",
                 "forecastNew",
@@ -15748,7 +15760,21 @@
               },
               "totalNewSequencesPerDay": {
                 "type": "number",
-                "description": "Fleet new sequences/day at full budget (sum over active brands of budget divided by the feature's POOLED realized cost per outreach). Launched only on sending days."
+                "description": "Fleet new sequences/day at full budget (sum over active brands of budget divided by the feature's POOLED realized cost per outreach). Launched every day, weekends included."
+              },
+              "observedDailyThroughput": {
+                "type": "number",
+                "nullable": true,
+                "description": "The fleet's measured send rate on a sending day - the median of its recent ones. null when nothing has been measured."
+              },
+              "queuedEmails": {
+                "type": "number",
+                "description": "Emails already provisioned and waiting to go out: the gap creation has opened over sending."
+              },
+              "queuedSendingDays": {
+                "type": "number",
+                "nullable": true,
+                "description": "Sending days that queue takes to clear at the measured rate. null when the rate is unmeasured."
               }
             },
             "required": [
@@ -15756,7 +15782,10 @@
               "remainingTodayUsd",
               "followupModel",
               "activeBrandCount",
-              "totalNewSequencesPerDay"
+              "totalNewSequencesPerDay",
+              "observedDailyThroughput",
+              "queuedEmails",
+              "queuedSendingDays"
             ]
           }
         },
@@ -26680,7 +26709,7 @@
     "/internal/stats/send-forecast": {
       "get": {
         "summary": "Global fleet email send forecast per day (internal, api-key; staff-gated at api-service)",
-        "description": "Cross-org, fleet-wide projection of how many outreach emails will be SENT per calendar day over a past+future window. Modelled as a QUEUE THAT DRAINS: volume becomes DUE on a day and goes out on the first day the fleet has room for it. Stacks three EMAIL-grain series: actualSent (past real email_sent events, follow-ups included, from email-gateway groupBy=day), inFlightSent (follow-ups provisioned for sequences launched before today, relayed via email-gateway, drained under capacity), and forecastNew (new sequences the active brands' daily budgets launch from today onward, each emitting on the D0/D3/D10 cadence). forecastNew covers cohorts started today-or-later; inFlightSent covers pre-today cohorts' follow-ups, so they never overlap. Two physical constraints bound every projected day: the fleet's own measured send THROUGHPUT (the median of its recent sending days, bounded above by the daily CAPACITY the email-gateway payload reports - capacity is a ceiling the fleet has never come close to, never its rate) and its SENDING DAYS (Monday-Friday). A weekend has zero capacity, so nothing goes out and no cohort is launched; that volume rolls to the next sending day rather than vanishing or landing all at once. The already-provisioned in-flight queue drains before new cohorts are launched. Volume is conserved: everything due is either sent within the horizon or still queued at its end. Today's new-sequence cohort is scaled to the remaining daily budget, and emails already sent today consume part of today's capacity. A series is null when it does not APPLY to that day (a past day has no forward series); a drained figure of 0 is a measured quantity, not a missing one.",
+        "description": "Cross-org, fleet-wide answer to TWO questions that are routinely confused for one: how many sequences the budget CREATES per day (`createdActual` / `createdProjected`, sequence-grain, SEVEN days a week) and how many emails physically GO OUT per day (the send series, email-grain, Monday-Friday). They are different processes on different calendars and the gap between them is `summary.queuedEmails`. Render them as two charts; a single series cannot carry both, and a send-only view draws a weekend as an empty day while the fleet spent its budget creating hundreds of sequences. Modelled as a QUEUE THAT DRAINS: volume becomes DUE on a day and goes out on the first day the fleet has room for it. Stacks three EMAIL-grain series: actualSent (past real email_sent events, follow-ups included, from email-gateway groupBy=day), inFlightSent (follow-ups provisioned for sequences launched before today, relayed via email-gateway, drained under capacity), and forecastNew (new sequences the active brands' daily budgets launch from today onward, each emitting on the D0/D3/D10 cadence). forecastNew covers cohorts started today-or-later; inFlightSent covers pre-today cohorts' follow-ups, so they never overlap. Two physical constraints bound every projected day: the fleet's own measured send THROUGHPUT (the median of its recent sending days, bounded above by the daily CAPACITY the email-gateway payload reports - capacity is a ceiling the fleet has never come close to, never its rate) and its SENDING DAYS (Monday-Friday). A weekend has zero capacity, so nothing goes out and no cohort is launched; that volume rolls to the next sending day rather than vanishing or landing all at once. The already-provisioned in-flight queue drains before new cohorts are launched. Volume is conserved: everything due is either sent within the horizon or still queued at its end. Today's new-sequence cohort is scaled to the remaining daily budget, and emails already sent today consume part of today's capacity. A series is null when it does not APPLY to that day (a past day has no forward series); a drained figure of 0 is a measured quantity, not a missing one.",
         "tags": [
           "Internal"
         ],

@@ -2415,8 +2415,10 @@ export async function handleSendForecast(daysParam: string | undefined, res: imp
 
     // Series 1 (past actuals) + Series 2 (in-flight due, plus the fleet's send capacity, on one
     // payload) + Series 3 (budget-driven new cohorts).
-    const [actualByDay, sending, fleet] = await Promise.all([
-      coldCsv ? fetchFleetEmailsSentByDay(coldCsv) : Promise.resolve(new Map<string, number>()),
+    const [actuals, sending, fleet] = await Promise.all([
+      coldCsv
+        ? fetchFleetEmailsSentByDay(coldCsv)
+        : Promise.resolve({ sentByDay: new Map<string, number>(), createdByDay: new Map<string, number>() }),
       fetchFleetSendingForecast(),
       aggregateFleetNewSequences(coldSlugs, now),
     ]);
@@ -2427,10 +2429,11 @@ export async function handleSendForecast(daysParam: string | undefined, res: imp
       dailyCapacity: sending.dailyCapacity,
       // What the fleet ACTUALLY sends on a sending day, measured from series 1 — the capacity above
       // is only the ceiling it is bounded by. See send-forecast-compute.ts.
-      observedThroughput: observedDailyThroughput(actualByDay, todayIso),
+      observedThroughput: observedDailyThroughput(actuals.sentByDay, todayIso),
       totalNewPerDay: fleet.totalNewPerDay,
       todayNewOverride: fleet.todayNewOverride,
-      actualByDay,
+      actualByDay: actuals.sentByDay,
+      createdByDay: actuals.createdByDay,
       inFlightByDay: sending.scheduledByDay,
       summary: {
         totalDailyBudgetUsd: fleet.totalDailyBudgetUsd,
