@@ -73,6 +73,7 @@ vi.mock("../lib/send-forecast-aggregate.js", () => ({
 const app = (await import("../index.js")).default;
 const { __resetPublicRevenueCache, __resetPublicCostProjectionCache, __resetPublicStatsCache, __resetSendForecastCache, __resetCostPerOutcomeTrendCache, __resetWorkflowCostPerOutcomeCache, __resetBestModelCostPerOutcomeTrendCache, __awaitWorkflowRecentWarm, __expireWorkflowPayloadCacheForTest, __withTimeoutForTest, __mapWithConcurrencyForTest, __resetCostPerOutcomeLifetimeCache, __resetCostPerOutcomeDistributionCache, __resetFunnelBucketDatasetCache, __expireFunnelBucketFreshCacheForTest, __awaitFunnelBucketRefresh } = await import("./public.js");
 const { BrandOwnershipError } = await import("../lib/sales-economics-client.js");
+const { isSendingDay } = await import("../lib/send-forecast-compute.js");
 const { projectOutcomeCosts } = await import("../lib/funnel-registry.js");
 
 const AUTH_HEADERS = {
@@ -2005,7 +2006,9 @@ describe("GET /internal/stats/send-forecast", () => {
       { slug: "outlet-database-discovery" }, // non-cold-email → filtered out
     ]);
     mockEmailsSent.mockResolvedValue(new Map<string, number>());
-    mockSendingForecast.mockResolvedValue(new Map<string, number>());
+    // Capacity far above anything the fixtures make due, so these route tests exercise the
+    // assembly rather than the drain (that is send-forecast-compute.test.ts's job).
+    mockSendingForecast.mockResolvedValue({ dailyCapacity: 1_000_000, scheduledByDay: new Map<string, number>() });
     mockAggregate.mockResolvedValue({
       totalNewPerDay: 100,
       todayNewOverride: 40,
@@ -2027,8 +2030,10 @@ describe("GET /internal/stats/send-forecast", () => {
     });
     // window = 7 past + today + 14 future = 22 days
     expect(res.body.days).toHaveLength(22);
-    const today = res.body.days.find((d: { isToday: boolean }) => d.isToday);
-    expect(today.forecastNew).toBe(40); // today cohort = remaining-scaled override
+    const today = res.body.days.find((d: { isToday: boolean; date: string }) => d.isToday);
+    // Today's cohort is the remaining-scaled override — unless today is a weekend, when the fleet
+    // launches nothing at all. Keyed on the real clock so the test never rots.
+    expect(today.forecastNew).toBe(isSendingDay(today.date) ? 40 : 0);
     // every day carries all four series keys (null-safe shape)
     for (const d of res.body.days) {
       expect(d).toHaveProperty("actualSent");
@@ -2052,14 +2057,22 @@ describe("GET /internal/stats/send-forecast", () => {
       return t.toISOString().slice(0, 10);
     };
     mockEmailsSent.mockResolvedValue(new Map([[iso(-2), 33]]));
-    mockSendingForecast.mockResolvedValue(new Map([[iso(4), 21]]));
+    mockSendingForecast.mockResolvedValue({
+      dailyCapacity: 1_000_000,
+      scheduledByDay: new Map([[iso(4), 21]]),
+    });
     const res = await request(app).get("/internal/stats/send-forecast").set(KEY);
     const past = res.body.days.find((d: { date: string }) => d.date === iso(-2));
     expect(past).toMatchObject({ actualSent: 33, inFlightSent: null, forecastNew: null, total: 33 });
-    const future = res.body.days.find((d: { date: string }) => d.date === iso(4));
-    expect(future.inFlightSent).toBe(21);
-    expect(future.forecastNew).toBeGreaterThan(0);
-    expect(future.total).toBe(future.inFlightSent + future.forecastNew);
+
+    // The 21 in-flight emails go out on iso(4) itself when the fleet sends that day, and on the next
+    // sending day when it does not — either way every one of them is in the horizon exactly once.
+    type Row = { date: string; inFlightSent: number | null; forecastNew: number | null; total: number | null };
+    const futureRows: Row[] = res.body.days.filter((d: Row) => d.date >= iso(4));
+    expect(futureRows.reduce((a: number, d: Row) => a + (d.inFlightSent ?? 0), 0)).toBe(21);
+    for (const d of futureRows) {
+      expect(d.total).toBe((d.inFlightSent ?? 0) + (d.forecastNew ?? 0));
+    }
   });
 
   it("401s without the service api-key (internal, not public)", async () => {

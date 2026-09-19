@@ -2106,8 +2106,8 @@ const sendForecastDaySchema = z.object({
   date: z.string().describe("UTC calendar day (YYYY-MM-DD)."),
   isToday: z.boolean(),
   actualSent: z.number().nullable().describe("Past real emails sent that day (email-grain, follow-ups included). null on future days."),
-  inFlightSent: z.number().nullable().describe("Already-scheduled follow-up sends for sequences launched before today. null on past days."),
-  forecastNew: z.number().nullable().describe("Projected emails from NEW (today-onward) budget-driven sequences, D0/D3/D10 model. null on past days."),
+  inFlightSent: z.number().nullable().describe("Follow-ups for sequences launched before today that GO OUT that day (drained from the provisioned queue under the fleet's daily capacity). null on past days; a measured 0 on a day the fleet sends nothing."),
+  forecastNew: z.number().nullable().describe("Emails from NEW (today-onward) budget-driven sequences that GO OUT that day, D0/D3/D10 model, drained under the remaining capacity. null on past days; a measured 0 on a day the fleet sends nothing."),
   total: z.number().nullable().describe("Predictive total — past: actualSent; today/future: sum of present components."),
 });
 
@@ -2118,7 +2118,7 @@ const sendForecastResponseSchema = z.object({
     remainingTodayUsd: z.number().describe("Sum of remaining budget today over active brands (USD)."),
     followupModel: z.string().describe("The send cadence model, e.g. 'D0/D3/D10'."),
     activeBrandCount: z.number(),
-    totalNewSequencesPerDay: z.number().describe("Fleet new sequences/day at full budget (sum over brands of budget/outreachUsd)."),
+    totalNewSequencesPerDay: z.number().describe("Fleet new sequences/day at full budget (sum over active brands of budget divided by the feature's POOLED realized cost per outreach). Launched only on sending days."),
   }),
 });
 
@@ -2130,11 +2130,16 @@ registry.registerPath({
   summary: "Global fleet email send forecast per day (internal, api-key; staff-gated at api-service)",
   description:
     "Cross-org, fleet-wide projection of how many outreach emails will be SENT per calendar day over a past+future window. " +
+    "Modelled as a QUEUE THAT DRAINS: volume becomes DUE on a day and goes out on the first day the fleet has room for it. " +
     "Stacks three EMAIL-grain series: actualSent (past real email_sent events, follow-ups included, from email-gateway groupBy=day), " +
-    "inFlightSent (already-scheduled follow-up sends for sequences launched before today, from the instantly sending-forecast relayed via email-gateway), " +
+    "inFlightSent (follow-ups provisioned for sequences launched before today, relayed via email-gateway, drained under capacity), " +
     "and forecastNew (new sequences the active brands' daily budgets launch from today onward, each emitting on the D0/D3/D10 cadence). " +
     "forecastNew covers cohorts started today-or-later; inFlightSent covers pre-today cohorts' follow-ups, so they never overlap. " +
-    "Today's new-sequence cohort is scaled to the remaining daily budget. Values are null (not 0) when an input is absent.",
+    "Two physical constraints bound every projected day: the fleet's daily send CAPACITY (reported on the same email-gateway payload the in-flight series comes from) and its SENDING DAYS (Monday-Friday). " +
+    "A weekend has zero capacity, so nothing goes out and no cohort is launched; that volume rolls to the next sending day rather than vanishing or landing all at once. " +
+    "The already-provisioned in-flight queue drains before new cohorts are launched. Volume is conserved: everything due is either sent within the horizon or still queued at its end. " +
+    "Today's new-sequence cohort is scaled to the remaining daily budget, and emails already sent today consume part of today's capacity. " +
+    "A series is null when it does not APPLY to that day (a past day has no forward series); a drained figure of 0 is a measured quantity, not a missing one.",
   tags: ["Internal"],
   request: {
     query: z.object({
