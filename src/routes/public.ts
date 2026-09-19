@@ -2412,8 +2412,9 @@ export async function handleSendForecast(daysParam: string | undefined, res: imp
     const coldSlugs = coldEmailOutreachSlugs(allFeatures.map((f) => f.slug));
     const coldCsv = coldSlugs.join(",");
 
-    // Series 1 (past actuals) + Series 2 (in-flight scheduled) + Series 3 (budget-driven new cohorts).
-    const [actualByDay, inFlightByDay, fleet] = await Promise.all([
+    // Series 1 (past actuals) + Series 2 (in-flight due, plus the fleet's send capacity, on one
+    // payload) + Series 3 (budget-driven new cohorts).
+    const [actualByDay, sending, fleet] = await Promise.all([
       coldCsv ? fetchFleetEmailsSentByDay(coldCsv) : Promise.resolve(new Map<string, number>()),
       fetchFleetSendingForecast(),
       aggregateFleetNewSequences(coldSlugs, now),
@@ -2422,10 +2423,11 @@ export async function handleSendForecast(daysParam: string | undefined, res: imp
     const built = buildSendForecast({
       dates,
       todayIso,
+      dailyCapacity: sending.dailyCapacity,
       totalNewPerDay: fleet.totalNewPerDay,
       todayNewOverride: fleet.todayNewOverride,
       actualByDay,
-      inFlightByDay,
+      inFlightByDay: sending.scheduledByDay,
       summary: {
         totalDailyBudgetUsd: fleet.totalDailyBudgetUsd,
         remainingTodayUsd: fleet.remainingTodayUsd,
