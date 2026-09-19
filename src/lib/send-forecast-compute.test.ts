@@ -4,6 +4,7 @@ import {
   coldEmailOutreachSlugs,
   isSendingDay,
   observedDailyThroughput,
+  THROUGHPUT_WINDOW_DAYS,
   utcDateRange,
   addUtcDays,
   FOLLOWUP_MODEL_LABEL,
@@ -251,6 +252,23 @@ describe("observedDailyThroughput", () => {
 
   it("is null when the fleet has never been seen sending", () => {
     expect(observedDailyThroughput(new Map(), TODAY)).toBeNull();
+  });
+
+  it("takes only the MOST RECENT window, never the whole history the producer hands back", () => {
+    // `actualByDay` carries the fleet's entire history (204 days in prod), not this forecast's
+    // 7-day render window. An all-time median is a median over months the fleet spent far smaller.
+    const m = new Map<string, number>();
+    for (let i = 60; i > 10; i--) m.set(addUtcDays(TODAY, -i), 100); // the fleet's small early life
+    for (let i = 10; i > 0; i--) m.set(addUtcDays(TODAY, -i), 1900); // what it does now
+    expect(observedDailyThroughput(m, TODAY)).toBe(1900);
+  });
+
+  it("is a median of at most THROUGHPUT_WINDOW_DAYS entries", () => {
+    const m = new Map<string, number>();
+    for (let i = 40; i > 0; i--) m.set(addUtcDays(TODAY, -i), i); // older days carry smaller values
+    // Newest 10 are the days -1..-10, i.e. values 1..10 → median 5.5.
+    expect(THROUGHPUT_WINDOW_DAYS).toBe(10);
+    expect(observedDailyThroughput(m, TODAY)).toBe(5.5);
   });
 
   it("is not dragged down by a day with no send — those are absent, not zero", () => {
