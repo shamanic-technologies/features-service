@@ -78,26 +78,37 @@ export function isSendingDay(dateIso: string): boolean {
   return SENDING_WEEKDAYS_UTC.includes(weekday);
 }
 
+/** How many of the most RECENT sending days the throughput median is taken over (~two weeks of weekdays). */
+export const THROUGHPUT_WINDOW_DAYS = 10;
+
 /**
- * The fleet's own recent send RATE: the MEDIAN of the past days on which it actually sent.
+ * The fleet's own recent send RATE: the MEDIAN of the last `THROUGHPUT_WINDOW_DAYS` days it sent on.
  *
- * Median, not mean, because one outage or one unusually big day should not move the projection.
- * Days with no recorded send are absent from `actualByDay` and are therefore excluded for free —
- * weekends and outage days do not drag it down, which is what we want: this is the rate on a day
- * the fleet IS sending.
+ * ⚠️ RECENT is load-bearing and is not free — `actualByDay` is NOT the window this forecast renders.
+ * The producer answers `groupBy=day` with the fleet's WHOLE history (204 days back to 2026-02-10 as
+ * of 2026-09-19), so a median over everything it hands back is a median over the fleet's entire life,
+ * most of which it spent far smaller. Measured: all-time gives 535.5/day against a recent 1,859 —
+ * under-predicting by 3.5x, on a series whose own last five bars are on the same chart contradicting
+ * it. Always take the tail, never the map.
  *
- * `null` when nothing has been sent in the window. The caller then has no measurement and falls
- * back to the capacity ceiling, which is the pre-measurement behaviour and the only honest default —
- * inventing a rate for a fleet we have never seen send would be worse than an optimistic one.
+ * Median, not mean, so one outage or one unusually big day does not move the projection. Days with no
+ * recorded send are absent from `actualByDay` and are excluded for free — weekends and outage days do
+ * not drag it down, which is what we want: this is the rate on a day the fleet IS sending.
+ *
+ * `null` when nothing has been sent. The caller then has no measurement and falls back to the capacity
+ * ceiling — the pre-measurement behaviour, and the only honest default: inventing a rate for a fleet
+ * nobody has seen send would be worse than an optimistic one.
  */
 export function observedDailyThroughput(actualByDay: Map<string, number>, todayIso: string): number | null {
-  const past = [...actualByDay.entries()]
+  const recent = [...actualByDay.entries()]
     .filter(([date, sent]) => date < todayIso && Number.isFinite(sent) && sent > 0)
+    .sort(([a], [b]) => (a < b ? 1 : a > b ? -1 : 0)) // newest first
+    .slice(0, THROUGHPUT_WINDOW_DAYS)
     .map(([, sent]) => sent)
     .sort((a, b) => a - b);
-  if (past.length === 0) return null;
-  const mid = Math.floor(past.length / 2);
-  return past.length % 2 === 1 ? past[mid] : (past[mid - 1] + past[mid]) / 2;
+  if (recent.length === 0) return null;
+  const mid = Math.floor(recent.length / 2);
+  return recent.length % 2 === 1 ? recent[mid] : (recent[mid - 1] + recent[mid]) / 2;
 }
 
 /** Slug marker for the email-sequence outreach features that feed this forecast (instantly cold-email). */
