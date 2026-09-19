@@ -2135,7 +2135,7 @@ registry.registerPath({
     "inFlightSent (follow-ups provisioned for sequences launched before today, relayed via email-gateway, drained under capacity), " +
     "and forecastNew (new sequences the active brands' daily budgets launch from today onward, each emitting on the D0/D3/D10 cadence). " +
     "forecastNew covers cohorts started today-or-later; inFlightSent covers pre-today cohorts' follow-ups, so they never overlap. " +
-    "Two physical constraints bound every projected day: the fleet's daily send CAPACITY (reported on the same email-gateway payload the in-flight series comes from) and its SENDING DAYS (Monday-Friday). " +
+    "Two physical constraints bound every projected day: the fleet's own measured send THROUGHPUT (the median of its recent sending days, bounded above by the daily CAPACITY the email-gateway payload reports - capacity is a ceiling the fleet has never come close to, never its rate) and its SENDING DAYS (Monday-Friday). " +
     "A weekend has zero capacity, so nothing goes out and no cohort is launched; that volume rolls to the next sending day rather than vanishing or landing all at once. " +
     "The already-provisioned in-flight queue drains before new cohorts are launched. Volume is conserved: everything due is either sent within the horizon or still queued at its end. " +
     "Today's new-sequence cohort is scaled to the remaining daily budget, and emails already sent today consume part of today's capacity. " +
