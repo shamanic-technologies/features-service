@@ -1,7 +1,17 @@
 /**
  * Pure assembly of the GLOBAL email send-forecast — `GET /internal/stats/send-forecast`.
  *
- * Answers "how many outreach emails will the fleet SEND per calendar day over the next N days".
+ * Answers TWO questions that are routinely confused for one, and keeps them apart:
+ *
+ *   CREATED — how many new sequences the budget LAUNCHES per day. Budget-driven, SEVEN days a week.
+ *   SENT    — how many emails physically GO OUT per day. Throughput-driven, Monday-Friday.
+ *
+ * They are different processes on different calendars and the gap between them is the backlog.
+ * Measured 2026-09-19: Sat 09-12 created 801 sequences and sent 0; Sun 09-13 created 756 and sent 0;
+ * Mon 09-14 created 787 and sent 2,489. A single series cannot carry both, and a chart that draws
+ * only the send side shows a weekend as an empty day — hiding a day the fleet spent its budget.
+ *
+ * The SEND half:
  *
  * The forecast is a QUEUE THAT DRAINS, not three independent per-day sums. Volume becomes DUE on a
  * day and is SENT on the first day the fleet has room for it — those are different dates, and the
@@ -122,6 +132,14 @@ export function coldEmailOutreachSlugs(allSlugs: readonly string[]): string[] {
 export interface SendForecastDay {
   date: string;
   isToday: boolean;
+  /**
+   * Sequences the fleet CREATED that day (one per lead launched) — the budget's own output, on its
+   * own calendar. Recorded for past days and today-so-far; null on future days, where `createdProjected`
+   * answers instead. NOT an email count and NOT comparable to the send series.
+   */
+  createdActual: number | null;
+  /** Sequences the budget will create that day. Today = remaining-budget scaled. null on past days. */
+  createdProjected: number | null;
   /** Past real emails sent that day (email-grain, follow-ups incl). null on future days. */
   actualSent: number | null;
   /** In-flight (pre-today cohort) follow-ups DRAINED that day. null on past days. */
@@ -139,6 +157,12 @@ export interface SendForecastSummary {
   activeBrandCount: number;
   /** Fleet new sequences/day at full budget (Σ brand budget/outreachUsd). */
   totalNewSequencesPerDay: number;
+  /** The fleet's measured send rate on a sending day (median of its recent ones). null when unmeasured. */
+  observedDailyThroughput: number | null;
+  /** Emails already provisioned and waiting to go out — the gap creation has opened over sending. */
+  queuedEmails: number;
+  /** Sending days that queue takes to drain at the measured rate. null when the rate is unmeasured. */
+  queuedSendingDays: number | null;
 }
 
 export interface BuildSendForecastInput {
@@ -160,19 +184,26 @@ export interface BuildSendForecastInput {
   todayNewOverride: number;
   /** Past real emails sent per day (email-grain), keyed by UTC date. */
   actualByDay: Map<string, number>;
+  /** Sequences created per day (sequence-grain), keyed by UTC date. Past + today-so-far. */
+  createdByDay: Map<string, number>;
   /** In-flight follow-up sends BECOMING DUE per day, keyed by UTC date (the provider's due dates). */
   inFlightByDay: Map<string, number>;
-  summary: Omit<SendForecastSummary, "followupModel">;
+  summary: Omit<SendForecastSummary, "followupModel" | "observedDailyThroughput" | "queuedEmails" | "queuedSendingDays">;
 }
 
 /**
- * Cohort size (new sequences launched) on day `k`. Zero before today (those are the in-flight series'
- * responsibility), zero on a non-sending day (no budget is spent on a day the fleet does not send),
- * remaining-scaled today, full fleet rate on every later sending day.
+ * Cohort size (new sequences LAUNCHED) on day `k`. Zero before today — those cohorts' follow-ups are
+ * the in-flight series' responsibility. Today's is scaled to the REMAINING budget; every later day
+ * gets the full fleet rate.
+ *
+ * ⚠️ EVERY day, weekends INCLUDED. Creation is driven by the daily budget and does not stop when the
+ * fleet stops sending: measured 2026-09-19, the two weekend days before it created 801 and 756
+ * sequences while sending nothing. A previous cut of this gated launches on `isSendingDay` — that
+ * applied the SENDING calendar to CREATION, which is the confusion this module exists to remove. The
+ * emails those weekend cohorts owe simply queue until Monday, which the drain below already handles.
  */
 function cohortSize(k: string, todayIso: string, totalNewPerDay: number, todayNewOverride: number): number {
   if (k < todayIso) return 0;
-  if (!isSendingDay(k)) return 0;
   if (k === todayIso) return todayNewOverride;
   return totalNewPerDay;
 }
@@ -181,7 +212,7 @@ export function buildSendForecast(input: BuildSendForecastInput): {
   days: SendForecastDay[];
   summary: SendForecastSummary;
 } {
-  const { dates, todayIso, dailyCapacity, observedThroughput, totalNewPerDay, todayNewOverride, actualByDay, inFlightByDay } = input;
+  const { dates, todayIso, dailyCapacity, observedThroughput, totalNewPerDay, todayNewOverride, actualByDay, createdByDay, inFlightByDay } = input;
   // The rate a sending day drains at: what the fleet actually does, never more than it could do.
   const drainRate = observedThroughput === null ? dailyCapacity : Math.min(observedThroughput, dailyCapacity);
 
@@ -193,10 +224,19 @@ export function buildSendForecast(input: BuildSendForecastInput): {
     const isToday = date === todayIso;
     const isPast = date < todayIso;
 
-    // Past days: only the real sent series is meaningful — it already happened, nothing to drain.
+    // Past days: what happened, on both calendars. Nothing to drain — it already went out.
     if (isPast) {
       const actualSent = actualByDay.get(date) ?? null;
-      return { date, isToday: false, actualSent, inFlightSent: null, forecastNew: null, total: actualSent };
+      return {
+        date,
+        isToday: false,
+        createdActual: createdByDay.get(date) ?? null,
+        createdProjected: null,
+        actualSent,
+        inFlightSent: null,
+        forecastNew: null,
+        total: actualSent,
+      };
     }
 
     // What becomes DUE today: the provider's provisioned steps, plus the convolution of new cohorts.
@@ -217,12 +257,39 @@ export function buildSendForecast(input: BuildSendForecastInput): {
     queuedNew -= forecastNew;
 
     const total = sumNullable([actualSent, inFlightSent, forecastNew]);
-    return { date, isToday, actualSent, inFlightSent, forecastNew, total };
+    return {
+      date,
+      isToday,
+      // Today already has creations recorded; every later day is the budget's projection alone.
+      createdActual: isToday ? (createdByDay.get(date) ?? null) : null,
+      createdProjected: cohortSize(date, todayIso, totalNewPerDay, todayNewOverride),
+      actualSent,
+      inFlightSent,
+      forecastNew,
+      total,
+    };
   });
+
+  // The backlog: everything already provisioned across the horizon, and how long it takes to clear.
+  // This is the gap creation has opened over sending, and it is the number anyone acts on.
+  let queuedEmails = 0;
+  for (const date of dates) {
+    if (date < todayIso) continue;
+    queuedEmails += inFlightByDay.get(date) ?? 0;
+  }
+  const drainForBacklog = observedThroughput === null ? null : Math.min(observedThroughput, dailyCapacity);
+  const queuedSendingDays =
+    drainForBacklog === null || drainForBacklog <= 0 ? null : queuedEmails / drainForBacklog;
 
   return {
     days,
-    summary: { ...input.summary, followupModel: FOLLOWUP_MODEL_LABEL },
+    summary: {
+      ...input.summary,
+      followupModel: FOLLOWUP_MODEL_LABEL,
+      observedDailyThroughput: observedThroughput,
+      queuedEmails,
+      queuedSendingDays,
+    },
   };
 }
 

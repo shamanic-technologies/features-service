@@ -34,6 +34,7 @@ function baseInput(overrides: Partial<Parameters<typeof buildSendForecast>[0]> =
     totalNewPerDay: 100,
     todayNewOverride: 100,
     actualByDay: new Map(),
+    createdByDay: new Map(),
     inFlightByDay: new Map(),
     summary: {
       totalDailyBudgetUsd: 500,
@@ -68,18 +69,21 @@ describe("buildSendForecast — sending days", () => {
     }
   });
 
-  it("launches no new cohort on a non-sending day, so the weekend's volume is the WEEK's follow-ups", () => {
+  it("still LAUNCHES a cohort at the weekend — creation does not stop when sending does", () => {
+    // Sat 07-04 carries cohort(07-04)'s own D0 plus cohort(07-01)'s D+3 = 200 emails DUE. None go
+    // out, because the fleet does not send that day — but the sequences were created and the budget
+    // was spent, which the created series reports and this one cannot.
     const { days } = baseInput();
-    // Sat 07-04 would otherwise carry cohort(07-04) D0 + cohort(07-01) D+3; only the second exists,
-    // and neither goes out — both roll forward.
+    expect(dayOf(days, SAT).createdProjected).toBe(100);
     expect(dayOf(days, SAT).forecastNew).toBe(0);
   });
 
   it("rolls the weekend's due volume into Monday rather than losing it", () => {
     const { days } = baseInput();
-    // Due but unsent: Sat = cohort(07-01) D+3 = 100; Sun = cohort(07-02) D+3 = 100.
-    // Monday's own due: cohort(07-06) D0 = 100 + cohort(07-03) D+3 = 100.
-    expect(dayOf(days, MON).forecastNew).toBe(400);
+    // Due but unsent: Sat = cohort(07-04) D0 100 + cohort(07-01) D+3 100 = 200;
+    // Sun = cohort(07-05) D0 100 + cohort(07-02) D+3 100 = 200.
+    // Monday's own due: cohort(07-06) D0 100 + cohort(07-03) D+3 100 = 200.
+    expect(dayOf(days, MON).forecastNew).toBe(600);
   });
 });
 
@@ -96,7 +100,8 @@ describe("buildSendForecast — convolution D0/D3/D10", () => {
     expect(dayOf(days, "2026-07-02").forecastNew).toBe(100);
     // Sat carries cohort(today)=40 as a D+3, unsent; Monday absorbs it with the rest of the weekend.
     expect(dayOf(days, SAT).forecastNew).toBe(0);
-    expect(dayOf(days, MON).forecastNew).toBe(340); // 40 (Sat's D+3) + 100 (Sun's) + 100 + 100
+    // Sat due 100 + 40, Sun due 100 + 100, Mon's own 100 + 100 — all of it goes out on Monday.
+    expect(dayOf(days, MON).forecastNew).toBe(540);
   });
 
   it("conserves every launched email across the horizon when capacity never binds", () => {
@@ -111,7 +116,7 @@ describe("buildSendForecast — convolution D0/D3/D10", () => {
     const last = dates[dates.length - 1];
     let due = 0;
     for (const start of dates) {
-      if (start < TODAY || !isSendingDay(start)) continue;
+      if (start < TODAY) continue; // every day launches, weekends included
       const size = start === TODAY ? 100 : 100;
       for (const off of [0, 3, 10]) if (addUtcDays(start, off) <= last) due += size;
     }
@@ -353,6 +358,80 @@ describe("buildSendForecast — throughput is the rate, capacity is the ceiling"
     expect(today.actualSent).toBe(900);
     expect(today.inFlightSent).toBe(100); // 1000 measured rate − 900 already sent
     expect(today.total).toBe(1000);
+  });
+});
+
+describe("buildSendForecast — created and sent are two calendars", () => {
+  it("reports what was CREATED on a past day the fleet sent nothing on", () => {
+    // The weekend the fleet spent its budget and shipped no email. A send-only chart draws this as
+    // an empty day; that is the confusion this series exists to remove.
+    const pastSat = "2026-06-27";
+    const dates = utcDateRange(pastSat, addUtcDays(TODAY, 3));
+    const { days } = baseInput({ dates, createdByDay: new Map([[pastSat, 801]]) });
+    const d = dayOf(days, pastSat);
+    expect(d.createdActual).toBe(801);
+    expect(d.actualSent).toBeNull();
+    expect(d.total).toBeNull();
+  });
+
+  it("projects creation on EVERY future day, weekends included", () => {
+    const { days } = baseInput();
+    for (const date of [MON, SAT, SUN, "2026-07-11", "2026-07-12"]) {
+      expect(dayOf(days, date).createdProjected).toBe(100);
+    }
+  });
+
+  it("scales only TODAY's creation to the remaining budget", () => {
+    const { days } = baseInput({ todayNewOverride: 40 });
+    expect(dayOf(days, TODAY).createdProjected).toBe(40);
+    expect(dayOf(days, "2026-07-02").createdProjected).toBe(100);
+  });
+
+  it("carries today's creations so far beside today's projection", () => {
+    const { days } = baseInput({ todayNewOverride: 40, createdByDay: new Map([[TODAY, 12]]) });
+    const today = dayOf(days, TODAY);
+    expect(today.createdActual).toBe(12);
+    expect(today.createdProjected).toBe(40);
+  });
+
+  it("never mixes the two: a past day has no projection, a future day no actual", () => {
+    const past = addUtcDays(TODAY, -1);
+    const { days } = baseInput({ createdByDay: new Map([[past, 500]]) });
+    expect(dayOf(days, past).createdProjected).toBeNull();
+    expect(dayOf(days, addUtcDays(TODAY, 2)).createdActual).toBeNull();
+  });
+});
+
+describe("buildSendForecast — the backlog is the gap", () => {
+  it("reports what is queued and how long it takes to clear", () => {
+    const { summary } = baseInput({
+      dailyCapacity: 4105,
+      observedThroughput: 1000,
+      inFlightByDay: new Map([
+        [TODAY, 3000],
+        [addUtcDays(TODAY, 1), 2000],
+      ]),
+    });
+    expect(summary.queuedEmails).toBe(5000);
+    expect(summary.queuedSendingDays).toBe(5);
+    expect(summary.observedDailyThroughput).toBe(1000);
+  });
+
+  it("counts nothing already in the past", () => {
+    const { summary } = baseInput({
+      observedThroughput: 1000,
+      inFlightByDay: new Map([[addUtcDays(TODAY, -1), 9999]]),
+    });
+    expect(summary.queuedEmails).toBe(0);
+  });
+
+  it("cannot state a drain time with no measured rate", () => {
+    const { summary } = baseInput({
+      observedThroughput: null,
+      inFlightByDay: new Map([[TODAY, 5000]]),
+    });
+    expect(summary.queuedEmails).toBe(5000);
+    expect(summary.queuedSendingDays).toBeNull();
   });
 });
 

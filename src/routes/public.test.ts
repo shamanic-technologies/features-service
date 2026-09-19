@@ -2005,7 +2005,10 @@ describe("GET /internal/stats/send-forecast", () => {
       { slug: "sales-cold-email-outreach" },
       { slug: "outlet-database-discovery" }, // non-cold-email → filtered out
     ]);
-    mockEmailsSent.mockResolvedValue(new Map<string, number>());
+    mockEmailsSent.mockResolvedValue({
+      sentByDay: new Map<string, number>(),
+      createdByDay: new Map<string, number>(),
+    });
     // Capacity far above anything the fixtures make due, so these route tests exercise the
     // assembly rather than the drain (that is send-forecast-compute.test.ts's job).
     mockSendingForecast.mockResolvedValue({ dailyCapacity: 1_000_000, scheduledByDay: new Map<string, number>() });
@@ -2031,11 +2034,14 @@ describe("GET /internal/stats/send-forecast", () => {
     // window = 7 past + today + 14 future = 22 days
     expect(res.body.days).toHaveLength(22);
     const today = res.body.days.find((d: { isToday: boolean; date: string }) => d.isToday);
-    // Today's cohort is the remaining-scaled override — unless today is a weekend, when the fleet
-    // launches nothing at all. Keyed on the real clock so the test never rots.
+    // Creation runs every day, so today always projects the remaining-scaled override. Whether any
+    // of it goes OUT today depends on the sending calendar. Keyed on the real clock so this never rots.
+    expect(today.createdProjected).toBe(40);
     expect(today.forecastNew).toBe(isSendingDay(today.date) ? 40 : 0);
     // every day carries all four series keys (null-safe shape)
     for (const d of res.body.days) {
+      expect(d).toHaveProperty("createdActual");
+      expect(d).toHaveProperty("createdProjected");
       expect(d).toHaveProperty("actualSent");
       expect(d).toHaveProperty("inFlightSent");
       expect(d).toHaveProperty("forecastNew");
@@ -2056,14 +2062,24 @@ describe("GET /internal/stats/send-forecast", () => {
       t.setUTCDate(t.getUTCDate() + delta);
       return t.toISOString().slice(0, 10);
     };
-    mockEmailsSent.mockResolvedValue(new Map([[iso(-2), 33]]));
+    mockEmailsSent.mockResolvedValue({
+      sentByDay: new Map([[iso(-2), 33]]),
+      createdByDay: new Map([[iso(-2), 500]]),
+    });
     mockSendingForecast.mockResolvedValue({
       dailyCapacity: 1_000_000,
       scheduledByDay: new Map([[iso(4), 21]]),
     });
     const res = await request(app).get("/internal/stats/send-forecast").set(KEY);
     const past = res.body.days.find((d: { date: string }) => d.date === iso(-2));
-    expect(past).toMatchObject({ actualSent: 33, inFlightSent: null, forecastNew: null, total: 33 });
+    expect(past).toMatchObject({
+      actualSent: 33,
+      createdActual: 500, // the OTHER calendar: what the budget launched that day
+      createdProjected: null,
+      inFlightSent: null,
+      forecastNew: null,
+      total: 33,
+    });
 
     // The 21 in-flight emails go out on iso(4) itself when the fleet sends that day, and on the next
     // sending day when it does not — either way every one of them is in the horizon exactly once.
