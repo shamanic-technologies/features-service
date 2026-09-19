@@ -56,11 +56,28 @@ export async function fetchFleetEmailsSentByDay(featureSlugsCsv: string): Promis
 }
 
 /**
- * Series 2 — FUTURE already-scheduled follow-up sends per UTC day (in-flight cohorts started before
- * today), fleet-wide. Relayed by email-gateway `GET /public/stats/sending-forecast`, which proxies
- * instantly `/internal/audit/sending-forecast` (provisioned sequence steps projected forward).
+ * Series 2 + the fleet's send CAPACITY. Relayed by email-gateway `GET /public/stats/sending-forecast`,
+ * which proxies the broadcast provider's own forecast.
+ *
+ * Two things come back on ONE payload and the forecast needs BOTH:
+ *   - `dailyCapacity` — emails/day the healthy fleet can physically send. The ceiling every projected
+ *     day is drained under. It was on this response all along and was being discarded.
+ *   - `days[].scheduledCount` — provisioned follow-up steps for in-flight (pre-today) cohorts, dated
+ *     by when the provider considers them DUE. When they actually go out is this service's answer,
+ *     not the provider's: a step due on a Saturday, or one due on a day already at capacity, sends
+ *     later. See send-forecast-compute.ts.
+ *
+ * Both fields are required on the producer's contract; a missing or non-numeric one is a read we did
+ * not get, never a zero.
  */
-export async function fetchFleetSendingForecast(): Promise<Map<string, number>> {
+export interface FleetSendingForecast {
+  /** Emails/day the healthy fleet can physically send. */
+  dailyCapacity: number;
+  /** Provisioned in-flight follow-ups becoming DUE per UTC day. */
+  scheduledByDay: Map<string, number>;
+}
+
+export async function fetchFleetSendingForecast(): Promise<FleetSendingForecast> {
   const { url, apiKey } = emailGatewayConfig();
 
   const response = await fetchWithRetry(`${url}/public/stats/sending-forecast`, { headers: { "x-api-key": apiKey } });
@@ -70,18 +87,22 @@ export async function fetchFleetSendingForecast(): Promise<Map<string, number>> 
   }
 
   const data = (await response.json()) as {
+    dailyCapacity?: number;
     days?: Array<{ date?: string; scheduledCount?: number }>;
   };
   if (!Array.isArray(data.days)) {
     throw new Error("[features-service] email-gateway /public/stats/sending-forecast returned no days array");
   }
+  if (typeof data.dailyCapacity !== "number" || !Number.isFinite(data.dailyCapacity)) {
+    throw new Error("[features-service] email-gateway /public/stats/sending-forecast returned no numeric dailyCapacity");
+  }
 
-  const byDay = new Map<string, number>();
+  const scheduledByDay = new Map<string, number>();
   for (const day of data.days) {
     if (typeof day.date !== "string" || typeof day.scheduledCount !== "number" || !Number.isFinite(day.scheduledCount)) {
       throw new Error(`[features-service] sending-forecast day ${day.date} missing numeric scheduledCount`);
     }
-    byDay.set(day.date, day.scheduledCount);
+    scheduledByDay.set(day.date, day.scheduledCount);
   }
-  return byDay;
+  return { dailyCapacity: data.dailyCapacity, scheduledByDay };
 }

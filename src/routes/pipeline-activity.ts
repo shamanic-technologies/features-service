@@ -442,6 +442,12 @@ interface WorkflowActivityUnits {
   units: Map<string, WorkflowActivityUnit>;
   /** The feature's fleet workflow metadata — reused for the BRAND-grain evidence read (dynasty rollup). */
   workflows: WorkflowMetadata[];
+  /**
+   * The feature's POOLED realized cost per outreach: Σ cost ÷ Σ contacted across every dynasty, so a
+   * dollar of budget buys what the fleet actually gets rather than what its cheapest workflow got.
+   * `null` when nothing across the feature has both cost and a contacted recipient.
+   */
+  pooledOutreachUsd: number | null;
 }
 
 async function buildWorkflowActivityUnits(
@@ -463,6 +469,9 @@ async function buildWorkflowActivityUnits(
   const workflowBySlug = new Map(workflows.map((workflow) => [workflow.workflowSlug, workflow]));
   const unitsByWorkflowSlug = new Map<string, WorkflowActivityUnit>();
   const projectionInputs = economicsToProjectionInputs(economics);
+  // Pooled across DYNASTIES (the loop key), so each rolled-up chain is counted exactly once.
+  let pooledCostUsd = 0;
+  let pooledContacted = 0;
 
   for (const [activeSlug, versionSlugs] of dynasties) {
     const cost = costMap.get(activeSlug);
@@ -486,9 +495,13 @@ async function buildWorkflowActivityUnits(
 
     for (const slug of versionSlugs) unitsByWorkflowSlug.set(slug, unit);
     unitsByWorkflowSlug.set(activeSlug, unit);
+
+    pooledCostUsd += costUsd;
+    pooledContacted += contacted;
   }
 
-  return { units: unitsByWorkflowSlug, workflows };
+  const pooledOutreachUsd = pooledCostUsd > 0 && pooledContacted > 0 ? pooledCostUsd / pooledContacted : null;
+  return { units: unitsByWorkflowSlug, workflows, pooledOutreachUsd };
 }
 
 function chooseBestSignupWorkflow(units: Map<string, WorkflowActivityUnit>): WorkflowActivityUnit | null {
@@ -503,22 +516,26 @@ function chooseBestSignupWorkflow(units: Map<string, WorkflowActivityUnit>): Wor
 }
 
 /**
- * Feature-level cost-per-outreach (USD) of the best-signup workflow — the fleet BENCHMARK the
- * dashboard's per-brand forecast divides the daily budget by (`computeExpectedActivity`, where it is
- * additionally floored at the brand's OWN observed ratio). It is a CROSS-ORG (goal-global) figure:
- * `buildWorkflowActivityUnits` reads the PUBLIC workflow cost/email stats, so it depends only on the
- * FEATURE, not the brand — only the daily BUDGET is per-brand.
+ * Feature-level POOLED cost-per-outreach (USD) — Σ cost ÷ Σ contacted over every dynasty of the
+ * feature. The ADMIN fleet send-forecast's sole input: it divides each active brand's running daily
+ * budget by this to get new sequences/day. CROSS-ORG (goal-global): `buildWorkflowActivityUnits`
+ * reads the PUBLIC workflow cost/email stats, so it depends only on the FEATURE, not the brand —
+ * only the BUDGET is per-brand.
  *
- * The per-brand floor is deliberately NOT applied here: this is the ADMIN fleet send-forecast's
- * aggregate input, which is legitimately fleet-level and cross-brand. Keep this function's behaviour
- * unchanged.
+ * POOLED, deliberately, and this is the one place in the service where that is the right basis. The
+ * figure used to be the BEST-signup workflow's own ratio — the cheapest price any single workflow
+ * ever achieved — which is a floor nobody pays across a whole campaign: the selector fans a campaign
+ * across several workflows. Dividing a budget by a floor over-counts what that budget launches, and
+ * it did: measured in prod 2026-09-19, the floor basis projected 2,074 new sequences/day against
+ * 453-1,166 observed.
  *
- * The best-signup ranking (`chooseBestSignupWorkflow`, lowest `costPerSignupUsd`) is monotonic in
- * `clickUsd` for any fixed economics, so it's economics-INVARIANT: a neutral economics picks the same
- * workflow the dashboard would for any real brand. So the global send-forecast can compute one
- * `outreachUsd` per cold-email feature and reuse it across every active brand (fleet aggregation),
- * instead of re-running the full per-brand expected-activity path. Returns null when no workflow has
- * usable cost-per-outreach economics.
+ * ⚠️ The fleet-wide convention elsewhere in this service and on the landing is cross-org + BEST
+ * workflow, NEVER pooled. That governs what we ADVERTISE. This is a staff capacity PREDICTION of
+ * what will actually be sent, where the blended realized figure is the correct predictor. The
+ * distinction is deliberate: `chooseBestSignupWorkflow` still backs the per-brand dashboard forecast
+ * (`computeExpectedActivity`) and every public surface, unchanged.
+ *
+ * Returns null when nothing across the feature has both cost and a contacted recipient.
  */
 const NEUTRAL_ECONOMICS: SalesEconomics = {
   lifetimeRevenueUsd: 1000,
@@ -533,9 +550,8 @@ const NEUTRAL_ECONOMICS: SalesEconomics = {
 export async function computeFeatureOutreachUsd(featureSlug: string): Promise<number | null> {
   // GROSS on purpose: the admin fleet send-forecast is a cross-org staff surface (no per-org pricing
   // selector), so it keeps the real undiscounted cost per outreach — byte-unchanged.
-  const { units } = await buildWorkflowActivityUnits(featureSlug, NEUTRAL_ECONOMICS, "gross");
-  const best = chooseBestSignupWorkflow(units);
-  return best?.outreachUsd ?? null;
+  const { pooledOutreachUsd } = await buildWorkflowActivityUnits(featureSlug, NEUTRAL_ECONOMICS, "gross");
+  return pooledOutreachUsd;
 }
 
 /**

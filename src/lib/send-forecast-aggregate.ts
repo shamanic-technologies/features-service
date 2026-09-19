@@ -3,10 +3,17 @@
  * ACTIVE brands' daily budgets.
  *
  * Per brand, new sequences/day `R_b = dailyBudget_b × (1 / outreachUsd)` where `outreachUsd` is the
- * best-signup workflow's cost-per-outreach — a CROSS-ORG per-FEATURE figure (see
- * `computeFeatureOutreachUsd`), NOT per-brand — so we compute it ONCE per cold-email feature and reuse
- * it across every active brand. A brand on multiple cold-email features takes the cheapest (highest
- * sequences-per-USD) → `max` over its features. The daily BUDGET is the only per-brand input.
+ * feature's POOLED realized cost-per-outreach — Σ cost ÷ Σ contacted across its dynasties, a CROSS-ORG
+ * per-FEATURE figure (see `computeFeatureOutreachUsd`), NOT per-brand — so we compute it ONCE per
+ * cold-email feature and reuse it across every active brand. Pooled rather than best-workflow because
+ * this is a prediction of what the budget will actually launch, and the selector spreads a campaign
+ * across several workflows; dividing by the cheapest one's floor price over-counts (measured in prod
+ * 2026-09-19: 2,074 projected against 453-1,166 observed). The daily BUDGET is the only per-brand input.
+ *
+ * A brand on multiple cold-email features still takes the cheapest feature (highest sequences-per-USD)
+ * → `max` over its features. That remains a best-case pick and only bites a brand running more than
+ * one cold-email feature; how a brand's single running budget actually splits across its features is
+ * not something any producer reports today.
  *
  * ACTIVE gate (shared with the `/internal/stats/accounts` audit — reuses `accountStatus`): a
  * (org, brand) account contributes ONLY when `accountStatus(...) === "active"` — its RUNNING daily
