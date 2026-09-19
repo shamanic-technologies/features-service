@@ -17,10 +17,22 @@
  *
  * TWO CONSTRAINTS the fleet is physically under, and both were missing before:
  *
- *   CAPACITY. The fleet can send at most `dailyCapacity` emails a day (the healthy mailbox count ×
- *   their per-mailbox limits — the provider already reports it on the same payload series 2 comes
- *   from). Anything due beyond that does NOT vanish and does NOT all land on one day: it stays in
- *   the queue and goes out on the next day with room.
+ *   THROUGHPUT, bounded by CAPACITY. `dailyCapacity` (the healthy mailbox count × their per-mailbox
+ *   limits, reported by the provider on the same payload series 2 comes from) is a CEILING, not a
+ *   RATE — and the distinction is the whole of this model. The fleet has never come close to it:
+ *   measured 2026-09-19, its best day in 60 was 2,489 against a 4,105 ceiling, and on an ordinary
+ *   day 112 sending mailboxes delivered 15.8 emails each against a ~47/day average limit — WITH a
+ *   14,874-email backlog provisioned, so it was not demand-starved. What actually bounds it is the
+ *   provider's own pacing: campaign schedules, per-recipient timezone windows, per-account ramp.
+ *   So each day drains at `min(observedThroughput, dailyCapacity)` — the fleet's OWN recent
+ *   sending-day median, which is a measurement rather than an aspiration. Anything due beyond that
+ *   does NOT vanish and does NOT all land on one day: it stays in the queue for the next day.
+ *
+ *   ⚠️ Draining at the CEILING is what the first cut of this model did, and it is a bug that looks
+ *   like a fix: it correctly stops the forecast exceeding capacity and then predicts a throughput
+ *   never once observed, pinned flat on the ceiling for days. The tell is a plateau landing exactly
+ *   on a round capacity number several days running — a queue draining against a real constraint
+ *   does not do that.
  *
  *   SENDING DAYS. The fleet sends Monday-Friday (`SENDING_WEEKDAYS_UTC`). A weekend day has ZERO
  *   capacity, so nothing goes out and nothing is launched — the weekend's volume rolls to Monday.
@@ -66,6 +78,28 @@ export function isSendingDay(dateIso: string): boolean {
   return SENDING_WEEKDAYS_UTC.includes(weekday);
 }
 
+/**
+ * The fleet's own recent send RATE: the MEDIAN of the past days on which it actually sent.
+ *
+ * Median, not mean, because one outage or one unusually big day should not move the projection.
+ * Days with no recorded send are absent from `actualByDay` and are therefore excluded for free —
+ * weekends and outage days do not drag it down, which is what we want: this is the rate on a day
+ * the fleet IS sending.
+ *
+ * `null` when nothing has been sent in the window. The caller then has no measurement and falls
+ * back to the capacity ceiling, which is the pre-measurement behaviour and the only honest default —
+ * inventing a rate for a fleet we have never seen send would be worse than an optimistic one.
+ */
+export function observedDailyThroughput(actualByDay: Map<string, number>, todayIso: string): number | null {
+  const past = [...actualByDay.entries()]
+    .filter(([date, sent]) => date < todayIso && Number.isFinite(sent) && sent > 0)
+    .map(([, sent]) => sent)
+    .sort((a, b) => a - b);
+  if (past.length === 0) return null;
+  const mid = Math.floor(past.length / 2);
+  return past.length % 2 === 1 ? past[mid] : (past[mid - 1] + past[mid]) / 2;
+}
+
 /** Slug marker for the email-sequence outreach features that feed this forecast (instantly cold-email). */
 const COLD_EMAIL_SLUG_SUFFIX = "-cold-email-outreach";
 
@@ -101,8 +135,14 @@ export interface BuildSendForecastInput {
   dates: string[];
   /** UTC "today" date string (must be one of `dates`). */
   todayIso: string;
-  /** Emails/day the healthy fleet can physically send. The per-day ceiling every future day is drained under. */
+  /** Emails/day the healthy fleet could physically send — a CEILING, never the drain rate. */
   dailyCapacity: number;
+  /**
+   * The fleet's measured recent send rate (`observedDailyThroughput`), which is what each day
+   * actually drains at, bounded above by `dailyCapacity`. `null` when nothing has been sent in the
+   * window, in which case the ceiling stands in for it.
+   */
+  observedThroughput: number | null;
   /** Fleet new sequences/day at full budget — the cohort launched on every future SENDING day. */
   totalNewPerDay: number;
   /** Today's cohort size scaled to REMAINING budget (≤ totalNewPerDay). */
@@ -130,7 +170,9 @@ export function buildSendForecast(input: BuildSendForecastInput): {
   days: SendForecastDay[];
   summary: SendForecastSummary;
 } {
-  const { dates, todayIso, dailyCapacity, totalNewPerDay, todayNewOverride, actualByDay, inFlightByDay } = input;
+  const { dates, todayIso, dailyCapacity, observedThroughput, totalNewPerDay, todayNewOverride, actualByDay, inFlightByDay } = input;
+  // The rate a sending day drains at: what the fleet actually does, never more than it could do.
+  const drainRate = observedThroughput === null ? dailyCapacity : Math.min(observedThroughput, dailyCapacity);
 
   // Queues carried across days. Kept SEPARATE so each series stays attributable after draining.
   let queuedInFlight = 0;
@@ -155,7 +197,7 @@ export function buildSendForecast(input: BuildSendForecastInput): {
     // Today additionally carries the emails already sent so far today (disjoint from the queues, which
     // are provisioned-or-projected-not-yet-sent) — and they have already consumed part of the day's room.
     const actualSent = isToday ? (actualByDay.get(date) ?? null) : null;
-    const room = isSendingDay(date) ? Math.max(0, dailyCapacity - (actualSent ?? 0)) : 0;
+    const room = isSendingDay(date) ? Math.max(0, drainRate - (actualSent ?? 0)) : 0;
 
     // Already-provisioned work drains first; whatever room is left launches new cohorts.
     const inFlightSent = Math.min(queuedInFlight, room);

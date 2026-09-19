@@ -3,6 +3,7 @@ import {
   buildSendForecast,
   coldEmailOutreachSlugs,
   isSendingDay,
+  observedDailyThroughput,
   utcDateRange,
   addUtcDays,
   FOLLOWUP_MODEL_LABEL,
@@ -26,6 +27,9 @@ function baseInput(overrides: Partial<Parameters<typeof buildSendForecast>[0]> =
     dates,
     todayIso: TODAY,
     dailyCapacity: AMPLE,
+    // null = nothing measured yet, so the ceiling stands in for the rate. The capacity tests below
+    // key on that; the throughput tests pass a real one.
+    observedThroughput: null,
     totalNewPerDay: 100,
     todayNewOverride: 100,
     actualByDay: new Map(),
@@ -213,6 +217,124 @@ describe("buildSendForecast — series stacking + null-safety", () => {
     expect(summary.followupModel).toBe(FOLLOWUP_MODEL_LABEL);
     expect(summary.activeBrandCount).toBe(3);
     expect(summary.totalNewSequencesPerDay).toBe(100);
+  });
+});
+
+describe("observedDailyThroughput", () => {
+  it("takes the median of past days that actually sent", () => {
+    const m = new Map([
+      [addUtcDays(TODAY, -5), 1238],
+      [addUtcDays(TODAY, -4), 1771],
+      [addUtcDays(TODAY, -3), 1859],
+      [addUtcDays(TODAY, -2), 2024],
+      [addUtcDays(TODAY, -1), 2489],
+    ]);
+    expect(observedDailyThroughput(m, TODAY)).toBe(1859);
+  });
+
+  it("averages the middle two on an even count", () => {
+    const m = new Map([
+      [addUtcDays(TODAY, -2), 1000],
+      [addUtcDays(TODAY, -1), 2000],
+    ]);
+    expect(observedDailyThroughput(m, TODAY)).toBe(1500);
+  });
+
+  it("ignores today and anything after it — only settled days measure a rate", () => {
+    const m = new Map([
+      [addUtcDays(TODAY, -1), 1800],
+      [TODAY, 12],
+      [addUtcDays(TODAY, 1), 99],
+    ]);
+    expect(observedDailyThroughput(m, TODAY)).toBe(1800);
+  });
+
+  it("is null when the fleet has never been seen sending", () => {
+    expect(observedDailyThroughput(new Map(), TODAY)).toBeNull();
+  });
+
+  it("is not dragged down by a day with no send — those are absent, not zero", () => {
+    // A weekend or an outage never reaches actualByDay at all (the client drops sent=0).
+    const m = new Map([
+      [addUtcDays(TODAY, -3), 1800],
+      [addUtcDays(TODAY, -1), 1900],
+    ]);
+    expect(observedDailyThroughput(m, TODAY)).toBe(1850);
+  });
+});
+
+describe("buildSendForecast — throughput is the rate, capacity is the ceiling", () => {
+  it("drains at what the fleet ACTUALLY sends, not at what it could", () => {
+    const { days } = baseInput({
+      dailyCapacity: 4105,
+      observedThroughput: 1859,
+      totalNewPerDay: 0,
+      todayNewOverride: 0,
+      inFlightByDay: new Map([[TODAY, 10_000]]),
+    });
+    // The bug this replaced pinned every day flat on the 4,105 ceiling.
+    expect(dayOf(days, TODAY).total).toBe(1859);
+    expect(dayOf(days, "2026-07-02").total).toBe(1859);
+    expect(days.filter((d) => d.date >= TODAY).every((d) => (d.total ?? 0) <= 4105)).toBe(true);
+  });
+
+  it("never drains above the ceiling even when the measured rate exceeds it", () => {
+    // A measured rate above capacity means the fleet grew smaller, not that it can send more.
+    const { days } = baseInput({
+      dailyCapacity: 500,
+      observedThroughput: 9999,
+      totalNewPerDay: 0,
+      todayNewOverride: 0,
+      inFlightByDay: new Map([[TODAY, 10_000]]),
+    });
+    expect(dayOf(days, TODAY).total).toBe(500);
+  });
+
+  it("falls back to the ceiling when nothing has been measured", () => {
+    const measured = baseInput({
+      dailyCapacity: 700,
+      observedThroughput: 700,
+      totalNewPerDay: 0,
+      todayNewOverride: 0,
+      inFlightByDay: new Map([[TODAY, 5000]]),
+    }).days.map((d) => d.total);
+    const unmeasured = baseInput({
+      dailyCapacity: 700,
+      observedThroughput: null,
+      totalNewPerDay: 0,
+      todayNewOverride: 0,
+      inFlightByDay: new Map([[TODAY, 5000]]),
+    }).days.map((d) => d.total);
+    expect(unmeasured).toEqual(measured);
+  });
+
+  it("still loses nothing — a slower drain queues longer, it does not drop volume", () => {
+    const dates = utcDateRange(addUtcDays(TODAY, -1), addUtcDays(TODAY, 20));
+    const { days } = baseInput({
+      dates,
+      dailyCapacity: 4105,
+      observedThroughput: 300,
+      totalNewPerDay: 0,
+      todayNewOverride: 0,
+      inFlightByDay: new Map([[TODAY, 1500]]),
+    });
+    const drained = days.filter((d) => d.date >= TODAY).reduce((a, d) => a + (d.inFlightSent ?? 0), 0);
+    expect(drained).toBe(1500);
+  });
+
+  it("counts what already went out today against the measured rate, not the ceiling", () => {
+    const { days } = baseInput({
+      dailyCapacity: 4105,
+      observedThroughput: 1000,
+      totalNewPerDay: 0,
+      todayNewOverride: 0,
+      actualByDay: new Map([[TODAY, 900]]),
+      inFlightByDay: new Map([[TODAY, 5000]]),
+    });
+    const today = dayOf(days, TODAY);
+    expect(today.actualSent).toBe(900);
+    expect(today.inFlightSent).toBe(100); // 1000 measured rate − 900 already sent
+    expect(today.total).toBe(1000);
   });
 });
 
