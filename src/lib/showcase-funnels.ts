@@ -2,20 +2,26 @@
  * THE FUNNEL COUNTS OF THE CLIENTS WE NAME ON OUR OWN HOMEPAGE — public, org-less, and the brands are
  * decided HERE.
  *
- * The apex page states three named clients and, under each, how many people we contacted and how many
- * of them reached each subsequent step of that client's funnel. Those numbers were read out of
- * production by hand on 2026-09-06 and pasted into the page as literals. Nothing refreshes them, the
- * page renders perfectly either way, and the page nudges the counters in-session for a live feel — so
- * a reader watching a number climb is watching an invented increment climb from a frozen base. This is
- * the read that makes them true.
+ * The apex page names real clients in TWO places — a row of live cards in the hero and a proof section
+ * under it — and states, for each, how many people we contacted and how many of them reached each
+ * subsequent step of that client's funnel. Those numbers were read out of production by hand on
+ * 2026-09-06 and pasted into the page as literals. Nothing refreshes them, the page renders perfectly
+ * either way, and the page nudges the counters in-session for a live feel — so a reader watching a
+ * number climb is watching an invented increment climb from a frozen base. This is the read that makes
+ * them true.
  *
  * ── THE BRANDS ARE THE SERVICE'S DECISION, NEVER THE CALLER'S ───────────────────────────────────
  *
  * There is deliberately NO request parameter naming a brand anywhere on this surface. This is an
- * unauthenticated read of NAMED CLIENTS' funnel figures, published because we agreed to publish those
- * three; a caller-supplied identifier would turn the same route into a way to read any brand's funnel
- * with no session at all. The allowlist below is the whole access-control story, which is why it is a
- * frozen constant in code rather than a row somebody can add to from outside.
+ * unauthenticated read of NAMED CLIENTS' funnel figures; a caller-supplied identifier would turn the
+ * same route into a way to read any brand's funnel with no session at all. That property is unchanged.
+ *
+ * WHAT CHANGED IS WHO DECIDES THE LIST. It used to be a frozen constant of three brand ids, curated by
+ * hand and therefore ageing in public exactly as the numbers did. It is now TWO RANKINGS this service
+ * computes — the most recently begun clients that have produced an outcome, and the best measured
+ * return on spend past a floor — both of them in `lib/showcase-clients.ts`, both off the persisted
+ * fleet snapshot, and neither of them reachable by a caller. The page refreshes on its own and nobody
+ * adds a client by hand.
  *
  * ── THE PAGE DIVIDES NOTHING, AND "WE HAVE NO FIGURE" IS SAID OUT LOUD ──────────────────────────
  *
@@ -82,22 +88,7 @@ import { matchSalesFunnelKey, salesFunnelIndex, type SalesFunnelKey } from "./sa
 import type { CampaignIdentityRow } from "./campaign-identity.js";
 import type { FunnelStepBreakdown } from "./funnel-steps.js";
 import type { CostEconomics } from "./cost-economics.js";
-
-/**
- * THE ALLOWLIST — the clients whose funnel figures we publish, in the order the page states them.
- *
- * Adding a brand here PUBLISHES that brand's funnel counts to anyone on the internet, with no auth
- * and no session. That is the point of the surface and it is also its only risk, so the list lives in
- * code, is reviewed like code, and is never widened by a request.
- */
-export const SHOWCASE_BRAND_IDS: readonly string[] = [
-  // docdinners.com
-  "75d7e3e8-6926-4f85-a557-976895400666",
-  // opsfolio.com
-  "6e21bb6c-67bc-45f3-8a6d-52230338d7e4",
-  // shockwavecenters.com
-  "a179bbd9-8eed-4dba-9338-78125922b0c6",
-];
+import type { ShowcaseGroupUnmeasuredReason } from "./showcase-clients.js";
 
 /** The key + label of the outreach base — a step of no funnel, and the base every funnel converts from. */
 export const SHOWCASE_CONTACTED_KEY = "contacted";
@@ -175,9 +166,48 @@ export interface ShowcaseBrandFunnels {
   unmeasuredReason: ShowcaseUnmeasuredReason | null;
 }
 
-/** The payload. One entry per allowlisted brand, in the allowlist's own order — always all of them. */
+/**
+ * One PICKED group of clients, already ordered by this service, each carrying the identical entry the
+ * flat list below carries — who they are and their funnel figures, and nothing beyond it.
+ */
+export interface ShowcaseGroup {
+  /** The clients, in the order the page states them. Empty exactly when `measured` is false. */
+  brands: ShowcaseBrandFunnels[];
+  /** True iff this group named at least one client. False always carries a reason. */
+  measured: boolean;
+  unmeasuredReason: ShowcaseGroupUnmeasuredReason | null;
+  /** How many clients the group set out to name. */
+  requestedCount: number;
+  /**
+   * How many clients passed the gate before the cut to `requestedCount`. A SHORT group is therefore a
+   * stated fact (`qualifyingCount < requestedCount`) rather than a list a reader has to count — an
+   * empty or short group is never served silently.
+   */
+  qualifyingCount: number;
+}
+
+/**
+ * The payload.
+ *
+ * `brands` is the DEDUPED UNION of both groups — the field the existing consumer already reads, in an
+ * unchanged shape, so it keeps rendering while it moves onto the groups. A client picked by both
+ * questions appears ONCE here and in BOTH groups: a group is an answer to its own question, not a
+ * slice of one list.
+ */
 export interface ShowcaseFunnelsPayload {
   brands: ShowcaseBrandFunnels[];
+  groups: {
+    /** Most recently begun clients that have produced at least one outcome, newest first. */
+    recentlyStarted: ShowcaseGroup;
+    /** Best measured return on spend past `minSpendUsd`, best first. */
+    highestReturn: ShowcaseGroup;
+  };
+  /**
+   * The spend floor the `highestReturn` ranking was taken over, in USD — stated because a ranking
+   * whose population a reader cannot see is a ranking they cannot check. Below it a return is whatever
+   * that client's first outcome happened to do (measured in prod: 21.5x on $4.12 of spend).
+   */
+  minSpendUsd: number;
 }
 
 /**

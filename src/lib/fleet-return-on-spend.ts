@@ -56,6 +56,35 @@ export interface BrandReturnRow {
    * is a measurement nobody made.
    */
   expectedPipelineUsd: number | null;
+  /**
+   * THE FIRST UTC DAY (`YYYY-MM-DD`) THIS BRAND WAS EVER BILLED FOR THIS CHANNEL — the only notion of
+   * "when this client began" this service can answer honestly, and it is a measured fact rather than a
+   * declaration: the billed-spend ledger is the one record of a client's first day of paid outreach.
+   * A brand claimed by several orgs takes the EARLIEST of theirs — one client, one beginning.
+   *
+   * NULL is "we have no such day": the brand has never been billed on this channel, the read degraded,
+   * or the snapshot predates this field. Never a substituted date — a fabricated start would reorder a
+   * recency ranking, which is the one thing it decides.
+   *
+   * OPTIONAL on the stored shape, because a snapshot written before this field existed simply does not
+   * carry it; it reads as null and the next warm fills it in.
+   */
+  startedOn?: string | null;
+  /**
+   * DISTINCT PEOPLE WHO REACHED ONE OF THE TWO SIGNALS THIS SERVICE ACTUALLY COUNTS — a website visit
+   * or a positive reply — over this brand's whole outreach on the channel. It is the cheap, measured
+   * answer to "has this client produced anything at all", which is what a recency ranking has to gate
+   * on so it cannot lead with a client that has nothing to show.
+   *
+   * It is deliberately NOT a leg's outcome (`lib/leg-outcome.ts`): a leg is a property of a CAMPAIGN,
+   * and this row is the brand's whole channel. Counting the two observed signals is the same evidence
+   * every grain's `outcomes` block already states, so the two can never disagree.
+   *
+   * `0` is MEASURED — this brand reached people and none of them did either thing. NULL is "we could
+   * not count this" (the leads were never read, or the snapshot predates the field), and the two are
+   * kept apart because only the first is a statement about the client.
+   */
+  outcomeCount?: number | null;
 }
 
 /** Why a median could not be stated. Both are real answers; neither is an error. */
