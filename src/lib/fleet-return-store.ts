@@ -30,10 +30,27 @@ function parseRow(raw: unknown): BrandReturnRow | null {
   if (typeof r.committedSpendUsd !== "number" || !Number.isFinite(r.committedSpendUsd)) return null;
   const pipeline = r.expectedPipelineUsd;
   if (pipeline !== null && (typeof pipeline !== "number" || !Number.isFinite(pipeline))) return null;
+  // Both picks-only fields are OPTIONAL on the stored shape and ABSENT on every row written before
+  // they existed. Absent and explicit-null are the same statement here ("we have no such figure"), so
+  // a legacy snapshot narrows cleanly instead of reading as malformed — which would blank the whole
+  // channel's median over a field the median does not use. A present-but-wrong-typed value IS
+  // malformed, exactly as the two fields above are.
+  const startedOn = r.startedOn;
+  if (startedOn !== undefined && startedOn !== null && typeof startedOn !== "string") return null;
+  const outcomeCount = r.outcomeCount;
+  if (
+    outcomeCount !== undefined &&
+    outcomeCount !== null &&
+    (typeof outcomeCount !== "number" || !Number.isFinite(outcomeCount))
+  ) {
+    return null;
+  }
   return {
     brandId: r.brandId,
     committedSpendUsd: r.committedSpendUsd,
     expectedPipelineUsd: pipeline as number | null,
+    startedOn: (startedOn as string | undefined) ?? null,
+    outcomeCount: (outcomeCount as number | undefined) ?? null,
   };
 }
 

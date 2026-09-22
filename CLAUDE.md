@@ -1048,23 +1048,66 @@ The customer can now say so, per statement. lead-service froze `causedByOutreach
   only checked "a number came back" would pass on an implementation that ignored the parameter.
   (Set 2026-09-04, features-service#882; Wave 2 of 3 behind lead-service#511.)
 
-## OUR OWN HOMEPAGE STATES THREE CLIENTS' FUNNEL COUNTS — `GET /public/stats/showcase-funnels`, and the brands are decided HERE, never by the caller
+## OUR OWN HOMEPAGE NAMES CLIENTS THIS SERVICE PICKS — `GET /public/stats/showcase-funnels`, TWO ORDERED GROUPS, and the caller names nobody
 
-The apex page (indexable, no session) names three clients and states, under each, how many people we
-contacted and how many reached each subsequent step. Those figures were read out of production BY HAND
-on 2026-09-06 and pasted in as literals. Nothing refreshed them: a client's funnel moves every day, the
-page renders perfectly either way, and it NUDGES the counters in-session for a live feel — so a reader
-watching a number climb was watching an invented increment climb from a frozen base. This is the read
-that makes them true.
+The apex page (indexable, no session) names real clients in TWO places — a row of live cards in the
+hero and a proof section under it — and states, under each, how many people we contacted and how many
+reached each subsequent step. Those figures were read out of production BY HAND on 2026-09-06 and
+pasted in as literals; this read replaced them. WHICH CLIENTS get named was a frozen constant of three
+brand ids for the same reason and for longer: a human curated it, nothing refreshed it, and the page
+hardcoded the same three in its own HTML.
 
-- **THE ALLOWLIST IS IN THE SERVICE, AND THE ROUTE TAKES NO PARAMETER NAMING A BRAND**
-  (`lib/showcase-funnels.ts`, `SHOWCASE_BRAND_IDS`). This is an unauthenticated read of NAMED clients'
-  funnel figures, published because we agreed to publish those three; a caller-supplied identifier
-  would turn the same route into a way to read ANY brand's funnel with no session at all. The list is
-  the whole access-control story, which is why it is a frozen constant reviewed like code rather than a
-  row somebody can add to from outside. Adding a brand to it PUBLISHES that brand's funnel to the
-  internet. Guarded: a `?brandId=` on the request produces a BYTE-IDENTICAL body, and a non-allowlisted
-  brand is absent however it is asked for.
+- **TWO PICKS, BOTH THE SERVICE'S, BOTH ALREADY ORDERED** (`lib/showcase-clients.ts`, served as
+  `groups`). **`recentlyStarted`** — the three most recently begun clients that have produced at least
+  one outcome, newest first. **`highestReturn`** — the three highest realized returns on spend past the
+  floor, best first. The page ranks nothing, filters nothing and divides nothing: every figure it shows
+  is a served field, so both picks belong here. A client may legitimately be in BOTH — a group is an
+  ANSWER to its own question, never a slice of one list — and `brands` is their deduped union, in the
+  unchanged shape the existing consumer already reads.
+- **THE ROUTE STILL TAKES NO PARAMETER NAMING A BRAND, and never will.** This is an unauthenticated
+  read of NAMED clients' funnel figures; a caller-supplied identifier would turn it into a way to read
+  ANY brand's funnel with no session at all. What changed is only WHO decides the list — a human's
+  allowlist, or a ranking this service computes — and both keep the caller out. **`SHOWCASE_BRAND_IDS`
+  is GONE and must not come back**: a hand-curated list is exactly the thing that ages in public.
+  Guarded: a `?brandId=` produces a BYTE-IDENTICAL body.
+- **WHEN A CLIENT BEGAN IS THE FIRST DAY THEY WERE BILLED**, read from runs-service's dated cost ledger
+  (`fetchBrandFirstBilledDay`) and frozen on the snapshot row as `startedOn`. This service holds no
+  signup date and does not invent one; the billed-spend ledger is the one record of a client's first day
+  of paid outreach, and it is the same notion `agency-self-serve-compute.ts` already uses for "since this
+  pair began". A brand claimed by several orgs takes the EARLIEST of theirs. **A client we cannot date is
+  not a candidate** — never dated with a stand-in, which would reorder the one ranking it decides.
+- **THE OUTCOME GATE IS THE TWO SIGNALS THIS SERVICE ACTUALLY COUNTS** — a website visit or a positive
+  reply, off the `outcomes` block the same engine pass already carries (zero extra IO). It is the SUM of
+  two distinct-lead counts, so a person who did both is counted twice: an UPPER BOUND, which is exactly
+  enough for the `> 0` gate it is read as and for nothing else. It is **never served**. It is
+  deliberately NOT a leg's outcome — a leg is a property of a CAMPAIGN and this row is the brand's whole
+  channel. A MEASURED 0 fails the gate; so does an unmeasured null, because we cannot claim what we did
+  not count.
+- **THE RETURN RANKING RESTS ON A SPEND FLOOR, AND THE FLOOR IS STATED** (`minSpendUsd`, the same
+  `DEFAULT_MIN_SPEND_USD` of $100 the published median uses). Measured in prod 2026-09-22, the top of an
+  UNFILTERED ranking is **21.5x on $4.12** and **12.3x on $9.77** — ahead of clients with hundreds of
+  dollars behind their number. A ranking whose population a reader cannot see is one they cannot check,
+  so the floor rides the body. Verified against the same snapshot: with the floor, the three named are
+  **55.6x on $354.96**, **43.4x on $132.43** and **17.7x on $247.19**.
+- **THE PICK COSTS ONE INDEXED SELECT PER CHANNEL, and that is the whole design.** Ranking clients by
+  return means knowing every brand's return, and deriving that live is one engine pass per (org, brand)
+  — minutes, against a consumer that gives this EIGHT SECONDS and drops the section rather than block a
+  build. Those passes already happened, off the request path, in the fleet-return warm; this reads the
+  rows they wrote (`fleet_return_snapshots`, which is why `BrandReturnRow` grew `startedOn` and
+  `outcomeCount`). **Do NOT "simplify" the pick onto `/public/stats/revenue?groupBy=brand`** — that read
+  is the minutes-long fan-out this exists to avoid. Both fields are OPTIONAL on the stored shape, so a
+  snapshot written before them narrows to nulls rather than reading as malformed, and the next warm
+  fills them in; neither is read by any median or quantile, which is why an unreadable one costs a brand
+  ONE ranking rather than its place in the population.
+- **THE SNAPSHOT'S WARM KICKS THE SHOWCASE WARM WHEN IT FINISHES.** The picks are derived from the rows
+  it writes, so refreshing the evidence without refreshing the picks would leave the page naming the
+  previous deploy's clients for a whole stale window — a smaller version of the frozen list this
+  replaces.
+- **A GROUP WITH NOBODY SAYS WHICH SILENCE IT IS** — `no_snapshot_yet` (no warm has run, nothing to
+  rank) against `no_qualifying_clients` (a snapshot exists and nobody passed the gate). A SHORT group is
+  not silent either: `qualifyingCount` states how many passed before the cut to `requestedCount`. And a
+  group's `measured` is a statement about the PICK, not about any one client's chain — a named client
+  whose own funnel could not be walked still appears, carrying its own `measured: false`.
 - **THE PAGE DIVIDES NOTHING, and every figure it prints is stated on the wire, in DOLLARS.** Each step
   carries `peopleReached` and its own name; **`0` is MEASURED** ("nobody got here") and **`null` is "we
   have no figure"** (the producer behind that rung degraded on this read), exactly as `funnelSteps`
@@ -1145,17 +1188,25 @@ that makes them true.
 - Rides `LIFETIME_AGGREGATE_WINDOWS` through `servedPublicCached` (15 min fresh / 6 h stale,
   single-flighted), like every other cross-org public surface. **The api-service gateway does NOT proxy
   `/public/*`** (no wildcard there), so a consumer outside the cluster needs its own forward.
-- Guards: `src/routes/showcase-funnels.test.ts` — ONE fixture of three brands selling two different
-  funnels: the no-brand-parameter identity, the allowlist's order, the ordered chain with a MEASURED 0
-  at the rung nobody reached, each brand on its OWN funnel, a degraded producer nulling the rung it
-  alone evidences, all four unmeasured reasons, and one brand's failure leaving the others intact.
+- Guards: `src/lib/showcase-clients.test.ts` — ONE candidate set built so the TWO ORDERS DISAGREE
+  (recency `SHOCK, OPS, DOC` against return `OPS, SHOCK, DOC`), so a suite that only checked "a list
+  came back" would pass on an implementation that ranked one way twice: the floor DISPLACING a client
+  (unfiltered, the $4.12 client takes second and pushes a $5,046 client off), the outcome gate dropping
+  the newest client, an unmeasured count and an unmeasured date each costing ONE ranking, an unpriced
+  pipeline absent rather than 0, both silences, the total orders, and the legacy snapshot narrowing to
+  nulls. Plus `src/routes/showcase-funnels.test.ts` — ONE fixture carrying production's shape (the
+  22x-on-$4 client both gates reject): the two ordered groups, the deduped union with byte-identical
+  entries, the stated floor, the short group, both silences, the no-brand-parameter identity, the
+  ordered chain with a MEASURED 0 at the rung nobody reached, each brand on its OWN funnel, a degraded
+  producer nulling the rung it alone evidences, every unmeasured reason, and one brand's failure leaving
+  the others intact.
   Plus the money half on the SAME fixture ($100 committed over 4 contacted / 2 replies / 1 booked /
   1 attended / 0 closed, so every figure is hand-checkable): every rung priced including the base, the
   null cost beside the measured 0, **DOUBLING the committed spend HALVING the return and DOUBLING every
   cost per reach** — the divergence a forward projection would not show, and which a suite asserting
   only "a number came back" would miss — the zero-spend client keeping its counts and losing its money,
   an unmeasured rung carrying no cost, and the total spend absent from the body.
-  (Set 2026-09-08; money half 2026-09-09, features-service#902.)
+  (Set 2026-09-08; money half 2026-09-09, features-service#902; the picks replaced the frozen list 2026-09-22.)
 
 ## THE MEDIAN RETURN ON SPEND OUR CLIENTS GET — `GET /public/stats/return-on-spend`, served from a PERSISTED snapshot because the compute takes MINUTES
 
