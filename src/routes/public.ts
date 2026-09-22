@@ -73,13 +73,20 @@ import { distinctChannelFunnels } from "./offer-economics.js";
 import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
 import { buildBrandChannels, brandFeatureSlugs } from "../lib/brand-channels.js";
 import {
-  SHOWCASE_BRAND_IDS,
   brandSoldFunnels,
   showcaseFunnelOf,
   type ShowcaseBrandFunnels,
   type ShowcaseFunnel,
   type ShowcaseFunnelsPayload,
+  type ShowcaseGroup,
 } from "../lib/showcase-funnels.js";
+import {
+  buildShowcaseCandidates,
+  pickShowcaseClients,
+  SHOWCASE_GROUP_SIZE,
+  type ShowcaseGroupPick,
+} from "../lib/showcase-clients.js";
+import { fetchBrandFirstBilledDay } from "../lib/revenue-history-client.js";
 import { servedCached, PLATFORM_SCOPE_ORG_ID } from "../lib/view-cache.js";
 import {
   buildChannelCatalogue,
@@ -93,6 +100,7 @@ import type { ComposedMinimumCommitment } from "../lib/funnel-commercial-terms.j
 import {
   buildFleetReturnOnSpend,
   parseMinSpendUsd,
+  DEFAULT_MIN_SPEND_USD,
   type BrandReturnRow,
   type FleetReturnOnSpend,
 } from "../lib/fleet-return-on-spend.js";
@@ -871,6 +879,14 @@ async function computePairRevenue(
       // client. The COUNT of those clients is what composes across orgs (a ratio does not), so the
       // fleet warm stores the count and divides once, at the brand grain.
       costPerAcquisitionUsd: body.costEconomics.costPerAcquisitionUsd,
+      // HAS THIS BRAND PRODUCED ANYTHING AT ALL — the two signals this service actually counts, off
+      // the volume block this pass already carries (zero extra IO). It is the SUM of two distinct-lead
+      // counts, so a person who both visited and replied is counted twice: an UPPER BOUND, which is
+      // exactly enough for the `> 0` gate the recency pick reads it as and for nothing else. It is
+      // never served. NULL is "the leads were never read", kept apart from a measured 0.
+      outcomeCount: body.outcomes
+        ? body.outcomes.recipientsClicked + body.outcomes.recipientsRepliesPositive
+        : null,
       timeSeries: body.timeSeries,
     };
   } catch (error) {
@@ -1038,6 +1054,12 @@ const FLEET_RETURN_BRAND_TIMEOUT_MS = 120_000;
 /** Single-flight guard, per feature slug — a burst of cold reads must kick exactly ONE warm. */
 const fleetReturnWarmInFlight = new Map<string, Promise<void>>();
 
+/**
+ * The floor the first-billed-day read looks back from — earlier than this fleet's first billed dollar
+ * by years, so "first ever" is genuinely first ever and not "first since the window opened".
+ */
+const FIRST_BILLED_FLOOR_ISO = "2020-01-01T00:00:00.000Z";
+
 /** Test seam — await any in-flight fleet-return warm(s) so a follow-up read observes the snapshot. */
 export async function __awaitFleetReturnWarm(): Promise<void> {
   await Promise.allSettled([...fleetReturnWarmInFlight.values()]);
@@ -1065,23 +1087,44 @@ async function computePairReturns(
   funnel: ReturnType<typeof getFunnel>,
   orgId: string,
   brandId: string,
-): Promise<{ channel: PairReturn | null; byFunnel: Array<{ funnelKey: SalesFunnelKey; result: PairReturn }> }> {
+): Promise<{
+  channel: PairReturn | null;
+  startedOn: string | null;
+  byFunnel: Array<{ funnelKey: SalesFunnelKey; result: PairReturn }>;
+}> {
   const channel = await computePairRevenue(featureSlug, funnel, orgId, brandId);
-  if (channel === null) return { channel: null, byFunnel: [] };
+  if (channel === null) return { channel: null, startedOn: null, byFunnel: [] };
+
+  // WHEN THIS CLIENT BEGAN — the first UTC day the pair was ever billed on this channel. One cheap
+  // dated-cost read beside an engine pass that already took seconds, and the only notion of a
+  // beginning this service can answer honestly (see lib/showcase-clients.ts).
+  //
+  // SOFT, and deliberately so: no MEDIAN figure depends on this date, so a blip here must not drop the
+  // brand from the population it does belong to. Null degrades the brand out of the RECENCY pick alone
+  // — never dated with a stand-in, which would silently reorder the one ranking it decides.
+  let startedOn: string | null = null;
+  try {
+    startedOn = await fetchBrandFirstBilledDay(orgId, brandId, featureSlug, FIRST_BILLED_FLOOR_ISO);
+  } catch (err) {
+    console.error(
+      `[features-service] fleet-return warm: first-billed day unreadable for brand ${brandId} (org ${orgId}) — it is not a recency candidate:`,
+      err,
+    );
+  }
 
   // SOFT: a brand whose declaration cannot be read contributes to the channel median (which needs no
   // declaration) and to no funnel — never to a funnel we guessed it sells.
   const declared = await fetchDeclaredFunnelsSoft(brandId, orgId);
   const keys = [...new Set(declared.map((d) => d.funnelKey))];
-  if (keys.length === 0) return { channel, byFunnel: [] };
-  if (keys.length === 1) return { channel, byFunnel: [{ funnelKey: keys[0], result: channel }] };
+  if (keys.length === 0) return { channel, startedOn, byFunnel: [] };
+  if (keys.length === 1) return { channel, startedOn, byFunnel: [{ funnelKey: keys[0], result: channel }] };
 
   const byFunnel: Array<{ funnelKey: SalesFunnelKey; result: PairReturn }> = [];
   for (const funnelKey of keys) {
     const result = await computePairRevenue(featureSlug, funnel, orgId, brandId, funnelKey);
     if (result !== null) byFunnel.push({ funnelKey, result });
   }
-  return { channel, byFunnel };
+  return { channel, startedOn, byFunnel };
 }
 
 /**
@@ -1130,7 +1173,17 @@ export async function warmFleetReturnSnapshot(featureSlug: string): Promise<void
     // (leads are disjoint per org, so nothing is double-counted), exactly as the per-brand revenue read
     // above aggregates it. A pipeline stays null only when EVERY org's is null — no usable economics
     // anywhere — and null is never coerced to 0.
-    const byBrand = new Map<string, { spend: number; pipeline: number; hasPipeline: boolean }>();
+    const byBrand = new Map<
+      string,
+      {
+        spend: number;
+        pipeline: number;
+        hasPipeline: boolean;
+        startedOn: string | null;
+        outcomes: number;
+        hasOutcomes: boolean;
+      }
+    >();
     // The same aggregation one grain finer, keyed (brand, funnel). PAYING CLIENTS rather than a cost
     // per client, because a COUNT composes across the orgs claiming one brand and a ratio does not:
     // spend ÷ Σ clients is the brand's cost per client, whereas averaging two orgs' ratios is not.
@@ -1140,11 +1193,24 @@ export async function warmFleetReturnSnapshot(featureSlug: string): Promise<void
     >();
     for (const c of computed) {
       if (c === null || c.channel === null) continue;
-      const agg = byBrand.get(c.channel.brandId) ?? { spend: 0, pipeline: 0, hasPipeline: false };
+      const agg =
+        byBrand.get(c.channel.brandId) ??
+        { spend: 0, pipeline: 0, hasPipeline: false, startedOn: null, outcomes: 0, hasOutcomes: false };
       agg.spend += c.channel.committedCostUsd;
       if (c.channel.pipeline !== null) {
         agg.pipeline += c.channel.pipeline;
         agg.hasPipeline = true;
+      }
+      // A brand claimed by several orgs has ONE beginning: the EARLIEST of theirs. `YYYY-MM-DD` sorts
+      // lexically, so this is a string comparison with no parsing and no timezone to get wrong.
+      if (c.startedOn !== null && (agg.startedOn === null || c.startedOn < agg.startedOn)) {
+        agg.startedOn = c.startedOn;
+      }
+      // Leads are disjoint per org, so summing the orgs' counts counts nobody twice HERE (the double
+      // count this figure tolerates is the one WITHIN an org, between its two signals).
+      if (c.channel.outcomeCount !== null) {
+        agg.outcomes += c.channel.outcomeCount;
+        agg.hasOutcomes = true;
       }
       byBrand.set(c.channel.brandId, agg);
 
@@ -1172,6 +1238,11 @@ export async function warmFleetReturnSnapshot(featureSlug: string): Promise<void
       brandId,
       committedSpendUsd: agg.spend,
       expectedPipelineUsd: agg.hasPipeline ? agg.pipeline : null,
+      // Both are read ONLY by the homepage client picks (lib/showcase-clients.ts); no median or
+      // quantile on this snapshot touches either, which is why an unreadable one degrades the brand out
+      // of one ranking rather than out of the population.
+      startedOn: agg.startedOn,
+      outcomeCount: agg.hasOutcomes ? agg.outcomes : null,
     }));
     const funnelRows: BrandFunnelReturnRow[] = [...byBrandFunnel.values()].map((f) => ({
       brandId: f.brandId,
@@ -1212,6 +1283,10 @@ export function warmFleetReturnSnapshotsOnBoot(): void {
       // Sequential ACROSS channels: each warm is already an O(brands) fan-out with its own cap, and
       // running several at once would put every channel's engine passes on the siblings at the same time.
       for (const slug of slugs) await warmFleetReturnSnapshot(slug);
+      // The homepage's client PICKS are derived from the rows this warm just wrote, so refreshing the
+      // evidence without refreshing the picks would leave the page naming the previous deploy's
+      // clients for a whole stale window — a smaller version of the frozen list the picks replace.
+      warmShowcaseFunnelsOnBoot();
     } catch (err) {
       console.error("[features-service] fleet-return boot warm failed:", err);
     }
@@ -2989,7 +3064,16 @@ export function warmShowcaseFunnelsOnBoot(): void {
     });
 }
 
-/** The whole payload: every allowlisted brand, in the allowlist's order, one brand's failure isolated. */
+/**
+ * The whole payload: the two PICKED groups and the deduped union of the clients they name, one
+ * brand's failure isolated.
+ *
+ * THE PICK COSTS ONE INDEXED SELECT PER CHANNEL, which is the whole reason this read can be made at
+ * all. Ranking clients by return means knowing every brand's return, and deriving that live is one
+ * engine pass per (org, brand) — minutes, against a consumer that gives this eight seconds and drops
+ * the section rather than block a build. Those passes already happened, off the request path, in the
+ * fleet-return warm; this reads the rows they wrote. See `lib/showcase-clients.ts` for both rankings.
+ */
 async function computeShowcaseFunnelsPayload(): Promise<ShowcaseFunnelsPayload> {
   // Every seed slug in one membership read (308 rows fleet-wide, 2026-09-08) rather than a guess
   // at which channels a showcase brand happens to run — a brand that moves to a new channel keeps
@@ -3001,10 +3085,25 @@ async function computeShowcaseFunnelsPayload(): Promise<ShowcaseFunnelsPayload> 
     if (!orgByBrand.has(m.brandId)) orgByBrand.set(m.brandId, m.orgId);
   }
 
-  const brandInfo = await fetchBrandInfoBatch([...SHOWCASE_BRAND_IDS]);
+  // The snapshots to rank over: every cold-email channel's, so a client that runs two of them is ONE
+  // client with one beginning and one summed return, rather than two rows competing with each other.
+  // A channel with NO snapshot contributes nothing; only when NONE has one is there nothing to rank,
+  // which is the `no_snapshot_yet` silence and a different statement from "nobody qualifies".
+  const channelSlugs = coldEmailOutreachSlugs(allSlugs);
+  const snapshots = (await Promise.all(channelSlugs.map((slug) => readFleetReturnSnapshotSoft(slug)))).filter(
+    (snap): snap is NonNullable<typeof snap> => snap !== null,
+  );
+  const candidates = snapshots.length === 0 ? null : buildShowcaseCandidates(snapshots.map((snap) => snap.brands));
+  const picks = pickShowcaseClients(candidates, DEFAULT_MIN_SPEND_USD, SHOWCASE_GROUP_SIZE);
+
+  // A client picked by BOTH questions is walked ONCE and its identical entry appears in both groups —
+  // the funnel walk is the expensive half and a client does not have two funnels because two rankings
+  // liked it.
+  const named = [...new Set([...picks.recentlyStarted.brandIds, ...picks.highestReturn.brandIds])];
+  const brandInfo = named.length > 0 ? await fetchBrandInfoBatch(named) : new Map();
 
   const brands = await mapWithConcurrency(
-    [...SHOWCASE_BRAND_IDS],
+    named,
     SHOWCASE_BRAND_CONCURRENCY,
     async (brandId): Promise<ShowcaseBrandFunnels> => {
       try {
@@ -3021,8 +3120,29 @@ async function computeShowcaseFunnelsPayload(): Promise<ShowcaseFunnelsPayload> 
       }
     },
   );
+  const walked = new Map(brands.map((b) => [b.brand.id, b]));
 
-  return { brands };
+  // A group's `measured` is a statement about the PICK — did this ranking name anybody — and each
+  // entry's own `measured` is a statement about that client's chain. They are kept apart on purpose:
+  // "we could not rank" and "we could not walk this client's funnel" are different silences.
+  const groupOf = (pick: ShowcaseGroupPick): ShowcaseGroup => ({
+    brands: pick.brandIds
+      .map((id) => walked.get(id))
+      .filter((entry): entry is ShowcaseBrandFunnels => entry !== undefined),
+    measured: pick.measured,
+    unmeasuredReason: pick.unmeasuredReason,
+    requestedCount: pick.requestedCount,
+    qualifyingCount: pick.qualifyingCount,
+  });
+
+  return {
+    brands,
+    groups: {
+      recentlyStarted: groupOf(picks.recentlyStarted),
+      highestReturn: groupOf(picks.highestReturn),
+    },
+    minSpendUsd: picks.minSpendUsd,
+  };
 }
 
 export async function handleShowcaseFunnels(res: import("express").Response): Promise<void> {

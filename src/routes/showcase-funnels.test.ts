@@ -1,33 +1,46 @@
 /**
- * THE SHOWCASE BRANDS' FUNNEL COUNTS — public, org-less, allowlisted.
+ * THE CLIENTS OUR HOMEPAGE NAMES — picked here, ordered here, public and org-less.
  *
- * ONE downstream fixture drives every case, shaped like what the homepage actually states: three
- * named clients, two of them selling different funnels, one of them with a rung nobody has reached.
- * What the cases pin:
+ * ONE downstream fixture drives every case, shaped like what the homepage actually states: clients
+ * selling different funnels, one with a rung nobody has reached, and one whose 21.5x sits on $4 of
+ * spend (the shape production's unfiltered ranking leads with). What the cases pin:
  *
- *   - the route NAMES NO BRAND: a `?brandId=` on the request changes nothing, and a brand that is not
- *     on the allowlist is absent from the body however it is asked for. That is the whole access
- *     control of an unauthenticated read of named clients' figures;
+ *   - the two PICKS are the service's, ALREADY ORDERED, and they DIVERGE: the recency order and the
+ *     return order name the same clients in OPPOSITE sequences on one fixture, so a suite that only
+ *     checked "a group came back" would pass on an implementation that served one list twice;
+ *   - the SPEND FLOOR excludes the $4 client the unfiltered ranking would lead with, and the floor is
+ *     STATED on the wire;
+ *   - the OUTCOME gate excludes a client that began yesterday and has produced nothing;
+ *   - a group with nobody SAYS WHICH SILENCE it is, and a SHORT group is a stated fact rather than a
+ *     list somebody has to count;
+ *   - the route NAMES NO BRAND: a `?brandId=` on the request changes nothing, which is the whole
+ *     access control of an unauthenticated read of named clients' figures;
  *   - the chain is the funnel's OWN steps in the funnel's OWN order, the outreach base first, under
  *     the funnel's own names — and a rung nobody reached is SERVED at 0 rather than dropped, because
  *     the page draws the funnel in order and hides empty cells itself;
  *   - a rung whose only producer degraded reads NULL — "we have no figure" — never a 0;
  *   - each brand walks the funnel its OWN campaigns state they sell, not the other brand's;
- *   - every allowlisted brand is always in the body, in the allowlist's order, and a brand with
- *     nothing to walk carries `funnels: []` with a NAMED reason rather than an empty shrug;
- *   - one brand's failed read never blanks the others;
+ *   - a picked brand with nothing to walk carries `funnels: []` with a NAMED reason, and one brand's
+ *     failed read never blanks the others;
  *   - the MONEY half rides the same pass: every rung states what reaching it cost (the base priced on
  *     the identical formula, so the consumer never branches), each chain states the client's own
  *     realized return, and both HALVE/DOUBLE with committed spend — which a forward projection would
  *     not, and which is why the divergence is asserted rather than "a number came back";
  *   - a figure we could not measure is NULL beside a measured 0, both for a rung nobody reached and
- *     for a client whose spend we cannot read — and the total spend is never published.
+ *     for a client whose spend we cannot read — and no client's total spend is ever published.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
 
 vi.mock("../db/index.js", () => ({
-  db: { query: { features: { findFirst: vi.fn(), findMany: vi.fn() } } },
+  db: {
+    query: {
+      features: { findFirst: vi.fn(), findMany: vi.fn() },
+      // The picks are ranked off the PERSISTED fleet snapshot — the rows a background warm writes —
+      // which is the whole reason this read answers in milliseconds instead of minutes.
+      fleetReturnSnapshots: { findFirst: vi.fn() },
+    },
+  },
   sql: {},
 }));
 vi.mock("../lib/env.js", () => ({ validateRequiredEnv: vi.fn(), REQUIRED_ENV: [] }));
@@ -61,10 +74,17 @@ process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
 const { __resetShowcaseFunnelsCache } = await import("./public.js");
-const { SHOWCASE_BRAND_IDS, brandSoldFunnels } = await import("../lib/showcase-funnels.js");
+const { brandSoldFunnels } = await import("../lib/showcase-funnels.js");
 
-const [DOC, OPS, SHOCK] = SHOWCASE_BRAND_IDS;
-/** A brand that is NOT on the allowlist — nothing a caller does may make it appear. */
+const DOC = "75d7e3e8-6926-4f85-a557-976895400666";
+const OPS = "6e21bb6c-67bc-45f3-8a6d-52230338d7e4";
+const SHOCK = "a179bbd9-8eed-4dba-9338-78125922b0c6";
+/**
+ * THE SUB-FLOOR CLIENT — a 22x return sitting on $4 of spend and nothing produced. It is the shape
+ * production's unfiltered ranking leads with (21.5x on $4.12, measured 2026-09-22), so it is what
+ * both gates have to keep out: the spend floor from the return ranking, the outcome gate from the
+ * recency one. It is also the brand a caller tries to name.
+ */
 const OUTSIDER = "11111111-2222-3333-4444-555555555555";
 
 const PITCH = "sales-cold-email-outreach";
@@ -166,9 +186,27 @@ interface Fixture {
    * NET basis, so the money half must move with THIS number and not with `spendCents`.
    */
   netSpendCents?: number;
+  /**
+   * The stored fleet-snapshot rows the PICKS are ranked over. `null` = no snapshot exists at all,
+   * which is a different silence from "a snapshot exists and nobody qualifies".
+   */
+  snapshot?: SnapshotRow[] | null;
+}
+
+/** One stored row of the persisted fleet snapshot — what a ranking has to work with. */
+interface SnapshotRow {
+  brandId: string;
+  committedSpendUsd: number;
+  expectedPipelineUsd: number | null;
+  startedOn?: string | null;
+  outcomeCount?: number | null;
 }
 
 function mockFetch(fixture: Fixture): void {
+  const rows = fixture.snapshot === undefined ? SNAPSHOT : fixture.snapshot;
+  vi.mocked(db.query.fleetReturnSnapshots.findFirst).mockImplementation((async () =>
+    rows === null ? undefined : { featureSlug: PITCH, brands: rows, computedAt: new Date() }) as never);
+
   const brandOf = (q: URLSearchParams, headers: Headers | undefined): string =>
     q.get("brandId") ?? headers?.get("x-brand-id") ?? "";
 
@@ -293,6 +331,24 @@ function mockFetch(fixture: Fixture): void {
  *   opsfolio       — a DIFFERENT funnel (form magnet), so a brand walking the other's chain fails.
  *   shockwave      — no lead membership at all: we cannot resolve whose org to read it under.
  */
+/**
+ * THE SNAPSHOT THE PICKS RANK OVER, built so the TWO ORDERS DISAGREE.
+ *
+ * By return:  opsfolio 55.6x  >  shockwave 3.6x  >  docdinners 1.65x
+ * By recency: shockwave (Aug) >  opsfolio (Jun) >  docdinners (Mar)
+ *
+ * So the first client of one group is the second of the other, and an implementation that served one
+ * ranking under both names fails. The outsider carries the production shape both gates must reject:
+ * a 22x on $4 of spend, and nothing produced.
+ */
+const SNAPSHOT: SnapshotRow[] = [
+  { brandId: DOC, committedSpendUsd: 5046.42, expectedPipelineUsd: 8250, startedOn: "2026-03-01", outcomeCount: 2 },
+  { brandId: OPS, committedSpendUsd: 354.96, expectedPipelineUsd: 19750, startedOn: "2026-06-01", outcomeCount: 1 },
+  { brandId: SHOCK, committedSpendUsd: 497.65, expectedPipelineUsd: 1800, startedOn: "2026-08-01", outcomeCount: 1 },
+  // 22x on $4.12, begun most recently of all, and nothing to show for it.
+  { brandId: OUTSIDER, committedSpendUsd: 4.12, expectedPipelineUsd: 88.74, startedOn: "2026-09-01", outcomeCount: 0 },
+];
+
 const BASE: Fixture = {
   brands: {
     [DOC]: {
@@ -316,7 +372,17 @@ const withFeatures = () => {
   vi.mocked(db.query.features.findMany).mockImplementation((async () => [FEATURE_ROW(PITCH)]) as never);
 };
 
+type Group = {
+  brands: Body["brands"];
+  measured: boolean;
+  unmeasuredReason: string | null;
+  requestedCount: number;
+  qualifyingCount: number;
+};
+
 type Body = {
+  groups: { recentlyStarted: Group; highestReturn: Group };
+  minSpendUsd: number;
   brands: Array<{
     brand: { id: string; name: string | null; domain: string | null };
     funnels: Array<{
@@ -353,17 +419,90 @@ describe("GET /public/stats/showcase-funnels", () => {
     mockFetch(BASE);
     const asked = await get(`?brandId=${OUTSIDER}`);
 
-    // Byte-identical: the parameter is not read, so it cannot select anything.
+    // Byte-identical: the parameter is not read, so it cannot select anything. WHICH clients are named
+    // is a ranking this service computes; a caller cannot put a brand into it, or take one out.
     expect(asked).toEqual(plain);
-    // And the brand that is not on the allowlist is nowhere in the body, however it was asked for.
     expect(plain.brands.map((b) => b.brand.id)).not.toContain(OUTSIDER);
   });
 
-  it("answers EVERY allowlisted brand, in the allowlist's own order", async () => {
+  it("serves TWO groups, each already ordered, and the two orders DISAGREE", async () => {
     mockFetch(BASE);
     const body = await get();
-    expect(body.brands.map((b) => b.brand.id)).toEqual([...SHOWCASE_BRAND_IDS]);
+
+    // Newest beginning first. Shockwave began in August, opsfolio in June, docdinners in March.
+    expect(body.groups.recentlyStarted.brands.map((b) => b.brand.id)).toEqual([SHOCK, OPS, DOC]);
+    // Best return first — the SAME three clients in a DIFFERENT order (55.6x / 3.6x / 1.65x). An
+    // implementation that served one ranking under both names cannot pass both of these.
+    expect(body.groups.highestReturn.brands.map((b) => b.brand.id)).toEqual([OPS, SHOCK, DOC]);
+
+    expect(body.groups.recentlyStarted.measured).toBe(true);
+    expect(body.groups.highestReturn.measured).toBe(true);
+    expect(body.groups.recentlyStarted.unmeasuredReason).toBeNull();
+  });
+
+  it("names each client ONCE in the union, carrying the identical entry both groups carry", async () => {
+    mockFetch(BASE);
+    const body = await get();
+
+    // The deduped union — the field the existing consumer reads, unchanged in shape. A client picked
+    // by BOTH rankings is here once and in both groups.
+    expect([...body.brands.map((b) => b.brand.id)].sort()).toEqual([DOC, OPS, SHOCK].sort());
     expect(brandOf(body, DOC).brand.domain).toBe(`${DOC}.com`);
+    // Byte-identical entries: a client does not have two funnels because two rankings liked it.
+    expect(body.groups.recentlyStarted.brands.find((b) => b.brand.id === DOC)).toEqual(brandOf(body, DOC));
+    expect(body.groups.highestReturn.brands.find((b) => b.brand.id === DOC)).toEqual(brandOf(body, DOC));
+  });
+
+  it("the SPEND FLOOR keeps out the 22x that sits on $4, and the floor is STATED", async () => {
+    mockFetch(BASE);
+    const body = await get();
+
+    // The outsider's 22x would take SECOND place unfiltered and push docdinners — whose 1.63x has
+    // $5,046 of real money behind it — off the list. Below the floor a return is whatever that
+    // client's first outcome happened to do, so it is not ranked at all.
+    expect(body.groups.highestReturn.brands.map((b) => b.brand.id)).not.toContain(OUTSIDER);
+    expect(body.groups.highestReturn.brands.map((b) => b.brand.id)).toContain(DOC);
+    // A ranking whose population a reader cannot see is a ranking they cannot check.
+    expect(body.minSpendUsd).toBe(100);
+  });
+
+  it("the OUTCOME gate keeps out the client that began most recently and produced nothing", async () => {
+    mockFetch(BASE);
+    const body = await get();
+
+    // The outsider began in September — later than every client named — and has moved nobody past
+    // outreach, so the row of live cards does not lead with it.
+    expect(body.groups.recentlyStarted.brands.map((b) => b.brand.id)).not.toContain(OUTSIDER);
+    expect(body.groups.recentlyStarted.brands[0].brand.id).toBe(SHOCK);
+  });
+
+  it("a SHORT group is a stated fact, not a list somebody has to count", async () => {
+    mockFetch({ ...BASE, snapshot: [SNAPSHOT[0], SNAPSHOT[3]] });
+    const body = await get();
+
+    expect(body.groups.highestReturn.brands.map((b) => b.brand.id)).toEqual([DOC]);
+    expect(body.groups.highestReturn.measured).toBe(true);
+    expect(body.groups.highestReturn.requestedCount).toBe(3);
+    // One client passed the gate where three were asked for — visible on the wire.
+    expect(body.groups.highestReturn.qualifyingCount).toBe(1);
+  });
+
+  it("a group with nobody NAMES WHICH SILENCE it is", async () => {
+    // No snapshot at all: nothing to rank, which is not the same as "nobody qualified".
+    mockFetch({ ...BASE, snapshot: null });
+    const cold = await get();
+    expect(cold.groups.recentlyStarted.measured).toBe(false);
+    expect(cold.groups.recentlyStarted.unmeasuredReason).toBe("no_snapshot_yet");
+    expect(cold.groups.highestReturn.unmeasuredReason).toBe("no_snapshot_yet");
+    expect(cold.brands).toEqual([]);
+
+    // A snapshot that holds only the sub-floor client: something to say, and a different thing.
+    __resetShowcaseFunnelsCache();
+    mockFetch({ ...BASE, snapshot: [SNAPSHOT[3]] });
+    const thin = await get();
+    expect(thin.groups.highestReturn.unmeasuredReason).toBe("no_qualifying_clients");
+    expect(thin.groups.recentlyStarted.unmeasuredReason).toBe("no_qualifying_clients");
+    expect(thin.groups.highestReturn.qualifyingCount).toBe(0);
   });
 
   it("walks the funnel's OWN steps in order, outreach first, and serves a rung nobody reached at 0", async () => {
@@ -584,8 +723,10 @@ describe("GET /public/stats/showcase-funnels", () => {
     // A named client's total spend is not something this page asks for, so an unauthenticated read of
     // named clients does not state it. The keys are exactly the four the page renders.
     expect(Object.keys(ops.steps[0]).sort()).toEqual(["costPerReachUsd", "key", "label", "peopleReached"]);
-    expect(JSON.stringify(body)).not.toContain("committedSpent");
-    expect(JSON.stringify(body)).not.toContain("SpendUsd");
+    // No CLIENT entry carries a spend anywhere. (`minSpendUsd` at the payload root is the ranking's
+    // FLOOR — a fact about the question, not about any client's money.)
+    expect(JSON.stringify(body.brands)).not.toContain("committedSpent");
+    expect(JSON.stringify(body.brands)).not.toContain("SpendUsd");
   });
 });
 

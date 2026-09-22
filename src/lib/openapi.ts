@@ -2960,8 +2960,7 @@ const costPerOutcomeLifetimeResponseSchema = z.object({
   brandCount: z.number().int().describe("Number of client brands with usable economics that backed the fleet-mean projection."),
 });
 
-const showcaseFunnelsResponseSchema = z.object({
-  brands: z.array(z.object({
+const showcaseBrandFunnelsSchema = z.object({
     brand: z.object({
       id: z.string().uuid(),
       name: z.string().nullable(),
@@ -2980,7 +2979,23 @@ const showcaseFunnelsResponseSchema = z.object({
     })).describe("One chain per funnel the brand's OWN campaigns state they sell, in catalogue order. Two funnels share legs, so their figures overlap and must NEVER be summed."),
     measured: z.boolean().describe("True iff at least one chain was walked. False always names its reason."),
     unmeasuredReason: z.enum(["brand_has_no_channels", "no_funnel_sold", "no_lead_membership", "read_failed"]).nullable(),
-  })).describe("One entry per allowlisted showcase brand, in the allowlist's own order — always all of them, degraded ones included."),
+});
+
+const showcaseGroupSchema = z.object({
+  brands: z.array(showcaseBrandFunnelsSchema).describe("The clients this ranking named, ALREADY ORDERED by this service. The consumer ranks nothing. Empty exactly when `measured` is false."),
+  measured: z.boolean().describe("True iff this ranking named at least one client. False always carries a reason. It is a statement about the PICK, not about any one client's chain — a named client whose own funnel could not be walked still appears, with its own measured:false."),
+  unmeasuredReason: z.enum(["no_snapshot_yet", "no_qualifying_clients"]).nullable().describe("Present exactly when `measured` is false. `no_snapshot_yet` = no background snapshot has been written yet, so there was nothing to rank at all; `no_qualifying_clients` = a snapshot exists and nobody passed this ranking's gate (too new, below the spend floor, or nothing produced). Different silences, kept apart."),
+  requestedCount: z.number().int().describe("How many clients this group set out to name (3)."),
+  qualifyingCount: z.number().int().describe("How many clients passed the gate BEFORE the cut to requestedCount. A SHORT group is therefore a stated fact (qualifyingCount < requestedCount) rather than a list a consumer has to count — a short or empty group is never served silently."),
+});
+
+const showcaseFunnelsResponseSchema = z.object({
+  brands: z.array(showcaseBrandFunnelsSchema).describe("The DEDUPED UNION of both groups below — every client named anywhere in this payload, once. A client picked by BOTH rankings appears once here and in both groups."),
+  groups: z.object({
+    recentlyStarted: showcaseGroupSchema.describe("THE MOST RECENTLY BEGUN CLIENTS THAT HAVE PRODUCED AT LEAST ONE OUTCOME, newest first. 'Began' is the FIRST UTC DAY the client was ever billed for the channel — a measured fact from the dated cost ledger, not a declaration, and the only notion of a beginning this service can answer honestly. A client we cannot date is not a candidate; it is never dated with a stand-in. The outcome gate is what stops the list leading with somebody who started on Friday and has nothing to show."),
+    highestReturn: showcaseGroupSchema.describe("THE CLIENTS WHOSE MONEY CAME BACK BEST, past `minSpendUsd` of spend, best first — ranked on the same realized return each chain states as returnPerDollar. The floor is the point: below it a ratio is whatever that client's first outcome happened to do (measured in production, the top of an UNFILTERED ranking is 21.5x on $4.12 of spend and 12.3x on $9.77)."),
+  }).describe("The two PICKS. A client may legitimately be in BOTH: a group is an answer to its own question, not a slice of one list."),
+  minSpendUsd: z.number().describe("The spend floor the highestReturn ranking was taken over, in USD — stated because a ranking whose population a reader cannot see is a ranking they cannot check."),
 });
 
 const costPerOutcomeDistributionResponseSchema = z.object({
@@ -3272,10 +3287,10 @@ registry.registerPath({
   path: "/public/stats/showcase-funnels",
   summary: "Ordered funnel counts AND money for the SHOWCASE brands named on our homepage (public, no auth)",
   description:
-    "The current funnel counts of the named client brands our public homepage states — how many people were contacted, and how many reached each subsequent step of that client's own funnel — so a static page renders them without computing anything. TAKES NO PARAMETER NAMING A BRAND, and never will: the brands are a FROZEN SERVER-SIDE ALLOWLIST (src/lib/showcase-funnels.ts), because a caller-supplied identifier would turn this unauthenticated read of clients we agreed to publish into a way to read ANY brand's funnel with no session. Each rung carries both what it MEASURED and what it COST: peopleReached, plus costPerReachUsd (that rung's COMMITTED spend over the people who reached it, OBSERVED, in dollars), and each chain carries returnPerDollar — expected pipeline over committed spend, the byte-same ROI the client reads on their own dashboard. EVERY MONEY FIGURE HERE IS ON THE NET PRICING BASIS: what the client actually paid after their per-org usage discount, which is the basis their own dashboard reads, so the two surfaces cannot state two numbers. A client carrying no discount has a frozen net equal to its gross per cost row and is unchanged. THE CONSUMER DIVIDES NOTHING: every figure it prints is stated on the wire, in dollars. The client's total spend is deliberately NOT published. Each brand carries one ordered chain per funnel its OWN campaigns state they sell (two funnels share legs, so chains overlap and must never be summed), the outreach base first, in the funnel's own order under the funnel's own names; a step nobody reached is STILL SERVED, with 0, and the consumer hides empty cells itself. A step's peopleReached is null when we could not measure it — never a 0 standing in for an unknown. A brand with nothing to walk carries funnels: [] and a named unmeasuredReason, and one brand's failed read never blanks the others.",
+    "The current funnel counts of the client brands our public homepage names — how many people were contacted, and how many reached each subsequent step of that client's own funnel — so a static page renders them without computing anything. WHICH CLIENTS ARE NAMED IS THIS SERVICE'S DECISION AND IS ALREADY ORDERED HERE: two rankings, served as `groups` — `recentlyStarted` (the most recently begun clients that have produced at least one outcome, newest first) and `highestReturn` (the best realized return on spend past `minSpendUsd`, best first). The consumer ranks nothing, filters nothing and divides nothing. TAKES NO PARAMETER NAMING A BRAND, and never will, because a caller-supplied identifier would turn this unauthenticated read into a way to read ANY brand's funnel with no session. `brands` is the deduped union of both groups, in an unchanged shape, so an existing consumer keeps rendering while it moves onto the groups; a client picked by both rankings is in both. Every ranking is computed from a PERSISTED snapshot refreshed off the request path, so this read answers in milliseconds — the per-brand return it ranks on is a full engine pass per brand and takes minutes. Each rung carries both what it MEASURED and what it COST: peopleReached, plus costPerReachUsd (that rung's COMMITTED spend over the people who reached it, OBSERVED, in dollars), and each chain carries returnPerDollar — expected pipeline over committed spend, the byte-same ROI the client reads on their own dashboard. EVERY MONEY FIGURE HERE IS ON THE NET PRICING BASIS: what the client actually paid after their per-org usage discount, which is the basis their own dashboard reads, so the two surfaces cannot state two numbers. A client carrying no discount has a frozen net equal to its gross per cost row and is unchanged. THE CONSUMER DIVIDES NOTHING: every figure it prints is stated on the wire, in dollars. The client's total spend is deliberately NOT published. Each brand carries one ordered chain per funnel its OWN campaigns state they sell (two funnels share legs, so chains overlap and must never be summed), the outreach base first, in the funnel's own order under the funnel's own names; a step nobody reached is STILL SERVED, with 0, and the consumer hides empty cells itself. A step's peopleReached is null when we could not measure it — never a 0 standing in for an unknown. A brand with nothing to walk carries funnels: [] and a named unmeasuredReason, and one brand's failed read never blanks the others.",
   tags: ["Public"],
   responses: {
-    200: { description: "Ordered funnel counts, per-rung cost and per-funnel return for every allowlisted showcase brand", content: { "application/json": { schema: showcaseFunnelsResponseSchema } } },
+    200: { description: "The two PICKED groups of clients, each already ordered, plus their deduped union — ordered funnel counts, per-rung cost and per-funnel return for each", content: { "application/json": { schema: showcaseFunnelsResponseSchema } } },
   },
 });
 
