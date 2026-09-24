@@ -39,26 +39,38 @@ import { featureViewSnapshots } from "../db/schema.js";
 const DEFAULT_TTL_MS = 30_000;
 
 /**
- * HARD stale cap — beyond this age a read stops serving the snapshot and recomputes SYNCHRONOUSLY,
- * making the caller wait.
+ * HARD stale cap — there is none by default: a snapshot is served for as long as it is RETAINED.
  *
- * Was 60s, which was the dashboard's whole cold-load problem: the dashboard polls while a tab is open
- * but PAUSES when it is idle/hidden, so ANY revisit more than a minute later landed in the blocking
- * branch and every one of the ~5 brand-page views recomputed its full cross-service fan-out on the
- * request path (measured 5.6-5.9s each, and the page barriers on the slowest via `useCoordinatedReveal`).
+ * Beyond `maxStaleMs` a read stops serving the snapshot and recomputes SYNCHRONOUSLY, making the
+ * caller wait for the full cross-service fan-out. That branch is only worth having when the fan-out is
+ * cheap, and it is not: measured in prod 2026-09-24 on campaign `f7b1b610…` (brand `75d7e3e8…`), an
+ * uncached compute costs 24s (`/stats?campaignId=`), 24s (`/audience-stats`), 24s (`/pipeline-activity`),
+ * 34s (`/revenue`) and 44s (`/workflow-projection`), against 50-200ms for a snapshot hit. The time is
+ * almost all WAITING on siblings (a CPU profile of the `/stats` compute was 90% idle): human-service
+ * `GET /orgs/audiences` answers in 15-40s, runs-service's cost aggregations in 2-12s, and lead-service's
+ * `/orgs/leads` walk ships ~70 MB over four sequential pages in 20-30s.
  *
- * 30min means a revisit is served from the snapshot in ~0.2s and refreshed in the BACKGROUND instead;
- * the fresh number lands on the next 15s poll. This does NOT make the data staler in steady state — it
- * moves the refresh off the request path. The only visible effect is the very first paint after a long
- * absence, which may show a value up to this old for a few seconds before self-correcting. That is also
- * exactly what the dashboard already does client-side (`persist-cache.ts` paints last-known content from
- * IndexedDB first, `maxAge: Infinity`), so the backend blocking to look "fresh" was fighting the front end.
+ * With a 30-minute cap that cost landed on the customer: a dashboard is visited about once a day, so
+ * 309 of 328 stored snapshots (94%) sat past the cap at any given moment, and the FIRST page of every
+ * session recomputed every view on the request path — the 40-70s LCP the dashboard's web vitals
+ * reported, with later pages in the same session answering in 1-3s because by then they were fresh.
+ *
+ * So the snapshot is now served whatever its age (up to `viewCacheRetentionMs()`, past which it has been
+ * pruned and the read is a miss) and refreshed in the BACKGROUND; the dashboard's 15s poll picks up the
+ * fresh body within one refresh cycle. This moves the refresh off the request path, it does not make
+ * steady-state data staler. It is also exactly what the dashboard already does client-side
+ * (`persist-cache.ts` paints last-known content from IndexedDB first, `maxAge: Infinity`), so the
+ * backend blocking to look "fresh" was fighting the front end — and still only protected the ONE browser
+ * that had a local copy.
  *
  * Staleness of ECONOMICS-dependent bodies is handled by the cache KEY, not this cap: the economics-driven
  * views fold `economicsFingerprint()` into their `scopeKey`, so an economics write changes the cell and
- * forces a fresh compute regardless of age (see `sales-economics-client.economicsFingerprint`).
+ * forces a fresh compute regardless of age (see `sales-economics-client.economicsFingerprint`). A view
+ * that genuinely must never serve old data may still pass its own `maxStaleMs`.
  */
-const DEFAULT_MAX_STALE_MS = 30 * 60_000;
+function defaultMaxStaleMs(): number {
+  return viewCacheRetentionMs();
+}
 
 /**
  * Platform / fleet scope for a GLOBAL (org-less) view — a cross-org internal audit (e.g. the
@@ -70,8 +82,15 @@ const DEFAULT_MAX_STALE_MS = 30 * 60_000;
  */
 export const PLATFORM_SCOPE_ORG_ID = "00000000-0000-0000-0000-000000000000";
 
-/** Max age of a refresh claim before another replica may steal it (a hung refresh must not wedge). */
-const REFRESH_CLAIM_TTL_MS = 30_000;
+/**
+ * Max age of a refresh claim before another reader may steal it (a hung refresh must not wedge).
+ *
+ * Must exceed the slowest REAL refresh, or the claim expires mid-compute and the next stale read starts a
+ * second identical fan-out beside the first — doubling load on exactly the siblings that made it slow.
+ * Measured uncached computes run 24-44s (and up to ~70s under a page-open burst), so 30s was inside the
+ * window; 3 minutes is not.
+ */
+const REFRESH_CLAIM_TTL_MS = 3 * 60_000;
 
 /**
  * RETENTION — a snapshot untouched for this long is deleted.
@@ -145,7 +164,7 @@ interface CachedViewArgs<T> {
   ttlMs?: number;
   /**
    * Per-view HARD-MAX-STALE override (ms). Beyond this age a read recomputes SYNCHRONOUSLY (blocking)
-   * rather than serving too-old data. Omit to use the global 60s cap. Bounds the served "as-of" staleness.
+   * rather than serving too-old data. Omit to serve any retained snapshot (see `defaultMaxStaleMs`).
    */
   maxStaleMs?: number;
   /** Runs the live engine fan-out and returns the response body. */
@@ -158,7 +177,7 @@ interface CachedViewArgs<T> {
 export async function servedCached<T>({ view, scopeKey, orgId, ttlMs, maxStaleMs, compute }: CachedViewArgs<T>): Promise<T> {
   if (!cacheEnabled()) return compute();
   const ttl = ttlMs ?? viewCacheTtlMs();
-  const maxStale = maxStaleMs ?? DEFAULT_MAX_STALE_MS;
+  const maxStale = maxStaleMs ?? defaultMaxStaleMs();
 
   let row: typeof featureViewSnapshots.$inferSelect | undefined;
   try {
