@@ -129,8 +129,14 @@ function mockFetch(): void {
     if (url.includes("/v1/runs?")) {
       runsRequests.push(u);
       if (runsFails) return new Response("boom", { status: 503 });
-      const campaignId = u.searchParams.get("campaignId") ?? "";
-      return json({ runs: TRIGGER_RUNS[campaignId] ?? [], offset: 0, limit: 50 });
+      // runs-service's `campaignIds` contract: the newest `limit` runs across the whole set.
+      const ids = (u.searchParams.get("campaignIds") ?? "").split(",").filter(Boolean);
+      const limit = Number(u.searchParams.get("limit"));
+      const runs = ids
+        .flatMap((id) => (TRIGGER_RUNS[id] ?? []) as Array<{ startedAt: string }>)
+        .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
+        .slice(0, limit);
+      return json({ runs, offset: 0, limit });
     }
     if (url.includes("/public/workflows")) return json({ workflows: WORKFLOWS });
     if (url.includes("/v1/stats/public/costs")) return json({ groups: [cost("wf-lithium-v6", 5000000), cost("wf-cerulean-v4", 5000000)] });
@@ -237,15 +243,36 @@ describe("a campaign states the workflow that RAN, not the one it was configured
     expect(retired.workflowDynastyName).toBeNull();
   });
 
-  it("asks runs ONCE PER MEMBER, for campaign-service's own runs, with the limit on the wire", async () => {
+  it("asks runs ONCE for the whole family, for campaign-service's own runs, with limit + 1 on the wire", async () => {
     await get(`${LEG}&campaignId=${LIVE}`);
 
-    expect(runsRequests).toHaveLength(3);
-    expect(runsRequests.map((u) => u.searchParams.get("campaignId")).sort()).toEqual([LIVE, OLD_A, NEVER_RAN].sort());
-    for (const u of runsRequests) {
-      expect(u.searchParams.get("serviceName")).toBe("campaign-service");
-      expect(u.searchParams.get("limit")).toBe("50");
-    }
+    // One round trip however many stored rows the identity has — never one per member.
+    expect(runsRequests).toHaveLength(1);
+    const [u] = runsRequests;
+    expect(u.searchParams.get("campaignIds")!.split(",").sort()).toEqual([LIVE, OLD_A, NEVER_RAN].sort());
+    expect(u.searchParams.has("campaignId")).toBe(false);
+    expect(u.searchParams.get("serviceName")).toBe("campaign-service");
+    // limit + 1, so `truncated` can say the list is a window.
+    expect(u.searchParams.get("limit")).toBe("51");
+  });
+
+  it("says a family is truncated even when every run sits on ONE member", async () => {
+    // The per-member fan-out got exactly `limit` rows back from such a family and read `false`.
+    const saved = { ...TRIGGER_RUNS };
+    TRIGGER_RUNS[OLD_A] = [];
+    TRIGGER_RUNS[LIVE] = [0, 1, 2].map((i) => ({
+      campaignId: LIVE,
+      workflowSlug: "wf-lithium-v6",
+      audienceId: HOT,
+      startedAt: `2026-09-14T0${i}:00:00.000Z`,
+    }));
+    const res = await get(`${LEG}&campaignId=${LIVE}&picks=2`);
+    expect(res.body.observedPicks.recent.map((p: { startedAt: string }) => p.startedAt)).toEqual([
+      "2026-09-14T02:00:00.000Z",
+      "2026-09-14T01:00:00.000Z",
+    ]);
+    expect(res.body.observedPicks.truncated).toBe(true);
+    Object.assign(TRIGGER_RUNS, saved);
   });
 
   it("states a REAL, EMPTY answer for a campaign that has never triggered", async () => {
@@ -286,7 +313,7 @@ describe("a campaign states the workflow that RAN, not the one it was configured
     expect(res.body.observedPicks.truncated).toBe(true);
     // `last` is the whole identity's most recent pick, not merely the head of the window.
     expect(res.body.observedPicks.last.startedAt).toBe("2026-09-14T04:07:30.548Z");
-    expect(runsRequests.every((u) => u.searchParams.get("limit") === "2")).toBe(true);
+    expect(runsRequests.map((u) => u.searchParams.get("limit"))).toEqual(["3"]);
   });
 
   it("spends no read at all on `picks=0`, and says so with an absent block", async () => {
