@@ -7,8 +7,8 @@ const { fetchLeadsForRevenue } = await import("./leads-client.js");
 
 const HEADERS = { orgId: "org-1", userId: "u1", runId: "r1" };
 
-/** One lead-service /orgs/leads?view=basic row with the firmographic fields populated. */
-function basicRow(over: Record<string, unknown> = {}): Record<string, unknown> {
+/** One lead-service /orgs/leads?view=compact row with the firmographic fields populated. */
+function compactRow(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     leadId: "l1",
     email: "a@acme.com",
@@ -53,8 +53,8 @@ function mockLeads(rows: Record<string, unknown>[]): string {
 describe("fetchLeadsForRevenue — firmographic passthrough", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("carries person + company firmographics from view=basic onto the engine person", async () => {
-    mockLeads([basicRow()]);
+  it("carries person + company firmographics from view=compact onto the engine person", async () => {
+    mockLeads([compactRow()]);
 
     const persons = await fetchLeadsForRevenue("brand-1", undefined, HEADERS);
 
@@ -69,7 +69,7 @@ describe("fetchLeadsForRevenue — firmographic passthrough", () => {
     });
   });
 
-  it("requests the slim view=basic projection", async () => {
+  it("requests the view=compact projection built for whole-population reads", async () => {
     let seenUrl = "";
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       seenUrl = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
@@ -80,12 +80,91 @@ describe("fetchLeadsForRevenue — firmographic passthrough", () => {
     });
 
     await fetchLeadsForRevenue("brand-1", undefined, HEADERS);
-    expect(seenUrl).toContain("view=basic");
+    expect(new URL(seenUrl).searchParams.get("view")).toBe("compact");
+  });
+
+  it("every field it maps comes from the compact row — a row carrying EXACTLY the compact contract fills every person field", async () => {
+    // The deployed compact contract (lead-service v0.81.7), key for key and nothing else. If the
+    // mapping ever reads a field compact does not carry, that person field reads null here while
+    // the fixture states a value for everything — so this fails instead of shipping blanks.
+    const row = {
+      id: "row-1",
+      leadId: "l9",
+      campaignId: "c9",
+      workflowSlug: "wf-9",
+      status: "contacted",
+      email: "z@zeta.io",
+      contacted: true,
+      sent: true,
+      delivered: true,
+      opened: true,
+      clicked: true,
+      bounced: false,
+      unsubscribed: false,
+      replied: true,
+      replyClassification: "negative",
+      lead: {
+        firstName: "Zed",
+        lastName: "Zeta",
+        photoUrl: "https://img/z.png",
+        currentTitle: "CTO",
+        seniority: "c_suite",
+        organization: {
+          id: "o9",
+          name: "Zeta",
+          logoUrl: "https://img/zeta.png",
+          primaryDomain: "zeta.io",
+          websiteUrl: "https://www.zeta.io",
+          industry: "fintech",
+          estimatedNumEmployees: 120,
+          city: "Paris",
+          country: "France",
+        },
+      },
+    };
+    mockLeads([row]);
+
+    const [person] = await fetchLeadsForRevenue("brand-1", undefined, HEADERS);
+
+    expect(person).toEqual({
+      leadId: "l9",
+      campaignId: "c9",
+      workflowSlug: "wf-9",
+      email: "z@zeta.io",
+      firstName: "Zed",
+      lastName: "Zeta",
+      photoUrl: "https://img/z.png",
+      orgId: "o9",
+      orgName: "Zeta",
+      orgLogoUrl: "https://img/zeta.png",
+      orgDomain: "zeta.io",
+      title: "CTO",
+      seniority: "c_suite",
+      orgIndustry: "fintech",
+      orgEmployeeCount: 120,
+      orgCity: "Paris",
+      orgCountry: "France",
+      signals: {
+        contacted: true,
+        sent: true,
+        delivered: true,
+        bounced: false,
+        unsubscribed: false,
+        clicked: true,
+        positiveReply: false,
+        negativeReply: true,
+        neutralReply: false,
+      },
+    });
+    for (const [key, value] of Object.entries(person)) {
+      expect(value, `person.${key}`).not.toBeNull();
+      expect(value, `person.${key}`).not.toBeUndefined();
+    }
   });
 
   it("maps every unknown firmographic to null — no synthesis", async () => {
     mockLeads([
-      basicRow({
+      compactRow({
         lead: {
           firstName: "Grace",
           lastName: "Hopper",
@@ -114,7 +193,7 @@ describe("fetchLeadsForRevenue — firmographic passthrough", () => {
 
   it("maps null firmographics to null when the whole org is absent", async () => {
     mockLeads([
-      basicRow({
+      compactRow({
         lead: {
           firstName: "No",
           lastName: "Org",
@@ -153,7 +232,7 @@ describe("fetchLeadsForRevenue — one page, one parse", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
       calls += 1;
       await gate;
-      return new Response(JSON.stringify({ leads: [basicRow()] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ leads: [compactRow()] }), { status: 200, headers: { "Content-Type": "application/json" } });
     });
 
     const both = Promise.all([
@@ -176,7 +255,7 @@ describe("fetchLeadsForRevenue — one page, one parse", () => {
     const urls: string[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       urls.push(typeof input === "string" ? input : (input as any).url);
-      return new Response(JSON.stringify({ leads: [basicRow()] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ leads: [compactRow()] }), { status: 200, headers: { "Content-Type": "application/json" } });
     });
 
     await Promise.all([
@@ -192,7 +271,7 @@ describe("fetchLeadsForRevenue — one page, one parse", () => {
     let calls = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
       calls += 1;
-      return new Response(JSON.stringify({ leads: [basicRow()] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ leads: [compactRow()] }), { status: 200, headers: { "Content-Type": "application/json" } });
     });
 
     await fetchLeadsForRevenue("brand-1", undefined, HEADERS);
