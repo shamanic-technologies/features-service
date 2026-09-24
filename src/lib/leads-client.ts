@@ -238,11 +238,18 @@ export async function fetchLeadsForRevenue(
     throw new Error("LEAD_SERVICE_URL or LEAD_SERVICE_API_KEY not configured");
   }
 
-  // view=basic asks lead-service for the slim lead projection (#273/#281): same envelope
-  // and delivery-status overlay, but each row's nested `lead` is trimmed to the handful of
-  // thin fields the revenue engine reads. Cuts a ~150 MB body ~10x for big brands, removing
-  // the `await response.json()` heap-OOM behind "Failed to compute feature revenue".
-  const params = new URLSearchParams({ brandId, view: "basic", limit: String(LEAD_PAGE_SIZE) });
+  // view=compact is the projection lead-service built for a consumer computing figures over a
+  // WHOLE population (lead-service v0.81.7): same envelope, paging and filters as `basic`, but each
+  // row carries ONLY the fields mapped below — the delivery flags, the campaign/workflow the row was
+  // served under, and the thin person/organization fields — with every value identical to the same
+  // field on `basic` (verified in prod on all 49,792 + 17,796 rows of the two largest brands: 0
+  // differences). No audience, offer, standing or closedDeal is resolved, and the body is gzipped.
+  // Measured on the largest brand (49,792 leads, 10 pages of 5,000): 110 MB -> 5.7 MB on the wire.
+  // It exists because this process runs a 384 MB heap and the whole-population parse is the largest
+  // thing it does; `basic` (a list-view projection) carried headline, LinkedIn URL, audience/offer
+  // cards and more that nothing here reads. Do NOT add a field to the mapping below that `compact`
+  // does not carry — it would read undefined for every row without an error.
+  const params = new URLSearchParams({ brandId, view: "compact", limit: String(LEAD_PAGE_SIZE) });
   if (campaignId) params.set("campaignId", campaignId);
 
   const reqHeaders: Record<string, string> = {
