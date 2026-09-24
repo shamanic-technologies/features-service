@@ -41,15 +41,14 @@
  * half-row (zero such rows in prod over 30 days).
  */
 import { fetchWithRetry } from "./fetch-retry.js";
-import { mapWithConcurrency } from "./concurrency.js";
 import { dynastyOfSlug } from "./workflow-scope.js";
 import type { WorkflowMetadata } from "./public-stats-clients.js";
 
 /** How many picks a read states. Bounded so a debug panel cannot ask for a campaign's whole history. */
 export const OBSERVED_PICKS_DEFAULT = 50;
 export const OBSERVED_PICKS_MAX = 200;
-/** One call per identity member; a brand's largest identity with runs is 17 members in prod. */
-const MEMBER_CONCURRENCY = 6;
+/** runs-service's own cap on `campaignIds` per request (a larger list is a 400 there). */
+const CAMPAIGN_IDS_PER_REQUEST = 500;
 
 /** One trigger run as runs-service stores it — the raw half, before any dynasty is resolved. */
 export interface TriggerRun {
@@ -115,12 +114,20 @@ export function buildObservedPicks(
 }
 
 /**
- * The identity's trigger runs, one runs-service call per member.
+ * The identity's trigger runs, in ONE runs-service call for the whole family.
  *
- * runs-service takes no campaign LIST, so a family fans out — the same shape `/audience-stats` and the
- * campaign grain already use for email-gateway, and bounded by the same reasoning: a trigger carries
- * exactly ONE campaign, so the union counts nobody twice. Each member is asked for `limit` rows, so the
- * merge is exact rather than a sample of whichever member answered first.
+ * runs-service takes the family as a list (`campaignIds`, runs-service v0.47.5), and with `limit` it
+ * answers the newest `limit` runs across the whole set — by its own contract the same rows as asking
+ * each member for `limit` and keeping the newest `limit` of the union, which is what this used to do
+ * with one call per member (47 calls for campaign `f7b1b610…`). A trigger carries exactly ONE
+ * campaign, so the union counts nobody twice.
+ *
+ * It asks for `limit + 1` so `truncated` can say the list is a window. That is also more honest than
+ * the fan-out was: a family whose runs all sat on ONE member came back as exactly `limit` rows and read
+ * `truncated: false` however many that member held. `last` and `recent` are unchanged.
+ *
+ * A family above runs-service's per-request cap (none in prod: the largest is 97 rows) is asked in
+ * chunks and merged — each chunk's newest `limit + 1` keeps the merge exact.
  *
  * Fail-loud: the caller decides whether a failure nulls a block or fails a page.
  */
@@ -134,17 +141,24 @@ export async function fetchCampaignTriggerRuns(
   if (!url || !apiKey) {
     throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
   }
+  if (campaignIds.length === 0) return [];
 
   const reqHeaders: Record<string, string> = { "x-api-key": apiKey, "x-org-id": headers.orgId };
   if (headers.userId) reqHeaders["x-user-id"] = headers.userId;
   if (headers.runId) reqHeaders["x-run-id"] = headers.runId;
   if (headers.brandId) reqHeaders["x-brand-id"] = headers.brandId;
 
-  const perMember = await mapWithConcurrency(campaignIds, MEMBER_CONCURRENCY, async (campaignId) => {
+  const chunks: string[][] = [];
+  for (let i = 0; i < campaignIds.length; i += CAMPAIGN_IDS_PER_REQUEST) {
+    chunks.push(campaignIds.slice(i, i + CAMPAIGN_IDS_PER_REQUEST));
+  }
+
+  const rows: TriggerRun[] = [];
+  for (const chunk of chunks) {
     const params = new URLSearchParams({
-      campaignId,
+      campaignIds: chunk.join(","),
       serviceName: "campaign-service",
-      limit: String(limit),
+      limit: String(limit + 1),
     });
     const response = await fetchWithRetry(`${url}/v1/runs?${params}`, { headers: reqHeaders });
     if (!response.ok) {
@@ -162,22 +176,22 @@ export async function fetchCampaignTriggerRuns(
     if (!Array.isArray(data.runs)) {
       throw new Error("runs-service /v1/runs returned no runs array");
     }
-    const rows: TriggerRun[] = [];
     for (const run of data.runs) {
       // A trigger stating no workflow answers nothing about a pick; a row with no start cannot be
       // placed on the timeline. Neither is carried as a half-row.
       if (!run.workflowSlug || !run.startedAt) continue;
+      if (!run.campaignId) {
+        throw new Error("runs-service /v1/runs returned a run with no campaignId for a campaignIds read");
+      }
       rows.push({
-        campaignId: run.campaignId ?? campaignId,
+        campaignId: run.campaignId,
         workflowSlug: run.workflowSlug,
         audienceId: run.audienceId ?? null,
         startedAt: run.startedAt,
       });
     }
-    return rows;
-  });
-
-  return perMember.flat();
+  }
+  return rows;
 }
 
 /**
