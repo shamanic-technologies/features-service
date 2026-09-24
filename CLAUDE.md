@@ -1397,6 +1397,18 @@ lead-service could not drain them, undici gave up at its 300s headers timeout, a
 sockets left ten Postgres backends pinned writing to a client nobody was reading — pool gone, and it
 never came back on its own.
 
+- **THE WALK ASKS FOR `view=compact`, THE PROJECTION lead-service BUILT FOR IT (v0.81.7) — NOT `basic`.**
+  `basic` is a LIST-VIEW projection (headline, LinkedIn URL, audience/offer cards, standing, closedDeal…)
+  and nothing here reads those. `compact` carries exactly the fields `fetchLeadsForRevenue` maps, with
+  every value identical to `basic`, gzip-encoded, same envelope / paging / filters. Measured in prod
+  2026-09-24, from inside the container: brand `85ba8c9a…` (49,792 leads, 10 pages) **109.6 MB → 5.7 MB**
+  on the wire and heap after parse 216 → 138 MB; brand `75d7e3e8…` **69.8 MB → 3.5 MB**, 11.1 s → 4.1 s.
+  Every mapped field compared row by row across both views: **0 differences** on all 49,792 + 17,828 rows,
+  and the revenue figures were unchanged across the deploy. **Do NOT map a field `compact` does not
+  carry** — it would read `undefined` on every row with no error; the guard is the compact-contract case
+  in `leads-client.test.ts`, which fills every person field from a row holding EXACTLY that contract.
+  Page size stayed at 5,000 on purpose: lead-service measured 3 pages of 20,000 at ≈8 s vs ≈9.5 s here,
+  and ~1.5 s does not buy back the cheap-abandonment property the next bullet explains.
 - **THE PRODUCER ALREADY PAGED, AND ITS WALK IS COMPLETE BY CONTRACT.** `GET /orgs/leads` orders on
   `(created_at, id)` — a TOTAL order — and states that a `limit` + `cursor` walk visits every row
   **exactly once, no gaps, no repeats**, `nextCursor: null` at the end. So `walkLeadPages`
@@ -5931,7 +5943,9 @@ Measured in prod on campaign `f7b1b610…` (brand `75d7e3e8…`), uncached: `/st
 **44s**; a snapshot hit **50-200ms**. A CPU profile of the `/stats` compute was **90% idle** — the time is
 waiting on siblings, not our code: human-service `GET /orgs/audiences` **15-115s** (per-row contactability
 count, fixed by human-service `b727f2f`), runs-service cost aggregations **2-12s**, and lead-service
-`/orgs/leads?view=basic` shipping **~70 MB in 4 sequential pages (20-30s)** for one brand. **Do NOT
+`/orgs/leads?view=basic` shipping **~70 MB in 4 sequential pages (20-30s)** for one brand (since fixed on
+both sides: lead-service's query fix, and this service reading `view=compact` — 3.5 MB / 4 s on that brand,
+see the whole-population read section). **Do NOT
 reintroduce a blocking age cap to "look fresh"** — it puts every one of those seconds back on the customer.
 The refresh claim TTL is **3 min** for the same reason: it must exceed the slowest real refresh, or a
 second read starts a duplicate fan-out beside the first. What is still cold is a key that was NEVER
