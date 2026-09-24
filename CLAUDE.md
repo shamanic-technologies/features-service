@@ -812,22 +812,20 @@ page was rendering a CONFIGURATION where a reader expects a FACT.
   route's ECONOMICS: a figure whose whole job is to say what is happening RIGHT NOW cannot be served
   from a cell up to half an hour stale. It is fired in the SAME `Promise.all` as the cached evidence
   fan-out (it needs only the campaign ids), so it costs no extra wall-clock.
-- **ANSWERED FOR THE CAMPAIGN'S WHOLE IDENTITY**, like every other campaign-scoped figure here. runs
-  takes no campaign LIST, so it is one call per member at concurrency 6 — a trigger carries exactly ONE
-  campaign, so the union counts nobody twice, and each member is asked for the full window so the merge
-  is exact rather than a sample of whichever answered first.
-- **THE FAN-OUT IS OVER STORED MEMBERS, NOT OVER MEMBERS THAT RAN, AND THE DIFFERENCE IS 47 AGAINST 17.**
-  The plan sized it with `count(DISTINCT campaign_id) FROM runs` — campaigns that have RUN — which tops
-  out at **17** per brand over 90 days and reads as a comfortable bound. The loop iterates
-  `campaignIdentity.campaignIds`, i.e. every row campaign-service has ever minted on the identity, and
-  the reported campaign has **47** of which 30 never triggered. Measured in prod the day it shipped, on
-  that worst-case identity: **~540-780ms with `picks=50` against 89-221ms with `picks=0`**, so the block
-  costs about half a second and the cost is the FAN-OUT, not the window — dropping the default window
-  would save nothing. Two consequences worth stating rather than burying: a consumer that POLLS this
-  read should send **`picks=0`** and fetch the picks on demand, and the honest fix is ONE brand-scoped
-  `/v1/runs` call filtered to the identity locally, which is a design change rather than a tuning knob
-  (features-service#947). Same trap as the scope rule at the top of the global config: the query I
-  reasoned from answered a NARROWER population than the one the code walks.
+- **ANSWERED FOR THE CAMPAIGN'S WHOLE IDENTITY, IN ONE runs-service CALL (supersedes the per-member
+  fan-out of #944/#948).** runs takes the family as a list since v0.47.5 (`GET /v1/runs?campaignIds=`,
+  at most 500 ids, runs-service#233/#235), and with `limit` it answers the newest `limit` runs across the
+  whole set — by its own contract the same rows as asking each member and keeping the newest of the
+  union. A trigger carries exactly ONE campaign, so the union counts nobody twice. The list is every
+  STORED member (`campaignIdentity.campaignIds`), 47 rows on the reported campaign of which 30 never
+  triggered; that used to be 47 calls at concurrency 6 and is now one. Measured in prod on that
+  identity before the swap: 47 calls, **240-700ms** warm (and a 51-row family 510-1,030ms). **Do NOT
+  reintroduce a per-member loop**; a family above 500 rows (none in prod — the largest is 97) is asked
+  in 500-id chunks and merged, each chunk's newest `limit + 1` keeping the merge exact.
+- **IT ASKS FOR `limit + 1`, so `truncated` is TRUE whenever the identity holds more triggers than the
+  window.** The fan-out asked each member for `limit`, so a family whose runs all sat on ONE member came
+  back as exactly `limit` rows and read `truncated: false` however many it held. `last` and `recent`
+  are unchanged by the swap (verified byte-equal in prod on two 47- and 51-row identities).
 - **`audienceId: null` IS A REAL STATE.** The audience write-tag is younger than the workflow one —
   94-97% of triggers in the last three weeks, ~40% in July — so an older pick states its workflow and no
   audience. Reported as null, never substituted from a neighbouring run.
@@ -854,7 +852,7 @@ page was rendering a CONFIGURATION where a reader expects a FACT.
   so a suite that only checked "a block came back" would pass on the implementation this replaces: the
   named workflow, the merge order with a stopped ancestor second, either member reading the same answer,
   the null audience beside three tagged ones, the retired dynasty, the request shape
-  (`serviceName=campaign-service`, one call per member, the limit on the wire), the empty campaign, the
+  (`serviceName=campaign-service`, ONE `campaignIds` call for the whole family, `limit + 1` on the wire, and a one-member-holds-everything family reading `truncated: true`), the empty campaign, the
   fail-soft null with the rest of the body intact, the absent block on a read naming no campaign, the
   truncated window, `picks=0` spending nothing, the four 400s, and the funnel- and goal-keyed reads
   carrying none of it. (Set 2026-09-14, features-service#944.)
