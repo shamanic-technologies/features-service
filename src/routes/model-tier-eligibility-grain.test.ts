@@ -156,6 +156,8 @@ interface Options {
   tierCatalogue?: unknown | "fail";
   /** Replaces the workflow-service full listing. `"fail"` makes the read non-OK. */
   fullWorkflows?: unknown | "fail";
+  /** Overrides a dynasty's brand-grain positive replies (default 10 + its index). */
+  brandReplies?: Record<string, number>;
 }
 
 let requestedUrls: string[] = [];
@@ -192,7 +194,9 @@ function mockFetch(options: Options = {}): void {
       const audienceId = u.searchParams.get("audienceId");
       if (audienceId === AUD) return json({ groups: DYNASTIES.map((d) => email(`wf-${d}-v1`, 200, 2, 20)) });
       if (audienceId) return json({ groups: [] });
-      return json({ groups: DYNASTIES.map((d, i) => email(`wf-${d}-v1`, 1000, 10 + i, 100 + i)) });
+      return json({
+        groups: DYNASTIES.map((d, i) => email(`wf-${d}-v1`, 1000, options.brandReplies?.[d] ?? 10 + i, 100 + i)),
+      });
     }
     if (url.includes("/public/stats")) {
       return json({ groups: DYNASTIES.map((d) => email(`wf-${d}-v1`, 9000, 100, 900)) });
@@ -290,19 +294,21 @@ describe("a leg-keyed row states whether the model writing its emails is right f
     }
   });
 
-  it("MOVES NO NUMBER: the order, the figures and the recommendation are what they were", async () => {
+  it("MOVES NO FIGURE: every row's numbers are what they were — only the orders and the pick move", async () => {
     const withCatalogue = await get("leg=start_to_conversation");
     // The same read with both producers down — every verdict flips to unknowable-but-eligible, so any
-    // difference in the rest of the body would be the verdict having leaked into the math.
+    // difference in a row's FIGURES would be the verdict having leaked into the math.
     mockFetch({ tierCatalogue: "fail", fullWorkflows: "fail" });
     const without = await get("leg=start_to_conversation");
 
-    const strip = (body: any) => ({
-      ...body,
-      rows: body.rows.map(({ modelEligibility, ...rest }: any) => rest),
-    });
-    expect(strip(without.body)).toEqual(strip(withCatalogue.body));
-    expect(without.body.recommendedWorkflowDynastySlug).toBe(withCatalogue.body.recommendedWorkflowDynastySlug);
+    const figures = (body: any) =>
+      body.rows
+        .map(({ modelEligibility, rank, scopeRank, ...rest }: any) => rest)
+        .sort((a: any, b: any) =>
+          `${a.workflow.workflowDynastySlug}|${a.audienceId}`.localeCompare(`${b.workflow.workflowDynastySlug}|${b.audienceId}`),
+        );
+    expect(figures(without.body)).toEqual(figures(withCatalogue.body));
+    expect(without.body.rows.length).toBe(withCatalogue.body.rows.length);
   });
 });
 
@@ -411,5 +417,109 @@ describe("the verdict rides `?leg=` only", () => {
     // `all`, not `active`: a RETIRED lineage still carries rows and must resolve to the model its last
     // version named rather than vanishing into "no model stated".
     expect(q.get("status")).toBe("all");
+  });
+});
+
+/**
+ * THE VERDICT DECIDES THE PICK AND THE ORDER — prod 2026-09-24, campaign `c8133eca…` on a leg selling a
+ * positive reply: a cheap-tier workflow carrying `eligible: false` was `rank: 1` and the recommendation,
+ * so onboarding created the campaign on it and its very first run executed it.
+ *
+ * The fixture makes `sodium` (cheap, EXCLUDED on this leg) the cheapest workflow by a wide margin, and
+ * every audience cell ties so the slug tie-break would put `argon` (cheap, EXCLUDED) first in that
+ * column. Every case asserts the DIVERGENCE from what the verdict-blind order says on the same fixture.
+ */
+describe("an EXCLUDED workflow is never put forward", () => {
+  beforeEach(() => {
+    vi.mocked(db.query.features.findFirst).mockResolvedValue(FEATURE as any);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  const CHEAP_SODIUM = { brandReplies: { sodium: 50 } };
+  const rankOf = (body: any, dynasty: string) =>
+    body.rows.find((r: any) => r.workflow.workflowDynastySlug === dynasty).rank;
+
+  it("never recommends it, even when it is the cheapest workflow by far", async () => {
+    // Verdict-blind (both producers down → everything eligible): sodium wins.
+    mockFetch({ ...CHEAP_SODIUM, tierCatalogue: "fail", fullWorkflows: "fail" });
+    const blind = await get("leg=start_to_conversation");
+    expect(blind.body.recommendedWorkflowDynastySlug).toBe("sodium");
+
+    mockFetch(CHEAP_SODIUM);
+    const res = await get("leg=start_to_conversation");
+    expect(res.status).toBe(200);
+    expect(verdictOf(res.body, "sodium").eligible).toBe(false);
+    expect(res.body.recommendedWorkflowDynastySlug).not.toBe("sodium");
+    expect(verdictOf(res.body, res.body.recommendedWorkflowDynastySlug).eligible).toBe(true);
+    expect(rankOf(res.body, res.body.recommendedWorkflowDynastySlug)).toBe(1);
+    expect(res.body.recommendationWithheldReason).toBeUndefined();
+    // Budget is priced off the ELIGIBLE pick, not the excluded cheaper one.
+    expect(res.body.recommendedBudgetUsd).not.toBe(blind.body.recommendedBudgetUsd);
+  });
+
+  it("ranks EVERY eligible workflow above EVERY excluded one", async () => {
+    mockFetch(CHEAP_SODIUM);
+    const res = await get("leg=start_to_conversation");
+    const eligibleRanks = res.body.rows.filter((r: any) => r.modelEligibility.eligible).map((r: any) => r.rank);
+    const excludedRanks = res.body.rows.filter((r: any) => !r.modelEligibility.eligible).map((r: any) => r.rank);
+    expect(excludedRanks.length).toBeGreaterThan(0);
+    expect(Math.max(...eligibleRanks)).toBeLessThan(Math.min(...excludedRanks));
+    // Among the excluded, the usual order still holds: sodium (cheapest) before argon.
+    expect(rankOf(res.body, "sodium")).toBeLessThan(rankOf(res.body, "argon"));
+  });
+
+  it("ranks every eligible row above every excluded row in EACH scope's column", async () => {
+    // Verdict-blind, the audience column ties and the slug puts argon (excluded) first.
+    mockFetch({ ...CHEAP_SODIUM, tierCatalogue: "fail", fullWorkflows: "fail" });
+    const blind = await get("leg=start_to_conversation");
+    const blindAud = blind.body.rows.find((r: any) => r.audienceId === AUD && r.scopeRank === 1);
+    expect(["argon", "sodium"]).toContain(blindAud.workflow.workflowDynastySlug);
+
+    mockFetch(CHEAP_SODIUM);
+    const res = await get("leg=start_to_conversation");
+    const scopes = new Set(res.body.rows.map((r: any) => r.audienceId));
+    expect(scopes.size).toBeGreaterThan(1);
+    for (const scope of scopes) {
+      const col = res.body.rows.filter((r: any) => r.audienceId === scope);
+      const eligible = col.filter((r: any) => r.modelEligibility.eligible).map((r: any) => r.scopeRank);
+      const excluded = col.filter((r: any) => !r.modelEligibility.eligible).map((r: any) => r.scopeRank);
+      expect(excluded.length).toBeGreaterThan(0);
+      expect(Math.max(...eligible)).toBeLessThan(Math.min(...excluded));
+      // Still a total order: 1..n, no ties, no gaps.
+      expect(col.map((r: any) => r.scopeRank).sort((a: number, b: number) => a - b)).toEqual(col.map((_: any, i: number) => i + 1));
+    }
+  });
+
+  it("keeps the excluded rows on the body, flagged, with their figures", async () => {
+    mockFetch(CHEAP_SODIUM);
+    const res = await get("leg=start_to_conversation");
+    const sodium = res.body.rows.filter((r: any) => r.workflow.workflowDynastySlug === "sodium");
+    expect(sodium.length).toBeGreaterThan(1);
+    for (const row of sodium) {
+      expect(row.modelEligibility.eligible).toBe(false);
+      expect(row.resolved.costPerOutcomeUsd).toBeGreaterThan(0);
+    }
+  });
+
+  it("says so — and recommends nothing — when EVERY workflow is excluded", async () => {
+    mockFetch({
+      fullWorkflows: { workflows: DYNASTIES.map((d) => ({ ...wf(d), contentModel: "flash" })) },
+    });
+    const res = await get("leg=start_to_conversation");
+    expect(res.status).toBe(200);
+    expect(excludedSet(res.body)).toEqual([...DYNASTIES].sort());
+    expect(res.body.recommendedWorkflowDynastySlug).toBeNull();
+    expect(res.body.recommendedBudgetUsd).toBeNull();
+    expect(res.body.recommendationWithheldReason).toBe("no_eligible_workflow");
+    // Rows are all still served and still ranked.
+    expect(res.body.rows.every((r: any) => r.rank > 0 && r.scopeRank > 0)).toBe(true);
+  });
+
+  it("changes nothing on a funnel-keyed read, which carries no verdict", async () => {
+    mockFetch(CHEAP_SODIUM);
+    const res = await get("funnel=sales_meetings_from_conversation");
+    expect(res.status).toBe(200);
+    expect(res.body.recommendedWorkflowDynastySlug).toBe("sodium");
+    expect(res.body.recommendationWithheldReason).toBeUndefined();
   });
 });
