@@ -28577,7 +28577,7 @@
                             "requestedCount",
                             "qualifyingCount"
                           ],
-                          "description": "THE MOST RECENTLY BEGUN CLIENTS THAT HAVE PRODUCED AT LEAST ONE OUTCOME, newest first. 'Began' is the FIRST UTC DAY the client was ever billed for the channel — a measured fact from the dated cost ledger, not a declaration, and the only notion of a beginning this service can answer honestly. A client we cannot date is not a candidate; it is never dated with a stand-in. The outcome gate is what stops the list leading with somebody who started on Friday and has nothing to show."
+                          "description": "THE MOST RECENTLY BEGUN CLIENTS THAT HAVE PRODUCED AT LEAST ONE OUTCOME, newest first. 'Began' is the FIRST UTC DAY the client was ever billed for the channel — a measured fact from the dated cost ledger, not a declaration, and the only notion of a beginning this service can answer honestly. A client we cannot date is not a candidate; it is never dated with a stand-in. The outcome gate is what stops the list leading with somebody who started on Friday and has nothing to show. AN OUTCOME IS A RUNG THE FUNNEL CONVERTS TO, NEVER THE OUTREACH BASE: a client is named only when its own chain — the one served under it — shows a MEASURED, POSITIVE count on a step other than `contacted`. An unmeasured rung never qualifies. A refused candidate is replaced by the next one in order and comes off `qualifyingCount`, so a row that cannot be honestly filled is short rather than padded."
                         },
                         "highestReturn": {
                           "type": "object",

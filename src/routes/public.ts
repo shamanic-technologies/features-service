@@ -82,7 +82,9 @@ import {
 } from "../lib/showcase-funnels.js";
 import {
   buildShowcaseCandidates,
+  furthestRungReached,
   pickShowcaseClients,
+  showcaseChainHasOutcome,
   SHOWCASE_GROUP_SIZE,
   type ShowcaseGroupPick,
 } from "../lib/showcase-clients.js";
@@ -879,14 +881,15 @@ async function computePairRevenue(
       // client. The COUNT of those clients is what composes across orgs (a ratio does not), so the
       // fleet warm stores the count and divides once, at the brand grain.
       costPerAcquisitionUsd: body.costEconomics.costPerAcquisitionUsd,
-      // HAS THIS BRAND PRODUCED ANYTHING AT ALL — the two signals this service actually counts, off
-      // the volume block this pass already carries (zero extra IO). It is the SUM of two distinct-lead
-      // counts, so a person who both visited and replied is counted twice: an UPPER BOUND, which is
-      // exactly enough for the `> 0` gate the recency pick reads it as and for nothing else. It is
-      // never served. NULL is "the leads were never read", kept apart from a measured 0.
-      outcomeCount: body.outcomes
-        ? body.outcomes.recipientsClicked + body.outcomes.recipientsRepliesPositive
-        : null,
+      // HAS THIS BRAND PRODUCED ANYTHING AT ALL — the furthest RUNG of the funnel this pass walked,
+      // off the `funnelSteps` block it already carries (zero extra IO). A rung is a step the funnel
+      // converts TO; the outreach base is not one, and neither is a signal the funnel has no step for.
+      // It used to be clicks + positive replies whatever the funnel, which admitted a client selling
+      // the reply funnel on the strength of clicks its chain has no rung for (Living Vital, 2026-09-24:
+      // 183 contacted, 0 on every rung). Read ONLY as the recency pick's `> 0` prefilter, never served.
+      // NULL is "no rung could be counted" — including a read priced on several funnels at once, whose
+      // per-funnel passes answer instead — kept apart from a measured 0.
+      outcomeCount: furthestRungReached(body.funnelSteps),
       timeSeries: body.timeSeries,
     };
   } catch (error) {
@@ -1206,10 +1209,16 @@ export async function warmFleetReturnSnapshot(featureSlug: string): Promise<void
       if (c.startedOn !== null && (agg.startedOn === null || c.startedOn < agg.startedOn)) {
         agg.startedOn = c.startedOn;
       }
-      // Leads are disjoint per org, so summing the orgs' counts counts nobody twice HERE (the double
-      // count this figure tolerates is the one WITHIN an org, between its two signals).
-      if (c.channel.outcomeCount !== null) {
-        agg.outcomes += c.channel.outcomeCount;
+      // The furthest rung this pair reached on ANY funnel it walked: the channel pass walks the one
+      // funnel a single-declaration brand sells, and a brand declaring several is walked once per
+      // funnel instead (the channel pass then walks none). Leads are disjoint per org, so summing the
+      // orgs' figures counts nobody twice; it stays an upper bound, which a `> 0` prefilter tolerates.
+      const rung = [c.channel.outcomeCount, ...c.byFunnel.map((f) => f.result.outcomeCount)].reduce<number | null>(
+        (max, v) => (v === null ? max : max === null || v > max ? v : max),
+        null,
+      );
+      if (rung !== null) {
+        agg.outcomes += rung;
         agg.hasOutcomes = true;
       }
       byBrand.set(c.channel.brandId, agg);
@@ -2950,6 +2959,9 @@ export function __resetShowcaseFunnelsCache(): void {
  *  each one drives (leads, runs, brand, email-gateway), not about the list's length. */
 const SHOWCASE_BRAND_CONCURRENCY = 2;
 
+/** The most recency candidates one refresh will walk while confirming the row on their own chains. */
+const SHOWCASE_RECENT_MAX_WALKS = 12;
+
 /** Walk every funnel one showcase brand's campaigns sell, under the org that owns its leads. */
 async function computeShowcaseBrand(
   brandId: string,
@@ -3096,31 +3108,84 @@ async function computeShowcaseFunnelsPayload(): Promise<ShowcaseFunnelsPayload> 
   const candidates = snapshots.length === 0 ? null : buildShowcaseCandidates(snapshots.map((snap) => snap.brands));
   const picks = pickShowcaseClients(candidates, DEFAULT_MIN_SPEND_USD, SHOWCASE_GROUP_SIZE);
 
+  // The recency row is CONFIRMED on each candidate's own walked chain — the one the homepage draws —
+  // before it is named, so the row can never carry a card showing a contacted count and nothing after
+  // it. The walk is bounded: the snapshot prefilter already reads rungs, so a rejection is rare, and a
+  // cap keeps a stale snapshot from turning one refresh into a fleet-wide fan-out.
+  const recentWalkable = picks.recentlyStarted.rankedBrandIds.slice(0, SHOWCASE_RECENT_MAX_WALKS);
+  const infoIds = [...new Set([...picks.highestReturn.brandIds, ...recentWalkable])];
+  const brandInfo = infoIds.length > 0 ? await fetchBrandInfoBatch(infoIds) : new Map();
+
   // A client picked by BOTH questions is walked ONCE and its identical entry appears in both groups —
   // the funnel walk is the expensive half and a client does not have two funnels because two rankings
   // liked it.
-  const named = [...new Set([...picks.recentlyStarted.brandIds, ...picks.highestReturn.brandIds])];
-  const brandInfo = named.length > 0 ? await fetchBrandInfoBatch(named) : new Map();
+  const walked = new Map<string, ShowcaseBrandFunnels>();
+  const walkAll = async (ids: string[]): Promise<void> => {
+    const todo = ids.filter((id) => !walked.has(id));
+    const entries = await mapWithConcurrency(
+      todo,
+      SHOWCASE_BRAND_CONCURRENCY,
+      async (brandId): Promise<ShowcaseBrandFunnels> => {
+        try {
+          return await computeShowcaseBrand(brandId, orgByBrand.get(brandId), brandInfo.get(brandId));
+        } catch (error) {
+          console.error(`[features-service] showcase funnel read failed for brand ${brandId}:`, error);
+          const info = brandInfo.get(brandId);
+          return {
+            brand: { id: brandId, name: info?.name ?? null, domain: info?.domain ?? null },
+            funnels: [],
+            measured: false,
+            unmeasuredReason: "read_failed",
+          };
+        }
+      },
+    );
+    for (const e of entries) walked.set(e.brand.id, e);
+  };
 
-  const brands = await mapWithConcurrency(
-    named,
-    SHOWCASE_BRAND_CONCURRENCY,
-    async (brandId): Promise<ShowcaseBrandFunnels> => {
-      try {
-        return await computeShowcaseBrand(brandId, orgByBrand.get(brandId), brandInfo.get(brandId));
-      } catch (error) {
-        console.error(`[features-service] showcase funnel read failed for brand ${brandId}:`, error);
-        const info = brandInfo.get(brandId);
-        return {
-          brand: { id: brandId, name: info?.name ?? null, domain: info?.domain ?? null },
-          funnels: [],
+  await walkAll(picks.highestReturn.brandIds);
+
+  // Walk down the recency order in batches of exactly what is still missing, keeping a client only
+  // when its chain shows a MEASURED, POSITIVE count past the base. A client whose chain could not be
+  // read at all shows nothing either, and is not named on this read. Every rejection is subtracted
+  // from the group's `qualifyingCount`, so a short row states how many clients honestly qualified
+  // rather than being padded with one that produced nothing.
+  const confirmedRecent: string[] = [];
+  let rejectedRecent = 0;
+  let cursor = 0;
+  while (confirmedRecent.length < picks.recentlyStarted.requestedCount && cursor < recentWalkable.length) {
+    const batch = recentWalkable.slice(cursor, cursor + (picks.recentlyStarted.requestedCount - confirmedRecent.length));
+    cursor += batch.length;
+    await walkAll(batch);
+    for (const id of batch) {
+      const entry = walked.get(id);
+      if (entry && showcaseChainHasOutcome(entry.funnels)) confirmedRecent.push(id);
+      else rejectedRecent += 1;
+    }
+  }
+  if (rejectedRecent > 0) {
+    console.log(
+      `[features-service] showcase: ${rejectedRecent} recency candidate(s) showed nothing past the outreach base on their own chain and were not named`,
+    );
+  }
+  const recentQualifying = picks.recentlyStarted.qualifyingCount - rejectedRecent;
+  const recentPick: ShowcaseGroupPick =
+    confirmedRecent.length > 0
+      ? { ...picks.recentlyStarted, brandIds: confirmedRecent, qualifyingCount: recentQualifying }
+      : {
+          ...picks.recentlyStarted,
+          brandIds: [],
           measured: false,
-          unmeasuredReason: "read_failed",
+          // A snapshot with no candidates keeps its own silence; candidates that all showed nothing are
+          // "nobody qualifies", which is what they are.
+          unmeasuredReason: picks.recentlyStarted.unmeasuredReason ?? "no_qualifying_clients",
+          qualifyingCount: Math.max(0, recentQualifying),
         };
-      }
-    },
-  );
-  const walked = new Map(brands.map((b) => [b.brand.id, b]));
+
+  const named = [...new Set([...recentPick.brandIds, ...picks.highestReturn.brandIds])];
+  const brands = named
+    .map((id) => walked.get(id))
+    .filter((entry): entry is ShowcaseBrandFunnels => entry !== undefined);
 
   // A group's `measured` is a statement about the PICK — did this ranking name anybody — and each
   // entry's own `measured` is a statement about that client's chain. They are kept apart on purpose:
@@ -3138,7 +3203,7 @@ async function computeShowcaseFunnelsPayload(): Promise<ShowcaseFunnelsPayload> 
   return {
     brands,
     groups: {
-      recentlyStarted: groupOf(picks.recentlyStarted),
+      recentlyStarted: groupOf(recentPick),
       highestReturn: groupOf(picks.highestReturn),
     },
     minSpendUsd: picks.minSpendUsd,
