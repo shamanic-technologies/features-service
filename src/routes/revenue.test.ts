@@ -873,7 +873,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.status).toBe(502);
   });
 
-  it("requests the slim lead projection (view=basic) from lead-service (#281)", async () => {
+  it("requests the whole-population lead projection (view=compact) from lead-service", async () => {
     let leadsUrl: string | undefined;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
@@ -888,7 +888,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(leadsUrl).toBeDefined();
-    expect(new URL(leadsUrl!).searchParams.get("view")).toBe("basic");
+    expect(new URL(leadsUrl!).searchParams.get("view")).toBe("compact");
   });
 
   // ── costEconomics ───────────────────────────────────────────────────────────
