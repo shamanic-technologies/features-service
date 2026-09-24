@@ -170,16 +170,34 @@ describe("servedCached", () => {
     expect(storedRow?.body).toEqual({ pipeline: 42 });
   });
 
-  it("the DEFAULT hard cap is minutes-scale, so a revisit after a few minutes is served, never blocked", async () => {
-    // Guards the fix for the dashboard's cold-load: the dashboard pauses polling on an idle tab, so any
-    // revisit used to land past the old 60s cap and block on a full cross-service recompute (~5.8s).
-    storedRow = { view: "revenue", scopeKey: "k", orgId: "o", body: { pipeline: 7 }, computedAt: new Date(Date.now() - 5 * 60_000), refreshingAt: null };
-    const compute = vi.fn().mockResolvedValue({ pipeline: 42 });
+  it("the DEFAULT serves ANY retained snapshot — a day-old cell is served instantly and refreshed behind the response", async () => {
+    // Guards the fix for the dashboard's 40-70s first paint (2026-09-24): a dashboard is visited about once
+    // a day, so under the old 30-minute cap 94% of stored cells were past it and the FIRST page of every
+    // session recomputed every view on the request path (24-44s each, measured in prod). The caller must
+    // get the snapshot; the refresh belongs in the background.
+    storedRow = { view: "revenue", scopeKey: "k", orgId: "o", body: { pipeline: 7 }, computedAt: new Date(Date.now() - 24 * 60 * 60_000), refreshingAt: null };
+    let resolveCompute!: (value: { pipeline: number }) => void;
+    const compute = vi.fn(() => new Promise<{ pipeline: number }>((resolve) => { resolveCompute = resolve; }));
     const body = await servedCached({ view: "revenue", scopeKey: "k", orgId: "o", compute });
-    expect(body).toEqual({ pipeline: 7 }); // served from the snapshot, caller never waits
+    expect(body).toEqual({ pipeline: 7 }); // served while the recompute is still PENDING — the caller never waited on it
     await flush();
     expect(compute).toHaveBeenCalledTimes(1); // and refreshed in the BACKGROUND
+    resolveCompute({ pipeline: 42 });
+    await flush();
     expect(storedRow?.body).toEqual({ pipeline: 42 });
+  });
+
+  it("a cell older than the RETENTION window is recomputed synchronously (it is about to be pruned, i.e. a miss)", async () => {
+    process.env.FEATURE_VIEW_SNAPSHOT_RETENTION_MS = String(60 * 60_000);
+    try {
+      storedRow = { view: "revenue", scopeKey: "k", orgId: "o", body: { pipeline: 7 }, computedAt: new Date(Date.now() - 2 * 60 * 60_000), refreshingAt: null };
+      const compute = vi.fn().mockResolvedValue({ pipeline: 42 });
+      const body = await servedCached({ view: "revenue", scopeKey: "k", orgId: "o", compute });
+      expect(body).toEqual({ pipeline: 42 });
+      expect(compute).toHaveBeenCalledTimes(1);
+    } finally {
+      delete process.env.FEATURE_VIEW_SNAPSHOT_RETENTION_MS;
+    }
   });
 
   it("STALE hit but claim lost (another refresh in flight) → serves stale, does NOT recompute", async () => {
