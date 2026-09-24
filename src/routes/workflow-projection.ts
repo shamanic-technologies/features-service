@@ -266,9 +266,9 @@ export interface ProjectionRow {
    * on a leg selling a REPLY, the strong and frontier tiers are wasted on one selling a WEBSITE
    * VISIT. The rule and its three cases live in `lib/model-tier-eligibility.ts`.
    *
-   * It is STATED, never acted on here: the row is served whatever the verdict says, its figures are
-   * unchanged, its `rank` and `scopeRank` are unchanged, and the recommendation is unchanged. This
-   * ship adds a verdict and moves no number. campaign-service filters on `eligible`; a customer
+   * The row is served whatever the verdict says and its figures are unchanged, but the ORDERS act on
+   * it (features-service, 2026-09-24): an excluded workflow ranks after every eligible one in `rank`
+   * and in `scopeRank`, and is never `recommendedWorkflowDynastySlug`. campaign-service filters on `eligible`; a customer
    * surface reads `ineligibleReason` so an excluded workflow reads as excluded rather than as
    * missing — and a workflow that is excluded but has ALREADY RUN keeps its history on screen.
    */
@@ -427,6 +427,12 @@ export interface WorkflowProjectionResponse {
   measured: boolean;
   /** Present ⟺ `measured` is false. */
   unmeasuredReason?: UnmeasuredProjectionReason;
+  /**
+   * Present ⟺ a leg-keyed read has workflows but the leg's model rule excludes EVERY one of them, so
+   * `recommendedWorkflowDynastySlug` is null by refusal rather than for want of evidence. Never a fall
+   * back to an excluded workflow.
+   */
+  recommendationWithheldReason?: "no_eligible_workflow";
 }
 
 /**
@@ -1886,6 +1892,19 @@ export function projectFromEvidence(input: {
     // measured evidence) — and ties inside a group break on the dynasty slug, so there are no ties and
     // no gaps and the same evidence always produces the same list.
     const better = (a: number, b: number): boolean => (maximize === "conversionRate" ? a > b : a < b);
+
+    // ── A WORKFLOW THE LEG'S MODEL RULE EXCLUDES IS NEVER PUT FORWARD ─────────────────────────────
+    //
+    // The verdict (`modelEligibility`, leg-keyed reads only) is the OUTERMOST key of every order
+    // below: an excluded workflow sorts after EVERY eligible one — measured or not — in `rank` and in
+    // each scope's `scopeRank`, and it can never be the recommendation. Measured in prod 2026-09-24:
+    // a cheap-tier workflow carrying `eligible: false` on a leg selling a positive reply was rank 1
+    // and `recommendedWorkflowDynastySlug`, so onboarding created the campaign on it and its first run
+    // executed it. The excluded rows stay in the body with their flag (a workflow that already ran
+    // keeps its spend visible); they are simply not presented as a pick. An UNKNOWABLE tier is
+    // eligible by the rule's own contract, so nothing is demoted on a gap in our reading.
+    const eligibility = legTerms ? (input.modelEligibilityByDynasty ?? null) : null;
+    const excludedTier = (slug: string): number => (eligibility?.get(slug)?.eligible === false ? 1 : 0);
     const metricOf = (row: ProjectionRow): number | null =>
       maximize === "conversionRate" ? row.resolved.conversionRatePct : row.resolved.costPerOutcomeUsd;
     const rankableMetric = (row: ProjectionRow): number | null => {
@@ -1913,6 +1932,9 @@ export function projectFromEvidence(input: {
     }
 
     const orderedDynasties = [...bestByDynasty.entries()].sort((a, b) => {
+      const ea = excludedTier(a[0]);
+      const eb = excludedTier(b[0]);
+      if (ea !== eb) return ea - eb;
       const ga = a[1].measured ? (a[1].metric == null ? 1 : 0) : 2;
       const gb = b[1].measured ? (b[1].metric == null ? 1 : 0) : 2;
       if (ga !== gb) return ga - gb;
@@ -1933,12 +1955,11 @@ export function projectFromEvidence(input: {
 
       // ── AND WHETHER THE MODEL WRITING THIS WORKFLOW'S EMAILS IS RIGHT FOR THIS LEG ─────────────
       //
-      // Stated per row, never acted on: the order above is already fixed, the figures are untouched,
-      // and the recommendation below is chosen from the same rows it always was. A dropped row would
-      // be undebuggable ("why does this workflow never run" has no answer if it is nowhere) and would
-      // erase the history of a workflow that is excluded but has ALREADY RUN for this campaign.
-      // Absent entirely when the two reads it rests on were never made.
-      const eligibility = input.modelEligibilityByDynasty ?? null;
+      // Stated per row, and acted on ONLY by the orders (see `excludedTier` above): the figures are
+      // untouched and the row is always served. A dropped row would be undebuggable ("why does this
+      // workflow never run" has no answer if it is nowhere) and would erase the history of a workflow
+      // that is excluded but has ALREADY RUN for this campaign. Absent entirely when the two reads it
+      // rests on were never made.
       if (eligibility) {
         for (const row of rows) {
           const verdict = eligibility.get(row.workflow.workflowDynastySlug);
@@ -1963,6 +1984,9 @@ export function projectFromEvidence(input: {
         scopeRows
           .slice()
           .sort((a, b) => {
+            const ea = excludedTier(a.workflow.workflowDynastySlug);
+            const eb = excludedTier(b.workflow.workflowDynastySlug);
+            if (ea !== eb) return ea - eb;
             const ma = rankableMetric(a);
             const mb = rankableMetric(b);
             const ga = a.measured ? (ma == null ? 1 : 0) : 2;
@@ -1982,8 +2006,12 @@ export function projectFromEvidence(input: {
     // The recommendation is the head of that order: the best rankable row of the rank-1 dynasty. The
     // groups above put every rankable dynasty before every unrankable one, so this is non-null exactly
     // when some row is rankable — the byte-same condition the previous argmin answered on.
+    // An excluded head means NO eligible workflow exists (eligibility is the outermost key), and the
+    // answer is then no recommendation, stated with its reason — never a fall back to an excluded one.
     const head = orderedDynasties[0];
-    const recommended: ProjectionRow | null = head && head[1].metric != null ? head[1].row : null;
+    const headExcluded = head != null && excludedTier(head[0]) === 1;
+    const recommended: ProjectionRow | null =
+      head && !headExcluded && head[1].metric != null ? head[1].row : null;
     // The budget still answers "what does a month of this cost", whichever way the pick was made — it is
     // priced off the RECOMMENDED row's own cost per outcome, so it describes the workflow that was
     // actually chosen rather than the one the other objective would have chosen.
@@ -2001,6 +2029,7 @@ export function projectFromEvidence(input: {
       recommendedBudgetUsd: recommendedCost != null ? TARGET_OUTCOMES_PER_MONTH * recommendedCost : null,
       measured: unmeasuredReason === null,
       ...(unmeasuredReason ? { unmeasuredReason } : {}),
+      ...(headExcluded ? { recommendationWithheldReason: "no_eligible_workflow" as const } : {}),
     };
 }
 

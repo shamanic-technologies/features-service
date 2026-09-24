@@ -618,7 +618,7 @@ curve's last point stops agreeing with the rate printed inches above it.
   cost curve's null on the same fixture, and the rest of the body BYTE-EQUAL with the block stripped.
   (Set 2026-09-17, features-service#992.)
 
-## THE TIER OF THE MODEL WRITING THE EMAIL IS A PROPERTY OF THE LEG, NOT OF THE WORKFLOW — `modelEligibility`, stated on every row and acted on by nobody here
+## THE TIER OF THE MODEL WRITING THE EMAIL IS A PROPERTY OF THE LEG, NOT OF THE WORKFLOW — `modelEligibility`, stated on every row, and it DECIDES the order and the pick
 
 We measured, fleet-wide, that the CAPABILITY TIER of the model a workflow writes its content with
 decides how that workflow performs, and that the direction of the effect depends on WHAT THE LEG
@@ -643,10 +643,21 @@ cheapest-cell argmin keeps handing campaign-service tiers the study says cannot 
   **a workflow that is excluded but has ALREADY RUN keeps appearing with its history**, exactly as a
   retired lineage does. A dropped row is also undebuggable: "why does this workflow never run" has no
   answer if the workflow is nowhere on the body.
-- **IT MOVES NO NUMBER.** The figures, the cascade, `rank`, `scopeRank`, the recommendation and
-  `recommendedBudgetUsd` are what they were — guarded by a case that strips the block and asserts the
-  two bodies are byte-equal with both producers up and with both down. This ship adds a verdict; the
-  consumer that acts on it is a following ship.
+- **IT MOVES NO FIGURE, BUT IT DECIDES THE ORDER AND THE PICK (supersedes the "moves no number"
+  rule of #952).** The figures and the cascade are what they were. But the verdict is the OUTERMOST key
+  of both orders: an excluded workflow ranks after EVERY eligible one — measured or not — in `rank` and
+  in each scope's `scopeRank`, and is never `recommendedWorkflowDynastySlug` (so `recommendedBudgetUsd`
+  is priced off an eligible workflow too). Stating the verdict while ranking against it was a bug, not a
+  staging step: measured in prod 2026-09-24, campaign `c8133eca…` (leg `start_to_conversation`) had
+  `sales-cold-email-outreach-maelstrom` (glm-flash, cheap) at `eligible: false` AND `rank: 1` AND
+  recommended, so onboarding created the campaign on it and its very first run executed it, and the
+  dashboard badged it "Best". **When EVERY workflow is excluded the recommendation is null and
+  `recommendationWithheldReason: "no_eligible_workflow"` says so — never a fall back to an excluded
+  one.** The excluded rows stay on the body with their flag and figures (a workflow that already ran
+  keeps its spend visible). Funnel- and goal-keyed reads carry no verdict and are byte-unchanged.
+  Guards: the `an EXCLUDED workflow is never put forward` suite in
+  `routes/model-tier-eligibility-grain.test.ts`, on a fixture where the excluded workflow is the
+  cheapest and wins the verdict-blind order, so every case asserts the divergence.
 - **AN UNKNOWABLE TIER IS ELIGIBLE, LOUDLY, AND THE FOUR GAPS ARE TOLD APART.** A workflow whose DAG
   names no model, an alias chat-service's catalogue does not carry, a failed catalogue read, and a
   failed workflow read each state their own `unknownTierReason` and leave the row ELIGIBLE. Excluding
