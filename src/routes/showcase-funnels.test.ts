@@ -10,7 +10,10 @@
  *     checked "a group came back" would pass on an implementation that served one list twice;
  *   - the SPEND FLOOR excludes the $4 client the unfiltered ranking would lead with, and the floor is
  *     STATED on the wire;
- *   - the OUTCOME gate excludes a client that began yesterday and has produced nothing;
+ *   - the OUTCOME gate excludes a client that began yesterday and has produced nothing — and it is
+ *     decided on the RUNGS of the chain the page draws, never on the outreach base: a client selling
+ *     the reply funnel whose only evidence is clicks (a signal that funnel has no step for) is not
+ *     named, the next honest candidate takes its place, and the rejection comes off `qualifyingCount`;
  *   - a group with nobody SAYS WHICH SILENCE it is, and a SHORT group is a stated fact rather than a
  *     list somebody has to count;
  *   - the route NAMES NO BRAND: a `?brandId=` on the request changes nothing, which is the whole
@@ -79,6 +82,7 @@ const { brandSoldFunnels } = await import("../lib/showcase-funnels.js");
 const DOC = "75d7e3e8-6926-4f85-a557-976895400666";
 const OPS = "6e21bb6c-67bc-45f3-8a6d-52230338d7e4";
 const SHOCK = "a179bbd9-8eed-4dba-9338-78125922b0c6";
+const VITAL = "f2408cfb-4f02-4910-acec-e61fc8edb9cf";
 /**
  * THE SUB-FLOOR CLIENT — a 22x return sitting on $4 of spend and nothing produced. It is the shape
  * production's unfiltered ranking leads with (21.5x on $4.12, measured 2026-09-22), so it is what
@@ -367,6 +371,35 @@ const BASE: Fixture = {
   memberships: [DOC, OPS, OUTSIDER],
 };
 
+/** The base fixture with Shockwave's chain readable: its org resolves and it has a positive reply. */
+const READABLE_SHOCK: Fixture = {
+  ...BASE,
+  brands: { ...BASE.brands, [SHOCK]: { funnelKey: CONVERSATION, leads: [lead(SHOCK, "l1", "reply"), lead(SHOCK, "l2", "none")] } },
+  memberships: [DOC, OPS, SHOCK, OUTSIDER],
+};
+
+/**
+ * Living Vital's production shape: sells the REPLY funnel, began most recently, clicked twice and
+ * replied never — so a gate counting clicks lets it through while its own chain shows nothing past
+ * `contacted`. Its snapshot row carries the count the OLD warm wrote, which is exactly the stale state
+ * the route has to be robust to until the next warm rewrites it.
+ */
+const WITH_VITAL: Fixture = {
+  ...READABLE_SHOCK,
+  brands: {
+    ...READABLE_SHOCK.brands,
+    [VITAL]: {
+      funnelKey: CONVERSATION,
+      leads: [lead(VITAL, "l1", "click"), lead(VITAL, "l2", "click"), lead(VITAL, "l3", "none")],
+    },
+  },
+  memberships: [...(READABLE_SHOCK.memberships ?? []), VITAL],
+  snapshot: [
+    ...SNAPSHOT,
+    { brandId: VITAL, committedSpendUsd: 97.38, expectedPipelineUsd: 0, startedOn: "2026-09-10", outcomeCount: 2 },
+  ],
+};
+
 const withFeatures = () => {
   vi.mocked(db.query.features.findFirst).mockImplementation((async () => FEATURE_ROW(PITCH)) as never);
   vi.mocked(db.query.features.findMany).mockImplementation((async () => [FEATURE_ROW(PITCH)]) as never);
@@ -426,7 +459,7 @@ describe("GET /public/stats/showcase-funnels", () => {
   });
 
   it("serves TWO groups, each already ordered, and the two orders DISAGREE", async () => {
-    mockFetch(BASE);
+    mockFetch(READABLE_SHOCK);
     const body = await get();
 
     // Newest beginning first. Shockwave began in August, opsfolio in June, docdinners in March.
@@ -467,13 +500,64 @@ describe("GET /public/stats/showcase-funnels", () => {
   });
 
   it("the OUTCOME gate keeps out the client that began most recently and produced nothing", async () => {
-    mockFetch(BASE);
+    mockFetch(READABLE_SHOCK);
     const body = await get();
 
     // The outsider began in September — later than every client named — and has moved nobody past
     // outreach, so the row of live cards does not lead with it.
     expect(body.groups.recentlyStarted.brands.map((b) => b.brand.id)).not.toContain(OUTSIDER);
     expect(body.groups.recentlyStarted.brands[0].brand.id).toBe(SHOCK);
+  });
+
+  // ── AN OUTCOME IS A RUNG PAST THE BASE, READ ON THE CLIENT'S OWN CHAIN ─────────────────────────
+  //
+  // The production shape that shipped wrong (Living Vital, 2026-09-24): a client selling the REPLY
+  // funnel, begun most recently of all, whose snapshot said it had produced something because the
+  // warm counted clicks — a signal its funnel has no rung for. Its chain read `contacted` and then 0 on
+  // every rung. The id below is deliberately a fresh one: nothing here excludes anybody by name.
+
+  it("a client whose chain shows NOTHING past the outreach base is not named, whatever its snapshot said", async () => {
+    mockFetch(WITH_VITAL);
+    const body = await get();
+    const recent = body.groups.recentlyStarted;
+
+    expect(recent.brands.map((b) => b.brand.id)).not.toContain(VITAL);
+    expect(body.brands.map((b) => b.brand.id)).not.toContain(VITAL);
+    // Every client the row DOES name shows a measured, positive count on a rung past `contacted`.
+    for (const entry of recent.brands) {
+      const pastBase = entry.funnels.flatMap((f) => f.steps.filter((st) => st.key !== "contacted"));
+      expect(pastBase.some((st) => st.peopleReached !== null && st.peopleReached > 0)).toBe(true);
+    }
+  });
+
+  it("the next honest candidate takes the refused client's place, and the refusal comes off qualifyingCount", async () => {
+    mockFetch(WITH_VITAL);
+    const recent = (await get()).groups.recentlyStarted;
+
+    // Vital began first (September) and is refused; the three that produced something fill the row in
+    // their own recency order.
+    expect(recent.brands.map((b) => b.brand.id)).toEqual([SHOCK, OPS, DOC]);
+    // Four passed the snapshot prefilter; one showed nothing on its own chain.
+    expect(recent.qualifyingCount).toBe(3);
+    expect(recent.requestedCount).toBe(3);
+  });
+
+  it("a row that cannot be honestly filled is SHORT, and says so, rather than padded", async () => {
+    // Shockwave's org cannot be resolved in the base fixture, so its chain cannot be read: an
+    // unmeasured client shows nothing past the base either, and is not named.
+    mockFetch(BASE);
+    const recent = (await get()).groups.recentlyStarted;
+
+    expect(recent.brands.map((b) => b.brand.id)).toEqual([OPS, DOC]);
+    expect(recent.measured).toBe(true);
+    expect(recent.requestedCount).toBe(3);
+    expect(recent.qualifyingCount).toBe(2);
+  });
+
+  it("the return group is untouched by the recency check", async () => {
+    mockFetch(WITH_VITAL);
+    const body = await get();
+    expect(body.groups.highestReturn.brands.map((b) => b.brand.id)).toEqual([OPS, SHOCK, DOC]);
   });
 
   it("a SHORT group is a stated fact, not a list somebody has to count", async () => {

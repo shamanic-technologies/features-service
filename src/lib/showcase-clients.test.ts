@@ -16,6 +16,8 @@ import {
   pickShowcaseClients,
   SHOWCASE_GROUP_SIZE,
   type ShowcaseCandidate,
+  furthestRungReached,
+  showcaseChainHasOutcome,
 } from "./showcase-clients.js";
 import type { BrandReturnRow } from "./fleet-return-on-spend.js";
 
@@ -209,5 +211,69 @@ describe("buildShowcaseCandidates", () => {
   it("a MEASURED 0 outcome count survives the fold and is not an absence", () => {
     const [c] = buildShowcaseCandidates([[row({ brandId: DOC, committedSpendUsd: 400, outcomeCount: 0 })]]);
     expect(c.outcomeCount).toBe(0);
+  });
+});
+
+// ── AN OUTCOME IS A RUNG PAST THE BASE ────────────────────────────────────────────────────────────
+//
+// Both helpers assert the DIVERGENCE between "somebody was contacted" and "the funnel produced
+// something": a helper that read the outreach base, or counted an unmeasured rung, would pass a suite
+// that only checked a number came back — and would name the Living Vital shape again.
+
+describe("furthestRungReached", () => {
+  const step = (recipientsReached: number | null) => ({ recipientsReached }) as never;
+  const breakdown = (steps: Array<number | null>, contactedRecipients = 183) =>
+    ({ contactedRecipients, convertibleRecipients: contactedRecipients, steps: steps.map(step) }) as never;
+
+  it("never reads the outreach base: 183 contacted and 0 on every rung is 0, not 183", () => {
+    expect(furthestRungReached(breakdown([0, 0, 0, 0]))).toBe(0);
+  });
+
+  it("takes the furthest-reached rung's count", () => {
+    expect(furthestRungReached(breakdown([51, 0, 0]))).toBe(51);
+    expect(furthestRungReached(breakdown([1, 3, 0]))).toBe(3);
+  });
+
+  it("an unmeasured rung is skipped, and all-unmeasured or nothing walked is null — never 0", () => {
+    expect(furthestRungReached(breakdown([null, 0]))).toBe(0);
+    expect(furthestRungReached(breakdown([null, null]))).toBeNull();
+    expect(furthestRungReached(null)).toBeNull();
+    expect(furthestRungReached(undefined)).toBeNull();
+  });
+});
+
+describe("showcaseChainHasOutcome", () => {
+  const chain = (...steps: Array<[string, number | null]>) => [
+    { steps: steps.map(([key, peopleReached]) => ({ key, peopleReached })) },
+  ];
+
+  it("a chain with a contacted count and 0 on every rung has produced NOTHING", () => {
+    expect(
+      showcaseChainHasOutcome(
+        chain(["contacted", 183], ["start_to_conversation", 0], ["conversation_to_meeting_booked", 0]),
+      ),
+    ).toBe(false);
+  });
+
+  it("one measured person on one rung past the base is an outcome", () => {
+    expect(showcaseChainHasOutcome(chain(["contacted", 876], ["start_to_conversation", 1]))).toBe(true);
+    expect(showcaseChainHasOutcome(chain(["contacted", 1146], ["start_to_website_visit", 51], ["website_visit_to_signup", 0]))).toBe(true);
+  });
+
+  it("an UNMEASURED rung never qualifies a client", () => {
+    expect(showcaseChainHasOutcome(chain(["contacted", 500], ["start_to_website_visit", null]))).toBe(false);
+  });
+
+  it("no chain at all is nothing produced", () => {
+    expect(showcaseChainHasOutcome([])).toBe(false);
+  });
+
+  it("any ONE of several funnels showing a rung is enough", () => {
+    expect(
+      showcaseChainHasOutcome([
+        { steps: [{ key: "contacted", peopleReached: 10 }, { key: "start_to_conversation", peopleReached: 0 }] },
+        { steps: [{ key: "contacted", peopleReached: 10 }, { key: "start_to_website_visit", peopleReached: 2 }] },
+      ]),
+    ).toBe(true);
   });
 });
