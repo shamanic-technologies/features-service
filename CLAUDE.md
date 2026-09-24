@@ -5918,10 +5918,27 @@ Read them as one pair; tuning either alone regresses the other.
 - **`TTL` = 30s** — the FRESH window. Past it a read still serves instantly but ALSO kicks one background
   revalidation, so **TTL is what governs how often the expensive fan-out actually re-runs** — once per
   ~TTL per VIEWED cell. Idle cells never refresh.
-- **`maxStale` = 30min** — the HARD cap. Beyond it a read stops serving the snapshot and recomputes
-  SYNCHRONOUSLY, making the caller wait.
+- **`maxStale` = the RETENTION window (7d) by default** — i.e. there is no hard cap: any retained snapshot
+  is served instantly and refreshed behind the response. Only a cell older than retention (about to be
+  pruned, effectively a miss) or a genuinely never-computed key recomputes SYNCHRONOUSLY. A view may still
+  pass its own `maxStaleMs` (customer-health does).
 
-**`maxStale` was 60s, and that was the dashboard's entire cold-load problem.** The dashboard polls while a
+**`maxStale` was 30min until 2026-09-24, and that was the dashboard's 40-70s first paint (supersedes the
+30-minute cap below).** A dashboard is visited about once a day, so **309 of 328** stored cells (94%) sat
+past the cap at any moment and the FIRST page of every session recomputed every view on the request path.
+Measured in prod on campaign `f7b1b610…` (brand `75d7e3e8…`), uncached: `/stats?campaignId=` **24s**,
+`/audience-stats` **24s**, `/pipeline-activity` **24s**, `/revenue` **34s**, `/workflow-projection?leg=`
+**44s**; a snapshot hit **50-200ms**. A CPU profile of the `/stats` compute was **90% idle** — the time is
+waiting on siblings, not our code: human-service `GET /orgs/audiences` **15-115s** (per-row contactability
+count, fixed by human-service `b727f2f`), runs-service cost aggregations **2-12s**, and lead-service
+`/orgs/leads?view=basic` shipping **~70 MB in 4 sequential pages (20-30s)** for one brand. **Do NOT
+reintroduce a blocking age cap to "look fresh"** — it puts every one of those seconds back on the customer.
+The refresh claim TTL is **3 min** for the same reason: it must exceed the slowest real refresh, or a
+second read starts a duplicate fan-out beside the first. What is still cold is a key that was NEVER
+computed (a campaign opened for the first time, or a new economics fingerprint) — only the downstream
+fixes above shorten that.
+
+**`maxStale` was 60s before that, and that was the first cold-load problem.** The dashboard polls while a
 tab is open but PAUSES on an idle/hidden tab, so ANY revisit more than a minute later fell into the
 blocking branch and each of the ~5 brand-page views recomputed its full cross-service fan-out on the
 request path. Measured in prod 2026-07-30: **5.76s / 5.65s / 5.90s** for workflow-projection /
