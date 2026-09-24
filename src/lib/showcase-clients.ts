@@ -20,6 +20,19 @@
  *   - **recentlyStarted** — the most recently begun clients that have produced at least one outcome.
  *     The card row's question is "who else is on this right now", so a client that started last week
  *     and has something to show beats one that started a year ago and has more.
+ *
+ *     **AN OUTCOME IS A RUNG THE FUNNEL CONVERTS TO — never the outreach base.** Being contacted is
+ *     the base every funnel converts FROM, so a client whose only measured count is how many people
+ *     we emailed has produced nothing, and the card row must not name it. Nor is a signal a rung
+ *     merely because this service counts it: a website visit is not a step of a funnel that starts on
+ *     a positive reply, so a client that sells the reply funnel and collected a few clicks has still
+ *     produced nothing on the chain the homepage draws for it. Measured in prod 2026-09-24: Living
+ *     Vital (livingvital.ch) sat in the row with 183 contacted and 0 at every rung past it, admitted
+ *     by a gate that summed clicks and positive replies whatever funnel the client sells. So the gate
+ *     reads the rungs themselves — twice: the snapshot stores the furthest RUNG count the warm walked
+ *     (`furthestRungReached`), and the route then walks each pick's own chain and keeps it only when
+ *     that chain shows a measured, positive count past the base (`showcaseChainHasOutcome`). An
+ *     UNMEASURED rung (`null`) never qualifies anybody: we cannot claim what we did not count.
  *   - **highestReturn** — the clients whose money came back best, past a floor of spend. The proof
  *     section's question is "what does this return", so it leads with the best measured answers.
  *
@@ -63,6 +76,7 @@
  * on its first cold call.
  */
 import type { BrandReturnRow } from "./fleet-return-on-spend.js";
+import type { FunnelStepBreakdown } from "./funnel-steps.js";
 
 /** How many clients each group names. Both groups of the homepage show three. */
 export const SHOWCASE_GROUP_SIZE = 3;
@@ -84,10 +98,10 @@ export interface ShowcaseCandidate {
   /** The EARLIEST first-billed day across the brand's channels — one client, one beginning. */
   startedOn: string | null;
   /**
-   * An UPPER BOUND on the distinct people this brand has moved past outreach: the per-channel counts
-   * summed, so somebody reached on two channels is counted twice. That is harmless and deliberate —
-   * it is read ONLY as a `> 0` gate and is never served — and it keeps the aggregation additive.
-   * Null when no channel could count it.
+   * How many people reached the furthest-reached RUNG of the funnel(s) this brand's warm walked —
+   * a rung the funnel converts TO, never the outreach base (see `furthestRungReached`). Summed across
+   * channels, so it is an upper bound; that is harmless and deliberate — it is read ONLY as a `> 0`
+   * prefilter and is never served. Null when no rung could be counted.
    */
   outcomeCount: number | null;
 }
@@ -101,6 +115,12 @@ export interface ShowcaseGroupPick {
   unmeasuredReason: ShowcaseGroupUnmeasuredReason | null;
   /** How many clients this group set out to name. */
   requestedCount: number;
+  /**
+   * EVERY client that passed the gate, in the group's order — `brandIds` is its head. Internal: the
+   * route walks down it when a named client's own chain turns out to show nothing past the base, so
+   * the row is filled from the next honest candidate rather than padded. Never served.
+   */
+  rankedBrandIds: string[];
   /**
    * How many clients passed the gate BEFORE the cut to `requestedCount`. A short group is therefore
    * visible as a fact on the wire (`qualifyingCount < requestedCount`) rather than as a list somebody
@@ -169,7 +189,14 @@ function emptyGroup(
   reason: ShowcaseGroupUnmeasuredReason,
   requestedCount: number,
 ): ShowcaseGroupPick {
-  return { brandIds: [], measured: false, unmeasuredReason: reason, requestedCount, qualifyingCount: 0 };
+  return {
+    brandIds: [],
+    measured: false,
+    unmeasuredReason: reason,
+    requestedCount,
+    rankedBrandIds: [],
+    qualifyingCount: 0,
+  };
 }
 
 /** A group built from an ordered, already-gated candidate list. */
@@ -180,8 +207,43 @@ function groupOf(ordered: ShowcaseCandidate[], requestedCount: number): Showcase
     measured: true,
     unmeasuredReason: null,
     requestedCount,
+    rankedBrandIds: ordered.map((c) => c.brandId),
     qualifyingCount: ordered.length,
   };
+}
+
+/**
+ * PURE: the furthest RUNG one walked funnel reached — the largest measured `recipientsReached` among
+ * its steps. Every step of a `FunnelStepBreakdown` is a rung the funnel converts TO; the outreach base
+ * rides beside them as `contactedRecipients` and is deliberately NOT read here, because being contacted
+ * is not an outcome. Null when nothing was walked or every rung was unmeasured — never a 0 standing in
+ * for "we could not count this".
+ */
+export function furthestRungReached(breakdown: FunnelStepBreakdown | null | undefined): number | null {
+  if (!breakdown) return null;
+  let max: number | null = null;
+  for (const step of breakdown.steps) {
+    if (step.recipientsReached === null) continue;
+    if (max === null || step.recipientsReached > max) max = step.recipientsReached;
+  }
+  return max;
+}
+
+/** The one step of a showcase chain that is the outreach BASE rather than a rung. */
+const OUTREACH_BASE_STEP_KEY = "contacted";
+
+/**
+ * PURE: does a client's walked showcase chain show anything past the outreach base? True iff SOME
+ * funnel carries a step other than `contacted` with a MEASURED, POSITIVE count. A measured 0 is
+ * nothing produced; a null is nothing counted; neither qualifies. This is the check the recency row is
+ * finally decided on, because it reads the exact chain the homepage draws under the client's name.
+ */
+export function showcaseChainHasOutcome(
+  funnels: ReadonlyArray<{ steps: ReadonlyArray<{ key: string; peopleReached: number | null }> }>,
+): boolean {
+  return funnels.some((f) =>
+    f.steps.some((s) => s.key !== OUTREACH_BASE_STEP_KEY && s.peopleReached !== null && s.peopleReached > 0),
+  );
 }
 
 /**
@@ -206,9 +268,11 @@ export function pickShowcaseClients(
     };
   }
 
-  // RECENCY — a client we can date, that has moved at least one person past outreach. The outcome gate
-  // is what stops the row leading with a brand that signed up on Friday and has nothing to show; a
-  // MEASURED 0 fails it, and an unmeasured null fails it too (we cannot claim what we did not count).
+  // RECENCY — a client we can date, whose funnel has moved at least one person onto a RUNG past the
+  // outreach base. The outcome gate is what stops the row leading with a brand that signed up on Friday
+  // and has nothing to show; a MEASURED 0 fails it, and an unmeasured null fails it too (we cannot
+  // claim what we did not count). This is the PREFILTER; the route confirms each pick on its own
+  // walked chain before naming it.
   const recent = candidates
     .filter((c) => c.startedOn !== null && c.outcomeCount !== null && c.outcomeCount > 0)
     .sort((a, b) =>

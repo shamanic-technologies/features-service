@@ -1076,13 +1076,25 @@ hardcoded the same three in its own HTML.
   of paid outreach, and it is the same notion `agency-self-serve-compute.ts` already uses for "since this
   pair began". A brand claimed by several orgs takes the EARLIEST of theirs. **A client we cannot date is
   not a candidate** — never dated with a stand-in, which would reorder the one ranking it decides.
-- **THE OUTCOME GATE IS THE TWO SIGNALS THIS SERVICE ACTUALLY COUNTS** — a website visit or a positive
-  reply, off the `outcomes` block the same engine pass already carries (zero extra IO). It is the SUM of
-  two distinct-lead counts, so a person who did both is counted twice: an UPPER BOUND, which is exactly
-  enough for the `> 0` gate it is read as and for nothing else. It is **never served**. It is
-  deliberately NOT a leg's outcome — a leg is a property of a CAMPAIGN and this row is the brand's whole
-  channel. A MEASURED 0 fails the gate; so does an unmeasured null, because we cannot claim what we did
-  not count.
+- **AN OUTCOME IS A RUNG THE FUNNEL CONVERTS TO — NEVER THE OUTREACH BASE, AND IT IS CONFIRMED ON THE
+  CLIENT'S OWN CHAIN (supersedes the clicks-plus-replies gate of v0.171.0).** The first gate summed a
+  brand's clicks and positive replies whatever funnel it sells, so a client selling the REPLY funnel
+  passed on clicks its chain has no rung for. Measured in prod 2026-09-24: **Living Vital
+  (livingvital.ch) led the card row with 183 contacted and 0 on every rung past it** — a "grows on
+  autopilot" card showing one number and no result. Two halves now, and both read RUNGS:
+  - **the warm stores the furthest RUNG reached** (`furthestRungReached` over the pass's own
+    `funnelSteps`, zero extra IO; a several-funnel brand takes the max over its per-funnel passes).
+    `contactedRecipients` is deliberately never read — being contacted is the base every funnel converts
+    FROM. Null when no rung could be counted; still an upper bound, still never served, still a `> 0`
+    PREFILTER only.
+  - **the route then walks each recency candidate IN ORDER and names it only when its walked chain —
+    the exact one the homepage draws — shows a MEASURED, POSITIVE count on a step other than
+    `contacted`** (`showcaseChainHasOutcome`). A measured 0 is nothing produced, a null is nothing
+    counted, and a chain that could not be read at all shows nothing either: none of them qualify. The
+    next candidate takes the refused client's place, every refusal comes off `qualifyingCount`, and a row
+    that cannot be honestly filled is SHORT (`qualifyingCount < requestedCount`) rather than padded. The
+    walk is capped at `SHOWCASE_RECENT_MAX_WALKS` (12) so a stale snapshot cannot turn one refresh into a
+    fleet-wide fan-out. **Nothing is excluded by name** and the return group is untouched.
 - **THE RETURN RANKING RESTS ON A SPEND FLOOR, AND THE FLOOR IS STATED** (`minSpendUsd`, the same
   `DEFAULT_MIN_SPEND_USD` of $100 the published median uses). Measured in prod 2026-09-22, the top of an
   UNFILTERED ranking is **21.5x on $4.12** and **12.3x on $9.77** — ahead of clients with hundreds of
