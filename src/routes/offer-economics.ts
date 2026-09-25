@@ -707,7 +707,7 @@ router.get("/offers/:offerId/funnels", apiKeyAuth, async (req, res) => {
           brandId,
           costBasis: "charged" as const,
           // WHOSE WINS EVERY ROW COUNTED — stated once for the table, since a lean row carries none.
-          outcomeCauses: { counted: [...causes] },
+          outcomeCauses: { priced: [...causes] },
           // The WEAKEST coverage among the rows, because the marker is an admission: a payload holding
           // one fully-costed funnel and one that could not be costed at all is not a fully-costed payload.
           costCoverage: summariseCoverage(groups.map((g) => g.costCoverage)),

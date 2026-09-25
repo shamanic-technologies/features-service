@@ -80,7 +80,7 @@ import { fetchLeadsForRevenue } from "./leads-client.js";
 import { fetchRunsCostCentsByWorkflowSlug, type RunsCostCents } from "./runs-cost-client.js";
 import { fetchEventTimestamps } from "./email-status-client.js";
 import { fetchObservedStepFacts } from "./observed-steps.js";
-import { ALL_OUTCOME_CAUSES, type OutcomeCause } from "./outcome-cause.js";
+import { DEFAULT_PRICED_CAUSES, type OutcomeCause } from "./outcome-cause.js";
 import { fetchQualifications } from "./qualifications-client.js";
 import { applySignalOverlays } from "./signal-overlays.js";
 import { fetchPublicWorkflows, type WorkflowMetadata } from "./public-stats-clients.js";
@@ -286,7 +286,7 @@ export async function computeWorkflowRevenueGroups(input: {
   causes?: readonly OutcomeCause[];
 }): Promise<WorkflowRevenueGroup[]> {
   const { featureSlug, brandId, funnel, headers, pricing, priced, campaignScope } = input;
-  const causes = input.causes ?? ALL_OUTCOME_CAUSES;
+  const causes = input.causes ?? DEFAULT_PRICED_CAUSES;
   // The single campaign id the campaign-SCOPED per-email overlays still take: the requested campaign
   // for a single scope, `undefined` for a family (no producer accepts a campaign list). The two legs
   // that must be family-EXACT — cost and leads — take the scope itself.

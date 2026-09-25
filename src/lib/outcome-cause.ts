@@ -20,30 +20,57 @@
  *                  counts, their own revenue and their own ledger, and saying so honestly costs them
  *                  nothing they can see. What the answer buys is leaving its value out of the return
  *                  computed on OUR outreach.
- *   - `unstated` — NOBODY WAS ASKED. Every statement made before the field existed, and every
- *                  tracker-reported outcome, because a page-load tag observes a page load and cannot
- *                  know why somebody bought. It is neither of the other two answers and is never
- *                  folded into either: reading it as ours is exactly today's overstatement, and
- *                  reading it as theirs would wipe out the measured pipeline of every brand on the
- *                  platform overnight, since almost every outcome in the system is in this state.
+ *   - `unstated` — UNDECIDED. Nobody answered, and lead-service's default rule could not either:
+ *                  the outcome is undated, not matched to a lead, or on a lead we never delivered to.
+ *                  (A DATED outcome on a lead we emailed gets the rule's answer, whatever its source.)
+ *                  It is never folded into `other`; it is simply not claimed as ours.
  *
- * So the CALLER says which states it counts, one word per state, and nothing is decided silently.
  * Deliberately NOT the tracker's `attributed / needs_review / unmatched` vocabulary, which answers a
  * different question (did we manage to identify who somebody was); lead-service kept the two apart
  * and so does this.
  *
- * ── THE DEFAULT IS EVERY STATE, AND IT IS BYTE-IDENTICAL TO TODAY ───────────────────────────────
+ * ── `?cause=` SAYS WHICH OUTCOMES ARE PRICED, AND EVERY OUTCOME IS STILL COUNTED ───────────────
  *
- * A read that names nothing counts all three, which is what this service has always counted. A
- * consumer that never asks reads exactly what it read before, at every grain.
+ * (Supersedes the "every state, byte-identical to today" default of features-service#882.) Owner,
+ * 2026-09-25: the conversions a brand sees must be ALL of them, while the ROI of OUR service counts
+ * only what we generated. So the parameter moved from filtering the outcome to filtering its VALUE:
+ * an outcome whose state is not priced still reaches its rung in `leads[]`, `funnelSteps` and every
+ * measured conversion rate, and adds nothing to the pipeline, the return or the cost of acquisition.
+ *
+ * The DEFAULT is `outreach` alone — the same default the user dashboard shows on a lead's right panel
+ * ("Ours" / "Not ours" / "Undecided", with "Undecided" reading "we do not claim it"). lead-service
+ * answers `outreach` for any dated outcome that followed our first delivered email to that person, so
+ * the default counts exactly what the panel calls ours. `unstated` is priced only when a caller names
+ * it: an outcome nobody could date against our outreach is not claimed.
  */
 
 /** The producer's three words, in the canonical order every echo and every cache key uses. */
 export const OUTCOME_CAUSES = ["outreach", "other", "unstated"] as const;
 export type OutcomeCause = (typeof OUTCOME_CAUSES)[number];
 
-/** Every state — the DEFAULT, i.e. what this service counted before `?cause=` existed. */
+/** Every state. */
 export const ALL_OUTCOME_CAUSES: readonly OutcomeCause[] = OUTCOME_CAUSES;
+
+/** The states PRICED when a caller names none: our own wins only. */
+export const DEFAULT_PRICED_CAUSES: readonly OutcomeCause[] = ["outreach"];
+
+/**
+ * WHOSE WIN a LEGACY outcome was — lead-service's default rule (crm-evidence `crmCauseRule`), applied
+ * to the one producer lead-service does not hold: the instantly manual qualifications, which carry no
+ * cause and never can (that source is closed; nobody writes to it any more). Same inputs, same
+ * answers: after our first delivered email to that person → ours; before → not ours; undated, or
+ * nothing delivered → undecided. Kept identical to the producer's rule on purpose so a legacy meeting
+ * and a stated one are judged the same way; it empties itself as the legacy rows are restated.
+ */
+export function causeByDeliveryRule(
+  occurredAt: string | null | undefined,
+  firstDeliveredAt: string | null | undefined,
+): OutcomeCause {
+  const event = occurredAt ? Date.parse(occurredAt) : NaN;
+  const delivered = firstDeliveredAt ? Date.parse(firstDeliveredAt) : NaN;
+  if (Number.isNaN(event) || Number.isNaN(delivered)) return "unstated";
+  return event > delivered ? "outreach" : "other";
+}
 
 /**
  * WHICH STATE one outcome is in, from the producer's per-row `causedByOutreach`.
@@ -58,17 +85,18 @@ export function causeOf(causedByOutreach: boolean | null | undefined): OutcomeCa
 }
 
 /**
- * Parse `?cause=` — a comma-separated set of the three words, in any order and any case.
+ * Parse `?cause=` — a comma-separated set of the three words, in any order and any case, naming the
+ * states whose outcomes are PRICED.
  *
- * Absent / empty → every state (the default). An unrecognised word, or a list that names no state at
+ * Absent / empty → `outreach` alone (the default). An unrecognised word, or a list that names no state at
  * all, is `null` → the caller 400s: silently counting a set the caller did not ask for is exactly the
  * misunderstanding this parameter exists to remove, and "count nothing" is not a question anyone means.
  */
 export function parseOutcomeCauses(raw: unknown): readonly OutcomeCause[] | null {
-  if (raw === undefined || raw === null || raw === "") return ALL_OUTCOME_CAUSES;
+  if (raw === undefined || raw === null || raw === "") return DEFAULT_PRICED_CAUSES;
   if (typeof raw !== "string") return null;
   const trimmed = raw.trim();
-  if (trimmed === "") return ALL_OUTCOME_CAUSES;
+  if (trimmed === "") return DEFAULT_PRICED_CAUSES;
 
   const seen = new Set<OutcomeCause>();
   for (const part of trimmed.split(",")) {
@@ -82,10 +110,12 @@ export function parseOutcomeCauses(raw: unknown): readonly OutcomeCause[] | null
   return OUTCOME_CAUSES.filter((c) => seen.has(c));
 }
 
-/** The canonical cache-key / echo form. `undefined` for the default set, so today's keys are unmoved. */
-export function causeScopeKeyPart(causes: readonly OutcomeCause[]): string | undefined {
-  if (causes.length === OUTCOME_CAUSES.length) return undefined;
-  return causes.join("+");
+/**
+ * The canonical cache-key form. Always present: the default moved (every state → `outreach`), so a
+ * snapshot keyed without it is a body priced on the old default and must never be served again.
+ */
+export function causeScopeKeyPart(causes: readonly OutcomeCause[]): string {
+  return `priced:${causes.join("+")}`;
 }
 
 /** A zeroed tally, one entry per state. */

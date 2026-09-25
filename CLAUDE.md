@@ -1085,6 +1085,41 @@ not, so it answered about the NEWEST slice of a campaign that had been running s
   single-row identity's unchanged request shape, the multi-member fan-out shape, the untouched brand and
   offer reads, and the fail-soft degrade. (Set 2026-09-10, features-service#905.)
 
+## THE ROI OF OUR SERVICE PRICES ONLY OUR WINS; EVERY CONVERSION IS STILL COUNTED — `?cause=` names what is PRICED, default `outreach`
+
+(Supersedes the "silence is every state, byte-identically" and "a state left out drops the RUNG" rules
+of the section below; its vocabulary and producer contract still hold.) Owner, 2026-09-25: *"Pour les
+conversions, il faut bien prendre toutes les cards. Mais pour le ROI de notre service, il faut compter
+ce qu'on a généré."* Lead statuses merge the customer's CRM, so meetings attended / booked / won that we
+did not cause reach our leads — measured in prod that day: 13 CRM outcomes `other` against 8 `outreach`,
+all of them priced into ROI by the old every-state default.
+
+- **COUNTED vs PRICED are now two separate facts per rung.** Every outcome reaches its rung whatever its
+  cause (`leads[]` flags, `funnelSteps`, the measured effective conversion rates). A rung only
+  unpriced-state rows reached rides `EnginePerson.unpricedSignals`, and `evForPerson` skips that path —
+  so the lead falls back to exactly the forecast its other evidence earns, and only a PRICED row's
+  stated amount becomes its value. The website conversions (signup, form submission) take their cause
+  from the same statement rows.
+- **The default is `outreach` alone — the dashboard lead panel's "Ours".** lead-service answers `outreach`
+  for any dated outcome that followed our first delivered email to that person (its `crmCauseRule`,
+  extended to every source by sales-lead-service after this ship); "Undecided" reads "we do not claim
+  it", so `unstated` is priced only when a caller names it. `?cause=outreach,other,unstated` is the old
+  default, still reachable.
+- **The LEGACY instantly qualifications are judged by the SAME date rule** (`causeByDeliveryRule`, the
+  producer's rule restated, against the lead's first delivered email from the timestamps overlay): they
+  carry no cause and never can, and pricing them on a looser rule than a statement would be two answers
+  to one question. Undated / nothing delivered → undecided.
+- **The echo is `outcomeCauses.priced`** (renamed from `counted`, which no consumer read — checked across
+  every clone). `causeScopeKeyPart` now keys EVERY set, the default included, so no snapshot priced on the
+  old default is ever served again.
+- **Expect every ROI, pipeline and CAC to move down** where outcomes were not ours or undecided — the
+  brand grains, the per-workflow grain, the fleet return medians and the showcase. Intended.
+- Guards: `routes/outcome-cause-grain.test.ts` (five people, five answers: the default prices ours +
+  the legacy close after our email, still counts all five deals, a not-ours deal worth the forecast to
+  the cent, the early legacy close not ours, all-three reachable, return/CAC moving while spend and
+  volume do not), `lib/outcome-cause.test.ts` (the default, the keys, the date rule),
+  `lib/unpriced-signals.test.ts` (the per-lead merge). (Set 2026-09-25.)
+
 ## A RETURN ON OUR OUTREACH LEAVES OUT A DEAL THE CUSTOMER SAYS WE DID NOT CAUSE — `?cause=`, three states, and the third is NOT a missing answer
 
 A brand contacts people through us and also through everything else it already does: referrals,

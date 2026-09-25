@@ -165,6 +165,15 @@ export interface EnginePerson {
    * ruled out, which is every lead today.
    */
   deadSignals?: readonly string[];
+  /**
+   * The signals this person REACHED that are NOT OUR WIN (`lib/outcome-cause.ts`): the customer said,
+   * or the whose-win rule answered, that something other than our outreach produced the outcome — or
+   * nobody could tell. The rung still happened, so it is still COUNTED everywhere a rung is counted
+   * (`leads[]`, `funnelSteps`, the measured conversion rates); it is only never PRICED, so it adds
+   * nothing to the pipeline, the return or the cost of acquisition computed on our outreach. The lead
+   * falls back to exactly the forecast its other evidence earns. Absent = every reached signal is ours.
+   */
+  unpricedSignals?: readonly string[];
 }
 
 export interface TopPerson {
@@ -459,9 +468,12 @@ export function dedupPersonsByLead(rows: EnginePerson[]): EnginePerson[] {
       byLead.set(row.leadId, { ...row, signals: { ...row.signals }, signalDates: { ...(row.signalDates ?? {}) } });
       continue;
     }
+    // Read BEFORE the signals merge: whether a row priced a signal depends on that row's own signals.
+    const unpricedSignals = mergeUnpriced(existing, row);
     for (const [key, value] of Object.entries(row.signals)) {
       existing.signals[key] = Boolean(existing.signals[key]) || value;
     }
+    existing.unpricedSignals = unpricedSignals;
     if (row.signalDates) {
       existing.signalDates = existing.signalDates ?? {};
       for (const [key, value] of Object.entries(row.signalDates)) {
@@ -484,6 +496,18 @@ export function dedupPersonsByLead(rows: EnginePerson[]): EnginePerson[] {
     if (existing.seniority == null && row.seniority != null) existing.seniority = row.seniority;
   }
   return [...byLead.values()];
+}
+
+/**
+ * A signal is unpriced for the merged lead only when NO row carrying it priced it — one row saying
+ * the meeting was ours is enough, the same way one row reaching a rung is enough to have reached it.
+ */
+function mergeUnpriced(a: EnginePerson, b: EnginePerson): readonly string[] | undefined {
+  const pricedOn = (p: EnginePerson, signal: string) =>
+    Boolean(p.signals[signal]) && !(p.unpricedSignals ?? []).includes(signal);
+  const union = new Set([...(a.unpricedSignals ?? []), ...(b.unpricedSignals ?? [])]);
+  const out = [...union].filter((s) => !pricedOn(a, s) && !pricedOn(b, s));
+  return out.length > 0 ? out : undefined;
 }
 
 /**
@@ -543,6 +567,9 @@ function evForPerson(
   // Steps a human ruled out for this person. Expanded by the caller into every leg of every funnel
   // containing the dead step, so a funnel that never touches it keeps its value.
   const dead = person.deadSignals && person.deadSignals.length > 0 ? new Set(person.deadSignals) : null;
+  // Rungs this person reached that were not our win: counted by every count, priced by nothing here.
+  const unpriced =
+    person.unpricedSignals && person.unpricedSignals.length > 0 ? new Set(person.unpricedSignals) : null;
 
   // Milestones first — listed in ascending funnel order, so the last fired is the furthest reached.
   for (const milestone of milestones) {
@@ -557,6 +584,7 @@ function evForPerson(
     // fired, whose whole value was a forecast of the thing that has now been ruled out. It is not in
     // the ledger either: there is no expected revenue to itemise.
     if (dead?.has(path.signal)) continue;
+    if (unpriced?.has(path.signal)) continue;
     // A TERMINAL leg carrying a stated amount IS that amount — realized revenue is a fact, so it must
     // not be routed through the brand's average (nor vanish for a brand that declared no revenue).
     const contributionUsd =
