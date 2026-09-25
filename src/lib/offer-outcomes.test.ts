@@ -18,6 +18,7 @@ const OFFER = "offer-1";
 const coldEmail: AcquisitionChannel = {
   family: "outbound_one_to_one",
   operatedBy: "platform",
+  performedBy: "software",
   stepTransitions: [
     { from: null, to: "conversation" },
     { from: null, to: "website_visit" },
@@ -34,6 +35,7 @@ const yourTeam: AcquisitionChannel = {
   ...coldEmail,
   family: "conversion",
   operatedBy: "customer",
+  performedBy: "person",
   terms: { ...coldEmail.terms, dailyOperatingCostCents: 0 },
   stepTransitions: [{ from: "conversation", to: "meeting_booked" }],
 };
@@ -42,6 +44,8 @@ const CATALOGUE: Record<string, AcquisitionChannel> = {
   "feedback-request-cold-email-outreach": feedback,
   "ai-meeting-booking": aiBooking,
   "your-team-meeting-booking": yourTeam,
+  // OUR channel, performed by a person of ours by hand: same leg as the AI, same operator, opposite answer.
+  "agency-meeting-booking": { ...aiBooking, performedBy: "person", terms: { ...coldEmail.terms, dailyOperatingCostCents: 0 } },
 };
 const channelOf = (slug: string) => CATALOGUE[slug] ?? null;
 
@@ -76,13 +80,14 @@ function person(leadId: string, campaignId: string, signals: Record<string, bool
 }
 
 describe("buildOfferLegPartition", () => {
-  it("groups by leg × channel, derives the one leg a pre-leg ancestor's channel performs, hides customer-run legs", () => {
+  it("groups by leg × channel, derives the one leg a pre-leg ancestor's channel performs, hides by-hand legs", () => {
     const rows = [
       row("c1", "sales-cold-email-outreach", "start_to_conversation"),
       row("c2", "sales-cold-email-outreach", null, "sales_meetings_from_conversation"), // derived
       row("f1", "feedback-request-cold-email-outreach", "start_to_conversation"),
       row("a1", "ai-meeting-booking", "conversation_to_meeting_booked"),
       row("t1", "your-team-meeting-booking", "conversation_to_meeting_booked"),
+      row("g1", "agency-meeting-booking", "conversation_to_meeting_booked"),
       row("x1", "sales-cold-email-outreach", null, null), // no leg, no funnel
       row("o1", "sales-cold-email-outreach", "start_to_conversation", null, "other-offer"),
     ];
@@ -93,7 +98,18 @@ describe("buildOfferLegPartition", () => {
       ["conversation_to_meeting_booked", "ai-meeting-booking", ["a1"], "stated"],
     ]);
     expect(p.unattributedCampaignIds).toEqual(["x1"]);
-    expect(p.hiddenCampaignIds).toEqual(["t1"]);
+    expect(p.hiddenCampaignIds).toEqual(["g1", "t1"]);
+  });
+
+  it("the SAME leg on two platform-operated channels splits on who performs it: the AI shows, the agency hides", () => {
+    const rows = [
+      row("a1", "ai-meeting-booking", "conversation_to_meeting_booked"),
+      row("g1", "agency-meeting-booking", "conversation_to_meeting_booked"),
+    ];
+    expect(CATALOGUE["agency-meeting-booking"].operatedBy).toBe(CATALOGUE["ai-meeting-booking"].operatedBy);
+    const p = buildOfferLegPartition(rows, OFFER, channelOf);
+    expect(p.groups.map((g) => g.featureSlug)).toEqual(["ai-meeting-booking"]);
+    expect(p.hiddenCampaignIds).toEqual(["g1"]);
   });
 });
 

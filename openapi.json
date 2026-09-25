@@ -18456,6 +18456,14 @@
             ],
             "description": "WHO puts the hours in. `platform` is us — either our software or a specialist of ours, and the channel's NAME says which. `customer` is their own founder or team, so the platform puts nobody on it and the daily operating cost is 0 — a stated fact, not a blank. What such a leg costs THEM is declared per lead against lead-service; this catalogue never guesses at it. A zero daily operating cost does NOT imply `customer`: a platform-run channel can carry no standing day-rate either, so read this field rather than the price."
           },
+          "performedBy": {
+            "type": "string",
+            "enum": [
+              "software",
+              "person"
+            ],
+            "description": "WHAT does the leg's work, orthogonal to `operatedBy`. `software` is a machine end to end (our AI replying to a prospect, an email sender, an ad platform); `person` is somebody by hand — the customer's own team, a specialist of ours on an agency leg, a caller on the phone, an SEO specialist. Our agency channels are `platform` + `person` and our AI channel is `platform` + `software`, which `operatedBy` alone cannot tell apart. Stated per channel, never inferred from the name, the family or the price."
+          },
           "terms": {
             "type": "object",
             "properties": {
@@ -18645,6 +18653,7 @@
           "displayOrder",
           "family",
           "operatedBy",
+          "performedBy",
           "terms",
           "stepTransitions",
           "producibleSteps",
