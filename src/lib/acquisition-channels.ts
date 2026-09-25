@@ -369,12 +369,24 @@ export type ChannelFamily = (typeof CHANNEL_FAMILIES)[number];
 export const CHANNEL_OPERATORS = ["platform", "customer"] as const;
 export type ChannelOperator = (typeof CHANNEL_OPERATORS)[number];
 
+/**
+ * WHAT does the leg's work, orthogonal to WHO operates it. `software` is a machine end to end (our AI
+ * replying, an email sender, an ad platform); `person` is somebody doing it by hand — a customer's team
+ * (every `customer`-operated channel), a specialist of ours on an agency leg, a caller on the phone, an
+ * SEO specialist. `operatedBy: platform` covers BOTH our software and our people, which is why this is
+ * its own field: the catalogue could not tell `ai-meeting-booking` from `agency-meeting-booking` without
+ * reading the slug. Stated per channel on the seed, never inferred from a family, a name or a price.
+ */
+export const CHANNEL_PERFORMERS = ["software", "person"] as const;
+export type ChannelPerformer = (typeof CHANNEL_PERFORMERS)[number];
+
 /** The whole acquisition-channel statement carried by a feature. `null` on a feature says, out loud,
  *  that the feature is not an acquisition channel (hiring, investor and accelerator outreach, the
  *  internal discovery and page-generation tools) — never that nobody got round to filling it in. */
 export interface AcquisitionChannel {
   family: ChannelFamily;
   operatedBy: ChannelOperator;
+  performedBy: ChannelPerformer;
   stepTransitions: readonly ChannelStepTransition[];
   terms: ChannelCommercialTerms;
 }

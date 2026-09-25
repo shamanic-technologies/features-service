@@ -190,7 +190,7 @@ describe("every published channel is BOOKABLE — no coming-soon state", () => {
   it("carries NO availability flag — slowness is expressed in the terms, never hidden behind a boolean", () => {
     for (const channel of channels) {
       const blob = channel.acquisitionChannel as unknown as Record<string, unknown>;
-      expect(Object.keys(blob).sort(), channel.slug).toEqual(["family", "operatedBy", "stepTransitions", "terms"]);
+      expect(Object.keys(blob).sort(), channel.slug).toEqual(["family", "operatedBy", "performedBy", "stepTransitions", "terms"]);
       for (const banned of ["available", "comingSoon", "beta", "enabled", "launched"]) {
         expect(blob, `${channel.slug} must not carry ${banned}`).not.toHaveProperty(banned);
       }
@@ -504,6 +504,43 @@ describe("WHO operates a channel, and why a zero daily cost is a statement rathe
       const findsPeople = channel.acquisitionChannel!.stepTransitions.some((t) => t.from == null);
       if (findsPeople) expect(channel.acquisitionChannel!.operatedBy, channel.slug).toBe("platform");
     }
+  });
+});
+
+describe("WHAT performs a channel's leg — software or a person by hand — is stated per channel", () => {
+  // Pinned by slug, so a new channel must be classified on purpose rather than by default.
+  const PERSON_PERFORMED = [
+    "agency-closing-calls",
+    "agency-meeting-attendance",
+    "agency-meeting-booking",
+    "agency-signup-conversion",
+    "cold-call-outreach",
+    "seo-content",
+    "your-team-closing-calls",
+    "your-team-meeting-attendance",
+    "your-team-meeting-booking",
+    "your-team-signup-conversion",
+  ];
+
+  it("every channel states it, and exactly the by-hand ones read `person`", () => {
+    for (const channel of channels) {
+      expect(["software", "person"], channel.slug).toContain(channel.acquisitionChannel!.performedBy);
+    }
+    const person = channels.filter((c) => c.acquisitionChannel!.performedBy === "person").map((c) => c.slug).sort();
+    expect(person).toEqual(PERSON_PERFORMED);
+  });
+
+  it("every customer-operated channel is a person; the operator alone cannot tell AI from agency", () => {
+    for (const channel of channels) {
+      if (channel.acquisitionChannel!.operatedBy === "customer") {
+        expect(channel.acquisitionChannel!.performedBy, channel.slug).toBe("person");
+      }
+    }
+    const ai = bySlug("ai-meeting-booking")!.acquisitionChannel!;
+    const agency = bySlug("agency-meeting-booking")!.acquisitionChannel!;
+    expect(ai.operatedBy).toBe(agency.operatedBy);
+    expect(ai.performedBy).toBe("software");
+    expect(agency.performedBy).toBe("person");
   });
 });
 

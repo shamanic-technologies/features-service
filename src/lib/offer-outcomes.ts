@@ -43,8 +43,11 @@
  *
  * ── WHICH LEGS APPEAR ───────────────────────────────────────────────────────────────────────────
  *
- * Only legs a channel of OURS performs. A campaign on a customer-operated channel is hidden (its id
- * rides `hiddenCampaignIds`, never dropped in silence). A campaign stating no leg is placed on the one
+ * Only legs a channel of OURS performs IN SOFTWARE. A campaign whose channel is `performedBy: person`
+ * — the customer's own team (`your-team-*`) or somebody of ours by hand (`agency-*`, a caller, an SEO
+ * specialist) — is hidden (its id rides `hiddenCampaignIds`, never dropped in silence). The catalogue
+ * states it per channel; nothing here reads a slug. A campaign on a slug the catalogue does not describe
+ * is not hidden (nothing says a person performs it). A campaign stating no leg is placed on the one
  * leg its channel performs inside the funnel it states, when there is exactly one (`legSource:
  * "derived_from_funnel"`); otherwise it is in `unattributedCampaignIds`.
  */
@@ -89,7 +92,8 @@ export interface OfferLegPartition {
   groups: OfferLegGroup[];
   /** Campaigns of the offer whose leg we could not know. Their spend is in no outcome row. */
   unattributedCampaignIds: string[];
-  /** Campaigns of the offer on a channel the CUSTOMER operates — hidden from the outcome rows. */
+  /** Campaigns of the offer on a channel a PERSON performs (the customer's team or ours by hand) —
+   *  hidden from the outcome rows. */
   hiddenCampaignIds: string[];
 }
 
@@ -109,7 +113,7 @@ export function buildOfferLegPartition(
   for (const row of rows) {
     if (!row.id || row.offerId !== offerId || !row.featureSlug) continue;
     const channel = channelOf(row.featureSlug);
-    if (channel?.operatedBy === "customer") {
+    if (channel?.performedBy === "person") {
       hidden.push(row.id);
       continue;
     }
