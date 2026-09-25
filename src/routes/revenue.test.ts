@@ -15,6 +15,8 @@ vi.mock("@sentry/node", () => ({
 
 process.env.FEATURES_SERVICE_API_KEY = "test-key";
 process.env.RUNS_SERVICE_URL = "http://runs:3000";
+process.env.CAMPAIGN_SERVICE_URL = "http://campaign:3000";
+process.env.CAMPAIGN_SERVICE_API_KEY = "campaign-key";
 process.env.RUNS_SERVICE_API_KEY = "runs-key";
 process.env.EMAIL_GATEWAY_SERVICE_URL = "http://email:3000";
 process.env.EMAIL_GATEWAY_SERVICE_API_KEY = "email-key";
@@ -142,6 +144,7 @@ function outcomeRows(quals: Qualifications, event: string): unknown[] {
 function mockFetch(opts: { economics?: unknown; economicsAverage?: unknown; leads?: unknown[]; timestamps?: Timestamps; quals?: Qualifications; legacyQuals?: Qualifications; qualRowsRaw?: unknown[]; outcomeRowsRaw?: unknown[]; deadByStep?: Record<string, string[]>; platformStats?: unknown; costCents?: number; sequencesGroups?: Array<{ key: string; contacted: number }>; sequencesFail?: boolean; conversionCounts?: { signup: number; meeting_booked: number; form_submission: number; sale: number }; conversionCountsFail?: boolean; conversionEmails?: { signup?: string[]; form_submission?: string[] }; conversionEmailsFail?: boolean; salesFunnels?: unknown[]; spendByDay?: Array<{ period: string; actualCents: number }>; spendByDayFail?: boolean } = {}): void {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+    if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
     // lead-service GET /internal/brands/:brandId/converted-lead-emails?event=<type> — per-lead SIGNUP /
     // FORM-SUBMISSION attribution email sets (#476). Match BEFORE /conversion-counts (distinct path) and
     // before the generic branches. conversionEmailsFail → 500 so the soft wrapper degrades to no flags.
@@ -849,6 +852,7 @@ describe("GET /features/:featureSlug/revenue", () => {
   it("degrades to dateless (still 200, pipeline correct) when email-gateway /orgs/status fails", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : (input as any).url;
+      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       if (url.includes("/stats/costs")) return new Response(costGroups(0), { status: 200 });
       if (url.includes("/sales-economics-effective")) return new Response(JSON.stringify({ economics: ECONOMICS, source: "user" }), { status: 200 });
       if (url.includes("/orgs/leads")) return new Response(JSON.stringify({ leads: HAPPY_LEADS }), { status: 200 });
@@ -866,6 +870,7 @@ describe("GET /features/:featureSlug/revenue", () => {
   it("502 when lead-service fails", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : (input as any).url;
+      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       if (url.includes("/stats/costs")) return new Response(costGroups(0), { status: 200 });
       if (url.includes("/sales-economics-effective")) return new Response(JSON.stringify({ economics: ECONOMICS, source: "user" }), { status: 200 });
       if (url.includes("/orgs/leads")) return new Response("boom", { status: 500 });
@@ -879,6 +884,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     let leadsUrl: string | undefined;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       if (url.includes("/stats/costs")) return new Response(costGroups(0), { status: 200 });
       if (url.includes("/sales-economics-effective")) return new Response(JSON.stringify({ economics: ECONOMICS, source: "user" }), { status: 200 });
       if (url.includes("/orgs/leads")) {
@@ -939,6 +945,7 @@ describe("GET /features/:featureSlug/revenue", () => {
   it("502 (fail-loud) when runs-service /v1/stats/costs fails", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : (input as any).url;
+      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       if (url.includes("/stats/costs")) return new Response("boom", { status: 500 });
       if (url.includes("/sales-economics-effective")) return new Response(JSON.stringify({ economics: ECONOMICS, source: "user" }), { status: 200 });
       if (url.includes("/orgs/leads")) return new Response(JSON.stringify({ leads: HAPPY_LEADS }), { status: 200 });
@@ -1191,6 +1198,7 @@ describe("GET /features/:featureSlug/revenue", () => {
   it("degrades (still 200, pipeline correct) when the observed step statements fail", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : (input as any).url;
+      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       if (url.includes("/stats/costs")) return new Response(costGroups(0), { status: 200 });
       if (url.includes("/sales-economics-effective")) return new Response(JSON.stringify({ economics: ECONOMICS, source: "user" }), { status: 200 });
       if (url.includes("/public/stats")) return new Response(JSON.stringify(PLATFORM_STATS), { status: 200 });
@@ -1242,6 +1250,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     // Committed 10000c (= 6000 billed + 4000 holds). lead-service serves real counts: 4 signups, 2 meetings.
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "Content-Type": "application/json" } });
       if (url.includes("/conversion-counts")) return json({ counts: { signup: 4, meeting_booked: 2, form_submission: 7, sale: 1 } });
       if (url.includes("/stats/costs")) {
@@ -1340,6 +1349,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     // billed; provisioned… the holds. ROI/CAC ride ACTUAL only.
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "Content-Type": "application/json" } });
       if (url.includes("/stats/costs")) {
         if (url.includes("startedAfter")) return json({ groups: [{ dimensions: {}, totalCostInUsdCents: "3000", actualCostInUsdCents: "2000", runCount: 0 }] });
@@ -1397,6 +1407,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     // Distinct cost-name groups for the source breakdown; the today call (startedAfter set) returns a subset.
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "Content-Type": "application/json" } });
       if (url.includes("/stats/costs")) {
         if (url.includes("startedAfter")) {
@@ -1493,6 +1504,7 @@ type CampaignFixture = { costCents?: number; leads?: unknown[]; timestamps?: Tim
 function mockFetchGrouped(opts: { economics?: unknown; economicsAverage?: unknown; platformStats?: unknown; campaigns: Record<string, CampaignFixture> }): void {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+    if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
     const cid = (init?.headers as Record<string, string> | undefined)?.["x-campaign-id"];
 
     if (url.includes("/stats/costs")) {

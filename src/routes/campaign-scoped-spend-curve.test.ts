@@ -196,6 +196,8 @@ function mockFetch(): { timeseriesCampaignIds: Array<string | null>; timeseriesF
     // THE DATED SPEND LEG. runs takes ONE campaign: a family is read member by member, and a scope
     // that names none legitimately reads the whole brand.
     if (url.includes("/costs/timeseries")) {
+      // Nothing in this fixture started after the maturity cutoff on the suite's clock.
+      if (new URL(url).searchParams.get("startedAfter")) return json({ buckets: [] });
       const q = new URL(url).searchParams;
       const campaignId = q.get("campaignId");
       // A family is ONE `campaignIds` read (runs-service v0.47.7), answering the sum of its members.
@@ -235,6 +237,7 @@ function mockFetch(): { timeseriesCampaignIds: Array<string | null>; timeseriesF
     // THE UNTIMED COST. A family co-groups campaignId and is summed locally, so the brand's
     // outsider spend is excluded by construction — the property the dated leg had to match.
     if (url.includes("/stats/costs")) {
+      if (new URL(url).searchParams.get("startedAfter")) return json({ groups: [] });
       const cents = (id: string) => String((SPEND[id] ?? []).reduce((sum, [, c]) => sum + c, 0));
       const row = (dimensions: Record<string, unknown>, total: string) => ({
         dimensions, totalCostInUsdCents: total, actualCostInUsdCents: total,
@@ -268,7 +271,17 @@ describe("a campaign-scoped body states ONE spend", () => {
   beforeEach(() => {
     vi.mocked(db.query.features.findFirst).mockResolvedValue(feature(SALES) as never);
   });
-  afterEach(() => vi.restoreAllMocks());
+  // Every run and every lead of this fixture is older than the ROI maturity delay on this clock
+  // (lib/roi-maturity.ts): the suite is about how the curves are SCOPED, not about maturity, so the
+  // mature cohort is the whole fixture here and the figures read exactly as they did before the rule.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-12-31T12:00:00.000Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
 
   it("terminates its return curve on the campaign's OWN invested spend, not the brand's", async () => {
     mockFetch();

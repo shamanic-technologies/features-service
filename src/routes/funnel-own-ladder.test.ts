@@ -14,6 +14,8 @@ vi.mock("@sentry/node", () => ({
 
 process.env.FEATURES_SERVICE_API_KEY = "test-key";
 process.env.RUNS_SERVICE_URL = "http://runs:3000";
+process.env.CAMPAIGN_SERVICE_URL = "http://campaign:3000";
+process.env.CAMPAIGN_SERVICE_API_KEY = "campaign-key";
 process.env.RUNS_SERVICE_API_KEY = "runs-key";
 process.env.EMAIL_GATEWAY_SERVICE_URL = "http://email:3000";
 process.env.EMAIL_GATEWAY_SERVICE_API_KEY = "email-key";
@@ -158,6 +160,7 @@ function mockFetch(opts: {
 } = {}): void {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+    if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
     const json = (body: unknown, status = 200): Response =>
       new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 

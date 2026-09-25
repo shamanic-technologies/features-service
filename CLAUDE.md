@@ -1,5 +1,55 @@
 # Features Service — CLAUDE.md
 
+## ROI, %CAC AND $CAC ARE MEASURED ON THE MATURE COHORT — a campaign's leg says how long its outcomes lag, and a young campaign reads `maturing`, never a terrible ratio
+
+A cold email's replies and visits keep arriving ~two weeks after it is sent, so a campaign that spent
+heavily in the last fortnight read a terrible ROI: the spend was counted, the outcomes it bought had
+not landed. Owner decision 2026-09-25 (do not re-litigate), `lib/roi-maturity.ts`:
+
+- **THE DELAY IS A PROPERTY OF THE CAMPAIGN'S LEG**, read off campaign-service's `legKey`:
+  `OUTCOME_LAG_DAYS` (14, `lib/learning-phase.ts` — the single constant, never a second 14) for
+  `start_to_website_visit` and `start_to_conversation`; 0 for every other leg and for a row stating no
+  leg (every such row in prod is a stopped pre-leg ancestor).
+- **ONLY THE RATIOS MOVE.** `roiMultiple`, `costOfAcquisitionPct`, `costPerAcquisitionUsd` (and the lens's
+  `costPerConversionUsd`) divide the MATURE COHORT: committed cost of runs STARTED before the cutoff, over
+  the pipeline of the leads FIRST CONTACTED before it — their outcomes count whenever they happened. A
+  lead with no contact date is IN the cohort (owner: never lose information). `committedCostUsd`,
+  `actualCostUsd`, the headline pipeline, `outcomes`, `funnelSteps`, `leads[]`, the count series and the
+  measured conversion rates keep the whole history. **This is NOT decay** (see the no-decay section): no
+  outcome is discounted by age; young SPEND and the leads it reached leave the ratio until they can
+  have produced something.
+- **THE CUTOFF IS UTC MIDNIGHT OF `today − delay`**, so it moves once a day and the Gold cache's own
+  windows bound its staleness (no scope-key part needed). A scope mixing legs applies EACH campaign's own
+  delay (`delayedCampaignIds`); `costEconomics.maturityDays` states the longest.
+- **`unmeasuredReason`**: `maturing` = spent, nothing spent is mature yet → the three ratios are `null`,
+  never 0 (the dashboard shows its Learning tag on it). `maturity_unknown` = campaign-service's leg read
+  failed → ratios null with a loud log; never the whole-history ratio and never a 502 (the same degrade
+  the campaign-identity read takes). A scope that spent nothing states no reason.
+- **THE MATURE SPEND IS READ DIRECTLY, NEVER AS A SUBTRACTION** (`fetchMatureSpendCents`: runs
+  `startedBefore=cutoff` + the post-cutoff runs of zero-delay campaigns, both co-grouped
+  `workflowSlug,campaignId`). Per-group rounding would leave an all-young scope a few cents of phantom
+  "mature" spend and hide `maturing` behind a meaningless ratio.
+- **NO COHORT SPEND FIGURE IS SERVED.** The mature basis rides each `CostEconomics` block in-process only
+  (`matureBasisOf`, a WeakMap filled by `buildCostEconomics`); a block rebuilt from JSON has none and every
+  reader FAILS LOUD. Its two in-process readers: `buildCombinedCostEconomics` (the charged + customer
+  return rides the same cohort, customer costs undated so all in) and the public fleet
+  (`computePairRevenue` → `matureIngredients`), whose return medians, spend floor and paying-client
+  counts compose from mature ingredients — the statistic each client reads on its own dashboard.
+- **EVERY GRAIN MOVED AT ONCE**: brand / offer / funnel / campaign (identity) / `?groupBy=campaignId` /
+  `?workflow=` / lens (reads the per-email contact dates it otherwise skips) via `computeFeatureRevenue`;
+  `?groupBy=workflow` per dynasty (`workflow-revenue.ts`); `/public/stats/revenue` + the fleet return
+  snapshots; customer-health and the showcase read `roiMultiple` off those bodies. `roiHistory` rides the
+  cohort too (the maturing campaigns' own dated spend is subtracted from the cutoff on, via runs
+  timeseries `startedAfter`), so its last point is still the headline ROI. `?cause=` composes unchanged.
+- Guards: `src/lib/roi-maturity.test.ts` (the leg rule, the midnight cutoff, the scope predicate, the
+  cohort filter incl. the edge instant and undated leads, `maturing` vs nothing-spent, the combined block,
+  the loud missing basis) + `src/routes/roi-maturity-grain.test.ts` — ONE fixture ($60 mature / $40
+  young, 7 clickers: 3 mature, 3 young, 1 undated) asserting the DIVERGENCE: ROI on 4/7 of the pipeline
+  over $60, not 7/7 over $100 and not 3/7; the curve ending on it; an all-young campaign reading
+  `maturing`; the same fixture on a zero-delay leg reading the whole history while headline, outcomes,
+  funnelSteps, leads, series and spend stay byte-identical; `maturity_unknown`; and the lens.
+  (Set 2026-09-25.)
+
 ## A BRAND'S CONVERSION RATE IS THE BEST ONE WE HAVE PER ARROW — measured, else stated, else the fleet MEDIAN; and every fleet aggregate of rates is a MEDIAN of what brands STATED
 
 Conversion rates moved from the OFFER to the BRAND (owner decision, 2026-09-25): ONE rate per (brand,

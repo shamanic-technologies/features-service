@@ -77,7 +77,9 @@ import { buildCostEconomics, type CostEconomics } from "./cost-economics.js";
 import { computeRevenue, dedupPersonsByLead, type EnginePerson } from "./revenue-engine.js";
 import { buildRevenueOutcomes, type RevenueOutcomes } from "./revenue-outcomes.js";
 import { fetchLeadsForRevenue } from "./leads-client.js";
-import { fetchRunsCostCentsByWorkflowSlug, type RunsCostCents } from "./runs-cost-client.js";
+import { fetchRunsCostCentsByWorkflowSlug, fetchMatureSpendCents, type RunsCostCents } from "./runs-cost-client.js";
+import { fetchBrandCampaignRows } from "./campaign-identity-client.js";
+import { buildMaturityPlan, matureCohortPersons, scopePredicate, type MaturityPlan } from "./roi-maturity.js";
 import { fetchEventTimestamps } from "./email-status-client.js";
 import { fetchObservedStepFacts } from "./observed-steps.js";
 import { DEFAULT_PRICED_CAUSES, type OutcomeCause } from "./outcome-cause.js";
@@ -88,7 +90,7 @@ import { fetchPublicWorkflows, type WorkflowMetadata } from "./public-stats-clie
 // so the key this grain EMITS and the key that read RESOLVES can never disagree about a version.
 import { dynastyOfSlug } from "./workflow-scope.js";
 import type { Pricing } from "./pricing.js";
-import { singleCampaignId, type CampaignFilter } from "./campaign-scope.js";
+import { campaignScopeIds, singleCampaignId, type CampaignFilter } from "./campaign-scope.js";
 
 /**
  * The volume half of a workflow's answer — this brand's OWN outreach through this dynasty, and what
@@ -175,8 +177,14 @@ export function buildWorkflowRevenueGroups(input: {
   funnel: ReturnType<typeof getFunnel>;
   /** The brand's DECLARED-funnel-priced economics — resolved ONCE by the route, shared by every group. */
   priced: { economics: EffectiveEconomics; pricedFunnelKeys: SalesFunnelKey[] } | null;
+  /**
+   * The MATURE cohort each group's ratios divide (`lib/roi-maturity.ts`): which campaigns are maturing,
+   * and the mature spend per versioned slug. Omitted → nothing in scope is maturing, and every ratio
+   * rides the whole scope, exactly as before.
+   */
+  maturity?: { plan: MaturityPlan; matureCostBySlug: Map<string, RunsCostCents> } | "unknown";
 }): WorkflowRevenueGroup[] {
-  const { persons, costCentsBySlug, workflows, funnel, priced } = input;
+  const { persons, costCentsBySlug, workflows, funnel, priced, maturity } = input;
   const dynastyOf = dynastyOfSlug(workflows);
   const names = dynastyNames(workflows);
 
@@ -230,6 +238,19 @@ export function buildWorkflowRevenueGroups(input: {
         paths && economics && funnel
           ? computeRevenue(paths, mine, economics.lifetimeRevenueUsd, funnel.milestones).headline.totalPipelineUsd
           : null;
+      // The same dynasty's MATURE cohort: its versions' mature spend, and its leads first contacted
+      // before the cutoff — the byte-same rule the brand read applies, so a single-workflow brand still
+      // reads its brand's own ratios at both grains.
+      const known = maturity && maturity !== "unknown" ? maturity : undefined;
+      let matureCents = 0;
+      for (const slug of slugsByDynasty.get(dynasty) ?? []) {
+        matureCents += known?.matureCostBySlug.get(slug)?.committedCents ?? 0;
+      }
+      const maturePipelineUsd =
+        known && paths && economics && funnel
+          ? computeRevenue(paths, matureCohortPersons(mine, known.plan), economics.lifetimeRevenueUsd, funnel.milestones)
+              .headline.totalPipelineUsd
+          : null;
       return {
         workflowDynastySlug: dynasty,
         workflowDynastyName: names.get(dynasty) ?? null,
@@ -243,6 +264,11 @@ export function buildWorkflowRevenueGroups(input: {
           actualCostInUsdCents: cost.actualCents,
           totalPipelineUsd,
           lifetimeRevenueUsd: economics?.lifetimeRevenueUsd,
+          ...(maturity === "unknown"
+            ? { maturity: { unknown: true as const } }
+            : known
+              ? { maturity: { days: known.plan.days, committedCostInUsdCents: matureCents, totalPipelineUsd: maturePipelineUsd } }
+              : {}),
         }),
         // The volume half is funnel-INDEPENDENT on purpose: how many people a workflow reached is a
         // measured fact, so it is answered even for a brand with no funnel wired and no economics —
@@ -292,12 +318,32 @@ export async function computeWorkflowRevenueGroups(input: {
   // that must be family-EXACT — cost and leads — take the scope itself.
   const campaignId = singleCampaignId(campaignScope);
 
-  const [costCentsBySlug, persons, workflows] = await Promise.all([
+  // Which of the scope's campaigns are still maturing, then the mature spend per slug — the ratios'
+  // denominator (`lib/roi-maturity.ts`). Fail-loud, like the cost read beside it.
+  // The leg read is soft (the brand read's rule): unreadable legs null the ratios with a named reason.
+  const maturityPromise = fetchBrandCampaignRows(brandId, undefined, headers)
+    .then(
+      (rows) => buildMaturityPlan(rows, scopePredicate({ featureSlugs: [featureSlug], campaignIds: campaignScopeIds(campaignScope) })),
+      (err) => {
+        console.error(
+          `[features-service] campaign legs unreadable for brand ${brandId} — per-workflow ROI / CAC read null (maturity_unknown): ${(err as Error).message}`,
+        );
+        return null;
+      },
+    )
+    .then(async (plan) => {
+      if (plan === null) return "unknown" as const;
+      if (!plan.cutoffIso) return undefined;
+      const mature = await fetchMatureSpendCents(brandId, campaignScope, featureSlug, headers, pricing, plan);
+      return { plan, matureCostBySlug: mature.bySlug };
+    });
+  const [costCentsBySlug, persons, workflows, maturity] = await Promise.all([
     fetchRunsCostCentsByWorkflowSlug(brandId, featureSlug, headers, pricing, campaignScope),
     // The workflow grain PARTITIONS the leads of its scope: brand-wide by default, the campaign's own
     // rows when one is named. Never narrower than the scope, never wider.
     fetchLeadsForRevenue(brandId, campaignScope, headers),
     fetchWorkflowMetadataSoft(featureSlug),
+    maturityPromise,
   ]);
 
   // The overlays are brand-wide too (a lead's open date does not depend on which workflow reached
@@ -321,5 +367,5 @@ export async function computeWorkflowRevenueGroups(input: {
   ]);
   applySignalOverlays(persons, timestamps, observed?.byEmail ?? null, quals, priced?.pricedFunnelKeys ?? [], causes);
 
-  return buildWorkflowRevenueGroups({ persons, costCentsBySlug, workflows, funnel, priced });
+  return buildWorkflowRevenueGroups({ persons, costCentsBySlug, workflows, funnel, priced, maturity });
 }

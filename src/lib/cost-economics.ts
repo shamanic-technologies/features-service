@@ -60,6 +60,50 @@ export interface CostEconomics {
   costPerAcquisitionUsd: number | null;
   expectedConversions?: number;
   costPerConversionUsd?: number | null;
+  /**
+   * The MATURITY DELAY the three ratios above were measured under (`lib/roi-maturity.ts`): they divide
+   * the MATURE cohort's pipeline by the MATURE cohort's committed spend — runs started before
+   * `today − maturityDays` and the leads first contacted before it — while `committedCostUsd` and the
+   * headline pipeline keep the whole history. 0 when nothing in scope waits for its outcomes, in which
+   * case the ratios are over the whole scope, exactly as before.
+   */
+  maturityDays: number;
+  /**
+   * WHY the ratios are null when they are null for a reason other than "nothing to divide".
+   * `maturing` = every dollar in scope is younger than the maturity delay, so there is no mature
+   * cohort to measure yet — a young campaign, not a bad one. Never 0 in its place.
+   */
+  unmeasuredReason: MaturityReason | null;
+}
+
+/**
+ * `maturing` — spent, but nothing spent is mature yet. `maturity_unknown` — campaign-service could not
+ * say which campaigns wait for their outcomes, so the mature cohort cannot be told apart.
+ */
+export type MaturityReason = "maturing" | "maturity_unknown";
+
+/** The mature cohort a CostEconomics' ratios were computed on — what every ratio divided. */
+export interface MatureBasis {
+  committedCents: number;
+  pipelineUsd: number | null;
+  days: number;
+}
+
+/**
+ * The mature basis behind each block this module built, kept OFF the wire on purpose: the owner's rule
+ * is that no cohort spend figure is displayed anywhere, while two in-process consumers need it — the
+ * combined (charged + customer) economics, whose ratios must ride the same cohort, and the fleet warm,
+ * which stores ingredients and divides later. A block rebuilt from JSON (a cached snapshot) carries no
+ * entry, and every reader FAILS LOUD on that rather than dividing the whole history instead.
+ */
+const MATURE_BASIS = new WeakMap<object, MatureBasis>();
+
+export function matureBasisOf(economics: CostEconomics): MatureBasis {
+  const basis = MATURE_BASIS.get(economics);
+  if (!basis) {
+    throw new Error("cost economics block carries no mature basis (it was not built by buildCostEconomics in this process)");
+  }
+  return basis;
 }
 
 /**
@@ -77,10 +121,53 @@ export function buildCostEconomics(input: {
   // economics that produced `totalPipelineUsd`. Omitted on the paths that have no economics at all
   // (no funnel wired / cold start) → costPerAcquisitionUsd is null, which is the honest answer there.
   lifetimeRevenueUsd?: number | null;
+  /**
+   * The MATURE cohort the ratios divide (`lib/roi-maturity.ts`). Omitted → nothing in scope waits for
+   * its outcomes, and the ratios ride the whole scope (`maturityDays: 0`), byte-identical to before.
+   */
+  maturity?: { days: number; committedCostInUsdCents: number; totalPipelineUsd: number | null } | { unknown: true };
 }): CostEconomics {
-  const { committedCostInUsdCents, actualCostInUsdCents, totalPipelineUsd, lifetimeRevenueUsd } = input;
+  const { committedCostInUsdCents, actualCostInUsdCents, totalPipelineUsd, lifetimeRevenueUsd, maturity } = input;
   const committedCostUsd = committedCostInUsdCents / 100;
   const actualCostUsd = actualCostInUsdCents / 100;
+  if (maturity && "unknown" in maturity) {
+    const block: CostEconomics = {
+      committedCostUsd,
+      actualCostUsd,
+      costOfAcquisitionPct: null,
+      roiMultiple: null,
+      costPerAcquisitionUsd: null,
+      maturityDays: 0,
+      unmeasuredReason: "maturity_unknown",
+    };
+    MATURE_BASIS.set(block, { committedCents: 0, pipelineUsd: null, days: 0 });
+    return block;
+  }
+  const days = maturity && maturity.days > 0 ? maturity.days : 0;
+  const basisCents = maturity && days > 0 ? maturity.committedCostInUsdCents : committedCostInUsdCents;
+  const basisPipeline = maturity && days > 0 ? maturity.totalPipelineUsd : totalPipelineUsd;
+  // Spent something, and none of it is old enough yet: there is no cohort to measure, and saying so
+  // is a different statement from "nothing was spent" (which leaves the reason null).
+  const maturing = days > 0 && basisCents <= 0 && committedCostInUsdCents > 0;
+  const ratios = maturing
+    ? { costOfAcquisitionPct: null, roiMultiple: null, costPerAcquisitionUsd: null }
+    : ratiosOf(basisCents / 100, basisPipeline, lifetimeRevenueUsd);
+  const block: CostEconomics = {
+    committedCostUsd,
+    actualCostUsd,
+    ...ratios,
+    maturityDays: days,
+    unmeasuredReason: maturing ? "maturing" : null,
+  };
+  MATURE_BASIS.set(block, { committedCents: basisCents, pipelineUsd: basisPipeline, days });
+  return block;
+}
+
+function ratiosOf(
+  committedCostUsd: number,
+  totalPipelineUsd: number | null,
+  lifetimeRevenueUsd: number | null | undefined,
+): Pick<CostEconomics, "costOfAcquisitionPct" | "roiMultiple" | "costPerAcquisitionUsd"> {
   const costOfAcquisitionPct =
     totalPipelineUsd === null || totalPipelineUsd === 0 ? null : (committedCostUsd / totalPipelineUsd) * 100;
   const roiMultiple =
@@ -92,7 +179,7 @@ export function buildCostEconomics(input: {
       : totalPipelineUsd / lifetimeRevenueUsd;
   const costPerAcquisitionUsd =
     expectedPaidClients === null || expectedPaidClients === 0 ? null : committedCostUsd / expectedPaidClients;
-  return { committedCostUsd, actualCostUsd, costOfAcquisitionPct, roiMultiple, costPerAcquisitionUsd };
+  return { costOfAcquisitionPct, roiMultiple, costPerAcquisitionUsd };
 }
 
 /**
@@ -125,6 +212,9 @@ export interface CombinedCostEconomics {
   costOfAcquisitionPct: number | null;
   roiMultiple: number | null;
   costPerAcquisitionUsd: number | null;
+  /** The maturity delay the ratios rode — the charged block's own (see `CostEconomics.maturityDays`). */
+  maturityDays: number;
+  unmeasuredReason: MaturityReason | null;
 }
 
 export function buildCombinedCostEconomics(input: {
@@ -137,6 +227,10 @@ export function buildCombinedCostEconomics(input: {
 }): CombinedCostEconomics {
   const { charged, customerDeclaredCostCents, totalPipelineUsd, lifetimeRevenueUsd } = input;
   const customerDeclaredCostUsd = customerDeclaredCostCents / 100;
+  // The ratios ride the SAME mature cohort the charged block's do, or the two returns on one row would
+  // be measured on two different populations. The customer's statements carry no date, so they are
+  // all in the cohort — never dropped (the same undated-stays-in rule the leads follow).
+  const mature = matureBasisOf(charged);
   const combined = buildCostEconomics({
     // Cents in, cents out — the charged half is carried back at full precision rather than
     // re-rounded, since runs-service returns fractional cents per group.
@@ -146,13 +240,27 @@ export function buildCombinedCostEconomics(input: {
     actualCostInUsdCents: 0,
     totalPipelineUsd,
     lifetimeRevenueUsd,
+    ...(mature.days > 0
+      ? {
+          maturity: {
+            days: mature.days,
+            committedCostInUsdCents: mature.committedCents + customerDeclaredCostCents,
+            totalPipelineUsd: mature.pipelineUsd,
+          },
+        }
+      : {}),
   });
+  // A scope with no mature charged spend has no cohort to measure, whatever the customer stated: the
+  // customer's own money would otherwise be the whole denominator of a return on OUR outreach.
+  const unmeasured = charged.unmeasuredReason;
   return {
     platformCommittedCostUsd: charged.committedCostUsd,
     customerDeclaredCostUsd,
     committedCostUsd: combined.committedCostUsd,
-    costOfAcquisitionPct: combined.costOfAcquisitionPct,
-    roiMultiple: combined.roiMultiple,
-    costPerAcquisitionUsd: combined.costPerAcquisitionUsd,
+    costOfAcquisitionPct: unmeasured ? null : combined.costOfAcquisitionPct,
+    roiMultiple: unmeasured ? null : combined.roiMultiple,
+    costPerAcquisitionUsd: unmeasured ? null : combined.costPerAcquisitionUsd,
+    maturityDays: combined.maturityDays,
+    unmeasuredReason: unmeasured ?? combined.unmeasuredReason,
   };
 }

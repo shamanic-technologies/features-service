@@ -272,3 +272,113 @@ export async function fetchCampaignIdsWithRuns(
   }
   return [...ids];
 }
+
+/**
+ * The spend of a scope's MATURE cohort (`lib/roi-maturity.ts`) — the denominator ROI, %CAC and $CAC
+ * divide by: every run STARTED BEFORE the maturity cutoff, plus the runs since the cutoff of the
+ * campaigns whose leg does not wait for its outcomes (and of runs carrying no campaign at all).
+ *
+ * Read DIRECTLY rather than as "total minus the young part": runs-service returns fractional cents
+ * per group and this service rounds once per group, so a subtraction would leave a scope whose every
+ * dollar is young with a residual of a few cents — which would read as mature spend and hide the
+ * `maturing` answer behind a meaningless ratio. Two reads on the SAME grouping round the same way,
+ * and a scope with nothing mature reads exactly 0.
+ *
+ * Both reads co-group `workflowSlug,campaignId`, so the one answer serves the brand read (summed),
+ * the campaign / family scopes (members kept, the same rule `fetchRunsCostCents` applies), and the
+ * per-workflow grain (kept per slug). The after-cutoff read is bounded (a fortnight); the
+ * before-cutoff read covers the history, and its URL moves once a day, so it is shared across a
+ * view's refreshes for 30s like every other slow-moving input.
+ *
+ * Never called when nothing in scope is maturing: the mature cohort is then the whole scope, and the
+ * caller reuses the total it already has, so a scope on zero-delay legs issues the requests it issued
+ * before.
+ *
+ * Fail-loud, like its sibling: a swallowed error would print the very ROI this exists to stop printing.
+ */
+export async function fetchMatureSpendCents(
+  brandId: string,
+  campaignScope: CampaignFilter,
+  featureScope: FeatureScope,
+  headers: { orgId: string; userId?: string; runId?: string; featureSlug?: string },
+  pricing: Pricing,
+  plan: { cutoffIso: string | null; delayedCampaignIds: ReadonlySet<string> },
+  workflowSlugs?: string,
+): Promise<{ total: RunsCostCents; bySlug: Map<string, RunsCostCents> }> {
+  if (!plan.cutoffIso) throw new Error("fetchMatureSpendCents called with no maturity cutoff");
+  const url = process.env.RUNS_SERVICE_URL;
+  const apiKey = process.env.RUNS_SERVICE_API_KEY;
+  if (!url || !apiKey) {
+    throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
+  }
+  const campaignId = singleCampaignId(campaignScope);
+  const family = campaignFamilySet(campaignScope);
+
+  const reqHeaders: Record<string, string> = {
+    "x-api-key": apiKey,
+    "x-org-id": headers.orgId,
+    "x-brand-id": brandId,
+  };
+  if (headers.userId) reqHeaders["x-user-id"] = headers.userId;
+  if (headers.runId) reqHeaders["x-run-id"] = headers.runId;
+  if (campaignId) reqHeaders["x-campaign-id"] = campaignId;
+  if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
+
+  const read = async (bound: "startedBefore" | "startedAfter", value: string) => {
+    const params = new URLSearchParams({
+      groupBy: "workflowSlug,campaignId",
+      brandId,
+      featureSlugs: featureSlugsParam(featureScope),
+    });
+    if (campaignId) params.set("campaignId", campaignId);
+    if (workflowSlugs) params.set("workflowSlugs", workflowSlugs);
+    params.set(bound, value);
+    const response = await fetchWithRetry(
+      `${url}/v1/stats/costs?${params}`,
+      { headers: reqHeaders },
+      bound === "startedBefore" ? { shareForMs: 30_000 } : undefined,
+    );
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`runs-service /v1/stats/costs (mature spend, ${bound}) failed (${response.status}): ${text}`);
+    }
+    const data = (await response.json()) as {
+      groups?: Array<Record<string, unknown> & { dimensions?: Record<string, string | null> }>;
+    };
+    if (!Array.isArray(data.groups)) {
+      throw new Error("runs-service /v1/stats/costs returned no groups array");
+    }
+    return data.groups;
+  };
+
+  // `startedBefore` is inclusive at microsecond precision — the same partition runs-cost-split.ts uses.
+  const beforeIso = `${new Date(new Date(plan.cutoffIso).getTime() - 1).toISOString().slice(0, 23)}999Z`;
+  const [before, after] = await Promise.all([read("startedBefore", beforeIso), read("startedAfter", plan.cutoffIso)]);
+
+  const bySlug = new Map<string, RunsCostCents>();
+  const total: RunsCostCents = { committedCents: 0, actualCents: 0 };
+  const add = (group: Record<string, unknown> & { dimensions?: Record<string, string | null> }) => {
+    const committedCents = Math.round(selectCostCents(group, "totalCostInUsdCents", pricing));
+    const actualCents = Math.round(selectCostCents(group, "actualCostInUsdCents", pricing));
+    total.committedCents += committedCents;
+    total.actualCents += actualCents;
+    const slug = group.dimensions?.workflowSlug;
+    if (!slug || slug === "__total__") return;
+    const prev = bySlug.get(slug);
+    bySlug.set(slug, {
+      committedCents: (prev?.committedCents ?? 0) + committedCents,
+      actualCents: (prev?.actualCents ?? 0) + actualCents,
+    });
+  };
+  const inFamily = (cid: string | null | undefined) => !family || (cid != null && family.has(cid));
+  for (const group of before) {
+    if (inFamily(group.dimensions?.campaignId)) add(group);
+  }
+  for (const group of after) {
+    const cid = group.dimensions?.campaignId;
+    if (!inFamily(cid)) continue;
+    if (cid && plan.delayedCampaignIds.has(cid)) continue;
+    add(group);
+  }
+  return { total, bySlug };
+}

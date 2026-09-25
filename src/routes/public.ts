@@ -66,6 +66,7 @@ import {
 } from "../lib/stated-monthly-amounts-store.js";
 import { BrandOwnershipError, fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
 import { computeFeatureRevenue, buildCostEconomics, type DownstreamHeaders } from "./revenue.js";
+import { matureBasisOf, type CostEconomics } from "../lib/cost-economics.js";
 import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel } from "./revenue.js";
 import { distinctChannelFunnels } from "./offer-economics.js";
 import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
@@ -834,6 +835,16 @@ function revenueRollup(payload: PublicRevenuePayload): { featureSlug: string; to
   };
 }
 
+/** The mature cohort behind one body's ratios, as the ingredients the fleet aggregates compose. */
+function matureIngredients(costEconomics: CostEconomics): {
+  maturityDays: number;
+  matureCommittedCostUsd: number;
+  maturePipeline: number | null;
+} {
+  const basis = matureBasisOf(costEconomics);
+  return { maturityDays: basis.days, matureCommittedCostUsd: basis.committedCents / 100, maturePipeline: basis.pipelineUsd };
+}
+
 /** One (org, brand) engine pass, or null when the membership is stale (the brand moved orgs). */
 async function computePairRevenue(
   featureSlug: string,
@@ -875,6 +886,11 @@ async function computePairRevenue(
       pipeline: body.headline.totalPipelineUsd,
       committedCostUsd: body.costEconomics.committedCostUsd,
       actualCostUsd: body.costEconomics.actualCostUsd,
+      // THE MATURE COHORT the pair's ratios divide (`lib/roi-maturity.ts`) — the spend of runs old
+      // enough to have produced their outcomes and the pipeline of the leads they reached. The fleet
+      // medians are the same statistic every client reads on its own dashboard, so they compose from
+      // these ingredients, never from the whole-history ones above. Off the wire by design.
+      ...matureIngredients(body.costEconomics),
       // Committed spend ÷ expected paying clients — null when the brand states no lifetime revenue per
       // client. The COUNT of those clients is what composes across orgs (a ratio does not), so the
       // fleet warm stores the count and divides once, at the brand grain.
@@ -959,14 +975,21 @@ export async function handlePublicRevenue(
     // Aggregate per brand: pipeline = sum of the orgs' non-null pipelines (null iff EVERY org's is
     // null — i.e. no saved economics anywhere); cost always sums. Leads are disjoint per org, so the
     // sum does not double-count.
-    const byBrand = new Map<string, { pipelineSum: number; hasPipeline: boolean; committedCostCents: number; actualCostCents: number; timelineDeltas: Map<string, number> }>();
+    const byBrand = new Map<string, { pipelineSum: number; hasPipeline: boolean; committedCostCents: number; actualCostCents: number; maturityDays: number; maturePipelineSum: number; hasMaturePipeline: boolean; matureCostCents: number; timelineDeltas: Map<string, number> }>();
     for (const c of computed) {
       if (c === null) continue;
-      const agg = byBrand.get(c.brandId) ?? { pipelineSum: 0, hasPipeline: false, committedCostCents: 0, actualCostCents: 0, timelineDeltas: new Map<string, number>() };
+      const agg = byBrand.get(c.brandId) ?? { pipelineSum: 0, hasPipeline: false, committedCostCents: 0, actualCostCents: 0, maturityDays: 0, maturePipelineSum: 0, hasMaturePipeline: false, matureCostCents: 0, timelineDeltas: new Map<string, number>() };
       if (c.pipeline !== null) {
         agg.pipelineSum += c.pipeline;
         agg.hasPipeline = true;
       }
+      // The ratios compose from each org's MATURE cohort (lib/roi-maturity.ts), summed like the rest.
+      if (c.maturePipeline !== null) {
+        agg.maturePipelineSum += c.maturePipeline;
+        agg.hasMaturePipeline = true;
+      }
+      agg.matureCostCents += Math.round(c.matureCommittedCostUsd * 100);
+      agg.maturityDays = Math.max(agg.maturityDays, c.maturityDays);
       agg.committedCostCents += Math.round(c.committedCostUsd * 100);
       agg.actualCostCents += Math.round(c.actualCostUsd * 100);
       let previous = 0;
@@ -1000,6 +1023,15 @@ export async function handlePublicRevenue(
           committedCostInUsdCents: agg.committedCostCents,
           actualCostInUsdCents: agg.actualCostCents,
           totalPipelineUsd,
+          ...(agg.maturityDays > 0
+            ? {
+                maturity: {
+                  days: agg.maturityDays,
+                  committedCostInUsdCents: agg.matureCostCents,
+                  totalPipelineUsd: agg.hasMaturePipeline ? agg.maturePipelineSum : null,
+                },
+              }
+            : {}),
         }),
         ...(timeline.length > 0 ? { timeline } : {}),
       };
@@ -1197,9 +1229,11 @@ export async function warmFleetReturnSnapshot(featureSlug: string): Promise<void
       const agg =
         byBrand.get(c.channel.brandId) ??
         { spend: 0, pipeline: 0, hasPipeline: false, startedOn: null, outcomes: 0, hasOutcomes: false };
-      agg.spend += c.channel.committedCostUsd;
-      if (c.channel.pipeline !== null) {
-        agg.pipeline += c.channel.pipeline;
+      // The MATURE cohort (lib/roi-maturity.ts): a return median is the statistic each client reads on
+      // its own dashboard, and that one divides mature pipeline by mature spend — so does the floor.
+      agg.spend += c.channel.matureCommittedCostUsd;
+      if (c.channel.maturePipeline !== null) {
+        agg.pipeline += c.channel.maturePipeline;
         agg.hasPipeline = true;
       }
       // A brand claimed by several orgs has ONE beginning: the EARLIEST of theirs. `YYYY-MM-DD` sorts
@@ -1226,15 +1260,16 @@ export async function warmFleetReturnSnapshot(featureSlug: string): Promise<void
         const f =
           byBrandFunnel.get(key) ??
           { brandId: result.brandId, funnelKey, spend: 0, pipeline: 0, hasPipeline: false, clients: 0, hasClients: false };
-        f.spend += result.committedCostUsd;
-        if (result.pipeline !== null) {
-          f.pipeline += result.pipeline;
+        f.spend += result.matureCommittedCostUsd;
+        if (result.maturePipeline !== null) {
+          f.pipeline += result.maturePipeline;
           f.hasPipeline = true;
         }
-        // clients = spend ÷ cost-per-client, recovered from the figure the engine already stated. Null
-        // there is "this brand states no lifetime revenue per client", never a zero count.
+        // clients = spend ÷ cost-per-client, recovered from the figure the engine already stated — both
+        // on the mature cohort, which is the one the cost per client divides. Null there is "this brand
+        // states no lifetime revenue per client", never a zero count.
         if (result.costPerAcquisitionUsd !== null && result.costPerAcquisitionUsd > 0) {
-          f.clients += result.committedCostUsd / result.costPerAcquisitionUsd;
+          f.clients += result.matureCommittedCostUsd / result.costPerAcquisitionUsd;
           f.hasClients = true;
         }
         byBrandFunnel.set(key, f);
