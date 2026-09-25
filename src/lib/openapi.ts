@@ -1490,6 +1490,72 @@ registry.registerPath({
   },
 });
 
+const outcomeFiguresShape = {
+  recipientsReached: z.number().int().nullable().describe("DISTINCT leads that reached the step, every cause counted, whole history. 0 is measured; null = the producer behind this step was unreadable, or nothing in the fleet counts the step."),
+  spentUsd: z.number().describe("COMMITTED spend of the campaigns whose leg LANDS on this step (actual + provisioned), whole history, on the requested pricing basis."),
+  costPerOutcomeUsd: z.number().nullable().describe("spentUsd / recipientsReached — OBSERVED, never floored. Null when either is 0 or the count is unmeasured."),
+  valuePerOutcomeUsd: z.number().nullable().describe("What STANDING on this step is worth: P(paid client | reached it) x lifetime revenue, the BEST PATH (max) across the offer's declared funnels containing the step, each on its own terms. Null when no declared funnel prices it — never 0."),
+  valueUsd: z.number().nullable().describe("PRICED outcomes (only the ones the `cause` set prices, default ours) x valuePerOutcomeUsd."),
+  roiMultiple: z.number().nullable().describe("Value / spend on the MATURE COHORT (a 14-day leg counts only runs started, and leads first contacted, before its cutoff). Null with a named reason."),
+  unmeasuredReason: z.enum(["step_not_counted", "evidence_unreadable", "no_value_defined", "nothing_spent", "maturing"]).nullable(),
+};
+const stepRefSchema = z.object({ key: z.string(), label: z.string() });
+const offerOutcomeLegSchema = z.object({
+  legKey: z.string(),
+  fromStep: stepRefSchema.nullable().describe("null = from nothing (an ENTRY leg)."),
+  toStep: stepRefSchema,
+  featureSlug: z.string().describe("The channel performing the leg."),
+  channelName: z.string(),
+  campaignIds: z.array(z.string()),
+  legSource: z.enum(["stated", "derived_from_funnel"]).describe("`derived_from_funnel`: a pre-leg campaign placed on the ONE leg its channel performs inside the funnel it states."),
+  countBasis: z.enum(["campaign_leads", "leg_crossings"]).describe("`campaign_leads`: an entry leg counts its own campaigns' leads. `leg_crossings`: an internal leg's campaigns serve no lead of their own, so it counts the offer's leads that stood on FROM and reached TO."),
+  ...outcomeFiguresShape,
+});
+const offerOutcomesResponseSchema = z.object({
+  offerId: z.string(),
+  brandId: z.string(),
+  costBasis: z.literal("charged"),
+  outcomeCauses: z.object({ priced: z.array(z.string()) }),
+  maturityDays: z.number().int().describe("The longest maturity delay of any leg in scope (0 = nothing waits)."),
+  outcomes: z.array(
+    z.object({
+      step: z.object({ key: z.string(), label: z.string(), description: z.string() }),
+      valueBasisFunnelKey: z.string().nullable(),
+      ...outcomeFiguresShape,
+      legs: z.array(offerOutcomeLegSchema).describe("Every leg x channel serving this outcome, in parallel. Their counts can overlap (one lead reached by two channels); the outcome row's count is the distinct union."),
+    }),
+  ).describe("One row per step a leg of OUR channels lands on, in step order. NOT additive across rows."),
+  unattributedCampaignIds: z.array(z.string()).describe("Campaigns of the offer whose leg could not be known. Their spend is in no row."),
+  hiddenCampaignIds: z.array(z.string()).describe("Campaigns on a channel the customer operates — hidden from the rows."),
+});
+const offerOutcomesResponseRef = registry.register("OfferOutcomesResponse", offerOutcomesResponseSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/offers/{offerId}/outcomes",
+  summary: "What an offer buys, one row per OUTCOME, with every leg x channel serving it",
+  description:
+    "The outcome grain the sales funnel's retirement needs. An OUTCOME is a step at least one of our channels lands a leg on, derived from the offer's campaigns (offer x leg x channel), never stored. " +
+    "Each row states the distinct leads that reached the step, the committed spend of the campaigns whose leg lands on it, the cost per outcome, the value of the step (best path across the offer's declared funnels) and the ROI on the mature cohort; `legs` breaks it down per leg x channel with the same figures. " +
+    "Counts are DISTINCT leads, so a lead reached through two funnels or two channels counts once — the reason this is not a browser-side sum of funnel rungs. Rows are NOT additive across outcomes. Additive read: every funnel read is unchanged.",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ offerId: z.string() }),
+    query: z.object({
+      brandId: z.string().describe("Brand UUID (required)."),
+      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every money figure. Omit or 'gross' (default); 'net' reads runs-service's frozen net amounts, fail-loud."),
+      cause: z.string().optional().describe("Which cause states are PRICED (value, ROI) — comma-separated subset of outreach | other | unstated, default outreach. Every cause is always COUNTED."),
+    }),
+  },
+  responses: {
+    200: { description: "One row per outcome", content: { "application/json": { schema: offerOutcomesResponseRef } } },
+    400: { description: "Missing brandId, invalid pricing or cause", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "No campaign of this brand sells this offer (reason: offer_has_no_channels)", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 const offerAudienceStatsResponseSchema = audienceStatsResponseSchema.extend({
   offerId: z.string(),
   channels: z.array(offerChannelSchema).describe("The channels combined into every row below, ascending by slug."),
