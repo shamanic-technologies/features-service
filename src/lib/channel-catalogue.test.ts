@@ -18,6 +18,7 @@ import { SALES_FUNNELS, SALES_FUNNEL_KEYS } from "./sales-funnels.js";
 const CHANNEL = {
   family: "outbound_one_to_one",
   operatedBy: "platform",
+  performedBy: "software",
   stepTransitions: [
     { from: null, to: "conversation" },
     { from: null, to: "website_visit" },
@@ -29,6 +30,7 @@ const CHANNEL = {
 const CLOSER = {
   family: "conversion",
   operatedBy: "customer",
+  performedBy: "person",
   stepTransitions: [{ from: "meeting_attended", to: "paid_client" }],
   terms: { dailyOperatingCostCents: 0, minimumCommitmentDays: 30, maxDaysToFirstProduction: 1 },
 };
@@ -59,6 +61,9 @@ describe("reading a stored channel", () => {
       ["not an object", "outbound"],
       ["unknown family", { ...CHANNEL, family: "telepathy" }],
       ["unknown operator", { ...CHANNEL, operatedBy: "the-weather" }],
+      ["unknown performer", { ...CHANNEL, performedBy: "robot" }],
+      ["no performer stated", { ...CHANNEL, performedBy: undefined }],
+      ["customer-operated software", { ...CLOSER, performedBy: "software" }],
       ["operator missing", { family: CHANNEL.family, stepTransitions: CHANNEL.stepTransitions, terms: CHANNEL.terms }],
       ["unknown step", { ...CHANNEL, stepTransitions: [{ from: null, to: "smoke_signal" }] }],
       ["unknown from-step", { ...CHANNEL, stepTransitions: [{ from: "smoke_signal", to: "paid_client" }] }],
@@ -67,7 +72,7 @@ describe("reading a stored channel", () => {
       // channel as an entry channel because somebody forgot a field.
       ["from unstated", { ...CHANNEL, stepTransitions: [{ to: "conversation" }] }],
       ["a leg to itself", { ...CHANNEL, stepTransitions: [{ from: "signup", to: "signup" }] }],
-      ["terms missing", { family: CHANNEL.family, operatedBy: "platform", stepTransitions: CHANNEL.stepTransitions }],
+      ["terms missing", { family: CHANNEL.family, operatedBy: "platform", performedBy: "software", stepTransitions: CHANNEL.stepTransitions }],
       ["fractional cents", { ...CHANNEL, terms: { ...CHANNEL.terms, dailyOperatingCostCents: 12.5 } }],
       ["negative cost", { ...CHANNEL, terms: { ...CHANNEL.terms, dailyOperatingCostCents: -1 } }],
       ["zero-day commitment", { ...CHANNEL, terms: { ...CHANNEL.terms, minimumCommitmentDays: 0 } }],

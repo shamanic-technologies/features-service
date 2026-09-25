@@ -28,9 +28,12 @@ funnels, so summing funnel rungs in a browser counts a lead twice; this read tak
   funnel prices the step, never 0. **ROI** = value ÷ spend on the MATURE COHORT (per-leg delay,
   `fetchMatureSpendCents` + contact dates), `maturing` when nothing spent is mature.
 - **ROWS ARE NOT ADDITIVE** across outcomes (a lead who replied then booked is in both).
-- **ONLY OUR LEGS**: a campaign on a `customer`-operated channel is hidden (`hiddenCampaignIds`). ⚠️ An
-  AGENCY (by-hand) channel is `operatedBy: platform` like the AI one — the catalogue has no field telling
-  them apart, so agency legs are NOT hidden yet (0 agency campaigns in prod, 2026-09-25). A campaign stating
+- **ONLY LEGS OUR SOFTWARE PERFORMS**: a campaign on a channel stating `performedBy: person` is hidden
+  (`hiddenCampaignIds`) — the customer's team (`your-team-*`) AND ours by hand (`agency-*`, cold calling,
+  SEO). Keyed on the catalogue field, never on a slug prefix: `agency-*` and `ai-meeting-booking` are both
+  `operatedBy: platform`, so the operator alone could not tell them apart (supersedes the customer-only
+  rule of v0.174.1; 0 agency campaigns in prod at the switch, 2026-09-25, so no offer's rows moved). A
+  slug the catalogue does not describe is not hidden. A campaign stating
   no leg is placed on the ONE leg its channel performs inside its stated funnel, else
   `unattributedCampaignIds` (prod: 5 funnel-stating, leg-less rows, all derivable).
 - The catalogue is read from `SEED_FEATURES` in-process (no DB), which is what the table is upserted from.
@@ -2767,7 +2770,16 @@ per funded (funnel, channel) pair, so the catalogue was the only thing in the wa
   workspace is adding to lead-service — that reader belongs with the data.
 - **STILL NO AVAILABILITY FLAG, still no channel table, and no "convertor" beside "channel"** — it is
   the CHANNEL that gained this capability, and the blob's key set is pinned to
-  `{family, operatedBy, stepTransitions, terms}`.
+  `{family, operatedBy, performedBy, stepTransitions, terms}`.
+- **`performedBy` SAYS WHAT DOES THE WORK — `software` or `person` — ORTHOGONAL TO `operatedBy`.**
+  `operatedBy: platform` covers both our AI and our people, so nothing told `ai-meeting-booking` from
+  `agency-meeting-booking` but the slug. Stated on EVERY seed row (required, never defaulted, parser fails
+  loud); `customer` ⇒ `person` is enforced. Decided PER CHANNEL from the seed, never by family: `person` =
+  every `agency-*` and `your-team-*`, `cold-call-outreach` (someone is on the line) and `seo-content` (the
+  specialist); everything else `software`. The ten are pinned by slug in
+  `acquisition-channel-catalogue.test.ts`, so a new channel is classified on purpose. Published on
+  `/public/channels` (additive; nothing else in the body moved). Consumer: the offer-outcome partition,
+  which hides every `person` leg. (Set 2026-09-25.)
 - Guards: the widened-join cases in `src/lib/acquisition-channels.test.ts` (an internal leg sells its
   funnel; the two meeting funnels share every leg after the booking; a leg no funnel takes, and a backwards
   leg, sell nothing), `src/lib/channel-catalogue.test.ts` (an unstated `from` and a leg-to-itself both
@@ -2934,7 +2946,7 @@ are published, all bookable from day one, and a public marketing site is generat
   `implemented: true` / `status: "active"`. A channel we are slower to deliver says so through its OWN
   terms — a high `dailyOperatingCostCents` (a phone channel carries the person on the line, LinkedIn Ads
   carries its own daily floor, SEO carries the specialist), a long `maxDaysToFirstProduction`, a long
-  `minimumCommitmentDays`. Guard: the blob's key set is exactly `{family, producibleSteps, terms}` and
+  `minimumCommitmentDays`. Guard: the blob's key set is pinned (now `{family, operatedBy, performedBy, stepTransitions, terms}`) and
   `maxDaysToFirstProduction ≤ minimumCommitmentDays` (we never sell a booking that ends before it can
   produce).
 - **AN AD-DELIVERED STEP IS SPELLED AS THE FUNNEL STEP IT IS — the `in_ad_` prefix is GONE, not

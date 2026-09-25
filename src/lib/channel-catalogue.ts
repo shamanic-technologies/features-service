@@ -17,6 +17,7 @@
 import {
   CHANNEL_FAMILIES,
   CHANNEL_OPERATORS,
+  CHANNEL_PERFORMERS,
   CHANNEL_STEPS,
   CHANNEL_STEP_KEYS,
   matchChannelStepKey,
@@ -25,6 +26,7 @@ import {
   SALES_FUNNEL_ENTRY_STEP,
   type ChannelFamily,
   type ChannelOperator,
+  type ChannelPerformer,
   type ChannelStepKey,
   type ChannelStepTransition,
   type AcquisitionChannel,
@@ -79,6 +81,10 @@ export interface PublicChannel {
    *  converse does not hold: a platform-run channel can carry a zero day-rate too, so read this field
    *  for who is on it and never infer it from the price. */
   operatedBy: ChannelOperator;
+  /** WHAT does the leg's work: `software` (a machine end to end) or `person` (somebody by hand — the
+   *  customer's team, a specialist of ours, a caller). Orthogonal to `operatedBy`: our agency channels
+   *  are `platform` + `person`, our AI channel is `platform` + `software`. */
+  performedBy: ChannelPerformer;
   /** The commercial terms a buyer commits to, before any performance is measured. */
   terms: AcquisitionChannel["terms"];
   /** Every leg this channel performs, `from` → `to`. `from: null` is "from nothing". */
@@ -112,6 +118,7 @@ export class MalformedAcquisitionChannelError extends Error {
 
 const isFamily = (v: unknown): v is ChannelFamily => (CHANNEL_FAMILIES as readonly string[]).includes(v as string);
 const isOperator = (v: unknown): v is ChannelOperator => (CHANNEL_OPERATORS as readonly string[]).includes(v as string);
+const isPerformer = (v: unknown): v is ChannelPerformer => (CHANNEL_PERFORMERS as readonly string[]).includes(v as string);
 const isWholeNonNegative = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0;
 const isPositiveInt = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v > 0;
 
@@ -153,6 +160,14 @@ export function parseAcquisitionChannel(slug: string, raw: unknown): Acquisition
   if (!isFamily(blob.family)) throw new MalformedAcquisitionChannelError(slug, `unknown family ${JSON.stringify(blob.family)}`);
   if (!isOperator(blob.operatedBy)) throw new MalformedAcquisitionChannelError(slug, `unknown operator ${JSON.stringify(blob.operatedBy)}`);
 
+  // Stated, never defaulted: a row missing it would publish a person's work as a machine's (or hide a
+  // machine's legs as a person's), and nothing downstream could tell.
+  if (!isPerformer(blob.performedBy)) throw new MalformedAcquisitionChannelError(slug, `unknown performer ${JSON.stringify(blob.performedBy)}`);
+  // The customer's own team is people; a customer-operated channel run by software is a contradiction.
+  if (blob.operatedBy === "customer" && blob.performedBy !== "person") {
+    throw new MalformedAcquisitionChannelError(slug, "a customer-operated channel must be performed by a person");
+  }
+
   if (!Array.isArray(blob.stepTransitions)) throw new MalformedAcquisitionChannelError(slug, "stepTransitions is not an array");
   const transitions = blob.stepTransitions.map((entry) => parseTransition(slug, entry));
   // A channel that performs no leg could be paired with no funnel and sold to nobody; that is a broken
@@ -177,6 +192,7 @@ export function parseAcquisitionChannel(slug: string, raw: unknown): Acquisition
   return {
     family: blob.family,
     operatedBy: blob.operatedBy,
+    performedBy: blob.performedBy,
     stepTransitions: transitions,
     terms: {
       dailyOperatingCostCents: t.dailyOperatingCostCents,
@@ -217,6 +233,7 @@ export function buildChannelCatalogue(rows: readonly CatalogueFeatureRow[]): Pub
       displayOrder: row.displayOrder,
       family: channel.family,
       operatedBy: channel.operatedBy,
+      performedBy: channel.performedBy,
       terms: channel.terms,
       stepTransitions: channel.stepTransitions.map((t) => ({
         legKey: legKeyFor(t),
