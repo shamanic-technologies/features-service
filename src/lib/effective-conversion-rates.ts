@@ -220,24 +220,41 @@ export async function measureBrandSteps(
   };
 }
 
+/**
+ * The measurement reduced to what a rate reads: how many deduped leads reached each step. A measured
+ * rate counts FROM and TO independently, so the per-lead rows add nothing past these counts — and the
+ * counts are what the snapshot layer stores (a few dozen bytes against ~1 MB of per-lead rows).
+ */
+export interface BrandStepCounts {
+  contactedRecipients: number;
+  evidence: StepEvidence;
+  reachedCounts: Record<LeadStepField, number>;
+}
+
+/** PURE: a measurement's per-step counts. Idempotent on counts already summarised. */
+export function summariseMeasurement(measurement: BrandStepMeasurement | BrandStepCounts): BrandStepCounts {
+  if ("reachedCounts" in measurement) return measurement;
+  const fields = Object.keys(LEAD_FIELD_TO_SIGNAL) as LeadStepField[];
+  const reachedCounts = Object.fromEntries(fields.map((f) => [f, 0])) as Record<LeadStepField, number>;
+  for (const lead of measurement.reached) for (const f of fields) if (lead[f]) reachedCounts[f] += 1;
+  return { contactedRecipients: measurement.contactedRecipients, evidence: measurement.evidence, reachedCounts };
+}
+
 /** PURE: the measured rate of one arrow over one measurement. */
 export function measuredArrowRate(
-  measurement: BrandStepMeasurement,
+  input: BrandStepMeasurement | BrandStepCounts,
   fromField: LeadStepField | null,
   toField: LeadStepField | null,
 ): MeasuredArrowRate {
+  const measurement = summariseMeasurement(input);
   if (fromField === null || toField === null) {
     return { fromReached: null, toReached: null, ratePct: null, sufficient: false, gap: "step_not_counted" };
   }
   if (!stepMeasured(fromField, measurement.evidence) || !stepMeasured(toField, measurement.evidence)) {
     return { fromReached: null, toReached: null, ratePct: null, sufficient: false, gap: "evidence_unreadable" };
   }
-  let fromReached = 0;
-  let toReached = 0;
-  for (const lead of measurement.reached) {
-    if (lead[fromField]) fromReached += 1;
-    if (lead[toField]) toReached += 1;
-  }
+  const fromReached = measurement.reachedCounts[fromField] ?? 0;
+  const toReached = measurement.reachedCounts[toField] ?? 0;
   const ratePct = fromReached > 0 ? (toReached / fromReached) * 100 : null;
   // More leads at TO than at FROM: the FROM step is under-counted (a producer records the later rung
   // but not the earlier one), so the ratio is not a probability. Unmeasurable, never clamped to 100%.
@@ -370,10 +387,11 @@ export function resolveArrow(
 export function buildBrandEffectiveRates(input: {
   brandId: string;
   funnelKeys: readonly SalesFunnelKey[];
-  measurement: BrandStepMeasurement;
+  measurement: BrandStepMeasurement | BrandStepCounts;
   manual: readonly BrandFunnelRates[];
   medians: FleetArrowMedians;
 }): BrandEffectiveRates {
+  const measurement = summariseMeasurement(input.measurement);
   const manualByArrow = new Map<string, number>();
   // brand-service's OWN wording for each arrow (it owns the step vocabulary — its form rung reads
   // "Form filled" where ours reads "Form submitted"), so a consumer joins a served arrow to the
@@ -399,7 +417,7 @@ export function buildBrandEffectiveRates(input: {
           label.fromStep,
           label.toStep,
           measuredArrowRate(
-            input.measurement,
+            measurement,
             leadFieldOfStep(funnelKey, fromStep, fromIndex),
             leadFieldOfStep(funnelKey, toStep, fromIndex + 1),
           ),
@@ -411,40 +429,40 @@ export function buildBrandEffectiveRates(input: {
   return {
     brandId: input.brandId,
     minMeasuredFromReached: MIN_MEASURED_FROM_REACHED,
-    contactedRecipients: input.measurement.contactedRecipients,
+    contactedRecipients: measurement.contactedRecipients,
     funnels,
   };
 }
 
 /**
- * Compute a brand's effective rates live, for EVERY funnel of the catalogue — exactly the set
- * brand-service's own brand-grain read serves, so a brand deciding to sell through a new funnel finds
- * its rates already resolved. Fail-loud on the lead read and the manual read: "we could not read the
- * brand's leads" must never read as "nothing measured".
+ * The brand's per-step counts, served through the Gold snapshot layer: one brand-wide lead walk per
+ * refresh, shared by every surface that prices this brand. ONLY the measurement is cached — it is the
+ * expensive half and it is allowed to lag a refresh.
  */
-export async function computeBrandEffectiveRates(brandId: string, orgId: string): Promise<BrandEffectiveRates> {
+export function getBrandStepCounts(brandId: string, orgId: string): Promise<BrandStepCounts> {
+  return servedCached({
+    view: "brand-conversion-step-counts",
+    // `m` names the measurement rule, so a snapshot computed under a retired rule is never served.
+    scopeKey: buildScopeKey(brandId, { orgId, m: "funnel-step" }),
+    orgId,
+    compute: async () => summariseMeasurement(await measureBrandSteps(brandId, orgId, [])),
+  });
+}
+
+/**
+ * The brand's effective rates: the cached measurement, the fleet medians, and the brand's OWN
+ * statements read LIVE on every call. The statements are what a person just edited, so they must never
+ * come off a snapshot — caching the whole body served the pre-write value right after a save (a rate
+ * saved at 14% read back as the 50% it replaced), and every surface pricing on it lagged the same way.
+ * The live read is one indexed brand-service query; the lead walk stays cached.
+ */
+export async function getBrandEffectiveRates(brandId: string, orgId: string): Promise<BrandEffectiveRates> {
   const [measurement, manual, medians] = await Promise.all([
-    // A "never" statement only marks a lead's dead legs for PRICING; which steps it reached does not
-    // depend on the funnels priced, so the measurement needs none.
-    measureBrandSteps(brandId, orgId, []),
+    getBrandStepCounts(brandId, orgId),
     fetchBrandFunnelRates(brandId, orgId),
     getFleetArrowMedians(),
   ]);
   return buildBrandEffectiveRates({ brandId, funnelKeys: SALES_FUNNEL_KEYS, measurement, manual, medians });
-}
-
-/**
- * The brand's effective rates, served through the Gold snapshot layer: one brand-wide lead walk per
- * refresh, shared by every surface that prices this brand (and by the dashboard's read of the rates).
- */
-export function getBrandEffectiveRates(brandId: string, orgId: string): Promise<BrandEffectiveRates> {
-  return servedCached({
-    view: "brand-effective-conversion-rates",
-    // `m` names the measurement rule, so a snapshot computed under a retired rule is never served.
-    scopeKey: buildScopeKey(brandId, { orgId, m: "funnel-step" }),
-    orgId,
-    compute: () => computeBrandEffectiveRates(brandId, orgId),
-  });
 }
 
 // ── Pricing: the declared funnels, carried on the effective rates ─────────────────────────────
