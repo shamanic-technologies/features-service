@@ -13,6 +13,7 @@
  */
 
 import { fetchWithRetry } from "./fetch-retry.js";
+import { emailFingerprints, fingerprintScopeKey, liveLeadCopyRequested } from "./lead-copy.js";
 
 interface StatusScope {
   firstContactedAt?: string | null;
@@ -111,11 +112,13 @@ export async function fetchEmailOutcomes(
   if (campaignScoped) body.campaignId = scopeCampaignId;
   else body.brandId = brandId;
 
-  const response = await fetchWithRetry(`${url}/orgs/status`, {
-    method: "POST",
-    headers: reqHeaders,
-    body: JSON.stringify(body),
-  });
+  // Audience-forecast input (pipeline-activity): an audience's members' outcome flags move slowly, so
+  // an interactive view reuses the answer for 30s, re-read behind it (fetch-retry.ts `shareForMs`).
+  const response = await fetchWithRetry(
+    `${url}/orgs/status`,
+    { method: "POST", headers: reqHeaders, body: JSON.stringify(body) },
+    { shareForMs: 30_000 },
+  );
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`email-gateway /orgs/status failed (${response.status}): ${text}`);
@@ -147,7 +150,77 @@ function scopeFor(provider: ProviderStatus | undefined, campaignScoped: boolean)
   return (campaignScoped ? provider.campaign : provider.brand) ?? null;
 }
 
+/**
+ * INCREMENTAL timestamps for an interactive view (features-service#1045).
+ *
+ * A first-occurrence timestamp only moves when its delivery flag flips, and the live lead copy
+ * (lead-copy.ts) fingerprints every email's flags. So inside a live-copy read, an email is asked
+ * again only when its fingerprint changed since it was last asked (or it was never asked) — a
+ * refresh of the busiest campaign asks tens of emails instead of ~18k. Every
+ * {@link TIMESTAMP_FULL_REFRESH_MS} the whole set is asked again regardless, which bounds any
+ * drift the flags cannot see (an out-of-order event moving a MIN earlier) to that window.
+ * Outside a live-copy read nothing changes: every email is asked, as before.
+ */
+const TIMESTAMP_FULL_REFRESH_MS = 10 * 60_000;
+
+interface TimestampCache {
+  byEmail: Map<string, { fingerprint: string; dates: SignalDates | null }>;
+  fullAt: number;
+  lastReadAt: number;
+}
+
+const timestampCaches = new Map<string, TimestampCache>();
+
+/** Test seam. */
+export function __resetTimestampCaches(): void {
+  timestampCaches.clear();
+}
+
 export async function fetchEventTimestamps(
+  brandId: string,
+  campaignId: string | undefined,
+  emails: string[],
+  headers: { orgId: string; userId?: string; runId?: string; featureSlug?: string },
+): Promise<Map<string, SignalDates>> {
+  if (emails.length === 0) return new Map();
+  const scopeKey = fingerprintScopeKey(headers.orgId, brandId, campaignId);
+  const fps = liveLeadCopyRequested() ? emailFingerprints(scopeKey) : undefined;
+  if (!fps) return fetchEventTimestampsFor(brandId, campaignId, emails, headers);
+
+  const now = Date.now();
+  let cache = timestampCaches.get(scopeKey);
+  if (!cache || now - cache.fullAt > TIMESTAMP_FULL_REFRESH_MS) {
+    cache = { byEmail: new Map(), fullAt: now, lastReadAt: now };
+  }
+  const ask = emails.filter((email) => {
+    const cached = cache!.byEmail.get(email);
+    const fp = fps.get(email);
+    return !cached || fp === undefined || cached.fingerprint !== fp;
+  });
+  if (ask.length > 0) {
+    const fresh = await fetchEventTimestampsFor(brandId, campaignId, ask, headers);
+    for (const email of ask) {
+      cache.byEmail.set(email, { fingerprint: fps.get(email) ?? "", dates: fresh.get(email) ?? null });
+    }
+  }
+  cache.lastReadAt = now;
+  timestampCaches.delete(scopeKey);
+  timestampCaches.set(scopeKey, cache);
+  for (const [key, c] of timestampCaches) {
+    if (timestampCaches.size <= 64 && now - c.lastReadAt <= TIMESTAMP_FULL_REFRESH_MS) break;
+    if (key !== scopeKey) timestampCaches.delete(key);
+  }
+
+  // The same map a full ask returns: only emails the producer answered for.
+  const result = new Map<string, SignalDates>();
+  for (const email of emails) {
+    const dates = cache.byEmail.get(email)?.dates;
+    if (dates) result.set(email, dates);
+  }
+  return result;
+}
+
+async function fetchEventTimestampsFor(
   brandId: string,
   campaignId: string | undefined,
   emails: string[],

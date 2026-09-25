@@ -168,8 +168,9 @@ function campaignRow(id: string, funnelKey: string, legKey: string | null): Reco
   };
 }
 
-function mockFetch(): { timeseriesCampaignIds: Array<string | null> } {
+function mockFetch(): { timeseriesCampaignIds: Array<string | null>; timeseriesFamilyReads: string[] } {
   const timeseriesCampaignIds: Array<string | null> = [];
+  const timeseriesFamilyReads: string[] = [];
 
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as { url: string }).url;
@@ -195,9 +196,14 @@ function mockFetch(): { timeseriesCampaignIds: Array<string | null> } {
     // THE DATED SPEND LEG. runs takes ONE campaign: a family is read member by member, and a scope
     // that names none legitimately reads the whole brand.
     if (url.includes("/costs/timeseries")) {
-      const campaignId = new URL(url).searchParams.get("campaignId");
-      timeseriesCampaignIds.push(campaignId);
-      const rows = campaignId ? (SPEND[campaignId] ?? []) : Object.values(SPEND).flat();
+      const q = new URL(url).searchParams;
+      const campaignId = q.get("campaignId");
+      // A family is ONE `campaignIds` read (runs-service v0.47.7), answering the sum of its members.
+      const named = q.get("campaignIds")?.split(",") ?? (campaignId ? [campaignId] : null);
+      if (named) timeseriesCampaignIds.push(...named);
+      else timeseriesCampaignIds.push(null);
+      if (q.get("campaignIds")) timeseriesFamilyReads.push(q.get("campaignIds")!);
+      const rows = named ? named.flatMap((id) => SPEND[id] ?? []) : Object.values(SPEND).flat();
       const byDay = new Map<string, number>();
       for (const [day, cents] of rows) byDay.set(day, (byDay.get(day) ?? 0) + cents);
       return json({
@@ -249,7 +255,7 @@ function mockFetch(): { timeseriesCampaignIds: Array<string | null> } {
     return json({});
   });
 
-  return { timeseriesCampaignIds };
+  return { timeseriesCampaignIds, timeseriesFamilyReads };
 }
 
 async function body(query: string): Promise<Record<string, any>> {
@@ -297,11 +303,12 @@ describe("a campaign-scoped body states ONE spend", () => {
     expect(last.costPerOutcomeUsd).toBeLessThan(5);
   });
 
-  it("reads the dated spend ONE MEMBER AT A TIME, and never unfiltered", async () => {
-    const { timeseriesCampaignIds } = mockFetch();
+  it("reads the dated spend for the whole family in ONE request, and never unfiltered", async () => {
+    const { timeseriesCampaignIds, timeseriesFamilyReads } = mockFetch();
     await body("brandId=b1&campaignId=c-live");
 
     expect([...timeseriesCampaignIds].sort()).toEqual([...MEMBERS].sort());
+    expect(timeseriesFamilyReads).toHaveLength(1);
     // An unfiltered read here IS the bug: it answers for every identity on the brand.
     expect(timeseriesCampaignIds).not.toContain(null);
     expect(timeseriesCampaignIds).not.toContain(OUTSIDER);

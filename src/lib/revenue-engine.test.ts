@@ -795,3 +795,19 @@ describe("computeRevenue — firmographic passthrough onto leads[]", () => {
     expect(r.leads[0]).toMatchObject({ title: "CEO", seniority: "c_suite" });
   });
 });
+
+describe("computeRevenue — an organisation does not depend on the order its leads arrive in", () => {
+  it("states the same organisations, tags in funnel order, whatever the input order", () => {
+    const people = [
+      person({ leadId: "l2", orgId: "o1", orgName: "Acme", orgDomain: "b.com", signals: { clicked: true, positiveReply: false } }),
+      person({ leadId: "l1", orgId: "o1", orgName: "Acme", orgDomain: "a.com", signals: { clicked: false, positiveReply: true } }),
+      person({ leadId: "l3", orgId: "o1", orgName: "Acme", orgDomain: null, signals: { clicked: true, positiveReply: true } }),
+    ];
+    const forward = computeRevenue(PATHS, people);
+    const backward = computeRevenue(PATHS, [...people].reverse());
+    expect(backward.organizations).toEqual(forward.organizations);
+    expect(forward.organizations[0].tags).toEqual(["visit", "reply"]);
+    // The first-known domain is taken by lead id, not by arrival.
+    expect(forward.organizations[0].orgDomain).toBe("a.com");
+  });
+});

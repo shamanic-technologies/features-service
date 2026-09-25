@@ -171,9 +171,13 @@ function mockFetch(fixture: Fixture): void {
 
     if (path.endsWith("/orgs/stats")) {
       const only = q.get("campaignId");
+      // A family is ONE `campaignIds` read (email-gateway sums the per-member answers).
+      const family = q.get("campaignIds")?.split(",");
       if (q.get("groupBy") === "audienceId") {
         const per = fixture.engagementByCampaign ?? {};
-        const scoped = only ? { [only]: per[only] ?? {} } : per;
+        const scoped = family
+          ? Object.fromEntries(family.map((id) => [id, per[id] ?? {}]))
+          : only ? { [only]: per[only] ?? {} } : per;
         const totals = new Map<string, { contacted: number; clicked: number; repliesPositive: number }>();
         for (const byAudience of Object.values(scoped)) {
           for (const [audienceId, stats] of Object.entries(byAudience ?? {})) {

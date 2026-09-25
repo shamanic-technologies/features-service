@@ -52,7 +52,9 @@ export async function fetchBrandCampaignRows(
   if (headers.userId) reqHeaders["x-user-id"] = headers.userId;
   if (headers.runId) reqHeaders["x-run-id"] = headers.runId;
 
-  const response = await fetchWithRetry(`${url}/campaigns?${params}`, { headers: reqHeaders });
+  // The campaign rows of a brand move on the scale of minutes (a workflow switch mints one): an
+  // interactive view reuses the list 30s, re-read behind the answer (fetch-retry.ts `shareForMs`).
+  const response = await fetchWithRetry(`${url}/campaigns?${params}`, { headers: reqHeaders }, { shareForMs: 30_000 });
   if (!response.ok) {
     const body = await response.text();
     throw new Error(`[features-service] campaign-service /campaigns failed (${response.status}): ${body}`);
