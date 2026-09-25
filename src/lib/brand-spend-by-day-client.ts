@@ -54,6 +54,7 @@ async function fetchDatedSpendForCampaign(
   headers: { orgId: string },
   pricing: Pricing,
   workflowDynastySlug: string | undefined,
+  startedAfter?: string,
 ): Promise<Map<string, number>> {
   const url = process.env.RUNS_SERVICE_URL;
   const apiKey = process.env.RUNS_SERVICE_API_KEY;
@@ -70,6 +71,7 @@ async function fetchDatedSpendForCampaign(
   if (typeof campaign === "string") params.set("campaignId", campaign);
   else if (campaign) params.set("campaignIds", campaign.join(","));
   if (workflowDynastySlug) params.set("workflowDynastySlug", workflowDynastySlug);
+  if (startedAfter) params.set("startedAfter", startedAfter);
 
   const response = await fetchWithRetry(`${url}/v1/stats/public/costs/timeseries?${params}`, {
     headers: { "x-api-key": apiKey },
@@ -176,6 +178,9 @@ export async function fetchBrandCommittedSpendByDay(
   // The timeseries route resolves it to its versioned slugs through workflow-service, so the curve's
   // spend leg is narrowed by the SAME catalogue the untimed total is. Omitted → today's curve.
   workflowDynastySlug?: string,
+  // Only the runs started at or after this instant — the maturity cutoff, when the caller wants the
+  // maturing campaigns' own recent spend (`lib/roi-maturity.ts`). Omitted → the whole history.
+  startedAfter?: string,
 ): Promise<Map<string, number>> {
   const members = campaignScopeIds(campaignScope);
 
@@ -188,6 +193,7 @@ export async function fetchBrandCommittedSpendByDay(
       headers,
       pricing,
       workflowDynastySlug,
+      startedAfter,
     );
   }
 
@@ -200,7 +206,7 @@ export async function fetchBrandCommittedSpendByDay(
     chunks.push(members.slice(i, i + RUNS_CAMPAIGN_IDS_PER_REQUEST));
   }
   const perMember = await mapWithConcurrency(chunks, SPEND_BY_DAY_MEMBER_CONCURRENCY, (chunk) =>
-    fetchDatedSpendForCampaign(brandId, chunk, featureScope, headers, pricing, workflowDynastySlug),
+    fetchDatedSpendForCampaign(brandId, chunk, featureScope, headers, pricing, workflowDynastySlug, startedAfter),
   );
 
   const byDay = new Map<string, number>();

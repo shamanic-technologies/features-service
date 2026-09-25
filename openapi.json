@@ -1448,12 +1448,12 @@
               "costOfAcquisitionPct": {
                 "type": "number",
                 "nullable": true,
-                "description": "(committedCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+                "description": "(mature committed spend / mature pipeline) * 100 — the MATURE cohort, see maturityDays. Null when that pipeline is null or 0, or when unmeasuredReason is 'maturing'."
               },
               "roiMultiple": {
                 "type": "number",
                 "nullable": true,
-                "description": "totalPipelineUsd / committedCostUsd. Null when committedCostUsd is 0 or totalPipelineUsd is null."
+                "description": "mature pipeline / mature committed spend — the MATURE cohort, see maturityDays. Null when that spend is 0 or that pipeline is null; with unmeasuredReason 'maturing' when the scope spent but nothing it spent is mature yet. Never 0 in place of null."
               },
               "costPerAcquisitionUsd": {
                 "type": "number",
@@ -1467,7 +1467,20 @@
               "costPerConversionUsd": {
                 "type": "number",
                 "nullable": true,
-                "description": "LENS ONLY — committedCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                "description": "LENS ONLY — the mature cohort's committed spend / its expected conversions (see maturityDays). Null when that count is 0 or the scope is maturing. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+              },
+              "maturityDays": {
+                "type": "integer",
+                "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 14 days for its replies and visits; every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads FIRST CONTACTED before it (their outcomes count whenever they happened; a lead with no contact date is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
+              },
+              "unmeasuredReason": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "maturing",
+                  "maturity_unknown"
+                ],
+                "description": "Why the ratios are null for a reason other than having nothing to divide. 'maturing' = the scope has spent, but none of that spend is older than maturityDays yet, so there is no mature cohort to measure — a young campaign, not a bad one. 'maturity_unknown' = campaign-service could not say which campaigns wait for their outcomes, so the mature cohort could not be separated (a degraded read, not a property of the scope). Null otherwise."
               }
             },
             "required": [
@@ -1475,7 +1488,9 @@
               "actualCostUsd",
               "costOfAcquisitionPct",
               "roiMultiple",
-              "costPerAcquisitionUsd"
+              "costPerAcquisitionUsd",
+              "maturityDays",
+              "unmeasuredReason"
             ],
             "description": "Derived cost economics. Always present; ratios are null per the documented null semantics."
           },
@@ -1513,11 +1528,11 @@
                     },
                     "cumulativeSpendUsd": {
                       "type": "number",
-                      "description": "COMMITTED — every dollar of committed spend (billed + open holds) from the brand's first spend up to and including this day, the SAME basis costEconomics.committedCostUsd rides, so the curve's last point reconciles with the headline ROI rather than charting a different currency. Dated by runs-service's own cost buckets (each run's started_at); nothing is spread, smoothed or amortised."
+                      "description": "COMMITTED, MATURE COHORT — every dollar of committed spend (billed + open holds) from the brand's first spend up to and including this day, on the SAME basis and the SAME mature cohort costEconomics.roiMultiple divides (see costEconomics.maturityDays): from the maturity cutoff on, a maturing campaign's own spend is left out. So the curve's last point IS the headline ROI rather than a different currency or a different population. Dated by runs-service's own cost buckets (each run's started_at); nothing is spread, smoothed or amortised."
                     },
                     "cumulativePipelineUsd": {
                       "type": "number",
-                      "description": "REALIZED — every dollar of expected pipeline earned by a DATED outcome up to and including this day, from the same per-lead event timestamps the leads[] table and the daily signal series use. A day with spend but no new outcome carries the previous day's value forward, so the curve correctly dips."
+                      "description": "REALIZED, MATURE COHORT — every dollar of expected pipeline earned by a DATED outcome of a lead in the mature cohort (first contacted before the maturity cutoff, or undated) up to and including this day, from the same per-lead event timestamps the leads[] table and the daily signal series use. A day with spend but no new outcome carries the previous day's value forward, so the curve correctly dips."
                     },
                     "roiMultiple": {
                       "type": "number",
@@ -1536,11 +1551,11 @@
               },
               "datedPipelineUsd": {
                 "type": "number",
-                "description": "The curve's final cumulative pipeline — the part of headline.totalPipelineUsd this curve can describe."
+                "description": "The curve's final cumulative pipeline — the part of the MATURE cohort's pipeline (the one costEconomics.roiMultiple divides; headline.totalPipelineUsd when costEconomics.maturityDays is 0) this curve can describe."
               },
               "undatedPipelineUsd": {
                 "type": "number",
-                "description": "Pipeline counted in headline.totalPipelineUsd whose outcome carries NO timestamp, so it sits on no day. Reported rather than dropped or parked on a fabricated day: datedPipelineUsd + undatedPipelineUsd === headline.totalPipelineUsd."
+                "description": "Mature-cohort pipeline whose outcome carries NO timestamp, so it sits on no day. Reported rather than dropped or parked on a fabricated day: datedPipelineUsd + undatedPipelineUsd === the mature cohort's pipeline, which is headline.totalPipelineUsd when costEconomics.maturityDays is 0."
               }
             },
             "required": [
@@ -2856,12 +2871,12 @@
                     "costOfAcquisitionPct": {
                       "type": "number",
                       "nullable": true,
-                      "description": "(committedCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+                      "description": "(mature committed spend / mature pipeline) * 100 — the MATURE cohort, see maturityDays. Null when that pipeline is null or 0, or when unmeasuredReason is 'maturing'."
                     },
                     "roiMultiple": {
                       "type": "number",
                       "nullable": true,
-                      "description": "totalPipelineUsd / committedCostUsd. Null when committedCostUsd is 0 or totalPipelineUsd is null."
+                      "description": "mature pipeline / mature committed spend — the MATURE cohort, see maturityDays. Null when that spend is 0 or that pipeline is null; with unmeasuredReason 'maturing' when the scope spent but nothing it spent is mature yet. Never 0 in place of null."
                     },
                     "costPerAcquisitionUsd": {
                       "type": "number",
@@ -2875,7 +2890,20 @@
                     "costPerConversionUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "LENS ONLY — committedCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                      "description": "LENS ONLY — the mature cohort's committed spend / its expected conversions (see maturityDays). Null when that count is 0 or the scope is maturing. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                    },
+                    "maturityDays": {
+                      "type": "integer",
+                      "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 14 days for its replies and visits; every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads FIRST CONTACTED before it (their outcomes count whenever they happened; a lead with no contact date is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
+                    },
+                    "unmeasuredReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "maturing",
+                        "maturity_unknown"
+                      ],
+                      "description": "Why the ratios are null for a reason other than having nothing to divide. 'maturing' = the scope has spent, but none of that spend is older than maturityDays yet, so there is no mature cohort to measure — a young campaign, not a bad one. 'maturity_unknown' = campaign-service could not say which campaigns wait for their outcomes, so the mature cohort could not be separated (a degraded read, not a property of the scope). Null otherwise."
                     }
                   },
                   "required": [
@@ -2883,7 +2911,9 @@
                     "actualCostUsd",
                     "costOfAcquisitionPct",
                     "roiMultiple",
-                    "costPerAcquisitionUsd"
+                    "costPerAcquisitionUsd",
+                    "maturityDays",
+                    "unmeasuredReason"
                   ]
                 },
                 "outcomes": {
@@ -3088,12 +3118,12 @@
                     "costOfAcquisitionPct": {
                       "type": "number",
                       "nullable": true,
-                      "description": "(committedCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+                      "description": "(mature committed spend / mature pipeline) * 100 — the MATURE cohort, see maturityDays. Null when that pipeline is null or 0, or when unmeasuredReason is 'maturing'."
                     },
                     "roiMultiple": {
                       "type": "number",
                       "nullable": true,
-                      "description": "totalPipelineUsd / committedCostUsd. Null when committedCostUsd is 0 or totalPipelineUsd is null."
+                      "description": "mature pipeline / mature committed spend — the MATURE cohort, see maturityDays. Null when that spend is 0 or that pipeline is null; with unmeasuredReason 'maturing' when the scope spent but nothing it spent is mature yet. Never 0 in place of null."
                     },
                     "costPerAcquisitionUsd": {
                       "type": "number",
@@ -3107,7 +3137,20 @@
                     "costPerConversionUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "LENS ONLY — committedCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                      "description": "LENS ONLY — the mature cohort's committed spend / its expected conversions (see maturityDays). Null when that count is 0 or the scope is maturing. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                    },
+                    "maturityDays": {
+                      "type": "integer",
+                      "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 14 days for its replies and visits; every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads FIRST CONTACTED before it (their outcomes count whenever they happened; a lead with no contact date is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
+                    },
+                    "unmeasuredReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "maturing",
+                        "maturity_unknown"
+                      ],
+                      "description": "Why the ratios are null for a reason other than having nothing to divide. 'maturing' = the scope has spent, but none of that spend is older than maturityDays yet, so there is no mature cohort to measure — a young campaign, not a bad one. 'maturity_unknown' = campaign-service could not say which campaigns wait for their outcomes, so the mature cohort could not be separated (a degraded read, not a property of the scope). Null otherwise."
                     }
                   },
                   "required": [
@@ -3115,7 +3158,9 @@
                     "actualCostUsd",
                     "costOfAcquisitionPct",
                     "roiMultiple",
-                    "costPerAcquisitionUsd"
+                    "costPerAcquisitionUsd",
+                    "maturityDays",
+                    "unmeasuredReason"
                   ]
                 },
                 "outcomes": {
@@ -3269,12 +3314,12 @@
                     "costOfAcquisitionPct": {
                       "type": "number",
                       "nullable": true,
-                      "description": "(committedCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+                      "description": "(mature committed spend / mature pipeline) * 100 — the MATURE cohort, see maturityDays. Null when that pipeline is null or 0, or when unmeasuredReason is 'maturing'."
                     },
                     "roiMultiple": {
                       "type": "number",
                       "nullable": true,
-                      "description": "totalPipelineUsd / committedCostUsd. Null when committedCostUsd is 0 or totalPipelineUsd is null."
+                      "description": "mature pipeline / mature committed spend — the MATURE cohort, see maturityDays. Null when that spend is 0 or that pipeline is null; with unmeasuredReason 'maturing' when the scope spent but nothing it spent is mature yet. Never 0 in place of null."
                     },
                     "costPerAcquisitionUsd": {
                       "type": "number",
@@ -3288,7 +3333,20 @@
                     "costPerConversionUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "LENS ONLY — committedCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                      "description": "LENS ONLY — the mature cohort's committed spend / its expected conversions (see maturityDays). Null when that count is 0 or the scope is maturing. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                    },
+                    "maturityDays": {
+                      "type": "integer",
+                      "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 14 days for its replies and visits; every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads FIRST CONTACTED before it (their outcomes count whenever they happened; a lead with no contact date is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
+                    },
+                    "unmeasuredReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "maturing",
+                        "maturity_unknown"
+                      ],
+                      "description": "Why the ratios are null for a reason other than having nothing to divide. 'maturing' = the scope has spent, but none of that spend is older than maturityDays yet, so there is no mature cohort to measure — a young campaign, not a bad one. 'maturity_unknown' = campaign-service could not say which campaigns wait for their outcomes, so the mature cohort could not be separated (a degraded read, not a property of the scope). Null otherwise."
                     }
                   },
                   "required": [
@@ -3296,7 +3354,9 @@
                     "actualCostUsd",
                     "costOfAcquisitionPct",
                     "roiMultiple",
-                    "costPerAcquisitionUsd"
+                    "costPerAcquisitionUsd",
+                    "maturityDays",
+                    "unmeasuredReason"
                   ]
                 }
               },
@@ -7017,12 +7077,12 @@
               "costOfAcquisitionPct": {
                 "type": "number",
                 "nullable": true,
-                "description": "(committedCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+                "description": "(mature committed spend / mature pipeline) * 100 — the MATURE cohort, see maturityDays. Null when that pipeline is null or 0, or when unmeasuredReason is 'maturing'."
               },
               "roiMultiple": {
                 "type": "number",
                 "nullable": true,
-                "description": "totalPipelineUsd / committedCostUsd. Null when committedCostUsd is 0 or totalPipelineUsd is null."
+                "description": "mature pipeline / mature committed spend — the MATURE cohort, see maturityDays. Null when that spend is 0 or that pipeline is null; with unmeasuredReason 'maturing' when the scope spent but nothing it spent is mature yet. Never 0 in place of null."
               },
               "costPerAcquisitionUsd": {
                 "type": "number",
@@ -7036,7 +7096,20 @@
               "costPerConversionUsd": {
                 "type": "number",
                 "nullable": true,
-                "description": "LENS ONLY — committedCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                "description": "LENS ONLY — the mature cohort's committed spend / its expected conversions (see maturityDays). Null when that count is 0 or the scope is maturing. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+              },
+              "maturityDays": {
+                "type": "integer",
+                "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 14 days for its replies and visits; every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads FIRST CONTACTED before it (their outcomes count whenever they happened; a lead with no contact date is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
+              },
+              "unmeasuredReason": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "maturing",
+                  "maturity_unknown"
+                ],
+                "description": "Why the ratios are null for a reason other than having nothing to divide. 'maturing' = the scope has spent, but none of that spend is older than maturityDays yet, so there is no mature cohort to measure — a young campaign, not a bad one. 'maturity_unknown' = campaign-service could not say which campaigns wait for their outcomes, so the mature cohort could not be separated (a degraded read, not a property of the scope). Null otherwise."
               }
             },
             "required": [
@@ -7044,7 +7117,9 @@
               "actualCostUsd",
               "costOfAcquisitionPct",
               "roiMultiple",
-              "costPerAcquisitionUsd"
+              "costPerAcquisitionUsd",
+              "maturityDays",
+              "unmeasuredReason"
             ],
             "description": "Derived cost economics. Always present; ratios are null per the documented null semantics."
           },
@@ -7082,11 +7157,11 @@
                     },
                     "cumulativeSpendUsd": {
                       "type": "number",
-                      "description": "COMMITTED — every dollar of committed spend (billed + open holds) from the brand's first spend up to and including this day, the SAME basis costEconomics.committedCostUsd rides, so the curve's last point reconciles with the headline ROI rather than charting a different currency. Dated by runs-service's own cost buckets (each run's started_at); nothing is spread, smoothed or amortised."
+                      "description": "COMMITTED, MATURE COHORT — every dollar of committed spend (billed + open holds) from the brand's first spend up to and including this day, on the SAME basis and the SAME mature cohort costEconomics.roiMultiple divides (see costEconomics.maturityDays): from the maturity cutoff on, a maturing campaign's own spend is left out. So the curve's last point IS the headline ROI rather than a different currency or a different population. Dated by runs-service's own cost buckets (each run's started_at); nothing is spread, smoothed or amortised."
                     },
                     "cumulativePipelineUsd": {
                       "type": "number",
-                      "description": "REALIZED — every dollar of expected pipeline earned by a DATED outcome up to and including this day, from the same per-lead event timestamps the leads[] table and the daily signal series use. A day with spend but no new outcome carries the previous day's value forward, so the curve correctly dips."
+                      "description": "REALIZED, MATURE COHORT — every dollar of expected pipeline earned by a DATED outcome of a lead in the mature cohort (first contacted before the maturity cutoff, or undated) up to and including this day, from the same per-lead event timestamps the leads[] table and the daily signal series use. A day with spend but no new outcome carries the previous day's value forward, so the curve correctly dips."
                     },
                     "roiMultiple": {
                       "type": "number",
@@ -7105,11 +7180,11 @@
               },
               "datedPipelineUsd": {
                 "type": "number",
-                "description": "The curve's final cumulative pipeline — the part of headline.totalPipelineUsd this curve can describe."
+                "description": "The curve's final cumulative pipeline — the part of the MATURE cohort's pipeline (the one costEconomics.roiMultiple divides; headline.totalPipelineUsd when costEconomics.maturityDays is 0) this curve can describe."
               },
               "undatedPipelineUsd": {
                 "type": "number",
-                "description": "Pipeline counted in headline.totalPipelineUsd whose outcome carries NO timestamp, so it sits on no day. Reported rather than dropped or parked on a fabricated day: datedPipelineUsd + undatedPipelineUsd === headline.totalPipelineUsd."
+                "description": "Mature-cohort pipeline whose outcome carries NO timestamp, so it sits on no day. Reported rather than dropped or parked on a fabricated day: datedPipelineUsd + undatedPipelineUsd === the mature cohort's pipeline, which is headline.totalPipelineUsd when costEconomics.maturityDays is 0."
               }
             },
             "required": [
@@ -8344,12 +8419,12 @@
                     "costOfAcquisitionPct": {
                       "type": "number",
                       "nullable": true,
-                      "description": "(committedCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+                      "description": "(mature committed spend / mature pipeline) * 100 — the MATURE cohort, see maturityDays. Null when that pipeline is null or 0, or when unmeasuredReason is 'maturing'."
                     },
                     "roiMultiple": {
                       "type": "number",
                       "nullable": true,
-                      "description": "totalPipelineUsd / committedCostUsd. Null when committedCostUsd is 0 or totalPipelineUsd is null."
+                      "description": "mature pipeline / mature committed spend — the MATURE cohort, see maturityDays. Null when that spend is 0 or that pipeline is null; with unmeasuredReason 'maturing' when the scope spent but nothing it spent is mature yet. Never 0 in place of null."
                     },
                     "costPerAcquisitionUsd": {
                       "type": "number",
@@ -8363,7 +8438,20 @@
                     "costPerConversionUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "LENS ONLY — committedCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                      "description": "LENS ONLY — the mature cohort's committed spend / its expected conversions (see maturityDays). Null when that count is 0 or the scope is maturing. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                    },
+                    "maturityDays": {
+                      "type": "integer",
+                      "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 14 days for its replies and visits; every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads FIRST CONTACTED before it (their outcomes count whenever they happened; a lead with no contact date is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
+                    },
+                    "unmeasuredReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "maturing",
+                        "maturity_unknown"
+                      ],
+                      "description": "Why the ratios are null for a reason other than having nothing to divide. 'maturing' = the scope has spent, but none of that spend is older than maturityDays yet, so there is no mature cohort to measure — a young campaign, not a bad one. 'maturity_unknown' = campaign-service could not say which campaigns wait for their outcomes, so the mature cohort could not be separated (a degraded read, not a property of the scope). Null otherwise."
                     }
                   },
                   "required": [
@@ -8371,7 +8459,9 @@
                     "actualCostUsd",
                     "costOfAcquisitionPct",
                     "roiMultiple",
-                    "costPerAcquisitionUsd"
+                    "costPerAcquisitionUsd",
+                    "maturityDays",
+                    "unmeasuredReason"
                   ],
                   "description": "Derived cost economics. Always present; ratios are null per the documented null semantics."
                 }
@@ -8612,12 +8702,12 @@
                     "costOfAcquisitionPct": {
                       "type": "number",
                       "nullable": true,
-                      "description": "(committedCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+                      "description": "(mature committed spend / mature pipeline) * 100 — the MATURE cohort, see maturityDays. Null when that pipeline is null or 0, or when unmeasuredReason is 'maturing'."
                     },
                     "roiMultiple": {
                       "type": "number",
                       "nullable": true,
-                      "description": "totalPipelineUsd / committedCostUsd. Null when committedCostUsd is 0 or totalPipelineUsd is null."
+                      "description": "mature pipeline / mature committed spend — the MATURE cohort, see maturityDays. Null when that spend is 0 or that pipeline is null; with unmeasuredReason 'maturing' when the scope spent but nothing it spent is mature yet. Never 0 in place of null."
                     },
                     "costPerAcquisitionUsd": {
                       "type": "number",
@@ -8631,7 +8721,20 @@
                     "costPerConversionUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "LENS ONLY — committedCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                      "description": "LENS ONLY — the mature cohort's committed spend / its expected conversions (see maturityDays). Null when that count is 0 or the scope is maturing. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                    },
+                    "maturityDays": {
+                      "type": "integer",
+                      "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 14 days for its replies and visits; every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads FIRST CONTACTED before it (their outcomes count whenever they happened; a lead with no contact date is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
+                    },
+                    "unmeasuredReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "maturing",
+                        "maturity_unknown"
+                      ],
+                      "description": "Why the ratios are null for a reason other than having nothing to divide. 'maturing' = the scope has spent, but none of that spend is older than maturityDays yet, so there is no mature cohort to measure — a young campaign, not a bad one. 'maturity_unknown' = campaign-service could not say which campaigns wait for their outcomes, so the mature cohort could not be separated (a degraded read, not a property of the scope). Null otherwise."
                     }
                   },
                   "required": [
@@ -8639,7 +8742,9 @@
                     "actualCostUsd",
                     "costOfAcquisitionPct",
                     "roiMultiple",
-                    "costPerAcquisitionUsd"
+                    "costPerAcquisitionUsd",
+                    "maturityDays",
+                    "unmeasuredReason"
                   ],
                   "description": "Derived cost economics. Always present; ratios are null per the documented null semantics."
                 },
@@ -8702,6 +8807,19 @@
                     "costPerAcquisitionUsd": {
                       "type": "number",
                       "nullable": true
+                    },
+                    "maturityDays": {
+                      "type": "integer",
+                      "description": "The charged block's own maturity delay — the ratios ride the same mature cohort, with every customer-declared cost in it (those carry no date)."
+                    },
+                    "unmeasuredReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "maturing",
+                        "maturity_unknown"
+                      ],
+                      "description": "The charged block's own reason, carried over — the customer's own money is never the whole denominator of a return on our outreach."
                     }
                   },
                   "required": [
@@ -8710,7 +8828,9 @@
                     "committedCostUsd",
                     "costOfAcquisitionPct",
                     "roiMultiple",
-                    "costPerAcquisitionUsd"
+                    "costPerAcquisitionUsd",
+                    "maturityDays",
+                    "unmeasuredReason"
                   ],
                   "description": "The funnel's cost of acquisition WITH the customer's own legs in it, and the return that divides by it. The byte-same three ratios costEconomics computes, off the summed basis and the SAME lifetime revenue — so with nothing declared this block is identical to the charged one, and the day a cost is stated the whole ladder moves together instead of one figure drifting from the others. Reported apart from the charged block because what we charged and what they spent are two questions with two owners, and one of them is what we bill."
                 },
@@ -10210,12 +10330,12 @@
               "costOfAcquisitionPct": {
                 "type": "number",
                 "nullable": true,
-                "description": "(committedCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+                "description": "(mature committed spend / mature pipeline) * 100 — the MATURE cohort, see maturityDays. Null when that pipeline is null or 0, or when unmeasuredReason is 'maturing'."
               },
               "roiMultiple": {
                 "type": "number",
                 "nullable": true,
-                "description": "totalPipelineUsd / committedCostUsd. Null when committedCostUsd is 0 or totalPipelineUsd is null."
+                "description": "mature pipeline / mature committed spend — the MATURE cohort, see maturityDays. Null when that spend is 0 or that pipeline is null; with unmeasuredReason 'maturing' when the scope spent but nothing it spent is mature yet. Never 0 in place of null."
               },
               "costPerAcquisitionUsd": {
                 "type": "number",
@@ -10229,7 +10349,20 @@
               "costPerConversionUsd": {
                 "type": "number",
                 "nullable": true,
-                "description": "LENS ONLY — committedCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                "description": "LENS ONLY — the mature cohort's committed spend / its expected conversions (see maturityDays). Null when that count is 0 or the scope is maturing. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+              },
+              "maturityDays": {
+                "type": "integer",
+                "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 14 days for its replies and visits; every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads FIRST CONTACTED before it (their outcomes count whenever they happened; a lead with no contact date is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
+              },
+              "unmeasuredReason": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "maturing",
+                  "maturity_unknown"
+                ],
+                "description": "Why the ratios are null for a reason other than having nothing to divide. 'maturing' = the scope has spent, but none of that spend is older than maturityDays yet, so there is no mature cohort to measure — a young campaign, not a bad one. 'maturity_unknown' = campaign-service could not say which campaigns wait for their outcomes, so the mature cohort could not be separated (a degraded read, not a property of the scope). Null otherwise."
               }
             },
             "required": [
@@ -10237,7 +10370,9 @@
               "actualCostUsd",
               "costOfAcquisitionPct",
               "roiMultiple",
-              "costPerAcquisitionUsd"
+              "costPerAcquisitionUsd",
+              "maturityDays",
+              "unmeasuredReason"
             ],
             "description": "Derived cost economics. Always present; ratios are null per the documented null semantics."
           },
@@ -10275,11 +10410,11 @@
                     },
                     "cumulativeSpendUsd": {
                       "type": "number",
-                      "description": "COMMITTED — every dollar of committed spend (billed + open holds) from the brand's first spend up to and including this day, the SAME basis costEconomics.committedCostUsd rides, so the curve's last point reconciles with the headline ROI rather than charting a different currency. Dated by runs-service's own cost buckets (each run's started_at); nothing is spread, smoothed or amortised."
+                      "description": "COMMITTED, MATURE COHORT — every dollar of committed spend (billed + open holds) from the brand's first spend up to and including this day, on the SAME basis and the SAME mature cohort costEconomics.roiMultiple divides (see costEconomics.maturityDays): from the maturity cutoff on, a maturing campaign's own spend is left out. So the curve's last point IS the headline ROI rather than a different currency or a different population. Dated by runs-service's own cost buckets (each run's started_at); nothing is spread, smoothed or amortised."
                     },
                     "cumulativePipelineUsd": {
                       "type": "number",
-                      "description": "REALIZED — every dollar of expected pipeline earned by a DATED outcome up to and including this day, from the same per-lead event timestamps the leads[] table and the daily signal series use. A day with spend but no new outcome carries the previous day's value forward, so the curve correctly dips."
+                      "description": "REALIZED, MATURE COHORT — every dollar of expected pipeline earned by a DATED outcome of a lead in the mature cohort (first contacted before the maturity cutoff, or undated) up to and including this day, from the same per-lead event timestamps the leads[] table and the daily signal series use. A day with spend but no new outcome carries the previous day's value forward, so the curve correctly dips."
                     },
                     "roiMultiple": {
                       "type": "number",
@@ -10298,11 +10433,11 @@
               },
               "datedPipelineUsd": {
                 "type": "number",
-                "description": "The curve's final cumulative pipeline — the part of headline.totalPipelineUsd this curve can describe."
+                "description": "The curve's final cumulative pipeline — the part of the MATURE cohort's pipeline (the one costEconomics.roiMultiple divides; headline.totalPipelineUsd when costEconomics.maturityDays is 0) this curve can describe."
               },
               "undatedPipelineUsd": {
                 "type": "number",
-                "description": "Pipeline counted in headline.totalPipelineUsd whose outcome carries NO timestamp, so it sits on no day. Reported rather than dropped or parked on a fabricated day: datedPipelineUsd + undatedPipelineUsd === headline.totalPipelineUsd."
+                "description": "Mature-cohort pipeline whose outcome carries NO timestamp, so it sits on no day. Reported rather than dropped or parked on a fabricated day: datedPipelineUsd + undatedPipelineUsd === the mature cohort's pipeline, which is headline.totalPipelineUsd when costEconomics.maturityDays is 0."
               }
             },
             "required": [
@@ -11573,12 +11708,12 @@
                     "costOfAcquisitionPct": {
                       "type": "number",
                       "nullable": true,
-                      "description": "(committedCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+                      "description": "(mature committed spend / mature pipeline) * 100 — the MATURE cohort, see maturityDays. Null when that pipeline is null or 0, or when unmeasuredReason is 'maturing'."
                     },
                     "roiMultiple": {
                       "type": "number",
                       "nullable": true,
-                      "description": "totalPipelineUsd / committedCostUsd. Null when committedCostUsd is 0 or totalPipelineUsd is null."
+                      "description": "mature pipeline / mature committed spend — the MATURE cohort, see maturityDays. Null when that spend is 0 or that pipeline is null; with unmeasuredReason 'maturing' when the scope spent but nothing it spent is mature yet. Never 0 in place of null."
                     },
                     "costPerAcquisitionUsd": {
                       "type": "number",
@@ -11592,7 +11727,20 @@
                     "costPerConversionUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "LENS ONLY — committedCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                      "description": "LENS ONLY — the mature cohort's committed spend / its expected conversions (see maturityDays). Null when that count is 0 or the scope is maturing. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                    },
+                    "maturityDays": {
+                      "type": "integer",
+                      "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 14 days for its replies and visits; every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads FIRST CONTACTED before it (their outcomes count whenever they happened; a lead with no contact date is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
+                    },
+                    "unmeasuredReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "maturing",
+                        "maturity_unknown"
+                      ],
+                      "description": "Why the ratios are null for a reason other than having nothing to divide. 'maturing' = the scope has spent, but none of that spend is older than maturityDays yet, so there is no mature cohort to measure — a young campaign, not a bad one. 'maturity_unknown' = campaign-service could not say which campaigns wait for their outcomes, so the mature cohort could not be separated (a degraded read, not a property of the scope). Null otherwise."
                     }
                   },
                   "required": [
@@ -11600,7 +11748,9 @@
                     "actualCostUsd",
                     "costOfAcquisitionPct",
                     "roiMultiple",
-                    "costPerAcquisitionUsd"
+                    "costPerAcquisitionUsd",
+                    "maturityDays",
+                    "unmeasuredReason"
                   ],
                   "description": "Derived cost economics. Always present; ratios are null per the documented null semantics."
                 },
@@ -11735,6 +11885,19 @@
               "costPerAcquisitionUsd": {
                 "type": "number",
                 "nullable": true
+              },
+              "maturityDays": {
+                "type": "integer",
+                "description": "The charged block's own maturity delay — the ratios ride the same mature cohort, with every customer-declared cost in it (those carry no date)."
+              },
+              "unmeasuredReason": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "maturing",
+                  "maturity_unknown"
+                ],
+                "description": "The charged block's own reason, carried over — the customer's own money is never the whole denominator of a return on our outreach."
               }
             },
             "required": [
@@ -11743,7 +11906,9 @@
               "committedCostUsd",
               "costOfAcquisitionPct",
               "roiMultiple",
-              "costPerAcquisitionUsd"
+              "costPerAcquisitionUsd",
+              "maturityDays",
+              "unmeasuredReason"
             ],
             "description": "The funnel's cost of acquisition WITH the customer's own legs in it, and the return that divides by it — the byte-same three ratios costEconomics computes, off the summed basis and the SAME lifetime revenue. With nothing declared it is identical to the charged block."
           }
@@ -13193,12 +13358,12 @@
               "costOfAcquisitionPct": {
                 "type": "number",
                 "nullable": true,
-                "description": "(committedCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+                "description": "(mature committed spend / mature pipeline) * 100 — the MATURE cohort, see maturityDays. Null when that pipeline is null or 0, or when unmeasuredReason is 'maturing'."
               },
               "roiMultiple": {
                 "type": "number",
                 "nullable": true,
-                "description": "totalPipelineUsd / committedCostUsd. Null when committedCostUsd is 0 or totalPipelineUsd is null."
+                "description": "mature pipeline / mature committed spend — the MATURE cohort, see maturityDays. Null when that spend is 0 or that pipeline is null; with unmeasuredReason 'maturing' when the scope spent but nothing it spent is mature yet. Never 0 in place of null."
               },
               "costPerAcquisitionUsd": {
                 "type": "number",
@@ -13212,7 +13377,20 @@
               "costPerConversionUsd": {
                 "type": "number",
                 "nullable": true,
-                "description": "LENS ONLY — committedCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                "description": "LENS ONLY — the mature cohort's committed spend / its expected conversions (see maturityDays). Null when that count is 0 or the scope is maturing. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+              },
+              "maturityDays": {
+                "type": "integer",
+                "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 14 days for its replies and visits; every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads FIRST CONTACTED before it (their outcomes count whenever they happened; a lead with no contact date is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
+              },
+              "unmeasuredReason": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "maturing",
+                  "maturity_unknown"
+                ],
+                "description": "Why the ratios are null for a reason other than having nothing to divide. 'maturing' = the scope has spent, but none of that spend is older than maturityDays yet, so there is no mature cohort to measure — a young campaign, not a bad one. 'maturity_unknown' = campaign-service could not say which campaigns wait for their outcomes, so the mature cohort could not be separated (a degraded read, not a property of the scope). Null otherwise."
               }
             },
             "required": [
@@ -13220,7 +13398,9 @@
               "actualCostUsd",
               "costOfAcquisitionPct",
               "roiMultiple",
-              "costPerAcquisitionUsd"
+              "costPerAcquisitionUsd",
+              "maturityDays",
+              "unmeasuredReason"
             ],
             "description": "Derived cost economics. Always present; ratios are null per the documented null semantics."
           },
@@ -13258,11 +13438,11 @@
                     },
                     "cumulativeSpendUsd": {
                       "type": "number",
-                      "description": "COMMITTED — every dollar of committed spend (billed + open holds) from the brand's first spend up to and including this day, the SAME basis costEconomics.committedCostUsd rides, so the curve's last point reconciles with the headline ROI rather than charting a different currency. Dated by runs-service's own cost buckets (each run's started_at); nothing is spread, smoothed or amortised."
+                      "description": "COMMITTED, MATURE COHORT — every dollar of committed spend (billed + open holds) from the brand's first spend up to and including this day, on the SAME basis and the SAME mature cohort costEconomics.roiMultiple divides (see costEconomics.maturityDays): from the maturity cutoff on, a maturing campaign's own spend is left out. So the curve's last point IS the headline ROI rather than a different currency or a different population. Dated by runs-service's own cost buckets (each run's started_at); nothing is spread, smoothed or amortised."
                     },
                     "cumulativePipelineUsd": {
                       "type": "number",
-                      "description": "REALIZED — every dollar of expected pipeline earned by a DATED outcome up to and including this day, from the same per-lead event timestamps the leads[] table and the daily signal series use. A day with spend but no new outcome carries the previous day's value forward, so the curve correctly dips."
+                      "description": "REALIZED, MATURE COHORT — every dollar of expected pipeline earned by a DATED outcome of a lead in the mature cohort (first contacted before the maturity cutoff, or undated) up to and including this day, from the same per-lead event timestamps the leads[] table and the daily signal series use. A day with spend but no new outcome carries the previous day's value forward, so the curve correctly dips."
                     },
                     "roiMultiple": {
                       "type": "number",
@@ -13281,11 +13461,11 @@
               },
               "datedPipelineUsd": {
                 "type": "number",
-                "description": "The curve's final cumulative pipeline — the part of headline.totalPipelineUsd this curve can describe."
+                "description": "The curve's final cumulative pipeline — the part of the MATURE cohort's pipeline (the one costEconomics.roiMultiple divides; headline.totalPipelineUsd when costEconomics.maturityDays is 0) this curve can describe."
               },
               "undatedPipelineUsd": {
                 "type": "number",
-                "description": "Pipeline counted in headline.totalPipelineUsd whose outcome carries NO timestamp, so it sits on no day. Reported rather than dropped or parked on a fabricated day: datedPipelineUsd + undatedPipelineUsd === headline.totalPipelineUsd."
+                "description": "Mature-cohort pipeline whose outcome carries NO timestamp, so it sits on no day. Reported rather than dropped or parked on a fabricated day: datedPipelineUsd + undatedPipelineUsd === the mature cohort's pipeline, which is headline.totalPipelineUsd when costEconomics.maturityDays is 0."
               }
             },
             "required": [
@@ -14517,12 +14697,12 @@
                     "costOfAcquisitionPct": {
                       "type": "number",
                       "nullable": true,
-                      "description": "(committedCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+                      "description": "(mature committed spend / mature pipeline) * 100 — the MATURE cohort, see maturityDays. Null when that pipeline is null or 0, or when unmeasuredReason is 'maturing'."
                     },
                     "roiMultiple": {
                       "type": "number",
                       "nullable": true,
-                      "description": "totalPipelineUsd / committedCostUsd. Null when committedCostUsd is 0 or totalPipelineUsd is null."
+                      "description": "mature pipeline / mature committed spend — the MATURE cohort, see maturityDays. Null when that spend is 0 or that pipeline is null; with unmeasuredReason 'maturing' when the scope spent but nothing it spent is mature yet. Never 0 in place of null."
                     },
                     "costPerAcquisitionUsd": {
                       "type": "number",
@@ -14536,7 +14716,20 @@
                     "costPerConversionUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "LENS ONLY — committedCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                      "description": "LENS ONLY — the mature cohort's committed spend / its expected conversions (see maturityDays). Null when that count is 0 or the scope is maturing. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                    },
+                    "maturityDays": {
+                      "type": "integer",
+                      "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 14 days for its replies and visits; every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads FIRST CONTACTED before it (their outcomes count whenever they happened; a lead with no contact date is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
+                    },
+                    "unmeasuredReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "maturing",
+                        "maturity_unknown"
+                      ],
+                      "description": "Why the ratios are null for a reason other than having nothing to divide. 'maturing' = the scope has spent, but none of that spend is older than maturityDays yet, so there is no mature cohort to measure — a young campaign, not a bad one. 'maturity_unknown' = campaign-service could not say which campaigns wait for their outcomes, so the mature cohort could not be separated (a degraded read, not a property of the scope). Null otherwise."
                     }
                   },
                   "required": [
@@ -14544,7 +14737,9 @@
                     "actualCostUsd",
                     "costOfAcquisitionPct",
                     "roiMultiple",
-                    "costPerAcquisitionUsd"
+                    "costPerAcquisitionUsd",
+                    "maturityDays",
+                    "unmeasuredReason"
                   ],
                   "description": "Derived cost economics. Always present; ratios are null per the documented null semantics."
                 }
@@ -14692,12 +14887,12 @@
                     "costOfAcquisitionPct": {
                       "type": "number",
                       "nullable": true,
-                      "description": "(committedCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+                      "description": "(mature committed spend / mature pipeline) * 100 — the MATURE cohort, see maturityDays. Null when that pipeline is null or 0, or when unmeasuredReason is 'maturing'."
                     },
                     "roiMultiple": {
                       "type": "number",
                       "nullable": true,
-                      "description": "totalPipelineUsd / committedCostUsd. Null when committedCostUsd is 0 or totalPipelineUsd is null."
+                      "description": "mature pipeline / mature committed spend — the MATURE cohort, see maturityDays. Null when that spend is 0 or that pipeline is null; with unmeasuredReason 'maturing' when the scope spent but nothing it spent is mature yet. Never 0 in place of null."
                     },
                     "costPerAcquisitionUsd": {
                       "type": "number",
@@ -14711,7 +14906,20 @@
                     "costPerConversionUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "LENS ONLY — committedCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                      "description": "LENS ONLY — the mature cohort's committed spend / its expected conversions (see maturityDays). Null when that count is 0 or the scope is maturing. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                    },
+                    "maturityDays": {
+                      "type": "integer",
+                      "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 14 days for its replies and visits; every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads FIRST CONTACTED before it (their outcomes count whenever they happened; a lead with no contact date is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
+                    },
+                    "unmeasuredReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "maturing",
+                        "maturity_unknown"
+                      ],
+                      "description": "Why the ratios are null for a reason other than having nothing to divide. 'maturing' = the scope has spent, but none of that spend is older than maturityDays yet, so there is no mature cohort to measure — a young campaign, not a bad one. 'maturity_unknown' = campaign-service could not say which campaigns wait for their outcomes, so the mature cohort could not be separated (a degraded read, not a property of the scope). Null otherwise."
                     }
                   },
                   "required": [
@@ -14719,7 +14927,9 @@
                     "actualCostUsd",
                     "costOfAcquisitionPct",
                     "roiMultiple",
-                    "costPerAcquisitionUsd"
+                    "costPerAcquisitionUsd",
+                    "maturityDays",
+                    "unmeasuredReason"
                   ],
                   "description": "Derived cost economics. Always present; ratios are null per the documented null semantics."
                 }
@@ -15769,12 +15979,12 @@
                     "costOfAcquisitionPct": {
                       "type": "number",
                       "nullable": true,
-                      "description": "(committedCostUsd / totalPipelineUsd) * 100. Null when totalPipelineUsd is null or 0."
+                      "description": "(mature committed spend / mature pipeline) * 100 — the MATURE cohort, see maturityDays. Null when that pipeline is null or 0, or when unmeasuredReason is 'maturing'."
                     },
                     "roiMultiple": {
                       "type": "number",
                       "nullable": true,
-                      "description": "totalPipelineUsd / committedCostUsd. Null when committedCostUsd is 0 or totalPipelineUsd is null."
+                      "description": "mature pipeline / mature committed spend — the MATURE cohort, see maturityDays. Null when that spend is 0 or that pipeline is null; with unmeasuredReason 'maturing' when the scope spent but nothing it spent is mature yet. Never 0 in place of null."
                     },
                     "costPerAcquisitionUsd": {
                       "type": "number",
@@ -15788,7 +15998,20 @@
                     "costPerConversionUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "LENS ONLY — committedCostUsd / expectedConversions. Null when expectedConversions is 0. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                      "description": "LENS ONLY — the mature cohort's committed spend / its expected conversions (see maturityDays). Null when that count is 0 or the scope is maturing. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                    },
+                    "maturityDays": {
+                      "type": "integer",
+                      "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 14 days for its replies and visits; every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads FIRST CONTACTED before it (their outcomes count whenever they happened; a lead with no contact date is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
+                    },
+                    "unmeasuredReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "maturing",
+                        "maturity_unknown"
+                      ],
+                      "description": "Why the ratios are null for a reason other than having nothing to divide. 'maturing' = the scope has spent, but none of that spend is older than maturityDays yet, so there is no mature cohort to measure — a young campaign, not a bad one. 'maturity_unknown' = campaign-service could not say which campaigns wait for their outcomes, so the mature cohort could not be separated (a degraded read, not a property of the scope). Null otherwise."
                     }
                   },
                   "required": [
@@ -15796,7 +16019,9 @@
                     "actualCostUsd",
                     "costOfAcquisitionPct",
                     "roiMultiple",
-                    "costPerAcquisitionUsd"
+                    "costPerAcquisitionUsd",
+                    "maturityDays",
+                    "unmeasuredReason"
                   ]
                 },
                 "timeline": {

@@ -29,6 +29,8 @@ vi.mock("@sentry/node", () => ({
 
 process.env.FEATURES_SERVICE_API_KEY = "test-key";
 process.env.RUNS_SERVICE_URL = "http://runs:3000";
+process.env.CAMPAIGN_SERVICE_URL = "http://campaign:3000";
+process.env.CAMPAIGN_SERVICE_API_KEY = "campaign-key";
 process.env.RUNS_SERVICE_API_KEY = "runs-key";
 process.env.EMAIL_GATEWAY_SERVICE_URL = "http://email:3000";
 process.env.EMAIL_GATEWAY_SERVICE_API_KEY = "email-key";
@@ -53,6 +55,8 @@ vi.mock("./revenue.js", async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   computeFeatureRevenue: (...args: unknown[]) => mockComputeFeatureRevenue(...args),
 }));
+
+import { buildCostEconomics } from "../lib/cost-economics.js";
 
 // Send-forecast: the two email-gateway reads + the fleet series-3 aggregation are unit-tested at
 // their own boundaries (send-forecast-client / -aggregate / -compute). Mock them here so the public
@@ -179,6 +183,7 @@ function mockFetchResponses(overrides: Record<string, unknown> = {}) {
 
   vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
     for (const [prefix, body] of Object.entries(defaults).sort((a, b) => b[0].length - a[0].length)) {
       if (url.startsWith(prefix)) {
         return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
@@ -340,6 +345,7 @@ describe("GET /public/stats/ranked", () => {
 
     vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       // Independent journalists family is DOWN (mirrors the prod incident: instantly-service
       // outage → journalists-service 500). The email/recipient + cost families are healthy.
       if (url.startsWith("http://journalists:3000/public/stats")) {
@@ -686,12 +692,13 @@ function setPairResults(pairs: Record<string, PairResult>): void {
       const v = pairs[`${headers.orgId}::${brandId}`] ?? { pipeline: 0, costUsd: 0 };
       return {
         headline: { totalPipelineUsd: v.pipeline },
-        costEconomics: {
-          committedCostUsd: v.costUsd,
-          actualCostUsd: v.actualCostUsd ?? v.costUsd,
-          costOfAcquisitionPct: null,
-          roiMultiple: null,
-        },
+        // Built by the real builder, so the block carries the mature basis the fleet aggregates
+        // compose from (lib/roi-maturity.ts) — nothing is maturing in this fixture.
+        costEconomics: buildCostEconomics({
+          committedCostInUsdCents: v.costUsd * 100,
+          actualCostInUsdCents: (v.actualCostUsd ?? v.costUsd) * 100,
+          totalPipelineUsd: v.pipeline,
+        }),
         timeSeries: v.timeSeries ?? [], organizations: [], leads: [], events: [],
       };
     },
@@ -704,6 +711,7 @@ function mockRevenueFetch(
 ): void {
   vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
     if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
       return new Response(JSON.stringify({ memberships }), { status: 200, headers: { "content-type": "application/json" } });
     }
@@ -836,7 +844,7 @@ describe("GET /public/stats/revenue", () => {
       }
       return {
         headline: { totalPipelineUsd: 75 },
-        costEconomics: { actualCostUsd: 5, costOfAcquisitionPct: null, roiMultiple: null },
+        costEconomics: buildCostEconomics({ committedCostInUsdCents: 500, actualCostInUsdCents: 500, totalPipelineUsd: 75 }),
         timeSeries: [], organizations: [], leads: [], events: [],
       };
     });
@@ -1144,6 +1152,7 @@ describe("GET /public/stats/best-model-cost-per-outcome-trend", () => {
 
     vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       const stated = statedBrandRoute(url, () => ECON_FULL as Record<string, number>);
       if (stated) return stated;
       if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
@@ -1208,6 +1217,7 @@ describe("GET /public/stats/best-model-cost-per-outcome-trend", () => {
 
     vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       const stated = statedBrandRoute(url, () => ECON_FULL as Record<string, number>);
       if (stated) return stated;
       if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
@@ -1249,6 +1259,7 @@ describe("GET /public/stats/best-model-cost-per-outcome-trend", () => {
 
     vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       const stated = statedBrandRoute(url, () => ECON_FULL as Record<string, number>);
       if (stated) return stated;
       if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
@@ -1312,6 +1323,7 @@ describe("GET /public/stats/workflow-cost-per-outcome", () => {
 
     vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       const stated = statedBrandRoute(url, () => ECON_FULL as Record<string, number>);
       if (stated) return stated;
       if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
@@ -1371,6 +1383,7 @@ describe("GET /public/stats/workflow-cost-per-outcome", () => {
 
     vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       const stated = statedBrandRoute(url, () => ECON_FULL as Record<string, number>);
       if (stated) return stated;
       if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
@@ -1417,6 +1430,7 @@ describe("GET /public/stats/workflow-cost-per-outcome", () => {
 
     vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       const stated = statedBrandRoute(url, () => ECON_FULL as Record<string, number>);
       if (stated) return stated;
       if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
@@ -1483,6 +1497,7 @@ describe("GET /public/stats/workflow-cost-per-outcome", () => {
 
     vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       const stated = statedBrandRoute(url, () => ECON_FULL as Record<string, number>);
       if (stated) return stated;
       if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
@@ -1633,6 +1648,7 @@ function mockCostProjectionFetch(opts: {
 
   const spy = vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
     const stated = statedBrandRoute(url, (brandId) => (opts.economicsByBrand[brandId] ?? null) as Record<string, number> | null | "403");
     if (stated) return stated;
     if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
@@ -1688,6 +1704,7 @@ function mockBucketedFetch(opts: {
   const brandOf = (url: string): string | null => new URL(url).searchParams.get("brandId");
   const spy = vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
     if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
       return new Response(JSON.stringify({ memberships: opts.memberships }), { status: 200, headers: { "content-type": "application/json" } });
     }

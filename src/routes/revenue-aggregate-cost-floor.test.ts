@@ -30,6 +30,8 @@ vi.mock("@sentry/node", () => ({
 process.env.FEATURES_SERVICE_API_KEY = "test-key";
 process.env.FEATURE_VIEW_CACHE_ENABLED = "false"; // pure live-compute path on both surfaces
 process.env.RUNS_SERVICE_URL = "http://runs:3000";
+process.env.CAMPAIGN_SERVICE_URL = "http://campaign:3000";
+process.env.CAMPAIGN_SERVICE_API_KEY = "campaign-key";
 process.env.RUNS_SERVICE_API_KEY = "runs-key";
 process.env.EMAIL_GATEWAY_SERVICE_URL = "http://email:3000";
 process.env.EMAIL_GATEWAY_SERVICE_API_KEY = "email-key";
@@ -122,6 +124,7 @@ let conversionCounts: { signup: number; meeting_booked: number; form_submission:
 function mockFetch(): ReturnType<typeof vi.spyOn> {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = urlOf(input);
+    if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
     const params = new URL(url, "http://x").searchParams;
 
     // ── Cross-org projection inputs (shared by both surfaces) ──────────────
@@ -347,6 +350,7 @@ describe("aggregate cost coherence: /revenue spend ↔ /workflow-projection", ()
     fetchSpy.mockRestore();
     fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = urlOf(input);
+      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       if (url.includes("workflow:3000/public/workflows")) return new Response("boom", { status: 500 });
       return (await mockFetchOnce(url)) as Response;
     });
