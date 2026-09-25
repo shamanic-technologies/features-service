@@ -19,7 +19,8 @@ import { campaignFamilyStatsParams } from "./email-gateway-family.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { buildWorkflowDynasties, aggregateAcrossDynasties } from "../routes/public.js";
 import type { WorkflowMetadata } from "./public-stats-clients.js";
-import { fetchActiveAudiences } from "./human-client.js";
+import { fetchActiveAudiences, fetchAudienceMemberEmails } from "./human-client.js";
+import { addCrmRepliesToSlugStats, type CrmOnlyReplier } from "./crm-only-repliers.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { selectCostCents, selectCostCentsString, type Pricing } from "./pricing.js";
 import { type CostBasis } from "./cost-basis.js";
@@ -161,11 +162,17 @@ export async function fetchBrandWorkflowEvidence(
   // taken by ONE caller: the brand-observed cost-per-outreach that floors the budget→sends PROJECTION,
   // which is compared against the fleet benchmark and therefore must be read on the fleet's basis.
   basis: CostBasis = "charged",
+  // The brand's CRM-ONLY positive repliers (`fetchCrmOnlyRepliers`). email-gateway's per-workflow reply
+  // count cannot see them, so they are added per workflow slug before the dynasty rollup — the grain's
+  // replies then agree with every lead-population surface (`/stats`, `/revenue`). Omitted by a caller
+  // that reads no reply off this grain (the budget→sends projection reads cost and contacted only).
+  crmRepliers?: readonly CrmOnlyReplier[],
 ): Promise<Map<string, WorkflowGrainEvidence>> {
   const [costGroups, emailStats] = await Promise.all([
     fetchBrandCostGroups(brandId, featureSlug, "workflowSlug", identity),
     fetchBrandEmailStats(brandId, featureSlug, identity),
   ]);
+  if (crmRepliers) addCrmRepliesToSlugStats(emailStats, crmRepliers);
   const dynasties = buildWorkflowDynasties(workflows);
   const { costMap, aggregatedOutcomes } = aggregateAcrossDynasties(
     dynasties,
@@ -323,6 +330,33 @@ async function fetchAudienceDynastyOutcomes(
 }
 
 /**
+ * Per (audience × dynasty), how many of the brand's CRM-only positive repliers are MEMBERS of the audience
+ * (distinct leads). Fails loud like every other read of this grain.
+ */
+async function fetchAudienceCrmReplies(
+  audienceIds: string[],
+  repliers: readonly CrmOnlyReplier[],
+  identity: Identity,
+  slugToDynasty: Map<string, string>,
+): Promise<Map<string, Map<string, number>>> {
+  const perAudience = await mapWithConcurrency(audienceIds, 6, async (audienceId) => ({
+    audienceId,
+    emails: new Set((await fetchAudienceMemberEmails(audienceId, identity)).map((e) => e.trim().toLowerCase())),
+  }));
+  const result = new Map<string, Map<string, number>>();
+  for (const { audienceId, emails } of perAudience) {
+    const byDynasty = new Map<string, number>();
+    for (const r of repliers) {
+      if (!r.email || !r.workflowSlug || !emails.has(r.email)) continue;
+      const dynasty = slugToDynasty.get(r.workflowSlug) ?? r.workflowSlug;
+      byDynasty.set(dynasty, (byDynasty.get(dynasty) ?? 0) + 1);
+    }
+    if (byDynasty.size > 0) result.set(audienceId, byDynasty);
+  }
+  return result;
+}
+
+/**
  * Build the audience-grain evidence for a (brand, feature). One entry per ACTIVE human-service audience
  * (all of them — an audience with no attributed couple still surfaces with an empty `byDynasty`, and the
  * handler floors it to brand→crossOrg so every active audience appears under every active workflow). Both
@@ -347,21 +381,33 @@ export async function fetchAudienceGrainEvidence(
   // NET reads runs#179's frozen net twin per audience group; GROSS reads the gross field → byte-identical.
   pricing: Pricing = "gross",
   audienceIdsOverride?: string[],
+  // The brand's CRM-ONLY positive repliers. Attributed to an audience by MEMBERSHIP (human-service) —
+  // the same join `/audience-stats` adds them through — and to the dynasty of the workflow the lead was
+  // served under. Member lists are read only when there is somebody to place.
+  crmRepliers?: readonly CrmOnlyReplier[],
 ): Promise<AudienceGrainEvidence[]> {
   const audienceIds = audienceIdsOverride ?? (await fetchActiveAudiences(brandId, identity)).map((a) => a.id);
   if (audienceIds.length === 0) return [];
   const activeIds = new Set(audienceIds);
+  const placeable = (crmRepliers ?? []).filter((r) => r.email && r.workflowSlug);
 
-  const [costByAudience, outcomeByAudience] = await Promise.all([
+  const [costByAudience, outcomeByAudience, crmByAudience] = await Promise.all([
     fetchAudienceDynastyCosts(brandId, featureSlug, activeIds, identity, pricing, slugToDynasty),
     fetchAudienceDynastyOutcomes(brandId, featureSlug, audienceIds, identity, slugToDynasty),
+    placeable.length > 0
+      ? fetchAudienceCrmReplies(audienceIds, placeable, identity, slugToDynasty)
+      : Promise.resolve(new Map<string, Map<string, number>>()),
   ]);
 
   const result: AudienceGrainEvidence[] = [];
   for (const audienceId of audienceIds) {
     const costByDynasty = costByAudience.get(audienceId) ?? new Map<string, DynastyCost>();
     const outcomeByDynasty = outcomeByAudience.get(audienceId) ?? new Map<string, DynastyOutcome>();
-    const dynasties = new Set<string>([...costByDynasty.keys(), ...outcomeByDynasty.keys()]);
+    const dynasties = new Set<string>([
+      ...costByDynasty.keys(),
+      ...outcomeByDynasty.keys(),
+      ...(crmByAudience.get(audienceId)?.keys() ?? []),
+    ]);
     const byDynasty = new Map<string, WorkflowGrainEvidence>();
     for (const dynasty of dynasties) {
       const c = costByDynasty.get(dynasty) ?? { totalCostInUsdCents: 0, completedRuns: 0 };
@@ -371,7 +417,7 @@ export async function fetchAudienceGrainEvidence(
         completedRuns: c.completedRuns,
         contacted: o.contacted,
         clicks: o.clicks,
-        replies: o.replies,
+        replies: o.replies + (crmByAudience.get(audienceId)?.get(dynasty) ?? 0),
       });
     }
     result.push({ audienceId, byDynasty });
@@ -523,11 +569,14 @@ export async function fetchCampaignWorkflowEvidence(
   identity: Identity,
   pricing: Pricing = "gross",
   basis: CostBasis = "charged",
+  // The campaign identity's CRM-ONLY positive repliers — added per workflow slug, as on the brand grain.
+  crmRepliers?: readonly CrmOnlyReplier[],
 ): Promise<Map<string, WorkflowGrainEvidence>> {
   const [{ groups, filteredLocally }, emailStats] = await Promise.all([
     fetchCampaignCostGroups(brandId, featureSlug, campaignIds, identity),
     fetchCampaignEmailStats(brandId, featureSlug, campaignIds, identity),
   ]);
+  if (crmRepliers) addCrmRepliesToSlugStats(emailStats, crmRepliers);
   const dynasties = buildWorkflowDynasties(workflows);
   const { costMap, aggregatedOutcomes } = aggregateAcrossDynasties(
     dynasties,
