@@ -221,7 +221,28 @@ function mockFetch(fixture: Fixture): void {
       });
     }
 
-    if (url.includes("/orgs/leads")) return json({ leads: [] });
+    if (url.includes("/orgs/leads")) {
+      // The lead population the per-campaign counts and the cells' replies are counted on (PEOPLE, the
+      // `/stats` basis): one positive replier per reply the fixture states. The live campaign's repliers
+      // sit on the cells' workflows, the rest on a workflow nobody spent on.
+      const campaignFilter = new URL(url).searchParams.get("campaignId");
+      const rows: Array<Record<string, unknown>> = [];
+      for (const [id, n] of Object.entries(fixture.repliesByCampaign)) {
+        const pool = id === "c-live" ? Object.entries(fixture.cells).flatMap(([slug, cell]) => Array(cell.replies).fill(slug)) : [];
+        for (let i = 0; i < n; i++) {
+          rows.push({
+            leadId: `${id}-${i}`,
+            campaignId: id,
+            workflowSlug: pool[i] ?? "never-spent",
+            email: `${id}-${i}@x.com`,
+            contacted: true,
+            replied: true,
+            replyClassification: "positive",
+          });
+        }
+      }
+      return json({ leads: campaignFilter ? rows.filter((r) => r.campaignId === campaignFilter) : rows, nextCursor: null });
+    }
     if (url.includes("/manual-qualifications")) return json({ qualifications: [] });
     if (url.includes("/orgs/status")) return json({ results: [] });
     return json({});

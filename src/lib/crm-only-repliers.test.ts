@@ -2,26 +2,36 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
-import { addCrmRepliesToSlugStats, crmRepliesBySlug, fetchCrmOnlyRepliers, type CrmOnlyReplier } from "./crm-only-repliers.js";
-import { fetchBrandWorkflowEvidence, fetchCampaignWorkflowEvidence, fetchAudienceGrainEvidence } from "./workflow-projection-grains.js";
+import { crmRepliesBySlug, fetchCrmOnlyRepliers, fetchPositiveRepliers, setPersonRepliesOnSlugStats, type PositiveReplier } from "./crm-only-repliers.js";
+import {
+  brandGrainDynasties,
+  fetchAudienceGrainEvidence,
+  fetchBrandWorkflowEvidence,
+  fetchBrandWorkflowEvidenceWithRetired,
+  fetchCampaignWorkflowEvidence,
+} from "./workflow-projection-grains.js";
 
 /**
- * ONE brand, one workflow (`wf-a`, dynasty `wf-a`): email-gateway counts 2 positive replies under it.
- * Lead-service holds four people:
- *   - L1 replied positive by email AND through the CRM → the sender already counted them: +0.
- *   - L2 positive ONLY through the CRM, served under wf-a, member of audience AUD → +1.
- *   - L3 positive ONLY through the CRM, served under wf-a, in no audience → +1 brand, +0 audience.
- *   - L4 no positive reply at all → +0.
- * So every grain must read 2 + 2 = 4 at brand level (what /stats reads), never 2 and never 5.
+ * ONE brand. Workflow `wf-a` is active; `wf-old` is a RETIRED dynasty (deprecated, no active version).
+ * email-gateway's per-slug counts are WRONG in both known ways: it counts 3 positive replies under wf-a
+ * (one replier twice) and none under wf-old (it cannot see a CRM-evidenced reply). Lead-service holds:
+ *   - L1 replied positive by email (and through the CRM) — wf-a, campaign C1.
+ *   - L2 positive ONLY through the CRM — wf-a, C1, member of audience AUD.
+ *   - L3 positive ONLY through the CRM — wf-old, C2, in no audience.
+ *   - L4 no positive reply at all.
+ * Three people replied, so the rows must sum to 3: wf-a 2 + wf-old 1 — never email-gateway's 3 + 0.
  */
 const leads = [
   { leadId: "L1", campaignId: "C1", workflowSlug: "wf-a", email: "one@x.com", contacted: true, replied: true, replyClassification: "positive", crmPositiveReplyAt: "2026-09-20T00:00:00Z" },
   { leadId: "L2", campaignId: "C1", workflowSlug: "wf-a", email: "Two@X.com", contacted: true, crmPositiveReplyAt: "2026-09-21T00:00:00Z" },
-  { leadId: "L3", campaignId: "C2", workflowSlug: "wf-a", email: "three@x.com", contacted: true, crmPositiveReplyAt: "2026-09-22T00:00:00Z" },
+  { leadId: "L3", campaignId: "C2", workflowSlug: "wf-old", email: "three@x.com", contacted: true, crmPositiveReplyAt: "2026-09-22T00:00:00Z" },
   { leadId: "L4", campaignId: "C1", workflowSlug: "wf-a", email: "four@x.com", contacted: true },
 ];
 
-const workflows = [{ workflowSlug: "wf-a", workflowDynastySlug: "wf-a", workflowDynastyName: "A", status: "active" }] as never;
+const workflows = [
+  { id: "1", workflowSlug: "wf-a", workflowDynastySlug: "wf-a", workflowDynastyName: "A", status: "active" },
+  { id: "2", workflowSlug: "wf-old", workflowDynastySlug: "wf-old", workflowDynastyName: "Old", status: "deprecated" },
+] as never;
 const identity = { orgId: "org-1" };
 
 function json(body: unknown) {
@@ -43,15 +53,19 @@ beforeEach(() => {
     vi.fn(async (input: string | URL) => {
       const url = String(input);
       if (url.includes("/orgs/leads")) {
-        const u = new URL(url);
-        const campaignId = u.searchParams.get("campaignId");
+        const campaignId = new URL(url).searchParams.get("campaignId");
         return json({ leads: campaignId ? leads.filter((l) => l.campaignId === campaignId) : leads, nextCursor: null });
       }
       if (url.startsWith("http://runs")) {
-        return json({ groups: [{ dimensions: { workflowSlug: "wf-a", audienceId: "AUD", campaignId: "C1" }, totalCostInUsdCents: "1000", runCount: 3 }] });
+        return json({
+          groups: [
+            { dimensions: { workflowSlug: "wf-a", audienceId: "AUD", campaignId: "C1" }, totalCostInUsdCents: "1000", runCount: 3 },
+            { dimensions: { workflowSlug: "wf-old", audienceId: null, campaignId: "C2" }, totalCostInUsdCents: "400", runCount: 2 },
+          ],
+        });
       }
       if (url.startsWith("http://email")) {
-        return json({ groups: [{ key: "wf-a", broadcast: { recipientStats: { contacted: 4, clicked: 1, repliesPositive: 2 } } }] });
+        return json({ groups: [{ key: "wf-a", broadcast: { recipientStats: { contacted: 4, clicked: 1, repliesPositive: 3 } } }] });
       }
       if (url.includes("/members")) return json({ members: [{ emailNorm: "two@x.com" }, { emailNorm: "one@x.com" }], total: 2 });
       throw new Error(`unmocked ${url}`);
@@ -60,51 +74,73 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-describe("CRM-only positive repliers on the email-gateway-counted grains", () => {
-  it("keeps only the people whose positive reply ONLY the CRM shows — the sender already counted L1", async () => {
-    const repliers = await fetchCrmOnlyRepliers("brand-1", undefined, identity);
-    expect(repliers.map((r) => r.leadId).sort()).toEqual(["L2", "L3"]);
-    expect(repliers.find((r) => r.leadId === "L2")?.email).toBe("two@x.com");
+describe("positive replies on the workflow grains are counted per PERSON", () => {
+  it("reads every positive replier once, flagging the ones only the CRM saw", async () => {
+    const repliers = await fetchPositiveRepliers("brand-1", undefined, identity);
+    expect(repliers.map((r) => `${r.leadId}:${r.crmOnly}`).sort()).toEqual(["L1:false", "L2:true", "L3:true"]);
+    expect((await fetchCrmOnlyRepliers("brand-1", undefined, identity)).map((r) => r.leadId).sort()).toEqual(["L2", "L3"]);
   });
 
-  it("adds them per workflow slug, creating a slug email-gateway never answered for", () => {
-    const stats = new Map([["wf-a", { recipientsRepliesPositive: 2, recipientsClicked: 1 }]]);
-    const repliers: CrmOnlyReplier[] = [
-      { leadId: "L2", email: "a", campaignId: null, workflowSlug: "wf-a" },
-      { leadId: "L2", email: "a", campaignId: null, workflowSlug: "wf-a" },
-      { leadId: "L9", email: "b", campaignId: null, workflowSlug: "wf-b" },
-      { leadId: "L8", email: "c", campaignId: null, workflowSlug: null },
+  it("REPLACES email-gateway's per-slug reply count, zeroing a slug nobody replied under", () => {
+    const stats = new Map<string, Record<string, number>>([
+      ["wf-a", { recipientsRepliesPositive: 3, recipientsClicked: 1 }],
+      ["wf-b", { recipientsRepliesPositive: 1 }],
+    ]);
+    const repliers: PositiveReplier[] = [
+      { leadId: "L1", email: "a", campaignId: null, workflowSlug: "wf-a", crmOnly: false },
+      { leadId: "L2", email: "b", campaignId: null, workflowSlug: "wf-a", crmOnly: true },
+      { leadId: "L3", email: "c", campaignId: null, workflowSlug: "wf-c", crmOnly: true },
     ];
-    expect(crmRepliesBySlug(repliers)).toEqual(new Map([["wf-a", 1], ["wf-b", 1]]));
-    addCrmRepliesToSlugStats(stats, repliers);
-    expect(stats.get("wf-a")).toEqual({ recipientsRepliesPositive: 3, recipientsClicked: 1 });
-    expect(stats.get("wf-b")).toEqual({ recipientsRepliesPositive: 1 });
+    expect(crmRepliesBySlug(repliers)).toEqual(new Map([["wf-a", 2], ["wf-c", 1]]));
+    setPersonRepliesOnSlugStats(stats, repliers);
+    expect(stats.get("wf-a")).toEqual({ recipientsRepliesPositive: 2, recipientsClicked: 1 });
+    expect(stats.get("wf-b")).toEqual({ recipientsRepliesPositive: 0 });
+    expect(stats.get("wf-c")).toEqual({ recipientsRepliesPositive: 1 });
   });
 
-  it("the BRAND grain reads the sender's 2 plus the 2 CRM-only repliers — the /stats figure, not 2", async () => {
-    const repliers = await fetchCrmOnlyRepliers("brand-1", undefined, identity);
-    const withCrm = await fetchBrandWorkflowEvidence("brand-1", "f", workflows, identity, "gross", "charged", repliers);
+  it("keeps a RETIRED lineage apart, and folds an unreached version into its active dynasty", () => {
+    const wfs = [
+      { id: "1", workflowSlug: "x-v2", workflowDynastySlug: "x", status: "active" },
+      { id: "2", workflowSlug: "x", workflowDynastySlug: "x", status: "deprecated" },
+      { id: "3", workflowSlug: "old", workflowDynastySlug: "old", status: "deprecated" },
+    ] as never;
+    const { active, retired } = brandGrainDynasties(wfs, ["x-v2", "old", "ghost"]);
+    expect(active.get("x-v2")?.slice().sort()).toEqual(["x", "x-v2"]);
+    expect(retired.get("old")).toEqual(["old"]);
+    expect(retired.get("ghost")).toEqual(["ghost"]);
+  });
+
+  it("the BRAND rows sum to the three people who replied — wf-a 2 + retired wf-old 1, not email-gateway's 3 + 0", async () => {
+    const repliers = await fetchPositiveRepliers("brand-1", undefined, identity);
+    const grain = await fetchBrandWorkflowEvidenceWithRetired("brand-1", "f", workflows, identity, "gross", "charged", repliers);
+    expect(grain.active.get("wf-a")?.replies).toBe(2);
+    expect(grain.retired.get("wf-old")?.replies).toBe(1);
+    expect(grain.retired.get("wf-old")?.totalCostInUsdCents).toBe(400);
+    // The active map is what every ranked surface reads — the retired lineage is never in it.
+    const active = await fetchBrandWorkflowEvidence("brand-1", "f", workflows, identity, "gross", "charged", repliers);
+    expect([...active.keys()]).toEqual(["wf-a"]);
+  });
+
+  it("without the person set, the grain reads email-gateway exactly as before", async () => {
     const without = await fetchBrandWorkflowEvidence("brand-1", "f", workflows, identity);
-    expect(withCrm.get("wf-a")?.replies).toBe(4);
-    expect(without.get("wf-a")?.replies).toBe(2);
-    expect({ ...withCrm.get("wf-a"), replies: 0 }).toEqual({ ...without.get("wf-a"), replies: 0 });
+    expect(without.get("wf-a")?.replies).toBe(3);
   });
 
-  it("the CAMPAIGN grain (a learning cell) counts only its own campaign's CRM-only repliers", async () => {
-    const repliers = await fetchCrmOnlyRepliers("brand-1", ["C1"], identity);
-    expect(repliers.map((r) => r.leadId)).toEqual(["L2"]);
+  it("the CAMPAIGN grain counts only its own identity's people", async () => {
+    const repliers = await fetchPositiveRepliers("brand-1", ["C1"], identity);
+    expect(repliers.map((r) => r.leadId).sort()).toEqual(["L1", "L2"]);
     const cells = await fetchCampaignWorkflowEvidence("brand-1", "f", ["C1"], workflows, identity, "gross", "charged", repliers);
-    expect(cells.get("wf-a")?.replies).toBe(3);
+    expect(cells.get("wf-a")?.replies).toBe(2);
   });
 
-  it("the AUDIENCE grain adds a CRM-only replier by membership — L3 is in no audience", async () => {
-    const repliers = await fetchCrmOnlyRepliers("brand-1", undefined, identity);
-    const slugToDynasty = new Map([["wf-a", "wf-a"]]);
+  it("the AUDIENCE grain adds only CRM-ONLY repliers, by membership — L1 is already in email-gateway's count", async () => {
+    const repliers = await fetchPositiveRepliers("brand-1", undefined, identity);
+    const slugToDynasty = new Map([["wf-a", "wf-a"], ["wf-old", "wf-old"]]);
     const [ev] = await fetchAudienceGrainEvidence("brand-1", "f", identity, slugToDynasty, "gross", ["AUD"], repliers);
-    expect(ev.byDynasty.get("wf-a")?.replies).toBe(3);
+    expect(ev.byDynasty.get("wf-a")?.replies).toBe(4); // email-gateway 3 + L2
   });
 
-  it("a brand with no CRM-only replier reads byte-identically and reads no member list", async () => {
+  it("a brand with no CRM-only replier reads no member list", async () => {
     const slugToDynasty = new Map([["wf-a", "wf-a"]]);
     const a = await fetchAudienceGrainEvidence("brand-1", "f", identity, slugToDynasty, "gross", ["AUD"], []);
     const b = await fetchAudienceGrainEvidence("brand-1", "f", identity, slugToDynasty, "gross", ["AUD"]);
@@ -115,6 +151,6 @@ describe("CRM-only positive repliers on the email-gateway-counted grains", () =>
 
   it("FAILS LOUD when the lead read fails — never a silent return to the sender's count", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("boom", { status: 500 })));
-    await expect(fetchCrmOnlyRepliers("brand-1", undefined, identity)).rejects.toThrow();
+    await expect(fetchPositiveRepliers("brand-1", undefined, identity)).rejects.toThrow();
   });
 });

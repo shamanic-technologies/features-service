@@ -59,11 +59,11 @@ import {
   type WorkflowMetadata,
 } from "../lib/public-stats-clients.js";
 import { buildWorkflowDynasties, aggregateAcrossDynasties } from "./public.js";
-import { fetchCrmOnlyRepliers } from "../lib/crm-only-repliers.js";
+import { fetchPositiveRepliers } from "../lib/crm-only-repliers.js";
 import {
-  fetchBrandWorkflowEvidence,
+  fetchBrandWorkflowEvidenceWithRetired,
+  fetchCampaignWorkflowEvidenceWithRetired,
   fetchAudienceGrainEvidence,
-  fetchCampaignWorkflowEvidence,
   type WorkflowGrainEvidence,
   type AudienceGrainEvidence,
   type Identity,
@@ -219,6 +219,14 @@ export interface ProjectionRow {
    * A row is never half-measured: the two states are what the row rests on, not how much it has.
    */
   measured: boolean;
+  /**
+   * TRUE on a row for a RETIRED lineage — a workflow dynasty with no active version left (or a slug the
+   * catalogue does not describe) that this brand / campaign still spent on. Absent on every other row.
+   * It carries its real brand / campaign evidence so the per-workflow rows add up to the scope's own
+   * total, and it can NEVER be put forward: `resolved` is all null, so it is unrankable, never
+   * recommended and skipped by every consumer that selects on `resolved.costPerOutcomeUsd`.
+   */
+  retired?: true;
   /**
    * THIS WORKFLOW'S POSITION IN THE ORDER THIS SERVICE SELECTS ON — 1-based, present ⟺ the caller
    * named a `?leg=`, so every existing body is byte-unchanged.
@@ -1491,6 +1499,15 @@ export interface WorkflowProjectionEvidence {
    * never replays a body computed for the brand.
    */
   campaignGrain?: Array<[string, WorkflowGrainEvidence]>;
+  /**
+   * RETIRED lineages (a dynasty with no active version left, or a slug the catalogue does not describe)
+   * this brand / this campaign identity spent on — keyed by the dynasty slug. They are real spend and
+   * real outcomes, so they get a row (never rankable, never recommended — see `retired` on the row),
+   * and the per-workflow rows then sum to the scope's own total. Optional: a snapshot written before
+   * they existed reads as none.
+   */
+  retiredBrandGrain?: Array<[string, WorkflowGrainEvidence]>;
+  retiredCampaignGrain?: Array<[string, WorkflowGrainEvidence]>;
 }
 
 export async function fetchWorkflowProjectionEvidence(input: {
@@ -1512,20 +1529,21 @@ export async function fetchWorkflowProjectionEvidence(input: {
   // per-audience dynasty attachment aligns with the dynasty-keyed rows (and skips runs-service's
   // lossy workflowDynastySlug regroup, which collapses the co-grouped audienceId).
   const slugToDynasty = new Map(workflows.map((w) => [w.workflowSlug, w.workflowDynastySlug]));
-  // The positive repliers only the customer's CRM evidences — email-gateway's per-workflow counts below
-  // cannot see them, so each grain adds them on top (lib/crm-only-repliers.ts). Read once per scope and
+  // The positive repliers, one per PERSON (lib/crm-only-repliers.ts) — the set `/stats` counts, CRM
+  // evidence included. The brand and campaign grains count replies on it instead of email-gateway's
+  // per-slug sums; the audience grain adds its CRM-only ones by membership. Read once per scope and
   // FAIL-LOUD like every other input here: a grain must never silently fall back to the sender's count.
-  const [brandCrmRepliers, campaignCrmRepliers] = await Promise.all([
-    fetchCrmOnlyRepliers(brandId, undefined, identity),
-    campaignIds && campaignIds.length > 0 ? fetchCrmOnlyRepliers(brandId, campaignIds, identity) : Promise.resolve(null),
+  const [brandRepliers, campaignRepliers] = await Promise.all([
+    fetchPositiveRepliers(brandId, undefined, identity),
+    campaignIds && campaignIds.length > 0 ? fetchPositiveRepliers(brandId, campaignIds, identity) : Promise.resolve(null),
   ]);
   const [costGroups, emailStats, brandGrain, audienceEvidence, campaignGrain] = await Promise.all([
     fetchPublicCosts(featureSlug, "workflowSlug", pricing),
     fetchPublicEmailStats(featureSlug, "workflowSlug"),
-    fetchBrandWorkflowEvidence(brandId, featureSlug, workflows, identity, pricing, "charged", brandCrmRepliers),
-    fetchAudienceGrainEvidence(brandId, featureSlug, identity, slugToDynasty, pricing, undefined, brandCrmRepliers),
+    fetchBrandWorkflowEvidenceWithRetired(brandId, featureSlug, workflows, identity, pricing, "charged", brandRepliers),
+    fetchAudienceGrainEvidence(brandId, featureSlug, identity, slugToDynasty, pricing, undefined, brandRepliers),
     campaignIds && campaignIds.length > 0
-      ? fetchCampaignWorkflowEvidence(brandId, featureSlug, campaignIds, workflows, identity, pricing, "charged", campaignCrmRepliers ?? [])
+      ? fetchCampaignWorkflowEvidenceWithRetired(brandId, featureSlug, campaignIds, workflows, identity, pricing, "charged", campaignRepliers ?? undefined)
       : Promise.resolve(null),
   ]);
 
@@ -1533,9 +1551,12 @@ export async function fetchWorkflowProjectionEvidence(input: {
     workflows,
     crossOrgCostGroups: costGroups,
     crossOrgEmailStats: [...emailStats.entries()],
-    brandGrain: [...brandGrain.entries()],
+    brandGrain: [...brandGrain.active.entries()],
+    retiredBrandGrain: [...brandGrain.retired.entries()],
     audienceEvidence: audienceEvidence.map((ev) => ({ audienceId: ev.audienceId, byDynasty: [...ev.byDynasty.entries()] })),
-    ...(campaignGrain ? { campaignGrain: [...campaignGrain.entries()] } : {}),
+    ...(campaignGrain
+      ? { campaignGrain: [...campaignGrain.active.entries()], retiredCampaignGrain: [...campaignGrain.retired.entries()] }
+      : {}),
   };
 }
 
@@ -1625,6 +1646,8 @@ export function projectFromEvidence(input: {
   const emailStats = new Map(evidence.crossOrgEmailStats);
   const brandGrain = new Map(evidence.brandGrain);
   const campaignGrain = evidence.campaignGrain ? new Map(evidence.campaignGrain) : null;
+  const retiredBrandGrain = new Map(evidence.retiredBrandGrain ?? []);
+  const retiredCampaignGrain = new Map(evidence.retiredCampaignGrain ?? []);
   const audienceEvidence: AudienceGrainEvidence[] = evidence.audienceEvidence.map((ev) => ({
     audienceId: ev.audienceId,
     byDynasty: new Map(ev.byDynasty),
@@ -1748,6 +1771,30 @@ export function projectFromEvidence(input: {
         estimatesByGrain: stampGrainBases(estimatesByGrain),
         resolved: resolve(estimatesByGrain),
         measured: true,
+      });
+    }
+
+    // ── RETIRED lineages — real spend, real outcomes, never put forward ─────────────────────────
+    // A dynasty nobody runs any more still holds this brand's spend and replies; without a row they
+    // vanished and the rows summed to less than the scope (Doc Dinners 2026-09-25: 23 of 26 positive
+    // replies). The row states the brand / campaign evidence and an all-null `resolved`, so no ranking,
+    // recommendation or selector can pick a workflow that no longer runs.
+    for (const dynastySlug of new Set([...retiredBrandGrain.keys(), ...retiredCampaignGrain.keys()])) {
+      const estimatesByGrain: Partial<Record<GrainName, GrainBlock>> = {};
+      const brandEv = retiredBrandGrain.get(dynastySlug);
+      if (brandEv && brandEv.totalCostInUsdCents > 0) estimatesByGrain.brand = buildBlock(brandEv);
+      const campaignEv = retiredCampaignGrain.get(dynastySlug);
+      if (campaignEv && campaignEv.totalCostInUsdCents > 0) {
+        estimatesByGrain.campaign = buildBlock(campaignEv, estimatesByGrain.brand?.unitCosts ?? null);
+      }
+      if (!estimatesByGrain.brand && !estimatesByGrain.campaign) continue;
+      rows.push({
+        audienceId: null,
+        workflow: { workflowDynastySlug: dynastySlug, workflowDynastyName: dynastyNameBySlug.get(dynastySlug) ?? null },
+        estimatesByGrain: stampGrainBases(estimatesByGrain),
+        resolved: { ...UNMEASURED_RESOLVED },
+        measured: true,
+        retired: true,
       });
     }
 
