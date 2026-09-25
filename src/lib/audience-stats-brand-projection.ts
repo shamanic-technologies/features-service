@@ -77,7 +77,7 @@ import { projectedCostPerOutcome } from "./cost-engine.js";
 import { goalToProjectionInputs, funnelToProjectionInputs, outcomeCostForGoal, paidClientCostForGoal, grainHasObservedOutcome } from "../routes/workflow-projection.js";
 import type { PricingChannel, SalesFunnelKey } from "./sales-funnels.js";
 import { mergeFunnelEconomics } from "./declared-funnels.js";
-import { fetchCrmOnlyRepliers } from "./crm-only-repliers.js";
+import { fetchPositiveRepliers } from "./crm-only-repliers.js";
 import {
   fetchBrandWorkflowEvidence,
   fetchAudienceGrainEvidence,
@@ -328,9 +328,9 @@ export async function fetchBrandProjectionEvidence(
   // The SAME slug → dynasty map the crossOrg/brand rollups use, so the audience grain's dynasty keys line
   // up with the dynasty-keyed rows (and skips runs-service's lossy workflowDynastySlug regroup).
   const slugToDynasty = new Map(workflows.map((w) => [w.workflowSlug, w.workflowDynastySlug]));
-  // CRM-only positive repliers, added on top of email-gateway's per-workflow / per-audience counts so the
-  // floor parent prices replies on the SAME person set `/stats` and the audience rows count.
-  const crmRepliers = await fetchCrmOnlyRepliers(brandId, undefined, identity);
+  // Positive repliers one per PERSON: the brand grain counts replies on them (the SAME basis
+  // workflow-projection's brand grain uses), the audience grain adds the CRM-only ones by membership.
+  const crmRepliers = await fetchPositiveRepliers(brandId, undefined, identity);
   const [fleetCostGroups, fleetEmail, effective, brandGrain, audienceGrain] = await Promise.all([
     fetchPublicCosts(featureSlug, "workflowSlug", pricing),
     fetchPublicEmailStats(featureSlug, "workflowSlug"),

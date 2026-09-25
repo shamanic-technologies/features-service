@@ -49,15 +49,24 @@ says so (dead leads still convert nothing), dates a CRM-only reply by the CRM, a
 `EnginePerson.crmPositiveReplyAt` ONLY when no row of the lead carries a sender-classified reply
 (`dedupPersonsByLead` keeps that invariant). Everything built on the lead population — `/revenue` at
 every grain, `/stats`, funnelSteps, the pipeline/ROI, the measured conversion rates, cost per positive
-reply — sees it with no further code. Two surfaces count replies from email-gateway aggregates instead,
-and ADD the CRM-ONLY repliers on top (never double-counted, since email-gateway holds every classified
-one): `/audience-stats` (members ∩ CRM-only emails, fail-soft) and the learning gate's per-campaign
-count (union per campaign identity). The per-(campaign × workflow) learning cells and
-`workflow-projection`'s brand / campaign / audience grains (and the `/audience-stats` floor parent built
-from them) add them too, through `lib/crm-only-repliers.ts`: the deduped CRM-only repliers, per the
-workflow slug lead-service froze on the row, added to email-gateway's per-slug count BEFORE the dynasty
-rollup; the audience grain places them by human-service membership. That read is FAIL-LOUD on
-workflow-projection (502) and folds into the learning cells' existing "unavailable" degrade. **Still
+reply — sees it with no further code. `/audience-stats` and workflow-projection's AUDIENCE grain count
+replies from email-gateway per audience and ADD the CRM-ONLY repliers on top by membership (never
+double-counted, since email-gateway holds every classified one). **The learning gate, its (campaign × workflow) cells and
+`workflow-projection`'s brand / campaign grains (and the `/audience-stats` floor parent built from the
+brand grain) now count positive replies on PEOPLE, not on email-gateway aggregates** (supersedes the
+"add the CRM-only ones on top" design of #1075): `lib/crm-only-repliers.ts` `fetchPositiveRepliers`
+reads the deduped lead population, and each person sits on the ONE workflow slug and campaign
+lead-service froze on the row. email-gateway's per-slug / per-campaign sums were wrong in a second way
+besides missing the CRM: they counted one replier under two slugs (Doc Dinners: 24 by slug, 23
+distinct), so the learning count read 27 beside `/stats`' 26. The learning per-campaign count is the
+UNION of people over the identity's members (`engagedLeadsByCampaign`, clicks too). **RETIRED lineages
+are no longer dropped**: `brandGrainDynasties` folds a version the upgrade chain never reached into its
+active dynasty and keeps a dynasty with no active version (or a slug the catalogue does not describe)
+as its own group. workflow-projection gives each a row with `retired: true`, its real brand / campaign
+evidence and an ALL-NULL `resolved` — unrankable, never recommended, skipped by every selector — and
+the learning cells include them. So the per-workflow rows sum to the scope's own total. The audience
+grain still reads email-gateway per audience and adds the CRM-only repliers by membership. The read is
+FAIL-LOUD on workflow-projection (502) and folds into the learning block's named degrade. **Still
 email-only:** the crossOrg (fleet) grain and the `/public/stats/*` fleet cost figures — they would need
 every brand's lead walk. Do NOT re-derive the fact from CRM data here — lead-service owns whether it
 happened. Prod 2026-09-25 (Doc Dinners): 23 → 26,
@@ -627,7 +636,8 @@ arrive", so an overrun rendered as a countdown that had finished.
   is not terminal, and a consumer has to be able to SAY that rather than render a finished bar. It is
   deliberately NOT folded into `daysRemaining`, which answers only "how long until the spend is in".
 - **THE SPEND IT COUNTS FROM IS THE LEDGER'S, NOT THE CELLS'.** The cells are rolled up by workflow
-  DYNASTY, so a lineage since retired is absent from them — summing them UNDER-states what the campaign
+  DYNASTY — retired lineages included since 2026-09-25, but a slug with no runs row still falls out —
+  and summing them could UNDER-state what the campaign
   committed and puts two numbers about one campaign's money on one body. Measured in prod on the first
   deploy: **$790.53 of cells against $850.35 of ledger**, $59.82 on retired lineages, beside a
   `costEconomics.committedCostUsd` that said the larger figure. `committedSpentUsd` is therefore read

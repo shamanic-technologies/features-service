@@ -4,7 +4,7 @@ vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
 import { dedupPersonsByLead, type EnginePerson } from "./revenue-engine.js";
 import { applySignalOverlays } from "./signal-overlays.js";
-import { crmOnlyRepliersByCampaign } from "./learning-phase-compute.js";
+import { engagedLeadsByCampaign } from "./learning-phase-compute.js";
 import type { SignalDates } from "./email-status-client.js";
 
 // A positive reply the customer's CRM evidences (lead-service#601) is the SAME fact as a reply the
@@ -65,14 +65,16 @@ describe("a CRM-evidenced positive reply", () => {
     expect(p.signalDates?.positiveReply).toBe("2026-09-10T08:00:00.000Z");
   });
 
-  it("groups CRM-ONLY repliers by the campaign each row was served under, and nobody else", () => {
-    const byCampaign = crmOnlyRepliersByCampaign([
+  it("groups EVERY positive replier (either witness) and every clicker by campaign, each lead once", () => {
+    const byCampaign = engagedLeadsByCampaign([
       person({ leadId: "a", campaignId: "c1", crmPositiveReplyAt: CRM_AT, signals: { positiveReply: true } }),
       person({ leadId: "a", campaignId: "c2", crmPositiveReplyAt: CRM_AT, signals: { positiveReply: true } }),
+      person({ leadId: "b", campaignId: "c1", signals: { positiveReply: true, clicked: true } }),
       person({ leadId: "b", campaignId: "c1", signals: { positiveReply: true } }),
       person({ leadId: "c", campaignId: "c1", signals: { positiveReply: false } }),
     ]);
-    expect([...(byCampaign.get("c1") ?? [])]).toEqual(["a"]);
-    expect([...(byCampaign.get("c2") ?? [])]).toEqual(["a"]);
+    expect([...(byCampaign.get("c1")?.repliers ?? [])].sort()).toEqual(["a", "b"]);
+    expect([...(byCampaign.get("c1")?.clickers ?? [])]).toEqual(["b"]);
+    expect([...(byCampaign.get("c2")?.repliers ?? [])]).toEqual(["a"]);
   });
 });

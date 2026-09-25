@@ -25,8 +25,8 @@ import { buildCampaignFamilies, type CampaignIdentityRow } from "./campaign-iden
 import { featureSlugList, featureSlugsParam, type FeatureScope } from "./feature-scope.js";
 import { fetchPublicWorkflows } from "./public-stats-clients.js";
 import type { EnginePerson } from "./revenue-engine.js";
-import { fetchCrmOnlyRepliers } from "./crm-only-repliers.js";
-import { fetchCampaignWorkflowEvidence, type Identity } from "./workflow-projection-grains.js";
+import { fetchPositiveRepliers } from "./crm-only-repliers.js";
+import { fetchCampaignWorkflowEvidenceWithRetired, type Identity } from "./workflow-projection-grains.js";
 import { fetchCampaignCommittedCents, fetchCampaignDriverCounts, fetchLegDailyCeilingUsd } from "./learning-phase-clients.js";
 import {
   buildLearningPhase,
@@ -76,21 +76,31 @@ export interface LearningPhaseScope {
   economics: SalesEconomics | null;
   pricing: Pricing;
   /**
-   * Per campaign id, the leads whose positive reply only the customer's CRM shows (lead-service's
-   * ledger). email-gateway's per-campaign reply count cannot see them and holds every sender-classified
-   * one, so they are added on top — per campaign IDENTITY as a union, nobody counted twice.
+   * Per campaign id, the leads that CLICKED and the leads that REPLIED POSITIVELY — the lead population
+   * `/stats` counts people from (a positive reply by either witness: the classified email or the
+   * customer's CRM). A campaign identity's counts are the UNION over its members, so a person counts
+   * once however many member rows they sit on. Summing email-gateway's per-campaign aggregates instead
+   * counted one replier twice (Doc Dinners 2026-09-25: 27 against 26 on `/stats`). `null` = the lead
+   * read failed, which fails this compute (→ the soft wrapper's `campaigns_unreadable`); absent = the
+   * caller holds no population and the per-campaign email-gateway counts are read instead.
    */
-  crmOnlyRepliersByCampaign?: Promise<Map<string, Set<string>>>;
+  engagedLeadsByCampaign?: Promise<Map<string, EngagedLeads> | null>;
 }
 
-/** Group the CRM-only positive repliers of a lead population by the campaign each row was served under. */
-export function crmOnlyRepliersByCampaign(persons: readonly EnginePerson[]): Map<string, Set<string>> {
-  const out = new Map<string, Set<string>>();
+export interface EngagedLeads {
+  clickers: Set<string>;
+  repliers: Set<string>;
+}
+
+/** Group a lead population's clickers and positive repliers by the campaign each row was served under. */
+export function engagedLeadsByCampaign(persons: readonly EnginePerson[]): Map<string, EngagedLeads> {
+  const out = new Map<string, EngagedLeads>();
   for (const p of persons) {
-    if (!p.crmPositiveReplyAt || !p.signals.positiveReply || !p.campaignId) continue;
-    const set = out.get(p.campaignId) ?? new Set<string>();
-    set.add(p.leadId);
-    out.set(p.campaignId, set);
+    if (!p.campaignId || (!p.signals.clicked && !p.signals.positiveReply)) continue;
+    const entry = out.get(p.campaignId) ?? { clickers: new Set<string>(), repliers: new Set<string>() };
+    if (p.signals.clicked) entry.clickers.add(p.leadId);
+    if (p.signals.positiveReply) entry.repliers.add(p.leadId);
+    out.set(p.campaignId, entry);
   }
   return out;
 }
@@ -119,12 +129,13 @@ export async function computeLearningPhase(scope: LearningPhaseScope): Promise<L
   const scopeIds = scope.campaignScopeIds.length > 0 ? new Set(scope.campaignScopeIds) : null;
   const scoped = rows.filter((row) => inScope(row, slugs, scopeIds));
 
-  const [driverCounts, committedCents, workflows, crmRepliers] = await Promise.all([
-    fetchCampaignDriverCounts(brandId, featureScope, headers),
+  const [driverCounts, committedCents, workflows, engaged] = await Promise.all([
+    scope.engagedLeadsByCampaign ? Promise.resolve(null) : fetchCampaignDriverCounts(brandId, featureScope, headers),
     fetchCampaignCommittedCents(brandId, featureScope, headers, pricing),
     fetchPublicWorkflows(featureSlugsParam(featureScope), "all"),
-    scope.crmOnlyRepliersByCampaign ?? Promise.resolve(new Map<string, Set<string>>()),
+    scope.engagedLeadsByCampaign ?? Promise.resolve(undefined),
   ]);
+  if (engaged === null) throw new Error("lead population unavailable for the learning counts");
 
   const families = buildCampaignFamilies(scoped);
   const byId = new Map(scoped.map((row) => [row.id, row]));
@@ -142,15 +153,24 @@ export async function computeLearningPhase(scope: LearningPhaseScope): Promise<L
     // Summing the family's members is exact: a send carries exactly one campaign.
     let clicks = 0;
     let replies = 0;
-    const crmOnly = new Set<string>();
-    for (const id of memberIds) {
-      for (const leadId of crmRepliers.get(id) ?? []) crmOnly.add(leadId);
-      const counts = driverCounts.get(id);
-      if (!counts) continue;
-      clicks += counts.clicks;
-      replies += counts.replies;
+    if (engaged) {
+      // PEOPLE, unioned over the identity's members — the basis `/stats` counts on.
+      const clickers = new Set<string>();
+      const repliers = new Set<string>();
+      for (const id of memberIds) {
+        for (const leadId of engaged.get(id)?.clickers ?? []) clickers.add(leadId);
+        for (const leadId of engaged.get(id)?.repliers ?? []) repliers.add(leadId);
+      }
+      clicks = clickers.size;
+      replies = repliers.size;
+    } else {
+      for (const id of memberIds) {
+        const counts = driverCounts?.get(id);
+        if (!counts) continue;
+        clicks += counts.clicks;
+        replies += counts.replies;
+      }
     }
-    replies += crmOnly.size;
     campaigns.push({
       campaignId: representativeId,
       campaignIds: memberIds,
@@ -173,11 +193,12 @@ export async function computeLearningPhase(scope: LearningPhaseScope): Promise<L
     const legKey = leader.leg?.legKey ?? null;
     const [evidence, ceiling] = await Promise.all([
       // THE COUNTDOWN'S ONLY FAN-OUT, and it is paid once per scope rather than once per campaign.
-      // The cells price an outcome on replies too, so they count the CRM-only repliers exactly as the
-      // per-campaign count above does — one person set, never the sender's count alone.
-      fetchCrmOnlyRepliers(brandId, leader.input.campaignIds, identity)
-        .then((crmRepliers) =>
-          fetchCampaignWorkflowEvidence(
+      // The cells count replies on the SAME person set the per-campaign count above does.
+      // Retired lineages are IN: they are this campaign's own spend and outcomes, and the cells only
+      // price an outcome (no cell is ever put forward), so leaving them out under-counted both.
+      fetchPositiveRepliers(brandId, leader.input.campaignIds, identity)
+        .then((repliers) =>
+          fetchCampaignWorkflowEvidenceWithRetired(
             brandId,
             featureSlugsParam(featureScope),
             leader.input.campaignIds,
@@ -185,9 +206,10 @@ export async function computeLearningPhase(scope: LearningPhaseScope): Promise<L
             identity,
             pricing,
             "charged",
-            crmRepliers,
+            repliers,
           ),
         )
+        .then((grain) => new Map([...grain.active, ...grain.retired]))
         .catch((error: Error) => {
         console.warn(`[features-service] learning cells unavailable (no expected price): ${error.message}`);
         return null;
