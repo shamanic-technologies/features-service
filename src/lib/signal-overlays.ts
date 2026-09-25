@@ -65,7 +65,9 @@ export function applySignalOverlays(
           delivered: dates.delivered,
           open: dates.open,
           clicked: dates.clicked,
-          positiveReply: dates.positiveReply,
+          // A reply known ONLY from the customer's CRM is dated by the CRM (leads-client): the sender's
+          // first-reply timestamp would be a reply it did NOT classify positive.
+          positiveReply: person.crmPositiveReplyAt ?? dates.positiveReply,
         };
         // `open` has no boolean in the leads overlay — a known open timestamp IS the signal.
         if (dates.open) person.signals.open = true;
@@ -123,3 +125,4 @@ function setPriced(person: EnginePerson, signal: string, priced: boolean): void 
   else current.add(signal);
   person.unpricedSignals = current.size > 0 ? [...current] : undefined;
 }
+

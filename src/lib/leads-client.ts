@@ -62,6 +62,13 @@ interface LeadRow {
   unsubscribed?: boolean;
   replied?: boolean;
   replyClassification?: "positive" | "negative" | "neutral" | null;
+  /**
+   * A positive reply the customer's OWN CRM evidences (their form, submitted after our first delivered
+   * email), dated by the CRM — lead-service's conversion ledger, served on the compact row since
+   * lead-service#601. The same fact as `replied && replyClassification === "positive"`: a person is a
+   * positive replier when EITHER says so, counted once. Absent on a producer predating the field.
+   */
+  crmPositiveReplyAt?: string | null;
   // Canonical lead payload.
   lead?: {
     firstName?: string | null;
@@ -307,6 +314,8 @@ export async function fetchLeadsForRevenue(
     // at any stage. That is a statement about its FUTURE, and it is expressed by zeroing the CONVERSION
     // legs alone.
     const dead = Boolean(row.bounced) || Boolean(row.unsubscribed);
+    const emailPositive = Boolean(row.replied) && row.replyClassification === "positive";
+    const crmPositive = Boolean(row.crmPositiveReplyAt);
     const signals: Record<string, boolean> = {
       // THE DELIVERY LADDER IS A SET OF FACTS ABOUT OUR OWN SENDING, AND A FACT IS NEVER ZEROED.
       // We queued the email, we sent it, we paid for it — a bounce is the PROOF a send happened, so
@@ -322,7 +331,10 @@ export async function fetchLeadsForRevenue(
       // THE CONVERSION LEGS ARE WHERE "CANNOT CONVERT" IS SAID, and they are the only thing the
       // dead flag touches — so the expected-value math is byte-unchanged by the ladder above.
       clicked: dead ? false : Boolean(row.clicked),
-      positiveReply: dead ? false : Boolean(row.replied) && row.replyClassification === "positive",
+      // A POSITIVE REPLY IS ONE FACT WITH TWO WITNESSES: the reply the sender classified, and the
+      // customer's own CRM form submitted after our email (lead-service owns whether that happened and
+      // whose win it was). Either one makes the person a positive replier — once, never twice.
+      positiveReply: dead ? false : emailPositive || crmPositive,
       // The other two reply classes, on the SAME terms as the positive one — they are person-grain
       // counts the stats surfaces report, and only a per-lead basis can bound a campaign identity's
       // total by its brand's. No funnel path reads them, so the engine's EV is untouched.
@@ -350,6 +362,10 @@ export async function fetchLeadsForRevenue(
       orgCity: org?.city ?? null,
       orgCountry: org?.country ?? null,
       signals,
+      // The CRM reply carries its own date (the form's); the email-gateway overlay merges its reply
+      // date over it, earliest wins (`applySignalOverlays`).
+      ...(crmPositive && !dead ? { signalDates: { positiveReply: row.crmPositiveReplyAt ?? null } } : {}),
+      crmPositiveReplyAt: crmPositive && !dead && !emailPositive ? (row.crmPositiveReplyAt ?? null) : null,
     };
   });
 }
