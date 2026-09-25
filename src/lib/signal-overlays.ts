@@ -27,7 +27,7 @@ import type { ObservedLeadFacts } from "./observed-steps.js";
 import type { QualificationDates } from "./qualifications-client.js";
 import { deadLegSignalsFor } from "./funnel-registry.js";
 import type { SalesFunnelKey } from "./sales-funnels-client.js";
-import { ALL_OUTCOME_CAUSES, type OutcomeCause } from "./outcome-cause.js";
+import { DEFAULT_PRICED_CAUSES, causeByDeliveryRule, type OutcomeCause } from "./outcome-cause.js";
 
 export function applySignalOverlays(
   persons: EnginePerson[],
@@ -47,14 +47,13 @@ export function applySignalOverlays(
    */
   pricedFunnelKeys: readonly SalesFunnelKey[] = [],
   /**
-   * WHICH CAUSE STATES this read counts (`lib/outcome-cause.ts`). The statement half is already
-   * filtered at the row by `fetchObservedStepFacts`; what this decides is the LEGACY half. An
-   * instantly manual qualification carries no cause and never can — nobody was ever asked about one —
-   * so it is `unstated`, and a read that is not counting that state must not take a booked meeting or
-   * a closed deal from it either. Anything else would leave one producer filtered and the other not,
-   * which is two answers to one question inside a single body.
+   * WHICH CAUSE STATES this read PRICES (`lib/outcome-cause.ts`); every state is still counted. The
+   * statement half arrives already marked by `fetchObservedStepFacts`; what this decides is the
+   * LEGACY half. An instantly manual qualification carries no cause, so it is judged by lead-service's
+   * own default rule (`causeByDeliveryRule`) against our first delivered email to that person — the
+   * same rule every other outcome gets, so one producer is never priced on a looser rule than the other.
    */
-  countedCauses: readonly OutcomeCause[] = ALL_OUTCOME_CAUSES,
+  pricedCauses: readonly OutcomeCause[] = DEFAULT_PRICED_CAUSES,
 ): void {
   if (timestamps) {
     for (const person of persons) {
@@ -74,18 +73,20 @@ export function applySignalOverlays(
     }
   }
 
-  if (quals && countedCauses.includes("unstated")) {
+  if (quals) {
     for (const person of persons) {
       const q = person.email ? quals.get(person.email) : undefined;
       if (!q) continue;
       person.signalDates = person.signalDates ?? {};
-      if (q.meetingBookedAt) {
-        person.signals.meeting = true;
-        person.signalDates.meeting = q.meetingBookedAt;
-      }
-      if (q.closedAt) {
-        person.signals.closeWin = true;
-        person.signalDates.closeWin = q.closedAt;
+      // Delivery date read BEFORE this overlay writes anything: the rule compares against OUR email.
+      const deliveredAt = person.signalDates.delivered ?? null;
+      const legacy: Array<[string, string]> = [];
+      if (q.meetingBookedAt) legacy.push(["meeting", q.meetingBookedAt]);
+      if (q.closedAt) legacy.push(["closeWin", q.closedAt]);
+      for (const [signal, at] of legacy) {
+        person.signals[signal] = true;
+        person.signalDates[signal] = at;
+        setPriced(person, signal, pricedCauses.includes(causeByDeliveryRule(at, deliveredAt)));
       }
     }
   }
@@ -98,9 +99,15 @@ export function applySignalOverlays(
       // A rung a human stated the lead reached. The date may legitimately be null (an undated
       // statement): the rung is still reached, it simply cannot be placed on the timeline — which is
       // the honest answer, and the reason it is never back-filled with the day we heard about it.
+      // A statement about a rung supersedes the legacy answer about it — its cause included.
       for (const [signal, date] of Object.entries(facts.reached)) {
         person.signals[signal] = true;
         person.signalDates[signal] = date;
+        setPriced(person, signal, !facts.unpricedSignals.includes(signal));
+      }
+      // Website conversions: the rung is set elsewhere, the cause rides the statement rows.
+      for (const signal of facts.unpricedSignals) {
+        if (!(signal in facts.reached)) setPriced(person, signal, false);
       }
       if (facts.valueUsd !== null) person.valueUsd = facts.valueUsd;
       if (facts.deadStepSignals.length > 0) {
@@ -108,4 +115,11 @@ export function applySignalOverlays(
       }
     }
   }
+}
+
+function setPriced(person: EnginePerson, signal: string, priced: boolean): void {
+  const current = new Set(person.unpricedSignals ?? []);
+  if (priced) current.delete(signal);
+  else current.add(signal);
+  person.unpricedSignals = current.size > 0 ? [...current] : undefined;
 }

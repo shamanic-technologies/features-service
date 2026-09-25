@@ -474,7 +474,7 @@ router.get("/brands/:brandId/offers", apiKeyAuth, async (req, res) => {
         // WHOSE WINS EVERY ROW COUNTED. A lean row carries no `outcomeCauses` of its own, so the
         // payload states it once: the money in these rows moves with the parameter, and a consumer
         // has to be able to name the basis of a figure it is about to render beside another.
-        return { brandId, costBasis: "charged" as const, outcomeCauses: { counted: [...causes] }, offers: groups };
+        return { brandId, costBasis: "charged" as const, outcomeCauses: { priced: [...causes] }, offers: groups };
       },
     });
 

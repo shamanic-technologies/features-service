@@ -150,6 +150,9 @@ function mockFetch(opts: Opts = {}): void {
         campaignId: "c1",
         occurredAt: o.occurredAt === undefined ? daysAgo(2) : o.occurredAt,
         valueCents: o.valueCents ?? null,
+        // Every statement in this suite is OUR win: the suite is about what an outcome is worth, and
+        // whose win it was is `outcome-cause-grain.test.ts`'s question.
+        causedByOutreach: true,
         source: "manual",
       }));
       return json({ event, outcomes: rows });
@@ -178,7 +181,16 @@ function mockFetch(opts: Opts = {}): void {
     if (url.includes("/orgs/leads")) return json({ leads: [ENGAGED()] });
     if (url.includes("/orgs/status")) {
       return json({
-        results: [{ email: "jane@acme.com", firstClickedAt: daysAgo(20), firstRepliedAt: daysAgo(20) }],
+        // Our first email reached Jane 30 days ago, BEFORE every legacy qualification below — so the
+        // whose-win date rule answers "ours" for them, exactly as lead-service answers it for a statement.
+        results: [
+          {
+            email: "jane@acme.com",
+            firstClickedAt: daysAgo(20),
+            firstRepliedAt: daysAgo(20),
+            broadcast: { brand: { firstDeliveredAt: daysAgo(30), firstClickedAt: daysAgo(20), firstRepliedAt: daysAgo(20) } },
+          },
+        ],
       });
     }
     return json({});

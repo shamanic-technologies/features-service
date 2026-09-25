@@ -5,7 +5,7 @@ import {
   type StepOutcomeRow,
 } from "./step-outcomes-client.js";
 import {
-  ALL_OUTCOME_CAUSES,
+  DEFAULT_PRICED_CAUSES,
   causeOf,
   zeroCauseTally,
   type OutcomeCause,
@@ -33,12 +33,13 @@ import {
  * ── WHOSE WIN IT WAS ────────────────────────────────────────────────────────────────────────────
  *
  * A statement now also carries WHO caused the outcome (`lib/outcome-cause.ts`), and this is the ONE
- * place the answer is acted on. A row whose state the caller is not counting is DROPPED before the
- * collapse — so it contributes neither its RUNG nor its VALUE, and the lead falls back to whatever
- * else it has. Filtering at the row is what keeps the two coherent: leaving the rung out while its
- * stated amount still scaled the ladder would price a lead on a deal this read is not counting.
+ * place the answer is acted on. Every row reaches its RUNG — the outcome happened, and every count,
+ * rate and funnel step counts it. What the cause decides is whether the rung is PRICED: a rung only
+ * rows of an unpriced state reached is listed in `unpricedSignals`, and only a PRICED row's stated
+ * amount becomes the lead's value. Filtering the value at the row is what keeps the two coherent: a
+ * deal we did not cause must not scale the ladder of a lead priced on our outreach.
  *
- * Dropping the rung is deliberately NOT the same as stating a `never`. The customer said our outreach
+ * Not pricing the rung is deliberately NOT the same as stating a `never`. The customer said our outreach
  * did not cause this deal; they did not say the person will never buy through us, and inventing a
  * disqualification from a cause answer would put words in their mouth. The mechanism for "it will
  * never happen" exists and is a statement a human makes.
@@ -76,7 +77,7 @@ export type OutcomeCauseCounts = Record<OutcomeCause, Record<LeadStepOutcome, nu
 
 /** What this brand's statements say, and how much of it each cause state accounts for. */
 export interface ObservedStepFacts {
-  /** Per-lead facts, keyed by the canonical email this service joins on — the COUNTED rows only. */
+  /** Per-lead facts, keyed by the canonical email this service joins on — EVERY row, priced or not. */
   byEmail: Map<string, ObservedLeadFacts>;
   /**
    * EVERY stated outcome this read saw, tallied by cause state and step — the filter is NOT applied
@@ -101,6 +102,8 @@ export interface ObservedLeadFacts {
   valueUsd: number | null;
   /** The engine signals of the steps a human ruled out for this lead. */
   deadStepSignals: string[];
+  /** The rungs in `reached` that NO priced row reached — counted, never priced. */
+  unpricedSignals: string[];
 }
 
 /**
@@ -117,11 +120,8 @@ export interface ObservedLeadFacts {
  */
 export async function fetchObservedStepFacts(
   brandId: string,
-  /**
-   * WHICH CAUSE STATES to count. Defaults to every state — what this service counted before the
-   * caller could say, so an unchanged caller reads an unchanged answer.
-   */
-  causes: readonly OutcomeCause[] = ALL_OUTCOME_CAUSES,
+  /** WHICH CAUSE STATES are PRICED. Every state is always COUNTED. Default: our own wins only. */
+  pricedCauses: readonly OutcomeCause[] = DEFAULT_PRICED_CAUSES,
 ): Promise<ObservedStepFacts> {
   const [outcomesByStep, dead] = await Promise.all([
     Promise.all(ALL_STEPS.map((step) => fetchStepOutcomes(brandId, step))).then(
@@ -130,7 +130,9 @@ export async function fetchObservedStepFacts(
     fetchStepDisqualifications(brandId),
   ]);
 
-  const counted = new Set<OutcomeCause>(causes);
+  const priced = new Set<OutcomeCause>(pricedCauses);
+  // Per lead, the rungs at least one PRICED row reached; everything else it reached is unpriced.
+  const pricedReached = new Map<string, Set<string>>();
   const causeCounts = zeroCauseTally(
     () => Object.fromEntries(ALL_STEPS.map((s) => [s, 0])) as Record<LeadStepOutcome, number>,
   );
@@ -139,7 +141,7 @@ export async function fetchObservedStepFacts(
   const facts = (email: string): ObservedLeadFacts => {
     let existing = byEmail.get(email);
     if (!existing) {
-      existing = { reached: {}, valueUsd: null, deadStepSignals: [] };
+      existing = { reached: {}, valueUsd: null, deadStepSignals: [], unpricedSignals: [] };
       byEmail.set(email, existing);
     }
     return existing;
@@ -151,14 +153,51 @@ export async function fetchObservedStepFacts(
     for (const row of outcomesByStep.get(step) ?? []) {
       // Tallied BEFORE anything is skipped: the counts state what exists, the filter states what was
       // counted, and a reader needs both to understand the figure above them.
-      causeCounts[causeOf(row.causedByOutreach)][step] += 1;
-      if (!counted.has(causeOf(row.causedByOutreach))) continue;
+      const cause = causeOf(row.causedByOutreach);
+      causeCounts[cause][step] += 1;
       if (!row.email) continue;
       const entry = facts(row.email);
+      const isPriced = priced.has(cause);
       if (PRICED_STEPS.includes(step)) {
-        entry.reached[STEP_TO_SIGNAL[step]] = earliest(entry.reached[STEP_TO_SIGNAL[step]], row.occurredAt);
+        const signal = STEP_TO_SIGNAL[step];
+        entry.reached[signal] = earliest(entry.reached[signal], row.occurredAt);
+        if (isPriced) {
+          let set = pricedReached.get(row.email);
+          if (!set) pricedReached.set(row.email, (set = new Set()));
+          set.add(signal);
+        }
       }
-      if (row.valueCents !== null) entry.valueUsd = row.valueCents / 100;
+      if (isPriced && row.valueCents !== null) entry.valueUsd = row.valueCents / 100;
+    }
+  }
+
+  // Also the website conversions: their rungs are set by another read (the matched-lead email sets),
+  // but their cause rides these rows, so a form submission that was not ours is not priced either.
+  const CAUSE_ONLY_STEPS: readonly LeadStepOutcome[] = ["signup", "form_submission"];
+  const causeOnlyPriced = new Map<string, Set<string>>();
+  const causeOnlySeen = new Map<string, Set<string>>();
+  for (const step of CAUSE_ONLY_STEPS) {
+    for (const row of outcomesByStep.get(step) ?? []) {
+      if (!row.email) continue;
+      const signal = STEP_TO_SIGNAL[step];
+      const seen = causeOnlySeen.get(row.email) ?? new Set<string>();
+      seen.add(signal);
+      causeOnlySeen.set(row.email, seen);
+      if (priced.has(causeOf(row.causedByOutreach))) {
+        const p = causeOnlyPriced.get(row.email) ?? new Set<string>();
+        p.add(signal);
+        causeOnlyPriced.set(row.email, p);
+      }
+    }
+  }
+
+  for (const [email, entry] of byEmail) {
+    const pricedSet = pricedReached.get(email);
+    for (const signal of Object.keys(entry.reached)) {
+      if (!pricedSet?.has(signal)) entry.unpricedSignals.push(signal);
+    }
+    for (const signal of causeOnlySeen.get(email) ?? []) {
+      if (!causeOnlyPriced.get(email)?.has(signal)) entry.unpricedSignals.push(signal);
     }
   }
 
