@@ -14817,12 +14817,12 @@
                           "toReached": {
                             "type": "integer",
                             "nullable": true,
-                            "description": "Of those, the leads that ALSO reached the TO step. Same null rule."
+                            "description": "Distinct leads that reached the TO step. Same null rule."
                           },
                           "ratePct": {
                             "type": "number",
                             "nullable": true,
-                            "description": "toReached / fromReached × 100 — the rate observed on the brand's own leads, conditional on the FROM step (so it can never exceed 100%). Null when either count is null or fromReached is 0."
+                            "description": "toReached / fromReached × 100 — the brand's funnel-step conversion for this arrow, byte-equal to funnelSteps.conversionFromPreviousPct for the rung. Null when either count is null or fromReached is 0."
                           },
                           "sufficient": {
                             "type": "boolean",
@@ -14834,9 +14834,10 @@
                             "enum": [
                               "step_not_counted",
                               "evidence_unreadable",
-                              "below_learning_bar"
+                              "below_learning_bar",
+                              "to_exceeds_from"
                             ],
-                            "description": "Why the measured rate is not the effective one; null when it is."
+                            "description": "Why the measured rate is not the effective one; null when it is. to_exceeds_from: more leads at TO than FROM, so the ratio is no probability (never clamped)."
                           }
                         },
                         "required": [

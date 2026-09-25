@@ -22,13 +22,16 @@
  * When none of the three exists the answer is `null` with `unresolvedReason` — never a default, never
  * a 0, never borrowed from a neighbouring arrow.
  *
- * ── A RATE IS CONDITIONAL ON THE FROM STEP ──────────────────────────────────────────────────────
+ * ── THE MEASURED RATE IS THE FUNNEL-STEP CONVERSION, BYTE FOR BYTE ─────────────────────────────
  *
- * The measured rate is `leads that reached FROM and TO ÷ leads that reached FROM`. A lead flag does not
- * record which path a lead took, so a raw `count(TO) ÷ count(FROM)` would credit a positive-reply →
- * meeting arrow with every meeting booked off the WEBSITE too, and can exceed 100% — a probability no
- * funnel can be priced on. Where every lead at TO also passed FROM (the ordinary case), this is the
- * byte-same figure `funnelSteps.conversionFromPreviousPct` states for the rung.
+ * `count(leads at TO) ÷ count(leads at FROM)` — exactly what `funnelSteps.conversionFromPreviousPct`
+ * states for the rung, so the rate a brand is priced on and the funnel it reads on its Overview are one
+ * number. NOT the intersection (leads at FROM that also reached TO): shipped that way first (v0.172.7)
+ * and measured wrong in prod the same hour — brand `75d7e3e8…` has 14 booked meetings of which only 5
+ * carry a positive-reply flag (bookings stated by hand or qualified without a reply classification), so
+ * the intersection read reply → meeting at 21.7% against the rung's 60.9%. A producer that records the
+ * later rung and misses the earlier one makes the intersection understate, silently. When TO exceeds
+ * FROM the ratio is no probability: `gap: "to_exceeds_from"`, never clamped, and the next source wins.
  *
  * ── RIGHT-CENSORING IS ACCEPTED ─────────────────────────────────────────────────────────────────
  *
@@ -71,7 +74,9 @@ export type MeasuredRateGap =
   /** The producer behind one of the steps could not be read on this computation. */
   | "evidence_unreadable"
   /** Counted, but fewer than `MIN_MEASURED_FROM_REACHED` leads reached the FROM step. */
-  | "below_learning_bar";
+  | "below_learning_bar"
+  /** More leads reached TO than FROM — the FROM step is under-counted, so the ratio is no probability. */
+  | "to_exceeds_from";
 
 export interface MeasuredArrowRate {
   /** Distinct leads that reached the FROM step. Null when that step is not counted or unreadable. */
@@ -230,11 +235,15 @@ export function measuredArrowRate(
   let fromReached = 0;
   let toReached = 0;
   for (const lead of measurement.reached) {
-    if (!lead[fromField]) continue;
-    fromReached += 1;
+    if (lead[fromField]) fromReached += 1;
     if (lead[toField]) toReached += 1;
   }
   const ratePct = fromReached > 0 ? (toReached / fromReached) * 100 : null;
+  // More leads at TO than at FROM: the FROM step is under-counted (a producer records the later rung
+  // but not the earlier one), so the ratio is not a probability. Unmeasurable, never clamped to 100%.
+  if (ratePct !== null && ratePct > 100) {
+    return { fromReached, toReached, ratePct, sufficient: false, gap: "to_exceeds_from" };
+  }
   const sufficient = fromReached >= MIN_MEASURED_FROM_REACHED;
   return { fromReached, toReached, ratePct, sufficient, gap: sufficient ? null : "below_learning_bar" };
 }
@@ -431,7 +440,8 @@ export async function computeBrandEffectiveRates(brandId: string, orgId: string)
 export function getBrandEffectiveRates(brandId: string, orgId: string): Promise<BrandEffectiveRates> {
   return servedCached({
     view: "brand-effective-conversion-rates",
-    scopeKey: buildScopeKey(brandId, { orgId }),
+    // `m` names the measurement rule, so a snapshot computed under a retired rule is never served.
+    scopeKey: buildScopeKey(brandId, { orgId, m: "funnel-step" }),
     orgId,
     compute: () => computeBrandEffectiveRates(brandId, orgId),
   });
