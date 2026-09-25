@@ -51,7 +51,58 @@ export async function fetchCrmOnlyRepliers(
   return out;
 }
 
-/** Count CRM-only repliers per workflow slug (distinct leads). */
+/** A person the lead population states replied positively, by EITHER witness (email or CRM). */
+export interface PositiveReplier extends CrmOnlyReplier {
+  /** True when only the customer's CRM evidences the reply — what an email-gateway count cannot see. */
+  crmOnly: boolean;
+}
+
+/**
+ * EVERY positive replier of a brand or campaign scope, one entry per PERSON (deduped by lead) — the same
+ * person set `/stats` recipientsRepliesPositive counts. Each person carries the ONE workflow slug and
+ * campaign of the row it survived dedup on, so a count partitioned by workflow is additive and sums to
+ * the scope's total (verified in prod on Doc Dinners 2026-09-25: 26 repliers, each on exactly one lead
+ * row). Fails loud like `fetchCrmOnlyRepliers`.
+ */
+export async function fetchPositiveRepliers(
+  brandId: string,
+  campaignScope: CampaignFilter,
+  identity: { orgId: string; userId?: string; runId?: string; featureSlug?: string },
+): Promise<PositiveReplier[]> {
+  const persons = dedupPersonsByLead(await fetchLeadsForRevenue(brandId, campaignScope, identity));
+  const out: PositiveReplier[] = [];
+  for (const p of persons) {
+    if (!p.signals.positiveReply) continue;
+    out.push({
+      leadId: p.leadId,
+      email: p.email ? p.email.trim().toLowerCase() : null,
+      campaignId: p.campaignId ?? null,
+      workflowSlug: p.workflowSlug ?? null,
+      crmOnly: Boolean(p.crmPositiveReplyAt),
+    });
+  }
+  return out;
+}
+
+/**
+ * REPLACE email-gateway's per-slug positive-reply count with the person count, IN PLACE, before the
+ * dynasty rollup reads it. email-gateway's per-slug sums can hold one replier under two slugs (Doc
+ * Dinners: 24 by slug against 23 distinct), and they cannot see a CRM-evidenced reply at all; the person
+ * partition has neither defect. A slug email-gateway answered for with nobody in it reads 0.
+ */
+export function setPersonRepliesOnSlugStats(
+  statsBySlug: Map<string, Record<string, number>>,
+  repliers: readonly PositiveReplier[],
+): void {
+  for (const stats of statsBySlug.values()) stats.recipientsRepliesPositive = 0;
+  for (const [slug, count] of crmRepliesBySlug(repliers)) {
+    const existing = statsBySlug.get(slug) ?? {};
+    existing.recipientsRepliesPositive = count;
+    statsBySlug.set(slug, existing);
+  }
+}
+
+/** Count repliers per workflow slug (distinct leads) — whichever replier set it is handed. */
 export function crmRepliesBySlug(repliers: readonly CrmOnlyReplier[]): Map<string, number> {
   const bySlug = new Map<string, Set<string>>();
   for (const r of repliers) {
@@ -61,20 +112,4 @@ export function crmRepliesBySlug(repliers: readonly CrmOnlyReplier[]): Map<strin
     bySlug.set(r.workflowSlug, set);
   }
   return new Map([...bySlug].map(([slug, set]) => [slug, set.size]));
-}
-
-/**
- * Add the CRM-only repliers to an email-gateway `groupBy=workflowSlug` outcome map, IN PLACE, before the
- * dynasty rollup reads it. A slug email-gateway never answered for gets its own entry, so a person the CRM
- * saw is never dropped because nobody replied by email under that workflow.
- */
-export function addCrmRepliesToSlugStats(
-  statsBySlug: Map<string, Record<string, number>>,
-  repliers: readonly CrmOnlyReplier[],
-): void {
-  for (const [slug, count] of crmRepliesBySlug(repliers)) {
-    const existing = statsBySlug.get(slug) ?? {};
-    existing.recipientsRepliesPositive = (existing.recipientsRepliesPositive ?? 0) + count;
-    statsBySlug.set(slug, existing);
-  }
 }

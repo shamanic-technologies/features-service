@@ -20,7 +20,7 @@ import { fetchWithRetry } from "./fetch-retry.js";
 import { buildWorkflowDynasties, aggregateAcrossDynasties } from "../routes/public.js";
 import type { WorkflowMetadata } from "./public-stats-clients.js";
 import { fetchActiveAudiences, fetchAudienceMemberEmails } from "./human-client.js";
-import { addCrmRepliesToSlugStats, type CrmOnlyReplier } from "./crm-only-repliers.js";
+import { setPersonRepliesOnSlugStats, type CrmOnlyReplier, type PositiveReplier } from "./crm-only-repliers.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { selectCostCents, selectCostCentsString, type Pricing } from "./pricing.js";
 import { type CostBasis } from "./cost-basis.js";
@@ -145,6 +145,82 @@ export interface WorkflowGrainEvidence {
 }
 
 /**
+ * The dynasty map a BRAND- or CAMPAIGN-grain rollup uses, split into the ACTIVE dynasties (keyed by the
+ * active version's slug — the map `buildWorkflowDynasties` builds, which every ranked row is keyed on)
+ * and the RETIRED ones (keyed by the dynasty slug — a lineage with no active version left).
+ *
+ * `buildWorkflowDynasties` walks `upgradedTo` from each ACTIVE workflow, so two things fall out of it:
+ * a deprecated version of a still-active dynasty that the upgrade chain never reached, and a whole
+ * dynasty nobody runs any more. Both carry real spend and real outcomes of this brand, and dropping them
+ * made the per-workflow rows sum to less than the scope's own total (Doc Dinners 2026-09-25: 23 positive
+ * replies across the rows against 26 on `/stats`, three of them under the retired arcadia, bronze-2 and
+ * cirque). So an unreached version joins the ACTIVE dynasty sharing its `workflowDynastySlug`, a retired
+ * lineage becomes its own group, and a slug the catalogue does not describe at all is a dynasty of one —
+ * the rule `?groupBy=workflow` already applies.
+ */
+export function brandGrainDynasties(
+  workflows: WorkflowMetadata[],
+  observedSlugs: Iterable<string>,
+): { active: Map<string, string[]>; retired: Map<string, string[]> } {
+  const active = buildWorkflowDynasties(workflows);
+  const covered = new Set<string>();
+  for (const members of active.values()) for (const slug of members) covered.add(slug);
+  const activeKeyByDynasty = new Map<string, string>();
+  for (const w of workflows) {
+    if (active.has(w.workflowSlug)) activeKeyByDynasty.set(w.workflowDynastySlug, w.workflowSlug);
+  }
+  const retired = new Map<string, string[]>();
+  const place = (slug: string, dynastySlug: string) => {
+    if (covered.has(slug)) return;
+    covered.add(slug);
+    const activeKey = activeKeyByDynasty.get(dynastySlug);
+    if (activeKey) {
+      active.set(activeKey, [...(active.get(activeKey) ?? []), slug]);
+      return;
+    }
+    retired.set(dynastySlug, [...(retired.get(dynastySlug) ?? []), slug]);
+  };
+  for (const w of workflows) place(w.workflowSlug, w.workflowDynastySlug);
+  for (const slug of observedSlugs) place(slug, slug);
+  return { active, retired };
+}
+
+/** A brand- or campaign-grain rollup, active dynasties and retired lineages kept apart. */
+export interface GrainEvidenceWithRetired {
+  /** Keyed by each active dynasty's active slug — the rows every ranked surface is built from. */
+  active: Map<string, WorkflowGrainEvidence>;
+  /** Keyed by the retired dynasty's slug. Evidence only: a retired workflow can never be put forward. */
+  retired: Map<string, WorkflowGrainEvidence>;
+}
+
+function rollUpGrain(
+  workflows: WorkflowMetadata[],
+  costGroups: Array<{ dimensions: Record<string, string | null>; totalCostInUsdCents: string; runCount: number }>,
+  emailStats: Map<string, Record<string, number>>,
+  repliers: readonly PositiveReplier[] | undefined,
+): GrainEvidenceWithRetired {
+  if (repliers) setPersonRepliesOnSlugStats(emailStats, repliers);
+  const observed = costGroups.map((g) => g.dimensions.workflowSlug).filter((s): s is string => Boolean(s));
+  const { active, retired } = brandGrainDynasties(workflows, observed);
+  const toEvidence = (dynasties: Map<string, string[]>) => {
+    const { costMap, aggregatedOutcomes } = aggregateAcrossDynasties(dynasties, costGroups, emailStats, "workflowSlug");
+    const result = new Map<string, WorkflowGrainEvidence>();
+    for (const [key, cost] of costMap) {
+      const outcomes = aggregatedOutcomes.get(key) ?? {};
+      result.set(key, {
+        totalCostInUsdCents: cost.totalCostInUsdCents,
+        completedRuns: cost.completedRuns,
+        contacted: outcomes.recipientsContacted ?? 0,
+        clicks: outcomes.recipientsClicked ?? 0,
+        replies: outcomes.recipientsRepliesPositive ?? 0,
+      });
+    }
+    return result;
+  };
+  return { active: toEvidence(active), retired: toEvidence(retired) };
+}
+
+/**
  * BRAND-grain evidence per active workflow dynasty for one (brand, feature): the SAME data path as
  * crossOrg (fetchPublicCosts/fetchPublicEmailStats + aggregateAcrossDynasties) but scoped to `brandId`.
  * Keyed by active workflow slug (the dynasty's active version). A dynasty the brand never ran is absent
@@ -162,39 +238,37 @@ export async function fetchBrandWorkflowEvidence(
   // taken by ONE caller: the brand-observed cost-per-outreach that floors the budget→sends PROJECTION,
   // which is compared against the fleet benchmark and therefore must be read on the fleet's basis.
   basis: CostBasis = "charged",
-  // The brand's CRM-ONLY positive repliers (`fetchCrmOnlyRepliers`). email-gateway's per-workflow reply
-  // count cannot see them, so they are added per workflow slug before the dynasty rollup — the grain's
-  // replies then agree with every lead-population surface (`/stats`, `/revenue`). Omitted by a caller
-  // that reads no reply off this grain (the budget→sends projection reads cost and contacted only).
-  crmRepliers?: readonly CrmOnlyReplier[],
+  // The brand's positive repliers, one per PERSON (`fetchPositiveRepliers`). They REPLACE
+  // email-gateway's per-slug reply count, so the grain counts replies on the person set `/stats` counts —
+  // CRM-evidenced ones included, nobody twice — and the rows sum to the brand's total. Omitted by a
+  // caller that reads no reply off this grain (the budget→sends projection reads cost and contacted only).
+  repliers?: readonly PositiveReplier[],
 ): Promise<Map<string, WorkflowGrainEvidence>> {
+  return (await fetchBrandWorkflowEvidenceWithRetired(brandId, featureSlug, workflows, identity, pricing, basis, repliers)).active;
+}
+
+/** The brand grain with its retired lineages kept beside the active dynasties (see `brandGrainDynasties`). */
+export async function fetchBrandWorkflowEvidenceWithRetired(
+  brandId: string,
+  featureSlug: string,
+  workflows: WorkflowMetadata[],
+  identity: Identity,
+  pricing: Pricing = "gross",
+  basis: CostBasis = "charged",
+  repliers?: readonly PositiveReplier[],
+): Promise<GrainEvidenceWithRetired> {
   const [costGroups, emailStats] = await Promise.all([
     fetchBrandCostGroups(brandId, featureSlug, "workflowSlug", identity),
     fetchBrandEmailStats(brandId, featureSlug, identity),
   ]);
-  if (crmRepliers) addCrmRepliesToSlugStats(emailStats, crmRepliers);
-  const dynasties = buildWorkflowDynasties(workflows);
-  const { costMap, aggregatedOutcomes } = aggregateAcrossDynasties(
-    dynasties,
-    // Select gross vs frozen-net cost per group BEFORE the dynasty rollup, so the aggregated brand-grain
-    // cost is net-or-gross end to end (no post-hoc multiply).
+  // Select gross vs frozen-net cost per group BEFORE the dynasty rollup, so the aggregated brand-grain
+  // cost is net-or-gross end to end (no post-hoc multiply).
+  return rollUpGrain(
+    workflows,
     costGroups.map((g) => ({ dimensions: g.dimensions, totalCostInUsdCents: selectCostCentsString(g, "totalCostInUsdCents", pricing, basis), runCount: g.runCount })),
     emailStats,
-    "workflowSlug",
+    repliers,
   );
-
-  const result = new Map<string, WorkflowGrainEvidence>();
-  for (const [activeSlug, cost] of costMap) {
-    const outcomes = aggregatedOutcomes.get(activeSlug) ?? {};
-    result.set(activeSlug, {
-      totalCostInUsdCents: cost.totalCostInUsdCents,
-      completedRuns: cost.completedRuns,
-      contacted: outcomes.recipientsContacted ?? 0,
-      clicks: outcomes.recipientsClicked ?? 0,
-      replies: outcomes.recipientsRepliesPositive ?? 0,
-    });
-  }
-  return result;
 }
 
 // ── AUDIENCE grain (send-tag, per (audience × dynasty)) ──────────────────────
@@ -384,12 +458,13 @@ export async function fetchAudienceGrainEvidence(
   // The brand's CRM-ONLY positive repliers. Attributed to an audience by MEMBERSHIP (human-service) —
   // the same join `/audience-stats` adds them through — and to the dynasty of the workflow the lead was
   // served under. Member lists are read only when there is somebody to place.
-  crmRepliers?: readonly CrmOnlyReplier[],
+  crmRepliers?: readonly (CrmOnlyReplier & { crmOnly?: boolean })[],
 ): Promise<AudienceGrainEvidence[]> {
   const audienceIds = audienceIdsOverride ?? (await fetchActiveAudiences(brandId, identity)).map((a) => a.id);
   if (audienceIds.length === 0) return [];
   const activeIds = new Set(audienceIds);
-  const placeable = (crmRepliers ?? []).filter((r) => r.email && r.workflowSlug);
+  // Only the CRM-ONLY ones: email-gateway's per-audience count already holds every classified reply.
+  const placeable = (crmRepliers ?? []).filter((r) => r.crmOnly !== false && r.email && r.workflowSlug);
 
   const [costByAudience, outcomeByAudience, crmByAudience] = await Promise.all([
     fetchAudienceDynastyCosts(brandId, featureSlug, activeIds, identity, pricing, slugToDynasty),
@@ -569,32 +644,32 @@ export async function fetchCampaignWorkflowEvidence(
   identity: Identity,
   pricing: Pricing = "gross",
   basis: CostBasis = "charged",
-  // The campaign identity's CRM-ONLY positive repliers — added per workflow slug, as on the brand grain.
-  crmRepliers?: readonly CrmOnlyReplier[],
+  // The campaign identity's positive repliers, one per person — replacing email-gateway's per-slug
+  // reply count exactly as on the brand grain.
+  repliers?: readonly PositiveReplier[],
 ): Promise<Map<string, WorkflowGrainEvidence>> {
+  return (await fetchCampaignWorkflowEvidenceWithRetired(brandId, featureSlug, campaignIds, workflows, identity, pricing, basis, repliers)).active;
+}
+
+/** The campaign grain with its retired lineages kept beside the active dynasties. */
+export async function fetchCampaignWorkflowEvidenceWithRetired(
+  brandId: string,
+  featureSlug: string,
+  campaignIds: string[],
+  workflows: WorkflowMetadata[],
+  identity: Identity,
+  pricing: Pricing = "gross",
+  basis: CostBasis = "charged",
+  repliers?: readonly PositiveReplier[],
+): Promise<GrainEvidenceWithRetired> {
   const [{ groups, filteredLocally }, emailStats] = await Promise.all([
     fetchCampaignCostGroups(brandId, featureSlug, campaignIds, identity),
     fetchCampaignEmailStats(brandId, featureSlug, campaignIds, identity),
   ]);
-  if (crmRepliers) addCrmRepliesToSlugStats(emailStats, crmRepliers);
-  const dynasties = buildWorkflowDynasties(workflows);
-  const { costMap, aggregatedOutcomes } = aggregateAcrossDynasties(
-    dynasties,
+  return rollUpGrain(
+    workflows,
     mergeCostGroupsByWorkflowSlug(groups, filteredLocally ? new Set(campaignIds) : null, pricing, basis),
     emailStats,
-    "workflowSlug",
+    repliers,
   );
-
-  const result = new Map<string, WorkflowGrainEvidence>();
-  for (const [activeSlug, cost] of costMap) {
-    const outcomes = aggregatedOutcomes.get(activeSlug) ?? {};
-    result.set(activeSlug, {
-      totalCostInUsdCents: cost.totalCostInUsdCents,
-      completedRuns: cost.completedRuns,
-      contacted: outcomes.recipientsContacted ?? 0,
-      clicks: outcomes.recipientsClicked ?? 0,
-      replies: outcomes.recipientsRepliesPositive ?? 0,
-    });
-  }
-  return result;
 }

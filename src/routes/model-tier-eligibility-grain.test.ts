@@ -27,11 +27,11 @@ vi.mock("../db/index.js", () => ({
 }));
 vi.mock("../lib/env.js", () => ({ validateRequiredEnv: vi.fn(), REQUIRED_ENV: [] }));
 vi.mock("../instrument.js", () => ({}));
-// A brand with no CRM connection: no positive reply is known only from the CRM, so every grain reads
-// exactly what email-gateway says (the CRM-only additions are guarded in crm-only-repliers*.test.ts).
+// These suites pin the grains on email-gateway counts alone: the person-grain reply set is not read,
+// so every grain reads what it always did (the person basis is guarded in crm-only-repliers.test.ts).
 vi.mock("../lib/crm-only-repliers.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/crm-only-repliers.js")>()),
-  fetchCrmOnlyRepliers: vi.fn(async () => []),
+  fetchPositiveRepliers: vi.fn(async () => undefined),
 }));
 vi.mock("@sentry/node", () => ({
   default: { setupExpressErrorHandler: vi.fn() },

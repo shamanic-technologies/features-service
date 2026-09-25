@@ -63,7 +63,7 @@ import { matchSalesFunnelKey, salesFunnelIndex, SALES_FUNNEL_KEYS, SALES_FUNNEL_
 import { campaignScopeIds, singleCampaignId, type CampaignFilter } from "../lib/campaign-scope.js";
 import {
   computeLearningPhaseSoft,
-  crmOnlyRepliersByCampaign,
+  engagedLeadsByCampaign,
   type LearningPhaseResult,
 } from "../lib/learning-phase-compute.js";
 import type { LearningPhase } from "../lib/learning-phase.js";
@@ -1545,7 +1545,8 @@ export async function computeFeatureRevenue(
           economics,
           pricing,
           // A failed lead read already fails this whole compute; here it only must not go unhandled.
-          crmOnlyRepliersByCampaign: leadsRead.then(crmOnlyRepliersByCampaign).catch(() => new Map()),
+          // null (never an empty map) on a failed read: the compute then fails into its named degrade.
+          engagedLeadsByCampaign: leadsRead.then(engagedLeadsByCampaign).catch(() => null),
         })
       : Promise.resolve<LearningPhaseResult | null>(null),
   ]);
