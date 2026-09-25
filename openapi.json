@@ -9027,6 +9027,7 @@
                   "type": "string",
                   "nullable": true,
                   "enum": [
+                    "not_attributable",
                     "step_not_counted",
                     "evidence_unreadable",
                     "no_value_defined",
@@ -9099,9 +9100,9 @@
                         "type": "string",
                         "enum": [
                           "campaign_leads",
-                          "leg_crossings"
+                          "offer_leads_at_step"
                         ],
-                        "description": "`campaign_leads`: an entry leg counts its own campaigns' leads. `leg_crossings`: an internal leg's campaigns serve no lead of their own, so it counts the offer's leads that stood on FROM and reached TO."
+                        "description": "`campaign_leads`: an entry leg counts its own campaigns' leads. `offer_leads_at_step`: an internal leg's campaigns serve no lead of their own and nothing records which leads it acted on, so it states the offer's leads at its TO step; that count is not attributable to the channel, so cost per outcome and ROI read null with reason `not_attributable`."
                       },
                       "recipientsReached": {
                         "type": "integer",
@@ -9136,6 +9137,7 @@
                         "type": "string",
                         "nullable": true,
                         "enum": [
+                          "not_attributable",
                           "step_not_counted",
                           "evidence_unreadable",
                           "no_value_defined",

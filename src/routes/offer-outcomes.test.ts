@@ -90,8 +90,11 @@ describe("GET /offers/:offerId/outcomes", () => {
     expect(reply.costPerOutcomeUsd).toBe(45);
     expect(reply.valuePerOutcomeUsd).toBeCloseTo(100); // 50% x 20% x $1,000
     expect(meeting.recipientsReached).toBe(1);
-    expect(meeting.legs[0].countBasis).toBe("leg_crossings");
+    expect(meeting.legs[0].countBasis).toBe("offer_leads_at_step");
     expect(meeting.spentUsd).toBe(10);
+    expect(meeting.costPerOutcomeUsd).toBeNull();
+    expect(meeting.roiMultiple).toBeNull();
+    expect(meeting.unmeasuredReason).toBe("not_attributable");
     // The two delayed legs' spend is read on the mature cohort; the AI leg is zero-delay.
     expect(fetchMatureSpendCents).toHaveBeenCalledTimes(2);
   });
