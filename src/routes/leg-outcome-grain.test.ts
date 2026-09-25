@@ -130,9 +130,24 @@ function mockFetch(opts: MockOpts = {}): void {
     if (url.includes("/orgs/stats")) {
       if (u.searchParams.get("audienceId")) return json({ groups: [] });
       const campaignId = u.searchParams.get("campaignId");
-      if (campaignId === LIVE_CAMPAIGN) return json({ groups: [email("wf-lithium", 400, 0, 5), email("wf-sodium", 200, 0, 1)] });
-      if (campaignId === STOPPED_CAMPAIGN) return json({ groups: [email("wf-lithium", 300, 0, 2)] });
-      if (campaignId) return json({ groups: [] });
+      const perCampaign: Record<string, ReturnType<typeof email>[]> = {
+        [LIVE_CAMPAIGN]: [email("wf-lithium", 400, 0, 5), email("wf-sodium", 200, 0, 1)],
+        [STOPPED_CAMPAIGN]: [email("wf-lithium", 300, 0, 2)],
+      };
+      // A family is ONE `campaignIds` read: email-gateway answers the per-member sum per group key.
+      const family = u.searchParams.get("campaignIds")?.split(",");
+      if (family) {
+        const byKey = new Map<string, ReturnType<typeof email>>();
+        for (const g of family.flatMap((id) => perCampaign[id] ?? [])) {
+          const prev = byKey.get(g.key);
+          if (!prev) { byKey.set(g.key, JSON.parse(JSON.stringify(g))); continue; }
+          for (const [k, v] of Object.entries(g.broadcast.recipientStats)) {
+            (prev.broadcast.recipientStats as Record<string, number>)[k] += v as number;
+          }
+        }
+        return json({ groups: [...byKey.values()] });
+      }
+      if (campaignId) return json({ groups: perCampaign[campaignId] ?? [] });
       return json({ groups: [email("wf-lithium", 1300, 0, BRAND_REPLIES), email("wf-sodium", 900, 0, 5)] });
     }
     if (url.includes("/public/stats")) return json({ groups: [email("wf-lithium", 9000, 0, 900), email("wf-sodium", 9000, 0, 900)] });

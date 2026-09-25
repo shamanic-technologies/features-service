@@ -2,6 +2,7 @@ import type { EnginePerson } from "./revenue-engine.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { createSlotLimiter } from "./concurrency.js";
 import { campaignFamilySet, singleCampaignId, type CampaignFilter } from "./campaign-scope.js";
+import { fingerprintScopeKey, liveLeadCopyRequested, readLeadCopy, registerEmailFingerprints, type CompactLeadRow } from "./lead-copy.js";
 
 /**
  * Shape of one leads_campaigns row returned by lead-service GET /orgs/leads.
@@ -181,6 +182,26 @@ async function walkLeadPages(baseUrl: string, reqHeaders: Record<string, string>
 }
 
 /**
+ * ONE `GET /orgs/leads/changes` read — the whole scope without `since`, the delta with it — through
+ * the same process-wide slot limiter and abort timeout as a page of the walk.
+ */
+async function fetchLeadChanges(
+  baseUrl: string,
+  since: string | null,
+  reqHeaders: Record<string, string>,
+): Promise<{ full: boolean; cursor: string | null; leads: CompactLeadRow[]; removed: string[] }> {
+  const url = since === null ? baseUrl : `${baseUrl}&since=${encodeURIComponent(since)}`;
+  return leadReadSlots.run(async () => {
+    const response = await fetchWithRetry(url, { headers: reqHeaders }, { timeoutMs: LEAD_PAGE_TIMEOUT_MS });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`lead-service /orgs/leads/changes failed (${response.status}): ${text}`);
+    }
+    return (await response.json()) as { full: boolean; cursor: string | null; leads: CompactLeadRow[]; removed: string[] };
+  });
+}
+
+/**
  * IN-FLIGHT walks of the SAME lead population, keyed by its exact request. NOT a cache — the entry is
  * dropped the moment the walk settles, so nobody is ever served a stale page and the next read
  * goes to lead-service as before.
@@ -251,6 +272,10 @@ export async function fetchLeadsForRevenue(
   // does not carry — it would read undefined for every row without an error.
   const params = new URLSearchParams({ brandId, view: "compact", limit: String(LEAD_PAGE_SIZE) });
   if (campaignId) params.set("campaignId", campaignId);
+  // The change feed takes the SAME scope and always serves the compact row of the whole scope
+  // (it refuses `limit`/`view` other than compact), so only the scope rides it.
+  const scopeParams = new URLSearchParams({ brandId });
+  if (campaignId) scopeParams.set("campaignId", campaignId);
 
   const reqHeaders: Record<string, string> = {
     "x-api-key": apiKey,
@@ -262,7 +287,19 @@ export async function fetchLeadsForRevenue(
   if (campaignId) reqHeaders["x-campaign-id"] = campaignId;
   if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
 
-  const allRows = await sharedLeadPage(`${url}/orgs/leads?${params}`, reqHeaders);
+  // An interactive view (servedCached) reads a LIVE COPY patched through lead-service's change feed
+  // instead of re-walking the whole population (lib/lead-copy.ts, features-service#1045); every
+  // other caller keeps the walk. Both return the same compact rows for the same scope.
+  let allRows: LeadRow[];
+  if (liveLeadCopyRequested()) {
+    const copyRows = await readLeadCopy(`${headers.orgId}|${url}|${scopeParams}`, (since) =>
+      fetchLeadChanges(`${url}/orgs/leads/changes?${scopeParams}`, since, reqHeaders),
+    );
+    registerEmailFingerprints(fingerprintScopeKey(headers.orgId, brandId, campaignId), copyRows);
+    allRows = copyRows as unknown as LeadRow[];
+  } else {
+    allRows = await sharedLeadPage(`${url}/orgs/leads?${params}`, reqHeaders);
+  }
   const rows = family ? allRows.filter((row) => row.campaignId && family.has(row.campaignId)) : allRows;
   return rows.map((row) => {
     const org = row.lead?.organization ?? null;

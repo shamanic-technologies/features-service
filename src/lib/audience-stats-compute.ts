@@ -1,4 +1,5 @@
 import type { Request } from "express";
+import { campaignFamilyStatsParams } from "./email-gateway-family.js";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
@@ -749,6 +750,12 @@ interface SendTagEngagement {
   positiveReplies: number;
 }
 
+/** One engagement read: a channel, narrowed by `campaignId` or a `campaignIds` family (or neither). */
+interface EngagementRead {
+  featureSlug: string;
+  scope?: Record<string, string>;
+}
+
 function emptyEngagement(): SendTagEngagement {
   return { contacted: 0, opened: 0, websiteClicks: 0, positiveReplies: 0 };
 }
@@ -777,7 +784,7 @@ async function fetchAudienceSendTagEngagement(
   // plural has not been verified to comma-split — and a filter that silently matched nothing would rank
   // every audience on zero engagement rather than fail. A send carries one channel, so per-channel
   // reads add exactly.
-  reads: Array<{ featureSlug: string; campaignId?: string }>,
+  reads: EngagementRead[],
   identity: { orgId: string; userId?: string; runId?: string; campaignId?: string; featureSlug?: string },
 ): Promise<{ perAudience: Map<string, SendTagEngagement>; brandGrain: SendTagEngagement }> {
   const baseUrl = process.env.EMAIL_GATEWAY_SERVICE_URL;
@@ -788,9 +795,9 @@ async function fetchAudienceSendTagEngagement(
   const perAudience = new Map<string, SendTagEngagement>();
   const brandGrain = emptyEngagement();
 
-  const readOne = async (read: { featureSlug: string; campaignId?: string }): Promise<void> => {
+  const readOne = async (read: EngagementRead): Promise<void> => {
     const params = new URLSearchParams({ type: "broadcast", groupBy: "audienceId", brandId, featureSlugs: read.featureSlug });
-    if (read.campaignId) params.set("campaignId", read.campaignId);
+    for (const [k, v] of Object.entries(read.scope ?? {})) params.set(k, v);
     const response = await fetchWithRetry(`${baseUrl}/orgs/stats?${params}`, {
       headers: buildHeaders(apiKey, identity.orgId, { ...identity, brandId }),
     });
@@ -1106,12 +1113,17 @@ export async function computeAudienceStats(
   // single-channel read is exactly the per-campaign fan-out this endpoint already did. At the BRAND
   // grain there are no campaign ids to narrow by and none are wanted: one brand-wide read per channel
   // covers every campaign of it, including any campaign-service does not list.
-  const engagementReads: Array<{ featureSlug: string; campaignId?: string }> = scopeChannels
+  //
+  // A channel's campaigns are ONE `campaignIds` request (email-gateway v0.27.2 sums the per-campaign
+  // answers server-side, lib/email-gateway-family.ts), chunked only above the producer's cap.
+  const engagementReads: EngagementRead[] = scopeChannels
     ? scopeCampaignIds
-      ? scopeChannels.flatMap((channel) => channel.campaignIds.map((campaignId) => ({ featureSlug: channel.featureSlug, campaignId })))
+      ? scopeChannels.flatMap((channel) =>
+          campaignFamilyStatsParams(channel.campaignIds).map((scope) => ({ featureSlug: channel.featureSlug, scope })),
+        )
       : scopeChannels.map((channel) => ({ featureSlug: channel.featureSlug }))
     : (scopeCampaignIds?.length ?? 0) > 0
-      ? scopeCampaignIds!.map((campaignId) => ({ featureSlug, campaignId }))
+      ? campaignFamilyStatsParams(scopeCampaignIds!).map((scope) => ({ featureSlug, scope }))
       : [{ featureSlug }];
 
   const [costs, membershipResult, engagementResult, projected] = await Promise.all([

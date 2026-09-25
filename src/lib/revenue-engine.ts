@@ -702,7 +702,12 @@ export function computeRevenue(
 
   interface OrgAgg { row: OrganizationRow; ev: number; birthDate: string | null; }
   const orgAggs: OrgAgg[] = [];
-  for (const bucket of byOrg.values()) {
+  for (const unordered of byOrg.values()) {
+    // An organisation's figures must not depend on the ORDER its leads arrived in (a full walk and a
+    // live copy serve the same rows in different orders — lead-copy.ts): members are taken by lead
+    // id, so the identity tie-break and the first-known domain are stable, and the tags are stated in
+    // funnel order below.
+    const bucket = [...unordered].sort((x, y) => (x.person.leadId < y.person.leadId ? -1 : x.person.leadId > y.person.leadId ? 1 : 0));
     let top = bucket[0];
     const tags: string[] = [];
     let orgDate: string | null = null;
@@ -716,6 +721,7 @@ export function computeRevenue(
       if (!orgDomain && entry.person.orgDomain) orgDomain = entry.person.orgDomain;
       if (entry.ev > orgEv) orgEv = entry.ev; // MAX over the org's members
     }
+    tags.sort((x, y) => (stageRank.get(x) ?? -1) - (stageRank.get(y) ?? -1));
     orgAggs.push({
       row: {
         orgId: top.person.orgId,
