@@ -1844,10 +1844,10 @@ registry.registerPath({
 
 const measuredArrowRateSchema = z.object({
   fromReached: z.number().int().nullable().describe("Distinct leads of this brand that reached the arrow's FROM step. Null when that step is not counted by anything in the fleet, or its evidence was unreadable."),
-  toReached: z.number().int().nullable().describe("Of those, the leads that ALSO reached the TO step. Same null rule."),
-  ratePct: z.number().nullable().describe("toReached / fromReached × 100 — the rate observed on the brand's own leads, conditional on the FROM step (so it can never exceed 100%). Null when either count is null or fromReached is 0."),
+  toReached: z.number().int().nullable().describe("Distinct leads that reached the TO step. Same null rule."),
+  ratePct: z.number().nullable().describe("toReached / fromReached × 100 — the brand's funnel-step conversion for this arrow, byte-equal to funnelSteps.conversionFromPreviousPct for the rung. Null when either count is null or fromReached is 0."),
   sufficient: z.boolean().describe("True exactly when fromReached ≥ minMeasuredFromReached, i.e. this measured rate is the effective one. The bar is on the DENOMINATOR, so an arrow truly at 0% still becomes measured."),
-  gap: z.enum(["step_not_counted", "evidence_unreadable", "below_learning_bar"]).nullable().describe("Why the measured rate is not the effective one; null when it is."),
+  gap: z.enum(["step_not_counted", "evidence_unreadable", "below_learning_bar", "to_exceeds_from"]).nullable().describe("Why the measured rate is not the effective one; null when it is. to_exceeds_from: more leads at TO than FROM, so the ratio is no probability (never clamped)."),
 });
 const effectiveArrowRateSchema = z.object({
   fromStep: z.string(),

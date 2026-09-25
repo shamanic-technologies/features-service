@@ -39,11 +39,20 @@ const MEASUREMENT: BrandStepMeasurement = {
   ],
 };
 
-describe("measuredArrowRate — conditional on the FROM step, the bar on the denominator", () => {
-  it("counts only leads that reached FROM: a meeting booked off the website never credits the reply arrow", () => {
+describe("measuredArrowRate — the funnel-step conversion, the bar on the denominator", () => {
+  it("is count(TO) ÷ count(FROM), the rung rate funnelSteps states — not the intersection", () => {
     const m = measuredArrowRate(MEASUREMENT, "repliedPositive", "meetingBooked");
-    expect(m).toEqual({ fromReached: 20, toReached: 8, ratePct: 40, sufficient: true, gap: null });
-    // A raw count ratio would have read (8 + 3 + 5) / 20 = 80%.
+    // 16 meetings over 20 replies. The intersection would have read 8 / 20 = 40%, under-stating every
+    // brand whose bookings are recorded without a reply flag (prod: 21.7% against the rung's 60.9%).
+    expect(m).toEqual({ fromReached: 20, toReached: 16, ratePct: 80, sufficient: true, gap: null });
+  });
+
+  it("more leads at TO than at FROM is no probability: unmeasurable, never clamped", () => {
+    const skewed: BrandStepMeasurement = {
+      ...MEASUREMENT,
+      reached: [...times(10, lead({ repliedPositive: true })), ...times(12, lead({ meetingBooked: true }))],
+    };
+    expect(measuredArrowRate(skewed, "repliedPositive", "meetingBooked")).toMatchObject({ ratePct: 120, sufficient: false, gap: "to_exceeds_from" });
   });
 
   it("an arrow truly at 0% becomes measured once the FROM step clears the bar", () => {
@@ -55,7 +64,8 @@ describe("measuredArrowRate — conditional on the FROM step, the bar on the den
 
   it("below the bar the rate is still reported, and is not sufficient", () => {
     const m = measuredArrowRate(MEASUREMENT, "clicked", "meetingBooked");
-    expect(m).toMatchObject({ fromReached: 3, toReached: 3, ratePct: 100, sufficient: false, gap: "below_learning_bar" });
+    // 3 website visits; the rung counts every booked meeting (16) — over 100%, so not a probability.
+    expect(m).toMatchObject({ fromReached: 3, toReached: 16, sufficient: false, gap: "to_exceeds_from" });
   });
 
   it("a step nothing counts, and an unreadable producer, are told apart and never read as 0", () => {
@@ -76,7 +86,7 @@ describe("resolveArrow — measured, else manual, else median, else null", () =>
 
   it("a sufficient measurement wins over a stated rate", () => {
     expect(resolveArrow("Positive reply", "Meeting booked", measured, 70, median)).toMatchObject({
-      effectiveRatePct: 40,
+      effectiveRatePct: 80,
       source: "measured",
       manualRatePct: 70,
       median,
@@ -134,16 +144,16 @@ describe("pricing rests on the EFFECTIVE rate", () => {
   it("each arrow resolves from its own best source", () => {
     const [funnel] = effective.funnels;
     expect(funnel.arrows.map((a) => [a.source, a.effectiveRatePct])).toEqual([
-      ["measured", 40], // 8 of 20 replies booked
-      ["measured", 5 / 16 * 100], // 5 of 16 booked attended — 16 ≥ 10
-      ["manual", 25], // nobody measured as attended→paid (0 of 5 < bar) → the brand's own statement
+      ["measured", 80], // 16 meetings over 20 replies
+      ["measured", 5 / 16 * 100], // 5 attended over 16 booked — 16 ≥ 10
+      ["manual", 25], // 5 attended < the bar → the brand's own statement
     ]);
   });
 
   it("the funnel is priced on the effective rates, not the offer's declared ones; its lifetime revenue stays the offer's", () => {
     const [onEffective] = applyEffectiveRates([declared], effective);
     const econ = declaredEconomicsForFunnel([onEffective], "sales_meetings_from_conversation")!;
-    expect(econ.replyToMeetingPct).toBeCloseTo(40, 9); // not the declared 90
+    expect(econ.replyToMeetingPct).toBeCloseTo(80, 9); // not the declared 90
     expect(econ.meetingAttendedToPaidClientPct).toBeCloseTo(25, 9);
     // booked → paid = show-up (measured 31.25%) × attended → paid (25%), not the declared 50%.
     expect(econ.meetingToClosePct).toBeCloseTo(31.25 * 0.25, 9);
