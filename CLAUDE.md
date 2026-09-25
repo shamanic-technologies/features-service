@@ -12,10 +12,11 @@ every arrow, and every money figure rests on the result.
   is on the DENOMINATOR so an arrow truly at 0% still becomes measured; else the brand's MANUAL statement;
   else the cross-org MEDIAN of stated rates for that (funnel, arrow). None → `effectiveRatePct: null`,
   `unresolvedReason: "no_rate_available"`. Never a default, never a 0.
-- **THE MEASURED RATE IS CONDITIONAL ON THE FROM STEP** — leads that reached FROM and TO ÷ leads that
-  reached FROM. A lead flag does not record the path, so `count(TO) ÷ count(FROM)` credits a reply →
-  meeting arrow with meetings booked off the website and can exceed 100%. Where every TO lead also
-  passed FROM it equals the `funnelSteps` rung rate. **Do NOT "simplify" it to the count ratio.** The
+- **THE MEASURED RATE IS THE FUNNEL-STEP CONVERSION** — `count(TO) ÷ count(FROM)`, byte-equal to
+  `funnelSteps.conversionFromPreviousPct`. **Do NOT switch it to the intersection** (leads at FROM that
+  also reached TO): v0.172.7 shipped that and prod read brand `75d7e3e8…` reply → meeting at 21.7%
+  against the rung's 60.9%, because 9 of its 14 booked meetings carry no positive-reply flag. TO > FROM
+  is `gap: "to_exceeds_from"` (no probability, never clamped; the next source wins). The
   population and the overlays are the brand revenue read's own (`measureBrandSteps`): same lead read,
   same human statements, same legacy qualifications, same website-conversion attribution. Right-censoring
   is ACCEPTED (owner): a young brand's measured rate reads slightly low.
@@ -52,7 +53,7 @@ every arrow, and every money figure rests on the result.
 - `statedLegRates` gained three funnel-restricted pairs so the direct/self-serve rates derive from arrows:
   `visitToClosePct` on `website_purchases` (= visit→signup × signup→paid, brand-service's own derivation),
   `visitToPaidClientPct` on `sales_from_website`, `replyToPaidClientPct` on `sales_from_conversation`.
-- Guards: `lib/effective-conversion-rates.test.ts` (conditional rate vs the count ratio, 0% measured,
+- Guards: `lib/effective-conversion-rates.test.ts` (the count ratio vs the intersection, TO > FROM, 0% measured,
   the precedence, median-not-mean, pricing moving off the declared rates while LTR stays, producer
   labels), `lib/stated-economics.test.ts`, `routes/conversion-rates.test.ts`. (Set 2026-09-25.)
 
