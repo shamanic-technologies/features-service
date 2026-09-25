@@ -16,7 +16,7 @@ import {
   type BrandProjectedParentsUsd,
 } from "../lib/audience-stats-brand-projection.js";
 import { fetchLeadsForRevenue } from "../lib/leads-client.js";
-import { fetchRunsCostCents, fetchCampaignIdsWithRuns, type RunsCostCents } from "../lib/runs-cost-client.js";
+import { fetchRunsCostCents, fetchCampaignIdsWithRuns, fetchMatureSpendCents, type RunsCostCents } from "../lib/runs-cost-client.js";
 import { fetchSpendBreakdown, type SpendBreakdown, type SpendSource } from "../lib/spend-client.js";
 import { fetchConversionCounts, type ConversionCounts } from "../lib/conversion-counts-client.js";
 import { fetchConversionEmails } from "../lib/conversion-emails-client.js";
@@ -63,7 +63,14 @@ import { matchSalesFunnelKey, salesFunnelIndex, SALES_FUNNEL_KEYS, SALES_FUNNEL_
 import { campaignScopeIds, singleCampaignId, type CampaignFilter } from "../lib/campaign-scope.js";
 import { computeLearningPhaseSoft, type LearningPhaseResult } from "../lib/learning-phase-compute.js";
 import type { LearningPhase } from "../lib/learning-phase.js";
-import { fetchCampaignFamiliesSoft } from "../lib/campaign-identity-client.js";
+import { fetchBrandCampaignRows, fetchCampaignFamiliesSoft } from "../lib/campaign-identity-client.js";
+import {
+  buildMaturityPlan,
+  matureCohortPersons,
+  scopePredicate,
+  UNKNOWN_MATURITY,
+  type MaturityPlan,
+} from "../lib/roi-maturity.js";
 import { describeIdentity } from "../lib/campaign-identity.js";
 import { buildRoiHistory, type RoiHistory } from "../lib/roi-history.js";
 import {
@@ -978,6 +985,24 @@ function lensTags(signals: Record<string, boolean>): string[] {
  * organizations / timeSeries / events are empty (not consumed by the dashboard lens pages); date is
  * null (Wave B per-event dates are skipped — the lens uses only clicked / positiveReply from Wave A).
  */
+/** The mature cohort a lensed read's ratios divide (`lib/roi-maturity.ts`). */
+interface LensMaturity {
+  days: number;
+  cost: RunsCostCents;
+  /** The lead rows of the cohort — first contacted before the cutoff, undated ones included. */
+  persons: EnginePerson[];
+}
+
+/** The lens's pipeline and expected conversion count over a set of lead rows. */
+function lensTotals(lens: Lens, rawPersons: EnginePerson[], economics: SalesEconomics): { pipelineUsd: number; conversions: number } {
+  let conversions = 0;
+  for (const person of dedupPersonsByLead(rawPersons)) {
+    const p = lensProbability(lens, person.signals, economics);
+    if (p !== null) conversions += p;
+  }
+  return { pipelineUsd: conversions * economics.lifetimeRevenueUsd, conversions };
+}
+
 function buildLensBody(
   lens: Lens,
   rawPersons: EnginePerson[],
@@ -988,6 +1013,9 @@ function buildLensBody(
   // outcome, so no figure here moves with the parameter — but a consumer reading two bodies side by
   // side must be able to see that, rather than infer it from a missing key.
   causes: readonly OutcomeCause[] = DEFAULT_PRICED_CAUSES,
+  // The mature cohort the ratios divide — omitted when nothing in scope is maturing, "unknown" when the
+  // scope's legs could not be read.
+  maturity?: LensMaturity | "unknown",
 ): RevenueBody {
   const ltr = economics.lifetimeRevenueUsd;
   const leads: LeadRow[] = [];
@@ -1055,18 +1083,33 @@ function buildLensBody(
   const expectedConversions = leads.reduce((sum, l) => sum + (l.conversionProbabilityPct ?? 0) / 100, 0);
   // `costPerAcquisitionUsd` derives from the SAME LTR the lens prices with, so it comes out equal to
   // `costPerConversionUsd` below (expectedConversions === totalPipelineUsd / ltr, by construction).
+  // The ratios — and the cost per conversion beside them — divide the MATURE cohort's pipeline by its
+  // spend. `expectedConversions` stays the whole lens's count: it is a count, and counts keep history.
+  const known = maturity && maturity !== "unknown" ? maturity : undefined;
+  const mature = known ? lensTotals(lens, known.persons, economics) : null;
   const costEconomics = buildCostEconomics({
     committedCostInUsdCents: cost.committedCents,
     actualCostInUsdCents: cost.actualCents,
     totalPipelineUsd,
     lifetimeRevenueUsd: ltr,
+    ...(maturity === "unknown"
+      ? { maturity: { unknown: true as const } }
+      : known && mature
+        ? { maturity: { days: known.days, committedCostInUsdCents: known.cost.committedCents, totalPipelineUsd: mature.pipelineUsd } }
+        : {}),
   });
+  const perConversion = (cents: number, conversions: number) => (conversions === 0 ? null : cents / 100 / conversions);
   return {
     headline: { totalPipelineUsd, economicsSource },
     costEconomics: {
       ...costEconomics,
       expectedConversions,
-      costPerConversionUsd: expectedConversions === 0 ? null : costEconomics.committedCostUsd / expectedConversions,
+      costPerConversionUsd:
+        costEconomics.unmeasuredReason !== null
+          ? null
+          : known && mature
+            ? perConversion(known.cost.committedCents, mature.conversions)
+            : perConversion(cost.committedCents, expectedConversions),
     },
     timeSeries: [],
     // The lens describes a SUBSET of the brand's leads; its spend leg would be the brand's whole
@@ -1108,6 +1151,52 @@ function buildLensBody(
     // a different population than the money beside it.
     learningPhase: null,
   };
+}
+
+/**
+ * WHICH OF THIS SCOPE'S CAMPAIGNS ARE STILL MATURING (`lib/roi-maturity.ts`) — read off campaign-service,
+ * the only service that records a campaign's leg. The scope is the read's own: its channel set, and its
+ * campaign family when one was named. FAIL-SOFT to `UNKNOWN_MATURITY`, with a loud log: without the legs
+ * we cannot tell young spend from mature spend, so the ratios read null with a named reason — never the
+ * whole-history ratio the rule exists to stop, and never a 502 on a page whose other figures are right.
+ */
+async function resolveMaturityPlan(
+  brandId: string,
+  featureScope: FeatureScope,
+  campaignScope: CampaignFilter,
+  headers: DownstreamHeaders,
+): Promise<MaturityPlan> {
+  try {
+    const rows = await fetchBrandCampaignRows(brandId, undefined, headers);
+    return buildMaturityPlan(
+      rows,
+      scopePredicate({ featureSlugs: featureSlugList(featureScope), campaignIds: campaignScopeIds(campaignScope) }),
+    );
+  } catch (err) {
+    console.error(
+      `[features-service] campaign legs unreadable for brand ${brandId} — ROI / CAC read null (maturity_unknown): ${(err as Error).message}`,
+    );
+    return UNKNOWN_MATURITY;
+  }
+}
+
+/**
+ * The MATURE cohort's committed spend per UTC day — the spend leg of the return-on-spend curve, so its
+ * last point is the headline ROI it sits under. Every day before the cutoff carries the scope's whole
+ * spend; every day from the cutoff on carries it less the maturing campaigns' own spend that day.
+ */
+function matureSpendByDay(
+  all: Map<string, number>,
+  maturingByDay: Map<string, number>,
+  cutoffIso: string,
+): Map<string, number> {
+  const cutoffDay = cutoffIso.slice(0, 10);
+  const out = new Map<string, number>();
+  for (const [day, usd] of all) {
+    const rest = day < cutoffDay ? usd : usd - (maturingByDay.get(day) ?? 0);
+    if (Math.abs(rest) > 1e-9) out.set(day, rest);
+  }
+  return out;
 }
 
 /**
@@ -1238,7 +1327,37 @@ export async function computeFeatureRevenue(
   // The cost / economics / leads reads are fail-loud (Promise.all rejects → the endpoint 502s): each
   // is a core input to the pipeline total / cost / ROI; a swallowed error would fake a number. The
   // economics===null cold-start path below over-fetches leads — accepted for the common-path win.
-  const [costResult, priced, persons, sequences, counts, conversionEmails, parents, spendByDay] = await Promise.all([
+  // WHICH campaigns of this scope are still maturing, then the MATURE cohort's spend — the denominator
+  // every ratio divides (`lib/roi-maturity.ts`). Chained inside Wave A so neither adds a round trip.
+  const planPromise = resolveMaturityPlan(brandId, featureScope, campaignScope, headers);
+  const maturePromise = planPromise.then((plan) =>
+    plan.cutoffIso
+      ? fetchMatureSpendCents(brandId, campaignScope, featureScope, headers, pricing, plan, workflowScope?.producerSlugs).then(
+          (r) => r.total,
+        )
+      : null,
+  );
+  // The maturing campaigns' own dated spend, so the ROI curve's spend leg is the mature cohort's too.
+  // Soft, like the dated spend it corrects: a failure nulls the curve, never the page.
+  const maturingByDayPromise = planPromise.then((plan) =>
+    includeSpend && plan.cutoffIso
+      ? fetchBrandCommittedSpendByDay(
+          brandId,
+          [...plan.delayedCampaignIds].sort(),
+          featureScope,
+          headers,
+          pricing,
+          workflowScope?.workflowDynastySlug,
+          plan.cutoffIso,
+        ).catch((err) => {
+          console.warn(
+            `[features-service] maturing dated-spend read failed (degrading roiHistory to null): ${(err as Error).message}`,
+          );
+          return null;
+        })
+      : new Map<string, number>(),
+  );
+  const [costResult, priced, persons, sequences, counts, conversionEmails, parents, spendByDay, plan, matureCost, maturingByDay] = await Promise.all([
     includeSpend
       ? fetchSpendBreakdown(brandId, campaignScope, featureScope, headers, new Date(), pricing, workflowScope?.producerSlugs)
       : fetchRunsCostCents(brandId, campaignScope, featureScope, headers, pricing, workflowScope?.producerSlugs),
@@ -1283,6 +1402,9 @@ export async function computeFeatureRevenue(
     includeSpend
       ? fetchSpendByDaySoft(brandId, campaignScope, featureScope, headers, pricing, workflowScope?.workflowDynastySlug)
       : Promise.resolve<Map<string, number> | null>(null),
+    planPromise,
+    maturePromise,
+    maturingByDayPromise,
   ]);
   const { economics, source } = priced.economics;
   const breakdown: SpendBreakdown | null = "totalSpentCents" in costResult ? costResult : null;
@@ -1336,7 +1458,22 @@ export async function computeFeatureRevenue(
   // Lensed overview: a fixed per-signal probability from sales economics. Uses ONLY Wave A
   // (economics + persons' clicked / positiveReply) — short-circuit BEFORE Wave B + the engine.
   if (lens) {
-    return buildLensBody(lens, persons, economics, economicsSource, cost, causes);
+    // The lens prices off engagement read in Wave A and never reads the per-email dates — but the
+    // mature cohort is "first contacted before the cutoff", so a maturing scope reads the dates here.
+    let lensMaturity: LensMaturity | "unknown" | undefined = plan.unknown ? "unknown" : undefined;
+    if (plan.cutoffIso && matureCost) {
+      const emails = [...new Set(persons.map((p) => p.email).filter((e): e is string => Boolean(e)))];
+      const timestamps = await fetchEventTimestamps(brandId, campaignId, emails, headers).catch((err) => {
+        console.warn(`[features-service] event-timestamp enrichment failed (lens maturity: every lead undated, so in the cohort): ${(err as Error).message}`);
+        return null;
+      });
+      const dated = persons.map((p) => {
+        const contacted = p.email ? (timestamps?.get(p.email)?.contacted ?? null) : null;
+        return { ...p, signalDates: { ...(p.signalDates ?? {}), contacted } };
+      });
+      lensMaturity = { days: plan.days, cost: matureCost, persons: matureCohortPersons(dated, plan) };
+    }
+    return buildLensBody(lens, persons, economics, economicsSource, cost, causes, lensMaturity);
   }
 
   // ONLY THE LEGS OF THE FUNNELS BEING PRICED. A signal that is not a step of one of the brand's
@@ -1439,6 +1576,18 @@ export async function computeFeatureRevenue(
   // closeValueUsd = LTR — the per-lead cap for combining independent engagement routes (click +
   // reply) as independent probabilities of one close (`undefined` keeps the wall-clock `now`).
   const result = computeRevenue(paths, persons, economics.lifetimeRevenueUsd, funnel.milestones);
+  // THE MATURE COHORT (`lib/roi-maturity.ts`): the same engine over the leads first contacted before the
+  // cutoff (undated leads stay in), priced on the same paths — the pipeline the ratios divide. Only when
+  // something in scope is maturing; otherwise the cohort IS the scope and the one pass answers both.
+  const matureResult =
+    plan.cutoffIso && matureCost
+      ? computeRevenue(paths, matureCohortPersons(persons, plan), economics.lifetimeRevenueUsd, funnel.milestones)
+      : result;
+  const maturity = plan.unknown
+    ? ({ unknown: true } as const)
+    : plan.cutoffIso && matureCost
+      ? { days: plan.days, committedCostInUsdCents: matureCost.committedCents, totalPipelineUsd: matureResult.headline.totalPipelineUsd }
+      : undefined;
 
   // The per-signal ACTUAL series, built ONCE: the body spreads them, and the cost-per-outcome curve
   // takes its driver leg from the SAME object, so the curve's denominator and the series a consumer
@@ -1464,14 +1613,21 @@ export async function computeFeatureRevenue(
       actualCostInUsdCents: cost.actualCents,
       totalPipelineUsd: result.headline.totalPipelineUsd,
       lifetimeRevenueUsd: economics.lifetimeRevenueUsd,
+      maturity,
     }),
     timeSeries: result.timeSeries,
-    // runs' dated COMMITTED buckets against the engine's own dated pipeline — the same basis the
-    // headline ROI rides, so the curve's last point IS that ROI. Null when the dated-spend read
-    // degraded — a curve is never drawn from one leg.
-    roiHistory: spendByDay
-      ? buildRoiHistory(spendByDay, result.timeSeries, result.headline.totalPipelineUsd)
-      : null,
+    // runs' dated COMMITTED buckets against the engine's own dated pipeline — the same basis AND the
+    // same mature cohort the headline ROI rides, so the curve's last point IS that ROI. Null when the
+    // dated-spend read (or the maturing campaigns' part of it) degraded — a curve is never drawn from
+    // one leg.
+    roiHistory:
+      spendByDay && maturingByDay
+        ? buildRoiHistory(
+            plan.cutoffIso ? matureSpendByDay(spendByDay, maturingByDay, plan.cutoffIso) : spendByDay,
+            matureResult.timeSeries,
+            matureResult.headline.totalPipelineUsd,
+          )
+        : null,
     // The SAME dated committed buckets, against the scope's own dated count of the step its leg
     // closes. Null when either ingredient is missing — the dated-spend read degraded, or the scope
     // names no priceable outcome step — and `learningPhase.unmeasuredReason` beside it says which.

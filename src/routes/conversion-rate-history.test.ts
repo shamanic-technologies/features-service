@@ -316,6 +316,8 @@ function mockFetch(fixture: Fixture): void {
     if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
 
     if (url.includes("/costs/timeseries")) {
+      // Nothing in this fixture started after the maturity cutoff on the suite's clock.
+      if (new URL(url).searchParams.get("startedAfter")) return json({ buckets: [] });
       return json({
         buckets: [{ period: "2026-09-16", totalCostInUsdCents: "35496", netTotalCostInUsdCents: "35496", actualCostInUsdCents: "35435" }],
       });
@@ -332,6 +334,7 @@ function mockFetch(fixture: Fixture): void {
     }
 
     if (url.includes("/stats/costs")) {
+      if (new URL(url).searchParams.get("startedAfter")) return json({ groups: [] });
       const row = (dimensions: Record<string, unknown>) => ({
         dimensions, totalCostInUsdCents: "35496", actualCostInUsdCents: "35435",
         runCount: 1, minStartedAt: null, maxStartedAt: null,
@@ -387,7 +390,17 @@ describe("what share of this campaign's outreach converts, day by day", () => {
   beforeEach(() => {
     vi.mocked(db.query.features.findFirst).mockResolvedValue(feature(SALES) as never);
   });
-  afterEach(() => vi.restoreAllMocks());
+  // Every run and every lead of this fixture is older than the ROI maturity delay on this clock
+  // (lib/roi-maturity.ts): the suite is about how the curves are SCOPED, not about maturity, so the
+  // mature cohort is the whole fixture here and the figures read exactly as they did before the rule.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-12-31T12:00:00.000Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
 
   it("terminates on the conversion figure the SAME body already serves", async () => {
     mockFetch({});
@@ -513,7 +526,9 @@ describe("what share of this campaign's outreach converts, day by day", () => {
     expect(unstated.learningPhase.unmeasuredReason).toBe("no_leg_stated");
     const strip = (b: Record<string, any>) => {
       const { conversionRateHistory, costPerOutcomeHistory, learningPhase, ...rest } = b;
-      return rest;
+      // A campaign stating no leg waits for nothing (lib/roi-maturity.ts), so the delay it states
+      // differs by design; on this clock the cohort is the whole fixture, so every figure agrees.
+      return { ...rest, costEconomics: { ...rest.costEconomics, maturityDays: "by leg" } };
     };
     expect(strip(unstated)).toEqual(strip(priced));
   });

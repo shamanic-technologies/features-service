@@ -183,6 +183,8 @@ function mockFetch(fixture: Fixture): void {
 
     // THE DATED SPEND LEG — runs' own cost buckets, one per UTC day.
     if (url.includes("/costs/timeseries")) {
+      // Nothing in this fixture started after the maturity cutoff on the suite's clock.
+      if (new URL(url).searchParams.get("startedAfter")) return json({ buckets: [] });
       if (fixture.spendByDayDown) return new Response("boom", { status: 503 });
       return json({
         buckets: SPEND_BUCKETS.map(([period, cents]) => ({
@@ -205,6 +207,7 @@ function mockFetch(fixture: Fixture): void {
     }
 
     if (url.includes("/stats/costs")) {
+      if (new URL(url).searchParams.get("startedAfter")) return json({ groups: [] });
       const total = String(Math.round(TOTAL_CENTS));
       const row = (dimensions: Record<string, unknown>) => ({
         dimensions, totalCostInUsdCents: total, actualCostInUsdCents: total,
@@ -232,7 +235,17 @@ describe("what one outcome has cost, day by day", () => {
   beforeEach(() => {
     vi.mocked(db.query.features.findFirst).mockResolvedValue(feature(SALES) as never);
   });
-  afterEach(() => vi.restoreAllMocks());
+  // Every run and every lead of this fixture is older than the ROI maturity delay on this clock
+  // (lib/roi-maturity.ts): the suite is about how the curves are SCOPED, not about maturity, so the
+  // mature cohort is the whole fixture here and the figures read exactly as they did before the rule.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-12-31T12:00:00.000Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
 
   it("terminates on the cost per outcome the SAME body already serves", async () => {
     mockFetch({});
@@ -339,7 +352,9 @@ describe("what one outcome has cost, day by day", () => {
     // Every figure a consumer reads today is byte-identical with the block and without it.
     const strip = (b: Record<string, any>) => {
       const { costPerOutcomeHistory, conversionRateHistory, learningPhase, ...rest } = b;
-      return rest;
+      // A campaign stating no leg waits for nothing (lib/roi-maturity.ts), so the delay it states
+      // differs by design; on this clock the cohort is the whole fixture, so every figure agrees.
+      return { ...rest, costEconomics: { ...rest.costEconomics, maturityDays: "by leg" } };
     };
     expect(strip(unstated)).toEqual(strip(priced));
   });
