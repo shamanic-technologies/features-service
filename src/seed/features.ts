@@ -153,7 +153,7 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
     // declared per run, so a standing day-rate would be charging for a salary that does not exist. This
     // figure is the commercial term we publish — the dashboard's budget form and billing-service both read
     // it live from `/public/channels` as the floor a brand may fund the channel at — never a measurement.
-    acquisitionChannel: { family: "outbound_one_to_one", operatedBy: "platform", stepTransitions: CONVERSATION_AND_VISIT, terms: terms(100, 30, 14) },
+    acquisitionChannel: { family: "outbound_one_to_one", operatedBy: "platform", performedBy: "software", stepTransitions: CONVERSATION_AND_VISIT, terms: terms(100, 30, 14) },
     supersededBySlug: null,
     inputs: [
       // NO free-text ICP input. Recipients come from the AUDIENCE BANDIT (a saved human-service
@@ -217,7 +217,7 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
     implemented: true,
     displayOrder: 12,
     status: "active",
-    acquisitionChannel: { family: "outbound_one_to_one", operatedBy: "platform", stepTransitions: CONVERSATION_ONLY, terms: terms(800, 30, 14) },
+    acquisitionChannel: { family: "outbound_one_to_one", operatedBy: "platform", performedBy: "software", stepTransitions: CONVERSATION_ONLY, terms: terms(800, 30, 14) },
     supersededBySlug: null,
     // THE OFFER HAS TWO HALVES, AND THE CUSTOMER STATES BOTH.
     //
@@ -285,7 +285,7 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
     implemented: true,
     displayOrder: 11,
     status: "active",
-    acquisitionChannel: { family: "outbound_one_to_one", operatedBy: "platform", stepTransitions: CONVERSATION_AND_VISIT, terms: terms(800, 30, 7) },
+    acquisitionChannel: { family: "outbound_one_to_one", operatedBy: "platform", performedBy: "software", stepTransitions: CONVERSATION_AND_VISIT, terms: terms(800, 30, 7) },
     supersededBySlug: null,
     inputs: [
       { key: "targetAudience", type: "text", label: "Target Audience", extractKey: "targetAudience", description: "Who the campaign targets — ICP description (role, company size, industry). Be precise about job titles, industry vertical, company size range, and geography. Example: 'VP of Marketing at B2B SaaS companies with 50-200 employees in the US'. The LLM uses this to find matching leads and personalize outreach.", placeholder: "CTOs at SaaS startups with 10-50 employees" },
@@ -334,7 +334,7 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
     implemented: true,
     displayOrder: 2,
     status: "active",
-    acquisitionChannel: { family: "earned", operatedBy: "platform", stepTransitions: VISIT_ONLY, terms: terms(800, 30, 21) },
+    acquisitionChannel: { family: "earned", operatedBy: "platform", performedBy: "software", stepTransitions: VISIT_ONLY, terms: terms(800, 30, 21) },
     supersededBySlug: null,
     inputs: [
       { key: "targetOutlets", type: "text", label: "Target Outlets", extractKey: "targetOutlets", description: "Types of media outlets or specific publications to target. Be specific about outlet tier, beat, and format (online, print, podcast). Examples: 'Top-tier tech blogs (TechCrunch, The Verge)', 'B2B SaaS trade publications', 'Fintech newsletters with 10k+ subscribers'. The LLM uses this to find and prioritize matching journalists.", placeholder: "TechCrunch, Forbes, industry trade publications..." },
@@ -488,7 +488,7 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
     implemented: true,
     displayOrder: 6,
     status: "active",
-    acquisitionChannel: { family: "earned", operatedBy: "platform", stepTransitions: VISIT_ONLY, terms: terms(800, 30, 21) },
+    acquisitionChannel: { family: "earned", operatedBy: "platform", performedBy: "software", stepTransitions: VISIT_ONLY, terms: terms(800, 30, 21) },
     supersededBySlug: null,
     inputs: [
       { key: "expertName", type: "text", label: "Expert Name", extractKey: "spokespersonName", description: "Full name of the brand's primary public spokesperson — the founder, CEO, or designated expert who will be quoted. Auto-extracted from the brand's site (about / team / leadership pages); edit if the wrong person is picked. Featured.com journalists attribute the published quote to this name verbatim.", placeholder: "Jane Doe" },
@@ -670,7 +670,7 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
     implemented: true,
     displayOrder: 10,
     status: "active",
-    acquisitionChannel: { family: "earned", operatedBy: "platform", stepTransitions: VISIT_ONLY, terms: terms(800, 30, 21) },
+    acquisitionChannel: { family: "earned", operatedBy: "platform", performedBy: "software", stepTransitions: VISIT_ONLY, terms: terms(800, 30, 21) },
     // RETIRED SPELLING of the expert-quote channel — the same offering, on byte-identical terms, is
     // sold as `pr-expert-quote-outreach`. The row stays, because live campaigns, live budgets and the
     // cost ledger reference this slug and every authenticated read of it must keep answering; what
@@ -758,6 +758,9 @@ interface ChannelSeed {
   family: AcquisitionChannel["family"];
   /** Defaults to `platform` — we operate a channel unless the row says the customer does. */
   operatedBy?: AcquisitionChannel["operatedBy"];
+  /** WHAT does the leg's work — our/their software, or a person by hand. Stated on every row, never
+   *  defaulted: a phone call and a specialist's salary are people even on a platform-run channel. */
+  performedBy: AcquisitionChannel["performedBy"];
   stepTransitions: readonly ChannelStepTransition[];
   terms: AcquisitionChannel["terms"];
   inputs: unknown[];
@@ -767,34 +770,34 @@ const PUBLISHED_CHANNELS: ChannelSeed[] = [
   // ── Outbound, one to one ────────────────────────────────────────────────────────────────────────
   // A person is reached individually. A conversation is what these buy; several also carry a link, so
   // they can produce a website visit too. Cold calling cannot: there is no link in a phone call.
-  { slug: "cold-call-outreach", name: "Cold Call Outreach", displayOrder: 13, icon: "phone", family: "outbound_one_to_one", stepTransitions: CONVERSATION_ONLY,
+  { slug: "cold-call-outreach", name: "Cold Call Outreach", displayOrder: 13, icon: "phone", family: "outbound_one_to_one", performedBy: "person", stepTransitions: CONVERSATION_ONLY,
     // A person is on the line for the whole day whether or not anyone picks up, which is the entire
     // reason this channel's daily operating cost is two orders of magnitude above cold email's.
     terms: terms(24000, 30, 5),
     description: "Reach buyers by phone, one call at a time, and open the conversation that becomes the meeting.",
     inputs: OFFER_INPUTS },
-  { slug: "cold-sms-outreach", name: "Cold SMS Outreach", displayOrder: 14, icon: "message-circle", family: "outbound_one_to_one", stepTransitions: CONVERSATION_AND_VISIT,
+  { slug: "cold-sms-outreach", name: "Cold SMS Outreach", displayOrder: 14, icon: "message-circle", family: "outbound_one_to_one", performedBy: "software", stepTransitions: CONVERSATION_AND_VISIT,
     terms: terms(1500, 30, 7),
     description: "Reach buyers by text message and turn the replies into conversations, with a link for the ones who would rather read first.",
     inputs: OFFER_INPUTS },
-  { slug: "cold-whatsapp-outreach", name: "Cold WhatsApp Outreach", displayOrder: 15, icon: "message-square", family: "outbound_one_to_one", stepTransitions: CONVERSATION_AND_VISIT,
+  { slug: "cold-whatsapp-outreach", name: "Cold WhatsApp Outreach", displayOrder: 15, icon: "message-square", family: "outbound_one_to_one", performedBy: "software", stepTransitions: CONVERSATION_AND_VISIT,
     terms: terms(1500, 30, 10),
     description: "Reach buyers on WhatsApp where replies are quick, and carry the ones who want detail through to your site.",
     inputs: OFFER_INPUTS },
-  { slug: "cold-linkedin-outreach", name: "Cold LinkedIn Outreach", displayOrder: 16, icon: "linkedin", family: "outbound_one_to_one", stepTransitions: CONVERSATION_AND_VISIT,
+  { slug: "cold-linkedin-outreach", name: "Cold LinkedIn Outreach", displayOrder: 16, icon: "linkedin", family: "outbound_one_to_one", performedBy: "software", stepTransitions: CONVERSATION_AND_VISIT,
     // The sending account has to be aged and warmed before it can send at volume without restriction.
     terms: terms(1200, 30, 14),
     description: "Reach buyers through LinkedIn messages and connection requests, and turn the replies into conversations.",
     inputs: OFFER_INPUTS },
-  { slug: "cold-x-outreach", name: "Cold X Outreach", displayOrder: 17, icon: "at-sign", family: "outbound_one_to_one", stepTransitions: CONVERSATION_AND_VISIT,
+  { slug: "cold-x-outreach", name: "Cold X Outreach", displayOrder: 17, icon: "at-sign", family: "outbound_one_to_one", performedBy: "software", stepTransitions: CONVERSATION_AND_VISIT,
     terms: terms(1000, 30, 14),
     description: "Reach buyers through X direct messages and replies, and turn the ones who answer into conversations.",
     inputs: OFFER_INPUTS },
-  { slug: "cold-instagram-outreach", name: "Cold Instagram Outreach", displayOrder: 18, icon: "instagram", family: "outbound_one_to_one", stepTransitions: CONVERSATION_AND_VISIT,
+  { slug: "cold-instagram-outreach", name: "Cold Instagram Outreach", displayOrder: 18, icon: "instagram", family: "outbound_one_to_one", performedBy: "software", stepTransitions: CONVERSATION_AND_VISIT,
     terms: terms(1000, 30, 14),
     description: "Reach buyers through Instagram direct messages and turn the ones who answer into conversations.",
     inputs: OFFER_INPUTS },
-  { slug: "cold-reddit-outreach", name: "Cold Reddit Outreach", displayOrder: 19, icon: "message-square", family: "outbound_one_to_one", stepTransitions: CONVERSATION_AND_VISIT,
+  { slug: "cold-reddit-outreach", name: "Cold Reddit Outreach", displayOrder: 19, icon: "message-square", family: "outbound_one_to_one", performedBy: "software", stepTransitions: CONVERSATION_AND_VISIT,
     // Reddit accounts need standing before they can message at all, so this one starts slowest.
     terms: terms(1000, 30, 21),
     description: "Reach buyers through Reddit direct messages, from an account with enough standing in their communities to be read.",
@@ -804,60 +807,60 @@ const PUBLISHED_CHANNELS: ChannelSeed[] = [
   // Bought impressions. Most of these platforms also host a form the buyer fills without leaving, and
   // two of them can take a booking straight from the ad, which is why the steps differ across a family
   // that otherwise looks uniform.
-  { slug: "google-ads", name: "Google Ads", displayOrder: 20, icon: "search", family: "paid_reach", stepTransitions: VISIT_AND_LEAD_FORM,
+  { slug: "google-ads", name: "Google Ads", displayOrder: 20, icon: "search", family: "paid_reach", performedBy: "software", stepTransitions: VISIT_AND_LEAD_FORM,
     // Google imposes no daily floor of its own, so what a day of this channel costs is what we choose to
     // accept: billing takes a Google Ads brand from $5/day, and this figure states the SAME floor. A buyer
     // reads both as "what it takes to run this channel for a day", so they may not disagree.
     terms: terms(500, 30, 3),
     description: "Buy the searches your buyers already run, and the clicks and lead forms that come from them.",
     inputs: PAID_REACH_INPUTS },
-  { slug: "meta-ads", name: "Meta Ads", displayOrder: 21, icon: "facebook", family: "paid_reach", stepTransitions: VISIT_AND_AD_DELIVERED_STEPS,
+  { slug: "meta-ads", name: "Meta Ads", displayOrder: 21, icon: "facebook", family: "paid_reach", performedBy: "software", stepTransitions: VISIT_AND_AD_DELIVERED_STEPS,
     terms: terms(5000, 30, 3),
     description: "Buy reach on Facebook and Instagram, with lead forms and appointment booking that happen inside the platform.",
     inputs: PAID_REACH_INPUTS },
-  { slug: "linkedin-ads", name: "LinkedIn Ads", displayOrder: 22, icon: "linkedin", family: "paid_reach", stepTransitions: VISIT_AND_AD_DELIVERED_STEPS,
+  { slug: "linkedin-ads", name: "LinkedIn Ads", displayOrder: 22, icon: "linkedin", family: "paid_reach", performedBy: "software", stepTransitions: VISIT_AND_AD_DELIVERED_STEPS,
     // LinkedIn imposes its own daily floor per campaign; the terms carry it rather than hiding it.
     terms: terms(10000, 30, 3),
     description: "Buy reach against job title, company and seniority, with lead gen forms filled without leaving LinkedIn.",
     inputs: PAID_REACH_INPUTS },
-  { slug: "tiktok-ads", name: "TikTok Ads", displayOrder: 23, icon: "video", family: "paid_reach", stepTransitions: VISIT_AND_LEAD_FORM,
+  { slug: "tiktok-ads", name: "TikTok Ads", displayOrder: 23, icon: "video", family: "paid_reach", performedBy: "software", stepTransitions: VISIT_AND_LEAD_FORM,
     terms: terms(5000, 30, 5),
     description: "Buy short-video reach and the clicks and instant forms it produces.",
     inputs: PAID_REACH_INPUTS },
-  { slug: "youtube-ads", name: "YouTube Ads", displayOrder: 24, icon: "youtube", family: "paid_reach", stepTransitions: VISIT_AND_LEAD_FORM,
+  { slug: "youtube-ads", name: "YouTube Ads", displayOrder: 24, icon: "youtube", family: "paid_reach", performedBy: "software", stepTransitions: VISIT_AND_LEAD_FORM,
     terms: terms(5000, 30, 5),
     description: "Buy video reach on YouTube and the clicks and lead forms it produces.",
     inputs: PAID_REACH_INPUTS },
-  { slug: "x-ads", name: "X Ads", displayOrder: 25, icon: "at-sign", family: "paid_reach", stepTransitions: VISIT_ONLY,
+  { slug: "x-ads", name: "X Ads", displayOrder: 25, icon: "at-sign", family: "paid_reach", performedBy: "software", stepTransitions: VISIT_ONLY,
     description: "Buy reach on X against interests and followings, and the clicks through to your site.",
     terms: terms(3000, 30, 3),
     inputs: PAID_REACH_INPUTS },
-  { slug: "reddit-ads", name: "Reddit Ads", displayOrder: 26, icon: "message-square", family: "paid_reach", stepTransitions: VISIT_AND_LEAD_FORM,
+  { slug: "reddit-ads", name: "Reddit Ads", displayOrder: 26, icon: "message-square", family: "paid_reach", performedBy: "software", stepTransitions: VISIT_AND_LEAD_FORM,
     terms: terms(3000, 30, 3),
     description: "Buy reach inside the communities where your buyers discuss the problem, with forms filled on Reddit itself.",
     inputs: PAID_REACH_INPUTS },
-  { slug: "bing-ads", name: "Bing Ads", displayOrder: 27, icon: "search", family: "paid_reach", stepTransitions: VISIT_AND_LEAD_FORM,
+  { slug: "bing-ads", name: "Bing Ads", displayOrder: 27, icon: "search", family: "paid_reach", performedBy: "software", stepTransitions: VISIT_AND_LEAD_FORM,
     terms: terms(3000, 30, 3),
     description: "Buy the searches your buyers run on Bing, and the clicks and lead forms that come from them.",
     inputs: PAID_REACH_INPUTS },
-  { slug: "quora-ads", name: "Quora Ads", displayOrder: 28, icon: "help-circle", family: "paid_reach", stepTransitions: VISIT_AND_LEAD_FORM,
+  { slug: "quora-ads", name: "Quora Ads", displayOrder: 28, icon: "help-circle", family: "paid_reach", performedBy: "software", stepTransitions: VISIT_AND_LEAD_FORM,
     terms: terms(3000, 30, 5),
     description: "Buy reach against the questions your buyers ask, and the clicks and lead forms they produce.",
     inputs: PAID_REACH_INPUTS },
-  { slug: "newsletter-sponsorships", name: "Newsletter Sponsorships", displayOrder: 29, icon: "mail", family: "paid_reach", stepTransitions: VISIT_ONLY,
+  { slug: "newsletter-sponsorships", name: "Newsletter Sponsorships", displayOrder: 29, icon: "mail", family: "paid_reach", performedBy: "software", stepTransitions: VISIT_ONLY,
     // A placement is booked into a future issue, so the wait is the publisher's calendar, not ours.
     terms: terms(6000, 30, 30),
     description: "Buy placements in the newsletters your buyers already read, and the clicks through to your site.",
     inputs: PAID_REACH_INPUTS },
-  { slug: "podcast-sponsorships", name: "Podcast Sponsorships", displayOrder: 30, icon: "mic", family: "paid_reach", stepTransitions: VISIT_ONLY,
+  { slug: "podcast-sponsorships", name: "Podcast Sponsorships", displayOrder: 30, icon: "mic", family: "paid_reach", performedBy: "software", stepTransitions: VISIT_ONLY,
     terms: terms(8000, 60, 45),
     description: "Buy read spots on the podcasts your buyers listen to, and the visits they send.",
     inputs: PAID_REACH_INPUTS },
-  { slug: "creator-sponsorships", name: "Creator Sponsorships", displayOrder: 31, icon: "users", family: "paid_reach", stepTransitions: VISIT_ONLY,
+  { slug: "creator-sponsorships", name: "Creator Sponsorships", displayOrder: 31, icon: "users", family: "paid_reach", performedBy: "software", stepTransitions: VISIT_ONLY,
     terms: terms(8000, 60, 30),
     description: "Pay creators your buyers follow to show your product to them, and measure the visits it sends.",
     inputs: PAID_REACH_INPUTS },
-  { slug: "paid-directory-listings", name: "Paid Software Directory Listings", displayOrder: 32, icon: "list", family: "paid_reach", stepTransitions: VISIT_ONLY,
+  { slug: "paid-directory-listings", name: "Paid Software Directory Listings", displayOrder: 32, icon: "list", family: "paid_reach", performedBy: "software", stepTransitions: VISIT_ONLY,
     terms: terms(4000, 90, 14),
     description: "Buy placement in the software directories buyers shortlist from, and the visits that follow.",
     inputs: PAID_REACH_INPUTS },
@@ -865,37 +868,37 @@ const PUBLISHED_CHANNELS: ChannelSeed[] = [
   // ── Earned ──────────────────────────────────────────────────────────────────────────────────────
   // Nothing here buys an impression; it earns one. That is why these carry the longest starts: an
   // article has to be published and indexed, an editor has to choose you, a host has to book you.
-  { slug: "seo-content", name: "SEO Content", displayOrder: 33, icon: "file-text", family: "earned", stepTransitions: VISIT_ONLY,
+  { slug: "seo-content", name: "SEO Content", displayOrder: 33, icon: "file-text", family: "earned", performedBy: "person", stepTransitions: VISIT_ONLY,
     // Publishing and ranking is a quarter's work before it produces, and it is worth nothing bought by
     // the week — which is what the 90-day minimum says out loud.
     terms: terms(12000, 90, 90),
     description: "Publish content that ranks for what your buyers search, and earn the visits it brings every month after.",
     inputs: EARNED_INPUTS },
-  { slug: "press-placements", name: "Press Placements", displayOrder: 34, icon: "newspaper", family: "earned", stepTransitions: VISIT_ONLY,
+  { slug: "press-placements", name: "Press Placements", displayOrder: 34, icon: "newspaper", family: "earned", performedBy: "software", stepTransitions: VISIT_ONLY,
     terms: terms(8000, 30, 30),
     description: "Place guaranteed articles about your brand in real publications, and earn the visits and authority they carry.",
     inputs: EARNED_INPUTS },
-  { slug: "podcast-guesting", name: "Podcast Guesting", displayOrder: 35, icon: "mic", family: "earned", stepTransitions: VISIT_ONLY,
+  { slug: "podcast-guesting", name: "Podcast Guesting", displayOrder: 35, icon: "mic", family: "earned", performedBy: "software", stepTransitions: VISIT_ONLY,
     terms: terms(6000, 60, 45),
     description: "Get your spokesperson booked on the podcasts your buyers listen to, and earn the visits each episode sends.",
     inputs: EARNED_INPUTS },
-  { slug: "affiliate-programme", name: "Affiliate Programme", displayOrder: 36, icon: "share-2", family: "earned", stepTransitions: VISIT_ONLY,
+  { slug: "affiliate-programme", name: "Affiliate Programme", displayOrder: 36, icon: "share-2", family: "earned", performedBy: "software", stepTransitions: VISIT_ONLY,
     terms: terms(4000, 90, 45),
     description: "Recruit partners who send you buyers and get paid on what closes, and measure the visits they send.",
     inputs: EARNED_INPUTS },
-  { slug: "organic-linkedin-publishing", name: "Organic LinkedIn Publishing", displayOrder: 37, icon: "linkedin", family: "earned", stepTransitions: CONVERSATION_AND_VISIT,
+  { slug: "organic-linkedin-publishing", name: "Organic LinkedIn Publishing", displayOrder: 37, icon: "linkedin", family: "earned", performedBy: "software", stepTransitions: CONVERSATION_AND_VISIT,
     terms: terms(10000, 90, 30),
     description: "Publish on LinkedIn under your spokesperson's name, and earn both the replies it opens and the visits it sends.",
     inputs: EARNED_INPUTS },
-  { slug: "organic-x-publishing", name: "Organic X Publishing", displayOrder: 38, icon: "at-sign", family: "earned", stepTransitions: CONVERSATION_AND_VISIT,
+  { slug: "organic-x-publishing", name: "Organic X Publishing", displayOrder: 38, icon: "at-sign", family: "earned", performedBy: "software", stepTransitions: CONVERSATION_AND_VISIT,
     terms: terms(8000, 90, 30),
     description: "Publish on X under your spokesperson's name, and earn both the replies it opens and the visits it sends.",
     inputs: EARNED_INPUTS },
-  { slug: "organic-reddit-publishing", name: "Organic Reddit Publishing", displayOrder: 39, icon: "message-square", family: "earned", stepTransitions: CONVERSATION_AND_VISIT,
+  { slug: "organic-reddit-publishing", name: "Organic Reddit Publishing", displayOrder: 39, icon: "message-square", family: "earned", performedBy: "software", stepTransitions: CONVERSATION_AND_VISIT,
     terms: terms(8000, 90, 45),
     description: "Post in the communities where your buyers discuss the problem, and earn the replies and visits it produces.",
     inputs: EARNED_INPUTS },
-  { slug: "organic-youtube-publishing", name: "Organic YouTube Publishing", displayOrder: 40, icon: "youtube", family: "earned", stepTransitions: CONVERSATION_AND_VISIT,
+  { slug: "organic-youtube-publishing", name: "Organic YouTube Publishing", displayOrder: 40, icon: "youtube", family: "earned", performedBy: "software", stepTransitions: CONVERSATION_AND_VISIT,
     terms: terms(12000, 90, 60),
     description: "Publish video that answers what your buyers search on YouTube, and earn the comments and visits it brings.",
     inputs: EARNED_INPUTS },
@@ -918,46 +921,46 @@ const PUBLISHED_CHANNELS: ChannelSeed[] = [
   // declares its API spend per run, and what a `Your Team` leg costs THEM is stated per lead against
   // lead-service. `operatedBy` is what says who is on it; the zero says only what the day-rate is.
 
-  { slug: "ai-meeting-booking", name: "AI Meeting Booking", displayOrder: 41, icon: "calendar-check", family: "conversion", stepTransitions: AI_BOOKS_THE_MEETING,
+  { slug: "ai-meeting-booking", name: "AI Meeting Booking", displayOrder: 41, icon: "calendar-check", family: "conversion", performedBy: "software", stepTransitions: AI_BOOKS_THE_MEETING,
     // No salary to carry — the standing cost is a nominal dollar, and the real spend is the metered API
     // cost declared on each run.
     terms: terms(100, 30, 1),
     description: "Our AI replies to the prospects who answered you, within minutes, and books the meeting on your calendar.",
     inputs: OFFER_INPUTS },
-  { slug: "agency-meeting-booking", name: "Agency Meeting Booking", displayOrder: 42, icon: "calendar-plus", family: "conversion", stepTransitions: BOOKS_THE_MEETING,
+  { slug: "agency-meeting-booking", name: "Agency Meeting Booking", displayOrder: 42, icon: "calendar-plus", family: "conversion", performedBy: "person", stepTransitions: BOOKS_THE_MEETING,
     terms: terms(0, 30, 3),
     description: "Our team works the replies and site visits you already have by hand, and turns them into meetings on your calendar.",
     inputs: OFFER_INPUTS },
-  { slug: "your-team-meeting-booking", name: "Your Team Meeting Booking", displayOrder: 43, icon: "calendar-plus", family: "conversion", operatedBy: "customer", stepTransitions: BOOKS_THE_MEETING,
+  { slug: "your-team-meeting-booking", name: "Your Team Meeting Booking", displayOrder: 43, icon: "calendar-plus", family: "conversion", operatedBy: "customer", performedBy: "person", stepTransitions: BOOKS_THE_MEETING,
     terms: terms(0, 30, 1),
     description: "Your own team works the replies and site visits, and books the meetings itself.",
     inputs: OFFER_INPUTS },
 
-  { slug: "agency-meeting-attendance", name: "Agency Meeting Attendance", displayOrder: 44, icon: "bell", family: "conversion", stepTransitions: GETS_THE_MEETING_HELD,
+  { slug: "agency-meeting-attendance", name: "Agency Meeting Attendance", displayOrder: 44, icon: "bell", family: "conversion", performedBy: "person", stepTransitions: GETS_THE_MEETING_HELD,
     // Confirming, reminding and rescheduling is a standing job, not a per-meeting one.
     terms: terms(6000, 30, 3),
     description: "Our team confirms, reminds and reschedules so the meetings on your calendar are actually held.",
     inputs: OFFER_INPUTS },
-  { slug: "your-team-meeting-attendance", name: "Your Team Meeting Attendance", displayOrder: 45, icon: "bell", family: "conversion", operatedBy: "customer", stepTransitions: GETS_THE_MEETING_HELD,
+  { slug: "your-team-meeting-attendance", name: "Your Team Meeting Attendance", displayOrder: 45, icon: "bell", family: "conversion", operatedBy: "customer", performedBy: "person", stepTransitions: GETS_THE_MEETING_HELD,
     terms: terms(0, 30, 1),
     description: "Your own team confirms and reminds, so the meetings you booked do not become no-shows.",
     inputs: OFFER_INPUTS },
 
-  { slug: "agency-closing-calls", name: "Agency Closing Calls", displayOrder: 46, icon: "handshake", family: "conversion", stepTransitions: CLOSES_THE_MEETING,
+  { slug: "agency-closing-calls", name: "Agency Closing Calls", displayOrder: 46, icon: "handshake", family: "conversion", performedBy: "person", stepTransitions: CLOSES_THE_MEETING,
     // A closer on your account is the most expensive day in the catalogue, and the one that ends in a sale.
     terms: terms(30000, 60, 7),
     description: "We put a closer on your account to run the meetings you get held and turn them into paying clients.",
     inputs: OFFER_INPUTS },
-  { slug: "your-team-closing-calls", name: "Your Team Closing Calls", displayOrder: 47, icon: "handshake", family: "conversion", operatedBy: "customer", stepTransitions: CLOSES_THE_MEETING,
+  { slug: "your-team-closing-calls", name: "Your Team Closing Calls", displayOrder: 47, icon: "handshake", family: "conversion", operatedBy: "customer", performedBy: "person", stepTransitions: CLOSES_THE_MEETING,
     terms: terms(0, 30, 1),
     description: "You run the meetings yourself and close them, which is what most founders do best early on.",
     inputs: OFFER_INPUTS },
 
-  { slug: "agency-signup-conversion", name: "Agency Signup Conversion", displayOrder: 48, icon: "user-check", family: "conversion", stepTransitions: CONVERTS_THE_SELF_SERVE_LEAD,
+  { slug: "agency-signup-conversion", name: "Agency Signup Conversion", displayOrder: 48, icon: "user-check", family: "conversion", performedBy: "person", stepTransitions: CONVERTS_THE_SELF_SERVE_LEAD,
     terms: terms(15000, 30, 5),
     description: "Our team follows up the people who signed up or filled your form until they become paying clients.",
     inputs: OFFER_INPUTS },
-  { slug: "your-team-signup-conversion", name: "Your Team Signup Conversion", displayOrder: 49, icon: "user-check", family: "conversion", operatedBy: "customer", stepTransitions: CONVERTS_THE_SELF_SERVE_LEAD,
+  { slug: "your-team-signup-conversion", name: "Your Team Signup Conversion", displayOrder: 49, icon: "user-check", family: "conversion", operatedBy: "customer", performedBy: "person", stepTransitions: CONVERTS_THE_SELF_SERVE_LEAD,
     terms: terms(0, 30, 1),
     description: "Your own team follows up the signups and form fills until they become paying clients.",
     inputs: OFFER_INPUTS },
@@ -976,6 +979,7 @@ for (const channel of PUBLISHED_CHANNELS) {
     acquisitionChannel: {
       family: channel.family,
       operatedBy: channel.operatedBy ?? "platform",
+      performedBy: channel.performedBy,
       stepTransitions: channel.stepTransitions,
       terms: channel.terms,
     },

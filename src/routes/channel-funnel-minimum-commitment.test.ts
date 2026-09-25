@@ -48,6 +48,7 @@ const SLOW_CHANNEL = "slow-seo-outreach";
 const channelBlob = (minimumCommitmentDays: number) => ({
   family: "outbound_one_to_one",
   operatedBy: "platform",
+  performedBy: "software",
   stepTransitions: [{ from: null, to: "conversation" }, { from: null, to: "website_visit" }],
   terms: { dailyOperatingCostCents: 800, minimumCommitmentDays, maxDaysToFirstProduction: 14 },
 });
