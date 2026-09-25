@@ -14,6 +14,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
+import { offerEconomicsFromDeclared } from "../lib/leg-economics-fixture.js";
 
 vi.mock("../db/index.js", () => ({
   db: { query: { features: { findFirst: vi.fn(), findMany: vi.fn() } } },
@@ -157,6 +158,7 @@ function mockFetch(opts: MockOpts = {}): void {
       return json({ groups: [email("wf-lithium", 1300, 0, BRAND_REPLIES), email("wf-sodium", 900, 0, 5)] });
     }
     if (url.includes("/public/stats")) return json({ groups: [email("wf-lithium", 9000, 0, 900), email("wf-sodium", 9000, 0, 900)] });
+    if (url.includes("/offer-economics")) return json(offerEconomicsFromDeclared([CONVERSATION_FUNNEL]));
     if (url.includes("/sales-funnels")) return json({ funnels: [CONVERSATION_FUNNEL] });
     if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
     // ONE active audience, with nothing attributed to it — enough for the unproven `argon` to be
@@ -242,16 +244,16 @@ describe("a leg-keyed read is priced on the LEG'S OWN STEP", () => {
     vi.mocked(db.query.features.findFirst).mockResolvedValue(FEATURE as any);
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
-      if (url.includes("/sales-funnels")) {
-        return json({
-          funnels: [
+      if (url.includes("/offer-economics")) {
+        return json(
+          offerEconomicsFromDeclared([
             {
               ...CONVERSATION_FUNNEL,
               // Nobody has stated how a conversation becomes a meeting.
               rates: { replyToMeetingPct: 0, meetingToClosePct: 50 },
             },
-          ],
-        });
+          ]),
+        );
       }
       if (url.includes("/sales-economics-effective")) return json({ economics: { ...ECONOMICS, replyToMeetingPct: 0 }, source: "user" });
       if (url.includes("/public/workflows")) return json({ workflows: WORKFLOWS });

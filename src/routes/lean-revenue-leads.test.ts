@@ -23,6 +23,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
+import { offerEconomicsFromDeclared } from "../lib/leg-economics-fixture.js";
 
 vi.mock("../db/index.js", () => ({
   db: { query: { features: { findFirst: vi.fn(), findMany: vi.fn() } } },
@@ -174,6 +175,7 @@ function mockFetch(degraded: Degraded = {}): void {
         }],
       });
     }
+    if (path.includes("/offer-economics")) return json(offerEconomicsFromDeclared(DECLARED, { offerId: OFFER }));
     if (path.includes("/sales-funnels")) return json({ funnels: DECLARED });
     if (path.includes("/costs/timeseries")) {
       return json({ buckets: [{ period: "2026-01-02", totalCostInUsdCents: "12000" }] });

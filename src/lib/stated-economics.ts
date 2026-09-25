@@ -16,28 +16,22 @@
  *
  * So the population is what brands STATED, and nothing else:
  *
- *  - RATES come from brand-service's BRAND-GRAIN store (one rate per brand, funnel and arrow; conversion
- *    rates moved from the offer to the brand on 2026-09-25). A row exists only where somebody stated a
+ *  - RATES come from brand-service's LEG store (one rate per brand and leg — no funnel in the key, wave
+ *    C1 2026-09-25). A row exists only where somebody stated a
  *    rate — it has no default behind it — and brand-service's one-time move from the per-offer grain
  *    discarded the values its economics backfill had copied from the brand-wide defaults.
- *  - LIFETIME REVENUE stays per OFFER, so it comes from the brand's DECLARED SALES FUNNELS
- *    (`lifetime_revenue_usd`, nullable — null is "never declared"). A brand selling several offers is
- *    read offer by offer (brand-service refuses a brand-scoped read for it rather than pick one).
+ *  - LIFETIME REVENUE stays per OFFER (`offer-economics`, nullable — null is "never stated"), carried
+ *    onto the funnels each offer's campaigns read. A brand selling several offers is read offer by offer.
  *
  * A value that is absent contributes nothing: it is not a zero, not a default, not an average. Each
  * brand is ONE data point per field (the median of its own statements across offers / funnels), so
  * the unit stays the BRAND.
  */
 
-import {
-  fetchDeclaredSalesFunnels,
-  SeveralOffersDeclaredError,
-  type DeclaredSalesFunnel,
-} from "./sales-funnels-client.js";
+import type { DeclaredSalesFunnel } from "./sales-funnels-client.js";
 import { declaredFunnelsToRank } from "./declared-funnels.js";
 import type { ProjectionEconomics, SalesEconomics } from "./funnel-registry.js";
 import type { SalesFunnelKey } from "./sales-funnels.js";
-import type { BrandFunnelRates } from "./brand-funnel-rates-client.js";
 
 /** A brand's stated economics — only the fields somebody stated. */
 export type StatedEconomics = Partial<SalesEconomics>;
@@ -50,23 +44,6 @@ export function median(values: readonly number[]): number | null {
   const lo = Math.floor(mid);
   const hi = Math.ceil(mid);
   return lo === hi ? sorted[lo] : (sorted[lo] + sorted[hi]) / 2;
-}
-
-/**
- * Every funnel a brand declared, across EVERY offer it sells. brand-service refuses a brand-scoped
- * read for a several-offer brand (409 `SEVERAL_OFFERS`, listing the offers), so that refusal is
- * answered by reading each offer it named. Any other failure propagates to the caller.
- */
-export async function fetchDeclaredFunnelsAllOffers(brandId: string, orgId: string): Promise<DeclaredSalesFunnel[]> {
-  try {
-    return await fetchDeclaredSalesFunnels(brandId, orgId);
-  } catch (error) {
-    if (!(error instanceof SeveralOffersDeclaredError)) throw error;
-    const perOffer = await Promise.all(
-      error.offers.map((offer) => fetchDeclaredSalesFunnels(brandId, orgId, offer.offerId)),
-    );
-    return perOffer.flat();
-  }
 }
 
 /**
@@ -114,62 +91,19 @@ export interface BrandStatedEconomics {
 }
 
 /**
- * A brand's stated economics: the RATES it stated on the brand grain (`brandRates`), read through the
- * funnel's own arrows exactly as pricing reads them, and the LIFETIME REVENUE each offer declared.
- * `brandRates` absent keeps the declared per-offer rates — the pre-brand-grain population.
+ * A brand's stated economics, read through each funnel's own legs exactly as pricing reads them: the leg
+ * RATES the brand stated and the LIFETIME REVENUE each offer stated (both already on the funnels).
  */
-export function brandStatedEconomics(
-  funnels: readonly DeclaredSalesFunnel[],
-  brandRates?: readonly BrandFunnelRates[],
-): BrandStatedEconomics {
-  const rated: DeclaredSalesFunnel[] = brandRates
-    ? withBrandRates(funnels, brandRates)
-    : [...funnels];
+export function brandStatedEconomics(funnels: readonly DeclaredSalesFunnel[]): BrandStatedEconomics {
   const grouped = new Map<SalesFunnelKey, StatedEconomics[]>();
-  for (const funnel of rated) {
+  for (const funnel of funnels) {
     const list = grouped.get(funnel.funnelKey) ?? [];
     list.push(statedOfFunnel(funnel));
     grouped.set(funnel.funnelKey, list);
   }
   const byFunnel: Partial<Record<SalesFunnelKey, StatedEconomics>> = {};
   for (const [key, list] of grouped) byFunnel[key] = collapseStated(list);
-  return { byFunnel, overall: collapseStated(rated.map(statedOfFunnel)) };
-}
-
-/**
- * Carry the brand-grain statements onto the declared funnels: each funnel's arrows become what the
- * BRAND stated (named per-offer rates dropped), its lifetime revenue stays the offer's. A funnel the
- * brand stated rates on without declaring it contributes its rates alone.
- */
-function withBrandRates(
-  funnels: readonly DeclaredSalesFunnel[],
-  brandRates: readonly BrandFunnelRates[],
-): DeclaredSalesFunnel[] {
-  const arrowsOf = (key: SalesFunnelKey) =>
-    (brandRates.find((f) => f.funnelKey === key)?.arrows ?? []).map((a) => ({
-      fromStep: a.fromStep,
-      toStep: a.toStep,
-      ratePct: a.stated ? a.ratePct : null,
-      provenance: a.stated ? "stated_manual" : "unstated",
-      rateKey: null,
-    }));
-  const out: DeclaredSalesFunnel[] = funnels.map((f) => ({ ...f, rates: {}, arrows: arrowsOf(f.funnelKey) }));
-  const declaredKeys = new Set(funnels.map((f) => f.funnelKey));
-  for (const f of brandRates) {
-    if (declaredKeys.has(f.funnelKey) || !f.arrows.some((a) => a.stated)) continue;
-    out.push({
-      funnelKey: f.funnelKey,
-      name: f.funnelKey,
-      steps: [],
-      rates: {},
-      arrows: arrowsOf(f.funnelKey),
-      lifetimeRevenueUsd: null,
-      destinationUrl: null,
-      bookingUrl: null,
-      updatedAt: "",
-    });
-  }
-  return out;
+  return { byFunnel, overall: collapseStated(funnels.map(statedOfFunnel)) };
 }
 
 /** The fleet's median statement, ready for the projection math. */

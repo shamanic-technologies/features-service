@@ -56,7 +56,7 @@
 import { funnelStepKeys, type ChannelStepDef, type ChannelStepKey } from "./acquisition-channels.js";
 import { funnelLeg, funnelsContainingLeg, matchFunnelLegKey } from "./funnel-legs.js";
 import { bookedToAttendedRate, legOutcomeTerms, FUNNEL_DRIVER, type LegDriver } from "./leg-outcome.js";
-import { matchSalesFunnelKey, type SalesFunnelKey } from "./sales-funnels.js";
+import type { SalesFunnelKey } from "./sales-funnels.js";
 import type { SalesEconomics } from "./funnel-registry.js";
 
 /** How many outcomes of its OWN leg a campaign must have before its figures stop being noise. */
@@ -216,9 +216,10 @@ export interface ResolvedLeg {
 }
 
 /**
- * Which funnel prices a campaign's leg: the funnel the CAMPAIGN ITSELF states, when that funnel
- * contains the leg, else the first funnel in the catalogue that does. The campaign states both, so
- * nothing here is guessed; the fallback only fires on a row whose two statements disagree.
+ * Which funnel prices a campaign's leg: the first funnel in the catalogue containing the leg that a
+ * counted signal enters (wave C1: the funnel a campaign row states is no longer read — the LEG is the
+ * campaign's identity). An entry leg's outcome is its own driver signal whichever funnel reads it, and a
+ * deeper leg's walk runs on the brand's per-leg rates, which no funnel changes.
  */
 function resolveLeg(input: LearningCampaignInput, economics: SalesEconomics | null): ResolvedLeg | null {
   if (!input.legKey) return null;
@@ -229,8 +230,7 @@ function resolveLeg(input: LearningCampaignInput, economics: SalesEconomics | nu
 
   const containing = funnelsContainingLeg(legKey);
   if (containing.length === 0) return null;
-  const stated = input.funnelKey ? matchSalesFunnelKey(input.funnelKey) : null;
-  const funnelKey = stated && containing.includes(stated) ? stated : containing[0]!;
+  const funnelKey = containing.find((k) => FUNNEL_DRIVER[k] != null) ?? containing[0]!;
 
   const driver = FUNNEL_DRIVER[funnelKey];
   // NO COUNTED SIGNAL ENTERS THIS FUNNEL — an ad delivers its first step, so there is no observation to

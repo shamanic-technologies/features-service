@@ -1152,7 +1152,7 @@ describe("GET /public/stats/best-model-cost-per-outcome-trend", () => {
 
     vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
+      if (url.includes("/campaigns?") && new URL(url).searchParams.has("featureSlug")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       const stated = statedBrandRoute(url, () => ECON_FULL as Record<string, number>);
       if (stated) return stated;
       if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
@@ -1217,7 +1217,7 @@ describe("GET /public/stats/best-model-cost-per-outcome-trend", () => {
 
     vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
+      if (url.includes("/campaigns?") && new URL(url).searchParams.has("featureSlug")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       const stated = statedBrandRoute(url, () => ECON_FULL as Record<string, number>);
       if (stated) return stated;
       if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
@@ -1259,7 +1259,7 @@ describe("GET /public/stats/best-model-cost-per-outcome-trend", () => {
 
     vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
+      if (url.includes("/campaigns?") && new URL(url).searchParams.has("featureSlug")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       const stated = statedBrandRoute(url, () => ECON_FULL as Record<string, number>);
       if (stated) return stated;
       if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
@@ -1323,7 +1323,7 @@ describe("GET /public/stats/workflow-cost-per-outcome", () => {
 
     vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
+      if (url.includes("/campaigns?") && new URL(url).searchParams.has("featureSlug")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       const stated = statedBrandRoute(url, () => ECON_FULL as Record<string, number>);
       if (stated) return stated;
       if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
@@ -1383,7 +1383,7 @@ describe("GET /public/stats/workflow-cost-per-outcome", () => {
 
     vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
+      if (url.includes("/campaigns?") && new URL(url).searchParams.has("featureSlug")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       const stated = statedBrandRoute(url, () => ECON_FULL as Record<string, number>);
       if (stated) return stated;
       if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
@@ -1430,7 +1430,7 @@ describe("GET /public/stats/workflow-cost-per-outcome", () => {
 
     vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
+      if (url.includes("/campaigns?") && new URL(url).searchParams.has("featureSlug")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       const stated = statedBrandRoute(url, () => ECON_FULL as Record<string, number>);
       if (stated) return stated;
       if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
@@ -1497,7 +1497,7 @@ describe("GET /public/stats/workflow-cost-per-outcome", () => {
 
     vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
+      if (url.includes("/campaigns?") && new URL(url).searchParams.has("featureSlug")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       const stated = statedBrandRoute(url, () => ECON_FULL as Record<string, number>);
       if (stated) return stated;
       if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
@@ -1590,6 +1590,46 @@ function funnelRatesFromEcon(econ: Record<string, number>) {
   ] };
 }
 
+/** Wave C1: what brand-service's `offer-economics` serves for a brand whose statements are `econ` —
+ * one rate per LEG (the legs OUT of an entry step restricted to `funnelKeys` when given) and one offer
+ * carrying the LTR. */
+function legEconomicsBody(econ: Record<string, number>, funnelKeys?: readonly string[]) {
+  const legs = new Map<string, { fromStep: string; toStep: string; ratePct: number | null; stated: boolean }>();
+  for (const f of funnelRatesFromEcon(econ).funnels) {
+    for (const a of f.arrows) {
+      // The leg OUT of an entry step says which funnel the brand's leads walk: stated only on the
+      // funnels the brand runs. Every later leg is a fact about the brand, stated wherever it sits.
+      const branching = a.fromStep === "Website visit" || a.fromStep === "Positive reply";
+      if (funnelKeys && branching && !funnelKeys.includes(f.funnelKey)) continue;
+      const key = `${a.fromStep}>${a.toStep}`;
+      if (a.stated && !legs.has(key)) legs.set(key, a);
+    }
+  }
+  return {
+    legRates: [...legs.values()].map((a) => ({ ...a, statedAt: "2026-08-01T00:00:00.000Z" })),
+    offers: [{ offerId: "offer-1", name: "Offer", lifetimeRevenueUsd: econ.lifetimeRevenueUsd ?? null, lifetimeRevenueStatedAt: null }],
+  };
+}
+
+const ENTRY_LEG_OF: Record<string, string> = {
+  sales_meetings_from_conversation: "start_to_conversation",
+  sales_from_conversation: "start_to_conversation",
+  sales_meetings_from_website: "start_to_website_visit",
+  website_purchases: "start_to_website_visit",
+  form_magnet: "start_to_website_visit",
+  sales_from_website: "start_to_website_visit",
+};
+
+/** The brand's campaigns, one per funnel it runs, each performing that funnel's entry leg. */
+function legCampaignsBody(brandId: string, funnelKeys: readonly string[]) {
+  return {
+    campaigns: funnelKeys.map((funnelKey, i) => ({
+      id: `${brandId}-c${i}`, orgId: "org-1", brandId, featureSlug: "sales-cold-email-outreach",
+      funnelKey, legKey: ENTRY_LEG_OF[funnelKey] ?? null, offerId: "offer-1", status: "stopped",
+    })),
+  };
+}
+
 /**
  * The per-brand STATEMENT reads every fleet cost surface makes through the shared funnel-bucket dataset:
  * the internal saved economics, the declared sales funnels (which carry what the brand STATED — the fleet
@@ -1602,20 +1642,17 @@ function statedBrandRoute(
 ): Response | null {
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-  const funnels = url.match(/http:\/\/brand:3000\/internal\/brands\/([^/?]+)\/sales-funnels/);
-  if (funnels) {
-    const econ = econFor(funnels[1]);
-    if (econ === null || econ === "403") return json({ funnels: [] });
-    const { lifetimeRevenueUsd, ...rates } = econ;
-    return json({ funnels: [{
-      funnelKey: "sales_meetings_from_conversation", name: "x", steps: [], rates,
-      lifetimeRevenueUsd: lifetimeRevenueUsd ?? null, destinationUrl: null, bookingUrl: null, updatedAt: "2026-08-01T00:00:00.000Z",
-    }] });
+  const legs = url.match(/http:\/\/brand:3000\/internal\/brands\/([^/?]+)\/offer-economics/);
+  if (legs) {
+    const econ = econFor(legs[1]);
+    if (econ === null || econ === "403") return json({ legRates: [], offers: [] });
+    return json(legEconomicsBody(econ));
   }
-  const rated = url.match(/http:\/\/brand:3000\/internal\/brands\/([^/?]+)\/funnel-rates/);
-  if (rated) {
-    const econ = econFor(rated[1]);
-    return json(econ === null || econ === "403" ? { funnels: [] } : funnelRatesFromEcon(econ));
+  const camp = url.match(/http:\/\/campaign:3000\/campaigns\?/);
+  if (camp && !new URL(url).searchParams.has("featureSlug")) {
+    const brandId = new URL(url).searchParams.get("brandId") ?? "";
+    const econ = econFor(brandId);
+    return json(legCampaignsBody(brandId, econ === null || econ === "403" ? [] : ["sales_meetings_from_conversation"]));
   }
   const saved = url.match(/http:\/\/brand:3000\/internal\/brands\/([^/?]+)\/sales-economics/);
   if (saved) {
@@ -1648,7 +1685,7 @@ function mockCostProjectionFetch(opts: {
 
   const spy = vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
+    if (url.includes("/campaigns?") && new URL(url).searchParams.has("featureSlug")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
     const stated = statedBrandRoute(url, (brandId) => (opts.economicsByBrand[brandId] ?? null) as Record<string, number> | null | "403");
     if (stated) return stated;
     if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
@@ -1704,26 +1741,22 @@ function mockBucketedFetch(opts: {
   const brandOf = (url: string): string | null => new URL(url).searchParams.get("brandId");
   const spy = vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
+    if (url.includes("/campaigns?") && new URL(url).searchParams.has("featureSlug")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
     if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
       return new Response(JSON.stringify({ memberships: opts.memberships }), { status: 200, headers: { "content-type": "application/json" } });
     }
-    const funnelsMatch = url.match(/http:\/\/brand:3000\/internal\/brands\/([^/]+)\/sales-funnels/);
-    if (funnelsMatch) {
-      const b = opts.brands[funnelsMatch[1]];
-      // Each declared funnel STATES the brand's rates — the fleet aggregates read what was stated on the
-      // funnels, never the brand-wide record (lib/stated-economics.ts).
-      const { lifetimeRevenueUsd, ...rates } = (b?.econ ?? {}) as unknown as Record<string, number>;
-      const funnels = (b?.funnels ?? []).map((funnelKey) => ({
-        funnelKey, name: funnelKey, steps: [], rates, lifetimeRevenueUsd: lifetimeRevenueUsd ?? null,
-        destinationUrl: null, bookingUrl: null, updatedAt: "2026-08-01T00:00:00.000Z",
-      }));
-      return new Response(JSON.stringify({ funnels }), { status: 200, headers: { "content-type": "application/json" } });
+    const legsMatch = url.match(/http:\/\/brand:3000\/internal\/brands\/([^/]+)\/offer-economics/);
+    if (legsMatch) {
+      const b = opts.brands[legsMatch[1]];
+      // The brand STATES its rates on the legs of the funnels it runs — the fleet aggregates read what
+      // was stated, never the brand-wide record (lib/stated-economics.ts).
+      const body = b?.funnels ? legEconomicsBody(b.econ as unknown as Record<string, number>, b.funnels) : { legRates: [], offers: [] };
+      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
     }
-    const ratedMatch = url.match(/http:\/\/brand:3000\/internal\/brands\/([^/]+)\/funnel-rates/);
-    if (ratedMatch) {
-      const b = opts.brands[ratedMatch[1]];
-      return new Response(JSON.stringify(b?.funnels ? funnelRatesFromEcon(b.econ as unknown as Record<string, number>) : { funnels: [] }), { status: 200, headers: { "content-type": "application/json" } });
+    const campMatch = url.match(/http:\/\/campaign:3000\/campaigns\?/);
+    if (campMatch && !new URL(url).searchParams.has("featureSlug")) {
+      const brandId = new URL(url).searchParams.get("brandId") ?? "";
+      return new Response(JSON.stringify(legCampaignsBody(brandId, opts.brands[brandId]?.funnels ?? [])), { status: 200, headers: { "content-type": "application/json" } });
     }
     const savedMatch = url.match(/http:\/\/brand:3000\/internal\/brands\/([^/]+)\/sales-economics/);
     if (savedMatch) {

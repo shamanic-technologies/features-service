@@ -56,6 +56,7 @@ process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
+const { offerEconomicsFromDeclared } = await import("../lib/leg-economics-fixture.js");
 
 const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
 const PITCH = "sales-cold-email-outreach";
@@ -191,6 +192,16 @@ function mockFetch(fixture: Fixture): void {
             createdAt: "2026-01-01T00:00:00.000Z",
           })),
       });
+    }
+    if (path.includes("/offer-economics")) {
+      // Wave C1: the brand's leg rates (what its funnels stated) and every offer its campaigns sell.
+      const declared = fixture.declared === undefined ? DECLARED : fixture.declared;
+      if (declared === null) return new Response("not found", { status: 404 });
+      const offerIds = [...new Set(Object.values(fixture.campaigns).map((row: any) => row.offerId).filter(Boolean))] as string[];
+      const ltr = (declared as any[]).map((d) => d.lifetimeRevenueUsd).find((v) => typeof v === "number") ?? null;
+      return json(
+        offerEconomicsFromDeclared(declared as any[], offerIds.length > 0 ? { offers: offerIds.map((offerId) => ({ offerId, lifetimeRevenueUsd: ltr })) } : {}),
+      );
     }
     if (path.includes("/sales-funnels")) {
       const declared = fixture.declared === undefined ? DECLARED : fixture.declared;
@@ -453,7 +464,7 @@ describe("GET /offers/:offerId/funnels/:funnelKey/revenue — one funnel's money
     expect(res.body.recipientsContacted.total).toBe(2);
   });
 
-  it("a funnel we cannot price reports its real spend beside a NULL return, naming the gap", async () => {
+  it("a funnel whose legs the brand never stated is still PRICED, on the brand-wide record (wave C1: no declared set)", async () => {
     mockFetch({
       campaigns: {
         c1: { featureSlug: PITCH, funnelKey: CONVERSATION, offerId: OFFER },
@@ -465,17 +476,12 @@ describe("GET /offers/:offerId/funnels/:funnelKey/revenue — one funnel's money
     const res = await request(app).get(revenueUrl("website_purchases")).set(AUTH);
     expect(res.status).toBe(200);
 
-    expect(res.body.priced).toBe(false);
-    expect(res.body.unpricedReason).toBe("funnel_not_declared");
-    // The customer paid it, so it is reported — in full, breakdown included.
+    // The funnel the route names is a way of reading the brand's legs; with none of its own stated, the
+    // brand-wide record prices it — never a "not declared" gap any more.
+    expect(res.body.priced).toBe(true);
+    expect(res.body.unpricedReason).toBeNull();
     expect(res.body.costEconomics.committedCostUsd).toBeCloseTo(25, 6);
     expect(res.body.spend.totalSpentCents).toBe(2500);
-    // Nothing is borrowed from the funnel beside it, and nothing is invented.
-    expect(res.body.headline.totalPipelineUsd).toBeNull();
-    expect(res.body.costEconomics.roiMultiple).toBeNull();
-    expect(res.body.costEconomics.costPerAcquisitionUsd).toBeNull();
-    // "We could not price this" and "this reached nobody" are different statements: the volume is real,
-    // and it is on `outcomes` — the cold-start path prices no lead, so it lists none either.
     expect(res.body.outcomes.recipientsContacted).toBe(1);
   });
 

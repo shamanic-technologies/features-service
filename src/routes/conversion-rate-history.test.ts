@@ -306,11 +306,13 @@ function mockFetch(fixture: Fixture): void {
     if (url.includes("/daily-budget")) {
       return json({ brandId: "b1", legKey: VISIT_LEG, dailyBudgetCents: "5000", updatedAt: null, funnels: [], channels: [], offers: [], legs: [] });
     }
-    // The brand declares the ONE funnel the reported campaign sells, so `funnelSteps` walks a single
-    // chain and its first rung is the figure this curve must terminate on.
-    if (url.includes("/sales-funnels")) {
+    // The brand's statements read the ONE funnel the reported campaign sells, so `funnelSteps` walks a
+    // single chain and its first rung is the figure this curve must terminate on.
+    // Wave C1: the brand states where its visitors go (the form), and its one offer is worth $5,000.
+    if (url.includes("/offer-economics")) {
       return json({
-        funnels: [{ funnelKey: FUNNEL, name: "Form magnet", lifetimeRevenueUsd: 5000, arrows: [] }],
+        legRates: [{ fromStep: "Website visit", toStep: "Form filled", ratePct: ECONOMICS.visitToFormSubmissionPct, stated: true, statedAt: "x" }],
+        offers: [{ offerId: "offer-1", name: "Offer", lifetimeRevenueUsd: 5000, lifetimeRevenueStatedAt: "x" }],
       });
     }
     if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });

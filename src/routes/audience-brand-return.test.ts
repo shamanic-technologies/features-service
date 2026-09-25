@@ -50,10 +50,13 @@ process.env.HUMAN_SERVICE_API_KEY = "human-key";
 process.env.LEAD_SERVICE_URL = "http://lead:3000";
 process.env.LEAD_SERVICE_API_KEY = "lead-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
+process.env.CAMPAIGN_SERVICE_URL = "http://campaign:3000";
+process.env.CAMPAIGN_SERVICE_API_KEY = "campaign-key";
 process.env.NODE_ENV = "test";
 
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
+const { offerEconomicsFromDeclared, legCampaignRows } = await import("../lib/leg-economics-fixture.js");
 
 const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
 const FEATURE = {
@@ -136,6 +139,29 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
     if (url.includes("email:3000/public/stats")) return json({ groups: FLEET_EMAIL });
     if (url.includes("brand:3000/orgs/brands/brand-1/sales-economics-effective")) {
       return json({ economics, source: "user" });
+    }
+    // Wave C1: the brand STATES the legs of the funnels it runs (at the brand-wide values), and its
+    // campaigns perform their entry legs — what brand-service's carry-over produced in prod.
+    if (url.includes("brand:3000/internal/brands/brand-1/offer-economics")) {
+      if (declarationUnreadable) return json({ error: "boom" }, 500);
+      const OWN: Record<string, string[]> = {
+        website_purchases: ["visitToSignupPct", "signupToPaidClientPct"],
+        sales_meetings_from_conversation: ["replyToMeetingPct", "meetingToClosePct"],
+        sales_meetings_from_website: ["visitToMeetingPct", "meetingToClosePct"],
+        form_magnet: ["visitToFormSubmissionPct", "formSubmissionToPaidClientPct"],
+      };
+      return json(
+        offerEconomicsFromDeclared(
+          declaredKeys.map((funnelKey) => ({
+            funnelKey,
+            rates: Object.fromEntries((OWN[funnelKey] ?? []).map((k) => [k, (economics as any)[k]])),
+            lifetimeRevenueUsd: null,
+          })),
+        ),
+      );
+    }
+    if (url.includes("campaign:3000/campaigns")) {
+      return json({ campaigns: legCampaignRows(declaredKeys.map((funnelKey) => ({ funnelKey }))) });
     }
     if (url.includes("brand:3000/internal/brands/brand-1/sales-funnels")) {
       if (declarationUnreadable) return json({ error: "boom" }, 500);

@@ -53,7 +53,8 @@ import { mapWithConcurrency } from "./concurrency.js";
 import { getFunnel, type SalesEconomics } from "./funnel-registry.js";
 import type { Goal } from "./goals.js";
 import { SALES_FUNNEL_GOAL_ECHO, type SalesFunnelKey } from "./sales-funnels.js";
-import { fetchDeclaredFunnelKeys, primaryDeclaredFunnel } from "./brand-funnels.js";
+import { primaryDeclaredFunnel } from "./brand-funnels.js";
+import { fetchReadingFunnelKeys } from "./reading-funnels.js";
 import type { Request } from "express";
 import { computeFeatureRevenue, type DownstreamHeaders } from "../routes/revenue.js";
 import {
@@ -298,7 +299,8 @@ const REAL_DEPS: CustomerHealthDeps = {
   accountsAudit: buildAccountsAudit,
   activeUsersByUser: buildActiveUsersByUser,
   savedEconomics: fetchBrandSavedEconomics,
-  declaredFunnels: fetchDeclaredFunnelKeys,
+  // Wave C1: the funnels the brand's campaigns READ (their legs), never a declared set.
+  declaredFunnels: fetchReadingFunnelKeys,
   conversionCounts: fetchConversionCounts,
   dashboardReturns: fetchDashboardReturnsByOrg,
   budgetHistory: fetchBudgetChangeHistory,

@@ -36,6 +36,7 @@ process.env.FEATURE_VIEW_CACHE_ENABLED = "false"; // exercise the pure live-comp
 
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
+const { offerEconomicsFromDeclared, legCampaignRows } = await import("../lib/leg-economics-fixture.js");
 
 const AUTH = {
   "x-api-key": "test-key",
@@ -144,7 +145,13 @@ function outcomeRows(quals: Qualifications, event: string): unknown[] {
 function mockFetch(opts: { economics?: unknown; economicsAverage?: unknown; leads?: unknown[]; timestamps?: Timestamps; quals?: Qualifications; legacyQuals?: Qualifications; qualRowsRaw?: unknown[]; outcomeRowsRaw?: unknown[]; deadByStep?: Record<string, string[]>; platformStats?: unknown; costCents?: number; sequencesGroups?: Array<{ key: string; contacted: number }>; sequencesFail?: boolean; conversionCounts?: { signup: number; meeting_booked: number; form_submission: number; sale: number }; conversionCountsFail?: boolean; conversionEmails?: { signup?: string[]; form_submission?: string[] }; conversionEmailsFail?: boolean; salesFunnels?: unknown[]; spendByDay?: Array<{ period: string; actualCents: number }>; spendByDayFail?: boolean } = {}): void {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
-    if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
+    // Wave C1: the brand's campaigns perform the ENTRY legs of the funnels it sells (none maturing:
+    // the fixtures' rows are the only campaigns and carry no runs, lib/roi-maturity.ts).
+    if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: opts.salesFunnels ? legCampaignRows(opts.salesFunnels as any[]) : [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    if (url.includes("/offer-economics")) {
+      if (!opts.salesFunnels) return new Response("no statements", { status: 404, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify(offerEconomicsFromDeclared(opts.salesFunnels as any[])), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
     // lead-service GET /internal/brands/:brandId/converted-lead-emails?event=<type> — per-lead SIGNUP /
     // FORM-SUBMISSION attribution email sets (#476). Match BEFORE /conversion-counts (distinct path) and
     // before the generic branches. conversionEmailsFail → 500 so the soft wrapper degrades to no flags.

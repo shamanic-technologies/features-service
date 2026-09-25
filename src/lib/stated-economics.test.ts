@@ -1,18 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 
-vi.mock("./sales-funnels-client.js", async (orig) => {
-  const actual = await orig<typeof import("./sales-funnels-client.js")>();
-  return { ...actual, fetchDeclaredSalesFunnels: vi.fn() };
-});
-
-import { fetchDeclaredSalesFunnels, SeveralOffersDeclaredError, type DeclaredSalesFunnel } from "./sales-funnels-client.js";
-import {
-  brandStatedEconomics,
-  collapseStated,
-  fetchDeclaredFunnelsAllOffers,
-  median,
-  medianFleetEconomics,
-} from "./stated-economics.js";
+import type { DeclaredSalesFunnel } from "./sales-funnels-client.js";
+import { brandStatedEconomics, collapseStated, median, medianFleetEconomics } from "./stated-economics.js";
 
 const conversation = (rates: Record<string, number | null>, ltr: number | null): DeclaredSalesFunnel => ({
   funnelKey: "sales_meetings_from_conversation",
@@ -104,24 +93,5 @@ describe("brandStatedEconomics", () => {
 
   it("collapseStated keeps a field only where something was stated", () => {
     expect(collapseStated([{ replyToMeetingPct: 10 }, {}])).toEqual({ replyToMeetingPct: 10 });
-  });
-});
-
-describe("fetchDeclaredFunnelsAllOffers", () => {
-  beforeEach(() => vi.mocked(fetchDeclaredSalesFunnels).mockReset());
-
-  it("reads each offer brand-service named when it refuses a brand-scoped read", async () => {
-    vi.mocked(fetchDeclaredSalesFunnels)
-      .mockRejectedValueOnce(
-        new SeveralOffersDeclaredError("several", [
-          { offerId: "offer-a", name: "A" },
-          { offerId: "offer-b", name: "B" },
-        ]),
-      )
-      .mockResolvedValueOnce([conversation({ replyToMeetingPct: 10 }, null)])
-      .mockResolvedValueOnce([conversation({ replyToMeetingPct: 30 }, null)]);
-    const funnels = await fetchDeclaredFunnelsAllOffers("brand-1", "org-1");
-    expect(funnels.map((f) => f.rates.replyToMeetingPct)).toEqual([10, 30]);
-    expect(vi.mocked(fetchDeclaredSalesFunnels).mock.calls).toContainEqual(["brand-1", "org-1", "offer-b"]);
   });
 });

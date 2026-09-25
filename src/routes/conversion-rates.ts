@@ -4,7 +4,8 @@
  * the cross-org median). Every money figure this service states is priced on these rates, so the
  * dashboard's Brand Settings can show the customer exactly what their pipeline rests on.
  *
- * Only the funnels the brand DECLARED (any offer) are served, each arrow named in brand-service's own
+ * Only the funnels the brand's offers READ (their campaigns' legs; wave C1 reads no declared set) are
+ * served, beside every leg of the brand on `legs`, each arrow named in brand-service's own
  * step wording so it joins to the brand-service write. `?funnel=` narrows to one (400 on a word naming
  * no funnel). The resolution rules live in
  * `lib/effective-conversion-rates.ts`; nothing is computed here.
@@ -13,7 +14,7 @@ import { Router } from "express";
 import { apiKeyAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import { getBrandEffectiveRates } from "../lib/effective-conversion-rates.js";
 import { matchSalesFunnelKey, SALES_FUNNEL_KEYS } from "../lib/sales-funnels.js";
-import { fetchDeclaredFunnelsAllOffers } from "../lib/stated-economics.js";
+import { fetchPricingFunnelsAllOffers } from "../lib/reading-funnels.js";
 import { SalesFunnelsUnavailableError } from "../lib/sales-funnels-client.js";
 
 const router = Router();
@@ -34,9 +35,10 @@ router.get("/brands/:brandId/conversion-rates", apiKeyAuth, async (req, res) => 
   try {
     const [rates, declared] = await Promise.all([
       getBrandEffectiveRates(brandId, orgId),
-      // The funnels the brand SELLS through, across every offer. A brand that has declared none sells
-      // through nothing yet, so it is served no funnel — never the whole catalogue as if it did.
-      fetchDeclaredFunnelsAllOffers(brandId, orgId).catch((error) => {
+      // The funnels the brand's offers READ (wave C1: their campaigns' legs), across every offer. A brand
+      // whose campaigns run no leg yet reads through nothing, so it is served no funnel — never the whole
+      // catalogue as if it did. Every LEG is served beside them on `legs`.
+      fetchPricingFunnelsAllOffers(brandId, orgId).catch((error) => {
         if (error instanceof SalesFunnelsUnavailableError) return [];
         throw error;
       }),

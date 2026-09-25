@@ -54,6 +54,7 @@ process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
+const { offerEconomicsFromDeclared } = await import("../lib/leg-economics-fixture.js");
 
 const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
 const PITCH = "sales-cold-email-outreach";
@@ -181,6 +182,16 @@ function mockFetch(fixture: Fixture): void {
             createdAt: "2026-01-01T00:00:00.000Z",
           })),
       });
+    }
+    if (path.includes("/offer-economics")) {
+      // Wave C1: the brand's leg rates (what its funnels stated) and every offer its campaigns sell.
+      const declared = fixture.declared === undefined ? ALL_DECLARED : fixture.declared;
+      if (declared === null) return new Response("not found", { status: 404 });
+      const offerIds = [...new Set(Object.values(fixture.campaigns).map((row: any) => row.offerId).filter(Boolean))] as string[];
+      const ltr = (declared as any[]).map((d) => d.lifetimeRevenueUsd).find((v) => typeof v === "number") ?? null;
+      return json(
+        offerEconomicsFromDeclared(declared as any[], offerIds.length > 0 ? { offers: offerIds.map((offerId) => ({ offerId, lifetimeRevenueUsd: ltr })) } : {}),
+      );
     }
     if (path.includes("/sales-funnels")) {
       const declared = fixture.declared === undefined ? ALL_DECLARED : fixture.declared;
