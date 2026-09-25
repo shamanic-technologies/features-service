@@ -1497,7 +1497,7 @@ const outcomeFiguresShape = {
   valuePerOutcomeUsd: z.number().nullable().describe("What STANDING on this step is worth: P(paid client | reached it) x lifetime revenue, the BEST PATH (max) across the offer's declared funnels containing the step, each on its own terms. Null when no declared funnel prices it — never 0."),
   valueUsd: z.number().nullable().describe("PRICED outcomes (only the ones the `cause` set prices, default ours) x valuePerOutcomeUsd."),
   roiMultiple: z.number().nullable().describe("Value / spend on the MATURE COHORT (a 14-day leg counts only runs started, and leads first contacted, before its cutoff). Null with a named reason."),
-  unmeasuredReason: z.enum(["step_not_counted", "evidence_unreadable", "no_value_defined", "nothing_spent", "maturing"]).nullable(),
+  unmeasuredReason: z.enum(["not_attributable", "step_not_counted", "evidence_unreadable", "no_value_defined", "nothing_spent", "maturing"]).nullable(),
 };
 const stepRefSchema = z.object({ key: z.string(), label: z.string() });
 const offerOutcomeLegSchema = z.object({
@@ -1508,7 +1508,7 @@ const offerOutcomeLegSchema = z.object({
   channelName: z.string(),
   campaignIds: z.array(z.string()),
   legSource: z.enum(["stated", "derived_from_funnel"]).describe("`derived_from_funnel`: a pre-leg campaign placed on the ONE leg its channel performs inside the funnel it states."),
-  countBasis: z.enum(["campaign_leads", "leg_crossings"]).describe("`campaign_leads`: an entry leg counts its own campaigns' leads. `leg_crossings`: an internal leg's campaigns serve no lead of their own, so it counts the offer's leads that stood on FROM and reached TO."),
+  countBasis: z.enum(["campaign_leads", "offer_leads_at_step"]).describe("`campaign_leads`: an entry leg counts its own campaigns' leads. `offer_leads_at_step`: an internal leg's campaigns serve no lead of their own and nothing records which leads it acted on, so it states the offer's leads at its TO step; that count is not attributable to the channel, so cost per outcome and ROI read null with reason `not_attributable`."),
   ...outcomeFiguresShape,
 });
 const offerOutcomesResponseSchema = z.object({

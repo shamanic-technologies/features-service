@@ -159,6 +159,7 @@ describe("assembleOfferOutcomes", () => {
     person("L2", "f1", { positiveReply: true }),
     person("L3", "f1", { positiveReply: true, meeting: true }, { unpricedSignals: ["positiveReply", "meeting"] }),
     person("L4", "c1", { clicked: true }),
+    person("L5", "c1", { meeting: true }),
   ];
   const whole = (committedCents: number, matureCommittedCents = committedCents, cutoffIso: string | null = null): GroupSpend => ({
     committedCents,
@@ -191,15 +192,19 @@ describe("assembleOfferOutcomes", () => {
     expect(reply.roiMultiple).toBeCloseTo(200 / 90);
   });
 
-  it("an INTERNAL leg counts the offer's leads that crossed it, on its own spend", () => {
+  it("an INTERNAL leg states the offer's leads at its step and claims NO cost or return for them", () => {
     const rows = build(new Map([[cold, whole(6000)], [fb, whole(3000)], [ai, whole(1000)]]));
     const meeting = rows.find((r) => r.step.key === "meeting_booked")!;
     expect(meeting.legs).toHaveLength(1);
-    expect(meeting.legs[0].countBasis).toBe("leg_crossings");
-    expect(meeting.recipientsReached).toBe(2); // L1, L3
+    expect(meeting.legs[0].countBasis).toBe("offer_leads_at_step");
+    expect(meeting.recipientsReached).toBe(3); // L1, L3 and L5 (a meeting with no reply flag still counts)
     expect(meeting.spentUsd).toBe(10);
-    expect(meeting.costPerOutcomeUsd).toBeCloseTo(5);
-    expect(meeting.valueUsd).toBe(200); // L1 only is priced
+    // $10 of AI spend over 3 meetings it may not have booked is not a cost per meeting.
+    expect(meeting.costPerOutcomeUsd).toBeNull();
+    expect(meeting.roiMultiple).toBeNull();
+    expect(meeting.unmeasuredReason).toBe("not_attributable");
+    expect(meeting.legs[0].costPerOutcomeUsd).toBeNull();
+    expect(meeting.valueUsd).toBe(400); // L1 + L5 priced; L3 is not ours
   });
 
   it("the ROI rides the mature cohort; an all-young leg reads `maturing`, never 0", () => {

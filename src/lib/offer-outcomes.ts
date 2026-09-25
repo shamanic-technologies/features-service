@@ -203,6 +203,7 @@ export function stepValues(
 
 /** Why a row's return is null. */
 export type OutcomeUnmeasuredReason =
+  | "not_attributable"
   | "step_not_counted"
   | "evidence_unreadable"
   | "no_value_defined"
@@ -239,11 +240,14 @@ export interface OfferOutcomeLeg extends OutcomeFigures {
   legSource: LegSource;
   /**
    * `campaign_leads` — an ENTRY leg counts the leads its own campaigns reached the step with.
-   * `leg_crossings` — an INTERNAL leg's campaigns serve no lead of their own (they act on leads another
-   * campaign found), so it counts the offer's leads that stood on its FROM step and reached its TO step.
-   * Two channels performing the same internal leg therefore read the same count.
+   * `offer_leads_at_step` — an INTERNAL leg's campaigns serve no lead of their own (they act on leads
+   * another campaign found, and nothing records which), so it states the offer's leads that reached its
+   * TO step. That count is NOT attributable to this channel, so its cost per outcome and its ROI read
+   * null with `unmeasuredReason: "not_attributable"` — never a ratio crediting the channel with every
+   * outcome of the step. Measured in prod: an AI booking leg with $2.07 of spend would otherwise have
+   * read $0.30 a meeting and a 1288x return on meetings it did not book.
    */
-  countBasis: "campaign_leads" | "leg_crossings";
+  countBasis: "campaign_leads" | "offer_leads_at_step";
 }
 
 export interface OfferOutcomeRow extends OutcomeFigures {
@@ -269,17 +273,13 @@ function reachedByGroup(
   cutoffIso: string | null,
 ): ReachedSets {
   const toField = STEP_LEAD_FIELD[group.toStep];
-  const fromField = group.fromStep ? STEP_LEAD_FIELD[group.fromStep] : null;
   const empty = { all: new Set<string>(), priced: new Set<string>(), maturePriced: new Set<string>() };
-  if (!toField || (group.fromStep && !fromField)) return { measured: false, notCounted: true, ...empty };
-  if (!stepMeasured(toField, evidence) || (fromField && !stepMeasured(fromField, evidence))) {
-    return { measured: false, notCounted: false, ...empty };
-  }
+  if (!toField) return { measured: false, notCounted: true, ...empty };
+  if (!stepMeasured(toField, evidence)) return { measured: false, notCounted: false, ...empty };
   const toSignal = LEAD_FIELD_TO_SIGNAL[toField];
-  const fromSignal = fromField ? LEAD_FIELD_TO_SIGNAL[fromField] : null;
   const ids = new Set(group.campaignIds);
   // An entry leg's people are its own campaigns' leads; an internal leg acts on the offer's whole
-  // population (its campaigns serve no lead of their own).
+  // population (its campaigns serve no lead of their own, and nothing records which it acted on).
   const rows = group.fromStep === null ? persons.filter((p) => p.campaignId && ids.has(p.campaignId)) : [...persons];
   const isMature = (p: EnginePerson): boolean => {
     if (!cutoffIso) return true;
@@ -290,7 +290,6 @@ function reachedByGroup(
   const matureIds = new Set(dedupPersonsByLead(rows.filter(isMature)).map((p) => p.leadId));
   for (const p of dedupPersonsByLead(rows)) {
     if (!p.signals[toSignal]) continue;
-    if (fromSignal && !p.signals[fromSignal]) continue;
     out.all.add(p.leadId);
     const priced = !(p.unpricedSignals ?? []).includes(toSignal);
     if (priced) {
@@ -305,14 +304,16 @@ function figures(
   reached: ReachedSets,
   spend: { committedCents: number; matureCommittedCents: number },
   value: StepValue | undefined,
+  attributable: boolean,
 ): OutcomeFigures {
   const count = reached.measured ? reached.all.size : null;
   const unit = value?.valuePerOutcomeUsd ?? null;
-  const cost = count === null ? null : observedCostPerOutcome(spend.committedCents, count);
+  const cost = count === null || !attributable ? null : observedCostPerOutcome(spend.committedCents, count);
   let roi: number | null = null;
   let reason: OutcomeUnmeasuredReason | null = null;
   if (reached.notCounted) reason = "step_not_counted";
   else if (!reached.measured) reason = "evidence_unreadable";
+  else if (!attributable) reason = "not_attributable";
   else if (unit === null) reason = "no_value_defined";
   else if (spend.committedCents <= 0) reason = "nothing_spent";
   else if (spend.matureCommittedCents <= 0) reason = "maturing";
@@ -376,14 +377,15 @@ export function assembleOfferOutcomes(input: {
         channelName: input.channelName(group.featureSlug),
         campaignIds: group.campaignIds,
         legSource: group.legSource,
-        countBasis: group.fromStep === null ? "campaign_leads" : "leg_crossings",
-        ...figures(reached, spend, value),
+        countBasis: group.fromStep === null ? "campaign_leads" : "offer_leads_at_step",
+        ...figures(reached, spend, value, group.fromStep === null),
       });
     }
     rows.push({
       step: { ...CHANNEL_STEPS[step] },
       valueBasisFunnelKey: value?.basisFunnelKey ?? null,
-      ...figures(union, total, value),
+      // One internal leg is enough to make the row's count something no spend here bought on its own.
+      ...figures(union, total, value, groups.every((g) => g.fromStep === null)),
       legs,
     });
   }
