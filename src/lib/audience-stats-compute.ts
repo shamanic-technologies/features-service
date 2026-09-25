@@ -1,4 +1,5 @@
 import type { Request } from "express";
+import { fetchDeclaredFunnelsOnEffectiveRates } from "./effective-conversion-rates.js";
 import { campaignFamilyStatsParams } from "./email-gateway-family.js";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
@@ -544,7 +545,7 @@ async function projectDeclaredFunnels(
     // caught here so the read degrades to the SAME shape a brand with no priced funnel already gets
     // (each audience floors on its own spend) while the envelope states WHY. Any other failure still
     // throws — "we could not read the declaration" must stay a 502, distinguishable from this.
-    fetchDeclaredSalesFunnels(brandId, orgId, offerId).catch((error: unknown) => {
+    fetchDeclaredFunnelsOnEffectiveRates(brandId, orgId, offerId).catch((error: unknown) => {
       if (error instanceof SeveralOffersDeclaredError) return error;
       throw error;
     }),
@@ -1095,7 +1096,7 @@ export async function computeAudienceStats(
   // rather than on a proposition nobody named. Any other failure still throws (502).
   let funnelEconomicsUnresolved: DeclaredFunnelsUnresolved | undefined;
   const funnelEconomics = funnelKey
-    ? await fetchDeclaredSalesFunnels(brandId, orgId, scopeOfferId)
+    ? await fetchDeclaredFunnelsOnEffectiveRates(brandId, orgId, scopeOfferId)
         .then((declared) => declaredEconomicsForFunnel(declared, funnelKey))
         .catch((error: unknown) => {
           if (!(error instanceof SeveralOffersDeclaredError)) throw error;

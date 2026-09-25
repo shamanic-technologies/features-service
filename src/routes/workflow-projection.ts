@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { fetchDeclaredFunnelsOnEffectiveRates } from "../lib/effective-conversion-rates.js";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
@@ -1193,7 +1194,7 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     let declaredFunnelsUnresolved: DeclaredFunnelsUnresolved | undefined;
     if (funnelKey || legKey) {
       try {
-        declaredFunnels = await fetchDeclaredSalesFunnels(brandId, orgId, scopeOfferId);
+        declaredFunnels = await fetchDeclaredFunnelsOnEffectiveRates(brandId, orgId, scopeOfferId);
       } catch (error) {
         // SEVERAL OFFERS, none named. Not an outage and not a producer gap — a question with several
         // answers. Degrade rather than 502: the funnel path prices on the brand-wide economics (the

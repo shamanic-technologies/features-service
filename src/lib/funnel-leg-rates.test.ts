@@ -153,13 +153,26 @@ describe("only the arrows THIS funnel has are asked for", () => {
     expect(rates).not.toHaveProperty("visitToPaidClientPct");
   });
 
-  it("a self-serve funnel answers for its own two arrows and for no meeting rate", () => {
+  it("a self-serve funnel answers for its own two arrows, the self-serve close they compose, and no meeting rate", () => {
+    // visitToClosePct is the product of the two, exactly as brand-service derives it on every write.
     expect(
       statedLegRates("website_purchases", [
         leg("Website visit", "Signup", 12, "stated_arrow"),
         leg("Signup", "Paid client", 25, "stated_arrow"),
       ]),
-    ).toEqual({ visitToSignupPct: 12, signupToPaidClientPct: 25 });
+    ).toEqual({ visitToSignupPct: 12, signupToPaidClientPct: 25, visitToClosePct: 3 });
+  });
+
+  it("the direct-sale funnels answer for their own direct rate, and the meeting funnel never derives one", () => {
+    const direct = statedLegRates("sales_from_conversation", [leg("Positive reply", "Paid client", 7, "stated_arrow")]);
+    expect(Object.keys(direct)).toEqual(["replyToPaidClientPct"]);
+    expect(direct.replyToPaidClientPct).toBeCloseTo(7, 9);
+    expect(
+      statedLegRates("sales_from_website", [
+        leg("Website visit", "Direct purchase", null, "unstated"),
+        leg("Direct purchase", "Paid client", 4, "stated_arrow"),
+      ]),
+    ).toEqual({ visitToPaidClientPct: 4 });
   });
 
   it("a form funnel answers for its own two arrows", () => {
