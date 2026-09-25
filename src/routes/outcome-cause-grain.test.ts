@@ -66,6 +66,10 @@ const daysAgo = (n: number): string => new Date(Date.now() - n * DAY_MS).toISOSt
 const CLOSED_AT = daysAgo(2);
 const LEGACY_AT = daysAgo(3);
 const ENGAGED_AT = daysAgo(20);
+/** Our first email reached every person here 30 days ago. */
+const DELIVERED_AT = daysAgo(30);
+/** A legacy close that happened BEFORE our first email reached that person. */
+const EARLY_LEGACY_AT = daysAgo(40);
 
 /** Nothing observed, so the lead is worth the plain forecast: 1000 × orP(0.0347, 0.12) = 150.536. */
 const FORECAST_USD = 150.536;
@@ -73,23 +77,24 @@ const FORECAST_USD = 150.536;
 const DEAL_USD = 5000;
 
 /**
- * FOUR PEOPLE, EACH IN THEIR OWN ORGANISATION so nothing combines, and each one a different sentence
- * about whose win it was:
+ * FIVE PEOPLE, EACH IN THEIR OWN ORGANISATION so nothing combines, and each one a different answer to
+ * whose win it was:
  *
- *   - `ours`   — a $5,000 deal the customer states OUR outreach caused.
- *   - `theirs` — a $5,000 deal they state something else of theirs caused. A REAL deal.
- *   - `unasked`— a $5,000 deal NOBODY WAS ASKED about, which is almost every deal in the system.
- *   - `legacy` — a closed deal from the LEGACY instantly qualifications, which carries no cause and
- *                never can, so it is `unstated` too.
+ *   - `ours`    — a $5,000 deal the customer (or lead-service's date rule) says OUR outreach caused.
+ *   - `theirs`  — a $5,000 deal that was not ours. A REAL deal.
+ *   - `unasked` — a $5,000 deal nobody could decide (undated / unmatched / never delivered).
+ *   - `legacy`  — a LEGACY instantly close dated AFTER our first email reached them → ours by the rule.
+ *   - `early`   — a LEGACY instantly close dated BEFORE our first email reached them → not ours.
  *
- * All four also clicked and replied, so every one of them has the same $150.536 forecast to fall back
- * to — which is what makes "the rung AND its value were both left out" checkable to the cent.
+ * All five also clicked and replied, so every one of them has the same $150.536 forecast to fall back
+ * to — which is what makes "the value was left out while the deal is still counted" checkable to the cent.
  */
 const PEOPLE = [
   { email: "ours@a.com", org: "org-a" },
   { email: "theirs@b.com", org: "org-b" },
   { email: "unasked@c.com", org: "org-c" },
   { email: "legacy@d.com", org: "org-d" },
+  { email: "early@e.com", org: "org-e" },
 ];
 
 function leadRow(email: string, org: string): Record<string, unknown> {
@@ -115,6 +120,18 @@ interface Opts {
   outcomesFail?: boolean;
 }
 
+const legacyClose = (email: string, at: string) => ({
+  id: `q-${email}`,
+  orgId: "org-1",
+  campaignId: "c1",
+  instantlyCampaignId: "ic1",
+  email,
+  status: "lead_closed",
+  qualifiedBy: "u1",
+  notes: null,
+  qualifiedAt: at,
+});
+
 function mockFetch(opts: Opts = {}): void {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
@@ -123,22 +140,8 @@ function mockFetch(opts: Opts = {}): void {
 
     if (url.includes("/converted-lead-emails")) return json({ event: "", emails: [] });
     if (url.includes("/manual-qualifications")) {
-      // The LEGACY half: one closed deal, carrying no cause and never able to carry one.
-      return json({
-        qualifications: [
-          {
-            id: "q-legacy",
-            orgId: "org-1",
-            campaignId: "c1",
-            instantlyCampaignId: "ic1",
-            email: "legacy@d.com",
-            status: "lead_closed",
-            qualifiedBy: "u1",
-            notes: null,
-            qualifiedAt: LEGACY_AT,
-          },
-        ],
-      });
+      // The LEGACY half: two closes carrying no cause, judged by the same date rule lead-service uses.
+      return json({ qualifications: [legacyClose("legacy@d.com", LEGACY_AT), legacyClose("early@e.com", EARLY_LEGACY_AT)] });
     }
     if (url.includes("/converted-leads")) {
       if (opts.outcomesFail) return new Response("boom", { status: 502 });
@@ -187,7 +190,10 @@ function mockFetch(opts: Opts = {}): void {
     if (url.includes("/orgs/leads")) return json({ leads: PEOPLE.map((p) => leadRow(p.email, p.org)) });
     if (url.includes("/orgs/status")) {
       return json({
-        results: PEOPLE.map((p) => ({ email: p.email, firstClickedAt: ENGAGED_AT, firstRepliedAt: ENGAGED_AT })),
+        results: PEOPLE.map((p) => ({
+          email: p.email,
+          broadcast: { brand: { firstDeliveredAt: DELIVERED_AT, firstClickedAt: ENGAGED_AT, firstRepliedAt: ENGAGED_AT } },
+        })),
       });
     }
     return json({});
@@ -196,24 +202,27 @@ function mockFetch(opts: Opts = {}): void {
 
 const read = async (query = ""): Promise<any> => {
   const res = await request(app)
-    .get(`/features/sales-cold-email-outreach/revenue?brandId=b1${query}`)
+    .get(`/features/sales-cold-email-outreach/revenue?brandId=b1&leads=full${query}`)
     .set(AUTH);
   expect(res.status).toBe(200);
   return res.body;
 };
 
+const purchasedCount = (body: any): number => body.leads.filter((l: any) => l.purchased).length;
+
 /**
- * A RETURN ON OUR OUTREACH LEAVES OUT A DEAL THE CUSTOMER SAYS WE DID NOT CAUSE.
+ * THE ROI OF OUR SERVICE COUNTS WHAT WE GENERATED; THE CONVERSIONS COUNT EVERYTHING.
  *
  * A brand contacts people through us AND through everything else it already does, so some of the
- * people we email buy for reasons that have nothing to do with us. Until the customer could say so,
- * the value of those deals landed in the same place as the value of the deals we produced and every
- * return reported on our own outreach was too good by however much of it we did not cause.
+ * people we email buy for reasons that have nothing to do with us — and their CRM, merged into our
+ * lead statuses, reports those deals too. Owner, 2026-09-25: every deal is a conversion the brand sees,
+ * but only a deal we caused is value on OUR outreach. `?cause=` therefore names what is PRICED
+ * (default `outreach`, what the lead panel calls "Ours"), and every state is always COUNTED.
  *
- * Every case below asserts the DIVERGENCE between two cause sets on the SAME fixture — a suite that
- * only checked "a number came back" would pass on an implementation that ignored the parameter.
+ * Every case asserts a DIVERGENCE on the SAME fixture — a suite that only checked "a number came back"
+ * would pass on the implementation this replaces, which priced every state by default.
  */
-describe("a return on our outreach counts the deals the customer says we caused", () => {
+describe("the return on our outreach prices only our wins, and every deal is still counted", () => {
   beforeEach(() => {
     vi.mocked(db.query.features.findFirst).mockResolvedValue(SALES_FEATURE as never);
   });
@@ -221,131 +230,125 @@ describe("a return on our outreach counts the deals the customer says we caused"
     vi.restoreAllMocks();
   });
 
-  // ── The default is every state, and it is today's answer ──────────────────
+  // ── The default prices what the lead panel calls "Ours" ───────────────────
 
-  it("counts every state when the caller names none — three stated deals plus the legacy one", async () => {
+  it("prices only OUR wins when the caller names none — the stated one and the legacy one after our email", async () => {
     mockFetch();
     const body = await read();
-    // Three $5,000 deals + the legacy close priced at the brand's LTR ($1,000).
-    expect(body.headline.totalPipelineUsd).toBeCloseTo(3 * DEAL_USD + 1000, 3);
-    expect(body.outcomeCauses.counted).toEqual(["outreach", "other", "unstated"]);
+    // ours $5,000 + legacy close after our email at the brand's LTR ($1,000); the other three fall
+    // back to the forecast their clicks and replies earn.
+    expect(body.headline.totalPipelineUsd).toBeCloseTo(DEAL_USD + 1000 + 3 * FORECAST_USD, 3);
+    expect(body.outcomeCauses.priced).toEqual(["outreach"]);
   });
 
-  it("is byte-identical whether the caller omits the parameter or names all three states", async () => {
+  it("still COUNTS every deal, whether or not it was ours", async () => {
+    mockFetch();
+    const body = await read();
+    // Five closed deals on the brand's leads: none of them disappears from what the brand sees.
+    expect(purchasedCount(body)).toBe(5);
+    const theirs = body.leads.find((l: any) => l.leadId === "lead-theirs@b.com");
+    expect(theirs.purchased).toBe(true);
+    // …and it is worth exactly the forecast, to the cent: its $5,000 did not survive to scale the
+    // ladder underneath it.
+    expect(theirs.expectedRevenueUsd).toBeCloseTo(FORECAST_USD, 3);
+  });
+
+  it("is byte-identical whether the caller omits the parameter or names outreach alone", async () => {
     mockFetch();
     const silent = await read();
     mockFetch();
-    const explicit = await read("&cause=unstated,other,outreach");
+    const explicit = await read("&cause=outreach");
     expect(explicit).toEqual(silent);
   });
 
-  // ── Leaving out what the customer says we did not cause ───────────────────
-
-  it("drops a not-ours deal's RUNG AND ITS VALUE, so that lead falls back to exactly the forecast", async () => {
+  it("judges a LEGACY close by the delivery date rule — before our first email is not ours", async () => {
     mockFetch();
-    const all = await read();
-    mockFetch();
-    const narrowed = await read("&cause=outreach,unstated");
-    // `theirs` loses its $5,000 and is worth the plain forecast — to the cent, which is what proves
-    // the stated amount did not survive to scale the ladder underneath it.
-    expect(narrowed.headline.totalPipelineUsd).toBeCloseTo(
-      all.headline.totalPipelineUsd - DEAL_USD + FORECAST_USD,
-      3,
-    );
-    expect(narrowed.outcomeCauses.counted).toEqual(["outreach", "unstated"]);
+    const body = await read();
+    const legacy = body.leads.find((l: any) => l.leadId === "lead-legacy@d.com");
+    const early = body.leads.find((l: any) => l.leadId === "lead-early@e.com");
+    expect(legacy.purchased).toBe(true);
+    expect(early.purchased).toBe(true);
+    expect(legacy.expectedRevenueUsd).toBeCloseTo(1000, 3);
+    expect(early.expectedRevenueUsd).toBeCloseTo(FORECAST_USD, 3);
   });
 
-  it("moves the RETURN and the COST OF ACQUISITION with the pipeline, not only the pipeline", async () => {
+  // ── Naming more states prices more ─────────────────────────────────────────
+
+  it("prices every state when the caller names all three — the old default, still reachable", async () => {
     mockFetch();
-    const all = await read();
+    const all = await read("&cause=outreach,other,unstated");
+    expect(all.headline.totalPipelineUsd).toBeCloseTo(3 * DEAL_USD + 2 * 1000, 3);
+    expect(all.outcomeCauses.priced).toEqual(["outreach", "other", "unstated"]);
+    // Pricing more never counts more: the conversions were already all there.
     mockFetch();
-    const narrowed = await read("&cause=outreach,unstated");
-    // $1,000 of committed spend on both reads — the same money, a smaller return.
-    expect(narrowed.costEconomics.committedCostUsd).toBe(all.costEconomics.committedCostUsd);
-    expect(narrowed.costEconomics.roiMultiple).toBeLessThan(all.costEconomics.roiMultiple);
-    expect(narrowed.costEconomics.costOfAcquisitionPct).toBeGreaterThan(all.costEconomics.costOfAcquisitionPct);
-    expect(narrowed.costEconomics.costPerAcquisitionUsd).toBeGreaterThan(all.costEconomics.costPerAcquisitionUsd);
+    expect(purchasedCount(all)).toBe(purchasedCount(await read()));
   });
 
-  it("counts ONLY what the customer said we caused when asked for that alone", async () => {
+  it("moves the RETURN and the COST OF ACQUISITION with the pipeline, never the spend", async () => {
     mockFetch();
-    const body = await read("&cause=outreach");
-    // `ours` keeps its deal; the other three fall back to the forecast — the legacy close with them,
-    // because nobody was ever asked about a manual qualification either.
-    expect(body.headline.totalPipelineUsd).toBeCloseTo(DEAL_USD + 3 * FORECAST_USD, 3);
+    const all = await read("&cause=outreach,other,unstated");
+    mockFetch();
+    const ours = await read();
+    expect(ours.costEconomics.committedCostUsd).toBe(all.costEconomics.committedCostUsd);
+    expect(ours.costEconomics.roiMultiple).toBeLessThan(all.costEconomics.roiMultiple);
+    expect(ours.costEconomics.costOfAcquisitionPct).toBeGreaterThan(all.costEconomics.costOfAcquisitionPct);
+    expect(ours.costEconomics.costPerAcquisitionUsd).toBeGreaterThan(all.costEconomics.costPerAcquisitionUsd);
   });
 
-  it("counts a NOBODY-WAS-ASKED deal apart from both answers", async () => {
+  it("prices an UNDECIDED deal only when the caller names `unstated`", async () => {
     mockFetch();
-    const oursOnly = await read("&cause=outreach");
+    const ours = await read();
     mockFetch();
-    const oursAndUnasked = await read("&cause=outreach,unstated");
-    // Adding `unstated` brings back BOTH the unasked deal and the legacy close, and nothing else.
-    expect(oursAndUnasked.headline.totalPipelineUsd).toBeCloseTo(
-      oursOnly.headline.totalPipelineUsd - 2 * FORECAST_USD + DEAL_USD + 1000,
+    const withUndecided = await read("&cause=outreach,unstated");
+    expect(withUndecided.headline.totalPipelineUsd).toBeCloseTo(
+      ours.headline.totalPipelineUsd - FORECAST_USD + DEAL_USD,
       3,
     );
   });
 
-  it("takes the LEGACY qualifications with `unstated`, never with an answer nobody gave", async () => {
+  // ── The three states are visible, whatever the read priced ─────────────────
+
+  it("states how many outcomes sit in each state, UNFILTERED by what it priced", async () => {
     mockFetch();
-    const withUnstated = await read("&cause=unstated");
-    mockFetch();
-    const withoutUnstated = await read("&cause=outreach,other");
-    // The legacy close is worth the brand's LTR under `unstated` and the plain forecast without it.
-    // `unasked` keeps its $5,000 and the legacy close its $1,000; `ours` and `theirs` fall back.
-    expect(withUnstated.headline.totalPipelineUsd).toBeCloseTo(DEAL_USD + 1000 + 2 * FORECAST_USD, 3);
-    expect(withoutUnstated.headline.totalPipelineUsd).toBeCloseTo(2 * DEAL_USD + 2 * FORECAST_USD, 3);
+    const body = await read();
+    expect(body.outcomeCauses.counts.outreach.sale).toBe(1);
+    expect(body.outcomeCauses.counts.other.sale).toBe(1);
+    expect(body.outcomeCauses.counts.unstated.sale).toBe(1);
+    expect(body.outcomeCauses.counts.outreach.meeting_booked).toBe(0);
   });
 
-  // ── The three states are visible, whatever the read counted ───────────────
-
-  it("states how many outcomes sit in each state, UNFILTERED by what it counted", async () => {
-    mockFetch();
-    const narrowed = await read("&cause=outreach");
-    expect(narrowed.outcomeCauses.counts.outreach.sale).toBe(1);
-    // The states this read left OUT are exactly the ones a surface has to be able to explain.
-    expect(narrowed.outcomeCauses.counts.other.sale).toBe(1);
-    expect(narrowed.outcomeCauses.counts.unstated.sale).toBe(1);
-    // A step nobody stated is a measured zero, not a gap.
-    expect(narrowed.outcomeCauses.counts.outreach.meeting_booked).toBe(0);
-  });
-
-  it("nulls the counts when the statements could not be read, and still states what it counted", async () => {
+  it("nulls the counts when the statements could not be read, and still states what it priced", async () => {
     mockFetch({ outcomesFail: true });
-    const body = await read("&cause=outreach");
-    // Null is "we could not count this" — a 0 would say the brand has no outcomes at all.
+    const body = await read();
     expect(body.outcomeCauses.counts).toBeNull();
-    expect(body.outcomeCauses.counted).toEqual(["outreach"]);
+    expect(body.outcomeCauses.priced).toEqual(["outreach"]);
   });
 
-  it("reads a producer that predates the field as NOBODY WAS ASKED, never as not-ours", async () => {
+  it("reads a producer that predates the field as UNDECIDED, never as ours", async () => {
     mockFetch({ producerPredatesCause: true });
     const body = await read();
     expect(body.outcomeCauses.counts.unstated.sale).toBe(3);
     expect(body.outcomeCauses.counts.other.sale).toBe(0);
-    mockFetch({ producerPredatesCause: true });
-    // Counting only what the customer stated as ours therefore keeps none of them — which is honest,
-    // and the reason the DEFAULT is every state rather than this.
-    const oursOnly = await read("&cause=outreach");
-    expect(oursOnly.headline.totalPipelineUsd).toBeCloseTo(4 * FORECAST_USD, 3);
+    // None of the three stated deals is priced; the legacy close after our email still is.
+    expect(body.headline.totalPipelineUsd).toBeCloseTo(1000 + 4 * FORECAST_USD, 3);
+    expect(purchasedCount(body)).toBe(5);
   });
 
   // ── Nothing else on the body moves ────────────────────────────────────────
 
   it("leaves the volume half and the spend untouched — a deal we did not cause was still outreach we paid for", async () => {
     mockFetch();
-    const all = await read();
+    const all = await read("&cause=outreach,other,unstated");
     mockFetch();
-    const narrowed = await read("&cause=outreach");
-    expect(narrowed.outcomes).toEqual(all.outcomes);
-    expect(narrowed.spend.totalSpentCents).toBe(all.spend.totalSpentCents);
-    expect(narrowed.recipientsContacted).toEqual(all.recipientsContacted);
+    const ours = await read();
+    expect(ours.outcomes).toEqual(all.outcomes);
+    expect(ours.spend.totalSpentCents).toBe(all.spend.totalSpentCents);
+    expect(ours.recipientsContacted).toEqual(all.recipientsContacted);
   });
 
   // ── An unrecognised word is a refusal ─────────────────────────────────────
 
-  it("REFUSES a word it does not know rather than counting some other set", async () => {
+  it("REFUSES a word it does not know rather than pricing some other set", async () => {
     mockFetch();
     const res = await request(app)
       .get("/features/sales-cold-email-outreach/revenue?brandId=b1&cause=ours")
@@ -362,14 +365,10 @@ describe("a return on our outreach counts the deals the customer says we caused"
     expect(res.status).toBe(400);
   });
 
-  // ── Every money grain moved at once ───────────────────────────────────────
-
-  it("states what it counted on the lensed read too, where no figure moves with it", async () => {
+  it("states what it priced on the lensed read too, where no figure moves with it", async () => {
     mockFetch();
     const body = await read("&lens=booked-meetings&cause=outreach");
-    // A lens prices engagement through declared rates and reads no stated outcome, so a consumer has
-    // to be able to SEE that rather than infer it from a missing key.
-    expect(body.outcomeCauses.counted).toEqual(["outreach"]);
+    expect(body.outcomeCauses.priced).toEqual(["outreach"]);
     expect(body.outcomeCauses.counts).toBeNull();
   });
 });

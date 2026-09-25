@@ -24,7 +24,7 @@ import { fetchEventTimestamps } from "../lib/email-status-client.js";
 import { fetchSequencesByDay } from "../lib/sequences-client.js";
 import { fetchObservedStepFacts, type OutcomeCauseCounts } from "../lib/observed-steps.js";
 import {
-  ALL_OUTCOME_CAUSES,
+  DEFAULT_PRICED_CAUSES,
   OUTCOME_CAUSES,
   causeScopeKeyPart,
   parseOutcomeCauses,
@@ -485,11 +485,14 @@ function buildSpend(
  */
 interface OutcomeCauses {
   /**
-   * The states this body COUNTED — the echo of `?cause=`, canonical order. A fact about the REQUEST,
-   * so it is ALWAYS present on every grain and every path: a consumer reading two of these figures
-   * side by side has to be able to name the basis of each, or one screen contradicts itself.
+   * The states whose outcomes this body PRICED — the echo of `?cause=` (default `outreach`),
+   * canonical order. Every state is COUNTED (`leads[]`, `funnelSteps`); only these carry value into
+   * the pipeline, the return and the cost of acquisition. A fact about the REQUEST, so it is ALWAYS
+   * present on every grain and every path: a consumer reading two figures side by side has to be able
+   * to name the basis of each. (Was `counted` while the parameter filtered outcomes; nothing outside
+   * this service read it.)
    */
-  counted: OutcomeCause[];
+  priced: OutcomeCause[];
   /**
    * How many stated outcomes exist in each state, per step — NOT filtered by `?cause=`, because a
    * consumer leaving a state out is exactly the consumer that has to say how much it left out. Null
@@ -766,7 +769,7 @@ function emptyBody(
   // consumer must be able to name the basis of a figure whatever else the read could not measure.
   // `counts` is null on both of these paths: the no-funnel path never reads the statements at all, and
   // the cold-start path short-circuits before them, so a 0 would say the brand has none.
-  causes: readonly OutcomeCause[] = ALL_OUTCOME_CAUSES,
+  causes: readonly OutcomeCause[] = DEFAULT_PRICED_CAUSES,
 ): RevenueBody {
   return {
     headline: { totalPipelineUsd, economicsSource: null },
@@ -792,7 +795,7 @@ function emptyBody(
     spend,
     outcomes,
     funnelSteps,
-    outcomeCauses: { counted: [...causes], counts: null },
+    outcomeCauses: { priced: [...causes], counts: null },
     // Not computed on either path that reaches here (no funnel wired, or cold start): the verdict
     // needs the brand's rate ladder to walk a leg's outcome, and neither path has one.
     learningPhase: null,
@@ -984,7 +987,7 @@ function buildLensBody(
   // Stated on the lens too: the lens prices a lead off engagement rates rather than off a stated
   // outcome, so no figure here moves with the parameter — but a consumer reading two bodies side by
   // side must be able to see that, rather than infer it from a missing key.
-  causes: readonly OutcomeCause[] = ALL_OUTCOME_CAUSES,
+  causes: readonly OutcomeCause[] = DEFAULT_PRICED_CAUSES,
 ): RevenueBody {
   const ltr = economics.lifetimeRevenueUsd;
   const leads: LeadRow[] = [];
@@ -1099,7 +1102,7 @@ function buildLensBody(
     // The lens prices engagement through declared rates and reads no stated outcome, so nothing here
     // moves with the parameter — `counted` is echoed anyway so a consumer can SEE that, and `counts`
     // is null because this path never reads the statements.
-    outcomeCauses: { counted: [...causes], counts: null },
+    outcomeCauses: { priced: [...causes], counts: null },
     // Same gate as `spend`, `outcomes` and `funnelSteps`: a lens is a SUBSET of the brand's leads while
     // the campaigns the verdict is built from are the whole scope's, so a verdict here would be about
     // a different population than the money beside it.
@@ -1173,7 +1176,7 @@ export async function computeFeatureRevenue(
   // service counted before a caller could say — so an unchanged caller reads an unchanged body. A
   // state left out drops its outcomes' RUNGS and their STATED VALUES from the pipeline, the return and
   // the cost of acquisition; it never removes them from the brand's own ledger, which lead-service owns.
-  causes: readonly OutcomeCause[] = ALL_OUTCOME_CAUSES,
+  causes: readonly OutcomeCause[] = DEFAULT_PRICED_CAUSES,
   // ONE WORKFLOW of this scope, when the caller drilled into one (`?workflow=`). Every block this
   // body serves is then computed over that workflow's leads and that workflow's spend — the two legs
   // narrowed by the SAME workflow-service catalogue, each through the producer that froze it (see
@@ -1504,7 +1507,7 @@ export async function computeFeatureRevenue(
     // WHOSE WINS THIS BODY COUNTED, and how many outcomes sit in each state. `counted` is a fact about
     // the REQUEST and is always stated, so a consumer can never be looking at a figure whose basis it
     // cannot name; `counts` is a fact about the DATA and is null when the statements could not be read.
-    outcomeCauses: { counted: [...causes], counts: observed?.causeCounts ?? null },
+    outcomeCauses: { priced: [...causes], counts: observed?.causeCounts ?? null },
     learningPhase: learning?.phase ?? null,
   };
 }

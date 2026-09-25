@@ -129,6 +129,8 @@ function outcomeRows(quals: Qualifications, event: string): unknown[] {
         occurredAt,
         // A sale always carries an amount at the producer; anything else only when stated.
         valueCents: step === "sale" ? (q.valueCents ?? null) : (q.valueCents ?? null),
+        // Stated as OUR win: these fixtures price outcomes; whose win it was is tested on its own.
+        causedByOutreach: true,
         source: "manual",
       });
     }
