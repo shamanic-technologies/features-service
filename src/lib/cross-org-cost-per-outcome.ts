@@ -28,9 +28,16 @@ import {
 } from "./sales-economics-client.js";
 import { fetchFleetSpendByDay, fetchPublicEmailStats } from "./public-stats-clients.js";
 import { mapWithConcurrency } from "./concurrency.js";
-import { fetchDeclaredFunnelKeys } from "./brand-funnels.js";
-import { SalesFunnelsUnavailableError } from "./sales-funnels-client.js";
-import type { SalesFunnelKey } from "./sales-funnels.js";
+import { SalesFunnelsUnavailableError, type DeclaredSalesFunnel } from "./sales-funnels-client.js";
+import { salesFunnelIndex, type SalesFunnelKey } from "./sales-funnels.js";
+import {
+  brandStatedEconomics,
+  fetchDeclaredFunnelsAllOffers,
+  median,
+  medianFleetEconomics,
+  type BrandStatedEconomics,
+} from "./stated-economics.js";
+import { fetchBrandFunnelRates, type BrandFunnelRates } from "./brand-funnel-rates-client.js";
 
 /** The objective family the admin page charts, = the brand optimization-goal set. */
 export const OBJECTIVES: readonly Goal[] = GOALS;
@@ -69,7 +76,7 @@ export function normalizeObjective(raw: string | undefined): Goal | null {
  * surfaces, which span ALL objectives at once and so cannot fail-loud on a single brand's missing rate
  * (a brand lacking one objective's economics simply contributes null to THAT objective's average).
  */
-export function buildLenientProjectionEconomics(e: SalesEconomics): ProjectionEconomics {
+export function buildLenientProjectionEconomics(e: Partial<SalesEconomics>): ProjectionEconomics {
   const dec = (v: number | undefined): number | undefined =>
     typeof v === "number" && Number.isFinite(v) ? v / 100 : undefined;
   // Required rates fall back to 0 (not NaN) when a partial fixture omits one → the objective's
@@ -140,83 +147,20 @@ export function windowBaseOutcome(goal: Goal, clicks: number, replies: number): 
   }
 }
 
-export const mean = (vals: number[]): number | null =>
-  vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
-
-/**
- * Fetch the list of USABLE effective economics across every client brand of a feature (cross-org).
- * One economics fetch per DISTINCT brand (forwarding any owning org — the /orgs/* tier needs only
- * x-org-id). A brand whose membership is stale (BrandOwnershipError) or which has no economics yet
- * contributes nothing. Shared by all three cross-org cost surfaces so they agree on the brand set.
- */
-export async function fetchFleetBrandEconomics(featureSlug: string): Promise<SalesEconomics[]> {
-  const memberships = await fetchFeatureMemberships(featureSlug);
-  const brandToOrg = new Map<string, string>();
-  for (const m of memberships) {
-    if (!brandToOrg.has(m.brandId)) brandToOrg.set(m.brandId, m.orgId);
-  }
-
-  const perBrand = await Promise.all(
-    [...brandToOrg.entries()].map(async ([brandId, orgId]) => {
-      try {
-        const effective = await fetchEffectiveEconomics(brandId, { orgId, featureSlug });
-        return effective.economics;
-      } catch (error) {
-        if (error instanceof BrandOwnershipError) {
-          console.log(
-            `[features-service] skipping stale feature membership for cross-org cost-per-outcome: featureSlug=${featureSlug}, orgId=${orgId}, brandId=${brandId}`,
-          );
-          return null;
-        }
-        throw error;
-      }
-    }),
-  );
-
-  return perBrand.filter((e): e is SalesEconomics => e != null);
-}
-
-/**
- * The fleet-mean economics across a set of brands — the SINGLE representative economics vector the
- * cross-org trend + per-workflow surfaces push global unit costs through (a fleet aggregate is one
- * number per objective, so it needs one economics). Each rate is the unweighted mean over the brands
- * that carry it; an optional rate no brand carries stays undefined (that objective → null downstream).
- * Returns null when the brand set is empty.
- */
-export function meanFleetEconomics(list: SalesEconomics[]): ProjectionEconomics | null {
-  if (list.length === 0) return null;
-  const decs = list.map(buildLenientProjectionEconomics);
-  const meanOf = (pick: (d: ProjectionEconomics) => number | undefined): number | undefined => {
-    const vals = decs.map(pick).filter((v): v is number => typeof v === "number" && Number.isFinite(v));
-    return vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : undefined;
-  };
-  return {
-    r2m: meanOf((d) => d.r2m) ?? 0,
-    v2m: meanOf((d) => d.v2m) ?? 0,
-    m2c: meanOf((d) => d.m2c) ?? 0,
-    v2c: meanOf((d) => d.v2c) ?? 0,
-    v2s: meanOf((d) => d.v2s) ?? 0,
-    s2pc: meanOf((d) => d.s2pc),
-    v2pc: meanOf((d) => d.v2pc),
-    r2pc: meanOf((d) => d.r2pc),
-    v2fs: meanOf((d) => d.v2fs),
-    fs2pc: meanOf((d) => d.fs2pc),
-  };
-}
-
 // ── Gap #1 — all-objective fleet averages ────────────────────────────────────
 
 export type ObjectiveAverages = Record<Goal, number | null>;
 
 /**
- * Fleet-average cost-per-outcome for EVERY objective: per brand, the BEST (lowest) cost across the
- * fleet's global per-workflow unit costs, then the unweighted mean across brands (null where no brand
- * is backed for that objective). Mirrors the legacy meeting/purchase methodology, one objective at a
- * time. brandCount = brands contributing ≥1 non-null objective.
+ * Fleet cost-per-outcome for EVERY objective: per brand, the BEST (lowest) cost across the fleet's
+ * global per-workflow unit costs priced on what that brand STATED, then the MEDIAN across brands (null
+ * where no brand is backed for that objective). The unit is the brand, so a mean — carried by whichever
+ * brand sits furthest from the rest — is never taken. brandCount = brands contributing ≥1 non-null
+ * objective.
  */
 export function buildObjectiveAverages(
   unitCostList: ProjectionUnitCosts[],
-  perBrandEconomics: SalesEconomics[],
+  perBrandEconomics: ReadonlyArray<Partial<SalesEconomics>>,
 ): { objectives: ObjectiveAverages; brandCount: number } {
   const perObjectiveBrandBests: Record<Goal, number[]> = {
     websiteVisit: [], positiveReply: [], signup: [], formSubmission: [], meetingBooked: [], websitePurchase: [], sales: [], whatsappConversation: [],
@@ -241,7 +185,7 @@ export function buildObjectiveAverages(
   }
 
   const objectives = {} as ObjectiveAverages;
-  for (const goal of OBJECTIVES) objectives[goal] = mean(perObjectiveBrandBests[goal]);
+  for (const goal of OBJECTIVES) objectives[goal] = median(perObjectiveBrandBests[goal]);
   return { objectives, brandCount };
 }
 
@@ -590,6 +534,12 @@ export interface BucketedBrand {
    * omitted from the dataset entirely rather than carried with a substituted funnel. */
   funnels: SalesFunnelKey[];
   economics: SalesEconomics;
+  /**
+   * What this brand STATED on its declared funnels — per funnel and collapsed — and nothing else. The
+   * brand-wide `economics` above carries brand-service's NOT NULL server defaults, so every FLEET
+   * aggregate reads this instead (`medianFleetEconomics`). See `lib/stated-economics.ts`.
+   */
+  stated: BrandStatedEconomics;
   /** Dated fleet spend for THIS brand (USD per UTC day). */
   spendByDay: Map<string, number>;
   /** Dated clicks / positive replies for THIS brand (per UTC day). */
@@ -648,7 +598,7 @@ export function buildBucketedLifetimeAverages(brands: BucketedBrand[]): Objectiv
         totalReplies += o.replies;
       }
     }
-    const fleetEcon = meanFleetEconomics(bucket.map((b) => b.economics));
+    const fleetEcon = medianFleetEconomics(bucket.map((b) => b.stated.overall)).economics;
     const unitCosts: ProjectionUnitCosts = {
       clickUsd: totalClicks > 0 && totalSpentUsd > 0 ? totalSpentUsd / totalClicks : null,
       replyUsd: totalReplies > 0 && totalSpentUsd > 0 ? totalSpentUsd / totalReplies : null,
@@ -815,12 +765,12 @@ export function buildCostPerOutcomeDistribution(params: {
  * treatment the retired goal read gave a brand with no goal, and it is the only honest one: a brand that
  * has not said what it sells through cannot be placed in a bucket, and placing it anyway is exactly the
  * fiction the defaulted goal column produced. A stale membership (`BrandOwnershipError`) is likewise
- * skipped, mirroring `fetchFleetBrandEconomics`.
+ * skipped, like every other fleet sweep here.
  *
  * WHICH ORG'S CONFIGURATION — a brand id is shared by every org that claims the same domain, so the
  * declared funnels + economics belong to an (org, brand) pair and brand-service will not guess for a
  * brand several orgs claim. The claiming org comes from the feature MEMBERSHIP that put the brand in this
- * dataset (`brandToOrg`, byte-for-byte how `fetchFleetBrandEconomics` above resolves it) — a real
+ * dataset (`brandToOrg`, first claimant) — a real
  * claimant, not a stand-in. The dataset deliberately stays ONE ROW PER BRAND: its spend + outcome legs are
  * read at brand grain (runs `brandId`, email-gateway `brandId`), so emitting a row per (org, brand) would
  * count a multi-org brand's fleet spend once per claiming org and inflate every bucket it lands in.
@@ -842,9 +792,18 @@ export async function fetchFunnelBucketDataset(featureSlug: string): Promise<Buc
     [...brandToOrg.entries()],
     FUNNEL_BUCKET_BRAND_CONCURRENCY,
     async ([brandId, orgId]): Promise<BucketedBrand | null> => {
-      const [{ economics }, funnels] = await Promise.all([
-        fetchBrandSavedEconomics(brandId, orgId),
-        fetchDeclaredFunnelKeys(brandId, orgId).catch((error): SalesFunnelKey[] => {
+      const [{ economics }, declared] = await Promise.all([
+        fetchBrandSavedEconomics(brandId, orgId).catch((error): { economics: null } => {
+          if (error instanceof BrandOwnershipError) {
+            console.log(
+              `[features-service] funnel-bucket dataset: skipping stale feature membership brand ${brandId} (org ${orgId}): ${error.message}`,
+            );
+            return { economics: null };
+          }
+          throw error;
+        }),
+        // EVERY offer's declaration: a several-offer brand is read offer by offer rather than dropped.
+        fetchDeclaredFunnelsAllOffers(brandId, orgId).catch((error): DeclaredSalesFunnel[] => {
           if (error instanceof SalesFunnelsUnavailableError) {
             console.warn(
               `[features-service] funnel-bucket dataset: brand ${brandId} (org ${orgId}) has declared no readable sales funnel — omitted from every bucket rather than placed on a substituted funnel: ${error.message}`,
@@ -854,7 +813,19 @@ export async function fetchFunnelBucketDataset(featureSlug: string): Promise<Buc
           throw error;
         }),
       ]);
+      const funnels = [...new Set(declared.map((f) => f.funnelKey))].sort(
+        (a, b) => salesFunnelIndex(a) - salesFunnelIndex(b),
+      );
       if (!economics || funnels.length === 0) return null;
+      // The RATES this brand stated live on the brand grain; lifetime revenue on the declared offers.
+      // An unreadable statement set costs this brand its data point, loudly — never a substituted rate.
+      const brandRates = await fetchBrandFunnelRates(brandId, orgId).catch((error): BrandFunnelRates[] => {
+        console.warn(
+          `[features-service] funnel-bucket dataset: brand ${brandId} (org ${orgId}) stated rates unreadable — it contributes no rate to any fleet median: ${(error as Error).message}`,
+        );
+        return [];
+      });
+      const stated = brandStatedEconomics(declared, brandRates);
 
       const [spendByDay, dayOutcomeMap] = await Promise.all([
         fetchFleetSpendByDay(featureSlug, brandId),
@@ -870,7 +841,7 @@ export async function fetchFunnelBucketDataset(featureSlug: string): Promise<Buc
         });
       }
 
-      return { brandId, funnels, economics, spendByDay, outcomesByDay };
+      return { brandId, funnels, economics, stated, spendByDay, outcomesByDay };
     },
   );
 

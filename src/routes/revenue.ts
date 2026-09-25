@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { fetchDeclaredFunnelsOnEffectiveRates } from "../lib/effective-conversion-rates.js";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
@@ -235,7 +236,7 @@ function fetchSpendCostParentsSoft(
 ): Promise<SpendCostParents> {
   // The caller's own org names whose configuration we want — a brand id alone is shared across every
   // org claiming the same domain, so what it sells through is the (org, brand) pair's data.
-  return fetchDeclaredSalesFunnels(brandId, headers.orgId, offerId)
+  return fetchDeclaredFunnelsOnEffectiveRates(brandId, headers.orgId, offerId)
     .then(async (declared) => {
       const declaredKeys = declared.map((f) => f.funnelKey).sort((a, b) => salesFunnelIndex(a) - salesFunnelIndex(b));
       // An explicit `?funnel=` is honoured only when the brand actually declared it — pricing a brand on
@@ -341,7 +342,7 @@ export async function fetchDeclaredFunnelsSoft(
   try {
     // The caller's own org names whose configuration we want: a brand id alone is shared across every
     // org claiming the same domain, so what it sells through is the (org, brand) pair's data.
-    return await fetchDeclaredSalesFunnels(brandId, orgId, offerId);
+    return await fetchDeclaredFunnelsOnEffectiveRates(brandId, orgId, offerId);
   } catch (err) {
     const what =
       err instanceof SalesFunnelsUnavailableError

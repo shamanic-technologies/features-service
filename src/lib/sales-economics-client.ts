@@ -120,6 +120,11 @@ export async function fetchBrandSavedEconomics(
 
   if (!response.ok) {
     const text = await response.text();
+    // The same stale-membership answer the org-scoped read gives: the org no longer holds this brand,
+    // or the brand is gone. A fleet sweep skips it rather than failing every brand on one.
+    if (response.status === 403 || response.status === 404) {
+      throw new BrandOwnershipError(brandId, orgId, `brand-service internal sales-economics failed (${response.status}): ${text}`);
+    }
     throw new Error(`brand-service internal sales-economics failed (${response.status}): ${text}`);
   }
 

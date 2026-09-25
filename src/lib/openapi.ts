@@ -1842,6 +1842,62 @@ registry.registerPath({
   },
 });
 
+const measuredArrowRateSchema = z.object({
+  fromReached: z.number().int().nullable().describe("Distinct leads of this brand that reached the arrow's FROM step. Null when that step is not counted by anything in the fleet, or its evidence was unreadable."),
+  toReached: z.number().int().nullable().describe("Of those, the leads that ALSO reached the TO step. Same null rule."),
+  ratePct: z.number().nullable().describe("toReached / fromReached × 100 — the rate observed on the brand's own leads, conditional on the FROM step (so it can never exceed 100%). Null when either count is null or fromReached is 0."),
+  sufficient: z.boolean().describe("True exactly when fromReached ≥ minMeasuredFromReached, i.e. this measured rate is the effective one. The bar is on the DENOMINATOR, so an arrow truly at 0% still becomes measured."),
+  gap: z.enum(["step_not_counted", "evidence_unreadable", "below_learning_bar"]).nullable().describe("Why the measured rate is not the effective one; null when it is."),
+});
+const effectiveArrowRateSchema = z.object({
+  fromStep: z.string(),
+  toStep: z.string(),
+  effectiveRatePct: z.number().nullable().describe("The rate every money figure (pipeline, ROI, CAC, projections) is priced on for this arrow, 0..100. Null when no source exists — never a default."),
+  source: z.enum(["measured", "manual", "median"]).nullable().describe("Which source effectiveRatePct is, in precedence order: measured on the brand's own leads (≥ minMeasuredFromReached on the FROM step), else what the brand stated by hand (brand-service brand-grain store), else the cross-org median of what brands stated. Null exactly when effectiveRatePct is null."),
+  unresolvedReason: z.enum(["no_rate_available"]).nullable().describe("Present exactly when effectiveRatePct is null: nothing measured, nothing stated, and no brand in the fleet stated this arrow."),
+  measured: measuredArrowRateSchema,
+  manualRatePct: z.number().nullable().describe("What the brand stated by hand for this arrow, or null when it has not."),
+  median: z.object({
+    ratePct: z.number().nullable().describe("The cross-org MEDIAN (never a mean) of the rates brands STATED for this (funnel, arrow). Null when none did."),
+    brandCount: z.number().int().describe("How many brands' statements the median is taken over."),
+  }),
+});
+const brandConversionRatesResponseRef = registry.register(
+  "BrandConversionRatesResponse",
+  z.object({
+    brandId: z.string(),
+    minMeasuredFromReached: z.number().int().describe("The learning bar: leads needed on an arrow's FROM step before its measured rate is used (10, the fleet's learning bar)."),
+    contactedRecipients: z.number().int().describe("Distinct leads this brand has contacted — the population every measured rate is read from."),
+    funnels: z.array(z.object({
+      funnelKey: z.string(),
+      name: z.string(),
+      steps: z.array(z.string()),
+      arrows: z.array(effectiveArrowRateSchema).describe("One entry per consecutive pair of the funnel's steps, in order."),
+    })).describe("Every funnel of the catalogue, in catalogue order — the same set brand-service's brand-grain read serves."),
+  }),
+);
+
+registry.registerPath({
+  method: "get",
+  path: "/brands/{brandId}/conversion-rates",
+  summary: "The effective conversion rate of every arrow of a brand's funnels, and where it came from",
+  description:
+    "Conversion rates are BRAND-grain: one rate per (brand, sales funnel, arrow). Every money figure this service states is priced on the rate resolved here, from three sources in order — MEASURED on the brand's own lead data once at least `minMeasuredFromReached` leads reached the arrow's FROM step, else the brand's MANUALLY stated rate, else the cross-org MEDIAN of stated rates. The response carries all three beside the effective one, so a consumer shows the value, its source, the measured n, the manual value and the median without computing anything. Right-censoring (a meeting booked yesterday cannot be attended yet) is accepted: a measured rate for a young brand reads slightly low.",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ brandId: z.string() }),
+    query: z.object({
+      funnel: z.string().optional().describe("Narrow to ONE sales funnel. A word naming no funnel is a 400 with reason 'funnel_unrecognised'."),
+    }),
+  },
+  responses: {
+    200: { description: "The brand's effective rates", content: { "application/json": { schema: brandConversionRatesResponseRef } } },
+    400: { description: "An unrecognised funnel", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "A producer the rates are resolved from could not be read", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 const brandAudienceStatsResponseSchema = audienceStatsResponseSchema.extend({
   channels: z.array(brandChannelSchema).describe("The channels combined into every row below, ascending by slug."),
 });

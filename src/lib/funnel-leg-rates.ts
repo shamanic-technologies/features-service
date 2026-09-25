@@ -190,7 +190,19 @@ export function legPathRate(
  * BOOKED → paid while brand-service's identically-named rate is ATTENDED → paid, so the composition is
  * the whole difference between the two services' meaning of that field (see `meetingFunnelCloseRate`).
  */
-const RATE_FOR_STEP_PAIR: ReadonlyArray<{ from: string; to: string; key: string }> = [
+const RATE_FOR_STEP_PAIR: ReadonlyArray<{
+  from: string;
+  to: string;
+  key: string;
+  /**
+   * The ONLY funnels this pair is asked of, when the same two steps mean different quantities in
+   * different funnels. `Website visit → Paid client` is the SELF-SERVE close through a signup on
+   * `website_purchases` (brand-service derives `visitToClosePct` exactly so), the DIRECT purchase on
+   * `sales_from_website` (`visitToPaidClientPct`), and a close THROUGH A MEETING on the meeting funnel —
+   * a third quantity no named rate expresses, so it is never derived there.
+   */
+  funnels?: readonly SalesFunnelKey[];
+}> = [
   { from: "Positive reply", to: "Meeting booked", key: "replyToMeetingPct" },
   { from: "Website visit", to: "Meeting booked", key: "visitToMeetingPct" },
   { from: "Meeting attended", to: "Paid client", key: "meetingAttendedToPaidClientPct" },
@@ -199,6 +211,9 @@ const RATE_FOR_STEP_PAIR: ReadonlyArray<{ from: string; to: string; key: string 
   { from: "Signup", to: "Paid client", key: "signupToPaidClientPct" },
   { from: "Website visit", to: "Form submitted", key: "visitToFormSubmissionPct" },
   { from: "Form submitted", to: "Paid client", key: "formSubmissionToPaidClientPct" },
+  { from: "Website visit", to: "Paid client", key: "visitToClosePct", funnels: ["website_purchases"] },
+  { from: "Website visit", to: "Paid client", key: "visitToPaidClientPct", funnels: ["sales_from_website"] },
+  { from: "Positive reply", to: "Paid client", key: "replyToPaidClientPct", funnels: ["sales_from_conversation"] },
 ];
 
 /**
@@ -220,6 +235,7 @@ export function statedLegRates(
   if (legs.length === 0) return out;
   const steps = SALES_FUNNELS[funnelKey].steps.map(normaliseStep);
   for (const pair of RATE_FOR_STEP_PAIR) {
+    if (pair.funnels && !pair.funnels.includes(funnelKey)) continue;
     const fromIndex = steps.indexOf(normaliseStep(pair.from));
     const toIndex = steps.indexOf(normaliseStep(pair.to));
     if (fromIndex === -1 || toIndex === -1 || toIndex <= fromIndex) continue;

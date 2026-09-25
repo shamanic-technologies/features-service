@@ -24,13 +24,10 @@ import {
   buildWorkflowCostPerOutcome,
   recentWindowCostPerOutcome,
   windowBaseOutcome,
-  fetchFleetBrandEconomics,
   fetchFunnelBucketDataset,
   bucketBrandsForObjective,
   mergeSpendByDay,
   mergeOutcomesByDay,
-  meanFleetEconomics,
-  mean,
   normalizeObjective,
   type ObjectiveAverages,
   type TrendPoint,
@@ -41,6 +38,7 @@ import {
   type WorkflowGrainInput,
 } from "../lib/cross-org-cost-per-outcome.js";
 import { fetchFeatureMemberships } from "../lib/feature-memberships-client.js";
+import { medianFleetEconomics } from "../lib/stated-economics.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
 import { fetchFleetEmailsSentByDay, fetchFleetSendingForecast } from "../lib/send-forecast-client.js";
 import { aggregateFleetNewSequences } from "../lib/send-forecast-aggregate.js";
@@ -1631,11 +1629,10 @@ export async function handlePublicCostProjection(
     compute: async () => {
     // GLOBAL per-workflow unit costs (cross-org, feature-scoped) — fetched once, shared across brands.
     // Same dynasty-funnel aggregation as /public/stats/best|ranked and the authed workflow-projection route.
-    const [workflows, costGroups, emailStats, memberships] = await Promise.all([
+    const [workflows, costGroups, emailStats] = await Promise.all([
       fetchPublicWorkflows(featureSlug, "all"),
       fetchPublicCosts(featureSlug, "workflowSlug"),
       fetchPublicEmailStats(featureSlug, "workflowSlug"),
-      fetchFeatureMemberships(featureSlug),
     ]);
 
     const dynasties = buildWorkflowDynasties(workflows);
@@ -1653,32 +1650,14 @@ export async function handlePublicCostProjection(
       });
     }
 
-    // One economics fetch per DISTINCT brand (forward any owning org — the /orgs/* tier needs only x-org-id).
-    // A stale membership (BrandOwnershipError) or a brand with no economics contributes nothing.
-    const brandToOrg = new Map<string, string>();
-    for (const m of memberships) {
-      if (!brandToOrg.has(m.brandId)) brandToOrg.set(m.brandId, m.orgId);
-    }
+    // What each brand STATED on its declared funnels — never its brand-wide record, whose NOT NULL server
+    // defaults would stand in for rates nobody stated (see lib/stated-economics.ts). The SAME cached
+    // per-brand dataset every other fleet cost surface reads, so they agree on the brand set.
+    const perBrandEconomics = (await getFunnelBucketDatasetCached(featureSlug))
+      .map((b) => b.stated.overall)
+      .filter((stated) => Object.keys(stated).length > 0);
 
-    const perBrandEconomicsRaw = await Promise.all(
-      [...brandToOrg.entries()].map(async ([brandId, orgId]) => {
-        try {
-          const effective = await fetchEffectiveEconomics(brandId, { orgId, featureSlug });
-          return effective.economics;
-        } catch (error) {
-          if (error instanceof BrandOwnershipError) {
-            console.log(
-              `[features-service] skipping stale feature membership for public cost-projection: featureSlug=${featureSlug}, orgId=${orgId}, brandId=${brandId}`,
-            );
-            return null;
-          }
-          throw error;
-        }
-      }),
-    );
-    const perBrandEconomics = perBrandEconomicsRaw.filter((e): e is SalesEconomics => e != null);
-
-    // Fleet averages across ALL objectives (per-brand best across the fleet unit costs → mean over brands).
+    // Fleet figures across ALL objectives (per-brand best across the fleet unit costs → MEDIAN over brands).
     const { objectives, brandCount } = buildObjectiveAverages(unitCostList, perBrandEconomics);
 
     return {
@@ -1770,7 +1749,7 @@ export async function handleCostPerOutcomeTrend(
     const spendByDay = mergeSpendByDay(bucket);
     const outcomesByDay = mergeOutcomesByDay(bucket);
 
-    const fleetEcon = meanFleetEconomics(bucket.map((b) => b.economics));
+    const fleetEcon = medianFleetEconomics(bucket.map((b) => b.stated.overall)).economics;
     const todayIso = new Date().toISOString().slice(0, 10);
     const points = buildCostPerOutcomeTrend({
       objective,
@@ -1919,7 +1898,7 @@ export async function handleWorkflowCostPerOutcome(
       fetchPublicWorkflows(featureSlug, "all"),
       fetchPublicCosts(featureSlug, "workflowSlug"),
       fetchPublicEmailStats(featureSlug, "workflowSlug"),
-      fetchFleetBrandEconomics(featureSlug),
+      getFunnelBucketDatasetCached(featureSlug).then((dataset) => dataset.map((b) => b.stated.overall)),
     ]);
 
     const dynasties = buildWorkflowDynasties(workflows);
@@ -1954,7 +1933,7 @@ export async function handleWorkflowCostPerOutcome(
     // crossOrg is the top grain of the per-workflow cost cascade: a 0-outcome workflow floors to its OWN
     // spend (parent = null in buildWorkflowCostPerOutcome), NOT a cross-workflow pooled average — so no
     // fleet-parent unit cost is computed here.
-    const fleetEcon = meanFleetEconomics(perBrandEconomics);
+    const fleetEcon = medianFleetEconomics(perBrandEconomics).economics;
     const todayIso = new Date().toISOString().slice(0, 10);
     const dynastyInputs = [...byDynasty.values()];
 
@@ -2167,7 +2146,7 @@ export async function handleBestModelCostPerOutcomeTrend(
       fetchPublicWorkflows(featureSlug, "all"),
       fetchPublicCosts(featureSlug, "workflowSlug"),
       fetchPublicEmailStats(featureSlug, "workflowSlug"),
-      fetchFleetBrandEconomics(featureSlug),
+      getFunnelBucketDatasetCached(featureSlug).then((dataset) => dataset.map((b) => b.stated.overall)),
     ]);
 
     const dynasties = buildWorkflowDynasties(workflows);
@@ -2198,7 +2177,7 @@ export async function handleBestModelCostPerOutcomeTrend(
       }
     }
 
-    const fleetEcon = meanFleetEconomics(perBrandEconomics);
+    const fleetEcon = medianFleetEconomics(perBrandEconomics).economics;
     const todayIso = new Date().toISOString().slice(0, 10);
     const rows = buildWorkflowCostPerOutcome({
       objective,
@@ -2870,23 +2849,33 @@ async function buildChannelFunnelEconomics(channels: readonly PublicChannel[]): 
       clickUsd: websiteVisitsProduced > 0 ? totalSpentUsd / websiteVisitsProduced : null,
       replyUsd: conversationsProduced > 0 ? totalSpentUsd / conversationsProduced : null,
     };
-    const economics = meanFleetEconomics(dataset.map((b) => b.economics));
-    const lifetimeRevenueUsd = mean(
-      dataset.map((b) => b.economics.lifetimeRevenueUsd).filter((v) => typeof v === "number" && v > 0),
-    );
-    const evidence = { totalSpentUsd, conversationsProduced, websiteVisitsProduced, brandCount: dataset.length };
-
-    return channel.salesFunnels.map((funnel): ChannelFunnelPairRow => ({
-      channelSlug: channel.slug,
-      channelName: channel.name,
-      funnelKey: funnel.key,
-      funnelName: funnel.name,
-      funnelSteps: funnel.steps,
-      funnelMinimumCommitmentDays: funnel.funnelMinimumCommitmentDays,
-      effectiveMinimumCommitmentDays: funnel.effectiveMinimumCommitmentDays,
-      governedBy: funnel.governedBy,
-      result: pricePair({ funnelKey: funnel.key, unitCosts, economics, lifetimeRevenueUsd, evidence }),
-    }));
+    return channel.salesFunnels.map((funnel): ChannelFunnelPairRow => {
+      // THE MEDIAN OF WHAT THE BRANDS RUNNING THIS CHANNEL STATED ON THIS FUNNEL — never a mean (one
+      // brand far from the rest carried it), never their brand-wide record (whose NOT NULL server
+      // defaults would stand in for rates nobody stated). A brand that stated nothing on this funnel
+      // contributes no data point. See lib/stated-economics.ts.
+      const fleet = medianFleetEconomics(
+        dataset.map((b) => b.stated.byFunnel[funnel.key] ?? {}),
+      );
+      const evidence = { totalSpentUsd, conversationsProduced, websiteVisitsProduced, brandCount: fleet.brandCount };
+      return {
+        channelSlug: channel.slug,
+        channelName: channel.name,
+        funnelKey: funnel.key,
+        funnelName: funnel.name,
+        funnelSteps: funnel.steps,
+        funnelMinimumCommitmentDays: funnel.funnelMinimumCommitmentDays,
+        effectiveMinimumCommitmentDays: funnel.effectiveMinimumCommitmentDays,
+        governedBy: funnel.governedBy,
+        result: pricePair({
+          funnelKey: funnel.key,
+          unitCosts,
+          economics: fleet.economics,
+          lifetimeRevenueUsd: fleet.lifetimeRevenueUsd,
+          evidence,
+        }),
+      };
+    });
   });
 
   return perChannel.flat();

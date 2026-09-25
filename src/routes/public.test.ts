@@ -949,14 +949,17 @@ describe("GET /public/stats/revenue?rollup=true", () => {
 
 describe("GET /public/stats/cost-projection", () => {
   beforeEach(() => {
+    __resetFunnelBucketDatasetCache();
     vi.clearAllMocks();
     vi.restoreAllMocks();
     __resetPublicCostProjectionCache();
   });
 
   // Brand economics (percentages, as brand-service stores them).
-  const ECON_1 = { lifetimeRevenueUsd: 1000, replyToMeetingPct: 40, visitToMeetingPct: 5, meetingToClosePct: 30, visitToClosePct: 2 };
-  const ECON_2 = { lifetimeRevenueUsd: 2000, replyToMeetingPct: 20, visitToMeetingPct: 10, meetingToClosePct: 50, visitToClosePct: 5 };
+  // The self-serve close is STATED as its two halves (brand-service derives visitToClosePct = visitToSignupPct ×
+  // signupToPaidClientPct), which is how the brand-grain store carries it: 4% × 50% = 2%, 10% × 50% = 5%.
+  const ECON_1 = { lifetimeRevenueUsd: 1000, replyToMeetingPct: 40, visitToMeetingPct: 5, meetingToClosePct: 30, visitToClosePct: 2, visitToSignupPct: 4, signupToPaidClientPct: 50 };
+  const ECON_2 = { lifetimeRevenueUsd: 2000, replyToMeetingPct: 20, visitToMeetingPct: 10, meetingToClosePct: 50, visitToClosePct: 5, visitToSignupPct: 10, signupToPaidClientPct: 50 };
   // decimals for the local expected-value computation
   const e1 = { r2m: 0.4, v2m: 0.05, m2c: 0.3, v2c: 0.02, v2s: 0.04 };
   const e2 = { r2m: 0.2, v2m: 0.1, m2c: 0.5, v2c: 0.05, v2s: 0.1 };
@@ -1104,6 +1107,7 @@ describe("GET /public/stats/cost-per-outcome-trend", () => {
 
 describe("GET /public/stats/best-model-cost-per-outcome-trend", () => {
   beforeEach(() => {
+    __resetFunnelBucketDatasetCache();
     vi.clearAllMocks();
     vi.restoreAllMocks();
     __resetBestModelCostPerOutcomeTrendCache();
@@ -1140,6 +1144,8 @@ describe("GET /public/stats/best-model-cost-per-outcome-trend", () => {
 
     vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const stated = statedBrandRoute(url, () => ECON_FULL as Record<string, number>);
+      if (stated) return stated;
       if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
         return mkJson({ memberships: [{ orgId: "org-A", brandId: "brand-1", workflowSlug: "wf-cheap" }] });
       }
@@ -1202,6 +1208,8 @@ describe("GET /public/stats/best-model-cost-per-outcome-trend", () => {
 
     vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const stated = statedBrandRoute(url, () => ECON_FULL as Record<string, number>);
+      if (stated) return stated;
       if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
         return mkJson({ memberships: [{ orgId: "org-A", brandId: "brand-1", workflowSlug: "wf-1" }] });
       }
@@ -1241,6 +1249,8 @@ describe("GET /public/stats/best-model-cost-per-outcome-trend", () => {
 
     vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const stated = statedBrandRoute(url, () => ECON_FULL as Record<string, number>);
+      if (stated) return stated;
       if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
         return mkJson({ memberships: [{ orgId: "org-A", brandId: "brand-1", workflowSlug: "wf-1" }] });
       }
@@ -1270,6 +1280,7 @@ describe("GET /public/stats/best-model-cost-per-outcome-trend", () => {
 
 describe("GET /public/stats/workflow-cost-per-outcome", () => {
   beforeEach(() => {
+    __resetFunnelBucketDatasetCache();
     vi.clearAllMocks();
     vi.restoreAllMocks();
     __resetWorkflowCostPerOutcomeCache();
@@ -1301,6 +1312,8 @@ describe("GET /public/stats/workflow-cost-per-outcome", () => {
 
     vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const stated = statedBrandRoute(url, () => ECON_FULL as Record<string, number>);
+      if (stated) return stated;
       if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
         return mkJson({ memberships: [{ orgId: "org-A", brandId: "brand-1", workflowSlug: "wf-1" }] });
       }
@@ -1358,6 +1371,8 @@ describe("GET /public/stats/workflow-cost-per-outcome", () => {
 
     vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const stated = statedBrandRoute(url, () => ECON_FULL as Record<string, number>);
+      if (stated) return stated;
       if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
         return mkJson({ memberships: [{ orgId: "org-A", brandId: "brand-1", workflowSlug: "wf-1" }] });
       }
@@ -1402,6 +1417,8 @@ describe("GET /public/stats/workflow-cost-per-outcome", () => {
 
     vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const stated = statedBrandRoute(url, () => ECON_FULL as Record<string, number>);
+      if (stated) return stated;
       if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
         return mkJson({ memberships: [
           { orgId: "org-A", brandId: "brand-1", workflowSlug: "wf-1" },
@@ -1466,6 +1483,8 @@ describe("GET /public/stats/workflow-cost-per-outcome", () => {
 
     vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const stated = statedBrandRoute(url, () => ECON_FULL as Record<string, number>);
+      if (stated) return stated;
       if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
         return mkJson({ memberships: [{ orgId: "org-A", brandId: "brand-1", workflowSlug: "wf-1" }] });
       }
@@ -1535,6 +1554,66 @@ interface MockEconomics {
   visitToClosePct: number;
 }
 
+/**
+ * The brand-grain store (brand-service `GET /internal/brands/:id/funnel-rates`) stating a brand-wide
+ * economics record ARROW BY ARROW, on every funnel whose arrows it covers — the fleet medians read the
+ * RATES a brand stated from there. The self-serve close is stated as its two halves, exactly as
+ * brand-service derives it.
+ */
+function funnelRatesFromEcon(econ: Record<string, number>) {
+  const arrow = (fromStep: string, toStep: string, ratePct: number | undefined) =>
+    ratePct === undefined
+      ? { fromStep, toStep, ratePct: null, stated: false }
+      : { fromStep, toStep, ratePct, stated: true };
+  const s2pc = econ.signupToPaidClientPct ?? (econ.visitToClosePct !== undefined && econ.visitToSignupPct ? (econ.visitToClosePct * 100) / econ.visitToSignupPct : undefined);
+  return { funnels: [
+    { funnelKey: "sales_meetings_from_conversation", arrows: [arrow("Positive reply", "Meeting booked", econ.replyToMeetingPct), arrow("Meeting booked", "Meeting attended", undefined), arrow("Meeting attended", "Paid client", econ.meetingToClosePct)] },
+    { funnelKey: "sales_meetings_from_website", arrows: [arrow("Website visit", "Meeting booked", econ.visitToMeetingPct), arrow("Meeting booked", "Meeting attended", undefined), arrow("Meeting attended", "Paid client", econ.meetingToClosePct)] },
+    { funnelKey: "website_purchases", arrows: [arrow("Website visit", "Signup", econ.visitToSignupPct), arrow("Signup", "Paid client", s2pc)] },
+    { funnelKey: "form_magnet", arrows: [arrow("Website visit", "Form submitted", econ.visitToFormSubmissionPct), arrow("Form submitted", "Paid client", econ.formSubmissionToPaidClientPct)] },
+    { funnelKey: "sales_from_conversation", arrows: [arrow("Positive reply", "Paid client", econ.replyToPaidClientPct)] },
+  ] };
+}
+
+/**
+ * The per-brand STATEMENT reads every fleet cost surface makes through the shared funnel-bucket dataset:
+ * the internal saved economics, the declared sales funnels (which carry what the brand STATED — the fleet
+ * figures read those, never the brand-wide record), and the brand-filtered dated spend / outcomes. Each
+ * brand states `econFor(brandId)` on one conversation funnel; null = declared nothing, "403" = stale.
+ */
+function statedBrandRoute(
+  url: string,
+  econFor: (brandId: string) => Record<string, number> | null | "403",
+): Response | null {
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  const funnels = url.match(/http:\/\/brand:3000\/internal\/brands\/([^/?]+)\/sales-funnels/);
+  if (funnels) {
+    const econ = econFor(funnels[1]);
+    if (econ === null || econ === "403") return json({ funnels: [] });
+    const { lifetimeRevenueUsd, ...rates } = econ;
+    return json({ funnels: [{
+      funnelKey: "sales_meetings_from_conversation", name: "x", steps: [], rates,
+      lifetimeRevenueUsd: lifetimeRevenueUsd ?? null, destinationUrl: null, bookingUrl: null, updatedAt: "2026-08-01T00:00:00.000Z",
+    }] });
+  }
+  const rated = url.match(/http:\/\/brand:3000\/internal\/brands\/([^/?]+)\/funnel-rates/);
+  if (rated) {
+    const econ = econFor(rated[1]);
+    return json(econ === null || econ === "403" ? { funnels: [] } : funnelRatesFromEcon(econ));
+  }
+  const saved = url.match(/http:\/\/brand:3000\/internal\/brands\/([^/?]+)\/sales-economics/);
+  if (saved) {
+    const econ = econFor(saved[1]);
+    if (econ === "403") return json({ error: "Brand does not belong to org" }, 403);
+    return json({ salesEconomics: econ });
+  }
+  const brandFiltered = new URL(url).searchParams.has("brandId");
+  if (brandFiltered && url.startsWith("http://runs:3000/v1/stats/public/costs/timeseries")) return json({ buckets: [] });
+  if (brandFiltered && url.startsWith("http://email:3000/public/stats")) return json({ groups: [] });
+  return null;
+}
+
 function mockCostProjectionFetch(opts: {
   memberships: Array<{ orgId: string; brandId: string; workflowSlug: string }>;
   economicsByBrand: Record<string, MockEconomics | null | "403">;
@@ -1554,6 +1633,8 @@ function mockCostProjectionFetch(opts: {
 
   const spy = vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const stated = statedBrandRoute(url, (brandId) => (opts.economicsByBrand[brandId] ?? null) as Record<string, number> | null | "403");
+    if (stated) return stated;
     if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
       return new Response(JSON.stringify({ memberships: opts.memberships }), { status: 200, headers: { "content-type": "application/json" } });
     }
@@ -1613,11 +1694,19 @@ function mockBucketedFetch(opts: {
     const funnelsMatch = url.match(/http:\/\/brand:3000\/internal\/brands\/([^/]+)\/sales-funnels/);
     if (funnelsMatch) {
       const b = opts.brands[funnelsMatch[1]];
+      // Each declared funnel STATES the brand's rates — the fleet aggregates read what was stated on the
+      // funnels, never the brand-wide record (lib/stated-economics.ts).
+      const { lifetimeRevenueUsd, ...rates } = (b?.econ ?? {}) as unknown as Record<string, number>;
       const funnels = (b?.funnels ?? []).map((funnelKey) => ({
-        funnelKey, name: funnelKey, steps: [], rates: {}, lifetimeRevenueUsd: null,
+        funnelKey, name: funnelKey, steps: [], rates, lifetimeRevenueUsd: lifetimeRevenueUsd ?? null,
         destinationUrl: null, bookingUrl: null, updatedAt: "2026-08-01T00:00:00.000Z",
       }));
       return new Response(JSON.stringify({ funnels }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    const ratedMatch = url.match(/http:\/\/brand:3000\/internal\/brands\/([^/]+)\/funnel-rates/);
+    if (ratedMatch) {
+      const b = opts.brands[ratedMatch[1]];
+      return new Response(JSON.stringify(b?.funnels ? funnelRatesFromEcon(b.econ as unknown as Record<string, number>) : { funnels: [] }), { status: 200, headers: { "content-type": "application/json" } });
     }
     const savedMatch = url.match(/http:\/\/brand:3000\/internal\/brands\/([^/]+)\/sales-economics/);
     if (savedMatch) {

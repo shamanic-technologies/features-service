@@ -93,6 +93,24 @@ function installFetchMock(state: { runsCostCents: string; runsCalls: number; fai
     if (url.startsWith("http://workflow:3000/public/workflows")) {
       return new Response(JSON.stringify({ workflows: WORKFLOWS }), { status: 200, headers: { "content-type": "application/json" } });
     }
+    // The per-brand STATEMENT reads of the shared funnel-bucket dataset — what each brand stated on its
+    // declared funnels (the fleet figures read those, never the brand-wide record) and its brand-filtered
+    // dated spend / outcomes. Not the ledger scan this suite counts.
+    const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    if (/http:\/\/brand:3000\/internal\/brands\/[^/]+\/sales-funnels/.test(url)) {
+      const { lifetimeRevenueUsd, ...rates } = ECONOMICS;
+      return json({ funnels: [{ funnelKey: "sales_meetings_from_conversation", name: "x", steps: [], rates, lifetimeRevenueUsd, destinationUrl: null, bookingUrl: null, updatedAt: "2026-08-01T00:00:00.000Z" }] });
+    }
+    if (/http:\/\/brand:3000\/internal\/brands\/[^/]+\/funnel-rates/.test(url)) {
+      return json({ funnels: [{ funnelKey: "sales_meetings_from_conversation", arrows: [
+        { fromStep: "Positive reply", toStep: "Meeting booked", ratePct: ECONOMICS.replyToMeetingPct, stated: true },
+        { fromStep: "Meeting booked", toStep: "Meeting attended", ratePct: null, stated: false },
+        { fromStep: "Meeting attended", toStep: "Paid client", ratePct: ECONOMICS.meetingToClosePct, stated: true },
+      ] }] });
+    }
+    if (/http:\/\/brand:3000\/internal\/brands\/[^/]+\/sales-economics/.test(url)) return json({ salesEconomics: ECONOMICS });
+    if (new URL(url).searchParams.has("brandId") && url.startsWith("http://runs:3000/v1/stats/public/costs/timeseries")) return json({ buckets: [] });
+    if (new URL(url).searchParams.has("brandId") && url.startsWith("http://email:3000/public/stats")) return json({ groups: [] });
     if (url.startsWith("http://runs:3000/v1/stats/public/costs")) {
       state.runsCalls += 1;
       if (state.failRuns) return new Response(JSON.stringify({ error: "ledger scan blew up" }), { status: 500 });
