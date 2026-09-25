@@ -24,6 +24,7 @@ import { fetchBrandCampaignRows } from "./campaign-identity-client.js";
 import { buildCampaignFamilies, type CampaignIdentityRow } from "./campaign-identity.js";
 import { featureSlugList, featureSlugsParam, type FeatureScope } from "./feature-scope.js";
 import { fetchPublicWorkflows } from "./public-stats-clients.js";
+import type { EnginePerson } from "./revenue-engine.js";
 import { fetchCampaignWorkflowEvidence, type Identity } from "./workflow-projection-grains.js";
 import { fetchCampaignCommittedCents, fetchCampaignDriverCounts, fetchLegDailyCeilingUsd } from "./learning-phase-clients.js";
 import {
@@ -73,6 +74,24 @@ export interface LearningPhaseScope {
   /** The brand's merged economics — the rate ladder each leg is walked through. Null at cold start. */
   economics: SalesEconomics | null;
   pricing: Pricing;
+  /**
+   * Per campaign id, the leads whose positive reply only the customer's CRM shows (lead-service's
+   * ledger). email-gateway's per-campaign reply count cannot see them and holds every sender-classified
+   * one, so they are added on top — per campaign IDENTITY as a union, nobody counted twice.
+   */
+  crmOnlyRepliersByCampaign?: Promise<Map<string, Set<string>>>;
+}
+
+/** Group the CRM-only positive repliers of a lead population by the campaign each row was served under. */
+export function crmOnlyRepliersByCampaign(persons: readonly EnginePerson[]): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  for (const p of persons) {
+    if (!p.crmPositiveReplyAt || !p.signals.positiveReply || !p.campaignId) continue;
+    const set = out.get(p.campaignId) ?? new Set<string>();
+    set.add(p.leadId);
+    out.set(p.campaignId, set);
+  }
+  return out;
 }
 
 function inScope(row: CampaignIdentityRow, slugs: Set<string>, scopeIds: Set<string> | null): boolean {
@@ -99,10 +118,11 @@ export async function computeLearningPhase(scope: LearningPhaseScope): Promise<L
   const scopeIds = scope.campaignScopeIds.length > 0 ? new Set(scope.campaignScopeIds) : null;
   const scoped = rows.filter((row) => inScope(row, slugs, scopeIds));
 
-  const [driverCounts, committedCents, workflows] = await Promise.all([
+  const [driverCounts, committedCents, workflows, crmRepliers] = await Promise.all([
     fetchCampaignDriverCounts(brandId, featureScope, headers),
     fetchCampaignCommittedCents(brandId, featureScope, headers, pricing),
     fetchPublicWorkflows(featureSlugsParam(featureScope), "all"),
+    scope.crmOnlyRepliersByCampaign ?? Promise.resolve(new Map<string, Set<string>>()),
   ]);
 
   const families = buildCampaignFamilies(scoped);
@@ -121,12 +141,15 @@ export async function computeLearningPhase(scope: LearningPhaseScope): Promise<L
     // Summing the family's members is exact: a send carries exactly one campaign.
     let clicks = 0;
     let replies = 0;
+    const crmOnly = new Set<string>();
     for (const id of memberIds) {
+      for (const leadId of crmRepliers.get(id) ?? []) crmOnly.add(leadId);
       const counts = driverCounts.get(id);
       if (!counts) continue;
       clicks += counts.clicks;
       replies += counts.replies;
     }
+    replies += crmOnly.size;
     campaigns.push({
       campaignId: representativeId,
       campaignIds: memberIds,
