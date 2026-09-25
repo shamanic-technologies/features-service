@@ -49,9 +49,15 @@ every grain, `/stats`, funnelSteps, the pipeline/ROI, the measured conversion ra
 reply — sees it with no further code. Two surfaces count replies from email-gateway aggregates instead,
 and ADD the CRM-ONLY repliers on top (never double-counted, since email-gateway holds every classified
 one): `/audience-stats` (members ∩ CRM-only emails, fail-soft) and the learning gate's per-campaign
-count (union per campaign identity). **Not yet:** the per-(campaign × workflow) learning cells and
-`workflow-projection`'s grains still price on email-gateway replies alone. Do NOT re-derive the fact
-from CRM data here — lead-service owns whether it happened. Prod 2026-09-25 (Doc Dinners): 23 → 26,
+count (union per campaign identity). The per-(campaign × workflow) learning cells and
+`workflow-projection`'s brand / campaign / audience grains (and the `/audience-stats` floor parent built
+from them) add them too, through `lib/crm-only-repliers.ts`: the deduped CRM-only repliers, per the
+workflow slug lead-service froze on the row, added to email-gateway's per-slug count BEFORE the dynasty
+rollup; the audience grain places them by human-service membership. That read is FAIL-LOUD on
+workflow-projection (502) and folds into the learning cells' existing "unavailable" degrade. **Still
+email-only:** the crossOrg (fleet) grain and the `/public/stats/*` fleet cost figures — they would need
+every brand's lead walk. Do NOT re-derive the fact from CRM data here — lead-service owns whether it
+happened. Prod 2026-09-25 (Doc Dinners): 23 → 26,
 equal to lead-service's `positive_reply` bucket. (Set 2026-09-25.)
 
 ## ROI, %CAC AND $CAC ARE MEASURED ON THE MATURE COHORT — a campaign's leg says how long its outcomes lag, and a young campaign reads `maturing`, never a terrible ratio

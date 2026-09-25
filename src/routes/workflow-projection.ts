@@ -59,6 +59,7 @@ import {
   type WorkflowMetadata,
 } from "../lib/public-stats-clients.js";
 import { buildWorkflowDynasties, aggregateAcrossDynasties } from "./public.js";
+import { fetchCrmOnlyRepliers } from "../lib/crm-only-repliers.js";
 import {
   fetchBrandWorkflowEvidence,
   fetchAudienceGrainEvidence,
@@ -1511,13 +1512,20 @@ export async function fetchWorkflowProjectionEvidence(input: {
   // per-audience dynasty attachment aligns with the dynasty-keyed rows (and skips runs-service's
   // lossy workflowDynastySlug regroup, which collapses the co-grouped audienceId).
   const slugToDynasty = new Map(workflows.map((w) => [w.workflowSlug, w.workflowDynastySlug]));
+  // The positive repliers only the customer's CRM evidences — email-gateway's per-workflow counts below
+  // cannot see them, so each grain adds them on top (lib/crm-only-repliers.ts). Read once per scope and
+  // FAIL-LOUD like every other input here: a grain must never silently fall back to the sender's count.
+  const [brandCrmRepliers, campaignCrmRepliers] = await Promise.all([
+    fetchCrmOnlyRepliers(brandId, undefined, identity),
+    campaignIds && campaignIds.length > 0 ? fetchCrmOnlyRepliers(brandId, campaignIds, identity) : Promise.resolve(null),
+  ]);
   const [costGroups, emailStats, brandGrain, audienceEvidence, campaignGrain] = await Promise.all([
     fetchPublicCosts(featureSlug, "workflowSlug", pricing),
     fetchPublicEmailStats(featureSlug, "workflowSlug"),
-    fetchBrandWorkflowEvidence(brandId, featureSlug, workflows, identity, pricing),
-    fetchAudienceGrainEvidence(brandId, featureSlug, identity, slugToDynasty, pricing),
+    fetchBrandWorkflowEvidence(brandId, featureSlug, workflows, identity, pricing, "charged", brandCrmRepliers),
+    fetchAudienceGrainEvidence(brandId, featureSlug, identity, slugToDynasty, pricing, undefined, brandCrmRepliers),
     campaignIds && campaignIds.length > 0
-      ? fetchCampaignWorkflowEvidence(brandId, featureSlug, campaignIds, workflows, identity, pricing)
+      ? fetchCampaignWorkflowEvidence(brandId, featureSlug, campaignIds, workflows, identity, pricing, "charged", campaignCrmRepliers ?? [])
       : Promise.resolve(null),
   ]);
 
