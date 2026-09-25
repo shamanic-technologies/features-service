@@ -1,6 +1,7 @@
 import { and, eq, isNull, lt, or } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { featureViewSnapshots } from "../db/schema.js";
+import { withLiveLeadCopy } from "./lead-copy.js";
 
 /**
  * Gold serving layer — stale-while-revalidate read-through cache for expensive feature views.
@@ -37,6 +38,35 @@ import { featureViewSnapshots } from "../db/schema.js";
  * make EVERY poll trigger the fan-out and double the load on the Neon-backed siblings.
  */
 const DEFAULT_TTL_MS = 30_000;
+
+/**
+ * A CAMPAIGN's Overview views refresh on every poll (features-service#1045). With the live lead copy,
+ * the past/today cost split and the shared reads, one refresh of the busiest campaign costs ~1-3s and
+ * a fraction of the downstream reads it used to, so these views go stale after
+ * {@link campaignLiveTtlMs} (3s by default, under the dashboard's 5s poll) instead of 30s: each poll
+ * kicks one background refresh (still single-flight, still only for a cell somebody reads), and a new
+ * send, reply or cost reaches the served body within about one refresh plus one poll.
+ *
+ * Scoped to a campaign, except `pipeline-activity`, whose cell is keyed on the brand and is the
+ * Overview's chart whichever campaign page polls it. Every other view keeps {@link DEFAULT_TTL_MS}.
+ */
+const CAMPAIGN_LIVE_VIEWS = new Set(["revenue", "stats", "audience-stats", "workflow-projection-evidence"]);
+const ALWAYS_LIVE_VIEWS = new Set(["pipeline-activity"]);
+const DEFAULT_CAMPAIGN_LIVE_TTL_MS = 3_000;
+
+export function campaignLiveTtlMs(): number {
+  const raw = process.env.CAMPAIGN_VIEW_SNAPSHOT_TTL_MS;
+  if (!raw) return DEFAULT_CAMPAIGN_LIVE_TTL_MS;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_CAMPAIGN_LIVE_TTL_MS;
+}
+
+/** The TTL a view cell takes when its caller names none. */
+export function defaultTtlFor(view: string, scopeKey: string): number {
+  if (ALWAYS_LIVE_VIEWS.has(view)) return campaignLiveTtlMs();
+  if (CAMPAIGN_LIVE_VIEWS.has(view) && /(^|[|&])campaign(Id)?=/.test(scopeKey)) return campaignLiveTtlMs();
+  return viewCacheTtlMs();
+}
 
 /**
  * HARD stale cap — there is none by default: a snapshot is served for as long as it is RETAINED.
@@ -174,9 +204,12 @@ interface CachedViewArgs<T> {
 /**
  * Serve `compute`'s result through the Gold snapshot cache. See module doc for the freshness model.
  */
-export async function servedCached<T>({ view, scopeKey, orgId, ttlMs, maxStaleMs, compute }: CachedViewArgs<T>): Promise<T> {
+export async function servedCached<T>({ view, scopeKey, orgId, ttlMs, maxStaleMs, compute: rawCompute }: CachedViewArgs<T>): Promise<T> {
+  // Every view compute reads leads through the live copy (lib/lead-copy.ts): these are the views a
+  // customer polls, which is exactly the population the change feed exists for.
+  const compute = () => withLiveLeadCopy(rawCompute);
   if (!cacheEnabled()) return compute();
-  const ttl = ttlMs ?? viewCacheTtlMs();
+  const ttl = ttlMs ?? defaultTtlFor(view, scopeKey);
   const maxStale = maxStaleMs ?? defaultMaxStaleMs();
 
   let row: typeof featureViewSnapshots.$inferSelect | undefined;

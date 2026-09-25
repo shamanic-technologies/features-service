@@ -31,12 +31,14 @@ import { campaignScopeIds, type CampaignFilter } from "./campaign-scope.js";
 import { featureSlugsParam, type FeatureScope } from "./feature-scope.js";
 
 /**
- * How many of a campaign IDENTITY's members are read at once. runs takes ONE campaign and the
- * timeseries route offers no `groupBy`, so a family is read member by member; the cap is the repo's
- * standard fan-out bound, sized so a 51-member identity (the largest in production, 2026-09-17)
- * cannot burst fifty simultaneous sockets at runs-service.
+ * How many `campaignIds` CHUNKS of a campaign IDENTITY are read at once. Since runs-service v0.47.7 a
+ * family is ONE request (the largest in production has 97 members, well under the 500-id cap), so
+ * this only bounds the pathological family above the cap.
  */
 export const SPEND_BY_DAY_MEMBER_CONCURRENCY = 6;
+
+/** runs-service's own cap on `campaignIds` per request (a larger list is a 400 there). */
+export const RUNS_CAMPAIGN_IDS_PER_REQUEST = 500;
 
 /**
  * ONE campaign filter's dated spend — the single `GET /costs/timeseries` read every scope is built
@@ -47,7 +49,7 @@ export const SPEND_BY_DAY_MEMBER_CONCURRENCY = 6;
  */
 async function fetchDatedSpendForCampaign(
   brandId: string,
-  campaignId: string | undefined,
+  campaign: string | readonly string[] | undefined,
   featureScope: FeatureScope,
   headers: { orgId: string },
   pricing: Pricing,
@@ -65,7 +67,8 @@ async function fetchDatedSpendForCampaign(
     orgId: headers.orgId,
     brandId,
   });
-  if (campaignId) params.set("campaignId", campaignId);
+  if (typeof campaign === "string") params.set("campaignId", campaign);
+  else if (campaign) params.set("campaignIds", campaign.join(","));
   if (workflowDynastySlug) params.set("workflowDynastySlug", workflowDynastySlug);
 
   const response = await fetchWithRetry(`${url}/v1/stats/public/costs/timeseries?${params}`, {
@@ -188,8 +191,16 @@ export async function fetchBrandCommittedSpendByDay(
     );
   }
 
-  const perMember = await mapWithConcurrency(members, SPEND_BY_DAY_MEMBER_CONCURRENCY, (campaignId) =>
-    fetchDatedSpendForCampaign(brandId, campaignId, featureScope, headers, pricing, workflowDynastySlug),
+  // runs-service takes the family as a LIST since v0.47.7 (`campaignIds`, at most
+  // {@link RUNS_CAMPAIGN_IDS_PER_REQUEST}) and sums it server-side off its (campaign, UTC day) rollup —
+  // one request instead of one per member (features-service#1045). A family above the cap is asked in
+  // chunks and merged, which is exact for the same reason the per-member sum was.
+  const chunks: string[][] = [];
+  for (let i = 0; i < members.length; i += RUNS_CAMPAIGN_IDS_PER_REQUEST) {
+    chunks.push(members.slice(i, i + RUNS_CAMPAIGN_IDS_PER_REQUEST));
+  }
+  const perMember = await mapWithConcurrency(chunks, SPEND_BY_DAY_MEMBER_CONCURRENCY, (chunk) =>
+    fetchDatedSpendForCampaign(brandId, chunk, featureScope, headers, pricing, workflowDynastySlug),
   );
 
   const byDay = new Map<string, number>();

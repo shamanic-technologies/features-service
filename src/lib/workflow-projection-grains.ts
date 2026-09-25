@@ -15,6 +15,7 @@
  * a workflow's evidence includes its predecessor versions', identical to crossOrg.
  */
 
+import { campaignFamilyStatsParams } from "./email-gateway-family.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { buildWorkflowDynasties, aggregateAcrossDynasties } from "../routes/public.js";
 import type { WorkflowMetadata } from "./public-stats-clients.js";
@@ -22,6 +23,15 @@ import { fetchActiveAudiences } from "./human-client.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { selectCostCents, selectCostCentsString, type Pricing } from "./pricing.js";
 import { type CostBasis } from "./cost-basis.js";
+
+/**
+ * Workflow-ranking EVIDENCE (per-workflow / per-audience engagement) moves on the scale of minutes
+ * and a campaign's views refresh every few seconds, so an interactive view reuses these reads for
+ * 30s and re-reads them behind the answer (fetch-retry.ts `shareForMs`) — the freshness they had when
+ * every view refreshed every ~30s (features-service#1045). Event figures (sends, replies, spend) are
+ * NOT read here.
+ */
+const EVIDENCE_REUSE = { shareForMs: 30_000 };
 
 export interface Identity {
   orgId: string;
@@ -97,7 +107,7 @@ async function fetchBrandEmailStats(
   const baseUrl = process.env.EMAIL_GATEWAY_SERVICE_URL;
   if (!baseUrl) throw new Error("EMAIL_GATEWAY_SERVICE_URL not configured");
   const params = new URLSearchParams({ type: "broadcast", groupBy: "workflowSlug", brandId, featureSlugs: featureSlug });
-  const response = await fetchWithRetry(`${baseUrl}/orgs/stats?${params}`, { headers: emailHeaders(brandId, identity) });
+  const response = await fetchWithRetry(`${baseUrl}/orgs/stats?${params}`, { headers: emailHeaders(brandId, identity) }, EVIDENCE_REUSE);
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`email-gateway /orgs/stats (groupBy=workflowSlug, brandId) failed (${response.status}): ${text}`);
@@ -284,7 +294,7 @@ async function fetchAudienceDynastyOutcomes(
       brandId,
       featureSlugs: featureSlug,
     });
-    const response = await fetchWithRetry(`${baseUrl}/orgs/stats?${params}`, { headers: emailHeaders(brandId, identity) });
+    const response = await fetchWithRetry(`${baseUrl}/orgs/stats?${params}`, { headers: emailHeaders(brandId, identity) }, EVIDENCE_REUSE);
     if (!response.ok) {
       const text = await response.text();
       throw new Error(`email-gateway /orgs/stats (audienceId, groupBy=workflowSlug) failed (${response.status}): ${text}`);
@@ -385,9 +395,9 @@ export async function fetchAudienceGrainEvidence(
 //   cost    = runs `groupBy=workflowSlug` with `campaignId=` for a single-member identity, and a
 //             co-grouped `workflowSlug,campaignId` for a FAMILY (runs-service takes no campaign LIST),
 //             whose members are kept locally and summed per workflow slug.
-//   outcome = email-gateway `/orgs/stats?groupBy=workflowSlug&campaignId=` ONCE PER MEMBER and summed —
-//             its `groupBy` is single-dimension, and a send carries ONE campaign, so the sum counts
-//             nobody twice. The identical property that lets the offer grain do it.
+//   outcome = email-gateway `/orgs/stats?groupBy=workflowSlug&campaignIds=` — ONE request that sums the
+//             per-member answers server-side (email-gateway v0.27.2); a send carries ONE campaign, so
+//             the sum counts nobody twice. The identical property that lets the offer grain do it.
 
 /** Merge co-grouped `(workflowSlug, campaignId)` cost rows down to one row per workflow slug. */
 function mergeCostGroupsByWorkflowSlug(
@@ -452,7 +462,7 @@ async function fetchCampaignCostGroups(
   return { groups: data.groups, filteredLocally: !single };
 }
 
-/** Campaign-scoped broadcast email stats, read once per identity member and summed. */
+/** Campaign-scoped broadcast email stats for the identity's members, summed. */
 async function fetchCampaignEmailStats(
   brandId: string,
   featureSlug: string,
@@ -461,17 +471,21 @@ async function fetchCampaignEmailStats(
 ): Promise<Map<string, Record<string, number>>> {
   const baseUrl = process.env.EMAIL_GATEWAY_SERVICE_URL;
   if (!baseUrl) throw new Error("EMAIL_GATEWAY_SERVICE_URL not configured");
-  const perMember = await mapWithConcurrency(campaignIds, 6, async (campaignId) => {
+  // One `campaignIds` request for the whole family (email-gateway v0.27.2, lib/email-gateway-family.ts),
+  // chunked only above the producer's cap; the answers are summed exactly as the per-member ones were.
+  const perMember = await mapWithConcurrency(campaignFamilyStatsParams(campaignIds), 6, async (scope) => {
     const params = new URLSearchParams({
       type: "broadcast",
       groupBy: "workflowSlug",
       brandId,
       featureSlugs: featureSlug,
-      campaignId,
+      ...scope,
     });
-    const response = await fetchWithRetry(`${baseUrl}/orgs/stats?${params}`, {
-      headers: emailHeaders(brandId, identity),
-    });
+    const response = await fetchWithRetry(
+      `${baseUrl}/orgs/stats?${params}`,
+      { headers: emailHeaders(brandId, identity) },
+      EVIDENCE_REUSE,
+    );
     if (!response.ok) {
       const text = await response.text();
       throw new Error(`email-gateway /orgs/stats (campaign grain) failed (${response.status}): ${text}`);

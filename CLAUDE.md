@@ -1,5 +1,55 @@
 # Features Service — CLAUDE.md
 
+## A CAMPAIGN OVERVIEW REFRESHES ON EVERY POLL — a live lead copy, shared reads, and a past/today cost split make that cheaper than the 30s cadence it replaces
+
+A customer watching a campaign Overview wants a new send, reply or cost on screen within seconds. It
+took ~35-40s (60s worst): a 30s TTL, then a ~12s recompute that re-walked the brand's whole lead
+population and fanned out once per stored campaign row (features-service#1045). Three producer
+capabilities made the recompute cheap (lead-service `GET /orgs/leads/changes`, runs-service and
+email-gateway `campaignIds=`), and this service now refreshes those views on every poll.
+
+- **THE LIVE LEAD COPY** (`lib/lead-copy.ts`). Inside a `servedCached` compute (`withLiveLeadCopy`), the
+  lead population is a copy held in-process and patched with the change feed (snapshot once, then
+  `since=<cursor>` deltas of 20-300ms) instead of a 4-page, 5-9s walk. Row for row what the walk
+  returns; `full: true` replaces the copy. Bounded by `LEAD_COPY_MAX_ROWS` (120k, least-recently-read
+  evicted) and `LEAD_COPY_IDLE_MS` (15 min). **The fleet sweeps keep the walk on purpose** — opening a
+  feed per brand there would make lead-service keep dozens of feeds warm for nobody. The ORDER differs
+  from the walk (snapshot is id-ordered), so **an organisation's figures are now order-independent by
+  construction** (members taken by lead id, tags in funnel order) — the one place the order showed.
+  `LEAD_COPY_ENABLED=false` is the kill switch and the test suites' setting.
+- **INCREMENTAL `/orgs/status` TIMESTAMPS** (`email-status-client.ts`). A first-occurrence timestamp
+  moves only when its delivery flag flips, and the copy fingerprints each email's flags — so inside a
+  live read only emails whose fingerprint changed are asked again, and the whole set every 10 min.
+- **SHARED READS** (`fetch-retry.ts`). Inside a view compute an identical GET (same URL, same headers)
+  is asked once and reused 3s (`DOWNSTREAM_READ_SHARE_MS`, 0 = off): the five views of one refresh
+  asked 121 duplicate questions. A failed answer is never reused; a POST is shared only when its call
+  site opts in with `shareForMs` (read-only POSTs).
+- **A LIFETIME RUNS COST READ IS PAST + TODAY** (`lib/runs-cost-split.ts`). `GET /v1/stats/costs` with
+  no time bound is asked as `startedBefore=<yesterday 23:59:59.999999Z>` (reused 30s, re-read behind
+  the answer) plus `startedAfter=<today 00:00Z>` (fresh, a bounded scan). Inclusive bounds at µs
+  precision partition the ledger exactly; money is summed as exact decimals in the producer's own
+  text. A change to a run that started before today reaches the figure within 30-60s — about what it
+  had before. A group field the merge cannot combine THROWS.
+- **SLOW-MOVING INPUTS ARE REUSED 30s, RE-READ BEHIND THE ANSWER**: workflow-ranking evidence
+  (`workflow-projection-grains.ts`), the fleet `/public/stats` benchmark, the workflow catalogue
+  (both reads), a brand's campaign rows and audience list, audience member lists
+  (`interactive-memo.ts`) and the audience-forecast outcome flags. The brand's ECONOMICS stay live on
+  every refresh (the rule stated in the workflow-projection section). Event figures — sends, replies,
+  spend, the lead population, the learning counts — are never behind that reuse.
+- **THE CADENCE** (`view-cache.ts defaultTtlFor`): `revenue`, `stats`, `audience-stats` and
+  `workflow-projection-evidence` scoped to a campaign, plus `pipeline-activity` (brand-keyed, it is the
+  Overview chart), go stale after 3s (`CAMPAIGN_VIEW_SNAPSHOT_TTL_MS`) instead of 30s. Each poll
+  kicks at most one single-flight background refresh, only for a cell somebody reads; every other
+  view keeps 30s. **Do NOT lower the global TTL** — the other views did not get cheaper.
+- **FAMILY READS ARE ONE REQUEST**: runs' dated spend (`campaignIds`, ≤500) and email-gateway
+  `/orgs/stats` (`campaignIds`, ≤200, `lib/email-gateway-family.ts`) — the per-member fan-outs are gone.
+- Guards: `lead-copy.test.ts`, `incremental-timestamps.test.ts`, `shared-reads.test.ts`,
+  `runs-cost-split.test.ts`, `interactive-memo.test.ts`, `campaign-live-ttl.test.ts`, the
+  order-independence case in `revenue-engine.test.ts`, and the family-request cases in the spend-curve,
+  audience-identity, leg-grain and offer suites. Prod proof: every number of the five views compared
+  copy-vs-walk in one process on campaign `f7b1b610…` — 0 differences over ~14,400 numbers.
+  (Set 2026-09-25, features-service#1045.)
+
 ## A CAMPAIGN NAMES THE OFFER ITS FUNNELS ARE READ UNDER — and a brand-scoped read of a SEVERAL-OFFER brand DEGRADES with a named reason, it never 502s
 
 A declared sales funnel hangs off an OFFER: each one carries its own conversion rates, its own lifetime
@@ -335,8 +385,9 @@ goal, never a leg — verified on its `origin/main`).
   campaign-service mints a new row on every workflow switch and keeps the ancestors. Both legs narrow
   through the producer that froze the attribution: runs takes `campaignId=` for a one-member identity
   and a co-grouped `workflowSlug,campaignId` for a FAMILY (it takes no campaign LIST) whose members are
-  kept locally; email-gateway is read ONCE PER MEMBER and summed, since a send carries ONE campaign so
-  the sum counts nobody twice. `campaignIdentity` rides the body — the byte-same block the two sibling
+  kept locally; email-gateway is read with the family's `campaignIds` in ONE request (it sums the
+  per-member answers server-side, email-gateway v0.27.2 — per member before #1045), since a send
+  carries ONE campaign so the sum counts nobody twice. `campaignIdentity` rides the body — the byte-same block the two sibling
   reads carry — and the IDENTITY (not the campaign) keys the Gold `scope_key`, so a family lands on ONE
   cell. FAIL-SOFT: with campaign-service unreachable the campaign falls back to its own family of one,
   a real answer about a real subset, and NEVER the brand's numbers under this campaign's name.
@@ -489,8 +540,9 @@ directly above it. One screen, two numbers for one statistic.
   **$369.32** as `costEconomics.committedCostUsd`, `outcomes.committedSpentCents` AND
   `spend.totalSpentCents`, while its curves divided **$1,342.38** — the other identities' spend under
   this campaign's name — so a campaign page drew **$16.57** an outcome beneath a stat row reading
-  **$4.56** for the same outcome on the same campaign. The fix is a fan-out: one timeseries read per
-  member, capped at `SPEND_BY_DAY_MEMBER_CONCURRENCY` (6), merged day by day. Summing members is
+  **$4.56** for the same outcome on the same campaign. The fix was a fan-out, one timeseries read per
+  member; since runs-service v0.47.7 it is ONE `campaignIds=` read summed server-side off its
+  (campaign, UTC day) rollup (features-service#1045), chunked only above 500 ids. Summing members is
   EXACT rather than approximate — a cost row belongs to exactly ONE campaign, so the union
   double-counts nobody, the byte-same additivity `/audience-stats` relies on when it reads
   email-gateway once per member; what is NOT additive is people, and no count is read there. A
@@ -500,8 +552,8 @@ directly above it. One screen, two numbers for one statistic.
   per member: a partial sum would under-state the spend leg and make the curve read cheaper than the
   scope is. **A brand running ONE identity cannot tell the fix from the bug** — which is why this
   survived every suite and every probe until a multi-identity brand was read. The honest cleanup is a
-  `groupBy=campaignId` on runs' timeseries, which would make the whole fan-out one call; it does not
-  exist today, and the fan-out ships meanwhile.
+  family list on runs' timeseries, which would make the whole fan-out one call — it shipped
+  (runs-service v0.47.7, `campaignIds`) and the fan-out is gone.
 - **THE FAN-OUT RECONCILES EXACTLY AGAINST RUNS, AND THE RESIDUAL YOU CAN SEE IS THIS SERVICE'S OWN
   PER-GROUP ROUNDING — MEASURED, NOT ASSUMED.** Verified against prod on the reported identity
   (2026-09-17, 51 members, 59 cost groups): the 51 dated reads sum to **36,946.3540¢** and runs'
@@ -5275,8 +5327,8 @@ a dash beside real numbers — which reads as a broken card, not a scoping decis
     onto it. Pipeline is the engine's OWN `timeSeries` (each org steps the total up at its
     most-advanced event date). **Do NOT spread spend evenly over time** — that invents the shape of the
     thing the chart claims to show.
-  - **A CAMPAIGN-SCOPED read narrows the spend leg to that campaign's IDENTITY, member by member**
-    (`SPEND_BY_DAY_MEMBER_CONCURRENCY`) — see the `costPerOutcomeHistory` section above for the
+  - **A CAMPAIGN-SCOPED read narrows the spend leg to that campaign's IDENTITY** (one `campaignIds`
+    request since features-service#1045) — see the `costPerOutcomeHistory` section above for the
     measured prod case and the reasoning. Before 2026-09-17 it silently served the BRAND's curve, so
     the "terminal point IS `costEconomics.roiMultiple`" claim one line up was true only for a brand
     running a single identity. Brand-wide and one-member reads are byte-unchanged.
