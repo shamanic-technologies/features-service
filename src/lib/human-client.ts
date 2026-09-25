@@ -98,9 +98,9 @@ export async function fetchAudiencesByStatuses(
   const perStatus = await Promise.all(
     statuses.map(async (status) => {
       const params = new URLSearchParams({ brandId, status });
-      const response = await fetchWithRetry(`${baseUrl}/orgs/audiences?${params}`, {
-        headers: reqHeaders,
-      });
+      // The brand's audience list moves on the scale of minutes: an interactive view reuses it 30s,
+      // re-read behind the answer (fetch-retry.ts `shareForMs`, features-service#1045).
+      const response = await fetchWithRetry(`${baseUrl}/orgs/audiences?${params}`, { headers: reqHeaders }, { shareForMs: 30_000 });
       if (!response.ok) {
         const text = await response.text();
         throw new Error(`human-service audiences failed (${response.status}): ${text}`);

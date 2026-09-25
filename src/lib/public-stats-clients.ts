@@ -52,9 +52,9 @@ export async function fetchPublicWorkflows(
   status = "all",
 ): Promise<WorkflowMetadata[]> {
   const url = `${process.env.WORKFLOW_SERVICE_URL}/public/workflows?featureSlugs=${encodeURIComponent(featureSlugs)}&status=${status}`;
-  const response = await fetchWithRetry(url, {
-    headers: { "x-api-key": process.env.WORKFLOW_SERVICE_API_KEY! },
-  });
+  // Slow-moving catalogue read: an interactive view reuses it 30s, re-read behind the answer
+  // (fetch-retry.ts `shareForMs`, features-service#1045).
+  const response = await fetchWithRetry(url, { headers: { "x-api-key": process.env.WORKFLOW_SERVICE_API_KEY! } }, { shareForMs: 30_000 });
 
   if (!response.ok) {
     const body = await response.text();

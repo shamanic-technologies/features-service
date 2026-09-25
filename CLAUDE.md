@@ -31,8 +31,10 @@ email-gateway `campaignIds=`), and this service now refreshes those views on eve
   text. A change to a run that started before today reaches the figure within 30-60s — about what it
   had before. A group field the merge cannot combine THROWS.
 - **SLOW-MOVING INPUTS ARE REUSED 30s, RE-READ BEHIND THE ANSWER**: workflow-ranking evidence
-  (`workflow-projection-grains.ts`), the fleet `/public/stats` benchmark, audience member lists
-  (`interactive-memo.ts`) and the audience-forecast outcome flags. Event figures — sends, replies,
+  (`workflow-projection-grains.ts`), the fleet `/public/stats` benchmark, the workflow catalogue
+  (both reads), a brand's campaign rows and audience list, audience member lists
+  (`interactive-memo.ts`) and the audience-forecast outcome flags. The brand's ECONOMICS stay live on
+  every refresh (the rule stated in the workflow-projection section). Event figures — sends, replies,
   spend, the lead population, the learning counts — are never behind that reuse.
 - **THE CADENCE** (`view-cache.ts defaultTtlFor`): `revenue`, `stats`, `audience-stats` and
   `workflow-projection-evidence` scoped to a campaign, plus `pipeline-activity` (brand-keyed, it is the

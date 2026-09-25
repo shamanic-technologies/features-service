@@ -54,7 +54,9 @@ export async function fetchWorkflowContentModels(
   if (identity.runId) headers["x-run-id"] = identity.runId;
 
   const url = `${base}/workflows?featureSlug=${encodeURIComponent(featureSlug)}&status=all`;
-  const response = await fetchWithRetry(url, { headers });
+  // The catalogue moves on the scale of minutes: an interactive view reuses it 30s, re-read behind
+  // the answer (fetch-retry.ts `shareForMs`, features-service#1045) — still never the snapshot's age.
+  const response = await fetchWithRetry(url, { headers }, { shareForMs: 30_000 });
   if (!response.ok) {
     const body = await response.text();
     throw new Error(`[features-service] workflow-service GET /workflows failed: ${response.status} — ${body}`);
