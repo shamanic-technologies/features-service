@@ -9,7 +9,6 @@ import {
   buildCostPerOutcomeTrend,
   recentWindowCostPerOutcome,
   buildWorkflowCostPerOutcome,
-  meanFleetEconomics,
   OBJECTIVES,
   type DayOutcome,
 } from "./cross-org-cost-per-outcome.js";
@@ -98,7 +97,7 @@ describe("buildObjectiveAverages", () => {
     // CPC / CPPR are brand-invariant (min unit cost) → the value itself.
     expect(objectives.websiteVisit).toBe(1);
     expect(objectives.positiveReply).toBe(2);
-    // meetingBooked = mean of each brand's best (cheapest workflow) projection.
+    // meetingBooked = MEDIAN of each brand's best (two brands → their midpoint) (cheapest workflow) projection.
     const p1 = projectOutcomeCosts(buildLenientProjectionEconomics(FULL_ECON), { clickUsd: 1, replyUsd: 2 });
     const p2 = projectOutcomeCosts(buildLenientProjectionEconomics(e2), { clickUsd: 1, replyUsd: 2 });
     expect(objectives.meetingBooked!).toBeCloseTo((p1.costPerMeetingBookedUsd! + p2.costPerMeetingBookedUsd!) / 2, 6);
@@ -120,21 +119,6 @@ describe("buildObjectiveAverages", () => {
     expect(brandCount).toBe(1);
     expect(objectives.websiteVisit).toBe(1);
     expect(objectives.formSubmission).toBeNull();
-  });
-});
-
-describe("meanFleetEconomics", () => {
-  it("returns null on empty; means each rate across brands", () => {
-    expect(meanFleetEconomics([])).toBeNull();
-    const a: SalesEconomics = { ...FULL_ECON, replyToMeetingPct: 40 };
-    const b: SalesEconomics = { ...FULL_ECON, replyToMeetingPct: 20 };
-    const m = meanFleetEconomics([a, b])!;
-    expect(m.r2m).toBeCloseTo(0.3, 6); // (0.4 + 0.2)/2
-  });
-  it("an optional rate no brand carries stays undefined", () => {
-    const noReplyPaid: SalesEconomics = { ...FULL_ECON, replyToPaidClientPct: undefined };
-    const m = meanFleetEconomics([noReplyPaid])!;
-    expect(m.r2pc).toBeUndefined();
   });
 });
 
@@ -389,6 +373,7 @@ function brand(brandId: string, funnels: SalesFunnelKey[], spend: number, clicks
     brandId,
     funnels,
     economics: FULL_ECON,
+    stated: { byFunnel: Object.fromEntries(funnels.map((f) => [f, FULL_ECON])), overall: FULL_ECON },
     spendByDay: new Map([["2026-07-08", spend]]),
     outcomesByDay: new Map([["2026-07-08", { clicks, replies }]]),
   };

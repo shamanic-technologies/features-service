@@ -97,7 +97,7 @@ const LEG_SIGNAL_TO_LEAD_FIELD: Record<string, LeadStepField> = {
 };
 
 /** The `EnginePerson.signals` key each lead field is read from. The engine's own vocabulary. */
-const LEAD_FIELD_TO_SIGNAL: Record<LeadStepField, string> = {
+export const LEAD_FIELD_TO_SIGNAL: Record<LeadStepField, string> = {
   clicked: "clicked",
   repliedPositive: "positiveReply",
   meetingBooked: "meeting",
@@ -171,7 +171,7 @@ export const ALL_STEP_EVIDENCE: StepEvidence = {
 };
 
 /** Was this step's evidence readable at all on this request? See {@link StepEvidence}. */
-function measured(field: LeadStepField, evidence: StepEvidence): boolean {
+export function stepMeasured(field: LeadStepField, evidence: StepEvidence): boolean {
   switch (field) {
     case "clicked":
     case "repliedPositive":
@@ -338,7 +338,7 @@ export function buildFunnelSteps(
     if (!leadField) throw new UnknownFunnelLegSignalError(funnelKey, signal);
 
     const personSignal = LEAD_FIELD_TO_SIGNAL[leadField];
-    const recipientsReached = measured(leadField, evidence)
+    const recipientsReached = stepMeasured(leadField, evidence)
       ? deduped.reduce((n, p) => n + (p.signals[personSignal] ? 1 : 0), 0)
       : null;
 

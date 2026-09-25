@@ -1,5 +1,61 @@
 # Features Service — CLAUDE.md
 
+## A BRAND'S CONVERSION RATE IS THE BEST ONE WE HAVE PER ARROW — measured, else stated, else the fleet MEDIAN; and every fleet aggregate of rates is a MEDIAN of what brands STATED
+
+Conversion rates moved from the OFFER to the BRAND (owner decision, 2026-09-25): ONE rate per (brand,
+sales funnel, arrow), stated in brand-service's brand-grain store (`GET /internal/brands/:brandId/funnel-rates`,
+brand-service#538). Lifetime revenue stays per OFFER. `lib/effective-conversion-rates.ts` resolves
+every arrow, and every money figure rests on the result.
+
+- **THREE SOURCES, IN ORDER, AND NOTHING ELSE.** MEASURED on the brand's own leads once at least
+  `MIN_MEASURED_FROM_REACHED` (= `LEARNING_OUTCOMES_REQUIRED`, 10) reached the arrow's FROM step — the bar
+  is on the DENOMINATOR so an arrow truly at 0% still becomes measured; else the brand's MANUAL statement;
+  else the cross-org MEDIAN of stated rates for that (funnel, arrow). None → `effectiveRatePct: null`,
+  `unresolvedReason: "no_rate_available"`. Never a default, never a 0.
+- **THE MEASURED RATE IS CONDITIONAL ON THE FROM STEP** — leads that reached FROM and TO ÷ leads that
+  reached FROM. A lead flag does not record the path, so `count(TO) ÷ count(FROM)` credits a reply →
+  meeting arrow with meetings booked off the website and can exceed 100%. Where every TO lead also
+  passed FROM it equals the `funnelSteps` rung rate. **Do NOT "simplify" it to the count ratio.** The
+  population and the overlays are the brand revenue read's own (`measureBrandSteps`): same lead read,
+  same human statements, same legacy qualifications, same website-conversion attribution. Right-censoring
+  is ACCEPTED (owner): a young brand's measured rate reads slightly low.
+- **PRICING READS IT THROUGH ONE DOOR — `fetchDeclaredFunnelsOnEffectiveRates`.** Every pricing surface
+  (`/revenue` + its brand/offer/funnel grains via `fetchDeclaredFunnelsSoft`, the spend cost parents,
+  `/workflow-projection`, `/funnel-ranking`, `/audience-stats`) reads the declared funnels with each arrow
+  REPLACED by its effective rate (`applyEffectiveRates`: provenance `stated_<source>`, named per-offer
+  rates DROPPED, lifetime revenue the offer's). A KEY-only read (`fetchDeclaredFunnelKeys`, the audience
+  route's `?funnel=` gate) stays on the raw client — it must not pay a lead walk for a list of keys.
+  Fail-soft with a LOUD log: effective rates unresolvable → the declared rates, never a 502.
+- **ONE brand-wide lead walk per refresh**, through the Gold layer (view
+  `brand-effective-conversion-rates`, scope `(brandId, orgId)`), for EVERY catalogue funnel (the set
+  brand-service's own read serves). The fleet medians ride a single-flighted in-memory cell (15 min
+  fresh / 6 h stale) over every feature membership's brands.
+- **`GET /brands/:brandId/conversion-rates`** serves it for Brand Settings: only the funnels the brand
+  DECLARED (any offer), each arrow in brand-service's OWN step wording (its form rung reads "Form
+  filled") so the dashboard joins it to the brand-service write without translating, with the
+  effective value, `source`, the measured n (`fromReached`/`toReached`), `manualRatePct` and the median
+  beside it. The gateway forwards `/brands/*` per suffix, so it needs its own api-service line.
+- **THE FLEET AGGREGATES ARE MEDIANS OVER STATED VALUES (`lib/stated-economics.ts`) — `meanFleetEconomics`
+  is DELETED.** Owner: a mean of cross-org conversion rates was never correct. The population was the
+  brand-wide record, which is NOT NULL with server defaults: measured in brand-service prod 2026-09-25,
+  82 / 91 / 93 / 93 of 109 rows sat on the defaults of `visitToPaidClientPct` / `replyToPaidClientPct` /
+  the two form rates, so a median there IS the default. RATES now come from the brand-grain store (no
+  default behind it; its migration discarded backfilled defaults), LIFETIME REVENUE from the declared
+  offers (nullable). One data point per brand (median over its offers/funnels). Applies to
+  `/public/channel-funnel-economics` (per (channel × funnel), on THAT funnel's statements —
+  `evidence.brandCount` is now the brands that stated something on it), the cost-per-outcome trend /
+  lifetime / per-workflow / best-model reads, and `/public/stats/cost-projection` (its per-brand
+  costs are priced on stated rates and taken as a MEDIAN across brands). Prod at ship: website_purchases
+  visit→signup median 1.30% vs mean 6.21%; declared lifetime revenue median $2,500 vs mean $11,261.
+- **The funnel-bucket dataset now reads EVERY offer** of a several-offer brand (it used to omit them)
+  and skips a stale membership (403/404 on the saved economics) instead of failing the sweep.
+- `statedLegRates` gained three funnel-restricted pairs so the direct/self-serve rates derive from arrows:
+  `visitToClosePct` on `website_purchases` (= visit→signup × signup→paid, brand-service's own derivation),
+  `visitToPaidClientPct` on `sales_from_website`, `replyToPaidClientPct` on `sales_from_conversation`.
+- Guards: `lib/effective-conversion-rates.test.ts` (conditional rate vs the count ratio, 0% measured,
+  the precedence, median-not-mean, pricing moving off the declared rates while LTR stays, producer
+  labels), `lib/stated-economics.test.ts`, `routes/conversion-rates.test.ts`. (Set 2026-09-25.)
+
 ## A CAMPAIGN NAMES THE OFFER ITS FUNNELS ARE READ UNDER — and a brand-scoped read of a SEVERAL-OFFER brand DEGRADES with a named reason, it never 502s
 
 A declared sales funnel hangs off an OFFER: each one carries its own conversion rates, its own lifetime
@@ -1323,7 +1379,7 @@ seconds** in prod (2026-09-08), and the two other candidates carry no return at 
 A customer looking at a sales funnel they have NOT declared asks one question: what did our other
 clients get back per dollar through it, and what did a paying client cost them. The only per-pair figure
 that existed answers a different question. `/public/channel-funnel-economics` prices a pooled fleet unit
-cost through the MEAN declared rates and the MEAN declared lifetime revenue — a forward PROJECTION whose
+cost through the fleet's declared rates and lifetime revenue — MEDIANS of what brands STATED since 2026-09-25 (they were MEANS before, see the effective-rates section) — a forward PROJECTION whose
 every ingredient is an average, so one brand far from the rest carries it: it reads **0.7x** for the
 conversation-to-meeting funnel while the per-brand medians sit near **2x**, dragged by a single brand at
 0.02x.
@@ -3344,7 +3400,7 @@ Every internal read of per-brand configuration therefore sends **`x-org-id`**, a
 - **NEVER pick an org on brand-service's behalf.** An empty `orgId` throws before the fetch
   (`SalesFunnelsUnavailableError` / a loud `Error`) — a plausible stand-in IS the bug. A caller with no
   org has no question to ask.
-- **Cross-org fleet surfaces are not org-LESS.** `fetchGoalBucketDataset` / `fetchFleetBrandEconomics`
+- **Cross-org fleet surfaces are not org-LESS.** `fetchGoalBucketDataset` (the retired `fetchFleetBrandEconomics` resolved it the same way)
   take the claiming org from the lead-service feature membership that put the brand in the set
   (`brandToOrg`, first claimant) — a REAL claimant, never a substitute. The goal-bucket dataset stays
   **one row per brand** on purpose: its spend + outcome legs are read at BRAND grain (runs `brandId`,
@@ -5507,7 +5563,7 @@ parent (the fleet-pooled cross-workflow rate is NOT its parent). So a 0-outcome 
 workflow-projection ladder base case — NEVER a `totalSpend/totalOutcomes` pooled average summed over all
 dynasties. Do NOT re-introduce a `fleetParentClickUsd`/`fleetParentReplyUsd` floor here (removed
 v0.95.2): it conflated cross-org with cross-workflow and made a barely-spent 0-outcome workflow read the
-fleet average instead of the honest "spent $X, produced nothing". (`meanFleetEconomics`/`fleetEcon` is a
+fleet average instead of the honest "spent $X, produced nothing". (`medianFleetEconomics`/`fleetEcon` — the MEAN it replaced is retired — is a
 different thing — cross-BRAND rate mean for the 4 PROJECTED objectives — and stays.)
 
 **Consumers that pick a "best" per outcome MUST filter `observed>0`, NOT a cost threshold.** Because a
@@ -5540,8 +5596,8 @@ through `projectOutcomeCosts`.** Objective params accept every fleet spelling vi
 - **Gap #2 — `GET /public/stats/cost-per-outcome-trend?featureSlug=&objective=&days=&windowOutcomes=`**
   (NEW). Dated moving-average series: each display day anchors a trailing window that walks backward until
   it holds ~`windowOutcomes` (default 100) of the objective's base outcomes; the point = that window's
-  fleet spend ÷ outcomes (projected objectives push the window unit costs through the fleet-MEAN economics
-  `meanFleetEconomics`). `buildCostPerOutcomeTrend` is pure. **DEPENDS on runs-service dated cross-org
+  fleet spend ÷ outcomes (projected objectives push the window unit costs through the fleet-MEDIAN of STATED economics
+  `medianFleetEconomics`). `buildCostPerOutcomeTrend` is pure. **DEPENDS on runs-service dated cross-org
   spend** — the public cost aggregation had NO time dimension, so runs-service shipped a NEW
   `GET /v1/stats/public/costs/timeseries?interval=day` (dated buckets by run started_at, `buckets[].period`
   = YYYY-MM-DD; runs-service#177). features reads it via `fetchFleetSpendByDay` and joins it to
@@ -5585,7 +5641,7 @@ windows (avg-of-windows ≠ lifetime avg) — do NOT push this to the consumer.
 days.** The handler reuses `fetchFleetSpendByDay` (runs-service dated fleet spend) + `fetchPublicEmailStats(_, "day")`
 (dated outcomes), sums every day → pooled `clickUsd = totalSpentUsd/totalClicks`,
 `replyUsd = totalSpentUsd/totalPositiveReplies`, then per objective `objectiveCostPerOutcome` (websiteVisit /
-positiveReply = pooled CPC / CPPR; the rest project through `meanFleetEconomics`). So each objective's
+positiveReply = pooled CPC / CPPR; the rest project through `medianFleetEconomics`). So each objective's
 all-time number is EXACTLY where its trend line converges — coherent by construction. Null (never a false
 $0) per objective when its denominator is 0 or its rate is absent (mirrors a trend point).
 

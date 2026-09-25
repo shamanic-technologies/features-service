@@ -1,0 +1,55 @@
+/**
+ * GET /brands/:brandId/conversion-rates — the EFFECTIVE conversion rate of every arrow of a brand's
+ * sales funnels, and which source it came from (measured on the brand's own leads, stated by hand, or
+ * the cross-org median). Every money figure this service states is priced on these rates, so the
+ * dashboard's Brand Settings can show the customer exactly what their pipeline rests on.
+ *
+ * Only the funnels the brand DECLARED (any offer) are served, each arrow named in brand-service's own
+ * step wording so it joins to the brand-service write. `?funnel=` narrows to one (400 on a word naming
+ * no funnel). The resolution rules live in
+ * `lib/effective-conversion-rates.ts`; nothing is computed here.
+ */
+import { Router } from "express";
+import { apiKeyAuth, type AuthenticatedRequest } from "../middleware/auth.js";
+import { getBrandEffectiveRates } from "../lib/effective-conversion-rates.js";
+import { matchSalesFunnelKey, SALES_FUNNEL_KEYS } from "../lib/sales-funnels.js";
+import { fetchDeclaredFunnelsAllOffers } from "../lib/stated-economics.js";
+import { SalesFunnelsUnavailableError } from "../lib/sales-funnels-client.js";
+
+const router = Router();
+
+router.get("/brands/:brandId/conversion-rates", apiKeyAuth, async (req, res) => {
+  const { orgId } = req as unknown as AuthenticatedRequest;
+  const brandId = req.params.brandId;
+
+  const funnelParam = req.query.funnel;
+  let funnelKey: ReturnType<typeof matchSalesFunnelKey> = null;
+  if (funnelParam !== undefined) {
+    funnelKey = typeof funnelParam === "string" ? matchSalesFunnelKey(funnelParam) : null;
+    if (!funnelKey) {
+      return res.status(400).json({ error: `funnel must be one of: ${SALES_FUNNEL_KEYS.join(", ")}`, reason: "funnel_unrecognised" });
+    }
+  }
+
+  try {
+    const [rates, declared] = await Promise.all([
+      getBrandEffectiveRates(brandId, orgId),
+      // The funnels the brand SELLS through, across every offer. A brand that has declared none sells
+      // through nothing yet, so it is served no funnel — never the whole catalogue as if it did.
+      fetchDeclaredFunnelsAllOffers(brandId, orgId).catch((error) => {
+        if (error instanceof SalesFunnelsUnavailableError) return [];
+        throw error;
+      }),
+    ]);
+    const sold = new Set(declared.map((f) => f.funnelKey));
+    return res.json({
+      ...rates,
+      funnels: rates.funnels.filter((f) => sold.has(f.funnelKey) && (!funnelKey || f.funnelKey === funnelKey)),
+    });
+  } catch (error) {
+    console.error(`[features-service] conversion-rates error for brand ${brandId}:`, error);
+    return res.status(502).json({ error: "Failed to resolve the brand's conversion rates" });
+  }
+});
+
+export default router;
