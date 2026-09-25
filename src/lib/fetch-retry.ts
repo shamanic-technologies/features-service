@@ -1,3 +1,5 @@
+import { insideInteractiveView } from "./lead-copy.js";
+import { mergeCostAnswers, PAST_PART_REUSE_MS, splitLifetimeCostUrl } from "./runs-cost-split.js";
 /**
  * Connect-phase retry for downstream HTTP calls to Neon-backed sibling services
  * (lead-service, brand-service, runs-service, email-gateway, instantly, campaign,
@@ -73,6 +75,14 @@ const delay = (ms: number): Promise<void> =>
  */
 export interface FetchRetryOptions {
   timeoutMs?: number;
+  /**
+   * Inside an interactive view compute, reuse this read's successful answer for this long and
+   * re-read it BEHIND the answer once it ages (served up to twice this old while re-read). For a
+   * slow-moving input (an audience's members, their outcome flags) that a view refreshing every few
+   * seconds would otherwise re-ask every time. Also applies to a POST (keyed on its body) — only for
+   * a read-only POST, which is the only kind a call site may mark.
+   */
+  shareForMs?: number;
 }
 
 /**
@@ -80,7 +90,161 @@ export interface FetchRetryOptions {
  * Drop-in replacement for `fetch(input, init)` — same signature, same return.
  * A non-transient rejection (or exhausted retries) propagates unchanged.
  */
+/**
+ * SHARED READS ACROSS THE VIEWS OF ONE REFRESH (features-service#1045).
+ *
+ * A campaign Overview polls five views at once and they ask several siblings the IDENTICAL question
+ * (the brand's cost per workflow, the workflow catalogue, the fleet benchmark…) — 121 of 440
+ * downstream calls of one refresh were exact duplicates. Inside an interactive view compute, a GET
+ * with the same URL and the same headers is answered once: concurrent askers share the in-flight
+ * request, and a successful answer is reused for {@link sharedReadMs} (3s by default — shorter than
+ * one dashboard poll, so no figure is held back a refresh). A failed answer is never reused.
+ * `DOWNSTREAM_READ_SHARE_MS=0` switches it off (the test suites do).
+ */
+function sharedReadMs(): number {
+  const raw = process.env.DOWNSTREAM_READ_SHARE_MS;
+  if (raw === undefined || raw === "") return 3_000;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : 3_000;
+}
+
+interface SharedAnswer {
+  status: number;
+  statusText: string;
+  headers: [string, string][];
+  body: ArrayBuffer;
+}
+
+interface SharedEntry {
+  at: number;
+  ttl: number;
+  revalidate: boolean;
+  settled: boolean;
+  refreshing: boolean;
+  answer: Promise<SharedAnswer>;
+}
+
+const sharedReads = new Map<string, SharedEntry>();
+
+function sharedKey(input: string, init?: RequestInit, allowBody = false): string | null {
+  const method = (init?.method ?? "GET").toUpperCase();
+  if (!allowBody && (method !== "GET" || init?.body)) return null;
+  if (init?.body !== undefined && init?.body !== null && typeof init.body !== "string") return null;
+  // Only a plain header object can be keyed faithfully; anything else is never shared.
+  const raw = init?.headers;
+  if (raw !== undefined && (raw instanceof Headers || Array.isArray(raw))) return null;
+  const headers = Object.entries((raw as Record<string, string> | undefined) ?? {})
+    .map(([k, v]) => [k.toLowerCase(), v])
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  return `${method} ${input}\n${JSON.stringify(headers)}\n${(init?.body as string | undefined) ?? ""}`;
+}
+
+/** Test seam. */
+export function __resetSharedReads(): void {
+  sharedReads.clear();
+}
+
 export async function fetchWithRetry(
+  input: string,
+  init?: RequestInit,
+  opts?: FetchRetryOptions,
+): Promise<Response> {
+  const ttl = sharedReadMs();
+  const key = ttl > 0 && insideInteractiveView() ? sharedKey(input, init, opts?.shareForMs !== undefined) : null;
+  if (key === null) return fetchWithRetryOnce(input, init, opts);
+  if (opts?.shareForMs !== undefined) {
+    return toResponse(await readShared(input, init, opts, Math.max(ttl, opts.shareForMs), true));
+  }
+
+  // A lifetime runs cost aggregate is answered as past + today (lib/runs-cost-split.ts).
+  const split = splitLifetimeCostUrl(input);
+  if (split) {
+    const [past, today] = await Promise.all([
+      readShared(split.past, init, opts, Math.max(ttl, PAST_PART_REUSE_MS), true),
+      readShared(split.today, init, opts, ttl),
+    ]);
+    if (past.status >= 400) return toResponse(past);
+    if (today.status >= 400) return toResponse(today);
+    const merged = mergeCostAnswers(
+      JSON.parse(new TextDecoder().decode(past.body)),
+      JSON.parse(new TextDecoder().decode(today.body)),
+    );
+    return new Response(JSON.stringify(merged), { status: 200, headers: { "content-type": "application/json" } });
+  }
+  return toResponse(await readShared(input, init, opts, ttl));
+}
+
+async function readShared(
+  input: string,
+  init: RequestInit | undefined,
+  opts: FetchRetryOptions | undefined,
+  ttl: number,
+  // Serve a successful answer up to 2 × ttl old while ONE background read replaces it — used for
+  // the past half of a lifetime cost read, so no refresh ever waits on the expensive scan.
+  revalidate = false,
+): Promise<SharedAnswer> {
+  const key = sharedKey(input, init, true)!;
+
+  const now = Date.now();
+  for (const [k, v] of sharedReads) if (now - v.at > (v.revalidate ? 2 * v.ttl : v.ttl)) sharedReads.delete(k);
+  let entry = sharedReads.get(key);
+  if (entry && revalidate && now - entry.at > ttl && !entry.refreshing && entry.settled) {
+    entry.refreshing = true;
+    const stale = entry;
+    const next = fetchWithRetryOnce(input, init, opts).then(async (res) => ({
+      status: res.status,
+      statusText: res.statusText,
+      headers: [...res.headers.entries()],
+      body: await res.arrayBuffer(),
+    }));
+    next.then(
+      (a) => {
+        if (a.status < 400 && sharedReads.get(key) === stale) {
+          sharedReads.set(key, { at: Date.now(), ttl, revalidate, settled: true, refreshing: false, answer: Promise.resolve(a) });
+        } else {
+          stale.refreshing = false;
+        }
+      },
+      (err) => {
+        console.error(`[features-service] background re-read failed (serving the previous answer): ${(err as Error).message}`);
+        stale.refreshing = false;
+      },
+    );
+    return stale.answer;
+  }
+  if (!entry) {
+    const answer = fetchWithRetryOnce(input, init, opts).then(async (res) => ({
+      status: res.status,
+      statusText: res.statusText,
+      headers: [...res.headers.entries()],
+      body: await res.arrayBuffer(),
+    }));
+    entry = { at: now, ttl, revalidate, settled: false, refreshing: false, answer };
+    sharedReads.set(key, entry);
+    const mine = entry;
+    // A failed read is never reused: drop it so the next asker goes to the sibling itself.
+    answer.then(
+      (a) => {
+        mine.settled = true;
+        if (a.status >= 400 && sharedReads.get(key) === mine) sharedReads.delete(key);
+      },
+      () => {
+        if (sharedReads.get(key) === mine) sharedReads.delete(key);
+      },
+    );
+  }
+  return entry.answer;
+}
+
+function toResponse(a: SharedAnswer): Response {
+  return new Response(a.body.byteLength === 0 && (a.status === 204 || a.status === 304) ? null : a.body.slice(0), {
+    status: a.status,
+    statusText: a.statusText,
+    headers: a.headers,
+  });
+}
+
+async function fetchWithRetryOnce(
   input: string,
   init?: RequestInit,
   opts?: FetchRetryOptions,

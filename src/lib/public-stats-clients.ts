@@ -186,9 +186,13 @@ export async function fetchPublicEmailStats(
   if (workflowDynastySlug) params.set("workflowDynastySlug", workflowDynastySlug);
 
   const url = `${process.env.EMAIL_GATEWAY_SERVICE_URL}/public/stats?${params}`;
-  const response = await fetchWithRetry(url, {
-    headers: { "x-api-key": process.env.EMAIL_GATEWAY_SERVICE_API_KEY! },
-  });
+  // The cross-org fleet benchmark: inside an interactive view it is reused 30s, re-read behind the
+  // answer (fetch-retry.ts `shareForMs`) — nobody's send moves the fleet in a few seconds.
+  const response = await fetchWithRetry(
+    url,
+    { headers: { "x-api-key": process.env.EMAIL_GATEWAY_SERVICE_API_KEY! } },
+    { shareForMs: 30_000 },
+  );
 
   if (!response.ok) {
     const body = await response.text();

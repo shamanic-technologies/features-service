@@ -17,7 +17,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 process.env.RUNS_SERVICE_URL = "http://runs:3000";
 process.env.RUNS_SERVICE_API_KEY = "runs-key";
 
-const { fetchBrandCommittedSpendByDay, SPEND_BY_DAY_MEMBER_CONCURRENCY } = await import(
+const { fetchBrandCommittedSpendByDay, SPEND_BY_DAY_MEMBER_CONCURRENCY, RUNS_CAMPAIGN_IDS_PER_REQUEST } = await import(
   "./brand-spend-by-day-client.js"
 );
 
@@ -50,6 +50,8 @@ interface Options {
 
 interface Call {
   campaignId: string | null;
+  /** The family list, when the read named one (`campaignIds`). */
+  campaignIds: string[] | null;
   params: URLSearchParams;
 }
 
@@ -62,22 +64,23 @@ function mockRuns(options: Options = {}): { calls: Call[]; inFlightPeak: () => n
     const url = typeof input === "string" ? input : (input as URL).toString();
     const params = new URL(url).searchParams;
     const campaignId = params.get("campaignId");
-    calls.push({ campaignId, params });
+    const campaignIds = params.get("campaignIds")?.split(",") ?? null;
+    calls.push({ campaignId, campaignIds, params });
 
     inFlight += 1;
     peak = Math.max(peak, inFlight);
     await new Promise((resolve) => setTimeout(resolve, 1));
     inFlight -= 1;
 
-    if (campaignId && options.failing?.includes(campaignId)) {
+    const named = campaignIds ?? (campaignId ? [campaignId] : null);
+    // The producer fails the WHOLE read when any row of a family fails (runs-service#239).
+    if (named && named.some((id) => options.failing?.includes(id))) {
       return new Response("boom", { status: 503 });
     }
 
-    // A brand-wide read (no campaignId) is every campaign on the brand — the curve the bug served.
-    const rows = campaignId
-      ? options.silent?.includes(campaignId)
-        ? []
-        : (SPEND[campaignId] ?? [])
+    // A brand-wide read (no campaign filter) is every campaign on the brand — the curve the bug served.
+    const rows = named
+      ? named.flatMap((id) => (options.silent?.includes(id) ? [] : (SPEND[id] ?? [])))
       : Object.values(SPEND).flat();
 
     const byDay = new Map<string, number>();
@@ -124,11 +127,13 @@ describe("a campaign-scoped dated-spend read answers for the CAMPAIGN, not its b
     // only one that catches a fall-back that happens to total correctly.
     expect(brand.get("2026-09-12")).toBeCloseTo(69.32 + 973.06, 6);
 
-    // ONE request per member, and NEVER an unfiltered brand-wide one while a family was asked for.
-    const familyCalls = calls.slice(0, MEMBERS.length);
-    expect(familyCalls.map((c) => c.campaignId).sort()).toEqual([...MEMBERS].sort());
-    expect(familyCalls.some((c) => c.campaignId === null)).toBe(false);
-    expect(familyCalls.some((c) => c.campaignId === OUTSIDER)).toBe(false);
+    // ONE request for the whole family (runs-service `campaignIds`, features-service#1045), naming
+    // exactly its members — NEVER an unfiltered brand-wide one, never the outsider.
+    const familyCall = calls[0]!;
+    expect(familyCall.campaignId).toBeNull();
+    expect(familyCall.campaignIds).toEqual(MEMBERS);
+    expect(familyCall.campaignIds).not.toContain(OUTSIDER);
+    expect(calls).toHaveLength(2);
   });
 
   it("issues the ORIGINAL single request for a one-member scope and for the whole brand", async () => {
@@ -148,12 +153,12 @@ describe("a campaign-scoped dated-spend read answers for the CAMPAIGN, not its b
     expect(total(brand)).toBeCloseTo(BRAND_USD, 6);
   });
 
-  it("carries the pricing basis and the workflow dynasty onto EVERY member request", async () => {
+  it("carries the pricing basis and the workflow dynasty onto the family request", async () => {
     const { calls } = mockRuns();
 
     const net = await fetchBrandCommittedSpendByDay(BRAND, MEMBERS, CHANNEL, HEADERS, "net", "azalea");
 
-    expect(calls).toHaveLength(MEMBERS.length);
+    expect(calls).toHaveLength(1);
     for (const call of calls) {
       expect(call.params.get("workflowDynastySlug")).toBe("azalea");
       expect(call.params.get("brandId")).toBe(BRAND);
@@ -180,10 +185,18 @@ describe("a campaign-scoped dated-spend read answers for the CAMPAIGN, not its b
     );
   });
 
-  it("caps the fan-out rather than bursting one socket per member", async () => {
-    const { inFlightPeak } = mockRuns();
+  it("asks a 51-member family in ONE request, and chunks only above runs-service's 500-id cap", async () => {
+    const { calls, inFlightPeak } = mockRuns();
     const many = Array.from({ length: 51 }, (_, i) => `c-${i}`);
     await fetchBrandCommittedSpendByDay(BRAND, many, CHANNEL, HEADERS);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.campaignIds).toHaveLength(51);
+
+    calls.length = 0;
+    const huge = Array.from({ length: RUNS_CAMPAIGN_IDS_PER_REQUEST * 2 + 1 }, (_, i) => `h-${i}`);
+    await fetchBrandCommittedSpendByDay(BRAND, huge, CHANNEL, HEADERS);
+    expect(calls).toHaveLength(3);
+    expect(calls.flatMap((c) => c.campaignIds ?? [])).toEqual(huge);
     expect(inFlightPeak()).toBeLessThanOrEqual(SPEND_BY_DAY_MEMBER_CONCURRENCY);
   });
 });

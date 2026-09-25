@@ -1,3 +1,4 @@
+import { campaignFamilyStatsParams } from "./email-gateway-family.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import type { SignalSeries } from "./revenue-engine.js";
 import { mapWithConcurrency } from "./concurrency.js";
@@ -68,12 +69,18 @@ export async function fetchSequencesByDay(
   }
   const featureSlug = slugs[0];
   const family = campaignFamilySet(campaignScope);
-  if (family) {
+  const campaignId = singleCampaignId(campaignScope);
+  // A FAMILY is ONE `campaignIds` request (email-gateway v0.27.2 sums the per-member day series
+  // server-side, lib/email-gateway-family.ts) — chunked only above the producer's cap.
+  const familyScopes = family ? campaignFamilyStatsParams([...family]) : [];
+  if (familyScopes.length > 1) {
     return sumSeries(
-      await mapWithConcurrency([...family], 6, (id) => fetchSequencesByDay(brandId, id, featureSlug, headers, workflowSlugs)),
+      await mapWithConcurrency(familyScopes, 6, (scope) =>
+        fetchSequencesByDay(brandId, scope.campaignId ?? scope.campaignIds!.split(","), featureSlug, headers, workflowSlugs),
+      ),
     );
   }
-  const campaignId = singleCampaignId(campaignScope);
+  const familyScope = familyScopes[0];
 
   const url = process.env.EMAIL_GATEWAY_SERVICE_URL;
   const apiKey = process.env.EMAIL_GATEWAY_SERVICE_API_KEY;
@@ -89,7 +96,11 @@ export async function fetchSequencesByDay(
     timezone: "UTC",
   });
   // campaignId narrows the same brand-scoped day series to one campaign (mirrors the other overview reads).
-  if (campaignId) params.set("campaignId", campaignId);
+  if (familyScope) {
+    for (const [k, v] of Object.entries(familyScope)) params.set(k, v);
+  } else if (campaignId) {
+    params.set("campaignId", campaignId);
+  }
   if (workflowSlugs) params.set("workflowSlugs", workflowSlugs);
 
   const reqHeaders: Record<string, string> = {

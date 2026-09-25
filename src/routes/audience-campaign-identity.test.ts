@@ -186,7 +186,9 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
         return json({ groups: legs.map((l) => emailGroup("wf-a", l.contacted, l.clicks, l.replies)) });
       }
       const campaignId = params.get("campaignId");
-      const legs = campaignId ? LEGS.filter((l) => l.campaignId === campaignId) : LEGS;
+      // A family arrives as ONE `campaignIds` read (email-gateway v0.27.2) answering the sum.
+      const named = params.get("campaignIds")?.split(",") ?? (campaignId ? [campaignId] : null);
+      const legs = named ? LEGS.filter((l) => named.includes(l.campaignId)) : LEGS;
       const byAudience = new Map<string, Leg[]>();
       for (const l of legs) byAudience.set(l.audienceId, [...(byAudience.get(l.audienceId) ?? []), l]);
       return json({
@@ -308,18 +310,19 @@ describe("a campaign-scoped /audience-stats read answers for the campaign IDENTI
     expect(emailScoped).toHaveLength(1);
   });
 
-  it("reads a MULTI-member identity with one co-grouped cost read and one engagement read per member", async () => {
+  it("reads a MULTI-member identity with one co-grouped cost read and ONE family engagement read", async () => {
     await read(`&campaignId=${LIVE}`);
     const coGrouped = calls.filter((u) => u.includes("runs:3000/v1/stats/costs") && u.includes("groupBy=audienceId%2CcampaignId"));
     expect(coGrouped).toHaveLength(1);
     // No `campaignId` filter on a co-grouped read — runs-service takes no campaign LIST, so the
     // members are kept locally instead.
     expect(coGrouped[0]).not.toContain("campaignId=");
-    const emailScoped = calls.filter((u) => u.includes("email:3000/orgs/stats") && u.includes("campaignId="));
-    expect(emailScoped).toHaveLength(IDENTITY_MEMBERS.length);
-    for (const member of IDENTITY_MEMBERS) {
-      expect(emailScoped.some((u) => u.includes(`campaignId=${member}`))).toBe(true);
-    }
+    // ONE `campaignIds` read naming every member (email-gateway sums the per-member answers,
+    // features-service#1045) — never one read per member, never a bare `campaignId=`.
+    const emailScoped = calls.filter((u) => u.includes("email:3000/orgs/stats") && /campaignIds?=/.test(u));
+    expect(emailScoped).toHaveLength(1);
+    const named = new URL(emailScoped[0]!).searchParams.get("campaignIds")!.split(",");
+    expect([...named].sort()).toEqual([...IDENTITY_MEMBERS].sort());
   });
 
   it("leaves the BRAND-WIDE read byte-identical, and asks campaign-service nothing for it", async () => {

@@ -1,4 +1,5 @@
 import { fetchWithRetry } from "./fetch-retry.js";
+import { memoizeInteractive } from "./interactive-memo.js";
 
 /**
  * human-service is the single source of truth for customer-targeting filter-sets
@@ -156,25 +157,29 @@ export async function fetchAudienceMemberEmails(
   if (headers.campaignId) reqHeaders["x-campaign-id"] = headers.campaignId;
   if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
 
-  const emails: string[] = [];
-  const pageSize = 500;
-  let offset = 0;
-  // Bounded loop: stop when a page returns fewer than pageSize rows.
-  for (;;) {
-    const params = new URLSearchParams({ limit: String(pageSize), offset: String(offset) });
-    const response = await fetchWithRetry(`${baseUrl}/orgs/audiences/${audienceId}/members?${params}`, {
-      headers: reqHeaders,
-    });
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`human-service audience members failed (${response.status}): ${text}`);
+  // The member list moves on the scale of minutes; an interactive view refreshing every few seconds
+  // reuses it for 30s (re-read behind the answer), keyed on the org it was asked under.
+  return memoizeInteractive(`audience-members|${headers.orgId}|${audienceId}`, 30_000, async () => {
+    const emails: string[] = [];
+    const pageSize = 500;
+    let offset = 0;
+    // Bounded loop: stop when a page returns fewer than pageSize rows.
+    for (;;) {
+      const params = new URLSearchParams({ limit: String(pageSize), offset: String(offset) });
+      const response = await fetchWithRetry(`${baseUrl}/orgs/audiences/${audienceId}/members?${params}`, {
+        headers: reqHeaders,
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`human-service audience members failed (${response.status}): ${text}`);
+      }
+      const data = (await response.json()) as { members: Array<{ emailNorm: string | null }>; total: number };
+      for (const m of data.members) {
+        if (m.emailNorm) emails.push(m.emailNorm);
+      }
+      if (data.members.length < pageSize) break;
+      offset += pageSize;
     }
-    const data = (await response.json()) as { members: Array<{ emailNorm: string | null }>; total: number };
-    for (const m of data.members) {
-      if (m.emailNorm) emails.push(m.emailNorm);
-    }
-    if (data.members.length < pageSize) break;
-    offset += pageSize;
-  }
-  return emails;
+    return emails;
+  });
 }
