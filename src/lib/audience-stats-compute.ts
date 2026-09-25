@@ -32,6 +32,8 @@ import { mapWithConcurrency } from "./concurrency.js";
 import { featureSlugList, featureSlugsParam, type FeatureScope } from "./feature-scope.js";
 import { pickBestChannel } from "./offer-parents.js";
 import type { CampaignIdentityView } from "./campaign-identity.js";
+import { fetchLeadsForRevenue } from "./leads-client.js";
+import { dedupPersonsByLead } from "./revenue-engine.js";
 /**
  * One acquisition channel a multi-channel read spans, and the campaigns of it the caller resolved.
  * Structurally the offer grain's `OfferChannel` and the brand grain's `BrandChannel` — both are "a
@@ -71,6 +73,11 @@ interface AudienceOutcomeEvidence {
   opened: number;
   websiteClicks: number;
   positiveReplies: number;
+  // Distinct members whose positive reply is known ONLY from the customer's CRM (lead-service's ledger:
+  // their form submitted after our first delivered email). email-gateway's send-tag count above cannot
+  // see those, and it already holds every sender-classified one, so this is exactly what it is missing —
+  // added on top, nobody counted twice. Absent when the CRM set could not be read.
+  crmPositiveReplies?: number;
   // REAL per-audience form-submission conversions (lead-service conversion tracker), attributed by
   // intersecting the audience's member emails with the brand's matched-lead conversion emails — the
   // SAME membership join used for clicks/replies. Present ONLY for the form_submissions goal (the only
@@ -355,6 +362,32 @@ interface BrandConversionTotals {
  * tiles, so a pre-rollout / down lead-service never 502s the ranking. The client itself is fail-loud;
  * this wrapper decides the degradation. Absent ≠ 0: a fake 0 would fabricate a false cost-per-form-submission.
  */
+async function fetchCrmOnlyReplierEmailsSoft(
+  brandId: string,
+  scopeCampaignIds: string[] | undefined,
+  identity: { orgId: string; userId?: string; runId?: string; featureSlug?: string },
+): Promise<Set<string> | null> {
+  try {
+    const persons = dedupPersonsByLead(
+      await fetchLeadsForRevenue(
+        brandId,
+        scopeCampaignIds && scopeCampaignIds.length > 0 ? scopeCampaignIds : undefined,
+        identity,
+      ),
+    );
+    const emails = new Set<string>();
+    for (const p of persons) {
+      if (p.crmPositiveReplyAt && p.signals.positiveReply && p.email) emails.add(p.email.trim().toLowerCase());
+    }
+    return emails;
+  } catch (err) {
+    console.warn(
+      `[features-service] audience-stats: CRM positive replies unavailable for brand ${brandId}; per-audience positive replies read the sender's count alone: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return null;
+  }
+}
+
 function fetchFormSubmissionEmailsSoft(brandId: string): Promise<Set<string> | null> {
   return fetchConversionEmails(brandId, "form_submission").catch((err) => {
     console.warn(
@@ -864,6 +897,9 @@ async function fetchAudienceMembership(
   // intersection as signups/form submissions. null when NOT a sale-terminating goal (website-purchase /
   // combined-sales), or when lead-service didn't serve them → each audience's sales stays ABSENT.
   saleEmails: Set<string> | null = null,
+  // The brand's CRM-ONLY positive repliers' emails (lowercased) — see `fetchCrmOnlyReplierEmailsSoft`.
+  // null → the per-audience CRM reply count stays absent (the send-tag count alone, as before).
+  crmReplyEmails: Set<string> | null = null,
 ): Promise<{ perAudience: Map<string, AudienceOutcomeEvidence>; brand: BrandConversionTotals }> {
   const perAudience = await Promise.all(
     audiences.map(async (a) => ({ audienceId: a.id, emails: await fetchAudienceMemberEmails(a.id, identity) })),
@@ -884,6 +920,8 @@ async function fetchAudienceMembership(
     let formSubmissions = formSubmissionEmails ? 0 : undefined;
     let signups = signupEmails ? 0 : undefined;
     let sales = saleEmails ? 0 : undefined;
+    let crmReplies = crmReplyEmails ? 0 : undefined;
+    const seenCrmReplies = new Set<string>();
     const seenSubmitters = new Set<string>();
     const seenSignups = new Set<string>();
     const seenSales = new Set<string>();
@@ -899,6 +937,10 @@ async function fetchAudienceMembership(
         signups = (signups ?? 0) + 1;
         brandSignups.add(key);
       }
+      if (crmReplyEmails && crmReplyEmails.has(key) && !seenCrmReplies.has(key)) {
+        seenCrmReplies.add(key);
+        crmReplies = (crmReplies ?? 0) + 1;
+      }
       if (saleEmails && saleEmails.has(key) && !seenSales.has(key)) {
         seenSales.add(key);
         sales = (sales ?? 0) + 1;
@@ -908,6 +950,7 @@ async function fetchAudienceMembership(
     if (formSubmissions !== undefined) agg.formSubmissions = formSubmissions;
     if (signups !== undefined) agg.signups = signups;
     if (sales !== undefined) agg.sales = sales;
+    if (crmReplies !== undefined) agg.crmPositiveReplies = crmReplies;
     result.set(audienceId, agg);
   }
   const brand: BrandConversionTotals = {
@@ -1129,7 +1172,9 @@ export async function computeAudienceStats(
 
   const [costs, membershipResult, engagementResult, projected] = await Promise.all([
     fetchAudienceCosts(brandId, featureScope, identity, pricing, scopeCampaignIds),
-    fetchAudienceMembership(brandId, audiences, identity, formSubmissionEmails, signupEmails, saleEmails),
+    fetchCrmOnlyReplierEmailsSoft(brandId, scopeCampaignIds, identity).then((crmReplyEmails) =>
+      fetchAudienceMembership(brandId, audiences, identity, formSubmissionEmails, signupEmails, saleEmails, crmReplyEmails),
+    ),
     fetchAudienceSendTagEngagement(brandId, engagementReads, identity),
     // FLEET-BACKED brand parent for the FLOOR cascade (audience → brand): the SAME cross-org → brand
     // projected cost-per-outcome that workflow-projection.resolved produces (fleet benchmark cascaded with
@@ -1217,7 +1262,8 @@ export async function computeAudienceStats(
       contacted: eng.contacted,
       opened: eng.opened,
       websiteClicks: eng.websiteClicks,
-      positiveReplies: eng.positiveReplies,
+      // The sender's send-tag count PLUS the members whose positive reply only the customer's CRM shows.
+      positiveReplies: eng.positiveReplies + (member.crmPositiveReplies ?? 0),
     };
     rows.push({
       audienceId,

@@ -103,6 +103,8 @@ describe("fetchLeadsForRevenue — firmographic passthrough", () => {
       unsubscribed: false,
       replied: true,
       replyClassification: "negative",
+      // lead-service#601: the positive reply the customer's CRM evidences.
+      crmPositiveReplyAt: "2026-09-21T13:45:00.000Z",
       lead: {
         firstName: "Zed",
         lastName: "Zeta",
@@ -151,10 +153,12 @@ describe("fetchLeadsForRevenue — firmographic passthrough", () => {
         bounced: false,
         unsubscribed: false,
         clicked: true,
-        positiveReply: false,
+        positiveReply: true,
         negativeReply: true,
         neutralReply: false,
       },
+      signalDates: { positiveReply: "2026-09-21T13:45:00.000Z" },
+      crmPositiveReplyAt: "2026-09-21T13:45:00.000Z",
     });
     for (const [key, value] of Object.entries(person)) {
       expect(value, `person.${key}`).not.toBeNull();
@@ -295,5 +299,40 @@ describe("fetchLeadsForRevenue — one page, one parse", () => {
     const before = calls;
     await expect(fetchLeadsForRevenue("brand-1", undefined, HEADERS)).rejects.toThrow();
     expect(calls).toBeGreaterThan(before);
+  });
+});
+
+describe("fetchLeadsForRevenue — a positive reply the customer's CRM evidences (lead-service#601)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("is a positive reply, dated by the CRM, and marked CRM-ONLY when the sender classified none", async () => {
+    mockLeads([compactRow({ replied: false, replyClassification: null, crmPositiveReplyAt: "2026-09-21T13:45:00.000Z" })]);
+    const [person] = await fetchLeadsForRevenue("brand-1", undefined, HEADERS);
+    expect(person.signals.positiveReply).toBe(true);
+    expect(person.signalDates?.positiveReply).toBe("2026-09-21T13:45:00.000Z");
+    expect(person.crmPositiveReplyAt).toBe("2026-09-21T13:45:00.000Z");
+  });
+
+  it("an email-classified positive reply witnessed by the CRM too is ONE reply and NOT CRM-only", async () => {
+    mockLeads([compactRow({ replied: true, replyClassification: "positive", crmPositiveReplyAt: "2026-09-21T13:45:00.000Z" })]);
+    const [person] = await fetchLeadsForRevenue("brand-1", undefined, HEADERS);
+    expect(person.signals.positiveReply).toBe(true);
+    expect(person.crmPositiveReplyAt).toBeNull();
+  });
+
+  it("no CRM reply and no classified one is no positive reply; a producer predating the field reads the same", async () => {
+    mockLeads([compactRow({ replied: false, replyClassification: null, crmPositiveReplyAt: null }), compactRow({ leadId: "l2", replied: false, replyClassification: null })]);
+    const persons = await fetchLeadsForRevenue("brand-1", undefined, HEADERS);
+    for (const p of persons) {
+      expect(p.signals.positiveReply).toBe(false);
+      expect(p.crmPositiveReplyAt).toBeNull();
+    }
+  });
+
+  it("a bounced / unsubscribed lead converts nothing, the CRM reply included (same rule as the email one)", async () => {
+    mockLeads([compactRow({ unsubscribed: true, crmPositiveReplyAt: "2026-09-21T13:45:00.000Z" })]);
+    const [person] = await fetchLeadsForRevenue("brand-1", undefined, HEADERS);
+    expect(person.signals.positiveReply).toBe(false);
+    expect(person.crmPositiveReplyAt).toBeNull();
   });
 });

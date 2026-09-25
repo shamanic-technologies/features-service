@@ -1,5 +1,22 @@
 # Features Service — CLAUDE.md
 
+## A POSITIVE REPLY HAS TWO WITNESSES — the reply the sender classified, and the customer's CRM form submitted after our email; a person counts once
+
+lead-service records a CRM form submitted after our first delivered email as a positive reply
+(`conversion_events.event='positive_reply'`, `source='crm'`, sales-lead-service#597) and serves it on the
+compact row as `crmPositiveReplyAt` (#601). `leads-client.ts` sets `positiveReply` when EITHER witness
+says so (dead leads still convert nothing), dates a CRM-only reply by the CRM, and marks it on
+`EnginePerson.crmPositiveReplyAt` ONLY when no row of the lead carries a sender-classified reply
+(`dedupPersonsByLead` keeps that invariant). Everything built on the lead population — `/revenue` at
+every grain, `/stats`, funnelSteps, the pipeline/ROI, the measured conversion rates, cost per positive
+reply — sees it with no further code. Two surfaces count replies from email-gateway aggregates instead,
+and ADD the CRM-ONLY repliers on top (never double-counted, since email-gateway holds every classified
+one): `/audience-stats` (members ∩ CRM-only emails, fail-soft) and the learning gate's per-campaign
+count (union per campaign identity). **Not yet:** the per-(campaign × workflow) learning cells and
+`workflow-projection`'s grains still price on email-gateway replies alone. Do NOT re-derive the fact
+from CRM data here — lead-service owns whether it happened. Prod 2026-09-25 (Doc Dinners): 23 → 26,
+equal to lead-service's `positive_reply` bucket. (Set 2026-09-25.)
+
 ## ROI, %CAC AND $CAC ARE MEASURED ON THE MATURE COHORT — a campaign's leg says how long its outcomes lag, and a young campaign reads `maturing`, never a terrible ratio
 
 A cold email's replies and visits keep arriving ~two weeks after it is sent, so a campaign that spent

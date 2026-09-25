@@ -61,7 +61,11 @@ import { declaredEconomicsForFunnel, mergeFunnelEconomics } from "../lib/declare
 import { primaryDeclaredFunnel } from "../lib/brand-funnels.js";
 import { matchSalesFunnelKey, salesFunnelIndex, SALES_FUNNEL_KEYS, SALES_FUNNEL_GOAL_ECHO, type SalesFunnelKey } from "../lib/sales-funnels.js";
 import { campaignScopeIds, singleCampaignId, type CampaignFilter } from "../lib/campaign-scope.js";
-import { computeLearningPhaseSoft, type LearningPhaseResult } from "../lib/learning-phase-compute.js";
+import {
+  computeLearningPhaseSoft,
+  crmOnlyRepliersByCampaign,
+  type LearningPhaseResult,
+} from "../lib/learning-phase-compute.js";
 import type { LearningPhase } from "../lib/learning-phase.js";
 import { fetchBrandCampaignRows, fetchCampaignFamiliesSoft } from "../lib/campaign-identity-client.js";
 import {
@@ -1357,6 +1361,9 @@ export async function computeFeatureRevenue(
         })
       : new Map<string, number>(),
   );
+  // Read once, used twice: the priced population (below) and the learning gate's CRM-only positive
+  // repliers per campaign (unfiltered by workflow — a campaign's count is the whole campaign's).
+  const leadsRead = fetchLeadsForRevenue(brandId, campaignScope, headers);
   const [costResult, priced, persons, sequences, counts, conversionEmails, parents, spendByDay, plan, matureCost, maturingByDay] = await Promise.all([
     includeSpend
       ? fetchSpendBreakdown(brandId, campaignScope, featureScope, headers, new Date(), pricing, workflowScope?.producerSlugs)
@@ -1371,7 +1378,7 @@ export async function computeFeatureRevenue(
     // narrower producer question — and the workflow filter is applied to the rows it returns, on the
     // `workflowSlug` lead-service FROZE at serve time. Filtering here rather than asking for less is
     // also what lets `sharedLeadPage` serve this read and the un-narrowed one from ONE parse.
-    fetchLeadsForRevenue(brandId, campaignScope, headers).then((rows) =>
+    leadsRead.then((rows) =>
       workflowScope ? rows.filter((p) => workflowScope.includes(p.workflowSlug)) : rows,
     ),
     // Overview-only sequences day series (email-gateway groupBy=day). Pre-caught → resolves to
@@ -1537,6 +1544,8 @@ export async function computeFeatureRevenue(
           headers,
           economics,
           pricing,
+          // A failed lead read already fails this whole compute; here it only must not go unhandled.
+          crmOnlyRepliersByCampaign: leadsRead.then(crmOnlyRepliersByCampaign).catch(() => new Map()),
         })
       : Promise.resolve<LearningPhaseResult | null>(null),
   ]);
