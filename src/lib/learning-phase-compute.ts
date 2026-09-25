@@ -25,6 +25,7 @@ import { buildCampaignFamilies, type CampaignIdentityRow } from "./campaign-iden
 import { featureSlugList, featureSlugsParam, type FeatureScope } from "./feature-scope.js";
 import { fetchPublicWorkflows } from "./public-stats-clients.js";
 import type { EnginePerson } from "./revenue-engine.js";
+import { fetchCrmOnlyRepliers } from "./crm-only-repliers.js";
 import { fetchCampaignWorkflowEvidence, type Identity } from "./workflow-projection-grains.js";
 import { fetchCampaignCommittedCents, fetchCampaignDriverCounts, fetchLegDailyCeilingUsd } from "./learning-phase-clients.js";
 import {
@@ -172,14 +173,22 @@ export async function computeLearningPhase(scope: LearningPhaseScope): Promise<L
     const legKey = leader.leg?.legKey ?? null;
     const [evidence, ceiling] = await Promise.all([
       // THE COUNTDOWN'S ONLY FAN-OUT, and it is paid once per scope rather than once per campaign.
-      fetchCampaignWorkflowEvidence(
-        brandId,
-        featureSlugsParam(featureScope),
-        leader.input.campaignIds,
-        workflows,
-        identity,
-        pricing,
-      ).catch((error: Error) => {
+      // The cells price an outcome on replies too, so they count the CRM-only repliers exactly as the
+      // per-campaign count above does — one person set, never the sender's count alone.
+      fetchCrmOnlyRepliers(brandId, leader.input.campaignIds, identity)
+        .then((crmRepliers) =>
+          fetchCampaignWorkflowEvidence(
+            brandId,
+            featureSlugsParam(featureScope),
+            leader.input.campaignIds,
+            workflows,
+            identity,
+            pricing,
+            "charged",
+            crmRepliers,
+          ),
+        )
+        .catch((error: Error) => {
         console.warn(`[features-service] learning cells unavailable (no expected price): ${error.message}`);
         return null;
       }),
