@@ -131,6 +131,13 @@ export interface EnginePerson {
    * to a single workflow. Null when the producer states none.
    */
   workflowSlug?: string | null;
+  /**
+   * Set ONLY when this person's positive reply is known SOLELY from the customer's CRM (lead-service's
+   * ledger) — the sender classified no positive reply. It is what a surface counting positive replies
+   * from ANOTHER source (email-gateway's per-audience / per-campaign aggregates) adds on top without
+   * counting anybody twice. The engine never reads it. Null / absent otherwise.
+   */
+  crmPositiveReplyAt?: string | null;
   /** Which funnel signals fired for this person (e.g. { clicked: true, positiveReply: false }). */
   signals: Record<string, boolean>;
   /** ISO timestamp of each signal's first occurrence, when known (null otherwise). */
@@ -468,6 +475,9 @@ export function dedupPersonsByLead(rows: EnginePerson[]): EnginePerson[] {
       byLead.set(row.leadId, { ...row, signals: { ...row.signals }, signalDates: { ...(row.signalDates ?? {}) } });
       continue;
     }
+    // Read BEFORE the signals merge. The person's positive reply stays CRM-ONLY when no row of it
+    // carries a sender-classified one: a row with a reply but no CRM date is a classified reply.
+    existing.crmPositiveReplyAt = mergeCrmOnlyReply(existing, row);
     // Read BEFORE the signals merge: whether a row priced a signal depends on that row's own signals.
     const unpricedSignals = mergeUnpriced(existing, row);
     for (const [key, value] of Object.entries(row.signals)) {
@@ -496,6 +506,12 @@ export function dedupPersonsByLead(rows: EnginePerson[]): EnginePerson[] {
     if (existing.seniority == null && row.seniority != null) existing.seniority = row.seniority;
   }
   return [...byLead.values()];
+}
+
+function mergeCrmOnlyReply(a: EnginePerson, b: EnginePerson): string | null {
+  const crmOnlyOrSilent = (p: EnginePerson) => Boolean(p.crmPositiveReplyAt) || !p.signals.positiveReply;
+  if (!crmOnlyOrSilent(a) || !crmOnlyOrSilent(b)) return null;
+  return minDate(a.crmPositiveReplyAt ?? null, b.crmPositiveReplyAt ?? null);
 }
 
 /**
