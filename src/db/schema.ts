@@ -97,10 +97,27 @@ export const featureViewSnapshots = pgTable(
     computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
     /** Single-flight guard: set while a background revalidate is in flight (claim cross-replica). */
     refreshingAt: timestamp("refreshing_at", { withTimezone: true }),
+    /**
+     * The GET that produced this cell (path + query), replayable against the refresher so the cell can
+     * be precomputed for a sibling scope or re-verified without a customer asking (`lib/view-keeper.ts`).
+     */
+    replayUrl: text("replay_url"),
+    /** That request's identity headers, WITHOUT the api key (the keeper injects this service's own). */
+    replayHeaders: jsonb("replay_headers"),
+    /** The brand the request named (header, query or path) — what the facts fingerprint is taken for. */
+    brandId: text("brand_id"),
+    /**
+     * The brand's FACTS FINGERPRINT taken just BEFORE this body was computed (`lib/view-facts.ts`). A
+     * stale cell whose brand still reads the same fingerprint is served without a recompute.
+     */
+    factsFingerprint: text("facts_fingerprint"),
+    /** When a CUSTOMER last read this cell. Null = never (a precomputed cell). Drives retention. */
+    lastReadAt: timestamp("last_read_at", { withTimezone: true }),
   },
   (table) => [
     uniqueIndex("idx_feature_view_snapshots_view_scope").on(table.view, table.scopeKey),
     index("idx_feature_view_snapshots_family").on(table.view, table.familyKey, table.computedAt),
+    index("idx_feature_view_snapshots_brand_read").on(table.brandId, table.lastReadAt),
   ]
 );
 
