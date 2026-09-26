@@ -186,7 +186,7 @@ describe("assembleOfferOutcomes", () => {
     ["conversation", { valuePerOutcomeUsd: 100, basisFunnelKey: "sales_meetings_from_conversation" as const }],
     ["meeting_booked", { valuePerOutcomeUsd: 200, basisFunnelKey: "sales_meetings_from_conversation" as const }],
   ] as const);
-  const build = (spend: Map<OfferLegGroup, GroupSpend>) =>
+  const build = (spend: Map<OfferLegGroup, GroupSpend>, acted: Map<string, Set<string>> | null = null) =>
     assembleOfferOutcomes({
       groups: [cold, fb, ai],
       persons,
@@ -194,6 +194,7 @@ describe("assembleOfferOutcomes", () => {
       spendByGroup: spend,
       values,
       channelName: (s) => s,
+      actedLeadIdsByCampaign: acted,
     });
 
   it("counts DISTINCT leads on the outcome row — fewer than the sum of its legs", () => {
@@ -208,7 +209,29 @@ describe("assembleOfferOutcomes", () => {
     expect(reply.roiMultiple).toBeCloseTo(200 / 90);
   });
 
-  it("an INTERNAL leg states the offer's leads at its step and claims NO cost or return for them", () => {
+  it("an INTERNAL leg counts the leads its workers ANSWERED, and prices its spend on them alone", () => {
+    const spend = new Map([[cold, whole(6000)], [fb, whole(3000)], [ai, whole(1000)]]);
+    // The AI answered L1 (who then booked) and L2 (who did not). L3 and L5 booked without it.
+    const rows = build(spend, new Map([["a1", new Set(["L1", "L2"])]]));
+    const meeting = rows.find((r) => r.step.key === "meeting_booked")!;
+    expect(meeting.legs[0].countBasis).toBe("acted_leads");
+    expect(meeting.recipientsReached).toBe(1); // L1 — not the 3 meetings of the offer
+    expect(meeting.costPerOutcomeUsd).toBe(10);
+    expect(meeting.valueUsd).toBe(200);
+    expect(meeting.roiMultiple).toBeCloseTo(20);
+    expect(meeting.unmeasuredReason).toBeNull();
+    // Answered nobody who booked: a measured 0, no cost per outcome, a 0 return — never the offer's 3.
+    const none = build(spend, new Map([["a1", new Set(["L2"])]])).find((r) => r.step.key === "meeting_booked")!;
+    expect(none.recipientsReached).toBe(0);
+    expect(none.costPerOutcomeUsd).toBeNull();
+    expect(none.roiMultiple).toBe(0);
+    // A campaign the read did not answer degrades to the unattributed basis.
+    const unanswered = build(spend, new Map()).find((r) => r.step.key === "meeting_booked")!;
+    expect(unanswered.legs[0].countBasis).toBe("offer_leads_at_step");
+    expect(unanswered.unmeasuredReason).toBe("not_attributable");
+  });
+
+  it("with the follow-up record UNREADABLE, an internal leg states the offer's leads and claims NO cost or return", () => {
     const rows = build(new Map([[cold, whole(6000)], [fb, whole(3000)], [ai, whole(1000)]]));
     const meeting = rows.find((r) => r.step.key === "meeting_booked")!;
     expect(meeting.legs).toHaveLength(1);
@@ -246,6 +269,7 @@ describe("assembleOfferOutcomes", () => {
       spendByGroup: new Map([[ai, whole(1000)], [purchase, whole(500)]]),
       values,
       channelName: (s) => s,
+      actedLeadIdsByCampaign: null,
     });
     const meeting = rows.find((r) => r.step.key === "meeting_booked")!;
     expect(meeting.recipientsReached).toBeNull();

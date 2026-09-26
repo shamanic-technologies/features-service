@@ -1510,7 +1510,7 @@ const offerOutcomeLegSchema = z.object({
   channelName: z.string(),
   campaignIds: z.array(z.string()),
   legSource: z.enum(["stated", "derived_from_funnel"]).describe("`derived_from_funnel`: a pre-leg campaign placed on the ONE leg its channel performs inside the funnel it states."),
-  countBasis: z.enum(["campaign_leads", "offer_leads_at_step"]).describe("`campaign_leads`: an entry leg counts its own campaigns' leads. `offer_leads_at_step`: an internal leg's campaigns serve no lead of their own and nothing records which leads it acted on, so it states the offer's leads at its TO step; that count is not attributable to the channel, so cost per outcome and ROI read null with reason `not_attributable`."),
+  countBasis: z.enum(["campaign_leads", "acted_leads", "offer_leads_at_step"]).describe("`campaign_leads`: an entry leg counts its own campaigns' leads. `acted_leads`: an internal leg's campaigns serve no lead of their own, so it counts the leads lead-service records its workers ANSWERED that reached its TO step, and its cost per outcome and ROI divide its spend by them. `offer_leads_at_step`: the degrade when that record is unreadable — the offer's leads at the TO step, not attributable to the channel, so cost per outcome and ROI read null with reason `not_attributable`."),
   ...outcomeFiguresShape,
 });
 const offerOutcomesResponseSchema = z.object({

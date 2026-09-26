@@ -74,15 +74,17 @@ the offer's campaign rows, never stored. The same leg (nothing → Website visit
 funnels, so summing funnel rungs in a browser counts a lead twice; this read takes the union here.
 `lib/offer-outcomes.ts` owns the model, `routes/offer-outcomes.ts` the IO. ADDITIVE: no funnel read moved.
 
-- **COUNT = DISTINCT leads that reached the step, every cause counted, whole history** — the union across
-  the outcome's legs, so ≤ the sum of the legs (and of the funnel rungs it replaces). An ENTRY leg counts
-  its own campaigns' leads (`countBasis: campaign_leads`); an INTERNAL leg's campaigns serve no lead of
-  their own (measured: 0 `leads_campaigns` rows on the three `ai-meeting-booking` campaigns) and nothing
-  records which leads it acted on, so it states the offer's leads at its TO step (`offer_leads_at_step`)
-  and its cost per outcome + ROI read NULL, `not_attributable` — on the leg AND on any outcome row holding
-  such a leg. **Do NOT divide its spend by that count**: the first prod probe (offer `d5ecba00…`) read
-  **$0.30 a meeting and a 1288x ROI** on $2.07 of AI spend against 7 reply→meeting crossings the AI did not
-  necessarily book. Fixing it needs the producer to record which leads the channel acted on.
+- **COUNT = DISTINCT leads that reached the step, whole history** — the union across the outcome's legs, so
+  ≤ the sum of the legs (and of the funnel rungs it replaces). An ENTRY leg counts its own campaigns' leads
+  (`countBasis: campaign_leads`, every cause). An INTERNAL leg's campaigns (`ai-meeting-booking`) serve no
+  lead of their own, so it counts the leads lead-service records its workers ANSWERED
+  (`GET /internal/brands/:brandId/followup-actions`, `acted` only — a claim can end with nothing sent)
+  that reached its TO step (`acted_leads`), and its cost per outcome + ROI divide its spend by THEM
+  (supersedes #1069's always-`not_attributable` rule). Only when that read fails — or does not answer
+  one of the leg's campaigns — does it degrade, loudly, to the offer's leads at the step
+  (`offer_leads_at_step`) with cost + ROI NULL, `not_attributable`, on the leg AND its row. **Do NOT
+  divide its spend by that count**: the first prod probe (offer `d5ecba00…`) read **$0.30 a meeting and a
+  1288x ROI** on $2.07 of AI spend against 7 meetings the AI did not necessarily book.
 - **SPEND = COMMITTED spend of the campaigns whose leg LANDS on the step.** A campaign carries one leg, so
   it adds across an outcome's legs. `costPerOutcomeUsd` = spend ÷ count, OBSERVED — for an offer whose one
   funnel is carried by one entry leg this is the funnel rung's `costPerReachCents` (same persons, same
