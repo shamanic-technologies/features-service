@@ -6,14 +6,14 @@
  *
  * Only the funnels the brand's offers READ (their campaigns' legs; wave C1 reads no declared set) are
  * served, beside every leg of the brand on `legs`, each arrow named in brand-service's own
- * step wording so it joins to the brand-service write. `?funnel=` narrows to one (400 on a word naming
- * no funnel). The resolution rules live in
+ * step wording so it joins to the brand-service write. `?funnel=` is retired (wave C2) and refused
+ * with a 400. The resolution rules live in
  * `lib/effective-conversion-rates.ts`; nothing is computed here.
  */
 import { Router } from "express";
 import { apiKeyAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import { getBrandEffectiveRates } from "../lib/effective-conversion-rates.js";
-import { matchSalesFunnelKey, SALES_FUNNEL_KEYS } from "../lib/sales-funnels.js";
+import { FUNNEL_RETIRED_BODY, namesRetiredFunnel } from "../lib/retired-funnel-param.js";
 import { fetchPricingFunnelsAllOffers } from "../lib/reading-funnels.js";
 import { SalesFunnelsUnavailableError } from "../lib/sales-funnels-client.js";
 
@@ -23,13 +23,9 @@ router.get("/brands/:brandId/conversion-rates", apiKeyAuth, async (req, res) => 
   const { orgId } = req as unknown as AuthenticatedRequest;
   const brandId = req.params.brandId;
 
-  const funnelParam = req.query.funnel;
-  let funnelKey: ReturnType<typeof matchSalesFunnelKey> = null;
-  if (funnelParam !== undefined) {
-    funnelKey = typeof funnelParam === "string" ? matchSalesFunnelKey(funnelParam) : null;
-    if (!funnelKey) {
-      return res.status(400).json({ error: `funnel must be one of: ${SALES_FUNNEL_KEYS.join(", ")}`, reason: "funnel_unrecognised" });
-    }
+  // `?funnel=` is RETIRED (wave C2): refused, never silently ignored. See lib/retired-funnel-param.ts.
+  if (namesRetiredFunnel(req.query as Record<string, unknown>)) {
+    return res.status(400).json(FUNNEL_RETIRED_BODY);
   }
 
   try {
@@ -46,7 +42,7 @@ router.get("/brands/:brandId/conversion-rates", apiKeyAuth, async (req, res) => 
     const sold = new Set(declared.map((f) => f.funnelKey));
     return res.json({
       ...rates,
-      funnels: rates.funnels.filter((f) => sold.has(f.funnelKey) && (!funnelKey || f.funnelKey === funnelKey)),
+      funnels: rates.funnels.filter((f) => sold.has(f.funnelKey)),
     });
   } catch (error) {
     console.error(`[features-service] conversion-rates error for brand ${brandId}:`, error);

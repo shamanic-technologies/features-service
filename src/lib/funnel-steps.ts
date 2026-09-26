@@ -59,7 +59,7 @@
  * The block itself is null when there is no ONE funnel to walk: no funnel is wired for the channel
  * (the leads were never read), or the read is priced on several declared funnels at once — a brand
  * selling several funnels has several chains, and picking one would state a funnel the caller never asked
- * about. A read that names its funnel (`?funnel=`, or the per-funnel grain) always gets its chain,
+ * about. A read priced on ONE funnel (a scope reading one, or a public per-funnel read) always gets its chain,
  * priced or not: "we could not price this" and "this reached nobody" are different statements, and
  * the volume half is measurable either way.
  */

@@ -7,7 +7,7 @@ import {
   scopePredicate,
 } from "./roi-maturity.js";
 import { OUTCOME_LAG_DAYS } from "./learning-phase.js";
-import { buildCombinedCostEconomics, buildCostEconomics, matureBasisOf } from "./cost-economics.js";
+import { buildCostEconomics, matureBasisOf } from "./cost-economics.js";
 import type { EnginePerson } from "./revenue-engine.js";
 
 const NOW = new Date("2026-10-01T12:34:56.000Z");
@@ -125,25 +125,6 @@ describe("the ratios ride the mature cohort; the displays keep the whole history
     expect(ce.roiMultiple).toBeCloseTo(7, 9);
     expect(ce.maturityDays).toBe(0);
     expect(ce.unmeasuredReason).toBeNull();
-  });
-
-  it("the combined (charged + customer) return rides the same mature cohort, with every customer cost in it", () => {
-    const charged = buildCostEconomics({
-      committedCostInUsdCents: 10_000, actualCostInUsdCents: 10_000, totalPipelineUsd: 700, lifetimeRevenueUsd: 100,
-      maturity: { days: 14, committedCostInUsdCents: 6_000, totalPipelineUsd: 400 },
-    });
-    const combined = buildCombinedCostEconomics({ charged, customerDeclaredCostCents: 2_000, totalPipelineUsd: 700, lifetimeRevenueUsd: 100 });
-    expect(combined.committedCostUsd).toBe(120);
-    expect(combined.roiMultiple).toBeCloseTo(400 / 80, 9);
-    expect(combined.maturityDays).toBe(14);
-
-    const youngCharged = buildCostEconomics({
-      committedCostInUsdCents: 4_000, actualCostInUsdCents: 4_000, totalPipelineUsd: 50,
-      maturity: { days: 14, committedCostInUsdCents: 0, totalPipelineUsd: 0 },
-    });
-    const youngCombined = buildCombinedCostEconomics({ charged: youngCharged, customerDeclaredCostCents: 2_000, totalPipelineUsd: 50 });
-    expect(youngCombined.roiMultiple).toBeNull();
-    expect(youngCombined.unmeasuredReason).toBe("maturing");
   });
 
   it("a block that did not come from the builder has no mature basis, and says so loudly", () => {

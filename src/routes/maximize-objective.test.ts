@@ -72,7 +72,6 @@ const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-
 const FEATURE = { id: "feat-1", slug: "x", name: "X", description: "x", status: "active", createdAt: new Date(), updatedAt: new Date() };
 const BRAND = "75d7e3e8-6926-4f85-a557-976895400666";
 const PROJECTION = "/features/sales-cold-email-outreach/workflow-projection";
-const RANKING = "/features/sales-cold-email-outreach/funnel-ranking";
 /** The leg BOTH meeting funnels share — the case a campaign is now identified by. */
 const SHARED_LEG = "meeting_booked_to_meeting_attended";
 
@@ -158,7 +157,6 @@ function json(body: unknown): Response {
 }
 
 const project = (query: string) => request(app).get(`${PROJECTION}?brandId=${BRAND}&${query}`).set(AUTH);
-const rank = (query = "") => request(app).get(`${RANKING}?brandId=${BRAND}${query ? `&${query}` : ""}`).set(AUTH);
 const brandRow = (body: any, slug: string) =>
   body.rows.find((r: any) => r.audienceId === null && r.workflow.workflowDynastySlug === slug);
 
@@ -190,11 +188,7 @@ describe("a caller says WHAT to maximise: a RETURN, or a CONVERSION RATE", () =>
     mockFetch();
     expect((await project("goal=meetingBooked")).body.maximize).toBe("return");
     mockFetch();
-    expect((await project("funnel=sales_meetings_from_website&maximize=conversion-rate")).body.maximize).toBe("conversionRate");
-    mockFetch();
-    expect((await rank()).body.maximize).toBe("return");
-    mockFetch();
-    expect((await rank("maximize=conversionRate")).body.maximize).toBe("conversionRate");
+    expect((await project("leg=start_to_website_visit&maximize=conversion-rate")).body.maximize).toBe("conversionRate");
   });
 
   it("stating NOTHING is byte-identical to stating `return` — the behaviour that already existed", async () => {
@@ -203,26 +197,20 @@ describe("a caller says WHAT to maximise: a RETURN, or a CONVERSION RATE", () =>
     mockFetch();
     const explicit = await project(`leg=${SHARED_LEG}&maximize=return`);
     expect(silent.body).toEqual(explicit.body);
-
-    mockFetch();
-    const silentRank = await rank();
-    mockFetch();
-    const explicitRank = await rank("maximize=return");
-    expect(silentRank.body).toEqual(explicitRank.body);
   });
 
   it("a row carries BOTH figures under EITHER objective, so the two answers are readable side by side", async () => {
     mockFetch();
-    const res = await project("funnel=sales_meetings_from_website");
+    const res = await project("leg=start_to_website_visit");
 
-    // dyn-volume: 100 clicks × 50% = 50 meetings off 10,000 people reached → 0.5%, at $2 each.
+    // dyn-volume: 100 clicks off 10,000 people reached → 1%, at $1 each.
     const volume = brandRow(res.body, "dyn-volume");
-    expect(volume.resolved.costPerOutcomeUsd).toBeCloseTo(2, 6);
-    expect(volume.resolved.conversionRatePct).toBeCloseTo(0.5, 6);
-    // dyn-precise: 20 clicks × 50% = 10 meetings off 200 people reached → 5%, at $10 each.
+    expect(volume.resolved.costPerOutcomeUsd).toBeCloseTo(1, 6);
+    expect(volume.resolved.conversionRatePct).toBeCloseTo(1, 6);
+    // dyn-precise: 20 clicks off 200 people reached → 10%, at $5 each.
     const precise = brandRow(res.body, "dyn-precise");
-    expect(precise.resolved.costPerOutcomeUsd).toBeCloseTo(10, 6);
-    expect(precise.resolved.conversionRatePct).toBeCloseTo(5, 6);
+    expect(precise.resolved.costPerOutcomeUsd).toBeCloseTo(5, 6);
+    expect(precise.resolved.conversionRatePct).toBeCloseTo(10, 6);
     // Cheaper AND worse at converting — the inversion the objective exists to let a caller choose on.
     expect(volume.resolved.costPerOutcomeUsd).toBeLessThan(precise.resolved.costPerOutcomeUsd);
     expect(volume.resolved.conversionRatePct).toBeLessThan(precise.resolved.conversionRatePct);
@@ -250,31 +238,6 @@ describe("a caller says WHAT to maximise: a RETURN, or a CONVERSION RATE", () =>
     expect(byReturn.body.funnelKey).toBe(byReturn.body.leg.basisFunnelKey);
   });
 
-  it("`/funnel-ranking` re-orders the SAME declared funnels under the two objectives", async () => {
-    mockFetch(undefined, FUNNEL_STATS);
-    const byReturn = await rank();
-    mockFetch(undefined, FUNNEL_STATS);
-    const byRate = await rank("maximize=conversionRate");
-
-    expect(byReturn.body.ranking.map((r: any) => r.funnelKey)).toEqual([
-      "sales_meetings_from_website",
-      "sales_meetings_from_conversation",
-    ]);
-    expect(byRate.body.ranking.map((r: any) => r.funnelKey)).toEqual([
-      "sales_meetings_from_conversation",
-      "sales_meetings_from_website",
-    ]);
-    expect(byReturn.body.recommendation.funnelKey).toBe("sales_meetings_from_website");
-    expect(byRate.body.recommendation.funnelKey).toBe("sales_meetings_from_conversation");
-    // Each funnel states both figures under both objectives — the ordering moved, the evidence did not.
-    for (const body of [byReturn.body, byRate.body]) {
-      for (const row of body.ranking) {
-        expect(typeof row.returnPerDollar).toBe("number");
-        expect(typeof row.conversionRatePct).toBe("number");
-      }
-    }
-  });
-
   it("VOLUME still governs: the evidence block is stated under both objectives, on the basis it used", async () => {
     mockFetch(undefined, FUNNEL_STATS);
     const byRate = await project(`leg=${SHARED_LEG}&maximize=conversionRate`);
@@ -289,15 +252,11 @@ describe("a caller says WHAT to maximise: a RETURN, or a CONVERSION RATE", () =>
     expect(byReturn.body.leg.evidence.resolvedOutcomeCount).toBeCloseTo(1000, 6); // 2,000 clicks × 50%
   });
 
-  it("an UNRECOGNISED word FAILS LOUD on both surfaces rather than quietly ranking on return", async () => {
+  it("an UNRECOGNISED word FAILS LOUD rather than quietly ranking on return", async () => {
     mockFetch();
     const bad = await project(`leg=${SHARED_LEG}&maximize=whatever`);
     expect(bad.status).toBe(400);
     expect(bad.body.reason).toBe("maximize_unrecognised");
-    mockFetch();
-    const badRank = await rank("maximize=cheapest");
-    expect(badRank.status).toBe(400);
-    expect(badRank.body.reason).toBe("maximize_unrecognised");
   });
 
   it("the British spelling of the KEY is accepted — the value is what carries the meaning", async () => {

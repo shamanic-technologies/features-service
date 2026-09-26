@@ -41,8 +41,8 @@
  * Both fall out of the engine pass the counts already cost, with no extra read of anything:
  *
  *   - `returnPerDollar` is `costEconomics.roiMultiple` for the funnel-narrowed read — expected
- *     pipeline over COMMITTED spend, the byte-same statistic `GET /features/:slug/revenue?funnel=`
- *     states on the client's OWN dashboard. So a showcase figure and the customer's own screen can
+ *     pipeline over COMMITTED spend, the byte-same statistic the client's own revenue
+ *     read states when priced on that funnel. So a showcase figure and the customer's own screen can
  *     never disagree, and it is emphatically NOT the forward `returnPerDollar` projection the
  *     channel-funnel economics publishes (an order apart in production — see `fleet-funnel-return.ts`).
  *   - `costPerReachUsd` is that rung's COMMITTED spend over the people who reached it — OBSERVED

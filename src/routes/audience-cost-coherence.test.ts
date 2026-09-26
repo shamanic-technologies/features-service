@@ -197,7 +197,7 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
     if (url.includes("brand:3000/internal/brands/brand-1/offer-economics")) {
       return json({ legRates: [], offers: [{ offerId: "offer-1", name: "Offer", lifetimeRevenueUsd: null, lifetimeRevenueStatedAt: null }] });
     }
-    // The funnels this brand declared — both meeting funnels, so a `?funnel=` request is answerable.
+    // The funnels this brand declared (pre-C1 read; kept for any path still asking).
     if (url.includes("brand:3000/internal/brands/brand-1/sales-funnels")) {
       return json({
         funnels: ["sales_meetings_from_conversation", "sales_meetings_from_website", "website_purchases", "form_magnet"].map(
@@ -254,14 +254,10 @@ async function bothSurfaces(
   goal: string,
   statsMetric: "cpcCents" | "cpprCents" | "cpsaleCents" | "cpfsCents",
   projectionField: "costPerOutcomeUsd" | "costPerClickUsd",
-  // The SALES FUNNEL to price on. Threaded onto BOTH URLs, because the invariant this suite guards is
-  // that the two surfaces answer with one number — which only holds if they are asked one question.
-  funnel?: string,
 ) {
-  const q = funnel ? `&funnel=${funnel}` : "";
-  const stats = await request(app).get(`/features/${FEATURE.slug}/audience-stats?brandId=brand-1&goal=${goal}${q}`).set(AUTH);
+  const stats = await request(app).get(`/features/${FEATURE.slug}/audience-stats?brandId=brand-1&goal=${goal}`).set(AUTH);
   expect(stats.status).toBe(200);
-  const projection = await request(app).get(`/features/${FEATURE.slug}/workflow-projection?brandId=brand-1&goal=${goal}${q}`).set(AUTH);
+  const projection = await request(app).get(`/features/${FEATURE.slug}/workflow-projection?brandId=brand-1&goal=${goal}`).set(AUTH);
   expect(projection.status).toBe(200);
 
   const row = stats.body.audiences.find((r: any) => r.audienceId === "audience-a");
@@ -392,26 +388,6 @@ describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection"
   // differently. What must NOT differ is the two surfaces' answer for one funnel: the per-audience floor
   // parent has to move with the funnel, or the Audiences table and the Strategy page split apart again
   // one layer down — the exact incoherence this suite exists to prevent, in the new vocabulary.
-  it("each MEETING FUNNEL prices the audience on its own channel, and both surfaces agree per funnel", async () => {
-    fleet = FLEET_GOAL_BEATS_CLICKS;
-
-    // Bought with a positive reply: wf-cheap has none (its reply cost floors to its $200 spend), so the
-    // conversation funnel is won by wf-closer and the audience's click column reads wf-closer's $4.
-    const conversation = await bothSurfaces("meetingBooked", "cpcCents", "costPerClickUsd", "sales_meetings_from_conversation");
-    expect(conversation.statsUsd).toBe(conversation.projectionUsd);
-    expect(conversation.statsUsd).toBe(4);
-
-    // Bought with a click onto the site: wf-cheap's $2 clicks win it outright.
-    const website = await bothSurfaces("meetingBooked", "cpcCents", "costPerClickUsd", "sales_meetings_from_website");
-    expect(website.statsUsd).toBe(website.projectionUsd);
-    expect(website.statsUsd).toBe(2);
-
-    // The two funnels genuinely disagree — a goal-keyed request cannot produce this split at all, which
-    // is why a brand running only the reply funnel was benchmarked against clicks it never buys.
-    expect(conversation.statsUsd).not.toBe(website.statsUsd);
-  });
-
-
   it("the BRAND grain floor is part of the pick — a workflow this brand already outspent cannot win on its fleet rate", async () => {
     fleet = FLEET_BRAND_GRAIN_FLIPS;
     audienceSpendSlug = "wf-a";
@@ -495,8 +471,8 @@ describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection"
   //
   // Cost per outcome ranks audiences by CHEAPNESS, which answers the wrong question: a cheap audience
   // that converts to nothing outranks an expensive one that pays. `projection.returnPerDollar` answers
-  // "where should the money go", and it is the SAME statistic `/funnel-ranking` ranks a brand's declared
-  // funnels on — so one brand cannot read two different returns on two pages. Both surfaces are driven
+  // "where should the money go", and it is the SAME returnPerDollar statistic every surface here uses —
+  // so one brand cannot read two different returns on two pages. Both surfaces are driven
   // from the ONE fixture above, so the agreement is a property of the computes.
   describe("per-audience RETURN per dollar", () => {
     it("is lifetimeRevenueUsd / costPerPaidClientUsd — the SAME definition, and the same LTR, the brand is ranked on", async () => {

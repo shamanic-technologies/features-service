@@ -98,7 +98,7 @@ export interface AudienceProjectedCostsUsd {
   /**
    * What it costs THIS audience to win one PAYING CLIENT — its own unit costs pushed through the
    * queried goal's funnel by the SAME `paidClientCostForGoal` `/workflow-projection` and
-   * `/funnel-ranking` route through. The denominator of the audience's return per dollar. null when
+   * the in-process funnel ranking route through. The denominator of the audience's return per dollar. null when
    * the funnel has no path to a paying client on the brand's declared rates (never 0, which would
    * read as an infinite return).
    */
@@ -110,7 +110,7 @@ export interface AudienceProjectedCostsUsd {
  * PARENT the corresponding column floors against at 0 outcomes. null when the driving input is absent.
  */
 /**
- * Why a projection carries no defined RETURN. Same vocabulary `/funnel-ranking` reports per declared
+ * Why a projection carries no defined RETURN. Same vocabulary the in-process funnel ranking reports per
  * funnel (`UnrankableReason`), deliberately spelled the same so a consumer reads one set of words for
  * "this funnel could not be priced" wherever it meets it. Never a substituted number — the reason IS the
  * answer.
@@ -169,8 +169,8 @@ export interface BrandProjectedParentsUsd {
  * RETURN PER DOLLAR — how many dollars of lifetime revenue one dollar of spend buys, for whatever
  * grain the two inputs describe.
  *
- * This is the ONE definition of "return" in this service, shared verbatim with `/funnel-ranking`
- * (which ranks a brand's declared funnels on it) so an audience's return and the brand's return are
+ * This is the ONE definition of "return" in this service, shared verbatim with the funnel ranking
+ * (`lib/funnel-ranking.ts`, which picks a leg's basis funnel on it) so an audience's return and the brand's return are
  * the same statistic at two grains — a brand cannot read two different returns on two pages.
  *
  * PROJECTED, not realized: it prices what the grain's OWN observed unit costs imply under the
@@ -299,7 +299,7 @@ function grainUnitCosts(ev: WorkflowGrainEvidence, parent: DynastyUnitCosts | nu
  *
  * GOAL- AND FUNNEL-INDEPENDENT by construction — nothing here is priced. That is what lets a caller that
  * must price the SAME brand through SEVERAL declared funnels (the funnel-less `/audience-stats` read) pay
- * for the fan-out ONCE and then run N pure projections, exactly as `/funnel-ranking` reuses one
+ * for the fan-out ONCE and then run N pure projections, exactly as the funnel ranking reuses one
  * `WorkflowProjectionEvidence` for every funnel it ranks. Fetching per funnel instead would multiply the
  * per-audience email fan-out by the number of funnels the brand declared.
  */
@@ -507,7 +507,7 @@ export function projectBrandParents(
       cpsaleUsd,
       cpsmUsd: p.costPerMeetingBookedUsd,
       // The grain's own path to a paying client, routed by the SAME function `/workflow-projection`
-      // and `/funnel-ranking` use — masked to the funnel's channel exactly like every column above.
+      // and the funnel ranking use — masked to the funnel's channel exactly like every column above.
       costPerPaidClientUsd: paidClientCostForGoal(
         econ!,
         { clickUsd: cpcUsd, replyUsd: cpprUsd },

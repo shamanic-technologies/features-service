@@ -71,12 +71,13 @@ describe("GET /brands/:brandId/conversion-rates", () => {
     expect(res.body.funnels[0].arrows[0]).toMatchObject({ effectiveRatePct: 40, source: "measured", manualRatePct: 70, median: { ratePct: 22 } });
   });
 
-  it("?funnel= narrows to one funnel, and a word naming none is a 400", async () => {
-    const one = await request(app).get("/brands/brand-1/conversion-rates?funnel=form_magnet").set(AUTH);
-    expect(one.body.funnels.map((f: { funnelKey: string }) => f.funnelKey)).toEqual(["form_magnet"]);
-    const bad = await request(app).get("/brands/brand-1/conversion-rates?funnel=nope").set(AUTH);
-    expect(bad.status).toBe(400);
-    expect(bad.body.reason).toBe("funnel_unrecognised");
+  it("?funnel= is retired: refused with funnel_retired whatever it names, before any read", async () => {
+    for (const word of ["form_magnet", "nope"]) {
+      const res = await request(app).get(`/brands/brand-1/conversion-rates?funnel=${word}`).set(AUTH);
+      expect(res.status).toBe(400);
+      expect(res.body.reason).toBe("funnel_retired");
+    }
+    expect(vi.mocked(getBrandEffectiveRates)).not.toHaveBeenCalled();
   });
 
   it("a producer failure is a 502, never an empty set of rates", async () => {

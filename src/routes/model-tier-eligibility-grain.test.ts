@@ -399,8 +399,8 @@ describe("the verdict rides `?leg=` only", () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it("carries NO verdict on a funnel- or goal-keyed read, and spends NO read on one", async () => {
-    for (const query of ["funnel=sales_meetings_from_conversation", "goal=meetingBooked"]) {
+  it("carries NO verdict on a goal-keyed read, and spends NO read on one", async () => {
+    for (const query of ["goal=meetingBooked"]) {
       mockFetch();
       const res = await get(query);
       expect(res.status).toBe(200);
@@ -523,9 +523,9 @@ describe("an EXCLUDED workflow is never put forward", () => {
     expect(res.body.rows.every((r: any) => r.rank > 0 && r.scopeRank > 0)).toBe(true);
   });
 
-  it("changes nothing on a funnel-keyed read, which carries no verdict", async () => {
+  it("changes nothing on a goal-keyed read, which carries no verdict", async () => {
     mockFetch(CHEAP_SODIUM);
-    const res = await get("funnel=sales_meetings_from_conversation");
+    const res = await get("goal=meetingBooked");
     expect(res.status).toBe(200);
     expect(res.body.recommendedWorkflowDynastySlug).toBe("sodium");
     expect(res.body.recommendationWithheldReason).toBeUndefined();

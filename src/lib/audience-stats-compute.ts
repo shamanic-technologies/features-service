@@ -1,5 +1,6 @@
 import type { Request } from "express";
 import { fetchPricingFunnels } from "./reading-funnels.js";
+import { FUNNEL_RETIRED_BODY, namesRetiredFunnel } from "./retired-funnel-param.js";
 import { campaignFamilyStatsParams } from "./email-gateway-family.js";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
@@ -19,13 +20,13 @@ import {
 } from "./audience-stats-brand-projection.js";
 import { fetchConversionEmails } from "./conversion-emails-client.js";
 import { isGoal, matchSingleStepGoal, matchFormSubmissionGoal, matchWhatsappGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal, type Goal } from "./goals.js";
-import { matchSalesFunnelKey, salesFunnelIndex, SALES_FUNNEL_KEYS, SALES_FUNNEL_GOAL_ECHO, type SalesFunnelKey } from "./sales-funnels.js";
+import { salesFunnelIndex, SALES_FUNNEL_GOAL_ECHO, type SalesFunnelKey } from "./sales-funnels.js";
 import {
   describeSeveralOffers,
   SeveralOffersDeclaredError,
   type DeclaredFunnelsUnresolved,
 } from "./sales-funnels-client.js";
-import { declaredEconomicsForFunnel, declaredFunnelsToRank } from "./declared-funnels.js";
+import { declaredFunnelsToRank } from "./declared-funnels.js";
 import { selectCostCents, type Pricing } from "./pricing.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { featureSlugList, featureSlugsParam, type FeatureScope } from "./feature-scope.js";
@@ -150,7 +151,7 @@ export interface AudienceStatsRow {
    * costs (its send-tag spend against its send-tag clicks/replies, on the workflow the Strategy page
    * renders it under) through the brand's OWN declared economics — the same economics behind the
    * brand-level figure, resolved once for the whole payload. `returnPerDollar = lifetimeRevenueUsd /
-   * costPerPaidClientUsd`, the identical definition `/funnel-ranking` ranks a brand's declared
+   * costPerPaidClientUsd`, the identical definition the funnel ranking ranks a brand's
    * funnels on, so an audience's return and the brand's return are one statistic at two grains.
    *
    * COHERENT WITH THE BRAND BY CONSTRUCTION: an audience with no MEASURED grain of its own carries no
@@ -198,9 +199,7 @@ export interface AudienceStatsRow {
  * At brand level there is no goal: a brand runs several sales funnels at once, and the only thing that
  * matters is what came back per dollar. So a brand-level return is combined over the brand's DECLARED
  * funnels as the BEST-RETURNING one — the same combination doctrine as the combined-`sales` cost (a sale
- * is won through the funnel that converts it best, never a blend), and the reason it reconciles with
- * `/funnel-ranking` by construction: its rank-1 funnel IS this maximum, on the identical
- * `returnPerDollar` definition and the identical evidence.
+ * is won through the funnel that converts it best, never a blend).
  */
 export interface AudienceStatsFunnelCoverage {
   /** The combination rule, named so it can never be guessed at from the numbers. */
@@ -272,8 +271,7 @@ export interface AudienceStatsEnvelope {
    */
   brandProjection: {
     /**
-     * The declared funnel the BRAND's own return was priced through on the brand-level read — the
-     * head of `/funnel-ranking`'s ranking for the same brand at the same moment. `null` on a
+     * The declared funnel the BRAND's own return was priced through on the brand-level read (its best-returning one). `null` on a
      * single-funnel read and when nothing could be priced.
      */
     basisFunnelKey?: SalesFunnelKey | null;
@@ -979,34 +977,22 @@ async function fetchAudienceMembership(
  * independently correct for its other caller (customer-health), and the route cannot drift from it.
  */
 export function validateAudienceStatsQuery(req: Request):
-  | { ok: true; brandId: string; goal: Goal | null; funnelKey?: SalesFunnelKey; statuses: AudienceStatus[]; limit?: number }
-  | { ok: false; status: number; error: string } {
+  | { ok: true; brandId: string; goal: Goal | null; statuses: AudienceStatus[]; limit?: number }
+  | { ok: false; status: number; error: string; reason?: string } {
   const brandId = req.query.brandId as string | undefined;
   const goalParam = req.query.goal as string | undefined;
-  const funnelParam = req.query.funnel as string | undefined;
   const limitParam = req.query.limit as string | undefined;
   const statusesParam = req.query.statuses as string | undefined;
 
   if (!brandId) {
     return { ok: false, status: 400, error: "brandId query parameter is required" };
   }
-  // `?funnel=` names the SALES FUNNEL to price on — the vocabulary a brand actually declares, and the
-  // only one that separates a meeting bought with a reply from one bought with a click. It is the
-  // CANONICAL parameter: a caller should send it and nothing else. Unknown value → 400; never a silent
-  // fall back to the goal, which would answer a finer question with a coarser number and look right.
-  let funnelKey: SalesFunnelKey | undefined;
-  if (funnelParam != null && funnelParam !== "") {
-    const matched = matchSalesFunnelKey(funnelParam);
-    if (!matched) {
-      return { ok: false, status: 400, error: `funnel query parameter must be one of: ${SALES_FUNNEL_KEYS.join(", ")}` };
-    }
-    funnelKey = matched;
+  // `?funnel=` is RETIRED (wave C2): refused, never silently ignored. See lib/retired-funnel-param.ts.
+  if (namesRetiredFunnel(req.query as Record<string, unknown>)) {
+    return { ok: false, status: 400, ...FUNNEL_RETIRED_BODY };
   }
 
-  // `?goal=` is DEPRECATED and kept only until the dashboard migrates to `?funnel=`. It is accepted in
-  // every fleet spelling (snake/kebab/display → canonical camel), and a named funnel WINS over it.
-  // When only a funnel is named the goal is DERIVED from it (`SALES_FUNNEL_GOAL_ECHO`) — an echo the
-  // internal column routing still speaks, never a goal→funnel translation in the other direction.
+  // `?goal=` is accepted in every fleet spelling (snake/kebab/display → canonical camel).
   const normalizedGoal = goalParam
     ? (matchSingleStepGoal(goalParam) ??
        matchFormSubmissionGoal(goalParam) ??
@@ -1014,19 +1000,17 @@ export function validateAudienceStatsQuery(req: Request):
        matchCombinedSalesGoal(goalParam) ??
        matchWebsitePurchaseGoal(goalParam) ??
        goalParam)
-    : funnelKey
-      ? SALES_FUNNEL_GOAL_ECHO[funnelKey]
-      : undefined;
+    : undefined;
   // NAMING NEITHER is the BRAND-LEVEL read, and it is a first-class request, not a missing parameter:
   // at brand level there is no goal, because the brand sells through every funnel it declared at once.
   // The money is then combined over the brand's DECLARED set (read from brand-service, never from the
   // caller) and the response says which funnels went into it. Only a NAMED-but-unrecognised goal is an
-  // error here — the funnel param already 400'd above on an unrecognised value.
+  // error here.
   if (goalParam != null && goalParam !== "" && !isGoal(normalizedGoal)) {
     return {
       ok: false,
       status: 400,
-      error: `goal query parameter must be one of: signup, meetingBooked, websitePurchase, sales, websiteVisit, positiveReply, formSubmission, whatsappConversation (or send funnel instead: ${SALES_FUNNEL_KEYS.join(", ")}; sending neither prices the brand across every funnel it declared)`,
+      error: `goal query parameter must be one of: signup, meetingBooked, websitePurchase, sales, websiteVisit, positiveReply, formSubmission, whatsappConversation (sending none prices the brand across every funnel its campaigns read)`,
     };
   }
 
@@ -1048,7 +1032,6 @@ export function validateAudienceStatsQuery(req: Request):
     ok: true,
     brandId,
     goal: isGoal(normalizedGoal) ? normalizedGoal : null,
-    ...(funnelKey ? { funnelKey } : {}),
     statuses: parsedStatuses.statuses,
     limit: parsedLimit,
   };
@@ -1096,7 +1079,7 @@ export async function computeAudienceStats(
 
   const validated = validateAudienceStatsQuery(req);
   if (!validated.ok) return validated;
-  const { brandId, goal: normalizedGoal, funnelKey, limit: parsedLimit } = validated;
+  const { brandId, goal: normalizedGoal, limit: parsedLimit } = validated;
   const parsedStatuses = { ok: true as const, statuses: validated.statuses };
 
   // An offer read names no feature in its path; the channels come from the campaign rows, and every one
@@ -1131,25 +1114,6 @@ export async function computeAudienceStats(
   const saleEmails =
     normalizedGoal === "websitePurchase" || normalizedGoal === "sales" ? await fetchSaleEmailsSoft(brandId) : null;
 
-  // A funnel-keyed request prices on the funnel's OWN declared terms, exactly as the ranking does — read
-  // from the same declared list, and only on the funnel path so no goal-keyed request pays for it.
-  // Degrades on the several-offers refusal exactly as the brand-level projection does: the named
-  // funnel is then priced on the brand-wide effective economics — the documented no-declaration path —
-  // rather than on a proposition nobody named. Any other failure still throws (502).
-  let funnelEconomicsUnresolved: DeclaredFunnelsUnresolved | undefined;
-  const funnelEconomics = funnelKey
-    ? await fetchPricingFunnels(brandId, orgId, scopeOfferId, { legKeys: [], include: [funnelKey] })
-        .then((declared) => declaredEconomicsForFunnel(declared, funnelKey))
-        .catch((error: unknown) => {
-          if (!(error instanceof SeveralOffersDeclaredError)) throw error;
-          console.warn(
-            `[features-service] audience-stats: brand ${brandId} sells several offers and this read named none; the ${funnelKey} funnel is priced on the brand-wide economics: ${error.message}`,
-          );
-          funnelEconomicsUnresolved = describeSeveralOffers(error)!;
-          return null;
-        })
-    : null;
-
   const audienceIds = audiences.map((audience) => audience.id);
 
   // One (channel × campaign) read per campaign of the offer, each under its OWN channel — which for a
@@ -1183,7 +1147,7 @@ export async function computeAudienceStats(
     //
     // BRAND LEVEL (no funnel, no goal): the SAME evidence, priced once per DECLARED funnel and combined
     // as the best-returning funnel. The fan-out is paid ONCE (`fetchBrandProjectionEvidence`) and the N
-    // projections are pure — exactly how /funnel-ranking ranks N funnels off one evidence set — so
+    // projections are pure — one evidence set, N funnels ranked off it — so
     // answering the brand-level question costs no more IO than answering a single-funnel one.
     // A BENCHMARK IS A CHANNEL'S BENCHMARK. When the read spans several channels it is resolved once per
     // channel and the BEST-RETURNING channel's is taken WHOLE — never blended field by field, which would
@@ -1201,11 +1165,6 @@ export async function computeAudienceStats(
               identity,
               pricing,
               audienceIds,
-              // When the caller named a funnel, the floor parent is priced on THAT funnel AND on that funnel's
-              // own declared terms — same overrides the per-row projection takes, so the two can never disagree
-              // for one audience.
-              funnelKey,
-              funnelEconomics,
             ).then((parents) => ({ parents, priced: null, coverage: undefined }) as DeclaredFunnelProjection);
       return { ...projection, featureSlug: slug };
       // Never empty: `scopeSlugs` always holds at least the channel the read is about, and every entry
@@ -1216,8 +1175,7 @@ export async function computeAudienceStats(
   const engagement = engagementResult.perAudience;
   const brandProjected = projected.parents;
   const coverage = projected.coverage;
-  // One reason per read whichever half hit it — the brand-level projection or the named funnel's terms.
-  const unresolved = projected.unresolved ?? funnelEconomicsUnresolved;
+  const unresolved = projected.unresolved;
   /**
    * The return for one grain: on a single-funnel read, that funnel's own figure (byte-identical to
    * before); on the brand-level read, the best-returning of the brand's declared funnels.

@@ -38,7 +38,7 @@
  * ── WHY THE FAN-OUT DOES NOT MULTIPLY ───────────────────────────────────────────────────────────
  *
  * ONE brand-wide lead read, ONE cost read, ONE overlay pair — then N pure engine passes, exactly the
- * shape `/funnel-ranking` uses to rank N funnels off one evidence fetch. Reusing the per-campaign
+ * shape the funnel ranking uses to rank N funnels off one evidence fetch. Reusing the per-campaign
  * machinery instead (one `computeFeatureRevenue` per group) would re-read the brand's leads once per
  * workflow, and this process parses that page under a 384 MB heap.
  *

@@ -33,7 +33,9 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
     // computeAudienceStats, which calls the same validator, so the route cannot drift from the lib.
     const validated = validateAudienceStatsQuery(req);
     if (!validated.ok) {
-      return res.status(validated.status).json({ error: validated.error });
+      return res
+        .status(validated.status)
+        .json(validated.reason ? { error: validated.error, reason: validated.reason } : { error: validated.error });
     }
 
     // ── Offer scope ──────────────────────────────────────────────────────────
@@ -96,10 +98,6 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
     // every brand selling one thing, so a single-offer brand is byte-unchanged.
     const scopeOfferId = offerId ?? identity?.offerId ?? null;
 
-    // A NAMED funnel is always priced (wave C1): a funnel is a way of reading legs, and the brand's leg
-    // rates price any of them — there is no declared set left to check it against, so the historical
-    // `funnel_not_declared` 404 is unreachable.
-
     // The derived cost columns (cost per form submission / signup / sale) project through the brand's
     // economics via `fetchBrandProjectedParents`, so the body goes stale the moment the economics change.
     // Folding the fingerprint into the cache key makes an economics write land on a different cell, which
@@ -119,7 +117,7 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
     // fingerprint does for an economics write. Fail-soft: it feeds the KEY, not the response — a read that
     // cannot be answered still 502s from the compute, which owns that decision.
     let decl: string | undefined;
-    if (!validated.funnelKey && validated.goal === null) {
+    if (validated.goal === null) {
       try {
         decl = (await fetchReadingFunnelKeys(validated.brandId, orgId, scopeOfferId)).sort().join(",");
       } catch (err) {
@@ -152,10 +150,6 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
       orgId,
       brandId: req.query.brandId,
       goal: req.query.goal,
-      // The funnel changes the cost basis of every column, so it MUST be in the key — keyed on the
-      // CANONICAL value the validator resolved, so `reply_meeting` and `sales_meetings_from_conversation`
-      // share one cell instead of fragmenting it. Absent → dropped → byte-identical to a goal-only key.
-      funnel: validated.funnelKey,
       statuses: req.query.statuses,
       limit: req.query.limit,
       brandProfileId: req.query.brandProfileId,
@@ -195,10 +189,9 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
     if (error instanceof OfferHasNoCampaignsError) {
       return res.status(404).json({ error: error.message, reason: "offer_has_no_campaigns", offerId: error.offerId });
     }
-    // The BRAND-LEVEL read (no funnel, no goal) prices the brand through the funnels it DECLARED, so a
+    // The BRAND-LEVEL read (no goal) prices the brand through the funnels it DECLARED, so a
     // declaration we cannot read leaves it with no question to answer — reported as what failed, never
-    // as a substituted default set and never as a zero return. Same reason string the `?funnel=` path
-    // above uses, so a consumer reads one word for one failure.
+    // as a substituted default set and never as a zero return.
     if (error instanceof SalesFunnelsUnavailableError) {
       console.error("[features-service] Audience stats: declared set unavailable:", error.message);
       return res.status(502).json({

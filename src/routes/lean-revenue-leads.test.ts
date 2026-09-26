@@ -243,8 +243,6 @@ const NARROW_KEYS = [
 const feature = (query = "") => request(app).get(`/features/${PITCH}/revenue?brandId=${BRAND}${query}`).set(AUTH);
 const brand = (query = "") => request(app).get(`/brands/${BRAND}/revenue${query}`).set(AUTH);
 const offer = (query = "") => request(app).get(`/offers/${OFFER}/revenue?brandId=${BRAND}${query}`).set(AUTH);
-const offerFunnel = (query = "") =>
-  request(app).get(`/offers/${OFFER}/funnels/${CONVERSATION}/revenue?brandId=${BRAND}${query}`).set(AUTH);
 
 describe("a revenue read answers about money — ?leads= decides how much of a person rides along", () => {
   beforeEach(() => {
@@ -338,14 +336,14 @@ describe("a revenue read answers about money — ?leads= decides how much of a p
   });
 
   it("EVERY money grain narrows the same way — a grain left behind reproduces the bug one click away", async () => {
-    for (const read of [feature, brand, offer, offerFunnel]) {
+    for (const read of [feature, brand, offer]) {
       const lean = await read();
       expect(lean.status).toBe(200);
       expect(lean.body.leads.length).toBe(3);
       for (const row of lean.body.leads) expect(Object.keys(row).sort()).toEqual(NARROW_KEYS);
       expect(lean.body.attributedOutcomes).toContain("signup");
 
-      const full = await read(read === feature || read === offer || read === offerFunnel ? "&leads=full" : "?leads=full");
+      const full = await read(read === feature || read === offer ? "&leads=full" : "?leads=full");
       expect(full.status).toBe(200);
       expect(full.body.leads.length).toBe(LEADS.length);
       expect(full.body.leads[0]).toHaveProperty("firstName");
@@ -365,7 +363,7 @@ describe("a revenue read answers about money — ?leads= decides how much of a p
   });
 
   it("an unrecognised word is a 400, never a silent pick", async () => {
-    for (const read of [feature, offer, offerFunnel]) {
+    for (const read of [feature, offer]) {
       const res = await read("&leads=everything");
       expect(res.status).toBe(400);
       expect(String(res.body.error)).toContain("leads must be one of");

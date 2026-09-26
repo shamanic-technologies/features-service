@@ -91,9 +91,8 @@ export interface MatureBasis {
 
 /**
  * The mature basis behind each block this module built, kept OFF the wire on purpose: the owner's rule
- * is that no cohort spend figure is displayed anywhere, while two in-process consumers need it — the
- * combined (charged + customer) economics, whose ratios must ride the same cohort, and the fleet warm,
- * which stores ingredients and divides later. A block rebuilt from JSON (a cached snapshot) carries no
+ * is that no cohort spend figure is displayed anywhere, while an in-process consumer needs it — the
+ * fleet warm, which stores ingredients and divides later. A block rebuilt from JSON (a cached snapshot) carries no
  * entry, and every reader FAILS LOUD on that rather than dividing the whole history instead.
  */
 const MATURE_BASIS = new WeakMap<object, MatureBasis>();
@@ -180,87 +179,4 @@ function ratiosOf(
   const costPerAcquisitionUsd =
     expectedPaidClients === null || expectedPaidClients === 0 ? null : committedCostUsd / expectedPaidClients;
   return { costOfAcquisitionPct, roiMultiple, costPerAcquisitionUsd };
-}
-
-/**
- * THE SAME SCOPE'S MONEY WITH THE CUSTOMER'S OWN LEGS IN IT — reported BESIDE the charged figures,
- * never inside them.
- *
- * The platform automates the first link of a sales funnel and bills for it; the customer performs the
- * rest, and lead-service records what those legs cost them. A cost of acquisition that counts only the
- * billed link is too small for every funnel that ends in a human leg, and the return that divides by it
- * is too good — the single most misleading figure a customer can be shown about their own money.
- *
- * The two kinds of money stay TELLABLE APART, which is why this is a second block rather than a wider
- * `committedCostUsd`. What we CHARGED them is a billing fact this service reports elsewhere and must
- * keep reporting unchanged; what THEY spent is their own statement, owned by them, in no ledger of
- * ours. Both spends are stated on this block, so a consumer renders either without inferring one from
- * the other, and nothing here ever reaches billing.
- *
- * The ratios are the byte-same three `buildCostEconomics` computes, off the summed basis and the SAME
- * lifetime revenue — so with nothing declared this block is identical to the charged one, and the day
- * a customer states a cost the whole ladder moves together instead of one figure drifting from the
- * others.
- */
-export interface CombinedCostEconomics {
-  /** What the platform CHARGED for this scope, in dollars — byte-equal to `costEconomics.committedCostUsd`. */
-  platformCommittedCostUsd: number;
-  /** What the CUSTOMER states their own legs cost them, in dollars. Never charged, never billed. */
-  customerDeclaredCostUsd: number;
-  /** The two together — the basis the three figures below divide by. */
-  committedCostUsd: number;
-  costOfAcquisitionPct: number | null;
-  roiMultiple: number | null;
-  costPerAcquisitionUsd: number | null;
-  /** The maturity delay the ratios rode — the charged block's own (see `CostEconomics.maturityDays`). */
-  maturityDays: number;
-  unmeasuredReason: MaturityReason | null;
-}
-
-export function buildCombinedCostEconomics(input: {
-  /** The charged block for the same scope — its committed total is one half of the basis. */
-  charged: CostEconomics;
-  /** The customer's stated cost for the same scope, in cents. 0 when nobody stated one. */
-  customerDeclaredCostCents: number;
-  totalPipelineUsd: number | null;
-  lifetimeRevenueUsd?: number | null;
-}): CombinedCostEconomics {
-  const { charged, customerDeclaredCostCents, totalPipelineUsd, lifetimeRevenueUsd } = input;
-  const customerDeclaredCostUsd = customerDeclaredCostCents / 100;
-  // The ratios ride the SAME mature cohort the charged block's do, or the two returns on one row would
-  // be measured on two different populations. The customer's statements carry no date, so they are
-  // all in the cohort — never dropped (the same undated-stays-in rule the leads follow).
-  const mature = matureBasisOf(charged);
-  const combined = buildCostEconomics({
-    // Cents in, cents out — the charged half is carried back at full precision rather than
-    // re-rounded, since runs-service returns fractional cents per group.
-    committedCostInUsdCents: charged.committedCostUsd * 100 + customerDeclaredCostCents,
-    // Reported only, and not by this block: an "actual" figure asserts BILLED money, and the customer's
-    // own spend was never billed. It is dropped here rather than quietly widened.
-    actualCostInUsdCents: 0,
-    totalPipelineUsd,
-    lifetimeRevenueUsd,
-    ...(mature.days > 0
-      ? {
-          maturity: {
-            days: mature.days,
-            committedCostInUsdCents: mature.committedCents + customerDeclaredCostCents,
-            totalPipelineUsd: mature.pipelineUsd,
-          },
-        }
-      : {}),
-  });
-  // A scope with no mature charged spend has no cohort to measure, whatever the customer stated: the
-  // customer's own money would otherwise be the whole denominator of a return on OUR outreach.
-  const unmeasured = charged.unmeasuredReason;
-  return {
-    platformCommittedCostUsd: charged.committedCostUsd,
-    customerDeclaredCostUsd,
-    committedCostUsd: combined.committedCostUsd,
-    costOfAcquisitionPct: unmeasured ? null : combined.costOfAcquisitionPct,
-    roiMultiple: unmeasured ? null : combined.roiMultiple,
-    costPerAcquisitionUsd: unmeasured ? null : combined.costPerAcquisitionUsd,
-    maturityDays: combined.maturityDays,
-    unmeasuredReason: unmeasured ?? combined.unmeasuredReason,
-  };
 }

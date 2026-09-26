@@ -1067,7 +1067,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.headline.totalPipelineUsd).toBe(875); // 2500 × 0.35 — the brief's per-reply figure
   });
 
-  it("`?funnel=` names which declared funnel to price on", async () => {
+  it("the first funnel read is priced on its own terms; `?funnel=` is retired and refused", async () => {
     mockFetch({
       economics: ECONOMICS,
       leads: [REPLY_ONLY()],
@@ -1080,10 +1080,13 @@ describe("GET /features/:featureSlug/revenue", () => {
     // Unqualified → the FIRST declared funnel in catalogue order (the conversation funnel).
     const first = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(first.body.headline.totalPipelineUsd).toBe(350);
-    // Named → that funnel alone, on its own terms AND its own legs. A positive reply is not a step of
-    // the WEBSITE funnel (Website visit → Meeting booked → …), so this lead buys nothing under it.
+    // Named → refused (wave C2): which funnels a brand reads comes from its legs, never a caller.
     const named = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&funnel=sales_meetings_from_website").set(AUTH);
-    expect(named.body.headline.totalPipelineUsd).toBe(0);
+    expect(named.status).toBe(400);
+    expect(named.body).toEqual({
+      error: "the funnel parameter is retired; name a leg (?leg=) or nothing",
+      reason: "funnel_retired",
+    });
   });
 
   it("a conversion signal prices a brand only when it is a leg of one of its DECLARED funnels", async () => {

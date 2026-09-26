@@ -9,7 +9,7 @@
  * read a landing can actually make.
  *
  * THE FIGURE IS A BRAND'S OWN REALIZED RETURN, NOT A PROJECTION, and the difference is not cosmetic.
- * `returnPerDollar` (`channel-funnel-economics.ts`, `/funnel-ranking`, `/audience-stats`) is a FORWARD
+ * `returnPerDollar` (`channel-funnel-economics.ts`, `/audience-stats`) is a FORWARD
  * unit-economics projection: a brand's lifetime revenue divided by what a paying client is modelled to
  * cost through one funnel. It answers "what should a dollar buy here". This module answers a different
  * question — "what has a dollar ALREADY come back as" — and it is the ratio every client reads on their

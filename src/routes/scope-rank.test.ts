@@ -248,8 +248,8 @@ describe("a row states its position among the rows it is COMPARABLE with", () =>
     expect(orderOf(byRate.body, null)).toEqual(["lithium", "sodium", "argon"]);
   });
 
-  it("carries NO scopeRank on a funnel- or goal-keyed read", async () => {
-    for (const query of ["funnel=sales_meetings_from_conversation", "goal=meetingBooked"]) {
+  it("carries NO scopeRank on a goal-keyed read", async () => {
+    for (const query of ["goal=meetingBooked"]) {
       const res = await get(query);
       expect(res.status).toBe(200);
       expect(res.body.rows.length).toBeGreaterThan(0);

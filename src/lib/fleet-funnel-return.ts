@@ -14,7 +14,7 @@
  * THE FIGURE IS THE ONE EVERY CLIENT ALREADY READS ON THEIR OWN DASHBOARD — `costEconomics.roiMultiple`
  * scoped to that funnel: expected pipeline over committed spend, where the pipeline starts each lead at
  * its most-advanced REALIZED step and projects the rest with the brand's OWN rates and LTR. It is the
- * byte-same statistic `GET /features/:slug/revenue?funnel=<key>` states for one brand, taken across
+ * byte-same statistic the brand's own revenue read states when priced on that funnel, taken across
  * brands. So a fleet figure and any one client's own number are one statistic at two grains, and
  * neither is a pure projection. It is read on the **NET** pricing basis (what the brand actually paid
  * after its usage discount), which is what makes that identity hold: the client's own dashboard reads
@@ -56,7 +56,7 @@ export interface BrandFunnelReturnRow {
   /**
    * The brand's COMMITTED spend on the channel (actual + provisioned holds), in USD — the single
    * spend basis every money figure in this service rides. It is the CHANNEL's spend, not a per-funnel
-   * split, exactly as `/revenue?funnel=` states it: the funnel narrows which legs carry value, and a
+   * split, exactly as the brand's own funnel-priced revenue read states it: the funnel narrows which legs carry value, and a
    * dollar spent on the channel bought the outreach whichever funnel it later converted through.
    */
   committedSpendUsd: number;

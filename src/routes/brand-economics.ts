@@ -71,6 +71,7 @@
  * available per channel on the existing reads, which are untouched and still mean what they mean.
  */
 import { Router } from "express";
+import { FUNNEL_RETIRED_BODY, namesRetiredFunnel } from "../lib/retired-funnel-param.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { getFunnel } from "../lib/funnel-registry.js";
 import {
@@ -98,7 +99,6 @@ import {
   parseOutcomeCauses,
 } from "../lib/outcome-cause.js";
 import { parsePricing } from "../lib/pricing.js";
-import { matchSalesFunnelKey, SALES_FUNNEL_KEYS, type SalesFunnelKey } from "../lib/sales-funnels.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
 import {
   resolveBrandChannels,
@@ -189,6 +189,10 @@ function handleError(res: import("express").Response, error: unknown, what: stri
 // stated at the row itself.
 router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
   try {
+    // `?funnel=` is RETIRED (wave C2): refused, never silently ignored. See lib/retired-funnel-param.ts.
+    if (namesRetiredFunnel(req.query as Record<string, unknown>)) {
+      return res.status(400).json(FUNNEL_RETIRED_BODY);
+    }
     const resolved = await resolveRequest(req as never);
     if (!resolved.ok) return res.status(resolved.status).json({ error: resolved.error });
     const { brandId, pricing, headers, channels, featureSlugs } = resolved;
@@ -211,15 +215,6 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
     }
     const causeKey = causeScopeKeyPart(causes);
 
-    // `?funnel=` names the SALES FUNNEL the spend block's cost-per-outcome columns are priced on, with
-    // the same meaning and the same fail-loud parse as the per-feature read.
-    let requestedFunnel: SalesFunnelKey | undefined;
-    const funnelParam = req.query.funnel as string | undefined;
-    if (funnelParam) {
-      const matched = matchSalesFunnelKey(funnelParam);
-      if (!matched) return res.status(400).json({ error: `funnel must be one of: ${SALES_FUNNEL_KEYS.join(", ")}` });
-      requestedFunnel = matched;
-    }
 
     const funnel = resolveBrandFunnel(brandId, channels);
 
@@ -230,7 +225,7 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
       ? await Promise.all([fetchDeclaredFunnelsSoft(brandId, headers.orgId), fetchEffectiveEconomics(brandId, headers)])
       : [[], null];
     const brandPriced: FunnelPricedEconomics | undefined = brandEconomics
-      ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics, requestedFunnel)
+      ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics)
       : undefined;
     const econ = brandPriced ? economicsFingerprint(brandPriced.economics) : undefined;
     const decl = funnel ? declaredFunnels.map((f) => f.funnelKey).sort().join("+") || "none" : undefined;
@@ -242,7 +237,6 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
       scopeKey: buildScopeKey(brandId, {
         orgId: headers.orgId,
         channels: featureSlugs.join("+"),
-        funnel: requestedFunnel,
         decl,
         pricing,
         econ,
@@ -266,7 +260,7 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
           brandPriced,
           true,
           pricing,
-          requestedFunnel,
+          undefined,
           undefined,
           undefined,
           causes,
@@ -297,7 +291,7 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
             brandPriced,
             false,
             pricing,
-            requestedFunnel,
+            undefined,
             undefined,
             undefined,
             causes,
@@ -368,6 +362,10 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
 // we cannot tell which channels any figure should span.
 router.get("/brands/:brandId/offers", apiKeyAuth, async (req, res) => {
   try {
+    // `?funnel=` is RETIRED (wave C2): refused, never silently ignored. See lib/retired-funnel-param.ts.
+    if (namesRetiredFunnel(req.query as Record<string, unknown>)) {
+      return res.status(400).json(FUNNEL_RETIRED_BODY);
+    }
     const authed = req as AuthenticatedRequest & { params: { brandId: string } };
     const brandId = authed.params.brandId;
 
@@ -385,13 +383,6 @@ router.get("/brands/:brandId/offers", apiKeyAuth, async (req, res) => {
     }
     const causeKey = causeScopeKeyPart(causes);
 
-    let requestedFunnel: SalesFunnelKey | undefined;
-    const funnelParam = req.query.funnel as string | undefined;
-    if (funnelParam) {
-      const matched = matchSalesFunnelKey(funnelParam);
-      if (!matched) return res.status(400).json({ error: `funnel must be one of: ${SALES_FUNNEL_KEYS.join(", ")}` });
-      requestedFunnel = matched;
-    }
 
     const headers: DownstreamHeaders = {
       orgId: authed.orgId,
@@ -423,7 +414,7 @@ router.get("/brands/:brandId/offers", apiKeyAuth, async (req, res) => {
       ? await Promise.all([fetchDeclaredFunnelsSoft(brandId, headers.orgId), fetchEffectiveEconomics(brandId, headers)])
       : [[], null];
     const brandPriced: FunnelPricedEconomics | undefined = brandEconomics
-      ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics, requestedFunnel)
+      ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics)
       : undefined;
     const econ = brandPriced ? economicsFingerprint(brandPriced.economics) : undefined;
     const decl = anyFunnel ? declaredFunnels.map((f) => f.funnelKey).sort().join("+") || "none" : undefined;
@@ -436,7 +427,6 @@ router.get("/brands/:brandId/offers", apiKeyAuth, async (req, res) => {
       scopeKey: buildScopeKey(brandId, {
         orgId: headers.orgId,
         offers: offers.map(({ offerId, channels }) => `${offerId}>${offerFeatureSlugs(channels).join("+")}`).join(","),
-        funnel: requestedFunnel,
         decl,
         pricing,
         // A read counting a different set of causes is a different answer, so it is a different cell.
@@ -459,7 +449,7 @@ router.get("/brands/:brandId/offers", apiKeyAuth, async (req, res) => {
             brandPriced,
             false,
             pricing,
-            requestedFunnel,
+            undefined,
             undefined,
             undefined,
             causes,
@@ -493,6 +483,10 @@ router.get("/brands/:brandId/offers", apiKeyAuth, async (req, res) => {
 // numerators, never averaged.
 router.get("/brands/:brandId/audience-stats", apiKeyAuth, async (req, res) => {
   try {
+    // `?funnel=` is RETIRED (wave C2): refused, never silently ignored. See lib/retired-funnel-param.ts.
+    if (namesRetiredFunnel(req.query as Record<string, unknown>)) {
+      return res.status(400).json(FUNNEL_RETIRED_BODY);
+    }
     const resolved = await resolveRequest(req as never);
     if (!resolved.ok) return res.status(resolved.status).json({ error: resolved.error });
     const { brandId, pricing, headers, channels, featureSlugs } = resolved;
@@ -515,7 +509,6 @@ router.get("/brands/:brandId/audience-stats", apiKeyAuth, async (req, res) => {
         orgId: headers.orgId,
         channels: featureSlugs.join("+"),
         goal: req.query.goal,
-        funnel: req.query.funnel,
         statuses: req.query.statuses,
         limit: req.query.limit,
         pricing,

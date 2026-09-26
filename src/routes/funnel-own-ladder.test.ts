@@ -366,7 +366,7 @@ describe("REGRESSION — the other three funnel keys are unchanged, to the cent"
     expect(res.body.headline.totalPipelineUsd).toBeCloseTo(30 * 0.4 * 0.25, 5);
   });
 
-  it("a brand whose statements send website visitors to a FORM is read through the form; `?funnel=` still asks for another funnel's own answer", async () => {
+  it("a brand whose statements send website visitors to a FORM is read through the form; `?funnel=` is refused", async () => {
     // Wave C1: no declared set is read. The brand states visit → form and nothing out of the visit step
     // toward a meeting, so its visitors are read through Form Magnet — the leg it states is where its
     // leads go.
@@ -386,10 +386,9 @@ describe("REGRESSION — the other three funnel keys are unchanged, to the cent"
     expect(unqualified.body.headline.totalPipelineUsd).toBeCloseTo(FORM_VISIT_USD, 5);
 
     mockFetch({ economics: ECONOMICS, leads: visitors(1), salesFunnels: funnels });
-    // `?funnel=` narrows among the funnels the brand's campaigns READ; one they do not read is not
-    // substituted in (the same rule the declared set had).
+    // `?funnel=` is retired (wave C2): the funnels a brand reads come from its legs, never a caller.
     const named = await read("&funnel=form_magnet");
-    expect(named.status).toBe(200);
-    expect(named.body.headline.totalPipelineUsd).toBeCloseTo(FORM_VISIT_USD, 5);
+    expect(named.status).toBe(400);
+    expect(named.body.reason).toBe("funnel_retired");
   });
 });

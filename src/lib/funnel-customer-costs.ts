@@ -1,15 +1,8 @@
 /**
- * THE CUSTOMER'S OWN MONEY, PARTITIONED BY SALES FUNNEL — pure, so the network read stays in the route.
+ * THE CUSTOMER'S OWN MONEY, PARTITIONED BY FUNNEL STEP — pure, so the network read stays in the route.
  *
- * A statement is made on a lead row, which belongs to a CAMPAIGN, and a campaign states exactly one
- * funnel. So the same campaign set that scopes a funnel's charged spend scopes the customer's declared
- * spend too, with nothing counted twice and nothing inferred: a statement is in the row whose campaign
- * set contains its campaign, and in no other.
- *
- * A statement we cannot place — no campaign named, or a campaign belonging to no funnel of this offer
- * (another offer's, or one stating no funnel) — is NOT dropped in silence and NOT parked on a default.
- * It is reported apart, exactly as an unattributed campaign id already is, so a reader sees the
- * difference rather than wondering why the rows do not add up.
+ * A statement is made on a lead row, which belongs to a CAMPAIGN, so the same campaign set that scopes
+ * a read's charged spend scopes the customer's declared spend too, with nothing inferred.
  *
  * A STATED ZERO IS AN ANSWER; AN UNSTATED LEG IS NOT. `costCents: null` means nobody was ever asked,
  * so it contributes nothing to the sum and increments `unstatedCount` instead — which is how a
@@ -47,55 +40,12 @@ export function coverageOf(cost: CustomerDeclaredCost | null): FunnelCostCoverag
   return cost.unstatedCount > 0 ? "platform_and_partial_customer_spend" : "platform_and_customer_spend";
 }
 
-/**
- * The weakest coverage among the rows — what the response AS A WHOLE is made of.
- *
- * Weakest wins because the marker is an admission: a payload holding one fully-costed funnel and one
- * that could not be costed at all is not a fully-costed payload, and a reader taking the summary at
- * face value must never be told more than the least-covered row supports.
- */
-export function summariseCoverage(rows: FunnelCostCoverage[]): FunnelCostCoverage {
-  if (rows.some((r) => r === "platform_and_partial_customer_spend")) return "platform_and_partial_customer_spend";
-  if (rows.some((r) => r === "platform_spend_only")) return "platform_spend_only";
-  return rows.length === 0 ? "platform_spend_only" : "platform_and_customer_spend";
-}
-
 const EMPTY: CustomerDeclaredCost = { costCents: 0, statedCount: 0, unstatedCount: 0 };
 
 /** One statement, reduced to the two things this partition needs. */
 export interface AttributableCost {
   campaignId: string | null;
   costCents: number | null;
-}
-
-/**
- * PURE: split the brand's statements across the offer's funnels by campaign, and report what is left.
- *
- * `funnels` maps a funnel key to its campaign set. Every statement lands in exactly one bucket, and the
- * leftovers are the ones no funnel of this offer can claim.
- */
-export function partitionCustomerCosts(
-  costs: AttributableCost[],
-  funnels: Array<{ key: string; campaignIds: string[] }>,
-): { byFunnel: Record<string, CustomerDeclaredCost>; unattributed: CustomerDeclaredCost } {
-  const funnelOfCampaign = new Map<string, string>();
-  const byFunnel: Record<string, CustomerDeclaredCost> = {};
-  for (const funnel of funnels) {
-    byFunnel[funnel.key] = { ...EMPTY };
-    for (const campaignId of funnel.campaignIds) funnelOfCampaign.set(campaignId, funnel.key);
-  }
-  const unattributed: CustomerDeclaredCost = { ...EMPTY };
-
-  for (const cost of costs) {
-    const key = cost.campaignId ? funnelOfCampaign.get(cost.campaignId) : undefined;
-    const bucket = key ? byFunnel[key] : unattributed;
-    if (cost.costCents === null) bucket.unstatedCount += 1;
-    else {
-      bucket.costCents += cost.costCents;
-      bucket.statedCount += 1;
-    }
-  }
-  return { byFunnel, unattributed };
 }
 
 /**

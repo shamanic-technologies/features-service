@@ -46,7 +46,7 @@
  *
  * DO NOT re-introduce a goal→funnel mapping here as a compatibility layer. The point of the retirement
  * is that the vocabulary is gone, not translated. The one tolerance that remains is the INBOUND request
- * spelling above, which is a deprecation with a stated end (the dashboard migrates to `?funnel=`).
+ * spelling above, which is a deprecation with a stated end.
  * A funnel→goal ECHO exists in the opposite direction only (`SALES_FUNNEL_GOAL_ECHO`, derived FROM the
  * funnel key), so consumers that still read a `goal` field keep reading one.
  * Pinned by `goals-entry-points.test.ts`.

@@ -466,7 +466,7 @@ describe("a campaign is priced on the funnels ITS OWN leg is read through, not t
     expect(brand.body.headline.totalPipelineUsd).toBeCloseTo(875 + 135.75, 6);
   });
 
-  it("an explicit `?funnel=` still wins over the campaign's own funnel (the caller asked for it)", async () => {
+  it("an explicit `?funnel=` is REFUSED — the parameter is retired, the campaign's own leg decides", async () => {
     mockFetch({
       campaigns: TWO_FUNNELS,
       costByCampaign: { conv: 1000, web: 1000 },
@@ -476,9 +476,8 @@ describe("a campaign is priced on the funnels ITS OWN leg is read through, not t
     const res = await request(app)
       .get("/features/sales-cold-email-outreach/revenue?brandId=b1&campaignId=conv&funnel=website_purchases")
       .set(AUTH);
-    expect(res.status).toBe(200);
-    // A positive reply is a step of no website funnel → nothing.
-    expect(res.body.headline.totalPipelineUsd).toBe(0);
+    expect(res.status).toBe(400);
+    expect(res.body.reason).toBe("funnel_retired");
   });
 
   it("a brand whose campaigns state NO leg reads no funnel, and is priced on the brand-wide record (wave C1)", async () => {
