@@ -61,6 +61,28 @@ P(r | contacted) × P(paid | r)` (`lib/contacted-value.ts`, `routes/contacted-va
   43/54,999), total $30.15; `f4d73dab…` 7,740 leads, click route brand-measured 181/8,135, total $247.59.
 - Guards: `lib/contacted-value.test.ts`, `routes/contacted-value.test.ts`. (Set 2026-09-26.)
 
+## EACH DEALS-BOARD COLUMN STATES ITS DOLLAR VALUE — `GET /brands/:brandId/deals-value`, a SEPARATE figure, never pipeline
+
+The dashboard's Deals board draws one column per lead-service STANDING. WHO is in a column is
+lead-service's answer (`/orgs/leads?standing=<s>&view=compact`, `fetchLeadIdsByStanding`), never
+re-derived; WHAT they are worth is priced here (`lib/deals-value.ts`, `routes/deals-value.ts`).
+
+- **Interested (`sales_interest`)**: each card = `expectedValueOfPerson` — the engine's own `evForPerson`,
+  on the byte-same population / overlays / paths / LTR / priced causes the pipeline uses
+  (`loadBrandPricedPopulation`, now shared with contacted-value). Column = Σ over organisations of the MAX
+  member (the pipeline's own per-company rule), so it is a SUBSET of the pipeline and can never exceed it.
+- **Won (`customer`)**: the amount a human STATED on the sale, read over EVERY cause (the column shows the
+  deal, not our share of it), else the brand's LTR per client; `valueSource` says which. Company = MAX.
+- **disqualified / opted_out / not_contacted / unresolved**: `valueUsd: null` + `unvaluedReason`
+  (`ruled_out` / `opted_out` / `not_placed` / `standing_unresolved`), never 0. `contacted` →
+  `see_contacted_value` (that column is `/contacted-value`'s).
+- A person lead-service places in a column that our population does not hold yet (reads minutes apart) is a
+  null card counted in `unpricedLeadCount`.
+- **Added to NOTHING**: pipeline, ROI, costEconomics, contacted-value byte-unchanged (the contacted-value
+  compute was only extracted into the shared loader). Gold view `brand-deals-value`.
+- Guards: `lib/deals-value.test.ts` (cards byte-equal to the engine's EV, company max not sum, subset of the
+  pipeline, stated vs LTR won, every null reason). (Set 2026-09-26.)
+
 ## A STALE CELL IS RECOMPUTED ONLY WHEN ITS BRAND'S FACTS MOVED, AND A SIBLING SCOPE IS PRECOMPUTED BEFORE ANYONE OPENS IT — `lib/view-facts.ts`, `lib/view-keeper.ts`
 
 Two gaps the refresher left (#1106): a stale cell recomputed the brand's whole population on a clock (3s for a

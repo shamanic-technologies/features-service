@@ -1678,6 +1678,46 @@ registry.registerPath({
   },
 });
 
+const dealsColumnUnvaluedReasons = [
+  "no_economics", "no_client_value", "ruled_out", "opted_out", "not_placed",
+  "standing_unresolved", "see_contacted_value", "not_a_deal_column",
+] as const;
+const brandDealsValueResponseSchema = z.object({
+  brandId: z.string(),
+  lifetimeRevenueUsd: z.number().nullable().describe("The brand's value of a client — the same LTR the pipeline is priced on."),
+  columns: z.array(z.object({
+    standing: z.string().describe("lead-service's standing state the column shows (`sales_interest`, `customer`, `disqualified`, `opted_out`, `not_contacted`, `unresolved`, `contacted`, `engaged`)."),
+    valueUsd: z.number().nullable().describe("Company-level value of the column: one organisation = one client = the MAX over its members in the column, organisations summed. Null exactly when `unvaluedReason` is set — never 0 for 'no value'."),
+    unvaluedReason: z.enum(dealsColumnUnvaluedReasons).nullable().describe("Why the column states no value. `ruled_out` / `opted_out`: nothing to win going forward. `not_placed`: never contacted. `see_contacted_value`: GET /brands/{brandId}/contacted-value values that column. `no_economics` / `no_client_value`: the brand states nothing a value could be priced on."),
+    basis: z.enum(["expected_value", "won_value"]).nullable().describe("`expected_value` (Interested): each person at the byte-same expected value the brand's pipeline prices them on — the column is a SUBSET of the pipeline. `won_value` (Won): the amount a human stated on the sale (whoever caused it), else the brand's lifetime revenue per client."),
+    leadCount: z.number().nullable(),
+    organizationCount: z.number().nullable(),
+    unpricedLeadCount: z.number().nullable().describe("People lead-service places in the column that this read's lead population did not hold yet (their card reads null)."),
+    leads: z.array(z.object({
+      leadId: z.string(),
+      valueUsd: z.number().nullable(),
+      valueSource: z.enum(["stated_amount", "lifetime_revenue"]).nullable().optional().describe("Won column only."),
+    })).describe("One card per person in the column, ordered by lead id (valued columns only)."),
+  })),
+});
+const brandDealsValueResponseRef = registry.register("BrandDealsValueResponse", brandDealsValueResponseSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/brands/{brandId}/deals-value",
+  summary: "The dollar value of each Deals-board column (lead-service standing), per column and per card",
+  description:
+    "A SEPARATE figure, added to no pipeline, ROI or cost figure. Column membership is lead-service's standing (its `?standing=` filter). Interested (`sales_interest`) = each person's expected value exactly as the brand's pipeline prices them (same paths, LTR, overlays, priced causes), company-deduped like the pipeline. Won (`customer`) = the stated sale amount, else the lifetime revenue per client. Disqualified, opted out and not placed state no value, with a reason. The Contacted column's value is GET /brands/{brandId}/contacted-value.",
+  tags: ["Stats"],
+  request: { headers: identityHeaders, params: z.object({ brandId: z.string() }) },
+  responses: {
+    200: { description: "The brand's Deals column values", content: { "application/json": { schema: brandDealsValueResponseRef } } },
+    404: { description: "reason='brand_has_no_channels'", content: { "application/json": { schema: errorResponse } } },
+    409: { description: "reason='brand_channels_price_differently'", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "A producer the figure is computed from could not be read", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 const brandAudienceStatsResponseSchema = audienceStatsResponseSchema.extend({
   channels: z.array(brandChannelSchema).describe("The channels combined into every row below, ascending by slug."),
 });

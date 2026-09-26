@@ -635,6 +635,19 @@ function evForPerson(
   return { person, ev, tags, date, firedEvents, reachedMilestone: furthestMilestoneTag !== null };
 }
 
+/**
+ * What ONE person is worth, priced exactly as the pipeline prices them (the same `evForPerson` every
+ * figure here rides). Exposed for reads that value a SUBSET of the population — a Deals column — so a
+ * card's value is the engine's own number, never a second derivation.
+ */
+export function expectedValueOfPerson(
+  person: EnginePerson,
+  paths: ResolvedPath[],
+  closeValueUsd: number,
+): number {
+  return evForPerson(person, paths, [], closeValueUsd).ev;
+}
+
 export function computeRevenue(
   paths: ResolvedPath[],
   rawPersons: EnginePerson[],
