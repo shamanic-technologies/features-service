@@ -376,10 +376,10 @@ describe("the CAMPAIGN grain answers for the campaign's identity, beside the gra
     expect(brandRow(viaAncestor.body, "lithium").resolved.costPerOutcomeUsd).toBeCloseTo(1400 / 7, 6);
   });
 
-  it("a brand-wide read asks campaign-service nothing and carries no campaign grain", async () => {
+  it("a brand-wide read carries no campaign grain", async () => {
+    // Wave C1: pricing reads the brand's campaign rows (which funnels its legs are read through), so a
+    // brand-wide read does ask campaign-service — for the brand's rows, never for a campaign identity.
     const res = await get("leg=start_to_conversation");
-    const calls = (globalThis.fetch as any).mock.calls.map((c: any[]) => String(c[0]));
-    expect(calls.some((u: string) => u.includes("/campaigns?"))).toBe(false);
     expect(brandRow(res.body, "lithium").estimatesByGrain.campaign).toBeUndefined();
     expect(res.body.campaignIdentity).toBeUndefined();
   });

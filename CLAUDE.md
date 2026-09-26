@@ -1,5 +1,50 @@
 # Features Service — CLAUDE.md
 
+## WAVE C1 — NOTHING HERE READS A DECLARED SALES FUNNEL; every figure is priced on the brand's LEG rates and the OFFER's lifetime revenue, through the funnels its campaigns' legs READ
+
+The fleet retired the sales funnel as an identity (org > brand > offer > outcome > leg). brand-service
+serves a brand's ONE rate per leg and each offer's lifetime revenue (`GET /internal/brands/:brandId/offer-economics`,
+v0.81.8, `lib/brand-leg-economics-client.ts`); campaign-service identifies a campaign by (offer, leg,
+channel). The read of the funnels a brand DECLARED (`/internal/brands/:id/sales-funnels`) and of its
+per-funnel arrow statements (`/funnel-rates`) are GONE from this service (`fetchDeclaredSalesFunnels`,
+`brand-funnel-rates-client.ts`, `fetchDeclaredFunnelKeys`, `fetchDeclaredFunnelsOnEffectiveRates` deleted).
+Supersedes every "declared funnel" statement in the sections below; their pricing math is unchanged.
+
+- **ONE DOOR: `fetchPricingFunnels` (`lib/reading-funnels.ts`)**, returning the same `DeclaredSalesFunnel[]`
+  shape every pricing module already consumed — so `declaredEconomics`, `statedLegRates`, the funnel
+  ladders and the max across funnels did not move. Each funnel carries the brand's EFFECTIVE leg rate on
+  every arrow (measured > stated > fleet median, per LEG) and the offer's lifetime revenue.
+- **WHICH FUNNELS — the READING FUNNELS of the scope's legs** (the offer's campaigns, every status and
+  channel; or the leg a `?leg=` read names). A funnel is a PATH: for each leg, the catalogue funnels
+  containing it; for a leg acting on leads already at a step, only those whose leg INTO that step the
+  brand states or the scope performs (else the ad funnel creeps in); then, at the step the leg lands on,
+  the funnels whose NEXT leg the brand STATES (where its leads go). Nothing stated there → the ONE
+  candidate whose onward path prices best on the effective rates (best path, max) — never every
+  candidate, or a path the brand never walks, priced on fleet medians, out-bids the one it does (measured:
+  a form median of 3.07% against a stated signup path of 0.21%). Nothing priceable at all → every
+  candidate (nothing to choose on, nothing guessed). No leg-running campaign → `[]` (the old
+  "no declaration" path: brand-wide economics, every leg).
+- **A funnel a caller NAMES is always priced** (`include`): `?funnel=` on `/workflow-projection` and
+  `/audience-stats`, and the funnel-keyed offer routes (`/offers/:id/funnels[/:funnelKey/*]`). The old
+  `funnel_not_declared` / `leg_not_declared` 404s are unreachable — pure compatibility answers now.
+  `/revenue?funnel=` still narrows only among the funnels the scope reads (unchanged rule).
+- **A CAMPAIGN-SCOPED read is priced on the reading funnels containing the campaign identity's own LEGS**
+  (`CampaignIdentity.legKeys`), never on the funnel the campaign row states; `learningPhase` likewise
+  resolves a leg through the first catalogue funnel a counted signal enters.
+- **SEVERAL OFFERS**: a brand-scoped read of a brand selling several offers still raises
+  `SeveralOffersDeclaredError` (now from the `offer-economics` offers list, same wire block); a
+  campaign-scoped read names the offer, and every existing degrade is unchanged.
+- **THE FLEET READS** (`fetchBrandStatedFunnels`): bucket membership = the funnels a brand's campaigns
+  read; stated economics = every leg the brand stated, whichever funnel reads it, plus each offer's LTR.
+  The fleet leg median pools per LEG across funnels (one rate per leg).
+- **Measured in prod before the ship (2026-09-25):** every live offer's campaigns sat on the ONE funnel it
+  declared, leg rates equal the arrow rates for every brand (0 of all rows differ), and the offer LTR
+  equals the declared funnel LTR for every live offer but Product-led `832126f3…` (its unused
+  conversation funnel stated $175; the offer is $500, as its website funnel was). The A/B of old vs new
+  dist on every live offer is in the PR.
+- Tests: `lib/reading-funnels.test.ts`; route suites mock `offer-economics` via `lib/leg-economics-fixture.ts`
+  (a pre-C1 declared fixture → the leg statements + offer brand-service's carry-over produced).
+
 ## AN OFFER IS READ ONE ROW PER OUTCOME — `GET /offers/:offerId/outcomes`, distinct leads, the spend of the legs that land on each step
 
 The fleet is retiring the sales funnel as an identity (org > brand > offer > outcome > leg): a campaign is
@@ -125,14 +170,14 @@ not landed. Owner decision 2026-09-25 (do not re-litigate), `lib/roi-maturity.ts
 ## A BRAND'S CONVERSION RATE IS THE BEST ONE WE HAVE PER ARROW — measured, else stated, else the fleet MEDIAN; and every fleet aggregate of rates is a MEDIAN of what brands STATED
 
 Conversion rates moved from the OFFER to the BRAND (owner decision, 2026-09-25): ONE rate per (brand,
-sales funnel, arrow), stated in brand-service's brand-grain store (`GET /internal/brands/:brandId/funnel-rates`,
-brand-service#538). Lifetime revenue stays per OFFER. `lib/effective-conversion-rates.ts` resolves
+LEG) since wave C1, stated in brand-service's leg store (`GET /internal/brands/:brandId/offer-economics`;
+the per-funnel `/funnel-rates` read is gone). Lifetime revenue stays per OFFER. `lib/effective-conversion-rates.ts` resolves
 every arrow, and every money figure rests on the result.
 
 - **THREE SOURCES, IN ORDER, AND NOTHING ELSE.** MEASURED on the brand's own leads once at least
   `MIN_MEASURED_FROM_REACHED` (= `LEARNING_OUTCOMES_REQUIRED`, 10) reached the arrow's FROM step — the bar
   is on the DENOMINATOR so an arrow truly at 0% still becomes measured; else the brand's MANUAL statement;
-  else the cross-org MEDIAN of stated rates for that (funnel, arrow). None → `effectiveRatePct: null`,
+  else the cross-org MEDIAN of stated rates for that LEG. None → `effectiveRatePct: null`,
   `unresolvedReason: "no_rate_available"`. Never a default, never a 0.
 - **THE MEASURED RATE IS THE FUNNEL-STEP CONVERSION** — `count(TO) ÷ count(FROM)`, byte-equal to
   `funnelSteps.conversionFromPreviousPct`. **Do NOT switch it to the intersection** (leads at FROM that
@@ -142,19 +187,15 @@ every arrow, and every money figure rests on the result.
   population and the overlays are the brand revenue read's own (`measureBrandSteps`): same lead read,
   same human statements, same legacy qualifications, same website-conversion attribution. Right-censoring
   is ACCEPTED (owner): a young brand's measured rate reads slightly low.
-- **PRICING READS IT THROUGH ONE DOOR — `fetchDeclaredFunnelsOnEffectiveRates`.** Every pricing surface
-  (`/revenue` + its brand/offer/funnel grains via `fetchDeclaredFunnelsSoft`, the spend cost parents,
-  `/workflow-projection`, `/funnel-ranking`, `/audience-stats`) reads the declared funnels with each arrow
-  REPLACED by its effective rate (`applyEffectiveRates`: provenance `stated_<source>`, named per-offer
-  rates DROPPED, lifetime revenue the offer's). A KEY-only read (`fetchDeclaredFunnelKeys`, the audience
-  route's `?funnel=` gate) stays on the raw client — it must not pay a lead walk for a list of keys.
-  Fail-soft with a LOUD log: effective rates unresolvable → the declared rates, never a 502.
+- **PRICING READS IT THROUGH ONE DOOR — `fetchPricingFunnels`** (see the wave C1 section): the scope's
+  reading funnels, each arrow its effective LEG rate, the offer's lifetime revenue. Fail-soft with a LOUD
+  log: effective rates unresolvable → the brand's stated leg rates, never a 502.
 - **ONE brand-wide lead walk per refresh**, through the Gold layer (view
   `brand-effective-conversion-rates`, scope `(brandId, orgId)`), for EVERY catalogue funnel (the set
   brand-service's own read serves). The fleet medians ride a single-flighted in-memory cell (15 min
   fresh / 6 h stale) over every feature membership's brands.
-- **`GET /brands/:brandId/conversion-rates`** serves it for Brand Settings: only the funnels the brand
-  DECLARED (any offer), each arrow in brand-service's OWN step wording (its form rung reads "Form
+- **`GET /brands/:brandId/conversion-rates`** serves it for Brand Settings: only the funnels the brand's
+  offers READ (their campaigns' legs), plus every leg on `legs`, each arrow in brand-service's OWN step wording (its form rung reads "Form
   filled") so the dashboard joins it to the brand-service write without translating, with the
   effective value, `source`, the measured n (`fromReached`/`toReached`), `manualRatePct` and the median
   beside it. The gateway forwards `/brands/*` per suffix, so it needs its own api-service line.
@@ -162,9 +203,8 @@ every arrow, and every money figure rests on the result.
   is DELETED.** Owner: a mean of cross-org conversion rates was never correct. The population was the
   brand-wide record, which is NOT NULL with server defaults: measured in brand-service prod 2026-09-25,
   82 / 91 / 93 / 93 of 109 rows sat on the defaults of `visitToPaidClientPct` / `replyToPaidClientPct` /
-  the two form rates, so a median there IS the default. RATES now come from the brand-grain store (no
-  default behind it; its migration discarded backfilled defaults), LIFETIME REVENUE from the declared
-  offers (nullable). One data point per brand (median over its offers/funnels). Applies to
+  the two form rates, so a median there IS the default. RATES now come from the leg store (no default
+  behind it), LIFETIME REVENUE from the offers (nullable). One data point per brand (median over its offers/funnels). Applies to
   `/public/channel-funnel-economics` (per (channel × funnel), on THAT funnel's statements —
   `evidence.brandCount` is now the brands that stated something on it), the cost-per-outcome trend /
   lifetime / per-workflow / best-model reads, and `/public/stats/cost-projection` (its per-brand
@@ -279,9 +319,9 @@ minute `audience-stats` and both `workflow-projection` reads 502'd on every poll
 - **AN OFFER-SCOPED ROUTE NAMES ITS OWN OFFER.** `/offers/:offerId/audience-stats` and its funnel
   sibling pass the offer from their own path, so they stop depending on brand-service resolving a sole
   offer. A single-offer brand resolves to the same offer either way, so those bodies are byte-unchanged.
-- **THE FLEET SWEEPS DEGRADE TO `[]`, LOUDLY** — `fetchDeclaredFunnelKeys` gained the offer argument,
-  but customer-health and the cross-org cost buckets have no campaign to resolve one from and already
-  `.catch` the read. A fleet sweep legitimately cannot name an offer; that is a gap to surface, never a
+- **THE FLEET SWEEPS DEGRADE TO `[]`, LOUDLY** — customer-health (`fetchReadingFunnelKeys`) has no
+  campaign to resolve an offer from and already `.catch`es the read (the cross-org buckets read every
+  offer since wave C1). A fleet sweep legitimately cannot name an offer; that is a gap to surface, never a
   guess to make.
 - **`/revenue` IS UNTOUCHED AND MUST STAY SO.** It already passes `offerId` on its `?offerId=` path and
   already degrades fail-soft, which is why it never 502'd — it was the tell that the plumbing existed and
