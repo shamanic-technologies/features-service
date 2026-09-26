@@ -22,6 +22,11 @@ reads the byte-same numbers under both:
   each at its CHANNEL-wide return. `fleet_return_snapshots` rows now carry `legKeys` + `expectedPaidClients`
   (optional; the warm reads campaign-service's rows soft). A snapshot predating them answers
   `legs_not_recorded_yet`, never `not_enough_brands`.
+  **The leg median is NOT the funnel median, and that is intended**: a brand whose campaigns perform
+  both entry legs sits in BOTH leg populations at its channel-wide return, while the funnel read uses its
+  funnel-narrowed rows. Measured in prod 2026-09-26 (cold email): conversation leg 3.60x on n=5 vs
+  conversation funnel 3.94x on n=4 — while every one-path brand's channel row was byte-equal to its funnel
+  row (spend, pipeline, paying clients). Reconcile per BRAND, never median against median.
 - **No fallback to a funnel**: an unpriceable figure is null with the SAME reason vocabulary the funnel
   read uses. **Projected and realized stay apart** under their own routes. Guards:
   `lib/outcome-public-reads.test.ts`, the C4 blocks of `routes/showcase-funnels.test.ts` and
