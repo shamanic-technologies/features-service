@@ -14,6 +14,7 @@ import pipelineActivityRoutes from "./routes/pipeline-activity.js";
 import offerEconomicsRoutes from "./routes/offer-economics.js";
 import offerOutcomesRoutes from "./routes/offer-outcomes.js";
 import brandEconomicsRoutes from "./routes/brand-economics.js";
+import contactedValueRoutes from "./routes/contacted-value.js";
 import conversionRatesRoutes from "./routes/conversion-rates.js";
 import audienceStatsRoutes from "./routes/audience-stats.js";
 import publicRoutes, { warmFleetReturnSnapshotsOnBoot, warmShowcaseFunnelsOnBoot } from "./routes/public.js";
@@ -61,6 +62,7 @@ app.use(audienceStatsRoutes);
 app.use(offerEconomicsRoutes);
 app.use(offerOutcomesRoutes);
 app.use(brandEconomicsRoutes);
+app.use(contactedValueRoutes);
 app.use(conversionRatesRoutes);
 app.use(viewCacheAdminRoutes);
 

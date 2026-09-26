@@ -1621,6 +1621,63 @@ registry.registerPath({
   },
 });
 
+const contactedEntryCountsSchema = z.object({ contacted: z.number(), reached: z.number() });
+const brandContactedValueResponseSchema = z.object({
+  brandId: z.string(),
+  lifetimeRevenueUsd: z.number().nullable().describe("The client value every figure is priced on — the same LTR the brand's pipeline uses. Null at cold start."),
+  contactedToPaidClientPct: z.number().nullable().describe("P(paid client | contacted), 0..100, for a lead no human ruled out of a route. Null exactly when `unmeasuredReason` is set."),
+  perLeadExpectedValueUsd: z.number().nullable().describe("LTR × that probability."),
+  totalExpectedValueUsd: z.number().nullable().describe("Company-level total over the brand's contacted-only leads: people of one organisation combined as independent shots at ONE client, then summed over organisations. NOT part of totalPipelineUsd, ROI or any cost of acquisition."),
+  unmeasuredReason: z.enum(["no_economics", "no_client_value", "no_entry_path", "no_entry_rate"]).nullable(),
+  routes: z.array(z.object({
+    signal: z.string().describe("The engine signal of the entry route (`clicked`, `positiveReply`)."),
+    step: z.string().describe("The funnel step the route lands on."),
+    entryRatePct: z.number().nullable().describe("P(this step | contacted), 0..100."),
+    entryRateSource: z.enum(["brand_measured", "fleet_measured"]).nullable().describe("brand_measured = the brand's own mature cohort (first contacted before `matureBefore`) once it holds `minBrandOutcomes` outcomes; else fleet_measured = every brand's pooled outreach on the same channels."),
+    brand: contactedEntryCountsSchema,
+    fleet: contactedEntryCountsSchema.nullable(),
+    paidClientGivenStepPct: z.number().describe("P(paid client | this step) — the pipeline engine's own ladder."),
+    valueAtStepUsd: z.number().describe("What a lead standing on this step is worth in the pipeline."),
+  })),
+  matureBefore: z.string(),
+  maturityDays: z.number(),
+  minBrandOutcomes: z.number(),
+  population: z.object({
+    contactedOnly: z.number().describe("Contacted leads with no conversion signal (no click, no reply, no meeting, no signup, no form, no sale) that did not bounce or unsubscribe."),
+    organizations: z.number(),
+    engaged: z.number().describe("Contacted leads that engaged — their value, if any, is the pipeline's."),
+    cannotConvert: z.number().describe("Contacted leads that bounced or unsubscribed."),
+  }),
+  leads: z.array(z.object({ leadId: z.string(), expectedValueUsd: z.number().nullable() })).describe("One page of contacted-only leads, ordered by lead id."),
+  nextCursor: z.string().nullable(),
+});
+const brandContactedValueResponseRef = registry.register("BrandContactedValueResponse", brandContactedValueResponseSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/brands/{brandId}/contacted-value",
+  summary: "What a brand's contacted-but-not-yet-engaged leads are worth in expectation",
+  description:
+    "A SEPARATE figure, added to no pipeline, ROI or cost figure. value = LTR × P(paid client | contacted), where P combines the brand's entry routes (click, positive reply) as independent shots at one close: P(route | contacted) × P(paid client | route). P(paid client | route) and the LTR are the byte-same ladder and value the brand's pipeline prices an engaged lead on, so a lead that engages moves onto the pipeline at the price this read forecast through. Paged: `limit`/`cursor`, or `leadIds` to price exactly the cards on screen; the summary rides every page.",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ brandId: z.string() }),
+    query: z.object({
+      limit: z.string().optional().describe("Rows per page, 1..5000, default 1000."),
+      cursor: z.string().optional().describe("The `nextCursor` of the previous page."),
+      leadIds: z.string().optional().describe("Comma-separated lead ids (≤1000): return only those rows. Cannot be combined with cursor."),
+    }),
+  },
+  responses: {
+    200: { description: "The brand's contacted value", content: { "application/json": { schema: brandContactedValueResponseRef } } },
+    400: { description: "Invalid paging parameters", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "reason='brand_has_no_channels'", content: { "application/json": { schema: errorResponse } } },
+    409: { description: "reason='brand_channels_price_differently'", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "A producer the figure is computed from could not be read", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 const brandAudienceStatsResponseSchema = audienceStatsResponseSchema.extend({
   channels: z.array(brandChannelSchema).describe("The channels combined into every row below, ascending by slug."),
 });

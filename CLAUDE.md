@@ -34,6 +34,33 @@ reads the byte-same numbers under both:
   (reconciliation to the funnel figure, no key naming a funnel, the old bodies' key sets pinned).
   (Set 2026-09-26.)
 
+## A CONTACTED LEAD WHO HAS NOT ENGAGED IS WORTH SOMETHING — `GET /brands/:brandId/contacted-value`, a SEPARATE figure, never pipeline
+
+The pipeline still prices a delivery at $0 (#863, unchanged). This read answers the Deals board's
+"Contacted" column: `value = LTR × P(paid client | contacted)`, `P = orP over entry routes r of
+P(r | contacted) × P(paid | r)` (`lib/contacted-value.ts`, `routes/contacted-value.ts`).
+
+- **`P(paid | r) × LTR` IS the engine's own path value** (same `resolvePaths`, same
+  `restrictPathsToDeclaredLegs`, same declared-funnel economics as `/brands/:id/revenue`), so a lead that
+  engages moves onto the pipeline at the price this read forecast through. Routes combine with
+  `combineIndependent` (now exported, unchanged). A human-ruled-out route (`deadSignals`) prices nothing.
+- **`P(r | contacted)`**: the brand's MATURE cohort (dated leads first contacted before today −
+  `OUTCOME_LAG_DAYS`) once it holds ≥10 OUTCOMES (bar on outcomes, not the denominator: entry arrows
+  convert a few percent, so 0/10 is chance), else the fleet's pooled email-gateway recipient stats on the
+  same channels, else null. Undated leads stay out of the rate.
+- **Priced population = contacted, no conversion signal of any kind (incl. negative/neutral replies),
+  not bounced/unsubscribed.** `population` states engaged / cannotConvert. Total is company-level
+  (per organisation `combineIndependent`, then summed).
+- **Null, never 0**, with `unmeasuredReason`: `no_economics` / `no_client_value` / `no_entry_path` /
+  `no_entry_rate`.
+- **Added to NOTHING**: `totalPipelineUsd`, ROI, CAC, every existing body byte-unchanged. Joining the
+  pipeline is a later owner decision.
+- Paged (`limit` ≤5000 default 1000, `cursor`, or `leadIds` ≤1000); summary on every page. Gold view
+  `brand-contacted-value`, keyed on channels + declared funnels + economics fingerprint.
+- Measured in prod 2026-09-26: webprime `9abe30d6…` 69/69 priced at $0.44 (reply route only, fleet rate
+  43/54,999), total $30.15; `f4d73dab…` 7,740 leads, click route brand-measured 181/8,135, total $247.59.
+- Guards: `lib/contacted-value.test.ts`, `routes/contacted-value.test.ts`. (Set 2026-09-26.)
+
 ## A STALE CELL IS RECOMPUTED ONLY WHEN ITS BRAND'S FACTS MOVED, AND A SIBLING SCOPE IS PRECOMPUTED BEFORE ANYONE OPENS IT — `lib/view-facts.ts`, `lib/view-keeper.ts`
 
 Two gaps the refresher left (#1106): a stale cell recomputed the brand's whole population on a clock (3s for a
