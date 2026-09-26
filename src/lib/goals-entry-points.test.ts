@@ -139,55 +139,43 @@ describe("bucket membership is decided by DECLARED FUNNELS, never by a goal", ()
   });
 });
 
-describe("the request door: `?funnel=` is sufficient, `?goal=` still works beside it", () => {
+describe("the request door: `?funnel=` is retired, `?goal=` still works", () => {
   const req = (query: Record<string, string>) => ({ query, params: {} }) as never;
 
-  it("a funnel alone is a valid request — the goal is derived from it, not demanded of the caller", () => {
-    const res = validateAudienceStatsQuery(req({ brandId: "b1", funnel: "sales_meetings_from_conversation" }));
-    expect(res.ok).toBe(true);
-    if (res.ok) {
-      expect(res.funnelKey).toBe("sales_meetings_from_conversation");
-      expect(res.goal).toBe("meetingBooked");
+  it("a named funnel is REFUSED with funnel_retired — alone or beside a goal, legacy spelling or not", () => {
+    for (const query of [
+      { brandId: "b1", funnel: "sales_meetings_from_conversation" } as Record<string, string>,
+      { brandId: "b1", funnel: "visit_form" },
+      { brandId: "b1", goal: "positiveReply", funnel: "form_magnet" },
+      { brandId: "b1", funnel: "not_a_funnel" },
+    ]) {
+      const res = validateAudienceStatsQuery(req(query));
+      expect(res.ok).toBe(false);
+      if (!res.ok) {
+        expect(res.status).toBe(400);
+        expect(res.reason).toBe("funnel_retired");
+      }
     }
   });
 
-  it("a legacy funnel spelling resolves to the canonical key (accepted forever on the way in)", () => {
-    const res = validateAudienceStatsQuery(req({ brandId: "b1", funnel: "visit_form" }));
+  it("an EMPTY `?funnel=` names nothing and is read as absent, as it always was", () => {
+    const res = validateAudienceStatsQuery(req({ brandId: "b1", goal: "positiveReply", funnel: "" }));
     expect(res.ok).toBe(true);
-    if (res.ok) expect(res.funnelKey).toBe("form_magnet");
   });
 
-  it("the deprecated `?goal=` alone still answers, and a named funnel WINS over it", () => {
+  it("`?goal=` alone still answers", () => {
     const goalOnly = validateAudienceStatsQuery(req({ brandId: "b1", goal: "positiveReply" }));
     expect(goalOnly.ok).toBe(true);
-    if (goalOnly.ok) {
-      expect(goalOnly.goal).toBe("positiveReply");
-      expect(goalOnly.funnelKey).toBeUndefined();
-    }
-
-    const both = validateAudienceStatsQuery(req({ brandId: "b1", goal: "positiveReply", funnel: "form_magnet" }));
-    expect(both.ok).toBe(true);
-    if (both.ok) expect(both.funnelKey).toBe("form_magnet");
+    if (goalOnly.ok) expect(goalOnly.goal).toBe("positiveReply");
   });
 
-  it("neither one is the BRAND-LEVEL read (goal null, no funnel named); an unrecognised funnel/goal is still 400", () => {
-    // A brand runs several funnels at once, so at brand level there is no goal — the read is combined
-    // over the brand's DECLARED set and carries no goal at all. It is a request, not a missing parameter.
+  it("neither is the BRAND-LEVEL read (goal null); an unrecognised goal is still 400", () => {
     const neither = validateAudienceStatsQuery(req({ brandId: "b1" }));
     expect(neither.ok).toBe(true);
-    if (neither.ok) {
-      expect(neither.goal).toBeNull();
-      expect(neither.funnelKey).toBeUndefined();
-    }
+    if (neither.ok) expect(neither.goal).toBeNull();
 
-    // A NAMED-but-unrecognised value stays a 400 — never a silent fall back to the brand-level read,
-    // which would answer a funnel-specific question with a brand-wide number and look right.
     const bogusGoal = validateAudienceStatsQuery(req({ brandId: "b1", goal: "not_a_goal" }));
     expect(bogusGoal.ok).toBe(false);
     if (!bogusGoal.ok) expect(bogusGoal.status).toBe(400);
-
-    const bogus = validateAudienceStatsQuery(req({ brandId: "b1", funnel: "not_a_funnel" }));
-    expect(bogus.ok).toBe(false);
-    if (!bogus.ok) expect(bogus.status).toBe(400);
   });
 });

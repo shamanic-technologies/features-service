@@ -78,7 +78,7 @@ export interface FunnelInputs {
   economics: SalesEconomics;
   /**
    * The funnels this read is being priced on — the brand's whole declared set, or the ONE funnel a
-   * `?funnel=` / a campaign's own statement narrowed it to. Each funnel is priced on its OWN ladder
+   * requested funnel (the public per-funnel reads) / a campaign's own legs narrowed it to. Each funnel is priced on its OWN ladder
    * (see `FUNNEL_LADDERS`), so a leg is never valued through a route the funnel does not contain.
    *
    * `[]` / absent ⇒ the brand declared nothing we could read: it keeps today's behaviour on every
@@ -677,7 +677,7 @@ export function declaredLegSignals(keys: readonly SalesFunnelKey[]): Set<string>
  * Keep only the paths that are a leg of one of the funnels being priced.
  *
  * A brand that declared SEVERAL funnels is priced on ALL of their legs (the union). A read narrowed to
- * ONE funnel — a caller's `?funnel=`, or the funnel a campaign itself states — is priced on that
+ * ONE funnel — a requested funnel (the public per-funnel reads), or the funnel a campaign's legs read — is priced on that
  * funnel's legs alone, because that is the funnel being sold.
  *
  * `[]` in ⇒ paths unchanged. An empty set means the brand declared nothing we could read, and we do

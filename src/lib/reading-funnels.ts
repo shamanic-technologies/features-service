@@ -216,8 +216,6 @@ export interface PricingFunnelsOptions {
   rates?: "effective" | "stated";
   /** Price these legs instead of the offer's campaigns' legs (a leg-keyed read names its own). */
   legKeys?: readonly string[];
-  /** Funnels a caller NAMED (`?funnel=`): always priced, whatever the reading set holds. */
-  include?: readonly SalesFunnelKey[];
   /** Already-read statements, to spare the brand-service read. */
   legEconomics?: BrandLegEconomics;
   /** Already-read campaign rows, to spare the campaign-service read. */
@@ -322,7 +320,6 @@ export async function fetchPricingFunnels(
       hints,
     ),
   );
-  for (const k of opts.include ?? []) keys.add(k);
   // A scope whose campaigns perform no leg (a brand before its first campaign) walks no path: an EMPTY
   // set, which every caller already reads as "nothing to price on" — never a substituted funnel.
   if (keys.size === 0) return [];

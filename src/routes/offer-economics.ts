@@ -69,6 +69,7 @@
  * total: a row for one channel and the total above it are visibly one statement at two grains.
  */
 import { Router } from "express";
+import { FUNNEL_RETIRED_BODY, namesRetiredFunnel } from "../lib/retired-funnel-param.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { getFunnel } from "../lib/funnel-registry.js";
 import {
@@ -80,8 +81,7 @@ import {
 } from "./revenue.js";
 import { computeAudienceStats, type ComputeResult } from "../lib/audience-stats-compute.js";
 import { computeOfferPipelineActivity } from "./pipeline-activity.js";
-import { fetchEffectiveEconomics, economicsFingerprint, type EffectiveEconomics } from "../lib/sales-economics-client.js";
-import type { DeclaredSalesFunnel } from "../lib/sales-funnels-client.js";
+import { fetchEffectiveEconomics, economicsFingerprint } from "../lib/sales-economics-client.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { applyLeadDetail, parseLeadDetail, LEAD_DETAIL_VALUES } from "../lib/lead-detail.js";
 import {
@@ -90,27 +90,14 @@ import {
   parseOutcomeCauses,
 } from "../lib/outcome-cause.js";
 import { parsePricing } from "../lib/pricing.js";
-import { matchSalesFunnelKey, SALES_FUNNEL_KEYS, type SalesFunnelKey } from "../lib/sales-funnels.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
 import {
   resolveOfferChannels,
-  buildOfferChannelMap,
   offerCampaignIds,
   offerFeatureSlugs,
   OfferHasNoChannelsError,
   type OfferChannel,
 } from "../lib/offer-channels.js";
-import { buildOfferFunnels, type OfferFunnel } from "../lib/offer-funnels.js";
-import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
-import { fetchBrandStepCostsSoft } from "../lib/step-costs-client.js";
-import {
-  partitionCustomerCosts,
-  coverageOf,
-  summariseCoverage,
-  type FunnelCostCoverage,
-  type CustomerDeclaredCost,
-} from "../lib/funnel-customer-costs.js";
-import { buildCombinedCostEconomics } from "../lib/cost-economics.js";
 
 const router = Router();
 
@@ -161,50 +148,6 @@ export function resolveOfferFunnel(offerId: string, channels: OfferChannel[]): R
   return distinct[0] ?? null;
 }
 
-/**
- * Why a funnel's money could not be turned into a return. See the `/offers/:offerId/funnels` header for
- * the order they are checked in and what each one leaves populated.
- */
-export type FunnelUnpricedReason = "no_channel_funnel" | "no_economics_declared" | "funnel_not_declared";
-
-/**
- * HOW ONE SALES FUNNEL'S MONEY IS PRICED — the single rule, so the funnel's own page and the funnel's
- * row in the offer's table can never state two prices for one funnel.
- *
- * PRICED: the funnel's OWN declared terms merged over the brand-wide record — its own rates and its own
- * lifetime revenue, and its own legs the only ones carrying expected value.
- *
- * UNPRICED but measurable: the same read with the economics deliberately nulled, which is the engine's
- * cold-start path — real spend, real volume, null pipeline. The leads are still read, because "we could
- * not price this" and "this reached nobody" are different statements.
- *
- * The reasons are checked in the order the `/offers/:offerId/funnels` header states, so the plain thing
- * is said first, and the brand-wide record is NEVER borrowed as a fallback: every rate on it is
- * server-defaulted, so pricing funnel A on it is the retired-goal fiction one grain finer.
- */
-export function priceFunnelRow(input: {
-  funnelKey: SalesFunnelKey;
-  /** Whether any channel carrying this funnel measures anything at all (a funnel wired in the registry). */
-  hasChannelFunnel: boolean;
-  declaredFunnels: DeclaredSalesFunnel[];
-  brandEconomics: EffectiveEconomics | null;
-}): { unpricedReason: FunnelUnpricedReason | null; economicsOverride: FunnelPricedEconomics | undefined } {
-  const { funnelKey, hasChannelFunnel, declaredFunnels, brandEconomics } = input;
-  const unpricedReason: FunnelUnpricedReason | null = !hasChannelFunnel
-    ? "no_channel_funnel"
-    : declaredFunnels.length === 0 || !brandEconomics?.economics
-      ? "no_economics_declared"
-      : !declaredFunnels.some((f) => f.funnelKey === funnelKey)
-        ? "funnel_not_declared"
-        : null;
-  const economicsOverride: FunnelPricedEconomics | undefined = !brandEconomics
-    ? undefined
-    : unpricedReason === null
-      ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics, funnelKey)
-      : { economics: { ...brandEconomics, economics: null }, pricedFunnelKeys: [funnelKey] };
-  return { unpricedReason, economicsOverride };
-}
-
 /** Shared parsing + channel resolution for all three offer reads. */
 async function resolveRequest(req: AuthenticatedRequest & { params: { offerId: string }; query: Record<string, unknown> }) {
   const offerId = req.params.offerId;
@@ -253,6 +196,10 @@ function describeChannels(channels: OfferChannel[]) {
 // unconditionally. Both stay available per channel on the existing reads.
 router.get("/offers/:offerId/revenue", apiKeyAuth, async (req, res) => {
   try {
+    // `?funnel=` is RETIRED (wave C2): refused, never silently ignored. See lib/retired-funnel-param.ts.
+    if (namesRetiredFunnel(req.query as Record<string, unknown>)) {
+      return res.status(400).json(FUNNEL_RETIRED_BODY);
+    }
     const resolved = await resolveRequest(req as never);
     if (!resolved.ok) return res.status(resolved.status).json({ error: resolved.error });
     const { offerId, brandId, pricing, headers, channels, campaignIds, featureSlugs } = resolved;
@@ -275,15 +222,6 @@ router.get("/offers/:offerId/revenue", apiKeyAuth, async (req, res) => {
     }
     const causeKey = causeScopeKeyPart(causes);
 
-    // `?funnel=` names the SALES FUNNEL the spend block's cost-per-outcome columns are priced on, with
-    // the same meaning and the same fail-loud parse as the per-feature read.
-    let requestedFunnel: SalesFunnelKey | undefined;
-    const funnelParam = req.query.funnel as string | undefined;
-    if (funnelParam) {
-      const matched = matchSalesFunnelKey(funnelParam);
-      if (!matched) return res.status(400).json({ error: `funnel must be one of: ${SALES_FUNNEL_KEYS.join(", ")}` });
-      requestedFunnel = matched;
-    }
 
     const funnel = resolveOfferFunnel(offerId, channels);
 
@@ -301,7 +239,7 @@ router.get("/offers/:offerId/revenue", apiKeyAuth, async (req, res) => {
         ])
       : [[], null];
     const brandPriced: FunnelPricedEconomics | undefined = brandEconomics
-      ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics, requestedFunnel)
+      ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics)
       : undefined;
     const econ = brandPriced ? economicsFingerprint(brandPriced.economics) : undefined;
     const decl = funnel ? declaredFunnels.map((f) => f.funnelKey).sort().join("+") || "none" : undefined;
@@ -314,7 +252,6 @@ router.get("/offers/:offerId/revenue", apiKeyAuth, async (req, res) => {
         orgId: headers.orgId,
         brandId,
         channels: featureSlugs.join("+"),
-        funnel: requestedFunnel,
         decl,
         pricing,
         econ,
@@ -338,7 +275,7 @@ router.get("/offers/:offerId/revenue", apiKeyAuth, async (req, res) => {
           brandPriced,
           true,
           pricing,
-          requestedFunnel,
+          undefined,
           offerId,
           undefined,
           causes,
@@ -357,7 +294,7 @@ router.get("/offers/:offerId/revenue", apiKeyAuth, async (req, res) => {
             brandPriced,
             false,
             pricing,
-            requestedFunnel,
+            undefined,
             offerId,
             undefined,
             causes,
@@ -399,6 +336,10 @@ router.get("/offers/:offerId/revenue", apiKeyAuth, async (req, res) => {
 // numerators, never averaged.
 router.get("/offers/:offerId/audience-stats", apiKeyAuth, async (req, res) => {
   try {
+    // `?funnel=` is RETIRED (wave C2): refused, never silently ignored. See lib/retired-funnel-param.ts.
+    if (namesRetiredFunnel(req.query as Record<string, unknown>)) {
+      return res.status(400).json(FUNNEL_RETIRED_BODY);
+    }
     const resolved = await resolveRequest(req as never);
     if (!resolved.ok) return res.status(resolved.status).json({ error: resolved.error });
     const { offerId, brandId, pricing, headers, channels, campaignIds, featureSlugs } = resolved;
@@ -419,7 +360,6 @@ router.get("/offers/:offerId/audience-stats", apiKeyAuth, async (req, res) => {
         brandId,
         channels: featureSlugs.join("+"),
         goal: req.query.goal,
-        funnel: req.query.funnel,
         statuses: req.query.statuses,
         limit: req.query.limit,
         pricing,
@@ -478,281 +418,5 @@ router.get("/offers/:offerId/pipeline-activity", apiKeyAuth, async (req, res) =>
   }
 });
 
-
-// ── GET /offers/:offerId/funnels ──────────────────────────────────────────────
-//
-// WHAT EACH OF THIS OFFER'S SALES FUNNELS COST AND RETURNED — one lean row per funnel, in ONE request.
-//
-// A customer reads the return of their brand, and of each of their offers. The grain under that is the
-// SALES FUNNEL, and it is the one that is about to matter most: the product is moving to ONE CAMPAIGN
-// PER STEP, so a campaign will buy a single link and have a cost per step but NO return of its own —
-// the lifetime revenue sits at the END of the funnel, and hanging it on whichever link happened to be
-// last would wildly overstate that link. The funnel is the smallest scope that spans a whole path to a
-// paying client, so it is the smallest scope whose money divides into a return.
-//
-// It is correct under BOTH shapes with no switch: the row is scoped to the funnel's CAMPAIGN SET, so a
-// funnel served by one campaign (every funnel in production today) and a funnel served by one campaign
-// per step read through the identical code — the set simply grows.
-//
-// ── THE ROW IS THE SAME COMPUTATION THE OFFER READ MAKES, NARROWED ─────────────────────────────
-//
-// Same engine, same brand pricing, same committed basis, `includeSpend: false` — the LEAN shape the
-// offer, channel, campaign and workflow groups already use. So a funnel row and the offer total above
-// it are one statement at two grains rather than two computations to reconcile.
-//
-// ── WHAT ADDS AND WHAT DOES NOT ────────────────────────────────────────────────────────────────
-//
-// A campaign states exactly one funnel, so MONEY adds: Σ funnels + Σ unattributed IS the offer's own
-// spend. PEOPLE do not — a lead worked through two funnels is ONE lead to the offer and belongs to both
-// rows — so the rows do not sum on the pipeline half and the offer read stays the number to trust for
-// "what did this offer do". Same counting-people property every grain here already carries.
-//
-// ── A FUNNEL WE CANNOT PRICE SAYS SO, AND NAMES THE MISSING INGREDIENT ──────────────────────────
-//
-// `priced: false` + `unpricedReason`, checked in the order below so the plain thing is said first:
-//
-//   no_channel_funnel     — no channel carrying this funnel measures anything (no funnel wired). The
-//                           leads are never read, so `outcomes` is null too: nothing counted them.
-//   no_economics_declared — the brand states no economics, or its declaration could not be read. This
-//                           funnel therefore has no rates and no lifetime revenue of its own.
-//   funnel_not_declared   — the declaration IS readable and does not contain this funnel.
-//
-// In all three the SPEND is real and reported (the customer paid it) and the pipeline, the return and
-// the cost of acquisition are null. Never 0, and never the brand-wide fallback the un-narrowed reads
-// legitimately take: pricing funnel A on a brand-wide record — whose every rate is server-defaulted —
-// is exactly the fiction the retired goal produced, one grain finer.
-//
-// ── TWO OWNERS OF MONEY, TOLD APART ────────────────────────────────────────────────────────────
-//
-// The platform automates the first link of a funnel and CHARGES for it; the customer performs the rest —
-// they run the meeting, they close the deal — and lead-service now records what those legs cost THEM
-// (`GET /internal/brands/:brandId/step-costs`). A cost of acquisition that counts only the billed link
-// is too small for every funnel ending in a human leg, and the return dividing by it is too good.
-//
-// So the row states both, apart:
-//
-//   costEconomics          — what the customer was CHARGED. A billing fact, unchanged, unwidened.
-//   customerCost           — what THEY state their own legs cost. Never charged, in no ledger of ours,
-//                            and it never reaches billing.
-//   combinedCostEconomics  — the two together, and the return that divides by that sum.
-//
-// A statement is made on a lead row, which belongs to a CAMPAIGN, and a campaign states exactly one
-// funnel — so the campaign set that scopes a row's charged spend scopes its declared spend too, with
-// nothing inferred. A statement naming no campaign, or a campaign in no funnel of this offer, is
-// reported apart (`customerCost.unattributed`) rather than dropped or parked on a default.
-//
-// A STATED ZERO IS AN ANSWER; AN UNSTATED LEG IS NOT. A leg nobody was ever asked about contributes
-// nothing to the sum and raises `unstatedCount`, and the funnel then says `platform_and_partial_customer_spend`
-// — a funnel we cannot fully cost says so instead of guessing at the rest. With nothing declared at all
-// the row reads exactly as it did before this and the marker still says `platform_spend_only`, which
-// is why the basis on the wire is always TRUE rather than always the same.
-//
-// The read is fail-SOFT: an unreadable statement set degrades the customer half (null, loud log) rather
-// than 502-ing a row whose charged money, volume and platform-priced return are all correct.
-router.get("/offers/:offerId/funnels", apiKeyAuth, async (req, res) => {
-  try {
-    const authed = req as AuthenticatedRequest & { params: { offerId: string } };
-    const offerId = authed.params.offerId;
-    const brandId = (req.query.brandId as string | undefined) ?? "";
-    if (!brandId) return res.status(400).json({ error: "brandId query parameter is required" });
-
-    const pricing = parsePricing(req.query.pricing);
-    if (pricing === null) return res.status(400).json({ error: "pricing must be one of: gross, net" });
-
-    // WHOSE WINS THIS READ COUNTS. Omitted → every state → byte-identical to today. An unrecognised
-    // word is a 400, never a silent pick. See lib/outcome-cause.ts.
-    const causes = parseOutcomeCauses(req.query.cause);
-    if (causes === null) {
-      return res.status(400).json({
-        error: `cause must be a comma-separated subset of: ${OUTCOME_CAUSES.join(", ")}`,
-        reason: "cause_unrecognised",
-      });
-    }
-    const causeKey = causeScopeKeyPart(causes);
-
-    const headers: DownstreamHeaders = {
-      orgId: authed.orgId,
-      userId: authed.userId,
-      runId: authed.runId,
-      // A funnel is sold through however many channels carry it, so naming one would attribute the read
-      // to a channel the caller never asked about.
-      featureSlug: undefined,
-    };
-
-    // ONE campaign read answers both questions: does any campaign of this brand sell this offer (the
-    // 404), and how do those campaigns partition by funnel. Reading it twice would be the same rows.
-    const rows = await fetchBrandCampaignRows(brandId, undefined, {
-      orgId: authed.orgId,
-      userId: authed.userId,
-      runId: authed.runId,
-    });
-    if (buildOfferChannelMap(rows).channelsOf(offerId).length === 0) {
-      throw new OfferHasNoChannelsError(offerId, brandId);
-    }
-    const { funnels, unattributedCampaignIds } = buildOfferFunnels(rows, offerId);
-
-    // Economics and the declaration are BRAND-scoped for THIS offer, so they are read ONCE and shared
-    // by every row: N funnels cost one pair of calls, and both ride the cache key so a write lands on a
-    // new cell instead of replaying the pre-write answer. Skipped entirely when no funnel has a channel
-    // that measures anything — there is then nothing to price.
-    const anyFunnel = funnels.some((funnel) => distinctChannelFunnels(funnel.channels).length > 0);
-    // The customer's own statements are read whether or not a funnel can be PRICED: what they spent on
-    // a leg is a fact about their money, not about our ability to turn it into a return. One
-    // brand-scoped read serves every row, exactly as the economics pair beside it does.
-    const [declaredFunnels, brandEconomics, stepCosts] = anyFunnel
-      ? await Promise.all([
-          // Every funnel the table lists is priced on its own terms (wave C1: no declared set to check
-          // a row against — a row IS a funnel the offer's campaigns state).
-          fetchDeclaredFunnelsSoft(brandId, headers.orgId, offerId, funnels.map((f) => f.funnelKey)),
-          fetchEffectiveEconomics(brandId, headers),
-          fetchBrandStepCostsSoft(brandId),
-        ])
-      : [[], null, await fetchBrandStepCostsSoft(brandId)];
-    const customerCosts = stepCosts
-      ? partitionCustomerCosts(
-          stepCosts.costs,
-          funnels.map((funnel) => ({ key: funnel.funnelKey, campaignIds: funnel.campaignIds })),
-        )
-      : null;
-    const declaredKeys = new Set(declaredFunnels.map((f) => f.funnelKey));
-    const decl = anyFunnel ? [...declaredKeys].sort().join("+") || "none" : undefined;
-    const econ = brandEconomics ? economicsFingerprint(brandEconomics) : undefined;
-
-    const payload = await servedCached({
-      view: "offer-funnels",
-      // The whole (funnel × channel) partition rides the key, not just the funnel list: a newly funded
-      // channel on one funnel changes that row's every figure while no other key part moves.
-      scopeKey: buildScopeKey(offerId, {
-        orgId: headers.orgId,
-        brandId,
-        funnels: funnels
-          .map((funnel) => `${funnel.funnelKey}>${funnel.channels.map((c) => c.featureSlug).join("+")}`)
-          .join(","),
-        unattributed: unattributedCampaignIds.join("+"),
-        // The customer's declared money is part of every combined figure below, so a new statement has
-        // to land on a NEW cell rather than replay the answer from before it was made — the same
-        // reasoning as the economics fingerprint beside it.
-        cust: stepCosts
-          ? `${stepCosts.costs.length}:${stepCosts.costs.reduce((n, c) => n + (c.costCents ?? 0), 0)}`
-          : "unavailable",
-        decl,
-        pricing,
-        // A read counting a different set of causes is a different answer, so it is a different cell.
-        // Absent for the default set → today's keys are unmoved.
-        cause: causeKey,
-        econ,
-      }),
-      orgId: headers.orgId,
-      compute: async () => {
-        const groups = await mapWithConcurrency(funnels, 4, async (row: OfferFunnel) => {
-          // Each row resolves the MEASUREMENT funnel of ITS OWN channels — a sales funnel whose channels
-          // price two ways says so (409) rather than having one silently picked for it.
-          const funnel = resolveOfferFunnel(offerId, row.channels);
-          const { unpricedReason, economicsOverride } = priceFunnelRow({
-            funnelKey: row.funnelKey,
-            hasChannelFunnel: funnel !== null,
-            declaredFunnels,
-            brandEconomics,
-          });
-
-          const body = await computeFeatureRevenue(
-            row.channels.map((c) => c.featureSlug),
-            brandId,
-            row.campaignIds,
-            unpricedReason === "no_channel_funnel" ? null : funnel,
-            headers,
-            undefined,
-            economicsOverride,
-            false,
-            pricing,
-            row.funnelKey,
-            offerId,
-            undefined,
-            causes,
-          );
-          // The customer's own legs, scoped by the SAME campaign set the charged money is scoped by.
-          // `null` only when the statements could not be read at all — never when nobody stated one,
-          // which is a real answer and reads as zeros.
-          const customerCost: CustomerDeclaredCost | null = customerCosts?.byFunnel[row.funnelKey] ?? null;
-          const coverage: FunnelCostCoverage = coverageOf(customerCost);
-          return {
-            funnelKey: row.funnelKey,
-            name: row.name,
-            steps: row.steps,
-            campaignIds: row.campaignIds,
-            channels: row.channels.map((c) => ({ featureSlug: c.featureSlug, campaignIds: c.campaignIds })),
-            priced: unpricedReason === null,
-            unpricedReason,
-            headline: body.headline,
-            costEconomics: body.costEconomics,
-            customerCost: customerCost
-              ? {
-                  declaredCostUsd: customerCost.costCents / 100,
-                  statedCount: customerCost.statedCount,
-                  unstatedCount: customerCost.unstatedCount,
-                }
-              : null,
-            costCoverage: coverage,
-            // The funnel's OWN lifetime revenue — the same one its pipeline was priced on — so the
-            // combined return is the charged one moved by exactly the customer's money and nothing else.
-            combinedCostEconomics: buildCombinedCostEconomics({
-              charged: body.costEconomics,
-              customerDeclaredCostCents: customerCost?.costCents ?? 0,
-              totalPipelineUsd: body.headline.totalPipelineUsd,
-              lifetimeRevenueUsd: economicsOverride?.economics.economics?.lifetimeRevenueUsd ?? null,
-            }),
-            outcomes: body.outcomes,
-          };
-        });
-        return {
-          offerId,
-          brandId,
-          costBasis: "charged" as const,
-          // WHOSE WINS EVERY ROW COUNTED — stated once for the table, since a lean row carries none.
-          outcomeCauses: { priced: [...causes] },
-          // The WEAKEST coverage among the rows, because the marker is an admission: a payload holding
-          // one fully-costed funnel and one that could not be costed at all is not a fully-costed payload.
-          costCoverage: summariseCoverage(groups.map((g) => g.costCoverage)),
-          // `null` = the statements could not be READ; zeros = nobody has stated one. Two different
-          // things a consumer acts on differently, so they are never collapsed.
-          customerCost: customerCosts
-            ? {
-                declaredCostUsd:
-                  (Object.values(customerCosts.byFunnel).reduce((n, c) => n + c.costCents, 0) +
-                    customerCosts.unattributed.costCents) /
-                  100,
-                statedCount:
-                  Object.values(customerCosts.byFunnel).reduce((n, c) => n + c.statedCount, 0) +
-                  customerCosts.unattributed.statedCount,
-                unstatedCount:
-                  Object.values(customerCosts.byFunnel).reduce((n, c) => n + c.unstatedCount, 0) +
-                  customerCosts.unattributed.unstatedCount,
-                // Statements naming no campaign, or a campaign in no funnel of this offer. In NO row,
-                // stated here so a reader sees the difference rather than wondering where they went.
-                unattributed: {
-                  declaredCostUsd: customerCosts.unattributed.costCents / 100,
-                  statedCount: customerCosts.unattributed.statedCount,
-                  unstatedCount: customerCosts.unattributed.unstatedCount,
-                },
-              }
-            : null,
-          funnels: groups,
-          unattributedCampaignIds,
-        };
-      },
-    });
-
-    res.json(payload);
-  } catch (error) {
-    if (error instanceof OfferHasNoChannelsError) {
-      return res.status(404).json({ error: error.message, reason: "offer_has_no_channels", offerId: error.offerId });
-    }
-    if (error instanceof OfferChannelsPriceDifferentlyError) {
-      return res.status(409).json({ error: error.message, reason: "offer_channels_price_differently", offerId: error.offerId });
-    }
-    console.error("[features-service] Offer funnels error:", error);
-    res.status(502).json({ error: "Failed to compute offer funnel economics" });
-  }
-});
 
 export default router;

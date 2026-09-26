@@ -2,14 +2,13 @@
  * THE BRAND-LEVEL PER-AUDIENCE RETURN — `/audience-stats` read with NEITHER `funnel` NOR `goal`.
  *
  * A brand runs several sales funnels at once, so at brand level there is no goal: the only thing that
- * matters is what came back per dollar. This suite drives THREE surfaces from ONE downstream fixture —
- * the brand-level read, the per-funnel (`?funnel=`) read, and `/funnel-ranking` — and asserts they are
- * one statistic seen three ways, rather than three hand-written expectations:
+ * matters is what came back per dollar. This suite drives the brand-level read from ONE downstream
+ * fixture, once over both funnels and once over each funnel ALONE (a brand whose campaigns read only that
+ * funnel), and asserts they are one statistic seen several ways, rather than hand-written expectations:
  *
- *   - the brand's combined return IS the head of the funnel ranking (same definition, same evidence);
- *   - an audience's combined return IS its return on the funnel it was combined through, so the number
- *     the Audiences table leads with is the number a click into that funnel shows;
- *   - naming a funnel still behaves exactly as it did.
+ *   - the brand's combined return IS the best of the single-funnel returns (same definition, same evidence);
+ *   - an audience's combined return IS its return on the funnel it was combined through;
+ *   - naming a funnel (`?funnel=`) is refused — the parameter is retired (wave C2).
  *
  * The fixture is built so the brand's best funnel and an audience's best funnel DIFFER — which is the
  * whole reason the row carries its own `basisFunnelKey` instead of inheriting the brand's.
@@ -223,15 +222,15 @@ async function brandLevelRead() {
   expect(res.status).toBe(200);
   return res.body;
 }
+/** The brand-level read of a brand whose campaigns read ONLY this funnel. */
 async function funnelRead(funnel: string) {
-  const res = await request(app).get(statsUrl(`&funnel=${funnel}`)).set(AUTH);
-  expect(res.status).toBe(200);
-  return res.body;
-}
-async function ranking() {
-  const res = await request(app).get(`/features/${FEATURE.slug}/funnel-ranking?brandId=brand-1`).set(AUTH);
-  expect(res.status).toBe(200);
-  return res.body;
+  const saved = declaredKeys;
+  declaredKeys = [funnel];
+  try {
+    return await brandLevelRead();
+  } finally {
+    declaredKeys = saved;
+  }
 }
 const rowFor = (body: any, audienceId: string): any => body.audiences.find((r: any) => r.audienceId === audienceId);
 
@@ -284,15 +283,16 @@ describe("brand-level per-audience return: /audience-stats with no funnel and no
     expect(body.funnelCoverage.pricingBasisFunnelKey).toBe(body.brandProjection.basisFunnelKey);
   });
 
-  it("reconciles with the brand's own return: the combined figure IS the head of /funnel-ranking", async () => {
-    const [body, rank] = await Promise.all([brandLevelRead(), ranking()]);
+  it("reconciles with the brand's own return: the combined figure IS the best single-funnel return", async () => {
+    const body = await brandLevelRead();
+    const conversation = await funnelRead("sales_meetings_from_conversation");
+    const purchases = await funnelRead("website_purchases");
 
-    expect(rank.recommendation.funnelKey).toBe("sales_meetings_from_conversation");
-    expect(body.brandProjection.basisFunnelKey).toBe(rank.recommendation.funnelKey);
-    expect(body.brandProjection.returnPerDollar).toBeCloseTo(rank.recommendation.returnPerDollar, 10);
-    expect(body.brandProjection.costPerPaidClientUsd).toBeCloseTo(rank.recommendation.costPerPaidClientUsd, 10);
-    // The ranking's rank-1 return is the MAXIMUM over the declared set — so is this one, by definition.
-    const best = Math.max(...rank.ranking.filter((f: any) => f.rankable).map((f: any) => f.returnPerDollar));
+    expect(body.brandProjection.basisFunnelKey).toBe("sales_meetings_from_conversation");
+    expect(body.brandProjection.returnPerDollar).toBeCloseTo(conversation.brandProjection.returnPerDollar, 10);
+    expect(body.brandProjection.costPerPaidClientUsd).toBeCloseTo(conversation.brandProjection.costPerPaidClientUsd, 10);
+    // The MAXIMUM over the funnels the brand reads — by definition.
+    const best = Math.max(conversation.brandProjection.returnPerDollar, purchases.brandProjection.returnPerDollar);
     expect(body.brandProjection.returnPerDollar).toBeCloseTo(best, 10);
   });
 
@@ -333,17 +333,10 @@ describe("brand-level per-audience return: /audience-stats with no funnel and no
     expect(body.audiences[0].audienceId).toBe("audience-b");
   });
 
-  it("naming a funnel still behaves exactly as it did — one funnel, its own order, no coverage block", async () => {
-    const body = await funnelRead("sales_meetings_from_conversation");
-
-    expect(body.goal).toBe("meetingBooked");
-    expect(body.sortMetric).toBe("cppr");
-    expect(body.funnelCoverage).toBeUndefined();
-    expect(body.brandProjection.basisFunnelKey).toBeUndefined();
-    for (const row of body.audiences) {
-      expect(row.projection.basisFunnelKey).toBeUndefined();
-      expect(typeof row.projection.returnPerDollar).toBe("number");
-    }
+  it("naming a funnel is REFUSED — the parameter is retired, never silently ignored", async () => {
+    const res = await request(app).get(statsUrl("&funnel=sales_meetings_from_conversation")).set(AUTH);
+    expect(res.status).toBe(400);
+    expect(res.body.reason).toBe("funnel_retired");
   });
 
   it("a brand whose funnels state no lifetime revenue reads NULL, never a zero return", async () => {
@@ -369,7 +362,7 @@ describe("brand-level per-audience return: /audience-stats with no funnel and no
     expect(res.body.reason).toBe("declared_funnels_unavailable");
   });
 
-  it("an unrecognised goal is still a 400 — only omitting BOTH parameters is the brand-level read", async () => {
+  it("an unrecognised goal is still a 400 — only omitting it is the brand-level read", async () => {
     const res = await request(app).get(statsUrl("&goal=not-a-goal")).set(AUTH);
     expect(res.status).toBe(400);
   });

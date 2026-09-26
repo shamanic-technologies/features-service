@@ -651,7 +651,7 @@ const featureRevenueResponseSchema = z.object({
     workflowDynastyName: z.string().nullable().describe("Human name of the dynasty. Null when workflow-service describes no version of it."),
     workflowSlugs: z.array(z.string()).describe("Every versioned slug the catalogue folds into it, ascending — nothing is hidden. EMPTY when workflow-service describes none, which is the dynasty-of-one case: the read still answers, over the leads and the spend frozen on that single slug."),
   }).optional().describe("WHAT THIS BODY ANSWERED FOR, present ONLY on a ?workflow= read. The drill-down narrows every block above to ONE workflow of the scope: the leads are the ones lead-service FROZE on that workflow at serve time, the spend is the runs / email-gateway spend frozen on the dynasty's versioned slugs, and each leg is resolved through the SAME workflow-service catalogue — neither is ever inferred from the campaign row's CURRENT workflow, which mis-attributes everything spent before a switch. Absent on an un-narrowed read."),
-  funnelSteps: funnelStepBreakdownSchema.nullable().describe("THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read: how many distinct leads reached it, what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped leads and the SAME committed cents as `outcomes` and the money above, so a rung's count agrees with leads[] row for row and the rate between two rungs of one funnel is a rate rather than two scopes divided into each other. NULL when there is no ONE funnel to walk: no funnel is wired for the channel (the leads were never read), the lensed (?lens=) response (a SUBSET of the brand's leads beside the brand's whole spend — the same gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no single one to state. A read that NAMES its funnel (?funnel=, or GET /offers/:offerId/funnels/:funnelKey/revenue) always carries it, priced or not — 'we could not price this' and 'this reached nobody' are different statements. Each rung also carries `customerCost`: what the CUSTOMER states the leg they worked themselves cost them, and the average per person who crossed it — reported BESIDE the charged cost, never folded into it, and scoped by the same campaigns the committed cents are."),
+  funnelSteps: funnelStepBreakdownSchema.nullable().describe("THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read: how many distinct leads reached it, what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped leads and the SAME committed cents as `outcomes` and the money above, so a rung's count agrees with leads[] row for row and the rate between two rungs of one funnel is a rate rather than two scopes divided into each other. NULL when there is no ONE funnel to walk: no funnel is wired for the channel (the leads were never read), the lensed (?lens=) response (a SUBSET of the brand's leads beside the brand's whole spend — the same gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no single one to state. A read priced on ONE funnel always carries it, priced or not — 'we could not price this' and 'this reached nobody' are different statements. Each rung also carries `customerCost`: what the CUSTOMER states the leg they worked themselves cost them, and the average per person who crossed it — reported BESIDE the charged cost, never folded into it, and scoped by the same campaigns the committed cents are."),
   costPerOutcomeHistory: costPerOutcomeHistorySchema.nullable().describe("WHAT ONE OUTCOME HAS COST THIS SCOPE, DAY BY DAY — the dated twin of the cost-per-outcome the `outcomes` block states as a scalar, so a customer can see whether it is getting cheaper and how fast. BOTH legs are CUMULATIVE since the scope's first day, for the reason roiHistory gives: spend on a day buys outcomes that land weeks later, so a period-grain ratio oscillates between 0 and absurd and describes nothing actionable. The outcome is the scope's OWN leg's step, resolved ONCE by the same leader resolution learningPhase uses. MEASURED on both legs and divided by nobody downstream — the spend is runs' dated COMMITTED buckets (the basis outcomes.committedSpentCents rides) and the outcomes are the same deduped leads outcomes.recipientsClicked / recipientsRepliesPositive count, so the FINAL point IS that block's cpcCents/cpprCents divided by the leg's own rate, to the sub-cent rounding roiHistory's terminal ROI also carries (runs returns fractional cents per group and each grouping rounds once: measured in prod 2026-09-17, $7.9740 against a served $7.9735, both rendering $7.97). NOT learningPhase.expectedCostPerOutcomeUsd, which answers a different question — that one is pooled over the cells that OBSERVED an outcome because its job is to found a spend target and exploration spend must not price into it; this is the OBSERVED accounting figure, every dollar spent over every outcome produced. OVERVIEW ONLY, the same gate roiHistory and spend ride: null on the lensed (?lens=) read, absent on the lean (?groupBy=) groups. NULL also when the scope names no priceable outcome step (no campaign, no leg stated, a rate the brand never declared) or the dated-spend read degraded — learningPhase.unmeasuredReason beside it names which, so no reason vocabulary is duplicated. Null means 'we could not measure this', never 'it cost nothing'. (features-service#980)"),
   conversionRateHistory: conversionRateHistorySchema.nullable().describe("WHAT SHARE OF THE PEOPLE THIS SCOPE REACHED HAVE CONVERTED, DAY BY DAY — the dated twin of the conversion rate the outcomes block states as a scalar, and the third curve of the campaign Overview beside roiHistory and costPerOutcomeHistory. BOTH legs are CUMULATIVE since the scope's first day, for the reason roiHistory gives: outreach on a day earns conversions weeks later, so a period-grain rate oscillates between 0 and absurd and describes nothing actionable. The outcome is the scope's OWN leg's step, resolved ONCE by the same leader resolution learningPhase and costPerOutcomeHistory use, so the three curves can never be denominated in different things; the denominator is REACH, the identical base funnelSteps.contactedRecipients states. BOTH legs come off the SAME leads[] rows of the SAME campaign-scoped snapshot — no producer is re-asked and nothing is narrowed — so a campaign-scoped read divides that campaign's own population by CONSTRUCTION and can never borrow its brand's. scopeConversionRatePct is the whole scope's rate including the undated and reconciles with the outcomes block; the curve's last point covers the dated population alone, and undatedContacted / undatedOutcomes state the difference. A point's rate is null ONLY when nobody has been reached yet; a measured 0 means people were reached and nobody converted. OVERVIEW ONLY, the same gate roiHistory and spend ride: null on the lensed (?lens=) read, absent on the lean (?groupBy=) groups. NULL also when the scope names no priceable outcome step (no campaign, no leg stated, a rate the brand never declared) — learningPhase.unmeasuredReason beside it names which, so no reason vocabulary is duplicated. (features-service#992)"),
   learningPhase: learningPhaseSchema.nullable()
@@ -769,7 +769,6 @@ registry.registerPath({
       offerId: z.string().optional().describe("Optional OFFER drill-down — the grain between the brand and its campaigns (Org > Brand > Offer > Campaign). An offer is one distinct thing the brand sells; brand-service owns the entity and campaign-service stores it on the campaign, so this resolves to the campaigns selling the offer and every figure is computed over exactly those. Nothing is re-attributed: the campaign is what runs-service and lead-service froze, and the offer only decides which campaigns answer together. Omitted → the whole brand, byte-identical to today. HONOURED by groupBy=workflow: each workflow group then states only what the campaigns selling THAT offer did and spent through that workflow, so an offer's Workflows table never renders a brand figure under an offer's name — the byte-same offer semantics this parameter has on the un-grouped read and that ?groupBy=offerId uses. A brand selling ONE offer through every campaign with runs reads the same groups either way; an offer whose campaigns never spent through a workflow is an EMPTY groups list, never the brand's. Mutually exclusive with campaignId (400). An offer no campaign of this brand sells is a 404 with reason 'offer_has_no_campaigns' — never the brand's own numbers under the offer's label, and never a fabricated zero."),
       groupBy: z.enum(["campaignId", "workflow", "offerId"]).optional().describe("When 'offerId', return one lean group per OFFER the brand sells (offerId + campaignIds + headline.totalPipelineUsd + costEconomics), each byte-equal to the standalone ?offerId= call, so the brand Overview can rank a brand's offers by what each returns while the brand's headline stays the sum across them. A brand selling ONE offer reads the same figures at both grains; across several the groups do NOT sum to the brand, and a campaign stating no offer is in no group at all (with its spend and its leads) — the same counting-people property the per-campaign and per-workflow grains carry. When 'campaignId', return one lean group per campaign with runs for the brand+feature instead of the single overview. When 'workflow', return one lean group per WORKFLOW DYNASTY the brand has run for the feature, carrying the same four money figures (pipeline revenue, ROI, cost-of-acquisition %, $ per acquisition), on the same single COMMITTED spend basis. Both legs are attributed by the producer that froze them — runs-service's per-workflow spend and the workflowSlug lead-service froze on each served lead — never inferred from the campaign row's current workflow (a campaign switches workflow while keeping its id). A brand whose spend all sits on one workflow reads the same figures at both grains; across several workflows the groups do NOT sum to the brand, because a lead served under two workflows is one lead to the brand and belongs to both."),
       lens: z.enum(["signups", "booked-meetings", "website_purchase", "sales", "website_visits", "positive_replies"]).optional().describe("Outcome lens (overview only). Filters leads[] to the lens's engagement signal and adds conversionProbabilityPct per lead: signups=website click (P=visitToSignup), booked-meetings=positive reply (P=replyToMeeting), website_purchase=click and/or positive reply, multi-step self-serve/meeting close (RENAMED from the former `sales` lens; legacy `purchase` spelling still accepted), sales=COMBINED goal — click and/or positive reply, per-lead sale probability = probabilistic OR of visit→paid (P=visitToPaidClient) and reply→paid (P=replyToPaidClient) (a lead converts at most once; ≤1×LTR), website_visits=website click SINGLE STEP (P=visitToPaidClient), positive_replies=positive reply SINGLE STEP (P=replyToPaidClient). headline.totalPipelineUsd = sum of the lensed leads' expectedRevenueUsd. Omitted → response unchanged."),
-      funnel: z.string().optional().describe("The SALES FUNNEL the spend block's cost-per-outcome columns are priced on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`) from one bought with a click onto the site (`sales_meetings_from_website`). Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases, form_magnet, sales_from_conversation (positive reply → paid client), sales_meetings_from_ads (meeting booked inside an ad → attended → paid client), lead_forms_from_ads (lead form filled inside an ad → paid client), sales_from_website (website visit → paid client); the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever. Omitted → the brand's FIRST DECLARED funnel in catalogue order (a deterministic pick over the brand's own declarations, never a default funnel); a brand that has declared nothing keeps OBSERVED columns (null at 0 outcomes), never a substituted funnel. A value the brand never declared is ignored in favour of that same pick. An unrecognised value is a 400."),
       pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every MONEY metric (spend block, costEconomics committedCostUsd, CAC, ROI, cps/cpsm/cpfs). Orthogonal to the ACCOUNTING basis, which is not selectable: committed, always. Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today). 'net' → the org's discounted figures, sourced from runs-service's FROZEN net cost amounts (frozen at cost-declaration time; features-service does NOT recompute the discount); fail-loud (502) if the frozen net figures are unavailable — never a silent fallback to gross. A non-discounted org's frozen net equals gross, so net == gross for it. Non-money fields (counts, rates, pipeline revenue) are identical either way."),
       cause: z.string().optional().describe("WHOSE WINS THIS READ PRICES — a comma-separated subset of outreach | other | unstated (any order, any case). Every outcome is COUNTED whatever this says (leads[], funnelSteps, conversion rates); this decides which outcomes carry VALUE into the pipeline revenue, the return and the cost of acquisition computed on OUR outreach. 'outreach' — ours: the customer said so, or lead-service's default rule answered it (the outcome followed our first delivered email to that person). 'other' — not ours: the customer said so, or it happened before our first email reached them. 'unstated' — undecided: undated, not matched to a lead, or on a lead we never delivered to. Omitted → 'outreach' alone, the same answer the dashboard's lead panel shows as \"Ours\". The legacy instantly qualifications are judged by the same date rule. An unrecognised word (or a list naming no state) is a 400 with reason 'cause_unrecognised', never a silent pick. The echo rides every response as `outcomeCauses.priced`."),
       leads: z.enum(["outcomes", "full"]).optional().describe("HOW MUCH OF A PERSON `leads[]` carries. Omit or 'outcomes' (the DEFAULT) serves the NARROW row (leadId + the seven outcome flags + the four realized-outcome timestamps) on the rows that REACHED something; 'full' serves every contacted lead fully hydrated — what this service served before, and what exactly one consumer (a server-side digest that NAMES each person and what they did) needs. The default moved because a body answering about MONEY was 99.6% people (10,860,781 bytes of a 10,903,573-byte prod body) and the consumer's 2MB persisted-cache cap meant every money card cold-skeletoned on every page load. Whether an outcome is attributed at all is answered separately by `attributedOutcomes`, so narrowing costs no consumer an answer. An unrecognised value is a 400, never a silent pick."),
@@ -777,7 +776,7 @@ registry.registerPath({
   },
   responses: {
     200: { description: "Feature revenue (overview, or grouped when groupBy=campaignId / groupBy=workflow / groupBy=offerId; lensed when ?lens= is set)", content: { "application/json": { schema: z.union([featureRevenueResponseRef, featureRevenueGroupedResponseRef, featureRevenueByWorkflowResponseRef, featureRevenueByOfferResponseRef]) } } },
-    400: { description: "Missing brandId, invalid lens, invalid funnel, invalid pricing value, offerId sent beside campaignId, or workflow sent beside groupBy (reason: workflow_and_group_by)", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "Missing brandId, invalid lens, invalid pricing value, offerId sent beside campaignId, or workflow sent beside groupBy (reason: workflow_and_group_by). The retired `funnel` parameter is refused with reason='funnel_retired' (name a leg or nothing).", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature not found, or an offer no campaign of this brand sells (reason: offer_has_no_campaigns)", content: { "application/json": { schema: errorResponse } } },
     502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
   },
@@ -876,7 +875,7 @@ const legStepSchema = z.object({ key: z.string(), label: z.string(), description
 const workflowProjectionResponseSchema = z.object({
   featureSlug: z.string(),
   maximize: z.enum(["return", "conversionRate"]).describe("WHAT THIS ANSWER WAS RANKED UNDER — always present, so a consumer can never present a recommendation without knowing what it optimised for. `return` is the default and what every caller that names nothing gets. Distinct from `objective`/`goal`, which name the OUTCOME being bought rather than the thing being maximised."),
-  funnelKey: salesFunnelKeyEnum.optional().describe("The SALES FUNNEL this projection was priced on — present ONLY when the request named one via `?funnel=`. It is the authoritative answer to what was priced: the two meeting funnels carry the SAME `goal`/`objective` echo and DIFFERENT numbers, which is why the goal was retired as an identity. Absent on a goal-keyed request, so an existing consumer reads a byte-identical body."),
+  funnelKey: salesFunnelKeyEnum.optional().describe("The SALES FUNNEL this projection was priced on — present ONLY on a `?leg=` read (the funnel the leg was priced through, = leg.basisFunnelKey). It is the authoritative answer to what was priced: the two meeting funnels carry the SAME `goal`/`objective` echo and DIFFERENT numbers, which is why the goal was retired as an identity. Absent on a goal-keyed request, so an existing consumer reads a byte-identical body."),
   objective: z.enum(["meeting-booked", "self-serve", "signup", "website_purchase", "sales", "website_visits", "positive_replies", "form_submissions", "whatsapp_conversations"]).describe("Canonical SNAKE echo of the requested goal (defaults to meeting-booked). Accepts both `goal` (camel) and `objective` (snake/kebab) request params. website_purchase is the RENAMED former `purchase` goal (multi-step self-serve/meeting close; legacy `purchase` input still accepted). sales is the COMBINED goal (a paying client won via EITHER visit→paid OR reply→paid, valued at CLTV; cost-per-outcome == cost-per-sale). whatsapp_conversations is a click-outcome goal (cost-per-outcome = CPC; no paid-client/ROI economics — those read null). A present-but-unrecognised goal fails loud (400)."),
   goal: z.enum(["meetingBooked", "signup", "websitePurchase", "sales", "websiteVisit", "positiveReply", "formSubmission", "whatsappConversation"]).describe("Canonical CAMEL echo (= brand-service CurrentGoal). self-serve/signup both echo signup. websitePurchase = renamed former purchase goal; sales = combined-sales goal."),
   leg: z.object({
@@ -884,9 +883,9 @@ const workflowProjectionResponseSchema = z.object({
     fromStep: legStepSchema.nullable().describe("The step a lead is taken out of; null on an entry leg. Read these rather than splitting `legKey`."),
     toStep: legStepSchema.describe("The step a lead is moved to."),
     candidateFunnelKeys: z.array(salesFunnelKeyEnum).describe("Every DECLARED funnel of this brand containing the leg — what the pick chose between. Their figures overlap on the shared leg and must never be summed."),
-    basisFunnelKey: salesFunnelKeyEnum.describe("The funnel the numbers on this body were priced through. Equals `funnelKey`, so a leg-keyed answer and the same brand's `?funnel=` answer for that funnel are the same body."),
+    basisFunnelKey: salesFunnelKeyEnum.describe("The funnel the numbers on this body were priced through. Equals `funnelKey`."),
     basis: z.enum(["sole_declared_funnel", "best_returning_declared_funnel", "best_converting_declared_funnel", "no_return_evidence", "no_conversion_evidence"]).describe("WHY that funnel: it was the only declared one containing the leg; it scored best on WHAT THE CALLER ASKED TO MAXIMISE (best_returning_* under `return`, best_converting_* under `conversionRate`); or nothing containing the leg has that figure yet and the catalogue's canonical order broke the tie deterministically (no_return_evidence / no_conversion_evidence). It names WHICH figure won, so a body ranked on a rate can never claim it ranked on a return."),
-    returnPerDollar: z.number().nullable().describe("The basis funnel's return per dollar — the IDENTICAL definition /funnel-ranking ranks on. Stated whether or not the pick was made on it, so the two objectives' answers are readable side by side. Null when nothing measurable stated one; 0 would say the funnel returns nothing."),
+    returnPerDollar: z.number().nullable().describe("The basis funnel's return per dollar — the IDENTICAL definition the audience-stats brand-level read combines on. Stated whether or not the pick was made on it, so the two objectives' answers are readable side by side. Null when nothing measurable stated one; 0 would say the funnel returns nothing."),
     conversionRatePct: z.number().nullable().describe("The basis funnel's conversion rate on the same terms — its best workflow's measured outcomes per 100 people reached, the figure `?maximize=conversionRate` picks on. Stated under both objectives. Null when nothing measured it."),
     evidence: z.object({
       grain: z.enum(["audience", "campaign", "brand", "crossOrg"]).nullable().describe("Whose results the recommendation's numbers are — crossOrg is the FLEET BENCHMARK, not this brand's own. Null when nothing measured it."),
@@ -949,8 +948,7 @@ registry.registerPath({
       audienceId: z.string().optional().describe("Optional audience UUID context (echoed via audience rows). Audience rows always enumerate ALL of the brand's active audiences that ran the workflow."),
       goal: z.string().optional().describe("Optimization goal. Accepts camel (websiteVisit/positiveReply/formSubmission/meetingBooked/signup/websitePurchase/sales/whatsappConversation), snake (website_visits/positive_replies/form_submissions/website_purchase/whatsapp_conversations), kebab, the legacy `purchase` spelling (→ websitePurchase), `combinedSales` (→ sales), and the whatsapp display value ('WhatsApp conversations'). Also accepted via `objective`. Defaults to meeting-booked; a present-but-unrecognised goal fails loud (400). websitePurchase = renamed former purchase (multi-step close). sales = COMBINED goal (paying client via either visit→paid OR reply→paid, valued at CLTV). whatsapp_conversations is a click-outcome goal — cost-per-outcome = CPC, no paid-client/ROI economics."),
       objective: z.string().optional().describe("Alias of `goal` (snake/kebab spelling). Either param is accepted."),
-      funnel: z.string().optional().describe("The SALES FUNNEL to price on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`, priced replyUsd / replyToMeetingPct) from one bought with a click onto the site (`sales_meetings_from_website`, priced clickUsd / visitToMeetingPct). A goal cannot express that difference: both echo `meetingBooked`, and a goal-keyed request funnels from BOTH channels. Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases (visit → signup → paid), form_magnet (visit → form → paid), sales_from_conversation (reply → paid), sales_meetings_from_ads (meeting booked in the ad → attended → paid), lead_forms_from_ads (lead form filled in the ad → paid), sales_from_website (visit → paid); the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever and resolve to the canonical key. WINS over `goal`/`objective` when both are sent. A funnel the brand never DECLARED is a 404 (reason='funnel_not_declared') — 'we could not estimate this' and 'it costs zero' are different statements. An unrecognised value is a 400, never a silent fall back to the goal."),
-      leg: z.string().optional().describe("ONE LEG of a sales funnel — the leg a budget is being put behind — named with its single canonical identifier (`start_to_conversation`, `conversation_to_meeting_booked`, `meeting_booked_to_meeting_attended`, `meeting_attended_to_paid_client`, `start_to_website_visit`, `website_visit_to_meeting_booked`, `website_visit_to_signup`, `signup_to_paid_client`, `website_visit_to_form_submitted`, `form_submitted_to_paid_client`; case and separators tolerated). NO sales funnel is named alongside it, which is the point: one leg belongs to several funnels, so a campaign can no longer be identified by one. THE FUNNEL IS CHOSEN HERE — the brand's BEST-RETURNING declared funnel that contains the leg, on the IDENTICAL returnPerDollar basis /funnel-ranking ranks funnels on, so a leg yields ONE answer whichever funnel the caller had in mind and the two surfaces can never name different funnels. NOT the cheapest: a dollar buys a paying client through whichever route converts best, so the cheap leg of a funnel worth little loses to the dear leg of one worth a lot. The pick and what it rests on are stated back on `leg`. Sending BOTH `leg` and `funnel` is a 400 (reason='leg_and_funnel'); an unrecognised leg is a 400 (reason='leg_unrecognised'); a leg no declared funnel of this brand contains is a 404 (reason='leg_not_declared')."),
+      leg: z.string().optional().describe("ONE LEG of a sales funnel — the leg a budget is being put behind — named with its single canonical identifier (`start_to_conversation`, `conversation_to_meeting_booked`, `meeting_booked_to_meeting_attended`, `meeting_attended_to_paid_client`, `start_to_website_visit`, `website_visit_to_meeting_booked`, `website_visit_to_signup`, `signup_to_paid_client`, `website_visit_to_form_submitted`, `form_submitted_to_paid_client`; case and separators tolerated). NO sales funnel is named alongside it, which is the point: one leg belongs to several funnels, so a campaign can no longer be identified by one. THE FUNNEL IS CHOSEN HERE — the brand's BEST-RETURNING declared funnel that contains the leg, on the IDENTICAL returnPerDollar basis the audience-stats brand-level read combines on, so a leg yields ONE answer whichever funnel the caller had in mind. NOT the cheapest: a dollar buys a paying client through whichever route converts best, so the cheap leg of a funnel worth little loses to the dear leg of one worth a lot. The pick and what it rests on are stated back on `leg`. An unrecognised leg is a 400 (reason='leg_unrecognised'); a leg no declared funnel of this brand contains is a 404 (reason='leg_not_declared')."),
       campaignId: z.string().optional().describe("ONE CAMPAIGN to narrow the ladder to, so a screen comparing grains — this campaign, this brand, every client we run the channel for — reads them all from ONE answer instead of stitching the campaign half on from a second endpoint. Answered for the campaign's whole IDENTITY. Only answerable BESIDE a `?leg=` (a campaign is bought for exactly one leg); sent without one it is a 400 `campaign_requires_leg`, never silently ignored."),
       picks: z.string().optional().describe("How many OBSERVED PICKS `observedPicks.recent` states — what actually ran, newest first, read live from the runs ledger. Whole number, 0..200; omitted → 50. Only ever read beside a `?campaignId=` (the block is a fact about ONE campaign's own triggers), and `0` is a real answer that spends no read at all. Bounded so a debug panel cannot ask for a campaign's whole history — that history is thousands of triggers. An unreadable or out-of-range value is a 400 (reason='picks_unrecognised'), never clamped into a window the caller did not ask for."),
       maximize: z.string().optional().describe(MAXIMIZE_DESC_PROJECTION),
@@ -961,122 +959,10 @@ registry.registerPath({
   },
   responses: {
     200: { description: "Workflow projection ladder", content: { "application/json": { schema: workflowProjectionResponseSchema } } },
-    400: { description: "Missing brandId, an unrecognised goal / funnel / pricing value, an unrecognised leg (reason='leg_unrecognised'), a leg sent beside a funnel (reason='leg_and_funnel'), an unrecognised maximize value (reason='maximize_unrecognised'), a campaignId sent without a leg (reason='campaign_requires_leg'), or an unrecognised picks window (reason='picks_unrecognised')", content: { "application/json": { schema: errorResponse } } },
-    404: { description: "Feature not found; (reason='funnel_not_declared') the requested `?funnel=` is not one this brand declared; or (reason='leg_not_declared') no funnel this brand declared contains the requested `?leg=` — both bodies carry `declaredFunnelKeys`", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "Missing brandId, an unrecognised goal / pricing value, an unrecognised leg (reason='leg_unrecognised'), an unrecognised maximize value (reason='maximize_unrecognised'), a campaignId sent without a leg (reason='campaign_requires_leg'), or an unrecognised picks window (reason='picks_unrecognised') The retired `funnel` parameter is refused with reason='funnel_retired' (name a leg or nothing).", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Feature not found; or (reason='leg_not_declared') no funnel this brand declared contains the requested `?leg=` — both bodies carry `declaredFunnelKeys`", content: { "application/json": { schema: errorResponse } } },
     409: { description: "(reason='several_offers') a `?leg=` read of a brand selling SEVERAL OFFERS that named no campaign. A leg is priced THROUGH one of the brand's declared funnels, and each offer declares its own — so the declared set is the ANSWER here rather than a refinement of it, and widening to every catalogue funnel containing the leg would price the brand on propositions it may not sell. The body lists the `offers`; name the campaign this leg is bought for (a campaign sells exactly one offer) and the read answers fully. A funnel- or goal-keyed read of the same brand degrades to a 200 instead — see declaredFunnelsUnresolved.", content: { "application/json": { schema: errorResponse } } },
     502: { description: "Downstream service error (reason='declared_funnels_unavailable' when the declared-funnel read could not be answered)", content: { "application/json": { schema: errorResponse } } },
-  },
-});
-
-// ── GET /features/:featureSlug/funnel-ranking ──────────────────────────────
-
-// EVERY sales funnel the brand DECLARED, ranked by what it returns per dollar, plus the best workflow
-// and per-audience evidence for the best-returning one — one answer, one request. It is a
-// RECOMMENDATION a customer reads to decide where to put their money, not an instruction a scheduler
-// obeys: which funnel runs is decided by what the customer FUNDS (campaign-service works every funded
-// funnel, each paced on its own ceiling).
-
-const goalEchoEnum = z.enum(["meetingBooked", "signup", "websitePurchase", "sales", "websiteVisit", "positiveReply", "formSubmission", "whatsappConversation"]);
-const objectiveEnum = z.enum(["meeting-booked", "self-serve", "signup", "website_purchase", "sales", "website_visits", "positive_replies", "form_submissions", "whatsapp_conversations"]);
-
-const MAXIMIZE_DESC_RANKING = "WHAT TO MAXIMISE. `return` (DEFAULT, byte-identical to every ordering this endpoint produced before) ranks the declared funnels on returnPerDollar — the most paying client per DOLLAR, the right question while the pool of people to reach is effectively unbounded and the binding constraint is the customer's budget. `conversionRate` ranks them on conversionRatePct — the most outcome per PERSON REACHED, the right question when the pool is small and finite, because the list is what runs out. The SAME declared funnels legitimately order differently under the two. Snake/kebab spellings accepted; the key may also be spelled `maximise`. A present-but-unrecognised word is a 400 (reason='maximize_unrecognised'), never a silent fall back to `return`. NOT the same question as a funnel's `goal`/`objective`, which name the OUTCOME being bought.";
-
-const rankedFunnelWorkflowSchema = z.object({ workflowDynastySlug: z.string(), workflowDynastyName: z.string().nullable() });
-
-const rankedFunnelSchema = z.object({
-  funnelKey: salesFunnelKeyEnum.describe("brand-service's key for the funnel — the SAME key billing funds and campaign-service paces on, so a customer can map a rank straight onto a budget, AND the only field that identifies what was priced. The two meeting funnels differ here and nowhere else in this shape: same goal echo, different numbers."),
-  name: z.string().describe("The brand's own label for the funnel."),
-  goal: goalEchoEnum.describe("LEGACY echo, derived from funnelKey. Lossy by construction — `sales_meetings_from_conversation` and `sales_meetings_from_website` both echo `meetingBooked` — so it must never be read as the identity of the row. Kept because campaign-service reads arbitration.goal in prod."),
-  objective: objectiveEnum.describe("Legacy snake echo of `goal`. Same lossiness; read `funnelKey`."),
-  rank: z.number().int().nullable().describe("1 for the best-returning funnel, 2 for the next, and so on. NULL when the funnel could not be ranked — it is still listed, with its reason, so the comparison is never silently short. A rank says how a funnel HAS PERFORMED, never whether it should run."),
-  rankable: z.boolean().describe("True ⟺ the funnel has a defined, positive return per dollar and therefore carries a rank."),
-  unrankableReason: z.enum(["no_economics", "no_workflow_evidence", "no_paid_client_path", "no_return_defined", "no_conversion_rate"]).nullable().describe("Why this funnel could not be ranked. `no_paid_client_path` = the funnel has NO defined path to a paying client — a leg of its OWN funnel is undeclared or sits at 0. Note a channel-scoped meeting funnel lands here whenever ITS channel has no rate, which a goal-keyed score used to hide behind the other channel's contribution. `no_workflow_evidence` = no history to compare it on yet. `no_conversion_rate` fires under `?maximize=conversionRate` ONLY: the funnel's best workflow has reached people and converted none of them, so there is no positive rate to rank on — a different statement from having no history at all. Note `no_paid_client_path` / `no_return_defined` cannot fire under `conversionRate`, which needs no paid-client price. Null ⟺ rankable."),
-  returnPerDollar: z.number().nullable().describe("lifetimeRevenueUsd / costPerPaidClientUsd of this funnel's best workflow (= the workflow-projection roiMultiple, = 100 / cacPct). THE ranking basis under `maximize=return` (the default): the only cross-funnel-comparable MONEY number, since each funnel's own outcome is denominated differently. Stated under both objectives. Null when the brand states no return for the funnel — under `conversionRate` a funnel can be rankable WITHOUT one, since a rate question is not a money question."),
-  conversionRatePct: z.number().nullable().describe("The funnel's best workflow's measured outcomes per 100 people reached — THE ranking basis under `maximize=conversionRate`, which is the question when the binding constraint is a finite list rather than a budget. Comparable across funnels for the same reason a return is: it is denominated in people, not in each funnel's own outcome. Stated under both objectives so the two orderings are readable side by side. Null when nothing measured it; a measured 0 is reported as 0."),
-  costPerOutcomeUsd: z.number().nullable().describe("The funnel's cost per its OWN outcome on its best workflow. NOT comparable across funnels — for information only."),
-  costPerPaidClientUsd: z.number().nullable(),
-  grain: z.enum(["audience", "brand", "crossOrg"]).nullable().describe("Provenance label of the best row's resolved pick (crossOrg = fleet benchmark)."),
-  workflow: rankedFunnelWorkflowSchema.nullable(),
-  usesFunnelEconomics: z.boolean().describe("True when this funnel carries economics of its own (its own lifetime revenue and/or rates), which refined the brand's effective set for this projection. A rate the brand never declared is dropped, never read as 0."),
-});
-
-const funnelRankingResponseSchema = z.object({
-  featureSlug: z.string(),
-  maximize: z.enum(["return", "conversionRate"]).describe("WHAT THIS RANKING WAS RANKED UNDER — always present, so a consumer can never present the order without knowing what produced it. `return` is the default and what every existing caller reads."),
-  ranking: z.array(rankedFunnelSchema).describe("EVERY sales funnel the brand declared — FUNDED OR NOT — best return per dollar first, the unrankable ones after in brand-service's own order. This is the answer the endpoint exists to give: the COMPARISON, not the winner. A funnel with no current daily ceiling is still ranked, because its history is what makes it comparable and a ranking that dropped the unfunded ones would answer 'where should I move my budget?' with only the places the budget already is. features-service never asks billing which funnels are funded."),
-  recommendation: z.object({
-    funnelKey: salesFunnelKeyEnum,
-    name: z.string(),
-    goal: goalEchoEnum,
-    objective: objectiveEnum,
-    returnPerDollar: z.number().nullable().describe("Always a positive finite number under `maximize=return`. Null only under `maximize=conversionRate`, where a funnel ranks on its rate and needs no return."),
-    conversionRatePct: z.number().nullable().describe("The recommended funnel's conversion rate — the figure the pick was made on under `maximize=conversionRate`."),
-    costPerOutcomeUsd: z.number().nullable(),
-    costPerPaidClientUsd: z.number().nullable(),
-    grain: z.enum(["audience", "brand", "crossOrg"]).nullable(),
-    workflow: rankedFunnelWorkflowSchema,
-  }).nullable().describe("The best funnel on whatever was asked for — the head of `ranking`, named as what it is: advice, not an instruction. Null when nothing in `ranking` could be ranked."),
-  arbitration: z.object({
-    status: z.enum(["resolved", "unrankable"]).describe("`resolved` = a funnel is recommended. `unrankable` = nothing could be ranked for this brand (see reason) — distinguishable from a recommendation, and not an error."),
-    funnelKey: salesFunnelKeyEnum.nullable().describe("The recommended funnel's key — the unambiguous half of this compatibility view, added beside the lossy `goal` so a consumer can migrate off it without a second endpoint. Null ⟺ status = unrankable."),
-    goal: goalEchoEnum.nullable().describe("LEGACY echo of the recommended funnel's goal. Cannot distinguish the two meeting funnels; read funnelKey. Null ⟺ status = unrankable."),
-    objective: objectiveEnum.nullable(),
-    reason: z.enum(["no_declared_funnels", "no_rankable_funnel", "several_offers_unnamed"]).nullable().describe("`no_declared_funnels` = there was no declared funnel to rank (a brand that never stated a set at all is a 502 reason='authorized_goals_unavailable', not this). `no_rankable_funnel` = every declared funnel is unrankable (see ranking[].unrankableReason). `several_offers_unnamed` = the brand sells SEVERAL OFFERS and this read named none, so brand-service refused to pick between them and there is genuinely no single declared set to rank — a 200, not an error; see declaredFunnelsUnresolved. Null ⟺ status = resolved."),
-    returnPerDollar: z.number().nullable().describe("The recommended funnel's expected revenue per dollar of spend. Always a positive finite number when status = resolved AND maximize = return."),
-    conversionRatePct: z.number().nullable().describe("The recommended funnel's measured outcomes per 100 people reached — the figure the pick was made on under maximize=conversionRate."),
-    costPerOutcomeUsd: z.number().nullable(),
-    costPerPaidClientUsd: z.number().nullable(),
-    grain: z.enum(["audience", "brand", "crossOrg"]).nullable(),
-  }).describe("COMPATIBILITY VIEW of `recommendation`, kept byte-compatible for campaign-service, which reads status/goal in prod to pace a brand that has no per-funnel funding. Derived from the same pick, so it can never name a different funnel than the head of `ranking`. New consumers should read `ranking` / `recommendation`."),
-  workflow: rankedFunnelWorkflowSchema.nullable().describe("The best workflow FOR THE RECOMMENDED FUNNEL, picked on WHAT WAS ASKED FOR: argmin resolved.costPerOutcomeUsd under `maximize=return` (the same ungated argmin the Strategy page ranks on), argmax resolved.conversionRatePct under `maximize=conversionRate`. Null ⟺ status = unrankable."),
-  economics: workflowProjectionEconomicsSchema.nullable().describe("The brand's EFFECTIVE economics as the recommended funnel saw them (including its own per-funnel refinement). Null at cold start."),
-  rows: z.array(workflowProjectionRowSchema).describe("The recommended (funnel × workflow) pairing's projection rows: the brand-level row plus EVERY active audience's row for that dynasty, in the SAME shape /workflow-projection serves (per-audience resolvedOutcomeCount successes, evidence.observedContacted trials, evidence.spentUsd cost). Empty when nothing could be ranked."),
-  recommendedBudgetUsd: z.number().nullable().describe("10 target outcomes/month × the recommended pairing's resolved.costPerOutcomeUsd. Null when nothing could be ranked."),
-  declaredFunnelsUnresolved: z.object({
-  reason: z.literal("several_offers").describe("Machine-readable, so no consumer matches on prose. The only value today."),
-  message: z.string().describe("brand-service's own sentence, rendered verbatim so the two services say one thing."),
-  offers: z.array(z.object({
-    offerId: z.string(),
-    name: z.string().nullable(),
-  })).describe("The offers brand-service refused to choose between — what a consumer needs to let someone pick one."),
-}).optional().describe("Present ONLY when this brand sells SEVERAL OFFERS and the read could name none. A declared sales funnel hangs off an OFFER — each carries its own conversion rates, its own lifetime revenue and its own value proposition — so brand-service REFUSES (409 SEVERAL_OFFERS) a brand-scoped declared-funnel read for a brand selling more than one, rather than serve one proposition's economics under another's name. That refusal is NOT an outage and NOT a producer gap; it is a question with several answers, so this read degrades and SAYS so instead of failing. A campaign sells exactly one offer, so naming a `campaignId` names the offer transitively and returns the fully-priced answer. Absent for every brand selling one offer, whose body is byte-unchanged."),
-});
-
-registry.register("FunnelRankingResponse", funnelRankingResponseSchema);
-
-registry.registerPath({
-  method: "get",
-  path: "/features/{featureSlug}/funnel-ranking",
-  summary: "Rank the brand's DECLARED sales funnels on what the caller is maximising — return per dollar (default) or conversion rate (a recommendation, not a selection)",
-  description:
-    "NAMED FOR WHAT IT DOES. This endpoint was `/goal-arbitration`, back when it WAS the decision (campaign-service asked which goal to work and ran the answer). It arbitrates nothing now — it ranks the funnels a brand declared it sells through, on what the CALLER says it is maximising (`?maximize=`), which defaults to return per dollar and is stated back on `maximize`. `/features/{featureSlug}/goal-arbitration` remains mounted as a DEPRECATED alias serving a byte-identical body while callers migrate; its removal is a separate change. " +
-    "ONE answer per brand: EVERY sales funnel the brand DECLARED, ranked by what it returns per dollar, plus the best workflow and the per-audience evidence for the best-returning one — so a consumer never issues one request per funnel and never ranks economics itself. " +
-    "IT IS ADVICE, NOT A GATE. Which funnel actually runs is decided by what the customer FUNDS: each funnel carries its own daily ceiling (billing-service) and campaign-service works every funded funnel, pacing each against its own ceiling. This endpoint answers the other question — which funnel has returned best, and how do the others compare — so a customer can decide where to move their money. The value is the COMPARISON in `ranking`; `recommendation` is simply its head. " +
-    "AN UNFUNDED FUNNEL IS STILL RANKED. Ranking is about history: what a funnel has returned is what makes it comparable, and being unfunded is a decision the customer just made, not a reason to hide how it performed. features-service never asks billing which funnels are funded. " +
-    "RANKING BASIS (default, `maximize=return`): returnPerDollar = lifetimeRevenueUsd / costPerPaidClientUsd, i.e. expected revenue per dollar of spend (the workflow-projection roiMultiple). It is the only cross-funnel-comparable number — a cost per outcome is denominated in each funnel's OWN outcome (a click, a reply, a booked meeting), so normalising through each funnel's own funnel to the same terminal unit (a paying client's lifetime revenue) is what makes them commensurable. Rankable funnels sort on returnPerDollar descending, ties broken by the canonical funnel-catalogue order, so the same evidence + the same economics + the same objective always produce the same list. " +
-    "RANKING BASIS (`maximize=conversionRate`): conversionRatePct = the funnel's best workflow's measured outcomes per 100 people REACHED. Where the pool is small and finite the binding constraint is the inventory rather than the money, so burning fewer people per outcome matters more than what each outcome costs — and the same declared funnels legitimately order differently. It needs no lifetime revenue, so a funnel with no defined return is still rankable under it; a funnel whose best workflow converted nobody is not (unrankableReason='no_conversion_rate'). Both figures are stated on every row under both objectives. " +
-    "Per funnel, the best workflow is argmin resolved.costPerOutcomeUsd over the brand-level rows — byte-for-byte the ungated argmin the Strategy page and the audience-stats floor parent use (equivalent to argmax return within a funnel, since the outcome→paid rate is a constant for it), so this endpoint can never crown a different workflow than those surfaces for the same brand + goal. " +
-    "EACH FUNNEL IS PRICED ON ITS OWN FUNNEL, keyed on funnelKey and not on a goal. A funnel carries no goal since brand-service retired the vocabulary, and the goal could not have answered this: sales_meetings_from_conversation and sales_meetings_from_website both mapped onto `meetingBooked`, so the two were charged one blended both-channel price and a brand running the reply-driven funnel was benchmarked against clicks it never buys. The conversation funnel now prices replyUsd / replyToMeetingPct and the website one clickUsd / visitToMeetingPct, so a brand declaring both gets two different costs — and often two different best workflows. " +
-    "A funnel with NO defined return is ranked LAST, never dropped: a funnel whose own legs are undeclared or sit at 0 has no path to a paying client, and a funnel with no economics / no workflow evidence / a non-positive return is likewise listed with rank=null, rankable=false and its reason. When nothing can be ranked at all the response is arbitration.status='unrankable' with a reason — distinguishable from a recommendation, never an error that hides why. " +
-    "ONE ENTRY PER FUNNEL: the two meeting funnels (booked from a reply, booked from a website visit) are ranked SEPARATELY and each priced on its own channel and its own declared terms, because the customer funds them separately — a merged row could not answer 'where should I move my budget?' for either. A rate a funnel does not state falls back to the brand's effective economics, never to zero. " +
-    "The DECLARED SET is brand-service's to own, read from brand-service, never accepted from the caller and never inferred (a brand no longer has an optimizationGoal at all — that column was NOT NULL with a server default, so it said 'website purchases' for brands that had chosen nothing — and the brand-wide economics row cannot stand in either, every rate of which is server-defaulted and so signals nothing). When that declaration cannot be READ — transport, a non-OK response, or an empty list, i.e. this org has never STATED what it sells through — the endpoint FAILS LOUD (502, reason='authorized_goals_unavailable') rather than substituting a default set. " +
-    "Cost: two small brand-service reads (the effective economics and the declared funnels) plus the goal-INDEPENDENT evidence fan-out, which SHARES the Gold snapshot /workflow-projection already maintains — ranking N funnels adds zero IO over reading one. /workflow-projection itself is unchanged.",
-  tags: ["Stats"],
-  request: {
-    headers: identityHeaders,
-    params: z.object({ featureSlug: z.string() }),
-    query: z.object({
-      brandId: z.string().describe("Brand UUID (required) — the declared funnel set and the economics are brand-scoped."),
-      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every MONEY metric (unit costs, cost-per-outcome, cost-per-paid-client, returnPerDollar, recommendedBudgetUsd). Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when those are unavailable — never a silent fallback to gross."),
-      maximize: z.string().optional().describe(MAXIMIZE_DESC_RANKING),
-      maximise: z.string().optional().describe("Alias of `maximize` (British spelling of the key). Either is accepted; the value vocabulary is identical."),
-    }),
-  },
-  responses: {
-    200: { description: "Every declared funnel ranked on what the caller asked to maximise + the recommended funnel's best workflow and per-audience rows (or a distinguishable unrankable verdict)", content: { "application/json": { schema: funnelRankingResponseSchema } } },
-    400: { description: "Missing brandId, an invalid pricing value, or an unrecognised maximize value (reason='maximize_unrecognised')", content: { "application/json": { schema: errorResponse } } },
-    404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
-    502: { description: "Downstream service error, or the brand's declared sales funnels could not be read — transport, a non-OK response, or an empty list because no set has ever been stated for this org (all reason='authorized_goals_unavailable') / a declared funnel naming a goal we cannot map (reason='authorized_goal_unrecognised')", content: { "application/json": { schema: errorResponse } } },
   },
 });
 
@@ -1210,10 +1096,10 @@ const audienceStatsRowSchema = z.object({
     cpsaleCents: z.number().nullable().describe("REAL cost per sale (OBSERVED) = totalCostInUsdCents / sales. Null when sales is 0/absent (not the website-purchase / combined-sales goal, or emails not served) OR no spend is attributed — never a false $0.00. Not used in ranking (both goals sort on cppr)."),
   }),
   projection: z.object({
-    basisFunnelKey: z.string().nullable().optional().describe("BRAND-LEVEL read only (neither `funnel` nor `goal` sent): WHICH of the brand's declared sales funnels this row's return was priced through — this audience's own best-returning funnel, so an audience that pays best through a different funnel than the brand's headline says so instead of being silently priced on the brand's. Absent on a single-funnel read (the caller named the funnel); null when nothing could be priced."),
+    basisFunnelKey: z.string().nullable().optional().describe("BRAND-LEVEL read only (no `goal` sent): WHICH of the brand's declared sales funnels this row's return was priced through — this audience's own best-returning funnel, so an audience that pays best through a different funnel than the brand's headline says so instead of being silently priced on the brand's. Absent on a single-funnel read (the caller named the funnel); null when nothing could be priced."),
     lifetimeRevenueUsd: z.number().nullable().optional().describe("The lifetime revenue this row's return was divided by — the NUMERATOR of returnPerDollar. Carried per row because on the brand-level read two audiences ca legitimately be priced through two funnels the brand values differently (a $200 self-serve plan and a $20k contract), so a consumer can never pair a return with an LTR this projection did not use. Equals brandProjection.lifetimeRevenueUsd on a single-funnel read."),
     costPerPaidClientUsd: z.number().nullable().describe("PROJECTED cost to win ONE paying client from this audience — its own observed unit costs (send-tag spend against send-tag clicks/replies, on the workflow the Strategy page renders it under) pushed through the queried goal's funnel on the brand's own declared economics. The denominator of returnPerDollar. Null (never 0) when the funnel has no path to a paying client or at cold start."),
-    returnPerDollar: z.number().nullable().describe("PROJECTED — dollars of lifetime revenue per dollar spent on this audience = brandProjection.lifetimeRevenueUsd / costPerPaidClientUsd. Rank a brand's audiences on THIS, not on cost per outcome: cost per outcome ranks by cheapness, so an audience that converts to nothing outranks an expensive one that pays. It is the IDENTICAL definition /features/{slug}/funnel-ranking ranks a brand's declared funnels on, so an audience's return and the brand's return are one statistic at two grains. Not the REALIZED /revenue costEconomics.roiMultiple (that divides measured pipeline by measured spend) — this is what the evidence PROJECTS. An audience with no measured grain of its own inherits brandProjection verbatim (the same brand-level fallback the derived cost columns take). Null (never 0) when unmeasurable."),
+    returnPerDollar: z.number().nullable().describe("PROJECTED — dollars of lifetime revenue per dollar spent on this audience = brandProjection.lifetimeRevenueUsd / costPerPaidClientUsd. Rank a brand's audiences on THIS, not on cost per outcome: cost per outcome ranks by cheapness, so an audience that converts to nothing outranks an expensive one that pays. An audience's return and the brand's return are one statistic at two grains. Not the REALIZED /revenue costEconomics.roiMultiple (that divides measured pipeline by measured spend) — this is what the evidence PROJECTS. An audience with no measured grain of its own inherits brandProjection verbatim (the same brand-level fallback the derived cost columns take). Null (never 0) when unmeasurable."),
     costOfAcquisitionPct: z.number().nullable().describe("PROJECTED — what winning a customer from this audience costs as a SHARE of what that customer is worth over their lifetime, percent = 100 x costPerPaidClientUsd / brandProjection.lifetimeRevenueUsd, which is exactly 100 / returnPerDollar. Below 100 means the audience pays for itself. Served rather than left to the consumer BECAUSE it is the reciprocal of a field already on this row: a consumer dividing one of our fields into another is how two surfaces come to print two numbers for one statistic. Same statement as returnPerDollar and costPerPaidClientUsd in a third unit, so the three can never disagree, and the identical definition one grain coarser at brandProjection.costOfAcquisitionPct. PROJECTED, NOT REALIZED: do not pair it with the realized /revenue costEconomics.costOfAcquisitionPct (measured spend / measured pipeline) as if they were the same figure — this one prices what the audience's own observed unit costs imply under the brand's declared economics. An audience with no measured grain of its own inherits brandProjection verbatim (the same brand-level fallback the derived cost columns and returnPerDollar take). NULL (never 0) whenever it could not be measured — no lifetime revenue, no path to a paying client, cold start; a 0 would say winning a customer costs nothing."),
   }).describe("PROJECTED return for this audience, on the brand's own economics — three units of ONE statement (cost per paying client, return per dollar, and that cost as a share of lifetime revenue). See returnPerDollar."),
 });
@@ -1222,22 +1108,22 @@ const audienceStatsResponseSchema = z.object({
   costBasis: z.literal("charged").describe("ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."),
   featureSlug: z.string(),
   brandId: z.string(),
-  goal: z.enum(["signup", "meetingBooked", "websitePurchase", "sales", "websiteVisit", "positiveReply", "formSubmission", "whatsappConversation"]).nullable().describe("The funnel's goal ECHO on a single-funnel read. NULL on the BRAND-LEVEL read (neither `funnel` nor `goal` sent): a brand has no goal — it sells through every funnel it declared at once — and echoing one of them there would be exactly the arbitrary pick that read exists to remove."),
+  goal: z.enum(["signup", "meetingBooked", "websitePurchase", "sales", "websiteVisit", "positiveReply", "formSubmission", "whatsappConversation"]).nullable().describe("The funnel's goal ECHO on a single-funnel read. NULL on the BRAND-LEVEL read (no `goal` sent): a brand has no goal — it sells through every funnel it declared at once — and echoing one of them there would be exactly the arbitrary pick that read exists to remove."),
   funnelCoverage: z.object({
-    basis: z.literal("best_returning_declared_funnel").describe("How the money figures were combined across the brand's declared funnels: a dollar spent buys a customer through whichever funnel converts it best, so a return is the MAXIMUM over the declared set — never a blend, never a sum. Same doctrine as the combined-`sales` cost (min over channels = max over returns), and the reason this reconciles with /features/{slug}/funnel-ranking by construction: its rank-1 funnel IS this maximum, on the identical returnPerDollar definition and the identical evidence."),
+    basis: z.literal("best_returning_declared_funnel").describe("How the money figures were combined across the brand's declared funnels: a dollar spent buys a customer through whichever funnel converts it best, so a return is the MAXIMUM over the declared set — never a blend, never a sum. Same doctrine as the combined-`sales` cost (min over channels = max over returns)."),
     funnels: z.array(z.object({
       funnelKey: z.string(),
       name: z.string(),
       priced: z.boolean().describe("True when this funnel produced a defined, positive return that competed for the best."),
-      reason: z.enum(["no_economics", "no_workflow_evidence", "no_paid_client_path", "no_return_defined"]).nullable().describe("Why the funnel could not be priced, when priced=false. Never a substituted number — the reason IS the answer. Same vocabulary /funnel-ranking reports per declared funnel."),
+      reason: z.enum(["no_economics", "no_workflow_evidence", "no_paid_client_path", "no_return_defined"]).nullable().describe("Why the funnel could not be priced, when priced=false. Never a substituted number — the reason IS the answer."),
     })).describe("EVERY funnel the brand DECLARED, and whether it went into the figures. Listed in full, never short: a reader who cannot tell what was included cannot trust the number."),
     pricingBasisFunnelKey: z.string().nullable().describe("The funnel whose funnel every cost-per-outcome COLUMN on this payload is denominated in — the brand's best-returning declared funnel, falling back to its FIRST declared funnel in catalogue order when none could be priced. A cost per outcome is denominated in a funnel's own outcome, so unlike a return it cannot be combined across funnels; naming the one it was priced on is the honest answer."),
-  }).optional().describe("Present ONLY on the BRAND-LEVEL read (neither `funnel` nor `goal` sent) — what the money figures cover."),
+  }).optional().describe("Present ONLY on the BRAND-LEVEL read (no `goal` sent) — what the money figures cover."),
   brandProfileId: z.string().nullable(),
   sortMetric: z.enum(["cpc", "cppr", "returnPerDollar"]).describe("Single-funnel read: signup / websiteVisit / formSubmission / whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / websitePurchase / sales / positiveReply sort by CPPR. BRAND-LEVEL read: `returnPerDollar`, DESCENDING (best return first, unmeasurable rows last) — at brand level there is no goal, and cost per outcome would rank by cheapness, putting an audience that converts to nothing above an expensive one that pays."),
   audiences: z.array(audienceStatsRowSchema).describe("Audience rows sorted by sortMetric — ascending for the cost metrics (null last), DESCENDING for returnPerDollar (null last). Rank by projection.returnPerDollar when the question is where the money should go."),
   brandProjection: z.object({
-    basisFunnelKey: z.string().nullable().optional().describe("BRAND-LEVEL read only: the declared funnel the BRAND's own return was priced through — the head of /features/{slug}/funnel-ranking's ranking for the same brand at the same moment. Absent on a single-funnel read; null when nothing could be priced."),
+    basisFunnelKey: z.string().nullable().optional().describe("BRAND-LEVEL read only: the funnel the BRAND's own return was priced through (its best-returning one). Absent on a single-funnel read; null when nothing could be priced."),
     lifetimeRevenueUsd: z.number().nullable().describe("The brand's lifetime revenue per paying client, from the resolved (declared-funnel-priced) economics this whole payload was projected on — the numerator behind every returnPerDollar here. Surfaced so a consumer can never pair a return with an LTR this projection did not use. Null at cold start."),
     costPerPaidClientUsd: z.number().nullable().describe("PROJECTED cost per paying client for the BRAND on the goal's winning workflow — the value an audience with no measured grain of its own inherits. Null (never 0) at cold start or when the funnel has no path to a paying client."),
     returnPerDollar: z.number().nullable().describe("PROJECTED brand-level return per dollar = lifetimeRevenueUsd / costPerPaidClientUsd — the same definition as each row's, one grain coarser. Read a row's return against this ('this audience beats the brand'). Null (never 0) when unmeasurable."),
@@ -1258,7 +1144,7 @@ registry.registerPath({
   path: "/features/{featureSlug}/audience-stats",
   summary: "Audience-level return and cost evidence for a brand + feature (optionally narrowed to one sales funnel)",
   description:
-    "SEND NEITHER `funnel` NOR `goal` FOR THE BRAND-LEVEL READ. A brand runs several sales funnels at once, so at brand level there is no goal — the only thing that matters is what came back per dollar. That read prices each audience through EVERY funnel the brand DECLARED (read from brand-service, never named by the caller) and reports, per audience, `projection.returnPerDollar`, `projection.costPerPaidClientUsd` and `projection.costOfAcquisitionPct` combined as the BEST-RETURNING funnel, with `funnelCoverage` stating which funnels went in and which could not be priced, and `goal: null`. It reconciles by construction with /features/{slug}/funnel-ranking (its rank-1 funnel is this maximum) and with the per-funnel figures for the same brand at the same moment (a `?funnel=` read of the winning funnel returns the identical numbers). A brand whose declaration cannot be READ — including the empty declaration, which is a producer gap and not an answer — is a 502 with reason='declared_funnels_unavailable', never a zero return. A brand selling SEVERAL OFFERS is different and is NOT a 502: brand-service refuses to pick between them (each offer has its own rates and its own lifetime revenue), so this read answers 200 with the volume half intact, the projected half null, and `declaredFunnelsUnresolved` naming the offers — name a `campaignId` (a campaign sells exactly one offer) for the fully-priced answer. " +
+    "SEND NO `goal` FOR THE BRAND-LEVEL READ. A brand runs several sales funnels at once, so at brand level there is no goal — the only thing that matters is what came back per dollar. That read prices each audience through EVERY funnel the brand DECLARED (read from brand-service, never named by the caller) and reports, per audience, `projection.returnPerDollar`, `projection.costPerPaidClientUsd` and `projection.costOfAcquisitionPct` combined as the BEST-RETURNING funnel, with `funnelCoverage` stating which funnels went in and which could not be priced, and `goal: null`. A brand whose declaration cannot be READ — including the empty declaration, which is a producer gap and not an answer — is a 502 with reason='declared_funnels_unavailable', never a zero return. A brand selling SEVERAL OFFERS is different and is NOT a 502: brand-service refuses to pick between them (each offer has its own rates and its own lifetime revenue), so this read answers 200 with the volume half intact, the projected half null, and `declaredFunnelsUnresolved` naming the offers — name a `campaignId` (a campaign sells exactly one offer) for the fully-priced answer. " +
     "NAMING A FUNNEL still behaves exactly as it did: one funnel, its own cost columns, its own sort metric. " +
     "Returns ranked human-service audience rows for dashboard ranking. Each row is based on producer-side attribution of runs/outcomes to audienceId/brandProfileId/goal/workflow, never hash assignment or equal splitting of brand totals. " +
     "Rows carry raw spend and outcome evidence so the dashboard can compute CPC (spend / websiteClicks) and CPPR (spend / positiveReplies). " +
@@ -1269,9 +1155,8 @@ registry.registerPath({
     params: z.object({ featureSlug: z.string() }),
     query: z.object({
       brandId: z.string().describe("Brand UUID (required)."),
-      goal: z.enum(["signup", "meetingBooked", "websitePurchase", "sales", "websiteVisit", "positiveReply", "formSubmission", "whatsappConversation"]).optional().describe("DEPRECATED — send `funnel` instead, or send NEITHER for the brand-level read. Kept working only until the dashboard migrates; a named `funnel` WINS over it, and when only a funnel is named the goal is DERIVED from it. Sending neither prices the brand across EVERY funnel it declared (see the endpoint description) — a first-class request, not a missing parameter. Legacy meaning: active optimization goal. signup + websiteVisit + formSubmission + whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / websitePurchase / sales / positiveReply sort by CPPR. snake_case / kebab / display spellings are also accepted (website_visits, positive_replies, form_submissions, whatsapp_conversations, 'WhatsApp conversations'). For whatsappConversation the outcome is a click on the brand's WhatsApp link (reuses the existing click evidence — cost-per-outcome = cpcCents, outcome count = evidence.websiteClicks); null-safe when no click data exists yet."),
+      goal: z.enum(["signup", "meetingBooked", "websitePurchase", "sales", "websiteVisit", "positiveReply", "formSubmission", "whatsappConversation"]).optional().describe("Omit it for the brand-level read. Omitting it prices the brand across EVERY funnel it declared (see the endpoint description) — a first-class request, not a missing parameter. Legacy meaning: active optimization goal. signup + websiteVisit + formSubmission + whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / websitePurchase / sales / positiveReply sort by CPPR. snake_case / kebab / display spellings are also accepted (website_visits, positive_replies, form_submissions, whatsapp_conversations, 'WhatsApp conversations'). For whatsappConversation the outcome is a click on the brand's WhatsApp link (reuses the existing click evidence — cost-per-outcome = cpcCents, outcome count = evidence.websiteClicks); null-safe when no click data exists yet."),
       pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every per-audience MONEY metric (metrics.cpcCents / cpprCents / cpfsCents + the brand-parent cascade). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today). 'net' → the org's discounted figures, sourced from runs-service's FROZEN net cost amounts (frozen at cost-declaration time; features-service does NOT recompute the discount); fail-loud (502) if the frozen net figures are unavailable — never a silent fallback to gross. A non-discounted org's frozen net equals gross, so net == gross for it. Non-money fields (evidence counts, conversion.rate) are identical either way. NOTE: campaign-service reads metrics.cpcCents byte-equal — it does NOT send pricing, so it always gets gross."),
-      funnel: z.string().optional().describe("The SALES FUNNEL to price the cost columns on — brand-service's vocabulary since it retired the goal, and the only one that separates a meeting bought with a positive reply (`sales_meetings_from_conversation`) from one bought with a click onto the site (`sales_meetings_from_website`); both echo `meetingBooked`, so a goal cannot. Values: sales_meetings_from_conversation, sales_meetings_from_website, website_purchases, form_magnet, sales_from_conversation (positive reply → paid client), sales_meetings_from_ads (meeting booked inside an ad → attended → paid client), lead_forms_from_ads (lead form filled inside an ad → paid client), sales_from_website (website visit → paid client); the pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form are accepted forever. `funnel` is the CANONICAL parameter for a SINGLE-FUNNEL read (a campaign genuinely sells one funnel): name it and nothing else. OMIT it entirely for the BRAND-LEVEL read, where the brand sells through every funnel it declared and the answer is combined over the declared set. It decides the COST basis — including the fleet-backed floor parent every per-audience cost cascades against, so this surface and /workflow-projection?funnel= stay the same number by construction. A funnel the brand never DECLARED is a 404 (reason='funnel_not_declared'); an unrecognised value is a 400, never a silent fall back to the goal."),
       brandProfileId: z.string().optional().describe("Optional brand-profile version to scope evidence, echoed back on the response. Null when omitted (brand-service retired versioned brand-profile storage — no current-profile lookup)."),
       offerId: z.string().optional().describe("Optional OFFER scope for the STATS — the grain between the brand and its campaigns (Org > Brand > Offer > Campaign). Resolves to the campaigns selling the offer and narrows every per-audience cost and engagement numerator to exactly those; the campaignId scope below is the one-member case of the same thing. AUDIENCES themselves stay brand-wide, as they do under a campaign scope: an audience is a brand-level entity several offers may address, and hiding one this offer has not reached yet would answer a question about the audience list with one about the spend. Mutually exclusive with campaignId (400). Omitted → byte-identical to today. An offer no campaign of this brand sells is a 404 with reason \'offer_has_no_campaigns\'."),
       campaignId: z.string().optional().describe("Optional CAMPAIGN scope for the STATS, answered for the campaign's whole IDENTITY - (org, brand, sales funnel, acquisition channel), campaign-service's own key. A campaign is stored as MANY rows (a new one per workflow switch, ancestors kept), so naming any member narrows the per-audience cost + outcome numerators to EVERY member: the same subject /features/{slug}/revenue?campaignId= answers for, so the two reads on one screen cannot state different numbers about one campaign. The resolved identity is echoed as `campaignIdentity`. Audiences themselves stay brand-wide (they are brand-scoped entities). Absent -> brand-wide numbers, byte-identical to today. Cost comes from runs-service (grouped by audienceId, co-grouped by campaign for a multi-member identity) and outcomes from email-gateway, read once per member and summed - a send carries one campaign, so nobody is counted twice. With campaign-service unreachable the read degrades to the single named row (narrower than the truth, never the brand's numbers under this campaign's name). Powers the dashboard's per-campaign audience view."),
@@ -1289,8 +1174,8 @@ registry.registerPath({
   },
   responses: {
     200: { description: "Audience cost/outcome evidence", content: { "application/json": { schema: audienceStatsResponseSchema } } },
-    400: { description: "Missing/invalid brandId, or an unrecognised goal / funnel / limit / statuses (omitting BOTH goal and funnel is the brand-level read, not an error)", content: { "application/json": { schema: errorResponse } } },
-    404: { description: "Feature not found, or (reason='funnel_not_declared') the requested `?funnel=` is not one this brand declared — the body carries `declaredFunnelKeys`", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "Missing/invalid brandId, or an unrecognised goal / limit / statuses (omitting the goal is the brand-level read, not an error). The retired `funnel` parameter is refused with reason='funnel_retired' (name a leg or nothing).", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
     502: { description: "Downstream service error (reason='declared_funnels_unavailable' when the declared-funnel read could not be answered — including on the brand-level read, whose whole basis is the declared set)", content: { "application/json": { schema: errorResponse } } },
   },
 });
@@ -1358,7 +1243,6 @@ registry.registerPath({
     params: z.object({ offerId: z.string() }),
     query: z.object({
       brandId: z.string().describe("Brand UUID (required) — an offer belongs to a brand."),
-      funnel: z.string().optional().describe("The SALES FUNNEL the spend block's cost-per-outcome columns are priced on, with the same vocabulary, the same default (the brand's first declared funnel) and the same fail-loud parse as the per-feature read."),
       pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every MONEY metric. Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the org's discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when they are unavailable, never a silent fallback to gross."),
       cause: z.string().optional().describe("WHOSE WINS THIS READ PRICES — a comma-separated subset of outreach | other | unstated (any order, any case). Every outcome is COUNTED whatever this says (leads[], funnelSteps, conversion rates); this decides which outcomes carry VALUE into the pipeline revenue, the return and the cost of acquisition computed on OUR outreach. 'outreach' — ours: the customer said so, or lead-service's default rule answered it (the outcome followed our first delivered email to that person). 'other' — not ours: the customer said so, or it happened before our first email reached them. 'unstated' — undecided: undated, not matched to a lead, or on a lead we never delivered to. Omitted → 'outreach' alone, the same answer the dashboard's lead panel shows as \"Ours\". The legacy instantly qualifications are judged by the same date rule. An unrecognised word (or a list naming no state) is a 400 with reason 'cause_unrecognised', never a silent pick. The echo rides every response as `outcomeCauses.priced`."),
       leads: z.enum(["outcomes", "full"]).optional().describe("HOW MUCH OF A PERSON `leads[]` carries. Omit or 'outcomes' (the DEFAULT) serves the NARROW row (leadId + the seven outcome flags + the four realized-outcome timestamps) on the rows that REACHED something; 'full' serves every contacted lead fully hydrated — what this service served before, and what exactly one consumer (a server-side digest that NAMES each person and what they did) needs. The default moved because a body answering about MONEY was 99.6% people (10,860,781 bytes of a 10,903,573-byte prod body) and the consumer's 2MB persisted-cache cap meant every money card cold-skeletoned on every page load. Whether an outcome is attributed at all is answered separately by `attributedOutcomes`, so narrowing costs no consumer an answer. An unrecognised value is a 400, never a silent pick."),
@@ -1366,128 +1250,9 @@ registry.registerPath({
   },
   responses: {
     200: { description: "The offer's money plus its per-channel breakdown", content: { "application/json": { schema: offerRevenueResponseRef } } },
-    400: { description: "Missing brandId, or an invalid funnel / pricing value", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "Missing brandId, or an invalid pricing value. The retired `funnel` parameter is refused with reason='funnel_retired' (name a leg or nothing).", content: { "application/json": { schema: errorResponse } } },
     404: { description: "No campaign of this brand sells this offer through any channel (reason: offer_has_no_channels) — never the brand's own numbers under the offer's label, and never a fabricated zero", content: { "application/json": { schema: errorResponse } } },
     409: { description: "The offer is sold through channels that price on different funnels (reason: offer_channels_price_differently), so its money cannot honestly be answered as one figure", content: { "application/json": { schema: errorResponse } } },
-    502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
-  },
-});
-
-// ── (OFFER x SALES FUNNEL) — the grain under the offer, and the only one at which a RETURN survives
-// one-campaign-per-step ─────────────────────────────────────────────────────────────────────────
-//
-// The product is moving to ONE CAMPAIGN PER STEP of a funnel. A campaign then buys a single link, so it
-// has a cost per step and NO return of its own: the lifetime revenue sits at the END of the funnel, and
-// attributing it to whichever link happened to be last would wildly overstate that link. The funnel is
-// the smallest scope spanning a whole path to a paying client, so it is the smallest scope whose money
-// divides into a return.
-//
-// A campaign states exactly one funnel (campaign-service owns `funnelKey`; it is never inferred from a
-// goal — two funnels answer to `meetingBooked`), so MONEY adds: Sigma funnels + Sigma unattributed IS the
-// offer's own spend. PEOPLE do not — a lead worked through two funnels is ONE lead to the offer and is
-// in both rows — so the rows do not sum on the pipeline half and the offer read stays the number to
-// trust for "what did this offer do".
-
-const customerDeclaredCostSchema = z.object({
-  declaredCostUsd: z.number().describe("The sum of every STATED cost in this scope. A leg nobody was ever asked about contributes nothing rather than a fabricated zero."),
-  statedCount: z.number().describe("How many statements carried a cost. A stated 0 is an answer and is counted here."),
-  unstatedCount: z.number().describe("How many did not, because nobody was ever asked. Greater than 0 means this scope cannot be fully costed."),
-});
-
-const combinedCostEconomicsSchema = z.object({
-  platformCommittedCostUsd: z.number().describe("What the platform CHARGED — byte-equal to costEconomics.committedCostUsd."),
-  customerDeclaredCostUsd: z.number().describe("What the customer states their own legs cost them. Never billed."),
-  committedCostUsd: z.number().describe("The two together — the basis the three figures below divide by."),
-  costOfAcquisitionPct: z.number().nullable(),
-  roiMultiple: z.number().nullable(),
-  costPerAcquisitionUsd: z.number().nullable(),
-  maturityDays: z.number().int().describe("The charged block's own maturity delay — the ratios ride the same mature cohort, with every customer-declared cost in it (those carry no date)."),
-  unmeasuredReason: z.enum(["maturing", "maturity_unknown"]).nullable().describe("The charged block's own reason, carried over — the customer's own money is never the whole denominator of a return on our outreach."),
-});
-
-const offerFunnelRowSchema = z.object({
-  funnelKey: z.string().describe("The sales funnel, canonicalised onto this service's catalogue."),
-  name: z.string().describe("The funnel's buyer-facing name."),
-  steps: z.array(z.string()).describe("The funnel's steps in order, so a row renders without the consumer knowing the catalogue."),
-  campaignIds: z.array(z.string()).describe("Every campaign of the offer selling through this funnel, ascending. ONE today; one per STEP as the product moves — the row is the same computation over the larger set."),
-  channels: z.array(offerChannelSchema).describe("The acquisition channels carrying this funnel, ascending by slug."),
-  priced: z.boolean().describe("Whether this funnel's money could be turned into a return. False leaves every money-derived figure null and names the missing ingredient below."),
-  unpricedReason: z
-    .enum(["no_channel_funnel", "no_economics_declared", "funnel_not_declared"])
-    .nullable()
-    .describe(
-      "Why the return is null, checked in this order so the plain thing is said first. no_channel_funnel: no channel carrying this funnel measures anything (no funnel wired), so the leads are never read and `outcomes` is null too. no_economics_declared: the brand states no economics, or its declaration could not be read, so this funnel has no rates and no lifetime revenue of its own. funnel_not_declared: the declaration IS readable and does not contain this funnel. In all three the SPEND is real and reported — the customer paid it — and the pipeline, the return and the cost of acquisition are null, never 0 and never the brand-wide record the un-narrowed reads legitimately fall back to (pricing one funnel on a server-defaulted brand row is the fiction the retired goal produced, one grain finer).",
-    ),
-  headline: featureRevenueResponseSchema.shape.headline,
-  costEconomics: featureRevenueResponseSchema.shape.costEconomics,
-  customerCost: customerDeclaredCostSchema
-    .nullable()
-    .describe(
-      "What the CUSTOMER states the legs they worked themselves cost them, for this funnel's campaign set. Never charged, in no ledger of ours, and it never reaches billing — it is reported BESIDE `costEconomics`, never inside it, so a consumer renders either without inferring one from the other. Null ONLY when the statements could not be read at all; a brand nobody has stated a cost for reads zeros, which is a different answer.",
-    ),
-  costCoverage: funnelCostCoverageSchema.describe(
-    "Which dollars the figures on this ROW are made of. platform_spend_only: no statement is attributable to this funnel, so it reads exactly as it did before customer costs existed. platform_and_customer_spend: every attributable statement carries a cost. platform_and_partial_customer_spend: some legs were never stated, so the customer half is a floor — a funnel we cannot fully cost says so rather than guessing at the rest.",
-  ),
-  combinedCostEconomics: combinedCostEconomicsSchema
-    .describe(
-      "The funnel's cost of acquisition WITH the customer's own legs in it, and the return that divides by it. The byte-same three ratios costEconomics computes, off the summed basis and the SAME lifetime revenue — so with nothing declared this block is identical to the charged one, and the day a cost is stated the whole ladder moves together instead of one figure drifting from the others. Reported apart from the charged block because what we charged and what they spent are two questions with two owners, and one of them is what we bill.",
-    ),
-  outcomes: featureRevenueResponseSchema.shape.outcomes,
-});
-
-const offerFunnelsResponseSchema = z.object({
-  offerId: z.string(),
-  brandId: z.string(),
-  outcomeCauses: z.object({
-    priced: z.array(z.enum(["outreach", "other", "unstated"])).describe("WHOSE WINS EVERY ROW PRICED — the echo of `?cause=` (default outreach), canonical order, stated ONCE for the table because a lean row carries no block of its own. The per-state COUNTS ride the full read (`outcomeCauses.counts` on /revenue)."),
-  }),
-  costBasis: z.literal("charged").describe("What the customer was CHARGED — a comped cost is not in it. Same accounting basis as every other org-scoped money read."),
-  costCoverage: funnelCostCoverageSchema.describe(
-    "Which dollars the payload AS A WHOLE is made of — the WEAKEST coverage among its rows, because the marker is an admission: a payload holding one fully-costed funnel and one that could not be costed at all is not a fully-costed payload. The platform automates the first link of a funnel and charges for it; the customer performs the rest and states what those legs cost them, so a funnel ending in a huma leg is only fully costed once every one of its statements carries a figure.",
-  ),
-  customerCost: customerDeclaredCostSchema
-    .extend({
-      unattributed: customerDeclaredCostSchema.describe(
-        "Statements naming no campaign, or a campaign belonging to no funnel of this offer. They are in NO row and stated here, so a reader sees the difference rather than wondering where they went.",
-      ),
-    })
-    .nullable()
-    .describe(
-      "The customer's own declared money across this offer, rows and leftovers together. NULL means the statements could not be READ; zeros mean nobody has stated one — two different things a consumer acts on differently, so they are never collapsed. None of this was charged to the organisation and none of it reaches billing.",
-    ),
-  funnels: z.array(offerFunnelRowSchema).describe("One LEAN row per funnel the offer sells through, in the catalogue's canonical order. Lean (headline + costEconomics + outcomes) because a table polls it: a full body per funnel would repeat the whole lead population once per row."),
-  unattributedCampaignIds: z
-    .array(z.string())
-    .describe("Campaigns of this offer that state no funnel (or one the catalogue does not know), ascending. Their spend is in NO row and still in the offer's own total, which narrows by nothing — stated so a reader sees the difference rather than wondering why the rows do not add up to the offer."),
-});
-
-const offerFunnelsResponseRef = registry.register("OfferFunnelsResponse", offerFunnelsResponseSchema);
-
-registry.registerPath({
-  method: "get",
-  path: "/offers/{offerId}/funnels",
-  summary: "What each of an offer's sales funnels cost and returned",
-  description:
-    "The (offer x sales funnel) grain: one row per funnel the offer is sold through, each carrying that funnel's own spend, pipeline, return per dollar and cost of acquisition. " +
-    "It is the grain the product needs as it moves to ONE CAMPAIGN PER STEP — a campaign then buys a single link and has no return of its own, because the lifetime revenue sits at the end of the funnel. Correct under both shapes with no switch: the row is scoped to the funnel's CAMPAIGN SET, so a funnel served by one campaign (every funnel in production today) is byte-equal to that campaign's own answer, and a funnel served by one campaign per step is the same row over the larger set. " +
-    "Each funnel's cost of acquisition is stated twice, apart: `costEconomics` is what the customer was CHARGED, `customerCost` is what they state the legs they worked themselves cost them, and `combinedCostEconomics` is the two together with the return that divides by that sum. `costCoverage` says which dollars a figure is made of, per row and for the payload, so the stated basis is always true rather than always the same. " +
-    "Each funnel is priced on its OWN declared terms — its own rates and its own lifetime revenue — so a $200 self-serve funnel and a $20k contract funnel are never blended. A funnel we cannot price says which ingredient is missing (`unpricedReason`) and reports its real spend beside a null return. " +
-    "The composition happens here: nothing on this response is meant to be summed in a browser, and the rows deliberately do not sum on the people half.",
-  tags: ["Stats"],
-  request: {
-    headers: identityHeaders,
-    params: z.object({ offerId: z.string() }),
-    query: z.object({
-      brandId: z.string().describe("Brand UUID (required) — an offer belongs to a brand."),
-      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every MONEY metric. Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the org's discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when they are unavailable, never a silent fallback to gross."),
-      cause: z.string().optional().describe("WHOSE WINS EACH ROW COUNTS — a comma-separated subset of outreach | other | unstated, the same parameter and the same three states /brands/{brandId}/revenue takes (see there for why the third is not a missing answer). Threaded so a lean table row and the full read it drills into can never be built on two different bases. Omitted → all three, byte-identical to today. An unrecognised word is a 400 with reason 'cause_unrecognised'."),
-    }),
-  },
-  responses: {
-    200: { description: "One row per sales funnel the offer is sold through", content: { "application/json": { schema: offerFunnelsResponseRef } } },
-    400: { description: "Missing brandId, or an invalid pricing value", content: { "application/json": { schema: errorResponse } } },
-    404: { description: "No campaign of this brand sells this offer through any channel (reason: offer_has_no_channels) — never the brand's own numbers under the offer's label", content: { "application/json": { schema: errorResponse } } },
-    409: { description: "A funnel is carried by channels that price on different funnels (reason: offer_channels_price_differently), so its money cannot honestly be answered as one figure", content: { "application/json": { schema: errorResponse } } },
     502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
   },
 });
@@ -1578,8 +1343,7 @@ registry.registerPath({
     params: z.object({ offerId: z.string() }),
     query: z.object({
       brandId: z.string().describe("Brand UUID (required)."),
-      goal: z.string().optional().describe("Same vocabulary and same meaning as the per-feature read. Omitting both goal and funnel is the brand-level read, not an error."),
-      funnel: z.string().optional().describe("Same vocabulary and same meaning as the per-feature read."),
+      goal: z.string().optional().describe("Same vocabulary and same meaning as the per-feature read. Omitting the goal is the brand-level read, not an error."),
       statuses: z.string().optional().describe("Comma-separated audience statuses. Same meaning as the per-feature read."),
       limit: z.string().optional().describe("Maximum number of audience rows. Same meaning as the per-feature read."),
       pricing: z.enum(["gross", "net"]).optional().describe("Same gross/net selector, same fail-loud NET rule, as the per-feature read."),
@@ -1587,7 +1351,7 @@ registry.registerPath({
   },
   responses: {
     200: { description: "The offer's per-audience evidence and metrics", content: { "application/json": { schema: offerAudienceStatsResponseRef } } },
-    400: { description: "Missing/invalid brandId, or an unrecognised goal / funnel / limit / statuses / pricing", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "Missing/invalid brandId, or an unrecognised goal / limit / statuses / pricing. The retired `funnel` parameter is refused with reason='funnel_retired' (name a leg or nothing).", content: { "application/json": { schema: errorResponse } } },
     404: { description: "No campaign of this brand sells this offer through any channel (reason: offer_has_no_channels), or a channel it is sold through is not a feature this service knows", content: { "application/json": { schema: errorResponse } } },
     502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
   },
@@ -1622,156 +1386,6 @@ registry.registerPath({
     200: { description: "The offer's day buckets", content: { "application/json": { schema: offerPipelineActivityResponseRef } } },
     400: { description: "Missing/invalid brandId, days, timezone or pricing", content: { "application/json": { schema: errorResponse } } },
     404: { description: "No campaign of this brand sells this offer through any channel (reason: offer_has_no_channels)", content: { "application/json": { schema: errorResponse } } },
-    502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
-  },
-});
-
-// ── ONE SALES FUNNEL OF ONE OFFER — the offer's three reads, narrowed ──────────────────────────
-//
-// `/offers/{offerId}/funnels` answers at the grain of a TABLE: a lean row per funnel, four figures
-// each. A funnel's own PAGE asks what an offer's page asks, and three of those things are simply not
-// on a lean row — the spend broken down the way the cost card reads it, the return over the customer's
-// whole life, and the dated series behind the activity chart. These three reads answer at the
-// (offer x sales funnel) grain, and every figure on them is scoped to the funnel's OWN campaign set
-// before anything is computed: no wider scope's shape is ever rendered under a narrower one's name.
-//
-// A campaign states exactly one offer and exactly one sales funnel, so the scope is the SAME partition
-// the offer's table is built from. That is what makes this correct under BOTH product shapes with no
-// switch: a funnel served by ONE campaign (every funnel in production today) issues the byte-same reads
-// that campaign's own ?campaignId= read issues, and a funnel served by one campaign per STEP is the
-// same read over a larger set. PARTIAL COVERAGE IS NORMAL HERE BY CONSTRUCTION — a funnel with a
-// campaign on two of its four legs answers with the two it has, and says nothing about the rest.
-
-const offerFunnelRevenueChannelGroupSchema = offerChannelSchema.extend({
-  headline: featureRevenueResponseSchema.shape.headline,
-  costEconomics: featureRevenueResponseSchema.shape.costEconomics,
-  outcomes: featureRevenueResponseSchema.shape.outcomes,
-});
-
-const offerFunnelRevenueResponseSchema = featureRevenueResponseSchema
-  .omit({ featureSlug: true })
-  .extend({
-    offerId: z.string(),
-    brandId: z.string(),
-    funnelKey: z.string().describe("The sales funnel this whole body is about, canonicalised onto this service's catalogue."),
-    name: z.string().describe("The funnel's buyer-facing name."),
-    steps: z.array(z.string()).describe("The funnel's steps in order, so the page renders without the consumer knowing the catalogue."),
-    campaignIds: z.array(z.string()).describe("Every campaign of the offer selling through this funnel, ascending — the scope of every figure below. ONE today; one per STEP as the product moves, and the body is the same computation over the larger set."),
-    costBasis: z.literal("charged").describe("What the customer was CHARGED — a comped cost is not in it. Same accounting basis as every other org-scoped money read."),
-    priced: z.boolean().describe("Whether this funnel's money could be turned into a return. False leaves every money-derived figure null and names the missing ingredient below; the SPEND is real and reported either way."),
-    unpricedReason: z
-      .enum(["no_channel_funnel", "no_economics_declared", "funnel_not_declared"])
-      .nullable()
-      .describe("Why the return is null, with the byte-same meaning and the byte-same order as on /offers/{offerId}/funnels — the two are decided by one shared rule, so this page and that table can never state two prices for one funnel."),
-    channels: z
-      .array(offerFunnelRevenueChannelGroupSchema)
-      .describe("The per-channel breakdown WITHIN the funnel — which of its legs is funded, and what each one cost and returned. LEAN (headline + costEconomics + outcomes) because a full body per leg would repeat the whole lead population for figures the body above already carries. A funnel with a campaign on only some of its legs shows only those: partial is what a funnel being sold leg by leg looks like, not a gap."),
-    costCoverage: funnelCostCoverageSchema.describe("Which dollars the figures on this page are made of. platform_spend_only: no statement is attributable to this funnel, so it reads exactly as it did before customer costs existed. platform_and_customer_spend: every attributable statement carries a cost. platform_and_partial_customer_spend: some legs were never stated, so the customer half is a floor — a funnel we cannot fully cost says so rather than guessing at the rest."),
-    customerCost: customerDeclaredCostSchema
-      .nullable()
-      .describe("What the CUSTOMER states the legs they worked themselves cost them, for this funnel's campaign set. Never charged, in no ledger of ours, and it never reaches billing — reported BESIDE costEconomics, never inside it. Null ONLY when the statements could not be read at all; a funnel nobody has stated a cost for reads zeros, which is a different answer."),
-    combinedCostEconomics: combinedCostEconomicsSchema.describe("The funnel's cost of acquisition WITH the customer's own legs in it, and the return that divides by it — the byte-same three ratios costEconomics computes, off the summed basis and the SAME lifetime revenue. With nothing declared it is identical to the charged block."),
-  });
-
-const offerFunnelRevenueResponseRef = registry.register("OfferFunnelRevenueResponse", offerFunnelRevenueResponseSchema);
-
-registry.registerPath({
-  method: "get",
-  path: "/offers/{offerId}/funnels/{funnelKey}/revenue",
-  summary: "One sales funnel's money, in full — the offer read narrowed to one funnel",
-  description:
-    "The same realized-money answer /offers/{offerId}/revenue gives, at the grain a customer's funnel screen asks about: ONE sales funnel of one offer, scoped to that funnel's own campaigns. " +
-    "It carries what the lean row on /offers/{offerId}/funnels cannot: the `spend` breakdown per cost source the cost card reads, `roiHistory` (the return on spend over the brand's whole life, both legs cumulative and both measured, terminating exactly on the headline ROI), and the dated ACTUAL series plus `leads[]` and the events ledger. Same engine, same COMMITTED basis, same brand pricing as the row — one statement at two levels of detail. " +
-    "The funnel is priced on its OWN declared terms (its own rates, its own lifetime revenue) through the rule the table shares, so a $200 self-serve funnel and a $20k contract funnel are never blended and the two surfaces can never disagree. A funnel that cannot be priced says which ingredient is missing and reports its real spend beside a NULL return — never 0 and never the brand-wide record. " +
-    "The cost of acquisition is stated twice, apart: `costEconomics` is what the customer was CHARGED, `customerCost` is what they state their own legs cost them, and `combinedCostEconomics` is the two together. " +
-    "A funnel served by ONE campaign issues the byte-same downstream reads that campaign's own ?campaignId= read issues; a funnel served by one campaign per step is the same read over the larger set. Nothing on this response is meant to be summed in a browser.",
-  tags: ["Stats"],
-  request: {
-    headers: identityHeaders,
-    params: z.object({
-      offerId: z.string(),
-      funnelKey: z.string().describe("The sales funnel. Every canonical key and every pre-retirement spelling is accepted; a word naming no funnel is a 400, never a silent pick."),
-    }),
-    query: z.object({
-      brandId: z.string().describe("Brand UUID (required) — an offer belongs to a brand."),
-      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every MONEY metric. Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the org's discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when they are unavailable, never a silent fallback to gross."),
-      cause: z.string().optional().describe("WHOSE WINS THIS READ PRICES — a comma-separated subset of outreach | other | unstated (any order, any case). Every outcome is COUNTED whatever this says (leads[], funnelSteps, conversion rates); this decides which outcomes carry VALUE into the pipeline revenue, the return and the cost of acquisition computed on OUR outreach. 'outreach' — ours: the customer said so, or lead-service's default rule answered it (the outcome followed our first delivered email to that person). 'other' — not ours: the customer said so, or it happened before our first email reached them. 'unstated' — undecided: undated, not matched to a lead, or on a lead we never delivered to. Omitted → 'outreach' alone, the same answer the dashboard's lead panel shows as \"Ours\". The legacy instantly qualifications are judged by the same date rule. An unrecognised word (or a list naming no state) is a 400 with reason 'cause_unrecognised', never a silent pick. The echo rides every response as `outcomeCauses.priced`."),
-      leads: z.enum(["outcomes", "full"]).optional().describe("HOW MUCH OF A PERSON `leads[]` carries. Omit or 'outcomes' (the DEFAULT) serves the NARROW row (leadId + the seven outcome flags + the four realized-outcome timestamps) on the rows that REACHED something; 'full' serves every contacted lead fully hydrated — what this service served before, and what exactly one consumer (a server-side digest that NAMES each person and what they did) needs. The default moved because a body answering about MONEY was 99.6% people (10,860,781 bytes of a 10,903,573-byte prod body) and the consumer's 2MB persisted-cache cap meant every money card cold-skeletoned on every page load. Whether an outcome is attributed at all is answered separately by `attributedOutcomes`, so narrowing costs no consumer an answer. An unrecognised value is a 400, never a silent pick."),
-    }),
-  },
-  responses: {
-    200: { description: "The funnel's money in full, plus the per-channel breakdown within it", content: { "application/json": { schema: offerFunnelRevenueResponseRef } } },
-    400: { description: "Missing brandId, an unrecognised funnelKey, or an invalid pricing value", content: { "application/json": { schema: errorResponse } } },
-    404: { description: "No campaign of this brand sells this offer through any channel (reason: offer_has_no_channels), or the offer sells through no campaign on this funnel (reason: funnel_not_sold, with soldFunnelKeys naming the ones it does) — never the offer's own numbers under a funnel's name, and never a fabricated zero", content: { "application/json": { schema: errorResponse } } },
-    409: { description: "The funnel is carried by channels that price on different funnels (reason: offer_channels_price_differently), so its money cannot honestly be answered as one figure", content: { "application/json": { schema: errorResponse } } },
-    502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
-  },
-});
-
-const offerFunnelAudienceStatsResponseSchema = audienceStatsResponseSchema.extend({
-  offerId: z.string(),
-  funnelKey: z.string(),
-  channels: z.array(offerChannelSchema).describe("The channels carrying this funnel's funded legs, combined into every row below, ascending by slug."),
-});
-const offerFunnelAudienceStatsResponseRef = registry.register("OfferFunnelAudienceStatsResponse", offerFunnelAudienceStatsResponseSchema);
-
-registry.registerPath({
-  method: "get",
-  path: "/offers/{offerId}/funnels/{funnelKey}/audience-stats",
-  summary: "One sales funnel's per-audience economics",
-  description:
-    "The same per-audience ranking /offers/{offerId}/audience-stats serves, narrowed to ONE sales funnel of the offer. " +
-    "Audiences are BRAND entities (human-service owns them, and several funnels may address the same one), so the audience LIST is unchanged; what narrows is the money and the engagement behind each row, to this funnel's campaigns. Both are per-audience SEND-TAG figures and a send carries exactly one campaign, so they add across the funnel's legs with nothing counted twice — and each row's ratios are then recomputed from those combined numerators, never averaged.",
-  tags: ["Stats"],
-  request: {
-    headers: identityHeaders,
-    params: z.object({ offerId: z.string(), funnelKey: z.string() }),
-    query: z.object({
-      brandId: z.string().describe("Brand UUID (required)."),
-      goal: z.string().optional().describe("Same vocabulary and same meaning as the per-feature read. Omitting both goal and funnel is the brand-level read, not an error."),
-      funnel: z.string().optional().describe("The funnel the COST COLUMNS are denominated in, with the same vocabulary as the per-feature read. Distinct from the path's funnelKey, which is the SCOPE of the evidence."),
-      statuses: z.string().optional().describe("Comma-separated audience statuses. Same meaning as the per-feature read."),
-      limit: z.string().optional().describe("Maximum number of audience rows. Same meaning as the per-feature read."),
-      pricing: z.enum(["gross", "net"]).optional().describe("Same gross/net selector, same fail-loud NET rule, as the per-feature read."),
-    }),
-  },
-  responses: {
-    200: { description: "The funnel's per-audience evidence and metrics", content: { "application/json": { schema: offerFunnelAudienceStatsResponseRef } } },
-    400: { description: "Missing/invalid brandId, an unrecognised funnelKey, or an unrecognised goal / funnel / limit / statuses / pricing", content: { "application/json": { schema: errorResponse } } },
-    404: { description: "reason: offer_has_no_channels, or reason: funnel_not_sold", content: { "application/json": { schema: errorResponse } } },
-    502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
-  },
-});
-
-const offerFunnelPipelineActivityResponseSchema = pipelineActivityResponseSchema.extend({
-  offerId: z.string(),
-  funnelKey: z.string(),
-  channels: z.array(offerChannelSchema).describe("The channels merged into the day series below, ascending by slug."),
-});
-const offerFunnelPipelineActivityResponseRef = registry.register("OfferFunnelPipelineActivityResponse", offerFunnelPipelineActivityResponseSchema);
-
-registry.registerPath({
-  method: "get",
-  path: "/offers/{offerId}/funnels/{funnelKey}/pipeline-activity",
-  summary: "One sales funnel's per-day activity",
-  description:
-    "The ACTUAL day series of /offers/{offerId}/pipeline-activity, narrowed to ONE sales funnel — so a funnel page draws ITS OWN chart instead of borrowing a wider scope's shape under a narrower scope's name. Every series here is an EVENT count tagged to one campaign, so the funnel's legs add exactly: each is read under its own channel and the day buckets merged. " +
-    "The EXPECTED series, summary.dailyBudgetUsd and the observed signup / form-submission actuals are NULL at this grain, for the reasons the offer grain already states one level up: a daily budget is funded per brand with no per-funnel ceiling to divide, and the conversion tracker is brand-keyed with no campaign on it. Null is 'we could not measure this at this grain', never a share and never a zero. The two conversion RATES survive, because they are the brand's economics and the funnel does not change them.",
-  tags: ["Stats"],
-  request: {
-    headers: identityHeaders,
-    params: z.object({ offerId: z.string(), funnelKey: z.string() }),
-    query: z.object({
-      brandId: z.string().describe("Brand UUID (required)."),
-      days: z.string().optional().describe("Number of days to return. Defaults to 7."),
-      timezone: z.string().describe("IANA timezone used for calendar day ordering. Same acceptance and same 400-naming-the-parameter behaviour as the per-feature read."),
-      pricing: z.enum(["gross", "net"]).optional().describe("Accepted for parity with the sibling reads and folded into the cache key. Every series answered at this grain is an event count, so neither basis changes a number here."),
-    }),
-  },
-  responses: {
-    200: { description: "The funnel's day buckets", content: { "application/json": { schema: offerFunnelPipelineActivityResponseRef } } },
-    400: { description: "Missing/invalid brandId, days, timezone, funnelKey or pricing", content: { "application/json": { schema: errorResponse } } },
-    404: { description: "reason: offer_has_no_channels, or reason: funnel_not_sold", content: { "application/json": { schema: errorResponse } } },
     502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
   },
 });
@@ -1839,7 +1453,6 @@ registry.registerPath({
     headers: identityHeaders,
     params: z.object({ brandId: z.string() }),
     query: z.object({
-      funnel: z.string().optional().describe("The SALES FUNNEL the spend block's cost-per-outcome columns are priced on, with the same vocabulary, the same default (the brand's first declared funnel) and the same fail-loud parse as the per-feature read."),
       pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every MONEY metric. Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the org's discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when they are unavailable, never a silent fallback to gross."),
       cause: z.string().optional().describe("WHOSE WINS THIS READ PRICES — a comma-separated subset of outreach | other | unstated (any order, any case). Every outcome is COUNTED whatever this says (leads[], funnelSteps, conversion rates); this decides which outcomes carry VALUE into the pipeline revenue, the return and the cost of acquisition computed on OUR outreach. 'outreach' — ours: the customer said so, or lead-service's default rule answered it (the outcome followed our first delivered email to that person). 'other' — not ours: the customer said so, or it happened before our first email reached them. 'unstated' — undecided: undated, not matched to a lead, or on a lead we never delivered to. Omitted → 'outreach' alone, the same answer the dashboard's lead panel shows as \"Ours\". The legacy instantly qualifications are judged by the same date rule. An unrecognised word (or a list naming no state) is a 400 with reason 'cause_unrecognised', never a silent pick. The echo rides every response as `outcomeCauses.priced`."),
       leads: z.enum(["outcomes", "full"]).optional().describe("HOW MUCH OF A PERSON `leads[]` carries. Omit or 'outcomes' (the DEFAULT) serves the NARROW row (leadId + the seven outcome flags + the four realized-outcome timestamps) on the rows that REACHED something; 'full' serves every contacted lead fully hydrated — what this service served before, and what exactly one consumer (a server-side digest that NAMES each person and what they did) needs. The default moved because a body answering about MONEY was 99.6% people (10,860,781 bytes of a 10,903,573-byte prod body) and the consumer's 2MB persisted-cache cap meant every money card cold-skeletoned on every page load. Whether an outcome is attributed at all is answered separately by `attributedOutcomes`, so narrowing costs no consumer an answer. An unrecognised value is a 400, never a silent pick."),
@@ -1847,7 +1460,7 @@ registry.registerPath({
   },
   responses: {
     200: { description: "The brand's money plus its per-channel breakdown", content: { "application/json": { schema: brandRevenueResponseRef } } },
-    400: { description: "An invalid funnel / pricing value", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "An invalid pricing value. The retired `funnel` parameter is refused with reason='funnel_retired' (name a leg or nothing).", content: { "application/json": { schema: errorResponse } } },
     404: { description: "campaign-service lists no campaign for this brand, so it runs no acquisition channel (reason: brand_has_no_channels) — never a number about an unknown subset of channels", content: { "application/json": { schema: errorResponse } } },
     409: { description: "The brand runs channels that price on different funnels (reason: brand_channels_price_differently), so its money cannot honestly be answered as one figure", content: { "application/json": { schema: errorResponse } } },
     502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
@@ -1900,14 +1513,13 @@ registry.registerPath({
     headers: identityHeaders,
     params: z.object({ brandId: z.string() }),
     query: z.object({
-      funnel: z.string().optional().describe("The SALES FUNNEL each row's economics are priced on, with the same vocabulary, the same default (the brand's first declared funnel) and the same fail-loud parse as the per-feature read."),
       pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every MONEY metric. Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the org's discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when they are unavailable, never a silent fallback to gross."),
       cause: z.string().optional().describe("WHOSE WINS EACH ROW COUNTS — a comma-separated subset of outreach | other | unstated, the same parameter and the same three states /brands/{brandId}/revenue takes (see there for why the third is not a missing answer). Threaded so a lean table row and the full read it drills into can never be built on two different bases. Omitted → all three, byte-identical to today. An unrecognised word is a 400 with reason 'cause_unrecognised'."),
     }),
   },
   responses: {
     200: { description: "One lean row per offer the brand sells", content: { "application/json": { schema: brandOffersResponseRef } } },
-    400: { description: "An invalid funnel / pricing value", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "An invalid pricing value. The retired `funnel` parameter is refused with reason='funnel_retired' (name a leg or nothing).", content: { "application/json": { schema: errorResponse } } },
     404: { description: "campaign-service lists no campaign for this brand, so it runs no acquisition channel (reason: brand_has_no_channels) — distinct from an empty offers array, which means its campaigns state no offer yet", content: { "application/json": { schema: errorResponse } } },
     409: { description: "One of the brand's offers is sold through channels that price on different funnels (reason: offer_channels_price_differently, with the offerId), so that offer's money cannot honestly be answered as one figure", content: { "application/json": { schema: errorResponse } } },
     502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
@@ -1960,12 +1572,11 @@ registry.registerPath({
     headers: identityHeaders,
     params: z.object({ brandId: z.string() }),
     query: z.object({
-      funnel: z.string().optional().describe("Narrow to ONE sales funnel. A word naming no funnel is a 400 with reason 'funnel_unrecognised'."),
     }),
   },
   responses: {
     200: { description: "The brand's effective rates", content: { "application/json": { schema: brandConversionRatesResponseRef } } },
-    400: { description: "An unrecognised funnel", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "The retired `funnel` parameter is refused with reason='funnel_retired' (name a leg or nothing).", content: { "application/json": { schema: errorResponse } } },
     502: { description: "A producer the rates are resolved from could not be read", content: { "application/json": { schema: errorResponse } } },
   },
 });
@@ -1988,8 +1599,7 @@ registry.registerPath({
     headers: identityHeaders,
     params: z.object({ brandId: z.string() }),
     query: z.object({
-      goal: z.string().optional().describe("Same vocabulary and same meaning as the per-feature read. Omitting both goal and funnel is the brand-level read, not an error."),
-      funnel: z.string().optional().describe("Same vocabulary and same meaning as the per-feature read."),
+      goal: z.string().optional().describe("Same vocabulary and same meaning as the per-feature read. Omitting the goal is the brand-level read, not an error."),
       statuses: z.string().optional().describe("Comma-separated audience statuses. Same meaning as the per-feature read."),
       limit: z.string().optional().describe("Maximum number of audience rows. Same meaning as the per-feature read."),
       pricing: z.enum(["gross", "net"]).optional().describe("Same gross/net selector, same fail-loud NET rule, as the per-feature read."),
@@ -1997,7 +1607,7 @@ registry.registerPath({
   },
   responses: {
     200: { description: "The brand's per-audience evidence and metrics", content: { "application/json": { schema: brandAudienceStatsResponseRef } } },
-    400: { description: "An unrecognised goal / funnel / limit / statuses / pricing", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "An unrecognised goal / limit / statuses / pricing. The retired `funnel` parameter is refused with reason='funnel_retired' (name a leg or nothing).", content: { "application/json": { schema: errorResponse } } },
     404: { description: "campaign-service lists no campaign for this brand (reason: brand_has_no_channels), or a channel it runs is not a feature this service knows", content: { "application/json": { schema: errorResponse } } },
     502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
   },
@@ -3102,7 +2712,7 @@ const showcaseBrandFunnelsSchema = z.object({
     funnels: z.array(z.object({
       funnelKey: z.string().describe("The sales funnel this chain walks — brand-service's own catalogue key."),
       funnelName: z.string().describe("The funnel's own name, so a consumer renders the chain without holding the catalogue."),
-      returnPerDollar: z.number().nullable().describe("WHAT A DOLLAR THROUGH THIS FUNNEL CAME BACK AS FOR THIS CLIENT — expected pipeline over COMMITTED spend, i.e. the byte-same roiMultiple the client reads as ROI on their own dashboard for GET /features/:slug/revenue?funnel=<key>&pricing=net. READ ON THE NET PRICING BASIS - what this client ACTUALLY PAID after whatever per-org usage discount they carry - which is what makes that byte-same claim true rather than aspirational: every dashboard surface a client reads is net, so a gross figure here would be one that appears on no screen they own. A client carrying no discount has a frozen net equal to its gross per cost row and is unchanged. NOT the forward returnPerDollar projection /public/channel-funnel-economics publishes — those are an order apart in production. null is 'we could not measure this' (nothing spent, or the brand states no economics); a measured 0 (real spend, no pipeline yet) stays 0."),
+      returnPerDollar: z.number().nullable().describe("WHAT A DOLLAR THROUGH THIS FUNNEL CAME BACK AS FOR THIS CLIENT — expected pipeline over COMMITTED spend, i.e. the byte-same roiMultiple the client reads as ROI on their own dashboard for GET /features/:slug/revenue?pricing=net on a brand reading this funnel. READ ON THE NET PRICING BASIS - what this client ACTUALLY PAID after whatever per-org usage discount they carry - which is what makes that byte-same claim true rather than aspirational: every dashboard surface a client reads is net, so a gross figure here would be one that appears on no screen they own. A client carrying no discount has a frozen net equal to its gross per cost row and is unchanged. NOT the forward returnPerDollar projection /public/channel-funnel-economics publishes — those are an order apart in production. null is 'we could not measure this' (nothing spent, or the brand states no economics); a measured 0 (real spend, no pipeline yet) stays 0."),
       steps: z.array(z.object({
         key: z.string().describe("Stable machine key of the rung — the canonical LEG key, or 'contacted' for the outreach base. Key off this, not off the buyer-facing label."),
         label: z.string().describe("The funnel's OWN name for this step, in the words the customer's screen uses."),
@@ -3336,7 +2946,7 @@ const pairEconomicsSchema = z.object({
   steps: z.array(pricedStepSchema),
   costPerSaleUsd: z.number().nullable().describe("What one SALE costs through this pair — the terminal step's own price."),
   costPerSaleUnpricedReason: z.enum(["rate_not_declared", "rate_is_zero"]).nullable(),
-  returnPerDollar: z.number().nullable().describe("lifetimeRevenueUsd / costPerSaleUsd — the identical definition /features/{slug}/funnel-ranking ranks a brand's declared funnels on. Null, never 0, when either half is missing."),
+  returnPerDollar: z.number().nullable().describe("lifetimeRevenueUsd / costPerSaleUsd — the identical returnPerDollar definition every surface of this service uses. Null, never 0, when either half is missing."),
   lifetimeRevenueUsd: z.number().nullable(),
   evidence: z.object({
     totalSpentUsd: z.number(),
@@ -3477,7 +3087,7 @@ registry.registerPath({
     "Cross-org (fleet-wide) MEDIAN return on spend our clients get on an acquisition channel: per brand, its expected pipeline divided by its committed spend on the NET pricing basis (what the brand actually paid after its per-org usage discount) — the exact ratio that brand reads as ROI on its own dashboard, which reads net too — with the median taken across brands. " +
     "The unit is the BRAND and the statistic is the MEDIAN, never a mean (a handful of brands sit tens of multiples above the rest, so an average describes nobody). " +
     "POPULATION: only brands past `minSpendUsd` of spend, because a brand three days into its first campaign produces a ratio with no information in it. `brandCount` states how many brands the median was actually taken over. " +
-    "This is a REALIZED figure and is NOT the projected `returnPerDollar` on /public/channel-funnel-economics or /funnel-ranking (lifetime revenue over a modelled cost per paying client) — the two answer different questions and differ by an order of magnitude in production. " +
+    "This is a REALIZED figure and is NOT the projected `returnPerDollar` on /public/channel-funnel-economics (lifetime revenue over a modelled cost per paying client) — the two answer different questions and differ by an order of magnitude in production. " +
     "Served from a PERSISTED snapshot refreshed off the request path, so it answers in milliseconds; the underlying per-brand compute is a full engine pass per brand and takes minutes. A read arriving before the first refresh answers `measured: false, reason: \"no_snapshot_yet\"` rather than blocking. " +
     "Never a 0 and never a wider population when the figure cannot be stated honestly.",
   tags: ["Public"],
@@ -3506,7 +3116,7 @@ const funnelReturnPairSchema = z.object({
   reason: z.enum(["no_snapshot_yet", "not_enough_brands"]).nullable().describe("Present exactly when `measured` is false. `no_snapshot_yet` = no background compute has written a snapshot for this CHANNEL yet; `not_enough_brands` = a snapshot exists but too few brands sell this funnel through this channel past the spend floor. Neither is an error, and neither is ever answered with a 0 or with a median quietly taken over a wider population (a neighbouring funnel, the whole channel)."),
   minSpendUsd: z.number().describe("The spend floor this pair's population was restricted to (USD)."),
   brandCount: z.number().int().describe("How many brands the RETURN median was taken over. ALWAYS present, including when it is too few to state one."),
-  medianReturnPerDollar: z.number().nullable().describe("The MIDDLE brand's realized return on spend through THIS funnel — its expected pipeline (scoped to the funnel) divided by its committed spend on the channel. Byte-same statistic as `costEconomics.roiMultiple` on GET /features/{slug}/revenue?funnel={key} for one brand. A median, never a mean."),
+  medianReturnPerDollar: z.number().nullable().describe("The MIDDLE brand's realized return on spend through THIS funnel — its expected pipeline (scoped to the funnel) divided by its committed spend on the channel. Byte-same statistic as `costEconomics.roiMultiple` for one brand reading that funnel. A median, never a mean."),
   p25ReturnPerDollar: z.number().nullable().describe("25th percentile — the lower edge of the bulk."),
   p75ReturnPerDollar: z.number().nullable().describe("75th percentile — the upper edge of the bulk."),
   minReturnPerDollar: z.number().nullable().describe("The weakest qualifying brand's return."),
@@ -3530,7 +3140,7 @@ registry.registerPath({
   summary: "Fleet MEDIAN return on spend per (acquisition channel x sales funnel) pair (public, no auth)",
   description:
     "Cross-org (fleet-wide) MEDIAN return on spend our clients get through ONE SALES FUNNEL on one acquisition channel, plus the median cost per paying client on the same population. " +
-    "Per brand the figure is its expected pipeline scoped to that funnel divided by its committed spend on the channel - the byte-same ratio that brand reads as ROI on its own dashboard (GET /features/{slug}/revenue?funnel={key}&pricing=net), on the NET pricing basis - what the brand actually paid after its per-org usage discount - with the median taken across brands. " +
+    "Per brand the figure is its expected pipeline scoped to that funnel divided by its committed spend on the channel - the byte-same ratio that brand reads as ROI on its own dashboard (GET /features/{slug}/revenue?pricing=net), on the NET pricing basis - what the brand actually paid after its per-org usage discount - with the median taken across brands. " +
     "The unit is the BRAND and the statistic is the MEDIAN, never a mean. " +
     "POPULATION: brands that declared the funnel and are past `minSpendUsd` of spend on the channel. A pair below the minimum brand count answers `measured: false, reason: \"not_enough_brands\"` with `brandCount` stated, and no figure is ever computed over a wider population to make a number appear. " +
     "This is a REALIZED figure and is NOT the projected `returnPerDollar` on /public/channel-funnel-economics (a pooled unit price through MEAN declared rates and a MEAN lifetime revenue) - the two answer different questions and differ by an order of magnitude in production. Both reads exist; neither may be relabelled as the other. " +

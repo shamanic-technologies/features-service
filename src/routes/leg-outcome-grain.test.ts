@@ -275,10 +275,9 @@ describe("a leg-keyed read is priced on the LEG'S OWN STEP", () => {
     expect(brandRow(entry.body, "lithium").estimatesByGrain.brand.legOutcome.costPerOutcomeUsd).toBeCloseTo(2141.76 / 13, 6);
   });
 
-  it("a funnel-keyed and a goal-keyed request carry no leg figures at all", async () => {
-    const byFunnel = await get("funnel=sales_meetings_from_conversation");
+  it("a goal-keyed request carries no leg figures at all", async () => {
     const byGoal = await get("goal=meetingBooked");
-    for (const body of [byFunnel.body, byGoal.body]) {
+    for (const body of [byGoal.body]) {
       expect(body.leg).toBeUndefined();
       expect(body.campaignIdentity).toBeUndefined();
       for (const row of body.rows) {
@@ -286,8 +285,6 @@ describe("a leg-keyed read is priced on the LEG'S OWN STEP", () => {
         for (const block of Object.values(row.estimatesByGrain) as any[]) expect(block.legOutcome).toBeUndefined();
       }
     }
-    // …and the funnel-keyed answer still prices the BOOKED MEETING it has always priced.
-    expect(brandRow(byFunnel.body, "lithium").resolved.costPerOutcomeUsd).toBeCloseTo(823.75, 2);
   });
 });
 

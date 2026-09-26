@@ -28,9 +28,9 @@
  *      reply-bought meeting against clicks the funnel never buys.
  *   3. The funnel's own rates carry the masked unit cost down to a SALE.
  *
- * Return is `lifetimeRevenueUsd / costPerSaleUsd` — the identical definition `/features/:slug/
- * funnel-ranking` ranks a brand's declared funnels on, so a public row and a customer's own ranking are
- * one statistic at two scopes.
+ * Return is `lifetimeRevenueUsd / costPerSaleUsd` — the identical definition every per-brand
+ * return in this service uses, so a public row and a customer's own figure are one statistic at two
+ * scopes.
  */
 
 import { projectOutcomeCosts, type ProjectionEconomics, type ProjectionUnitCosts } from "./funnel-registry.js";

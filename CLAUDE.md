@@ -1,5 +1,29 @@
 # Features Service — CLAUDE.md
 
+## WAVE C2 — THE FUNNEL-KEYED HTTP SURFACE IS GONE; `?funnel=` IS REFUSED (400 `funnel_retired`), NEVER IGNORED
+
+A fleet-wide search found no caller left, so wave C2 deleted: `GET /features/:slug/funnel-ranking` and its
+`/goal-arbitration` alias, `GET /offers/:offerId/funnels`, and the three
+`/offers/:offerId/funnels/:funnelKey/{revenue,audience-stats,pipeline-activity}` reads (and their
+OpenAPI). Supersedes every section below that documents those routes or the `?funnel=` parameter.
+
+- **`?funnel=` on `/features/:slug/{revenue,workflow-projection,audience-stats}`, `/brands/:id/{revenue,
+  offers,audience-stats,conversion-rates}` and `/offers/:id/{revenue,audience-stats}` is a 400**
+  `{ error: "the funnel parameter is retired; name a leg (?leg=) or nothing", reason: "funnel_retired" }`
+  (`lib/retired-funnel-param.ts`), checked before any downstream read. An EMPTY `?funnel=` names nothing
+  and stays absent. `goal`/`objective`/`leg` are untouched (live callers). `leg_and_funnel` and
+  `funnel_not_declared` are gone with it.
+- **Internal funnel narrowing STAYS**: `computeFeatureRevenue`'s `requestedFunnel` and
+  `priceOnDeclaredFunnel`'s (now optional) third argument still serve the public per-funnel reads
+  (`/public/stats/showcase-funnels`, `/public/stats/funnel-return-on-spend`, `/public/channel-funnel-economics`).
+  `lib/funnel-ranking.ts` stays too — `/workflow-projection?leg=` picks its basis funnel with
+  `rankDeclaredFunnels`.
+- **Deleted as unreferenced**: `lib/offer-funnels.ts`, `priceFunnelRow`, `severalOffersUnrankable`,
+  `partitionCustomerCosts`, `summariseCoverage`, `buildCombinedCostEconomics`, the `include` option of
+  `fetchPricingFunnels`, the `funnelKey` option of `computeOfferPipelineActivity`, and
+  `declaredFunnelsUnresolved` on `/workflow-projection` (only the retired funnel path could set it; a
+  several-offer LEG read still 409s). (Set 2026-09-26.)
+
 ## WAVE C1 — NOTHING HERE READS A DECLARED SALES FUNNEL; every figure is priced on the brand's LEG rates and the OFFER's lifetime revenue, through the funnels its campaigns' legs READ
 
 The fleet retired the sales funnel as an identity (org > brand > offer > outcome > leg). brand-service

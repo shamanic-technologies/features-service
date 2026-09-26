@@ -51,7 +51,7 @@ export function pickBestChannel<T extends ChannelParents>(byChannel: T[]): T | n
 
   // Rank only the channels that state a paid-client cost. One that does not has no comparable price —
   // it is not "expensive", it is unpriced, and dropping it from the ranking is the same treatment an
-  // unrankable funnel gets on /funnel-ranking (ranked last, never scored 0).
+  // unrankable funnel gets in the funnel ranking (ranked last, never scored 0).
   const priced = resolved.filter((entry) => typeof entry.parents!.costPerPaidClientUsd === "number");
   if (priced.length === 0) {
     // Nothing to rank on, but a real channel's benchmark is still a real answer and strictly better

@@ -443,3 +443,30 @@ describe("GET /brands/:brandId/pipeline-activity — per-day activity across eve
     expect(res.body.summary.dailyBudgetUsd).toBeCloseTo(50, 6);
   });
 });
+
+describe("`?funnel=` is retired on the brand grain (wave C2)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    withFeatures();
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("refuses it on /revenue, /offers and /audience-stats with funnel_retired, before any downstream read", async () => {
+    mockFetch(TWO_CHANNELS);
+    for (const path of ["revenue", "offers", "audience-stats"]) {
+      const res = await request(app).get(`/brands/${BRAND}/${path}?funnel=website_purchases`).set(AUTH);
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({
+        error: "the funnel parameter is retired; name a leg (?leg=) or nothing",
+        reason: "funnel_retired",
+      });
+    }
+    expect(vi.mocked(globalThis.fetch)).not.toHaveBeenCalled();
+  });
+
+  it("an EMPTY `?funnel=` names nothing and is read as absent, as it always was", async () => {
+    mockFetch(TWO_CHANNELS);
+    const res = await request(app).get(`/brands/${BRAND}/revenue?funnel=`).set(AUTH);
+    expect(res.status).toBe(200);
+  });
+});

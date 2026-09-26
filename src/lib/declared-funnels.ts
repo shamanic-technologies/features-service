@@ -188,13 +188,13 @@ export function declaredFunnelsToRank(funnels: DeclaredSalesFunnel[]): RankableF
 }
 
 /**
- * The declared economics of ONE funnel, for a read that names it (`?funnel=`).
+ * The declared economics of ONE funnel, for a read priced on it (a leg's basis funnel, a public per-funnel read).
  *
  * WHY THIS EXISTS: the ranking already prices each funnel on its OWN declared terms — that is the whole
  * point of per-funnel economics. A read that asks for the same funnel must do the same, or the two
  * surfaces print different prices for one brand + one funnel + one moment. Prod caught exactly that on
  * `b97440f6…`: the brand declares `replyToMeetingPct: 100` on its conversation funnel, so the ranking
- * said $73.74 per meeting while `?funnel=` — projecting on the brand-wide effective set, where the rate
+ * said $73.74 per meeting while the funnel-keyed read (since retired) — projecting on the brand-wide effective set, where the rate
  * is ~31% — said $237.87. Same funnel, same evidence, two numbers.
  *
  * Returns `null` when the brand declared no usable number for the funnel: the brand's effective
@@ -211,7 +211,7 @@ export function declaredEconomicsForFunnel(
 
 /**
  * Merge a funnel's declared terms OVER a brand's effective economics — the SAME merge the ranking does
- * (`mergeEconomics` in funnel-ranking.ts): only stated fields win, and a rate the brand never declared
+ * (`mergeEconomics` in lib/funnel-ranking.ts): only stated fields win, and a rate the brand never declared
  * is absent here rather than 0, so it falls through to the effective value instead of zero-collapsing
  * the funnel.
  */
