@@ -13,11 +13,14 @@ function result(n: number): ContactedValueResult {
     routes: [],
     matureBefore: "2026-09-12T00:00:00.000Z",
     maturityDays: 14,
+    expiryDays: 30,
+    lastSentOnOrAfter: "2026-08-27T12:00:00.000Z",
     minBrandOutcomes: 10,
-    population: { contactedOnly: n, organizations: n, engaged: 0, cannotConvert: 0 },
+    population: { contactedOnly: n, organizations: n, engaged: 0, cannotConvert: 0, expired: 0 },
     leads: Array.from({ length: n }, (_, i) => ({
       leadId: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
       expectedValueUsd: 3.996004,
+      expired: false,
     })),
   };
 }

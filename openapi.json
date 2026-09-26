@@ -11700,7 +11700,7 @@
           "totalExpectedValueUsd": {
             "type": "number",
             "nullable": true,
-            "description": "Company-level total over the brand's contacted-only leads: people of one organisation combined as independent shots at ONE client, then summed over organisations. NOT part of totalPipelineUsd, ROI or any cost of acquisition."
+            "description": "Company-level total over the brand's contacted-only leads, on the pipeline's own rule: each organisation at its most valuable member, summed over organisations. It IS what these leads add to the brand's totalPipelineUsd (and so to ROI / cost of acquisition); expired leads count 0."
           },
           "unmeasuredReason": {
             "type": "string",
@@ -11797,6 +11797,14 @@
           "maturityDays": {
             "type": "number"
           },
+          "expiryDays": {
+            "type": "number",
+            "description": "A contacted lead whose LAST email sent is older than this many days (or who was never sent one) is worth 0."
+          },
+          "lastSentOnOrAfter": {
+            "type": "string",
+            "description": "Leads whose last send is strictly before this instant have expired."
+          },
           "minBrandOutcomes": {
             "type": "number"
           },
@@ -11817,13 +11825,18 @@
               "cannotConvert": {
                 "type": "number",
                 "description": "Contacted leads that bounced or unsubscribed."
+              },
+              "expired": {
+                "type": "number",
+                "description": "Contacted-only leads with no email sent in the last `expiryDays` days — valued at 0."
               }
             },
             "required": [
               "contactedOnly",
               "organizations",
               "engaged",
-              "cannotConvert"
+              "cannotConvert",
+              "expired"
             ]
           },
           "leads": {
@@ -11836,12 +11849,18 @@
                 },
                 "expectedValueUsd": {
                   "type": "number",
-                  "nullable": true
+                  "nullable": true,
+                  "description": "The value this lead carries in the pipeline; 0 when expired."
+                },
+                "expired": {
+                  "type": "boolean",
+                  "description": "No email sent in the last `expiryDays` days (or never sent)."
                 }
               },
               "required": [
                 "leadId",
-                "expectedValueUsd"
+                "expectedValueUsd",
+                "expired"
               ]
             },
             "description": "One page of contacted-only leads, ordered by lead id."
@@ -11861,6 +11880,8 @@
           "routes",
           "matureBefore",
           "maturityDays",
+          "expiryDays",
+          "lastSentOnOrAfter",
           "minBrandOutcomes",
           "population",
           "leads",
@@ -20931,7 +20952,7 @@
     "/brands/{brandId}/contacted-value": {
       "get": {
         "summary": "What a brand's contacted-but-not-yet-engaged leads are worth in expectation",
-        "description": "A SEPARATE figure, added to no pipeline, ROI or cost figure. value = LTR × P(paid client | contacted), where P combines the brand's entry routes (click, positive reply) as independent shots at one close: P(route | contacted) × P(paid client | route). P(paid client | route) and the LTR are the byte-same ladder and value the brand's pipeline prices an engaged lead on, so a lead that engages moves onto the pipeline at the price this read forecast through. Paged: `limit`/`cursor`, or `leadIds` to price exactly the cards on screen; the summary rides every page.",
+        "description": "The SAME value these leads carry in the brand's pipeline (and so its ROI / cost of acquisition), at every grain, until 30 days after the last email SENT to the lead. value = LTR × P(paid client | contacted), where P combines the brand's entry routes (click, positive reply) as independent shots at one close: P(route | contacted) × P(paid client | route). P(paid client | route) and the LTR are the byte-same ladder and value the brand's pipeline prices an engaged lead on, so a lead that engages moves onto the pipeline at the price this read forecast through. Paged: `limit`/`cursor`, or `leadIds` to price exactly the cards on screen; the summary rides every page.",
         "tags": [
           "Stats"
         ],

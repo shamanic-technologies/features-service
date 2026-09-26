@@ -34,32 +34,32 @@ reads the byte-same numbers under both:
   (reconciliation to the funnel figure, no key naming a funnel, the old bodies' key sets pinned).
   (Set 2026-09-26.)
 
-## A CONTACTED LEAD WHO HAS NOT ENGAGED IS WORTH SOMETHING — `GET /brands/:brandId/contacted-value`, a SEPARATE figure, never pipeline
+## A CONTACTED LEAD WHO HAS NOT ENGAGED IS PIPELINE — until 30 days after the LAST email SENT to it
 
-The pipeline still prices a delivery at $0 (#863, unchanged). This read answers the Deals board's
-"Contacted" column: `value = LTR × P(paid client | contacted)`, `P = orP over entry routes r of
-P(r | contacted) × P(paid | r)` (`lib/contacted-value.ts`, `routes/contacted-value.ts`).
+Supersedes "added to NOTHING" (#1125) and the "a delivery prices $0" half of #863 for contacted-only leads.
+`value = LTR × P(paid client | contacted)`, `P = orP over entry routes r of P(r | contacted) × P(paid | r)`,
+computed by ONE engine function, `contactedLeadValue` (`lib/revenue-engine.ts`), which `computeRevenue` applies
+(`contacted` pricing arg) at EVERY grain that runs the engine — brand / offer / campaign / funnel `/revenue`
+(whole + mature cohort, so ROI / CAC / return curve move), `?groupBy=workflow`, the public fleet reads — and
+which `/brands/:brandId/contacted-value` (the Deals board's Contacted column) serves per lead.
 
-- **`P(paid | r) × LTR` IS the engine's own path value** (same `resolvePaths`, same
-  `restrictPathsToDeclaredLegs`, same declared-funnel economics as `/brands/:id/revenue`), so a lead that
-  engages moves onto the pipeline at the price this read forecast through. Routes combine with
-  `combineIndependent` (now exported, unchanged). A human-ruled-out route (`deadSignals`) prices nothing.
-- **`P(r | contacted)`**: the brand's MATURE cohort (dated leads first contacted before today −
-  `OUTCOME_LAG_DAYS`) once it holds ≥10 OUTCOMES (bar on outcomes, not the denominator: entry arrows
-  convert a few percent, so 0/10 is chance), else the fleet's pooled email-gateway recipient stats on the
-  same channels, else null. Undated leads stay out of the rate.
-- **Priced population = contacted, no conversion signal of any kind (incl. negative/neutral replies),
-  not bounced/unsubscribed.** `population` states engaged / cannotConvert. Total is company-level
-  (per organisation `combineIndependent`, then summed).
-- **Null, never 0**, with `unmeasuredReason`: `no_economics` / `no_client_value` / `no_entry_path` /
-  `no_entry_rate`.
-- **Added to NOTHING**: `totalPipelineUsd`, ROI, CAC, every existing body byte-unchanged. Joining the
-  pipeline is a later owner decision.
-- Paged (`limit` ≤5000 default 1000, `cursor`, or `leadIds` ≤1000); summary on every page. Gold view
-  `brand-contacted-value`, keyed on channels + declared funnels + economics fingerprint.
-- Measured in prod 2026-09-26: webprime `9abe30d6…` 69/69 priced at $0.44 (reply route only, fleet rate
-  43/54,999), total $30.15; `f4d73dab…` 7,740 leads, click route brand-measured 181/8,135, total $247.59.
-- Guards: `lib/contacted-value.test.ts`, `routes/contacted-value.test.ts`. (Set 2026-09-26.)
+- **Entry rates come from ONE cell**: `getBrandContactedValue` (view `brand-contacted-value`, `m:
+  contacted-value-v2`) — the route and every pipeline read (`contactedPricingSoft`) share it, so the column
+  and the pipeline cannot price off two rates. `P(r | contacted)`: the brand's MATURE cohort once it holds
+  ≥10 outcomes, else the fleet's pooled email-gateway rate, else null. Path values `P(paid | r) × LTR` are the
+  scope's own engine paths (same as every engaged lead). FAIL-SOFT: unreadable → those leads add nothing (loud log).
+- **Who**: contacted, not bounced/unsubscribed, NO conversion signal of any kind (`isContactedOnly`). Engaged
+  leads are valued exactly as before (guarded: identical `computeRevenue` output with and without the pricing).
+- **EXPIRY**: worth $0 once the LAST email SENT (`signalDates.lastSent` = email-gateway `/orgs/status`
+  `lastDeliveredAt` = instantly `MAX(email_sent)`, MAX across providers and across a lead's rows) is older than
+  `CONTACTED_VALUE_EXPIRY_DAYS` (30), or when none was ever sent. Never the contacted or first-send date. Why 30:
+  fleet-measured, 100% of positive replies (65) and clicks (981) land within 30 days of the last send before
+  them. Note instantly's MAX includes inferred sends (opened ⇒ sent), which date at the trigger event.
+- **Company rule = the pipeline's**: an organisation is worth its most valuable member; the contacted-value
+  `totalExpectedValueUsd` is Σ over orgs of that MAX (was a combine) = exactly what these leads add.
+- Rows carry `expired`; `population.expired`, `expiryDays`, `lastSentOnOrAfter` on the body.
+- Guards: `lib/contacted-value.test.ts` (expiry both ways, last send beats contacted date, pipeline = column
+  total, engaged untouched, no pricing ⇒ unchanged). (Set 2026-09-26.)
 
 ## EACH DEALS-BOARD COLUMN STATES ITS DOLLAR VALUE — `GET /brands/:brandId/deals-value`, a SEPARATE figure, never pipeline
 
