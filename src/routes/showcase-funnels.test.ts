@@ -79,6 +79,7 @@ const app = (await import("../index.js")).default;
 const { __resetShowcaseFunnelsCache } = await import("./public.js");
 const { brandReadingFunnels } = await import("../lib/showcase-funnels.js");
 const { offerEconomicsFromDeclared } = await import("../lib/leg-economics-fixture.js");
+const { funnelLeg } = await import("../lib/funnel-legs.js");
 
 const DOC = "75d7e3e8-6926-4f85-a557-976895400666";
 const OPS = "6e21bb6c-67bc-45f3-8a6d-52230338d7e4";
@@ -837,5 +838,90 @@ describe("brandReadingFunnels", () => {
 
   it("a brand whose campaigns perform no leg reads none — nothing is parked on a default", () => {
     expect(brandReadingFunnels([])).toEqual([]);
+  });
+});
+
+// ── WAVE C4: the SAME showcase, per OUTCOME ─────────────────────────────────────────────────────────
+//
+// `/public/stats/showcase-outcomes` is the funnel-keyed read re-keyed on the fleet's own vocabulary,
+// off the SAME cell. Every case asserts it RECONCILES with the funnel read on the same fixture — a
+// client selling one path reads the byte-same counts, costs and return under both — and that nothing
+// on it names a funnel.
+describe("GET /public/stats/showcase-outcomes (wave C4)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    __resetShowcaseFunnelsCache();
+    withFeatures();
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  type OutcomesBody = {
+    brands: Array<{
+      brand: { id: string };
+      outcomes: Array<{ key: string; label: string; legKeys: string[]; peopleReached: number | null; costPerReachUsd: number | null }>;
+      returnPerDollar: number | null;
+      measured: boolean;
+      unmeasuredReason: string | null;
+    }>;
+    groups: { recentlyStarted: { brands: Array<{ brand: { id: string } }> }; highestReturn: { brands: Array<{ brand: { id: string } }> } };
+    minSpendUsd: number;
+  };
+
+  it("names the same clients in the same order, and a one-path client reads the byte-same figures", async () => {
+    mockFetch(READABLE_SHOCK);
+    const funnels = await get();
+    const res = await request(app).get("/public/stats/showcase-outcomes");
+    expect(res.status).toBe(200);
+    const outcomes = res.body as OutcomesBody;
+
+    const ids = (g: { brands: Array<{ brand: { id: string } }> }) => g.brands.map((b) => b.brand.id);
+    expect(ids(outcomes.groups.recentlyStarted)).toEqual(ids(funnels.groups.recentlyStarted));
+    expect(ids(outcomes.groups.highestReturn)).toEqual(ids(funnels.groups.highestReturn));
+    expect(outcomes.brands.map((b) => b.brand.id)).toEqual(funnels.brands.map((b) => b.brand.id));
+    expect(outcomes.minSpendUsd).toBe(funnels.minSpendUsd);
+
+    let reconciled = 0;
+    for (const entry of funnels.brands) {
+      const twin = outcomes.brands.find((b) => b.brand.id === entry.brand.id)!;
+      expect(twin.measured).toBe(entry.measured);
+      if (entry.funnels.length !== 1) continue;
+      const chain = entry.funnels[0];
+      expect(twin.returnPerDollar).toBe(chain.returnPerDollar);
+      expect(twin.outcomes.map((o) => [o.key, o.peopleReached, o.costPerReachUsd])).toEqual(
+        chain.steps.map((s) => [s.key === "contacted" ? "contacted" : funnelLeg(s.key)!.toStep.key, s.peopleReached, s.costPerReachUsd]),
+      );
+      // Each outcome names the leg that lands on it — the rung's own key on the funnel read.
+      expect(twin.outcomes.slice(1).map((o) => o.legKeys)).toEqual(chain.steps.slice(1).map((s) => [s.key]));
+      reconciled += 1;
+    }
+    expect(reconciled).toBeGreaterThan(0);
+    // Nothing on the per-outcome body names a funnel.
+    expect(JSON.stringify(outcomes)).not.toMatch(/funnel/i);
+  });
+
+  it("a client with nothing to walk keeps its NAMED reason, and a leg-less one says so in leg words", async () => {
+    mockFetch(BASE);
+    await get();
+    const res = await request(app).get("/public/stats/showcase-outcomes");
+    for (const b of (res.body as OutcomesBody).brands) {
+      if (b.measured) continue;
+      expect(b.outcomes).toEqual([]);
+      expect(b.returnPerDollar).toBeNull();
+      expect(b.unmeasuredReason).not.toBe("no_funnel_sold");
+      expect(b.unmeasuredReason).not.toBeNull();
+    }
+  });
+
+  it("serving the outcome twin leaves the funnel-keyed body's SHAPE untouched", async () => {
+    mockFetch(READABLE_SHOCK);
+    const body = await get();
+    expect(Object.keys(body).sort()).toEqual(["brands", "groups", "minSpendUsd"]);
+    for (const b of body.brands) {
+      expect(Object.keys(b).sort()).toEqual(["brand", "funnels", "measured", "unmeasuredReason"]);
+      for (const f of b.funnels) {
+        expect(Object.keys(f).sort()).toEqual(["funnelKey", "funnelName", "returnPerDollar", "steps"]);
+        for (const s of f.steps) expect(Object.keys(s).sort()).toEqual(["costPerReachUsd", "key", "label", "peopleReached"]);
+      }
+    }
   });
 });

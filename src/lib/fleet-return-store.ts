@@ -45,12 +45,28 @@ function parseRow(raw: unknown): BrandReturnRow | null {
   ) {
     return null;
   }
+  const legKeys = r.legKeys;
+  if (
+    legKeys !== undefined &&
+    legKeys !== null &&
+    (!Array.isArray(legKeys) || !legKeys.every((k) => typeof k === "string"))
+  ) {
+    return null;
+  }
+  const clients = r.expectedPaidClients;
+  if (clients !== undefined && clients !== null && (typeof clients !== "number" || !Number.isFinite(clients))) {
+    return null;
+  }
   return {
     brandId: r.brandId,
     committedSpendUsd: r.committedSpendUsd,
     expectedPipelineUsd: pipeline as number | null,
     startedOn: (startedOn as string | undefined) ?? null,
     outcomeCount: (outcomeCount as number | undefined) ?? null,
+    // ABSENT stays absent (the snapshot predates the field) — distinct from a recorded null, which is
+    // what lets the outcome read say "legs not recorded yet" instead of "not enough brands".
+    ...(legKeys !== undefined ? { legKeys: legKeys as string[] | null } : {}),
+    ...(clients !== undefined ? { expectedPaidClients: clients as number | null } : {}),
   };
 }
 

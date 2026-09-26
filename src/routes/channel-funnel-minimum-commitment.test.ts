@@ -300,3 +300,52 @@ describe("the public catalogue states ONE composed minimum run length per pair",
     }
   });
 });
+
+// ── WAVE C4: the same catalogue + pair economics, per OUTCOME and per LEG ─────────────────────────
+describe("GET /public/channel-outcome-economics (wave C4)", () => {
+  it("states one entry per channel whose PATHS are its pair rows 1:1, named by legs, and never names a funnel", async () => {
+    mockRows();
+    const pairsRes = await request(app).get("/public/channel-funnel-economics");
+    const res = await request(app).get("/public/channel-outcome-economics");
+    expect(res.status).toBe(200);
+    const pairs = pairsRes.body.pairs as PairRow[];
+    const channels = res.body.channels as Array<{
+      channelSlug: string;
+      paths: Array<{ legKeys: string[]; measured: boolean; unmeasuredReason: string | null; effectiveMinimumCommitmentDays: number }>;
+      outcomes: Array<{ step: { key: string }; costPerOutcomeUsd: number | null; unpricedReason: string | null }>;
+      legs: Array<{ legKey: string; performedByChannel: boolean }>;
+      effectiveMinimumCommitmentDays: number | null;
+    }>;
+    expect(channels.map((c) => c.channelSlug).sort()).toEqual([FAST_CHANNEL, SLOW_CHANNEL].sort());
+    for (const c of channels) {
+      const own = pairs.filter((p) => p.channelSlug === c.channelSlug);
+      expect(c.paths).toHaveLength(own.length);
+      c.paths.forEach((path, i) => {
+        expect(path.measured).toBe(own[i].result.measured);
+        expect(path.effectiveMinimumCommitmentDays).toBe(own[i].effectiveMinimumCommitmentDays);
+      });
+      // The composed commitment of the longest pair — the funnel's 60 days governs on the fast channel.
+      expect(c.effectiveMinimumCommitmentDays).toBe(Math.max(...own.map((p) => p.effectiveMinimumCommitmentDays)));
+      // Nothing spent in this fixture: every outcome is NULL with the pair's own reason, never 0.
+      expect(c.outcomes.every((o) => o.costPerOutcomeUsd === null && o.unpricedReason === "no_spend_recorded")).toBe(true);
+      expect(c.legs.filter((l) => l.performedByChannel).map((l) => l.legKey).sort()).toEqual(["start_to_conversation", "start_to_website_visit"]);
+    }
+    const keys: string[] = [];
+    JSON.stringify(res.body, (k, v) => (keys.push(k), v));
+    expect(keys.filter((k) => /funnel/i.test(k))).toEqual([]);
+  });
+
+  it("404s an unknown channel, and the funnel-keyed bodies keep their exact shape", async () => {
+    mockRows();
+    expect((await request(app).get("/public/channel-outcome-economics?channelSlug=nope")).status).toBe(404);
+    const pairs = await request(app).get("/public/channel-funnel-economics");
+    expect(Object.keys(pairs.body).sort()).toEqual(["channelSlug", "pairs"]);
+    for (const p of pairs.body.pairs) {
+      expect(Object.keys(p).sort()).toEqual(
+        ["channelName", "channelSlug", "effectiveMinimumCommitmentDays", "funnelKey", "funnelMinimumCommitmentDays", "funnelName", "funnelSteps", "governedBy", "result"],
+      );
+    }
+    const cat = await request(app).get("/public/channels");
+    expect(Object.keys(cat.body).sort()).toEqual(["channels", "funnels", "legs", "steps"]);
+  });
+});

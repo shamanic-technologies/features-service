@@ -70,6 +70,15 @@ import { matureBasisOf, type CostEconomics } from "../lib/cost-economics.js";
 import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel } from "./revenue.js";
 import { distinctChannelFunnels } from "./offer-economics.js";
 import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
+import { matchFunnelLegKey } from "../lib/funnel-legs.js";
+import {
+  buildOutcomeReturnOnSpend,
+  channelOutcomeEconomicsOf,
+  showcaseOutcomesPayloadOf,
+  type ChannelOutcomeEconomics,
+  type OutcomeReturnFigures,
+  type ShowcaseOutcomesPayload,
+} from "../lib/outcome-public-reads.js";
 import { fetchPricingFunnelsAllOffers } from "../lib/reading-funnels.js";
 import { buildBrandChannels, brandFeatureSlugs } from "../lib/brand-channels.js";
 import {
@@ -1123,10 +1132,28 @@ async function computePairReturns(
 ): Promise<{
   channel: PairReturn | null;
   startedOn: string | null;
+  legKeys: string[] | null;
   byFunnel: Array<{ funnelKey: SalesFunnelKey; result: PairReturn }>;
 }> {
   const channel = await computePairRevenue(featureSlug, funnel, orgId, brandId);
-  if (channel === null) return { channel: null, startedOn: null, byFunnel: [] };
+  if (channel === null) return { channel: null, startedOn: null, legKeys: null, byFunnel: [] };
+
+  // THE LEGS this pair's campaigns on the channel are bought for — the population key of the
+  // outcome-keyed realized return (wave C4). One campaign-service list read beside an engine pass that
+  // already took seconds. SOFT, like the first-billed day: no channel-wide or funnel median reads it,
+  // so a blip leaves the brand out of the leg populations (null) and in every other one.
+  let legKeys: string[] | null = null;
+  try {
+    const rows = await fetchBrandCampaignRows(brandId, featureSlug, { orgId });
+    legKeys = [
+      ...new Set(rows.map((r) => (r.legKey ? matchFunnelLegKey(r.legKey) : null)).filter((k): k is string => k !== null)),
+    ].sort();
+  } catch (err) {
+    console.error(
+      `[features-service] fleet-return warm: campaign legs unreadable for brand ${brandId} (org ${orgId}) — it joins no leg population:`,
+      err,
+    );
+  }
 
   // WHEN THIS CLIENT BEGAN — the first UTC day the pair was ever billed on this channel. One cheap
   // dated-cost read beside an engine pass that already took seconds, and the only notion of a
@@ -1149,15 +1176,15 @@ async function computePairReturns(
   // declaration) and to no funnel — never to a funnel we guessed it sells.
   const declared = await fetchDeclaredFunnelsSoft(brandId, orgId);
   const keys = [...new Set(declared.map((d) => d.funnelKey))];
-  if (keys.length === 0) return { channel, startedOn, byFunnel: [] };
-  if (keys.length === 1) return { channel, startedOn, byFunnel: [{ funnelKey: keys[0], result: channel }] };
+  if (keys.length === 0) return { channel, startedOn, legKeys, byFunnel: [] };
+  if (keys.length === 1) return { channel, startedOn, legKeys, byFunnel: [{ funnelKey: keys[0], result: channel }] };
 
   const byFunnel: Array<{ funnelKey: SalesFunnelKey; result: PairReturn }> = [];
   for (const funnelKey of keys) {
     const result = await computePairRevenue(featureSlug, funnel, orgId, brandId, funnelKey);
     if (result !== null) byFunnel.push({ funnelKey, result });
   }
-  return { channel, startedOn, byFunnel };
+  return { channel, startedOn, legKeys, byFunnel };
 }
 
 /**
@@ -1215,6 +1242,10 @@ export async function warmFleetReturnSnapshot(featureSlug: string): Promise<void
         startedOn: string | null;
         outcomes: number;
         hasOutcomes: boolean;
+        legKeys: Set<string>;
+        hasLegs: boolean;
+        clients: number;
+        hasClients: boolean;
       }
     >();
     // The same aggregation one grain finer, keyed (brand, funnel). PAYING CLIENTS rather than a cost
@@ -1228,7 +1259,19 @@ export async function warmFleetReturnSnapshot(featureSlug: string): Promise<void
       if (c === null || c.channel === null) continue;
       const agg =
         byBrand.get(c.channel.brandId) ??
-        { spend: 0, pipeline: 0, hasPipeline: false, startedOn: null, outcomes: 0, hasOutcomes: false };
+        { spend: 0, pipeline: 0, hasPipeline: false, startedOn: null, outcomes: 0, hasOutcomes: false, legKeys: new Set<string>(), hasLegs: false, clients: 0, hasClients: false };
+      // The legs are the UNION over the orgs claiming the brand; one org's unreadable campaign list
+      // does not erase what another org's read stated.
+      if (c.legKeys !== null) {
+        for (const k of c.legKeys) agg.legKeys.add(k);
+        agg.hasLegs = true;
+      }
+      // Paying clients on the channel pass, recovered exactly as the per-funnel rows below recover
+      // theirs, so a brand selling one path carries the byte-same count under both keys.
+      if (c.channel.costPerAcquisitionUsd !== null && c.channel.costPerAcquisitionUsd > 0) {
+        agg.clients += c.channel.matureCommittedCostUsd / c.channel.costPerAcquisitionUsd;
+        agg.hasClients = true;
+      }
       // The MATURE cohort (lib/roi-maturity.ts): a return median is the statistic each client reads on
       // its own dashboard, and that one divides mature pipeline by mature spend — so does the floor.
       agg.spend += c.channel.matureCommittedCostUsd;
@@ -1285,6 +1328,8 @@ export async function warmFleetReturnSnapshot(featureSlug: string): Promise<void
       // of one ranking rather than out of the population.
       startedOn: agg.startedOn,
       outcomeCount: agg.hasOutcomes ? agg.outcomes : null,
+      legKeys: agg.hasLegs ? [...agg.legKeys].sort() : null,
+      expectedPaidClients: agg.hasClients ? agg.clients : null,
     }));
     const funnelRows: BrandFunnelReturnRow[] = [...byBrandFunnel.values()].map((f) => ({
       brandId: f.brandId,
@@ -1505,6 +1550,96 @@ export async function handleFleetFunnelReturn(
     pairs,
   };
   res.json(payload);
+}
+
+// ── Public FLEET (channel × leg / outcome) RETURN-ON-SPEND handler (wave C4) ──
+//
+// The funnel-keyed median above, re-keyed on the fleet's own vocabulary. The population of a LEG row is
+// the brands whose campaigns on the channel are bought for that leg; of an OUTCOME row, the brands with
+// a leg landing on that step. Each brand's figure is its CHANNEL-WIDE realized return off the channel
+// snapshot — for a brand selling one path the byte-same row the funnel read reuses. REALIZED, and never
+// relabelled as the PROJECTED `returnPerDollar` of /public/channel-outcome-economics.
+
+interface ChannelLegReturnRow extends OutcomeReturnFigures {
+  legKey: string;
+  fromStep: { key: string; label: string; description: string } | null;
+  toStep: { key: string; label: string; description: string };
+}
+
+interface ChannelOutcomeReturnRow extends OutcomeReturnFigures {
+  step: { key: string; label: string; description: string };
+  /** The legs of this channel landing on the step, whose brands make up the population. */
+  legKeys: string[];
+}
+
+interface ChannelOutcomeReturnEntry {
+  channelSlug: string;
+  channelName: string;
+  computedAt: string | null;
+  legs: ChannelLegReturnRow[];
+  outcomes: ChannelOutcomeReturnRow[];
+}
+
+export async function handleFleetOutcomeReturn(
+  channelSlug: string | undefined,
+  minSpendUsdParam: string | undefined,
+  res: import("express").Response,
+): Promise<void> {
+  const minSpendUsd = parseMinSpendUsd(minSpendUsdParam);
+  if (minSpendUsd === null) {
+    res.status(400).json({ error: "Query parameter 'minSpendUsd' must be a number >= 0" });
+    return;
+  }
+  const allChannels = await loadPublishedChannels();
+  if (channelSlug && !allChannels.some((c) => c.slug === channelSlug)) {
+    res.status(404).json({ error: `Acquisition channel not found: "${channelSlug}"` });
+    return;
+  }
+  const channels = channelSlug ? allChannels.filter((c) => c.slug === channelSlug) : allChannels;
+
+  // Channel snapshots, one soft read each — only the channels the boot warm covers ever have one; the
+  // rest answer `no_snapshot_yet` without a query. Same warm-kick rule as the funnel read: NEVER awaited.
+  const warmable = new Set(coldEmailOutreachSlugs(channels.map((c) => c.slug)));
+  const snapshots = new Map(
+    await Promise.all(
+      [...warmable].map(async (slug) => [slug, await readFleetReturnSnapshotSoft(slug)] as const),
+    ),
+  );
+  for (const slug of warmable) {
+    const snap = snapshots.get(slug);
+    if (!snap || Date.now() - snap.computedAt.getTime() > FLEET_RETURN_STALE_MS) void warmFleetReturnSnapshot(slug);
+  }
+
+  const entries: ChannelOutcomeReturnEntry[] = channels.map((channel) => {
+    const snap = snapshots.get(channel.slug) ?? null;
+    const rows = snap?.brands ?? null;
+    const legs = channel.stepTransitions.map((t) => ({
+      legKey: t.legKey,
+      fromStep: t.from,
+      toStep: t.to,
+      ...buildOutcomeReturnOnSpend(rows, new Set([t.legKey]), minSpendUsd),
+    }));
+    const byStep = new Map<string, { step: ChannelOutcomeReturnRow["step"]; legKeys: string[] }>();
+    for (const t of channel.stepTransitions) {
+      const e = byStep.get(t.to.key) ?? { step: t.to, legKeys: [] };
+      e.legKeys.push(t.legKey);
+      byStep.set(t.to.key, e);
+    }
+    const outcomes = [...byStep.values()].map((e) => ({
+      step: e.step,
+      legKeys: e.legKeys,
+      ...buildOutcomeReturnOnSpend(rows, new Set(e.legKeys), minSpendUsd),
+    }));
+    return {
+      channelSlug: channel.slug,
+      channelName: channel.name,
+      computedAt: snap?.computedAt.toISOString() ?? null,
+      legs,
+      outcomes,
+    };
+  });
+
+  res.json({ costBasis: "charged", unit: "brand", channelSlug: channelSlug ?? null, minSpendUsd, channels: entries });
 }
 
 // ── Public workflow engagement latency handler ───────────────────────────────
@@ -2797,6 +2932,7 @@ const channelFunnelEconomicsCache: PublicCache = new Map();
 export function __resetChannelCatalogueCache(): void {
   clearPublicCache(channelCatalogueCache);
   clearPublicCache(channelFunnelEconomicsCache);
+  clearPublicCache(channelOutcomeEconomicsCache);
 }
 
 async function loadPublishedChannels(): Promise<PublicChannel[]> {
@@ -2953,6 +3089,46 @@ export async function handleChannelFunnelEconomics(
   res.json(payload);
 }
 
+/** One channel's per-outcome / per-leg PROJECTED economics (wave C4). Read off the SAME pair rows the
+ *  funnel-keyed read computes (same dataset cache), re-keyed on outcomes and legs. */
+interface ChannelOutcomeEconomicsPayload {
+  channelSlug: string | null;
+  channels: ChannelOutcomeEconomics[];
+}
+
+const channelOutcomeEconomicsCache: PublicCache = new Map();
+
+/** Test seam — reset the per-outcome channel economics cache. */
+export function __resetChannelOutcomeEconomicsCache(): void {
+  clearPublicCache(channelOutcomeEconomicsCache);
+}
+
+export async function handleChannelOutcomeEconomics(
+  channelSlug: string | undefined,
+  res: import("express").Response,
+): Promise<void> {
+  const channels = await loadPublishedChannels();
+  if (channelSlug && !channels.some((c) => c.slug === channelSlug)) {
+    res.status(404).json({ error: `Acquisition channel not found: "${channelSlug}"` });
+    return;
+  }
+  const scope = channelSlug ? channels.filter((c) => c.slug === channelSlug) : channels;
+  const payload = await servedPublicCached<ChannelOutcomeEconomicsPayload>({
+    cache: channelOutcomeEconomicsCache,
+    key: channelSlug ?? "__all__",
+    windows: LIFETIME_AGGREGATE_WINDOWS,
+    label: "channel-outcome economics",
+    compute: async () => {
+      const pairs = await buildChannelFunnelEconomics(scope);
+      return {
+        channelSlug: channelSlug ?? null,
+        channels: scope.map((c) => channelOutcomeEconomicsOf(c, pairs.filter((p) => p.channelSlug === c.slug))),
+      };
+    },
+  });
+  res.json(payload);
+}
+
 // ── Showcase funnel counts (public, org-less, allowlisted brands) ────────────
 //
 // The homepage's three named clients, each walked down its own funnel. See lib/showcase-funnels.ts
@@ -2991,10 +3167,10 @@ async function computeShowcaseBrand(
   brandId: string,
   orgId: string | undefined,
   info: { name: string | null; domain: string | null } | undefined,
-): Promise<ShowcaseBrandFunnels> {
+): Promise<WalkedShowcaseBrand> {
   const brand = { id: brandId, name: info?.name ?? null, domain: info?.domain ?? null };
   if (!orgId) {
-    return { brand, funnels: [], measured: false, unmeasuredReason: "no_lead_membership" };
+    return { entry: { brand, funnels: [], measured: false, unmeasuredReason: "no_lead_membership" }, brandReturnPerDollar: null };
   }
 
   const headers: DownstreamHeaders = { orgId };
@@ -3002,14 +3178,14 @@ async function computeShowcaseBrand(
   const rows = await fetchBrandCampaignRows(brandId, undefined, { orgId });
   const channels = buildBrandChannels(rows);
   if (channels.length === 0) {
-    return { brand, funnels: [], measured: false, unmeasuredReason: "brand_has_no_channels" };
+    return { entry: { brand, funnels: [], measured: false, unmeasuredReason: "brand_has_no_channels" }, brandReturnPerDollar: null };
   }
   // Which paths it sells through = the reading paths of the LEGS its campaigns perform, every offer —
   // the same set every pricing read resolves (wave C3: the funnel a campaign row stated is retired).
   // An unreadable leg economics read fails loud and lands on this brand's `read_failed`.
   const soldFunnels = brandReadingFunnels(await fetchPricingFunnelsAllOffers(brandId, orgId));
   if (soldFunnels.length === 0) {
-    return { brand, funnels: [], measured: false, unmeasuredReason: "no_funnel_sold" };
+    return { entry: { brand, funnels: [], measured: false, unmeasuredReason: "no_funnel_sold" }, brandReturnPerDollar: null };
   }
 
   const featureSlugs = brandFeatureSlugs(channels);
@@ -3031,6 +3207,10 @@ async function computeShowcaseBrand(
     : [[], null];
 
   const funnels: ShowcaseFunnel[] = [];
+  // The per-OUTCOME twin's return (wave C4): the brand's own ROI across every path it sells. With ONE
+  // path that IS the funnel-narrowed read's return, so it is taken off that pass at no cost; only a
+  // brand selling several pays one extra, un-narrowed pass — off the request path, in this warm.
+  let brandReturnPerDollar: number | null = null;
   for (const funnelKey of soldFunnels) {
     const brandPriced = brandEconomics
       ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics, funnelKey)
@@ -3067,16 +3247,38 @@ async function computeShowcaseBrand(
     // is the return this client reads on their own dashboard, and each rung already carries what it
     // cost. Nothing extra is fetched for either.
     if (body.funnelSteps) funnels.push(showcaseFunnelOf(body.funnelSteps, body.costEconomics));
+    if (soldFunnels.length === 1) brandReturnPerDollar = body.costEconomics.roiMultiple ?? null;
+  }
+  if (soldFunnels.length > 1) {
+    const brandPriced = brandEconomics ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics) : undefined;
+    const whole = await computeFeatureRevenue(featureSlugs, brandId, undefined, funnel, headers, undefined, brandPriced, true, "net");
+    brandReturnPerDollar = whole.costEconomics.roiMultiple ?? null;
   }
 
   return {
-    brand,
-    funnels,
-    measured: funnels.length > 0,
-    // The chain resolves for every funnel the campaigns state, so an empty list here means the engine
-    // could not walk one — the same "we could not read this" a per-rung null says, one level up.
-    unmeasuredReason: funnels.length > 0 ? null : "read_failed",
+    entry: {
+      brand,
+      funnels,
+      measured: funnels.length > 0,
+      // The chain resolves for every funnel the campaigns state, so an empty list here means the engine
+      // could not walk one — the same "we could not read this" a per-rung null says, one level up.
+      unmeasuredReason: funnels.length > 0 ? null : "read_failed",
+    },
+    brandReturnPerDollar,
   };
+}
+
+/** One walked showcase brand: its funnel-keyed entry, and the brand-wide return its per-outcome twin states. */
+interface WalkedShowcaseBrand {
+  entry: ShowcaseBrandFunnels;
+  brandReturnPerDollar: number | null;
+}
+
+/** Both showcase payloads, built by ONE walk and cached as ONE cell, so the two vocabularies can never
+ *  name different clients or state different figures. */
+interface ShowcasePayloads {
+  funnels: ShowcaseFunnelsPayload;
+  outcomes: ShowcaseOutcomesPayload;
 }
 
 /**
@@ -3093,7 +3295,7 @@ async function computeShowcaseBrand(
  * fails the deploy health check and rolls the service back.
  */
 export function warmShowcaseFunnelsOnBoot(): void {
-  void computeShowcaseFunnelsPayload()
+  void computeShowcasePayloads()
     .then((payload) => {
       setPublicCache(showcaseFunnelsCache, "__showcase__", payload, LIFETIME_AGGREGATE_WINDOWS);
     })
@@ -3112,7 +3314,7 @@ export function warmShowcaseFunnelsOnBoot(): void {
  * the section rather than block a build. Those passes already happened, off the request path, in the
  * fleet-return warm; this reads the rows they wrote. See `lib/showcase-clients.ts` for both rankings.
  */
-async function computeShowcaseFunnelsPayload(): Promise<ShowcaseFunnelsPayload> {
+async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
   // Every seed slug in one membership read (308 rows fleet-wide, 2026-09-08) rather than a guess
   // at which channels a showcase brand happens to run — a brand that moves to a new channel keeps
   // answering with no change here.
@@ -3145,28 +3347,35 @@ async function computeShowcaseFunnelsPayload(): Promise<ShowcaseFunnelsPayload> 
   // A client picked by BOTH questions is walked ONCE and its identical entry appears in both groups —
   // the funnel walk is the expensive half and a client does not have two funnels because two rankings
   // liked it.
+  const walkedFull = new Map<string, WalkedShowcaseBrand>();
   const walked = new Map<string, ShowcaseBrandFunnels>();
   const walkAll = async (ids: string[]): Promise<void> => {
     const todo = ids.filter((id) => !walked.has(id));
     const entries = await mapWithConcurrency(
       todo,
       SHOWCASE_BRAND_CONCURRENCY,
-      async (brandId): Promise<ShowcaseBrandFunnels> => {
+      async (brandId): Promise<WalkedShowcaseBrand> => {
         try {
           return await computeShowcaseBrand(brandId, orgByBrand.get(brandId), brandInfo.get(brandId));
         } catch (error) {
           console.error(`[features-service] showcase funnel read failed for brand ${brandId}:`, error);
           const info = brandInfo.get(brandId);
           return {
-            brand: { id: brandId, name: info?.name ?? null, domain: info?.domain ?? null },
-            funnels: [],
-            measured: false,
-            unmeasuredReason: "read_failed",
+            entry: {
+              brand: { id: brandId, name: info?.name ?? null, domain: info?.domain ?? null },
+              funnels: [],
+              measured: false,
+              unmeasuredReason: "read_failed",
+            },
+            brandReturnPerDollar: null,
           };
         }
       },
     );
-    for (const e of entries) walked.set(e.brand.id, e);
+    for (const e of entries) {
+      walked.set(e.entry.brand.id, e.entry);
+      walkedFull.set(e.entry.brand.id, e);
+    }
   };
 
   await walkAll(picks.highestReturn.brandIds);
@@ -3226,7 +3435,7 @@ async function computeShowcaseFunnelsPayload(): Promise<ShowcaseFunnelsPayload> 
     qualifyingCount: pick.qualifyingCount,
   });
 
-  return {
+  const funnelsPayload: ShowcaseFunnelsPayload = {
     brands,
     groups: {
       recentlyStarted: groupOf(recentPick),
@@ -3234,17 +3443,27 @@ async function computeShowcaseFunnelsPayload(): Promise<ShowcaseFunnelsPayload> 
     },
     minSpendUsd: picks.minSpendUsd,
   };
+  const brandReturns = new Map([...walkedFull].map(([id, w]) => [id, w.brandReturnPerDollar]));
+  return { funnels: funnelsPayload, outcomes: showcaseOutcomesPayloadOf(funnelsPayload, brandReturns) };
 }
 
-export async function handleShowcaseFunnels(res: import("express").Response): Promise<void> {
-  const payload = await servedPublicCached<ShowcaseFunnelsPayload>({
+async function readShowcasePayloads(): Promise<ShowcasePayloads> {
+  return servedPublicCached<ShowcasePayloads>({
     cache: showcaseFunnelsCache,
     key: "__showcase__",
     windows: LIFETIME_AGGREGATE_WINDOWS,
     label: "showcase funnels",
-    compute: computeShowcaseFunnelsPayload,
+    compute: computeShowcasePayloads,
   });
-  res.json(payload);
+}
+
+export async function handleShowcaseFunnels(res: import("express").Response): Promise<void> {
+  res.json((await readShowcasePayloads()).funnels);
+}
+
+/** The showcase per OUTCOME (wave C4) — the SAME cell, the same picks, the same figures, no funnel named. */
+export async function handleShowcaseOutcomes(res: import("express").Response): Promise<void> {
+  res.json((await readShowcasePayloads()).outcomes);
 }
 
 // ── GET /public/channels ─────────────────────────────────────────────────────
@@ -3280,6 +3499,43 @@ router.get("/public/stats/funnel-return-on-spend", async (req, res) => {
     );
   } catch (error) {
     console.error("[features-service] Public funnel return-on-spend error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /public/channel-outcome-economics (wave C4) ───────────────────────────
+
+router.get("/public/channel-outcome-economics", async (req, res) => {
+  try {
+    await handleChannelOutcomeEconomics(req.query.channelSlug as string | undefined, res);
+  } catch (error) {
+    console.error("[features-service] Public channel-outcome economics error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /public/stats/outcome-return-on-spend (wave C4) ──────────────────────
+
+router.get("/public/stats/outcome-return-on-spend", async (req, res) => {
+  try {
+    await handleFleetOutcomeReturn(
+      req.query.channelSlug as string | undefined,
+      req.query.minSpendUsd as string | undefined,
+      res,
+    );
+  } catch (error) {
+    console.error("[features-service] Public outcome return-on-spend error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /public/stats/showcase-outcomes (wave C4) ────────────────────────────
+
+router.get("/public/stats/showcase-outcomes", async (_req, res) => {
+  try {
+    await handleShowcaseOutcomes(res);
+  } catch (error) {
+    console.error("[features-service] Public showcase outcomes error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });

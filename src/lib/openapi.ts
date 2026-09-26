@@ -3201,6 +3201,184 @@ registry.registerPath({
   },
 });
 
+// ── WAVE C4: the funnel-keyed public reads, per OUTCOME and per LEG ─────
+//
+// Additive twins. Each is PROJECTED out of the figure its funnel-keyed sibling computes (same warm, same
+// snapshot, same cache), so a brand or channel selling ONE path reads the byte-same numbers under both.
+
+const c4StepSchema = z.object({
+  key: z.string().describe("A step of the shared vocabulary (GET /public/channels `steps`)."),
+  label: z.string(),
+  description: z.string(),
+});
+const c4ProjectedReason = z
+  .enum(["no_spend_recorded", "no_entry_step_produced", "entry_step_not_measured", "no_economics_declared", "rate_not_declared", "rate_is_zero"])
+  .nullable()
+  .describe("Why the figure is null — the SAME vocabulary /public/channel-funnel-economics uses (pair-level: nothing spent, entry step never produced / not measured, no economics stated; step-level: rate not stated, rate is 0). Never a 0 standing in.");
+
+const channelOutcomeEconomicsSchema = z.object({
+  channelSlug: z.string(),
+  channelName: z.string(),
+  outcomes: z
+    .array(
+      z.object({
+        step: c4StepSchema,
+        landedByChannel: z.boolean().describe("True when this channel performs a leg landing on the step."),
+        costPerOutcomeUsd: z.number().nullable().describe("PROJECTED — the CHEAPEST path's price for reaching this step (the engine's best-path rule). Replaces a pair's `steps[].costPerStepUsd`."),
+        unpricedReason: c4ProjectedReason,
+        pricedThroughLegKeys: z.array(z.string()).nullable().describe("The legs of the path the price was taken from."),
+        paths: z.array(z.object({ legKeys: z.array(z.string()), costPerOutcomeUsd: z.number().nullable(), unpricedReason: c4ProjectedReason })).describe("Every path reaching this step with its own price. They OVERLAP — never sum."),
+      }),
+    )
+    .describe("Every step this channel's paths reach, in the step vocabulary's order."),
+  legs: z
+    .array(
+      z.object({
+        legKey: z.string(),
+        fromStep: c4StepSchema.nullable(),
+        toStep: c4StepSchema,
+        performedByChannel: z.boolean(),
+        costPerOutcomeUsd: z.number().nullable().describe("PROJECTED — what landing a lead on this leg's step costs, cheapest path containing the leg."),
+        unpricedReason: c4ProjectedReason,
+      }),
+    )
+    .describe("Every leg of those paths."),
+  paths: z
+    .array(
+      z.object({
+        legKeys: z.array(z.string()).describe("The path's legs, first to last — its identity (no funnel key)."),
+        measured: z.boolean(),
+        unmeasuredReason: c4ProjectedReason,
+        steps: z.array(z.object({ step: c4StepSchema, legKey: z.string(), costPerOutcomeUsd: z.number().nullable(), unpricedReason: c4ProjectedReason })),
+        costPerPaidClientUsd: z.number().nullable().describe("= the pair's `costPerSaleUsd`."),
+        returnPerDollar: z.number().nullable().describe("PROJECTED — lifetimeRevenueUsd / costPerPaidClientUsd. Never a realized return."),
+        lifetimeRevenueUsd: z.number().nullable(),
+        statedBrandCount: z.number().int().nullable().describe("= the pair's `evidence.brandCount`."),
+        effectiveMinimumCommitmentDays: z.number().int(),
+      }),
+    )
+    .describe("The pair rows 1:1, in catalogue order, named by their legs."),
+  returnPerDollar: z.number().nullable().describe("PROJECTED — the best path's return per dollar."),
+  returnPathLegKeys: z.array(z.string()).nullable(),
+  evidence: z.object({ totalSpentUsd: z.number(), conversationsProduced: z.number(), websiteVisitsProduced: z.number() }).nullable().describe("The channel-wide pooled evidence every path rides on. Null when no path was measured."),
+  effectiveMinimumCommitmentDays: z.number().int().nullable().describe("The longest composed minimum run across the channel's paths. Null when it has none."),
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/public/channel-outcome-economics",
+  summary: "PROJECTED channel economics per OUTCOME and per LEG — the funnel-free twin of /public/channel-funnel-economics (public, no auth)",
+  description:
+    "Wave C4. One entry per acquisition channel: every outcome (step) its paths reach with the cheapest projected price, every leg with its price, and every path (= one /public/channel-funnel-economics pair row, named by its leg keys) with its full priced chain, cost per paying client and PROJECTED return per dollar. Built from the SAME pair rows (same pooled dataset, same cache windows), so a channel selling one path reads byte-same figures. Also answers the funnel questions /public/channels answers (which outcomes follow, the composed minimum commitment) without naming a funnel. No field names a funnel. PROJECTED — never relabel as the realized /public/stats/outcome-return-on-spend.",
+  tags: ["Public"],
+  request: { query: z.object({ channelSlug: z.string().optional().describe("Narrow to one channel. Unknown = 404.") }) },
+  responses: {
+    200: { description: "Per-outcome / per-leg projected economics", content: { "application/json": { schema: z.object({ channelSlug: z.string().nullable(), channels: z.array(channelOutcomeEconomicsSchema) }) } } },
+    404: { description: "Acquisition channel not found", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+const c4RealizedFigures = {
+  measured: z.boolean(),
+  reason: z.enum(["no_snapshot_yet", "legs_not_recorded_yet", "not_enough_brands"]).nullable().describe("`legs_not_recorded_yet` = the channel snapshot predates the brand-leg field; the next warm fills it. Never a 0, never a wider population."),
+  minSpendUsd: z.number(),
+  brandCount: z.number().int(),
+  medianReturnPerDollar: z.number().nullable().describe("REALIZED — the middle brand's channel-wide return (mature pipeline / mature committed spend, net) over brands whose campaigns are bought for this leg / land on this outcome. Replaces the pair's `medianReturnPerDollar`."),
+  p25ReturnPerDollar: z.number().nullable(),
+  p75ReturnPerDollar: z.number().nullable(),
+  minReturnPerDollar: z.number().nullable(),
+  maxReturnPerDollar: z.number().nullable(),
+  medianCostPerPaidClientUsd: z.number().nullable(),
+  costPerPaidClientBrandCount: z.number().int(),
+};
+
+registry.registerPath({
+  method: "get",
+  path: "/public/stats/outcome-return-on-spend",
+  summary: "Fleet MEDIAN REALIZED return per (channel x leg) and (channel x outcome) — the funnel-free twin of /public/stats/funnel-return-on-spend (public, no auth)",
+  description:
+    "Wave C4. The population of a leg row is the brands whose campaigns on the channel are bought for that leg; of an outcome row, the brands with a leg landing on it. Each brand's figure is its channel-wide realized return from the SAME persisted snapshot the channel-wide median reads, so a population of one-path brands reads the byte-same median as the funnel pair. Minimum 3 brands; the brand is the unit and the statistic the median. Served from the snapshot, never computed on the request. REALIZED — never relabel as the projected `returnPerDollar` of /public/channel-outcome-economics.",
+  tags: ["Public"],
+  request: {
+    query: z.object({
+      channelSlug: z.string().optional().describe("Narrow to one channel. Unknown = 404."),
+      minSpendUsd: z.string().optional().describe("Spend floor in USD (default 100). Non-numeric or negative = 400."),
+    }),
+  },
+  responses: {
+    200: {
+      description: "Per-leg / per-outcome realized medians",
+      content: {
+        "application/json": {
+          schema: z.object({
+            costBasis: z.literal("charged"),
+            unit: z.literal("brand"),
+            channelSlug: z.string().nullable(),
+            minSpendUsd: z.number(),
+            channels: z.array(
+              z.object({
+                channelSlug: z.string(),
+                channelName: z.string(),
+                computedAt: z.string().nullable(),
+                legs: z.array(z.object({ legKey: z.string(), fromStep: c4StepSchema.nullable(), toStep: c4StepSchema, ...c4RealizedFigures })),
+                outcomes: z.array(z.object({ step: c4StepSchema, legKeys: z.array(z.string()), ...c4RealizedFigures })),
+              }),
+            ),
+          }),
+        },
+      },
+    },
+    400: { description: "Invalid parameters", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Acquisition channel not found", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+const showcaseOutcomeBrandSchema = z.object({
+  brand: z.object({ id: z.string(), name: z.string().nullable(), domain: z.string().nullable() }),
+  outcomes: z.array(
+    z.object({
+      key: z.string().describe("A step key, or `contacted` for the outreach base (first)."),
+      label: z.string(),
+      legKeys: z.array(z.string()).describe("The legs landing on this step on the paths the brand sells (empty for the base). Replaces a rung's `key`."),
+      peopleReached: z.number().int().nullable().describe("DISTINCT people who reached the step. 0 measured; null = no figure."),
+      costPerReachUsd: z.number().nullable().describe("Committed NET spend / people reached, in dollars. OBSERVED. Null when no denominator."),
+    }),
+  ),
+  returnPerDollar: z.number().nullable().describe("REALIZED — the brand's own ROI across every path it sells (its dashboard's `costEconomics.roiMultiple`, net). For a one-path brand = that path's `returnPerDollar` on /showcase-funnels."),
+  measured: z.boolean(),
+  unmeasuredReason: z.enum(["brand_has_no_channels", "no_leg_performed", "no_lead_membership", "read_failed"]).nullable(),
+});
+const showcaseOutcomeGroupSchema = z.object({
+  brands: z.array(showcaseOutcomeBrandSchema),
+  measured: z.boolean(),
+  unmeasuredReason: z.enum(["no_snapshot_yet", "no_qualifying_clients"]).nullable(),
+  requestedCount: z.number().int(),
+  qualifyingCount: z.number().int(),
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/public/stats/showcase-outcomes",
+  summary: "The homepage's named clients per OUTCOME — the funnel-free twin of /public/stats/showcase-funnels (public, no auth)",
+  description:
+    "Wave C4. The SAME cell, picks, order and figures as /public/stats/showcase-funnels, re-keyed: each client states one row per outcome (the rungs of every path it sells, merged by step — a rung's count and cost do not depend on the path it was walked on) and ONE realized return across its paths. No brand parameter; no field names a funnel.",
+  tags: ["Public"],
+  responses: {
+    200: {
+      description: "Showcase clients per outcome",
+      content: {
+        "application/json": {
+          schema: z.object({
+            brands: z.array(showcaseOutcomeBrandSchema),
+            groups: z.object({ recentlyStarted: showcaseOutcomeGroupSchema, highestReturn: showcaseOutcomeGroupSchema }),
+            minSpendUsd: z.number(),
+          }),
+        },
+      },
+    },
+  },
+});
+
 // ── GET /public/stats/workflow-engagement-latency ────────────────────────
 
 registry.registerPath({

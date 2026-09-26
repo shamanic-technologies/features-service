@@ -1,5 +1,34 @@
 # Features Service — CLAUDE.md
 
+## WAVE C4 (PRODUCER HALF) — EVERY FUNNEL-KEYED PUBLIC READ HAS A TWIN KEYED ON OUTCOMES AND LEGS; the old bodies are byte-unchanged until the consumers move
+
+The four public surfaces that still speak "funnel" (distribute.you#4413) each got an ADDITIVE twin
+(`lib/outcome-public-reads.ts`), and removing the funnel-keyed ones is a LATER wave, after distribute.you
++ api-service have moved. Nothing is a new computation — each twin is PROJECTED out of the figure its
+sibling already computes, off the same warm / snapshot / cache, so a brand or channel selling ONE path
+reads the byte-same numbers under both:
+
+- **`/public/stats/showcase-outcomes`** ← `/showcase-funnels`. SAME cell (one walk builds both payloads,
+  cached together), same picks. Per client: one row per OUTCOME (rungs of every path merged by step — a
+  rung's count and cost do not depend on the path), the legs landing on it, and ONE realized
+  `returnPerDollar` across its paths (= the funnel read's for a one-path client; a several-path client
+  pays one extra un-narrowed engine pass, in the warm).
+- **`/public/channel-outcome-economics`** ← `/channel-funnel-economics` AND the funnel fields of
+  `/public/channels`. PROJECTED. Per channel: `paths[]` = the pair rows 1:1 named by `legKeys`,
+  `outcomes[]` and `legs[]` priced on the CHEAPEST path (best-path rule, every path listed), best
+  `returnPerDollar`, the composed minimum commitment.
+- **`/public/stats/outcome-return-on-spend`** ← `/funnel-return-on-spend`. REALIZED median per (channel ×
+  leg) and (channel × outcome); the population is the brands whose campaigns are bought for that leg,
+  each at its CHANNEL-wide return. `fleet_return_snapshots` rows now carry `legKeys` + `expectedPaidClients`
+  (optional; the warm reads campaign-service's rows soft). A snapshot predating them answers
+  `legs_not_recorded_yet`, never `not_enough_brands`.
+- **No fallback to a funnel**: an unpriceable figure is null with the SAME reason vocabulary the funnel
+  read uses. **Projected and realized stay apart** under their own routes. Guards:
+  `lib/outcome-public-reads.test.ts`, the C4 blocks of `routes/showcase-funnels.test.ts` and
+  `routes/channel-funnel-minimum-commitment.test.ts`, `routes/outcome-return-on-spend.test.ts`
+  (reconciliation to the funnel figure, no key naming a funnel, the old bodies' key sets pinned).
+  (Set 2026-09-26.)
+
 ## A STALE CELL IS RECOMPUTED ONLY WHEN ITS BRAND'S FACTS MOVED, AND A SIBLING SCOPE IS PRECOMPUTED BEFORE ANYONE OPENS IT — `lib/view-facts.ts`, `lib/view-keeper.ts`
 
 Two gaps the refresher left (#1106): a stale cell recomputed the brand's whole population on a clock (3s for a
