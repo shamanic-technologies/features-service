@@ -148,7 +148,9 @@ function median(sorted: number[]): number {
  * snapshot whose qualifying population is too thin, and the two are told apart on the wire.
  */
 export function buildFunnelReturnOnSpend(
-  rows: readonly BrandFunnelReturnRow[] | null,
+  // The funnel key is not read: the outcome-keyed twin (`lib/outcome-public-reads.ts`) takes the same
+  // median over brand rows grouped by LEG, which carry none.
+  rows: readonly Omit<BrandFunnelReturnRow, "funnelKey">[] | null,
   minSpendUsd: number,
   minBrands: number = MIN_FUNNEL_RETURN_BRANDS,
 ): FunnelReturnOnSpend {
