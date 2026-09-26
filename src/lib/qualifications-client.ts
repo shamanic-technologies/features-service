@@ -2,11 +2,21 @@
  * Fetch per-lead manual-qualification timestamps from email-gateway
  * GET /orgs/manual-qualifications (proxy to instantly-service).
  *
- * The endpoint returns the org's manual qualification history (one row per human-set
- * qualification), sorted by `qualifiedAt` DESC. We read the two terminal statuses the
- * revenue funnel cares about — `lead_meeting_booked` and `lead_closed` — and reduce them
- * to first-occurrence (MIN qualifiedAt) per email, mirroring how email-status-client maps
- * `firstOpenedAt` etc.: a known timestamp IS the signal.
+ * The endpoint returns the org's manual qualification HISTORY (one row per human-set
+ * statement, append-only), sorted by `qualifiedAt` DESC — superseded statements and
+ * withdrawn ones (`withdrawnAt` non-null) included. Only a statement that still STANDS
+ * counts: per (instantlyCampaignId, lead), the LATEST row that is NOT withdrawn — the
+ * producer's own definition (instantly-service `findStandingManualQualification`). So a
+ * person restating a "meeting booked" lead as merely "interested", or withdrawing the
+ * statement, takes the meeting back out of every figure built on it.
+ *
+ * What the standing statement says:
+ *   - `lead_meeting_booked` → meetingBookedAt = its qualifiedAt.
+ *   - `lead_closed` → closedAt = its qualifiedAt, and the meeting it progressed through
+ *     stays: meetingBookedAt = the earliest non-withdrawn `lead_meeting_booked` row of the
+ *     same pair at or before it (none stated ⇒ null).
+ *   - any other kind (a plain reply kind, not interested, ...) → neither: the meeting is gone.
+ * Across a lead's several campaigns the earliest date wins (MIN), as before.
  *
  * Source of truth is the customer's own manual qualification ("if the customer doesn't tell
  * us it closed-won, it didn't").
@@ -28,7 +38,7 @@ import { fetchWithRetry } from "./fetch-retry.js";
 
 const MAX_LIMIT = 500;
 
-type QualificationStatus =
+export type QualificationStatus =
   | "lead_interested"
   | "lead_meeting_booked"
   | "lead_closed"
@@ -38,10 +48,15 @@ type QualificationStatus =
   | "lead_out_of_office"
   | "auto_reply_received";
 
-interface QualificationRow {
+export interface QualificationRow {
   email: string;
   status: QualificationStatus;
   qualifiedAt: string;
+  /** instantly-service's per-lead sequence id — the grain a statement stands on. */
+  instantlyCampaignId?: string | null;
+  campaignId?: string | null;
+  /** Non-null ⇒ the statement was taken back and no longer stands. */
+  withdrawnAt?: string | null;
 }
 
 export interface QualificationDates {
@@ -103,17 +118,45 @@ export async function fetchQualifications(
     );
   }
 
-  // Bucket by the brand's lead emails (org-wide history includes other brands' leads). MIN
-  // qualifiedAt per status = first occurrence — the date the lead first reached that stage.
+  // Bucket by the brand's lead emails (org-wide history includes other brands' leads), then
+  // keep only what each (campaign, lead) pair's STANDING statement says.
   const wanted = new Set(emails);
+  const standingByPair = new Map<string, { email: string; rows: QualificationRow[] }>();
   for (const row of rows) {
     if (!wanted.has(row.email)) continue;
-    if (row.status !== "lead_meeting_booked" && row.status !== "lead_closed") continue;
-    const existing = result.get(row.email) ?? { meetingBookedAt: null, closedAt: null };
-    if (row.status === "lead_meeting_booked") existing.meetingBookedAt = minDate(existing.meetingBookedAt, row.qualifiedAt);
-    else existing.closedAt = minDate(existing.closedAt, row.qualifiedAt);
-    result.set(row.email, existing);
+    if (row.withdrawnAt) continue;
+    const pair = `${row.instantlyCampaignId ?? row.campaignId ?? ""}|${row.email}`;
+    const bucket = standingByPair.get(pair) ?? { email: row.email, rows: [] };
+    bucket.rows.push(row);
+    standingByPair.set(pair, bucket);
+  }
+
+  for (const { email, rows: pairRows } of standingByPair.values()) {
+    const dates = standingDates(pairRows);
+    if (!dates.meetingBookedAt && !dates.closedAt) continue;
+    const existing = result.get(email) ?? { meetingBookedAt: null, closedAt: null };
+    existing.meetingBookedAt = minDate(existing.meetingBookedAt, dates.meetingBookedAt);
+    existing.closedAt = minDate(existing.closedAt, dates.closedAt);
+    result.set(email, existing);
   }
 
   return result;
+}
+
+/**
+ * What ONE (campaign, lead) pair's standing statement says, given its non-withdrawn rows.
+ * Exported for the unit test.
+ */
+export function standingDates(rows: QualificationRow[]): QualificationDates {
+  if (rows.length === 0) return { meetingBookedAt: null, closedAt: null };
+  const sorted = [...rows].sort((a, b) => (a.qualifiedAt < b.qualifiedAt ? -1 : a.qualifiedAt > b.qualifiedAt ? 1 : 0));
+  const standing = sorted[sorted.length - 1];
+  if (standing.status === "lead_meeting_booked") {
+    return { meetingBookedAt: standing.qualifiedAt, closedAt: null };
+  }
+  if (standing.status === "lead_closed") {
+    const booked = sorted.find((r) => r.status === "lead_meeting_booked" && r.qualifiedAt <= standing.qualifiedAt);
+    return { meetingBookedAt: booked?.qualifiedAt ?? null, closedAt: standing.qualifiedAt };
+  }
+  return { meetingBookedAt: null, closedAt: null };
 }

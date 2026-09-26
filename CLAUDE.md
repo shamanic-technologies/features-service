@@ -1,5 +1,31 @@
 # Features Service — CLAUDE.md
 
+## NO VIEW IS COMPUTED ON THE SERVING EVENT LOOP — every Gold compute runs in a forked REFRESHER process
+
+A view compute (an engine pass over a brand's whole lead population) is CPU work, and it ran on the same
+event loop that answers the dashboard. Measured in prod 2026-09-26: `/health` stalled up to 0.6-1.1s,
+and the snapshot reads the dashboard polls (p50 50-150ms) spiked to 0.6-3s at p95 — the cell was there,
+the loop was busy refreshing its neighbours. `lib/view-refresher.ts`:
+
+- **The server forks a refresher at boot** (same entrypoint, `VIEW_CACHE_ROLE=refresher`, 127.0.0.1:8091,
+  its own loop and heap; respawned on exit; exits with its parent). `VIEW_REFRESHER_ENABLED=false` is the
+  kill switch (everything computes in-process, as before).
+- **Every compute a request needs — miss, stale refresh, rotation, for ANY view the request reads, not
+  only the response's own cell — is asked of the refresher**: the server replays the SAME GET (headers
+  minus hop/conditional ones) with `x-view-refresh: <base64url {view, familyKey}>`. The refresher runs
+  the ordinary handler; the one `servedCached` call matching that view + key FAMILY computes + persists
+  and its value goes back AT ONCE in `{__viewRefresherComputed: value}` (the handler's own reply is
+  dropped). It is the COMPUTED value, not the HTTP body, because some handlers shape the cached value
+  (audience-stats caches a result union). A refresher that answers anything else → the server computes
+  locally, loudly, so a typed 404/409 still surfaces with its own status.
+- **Do NOT reintroduce an "outermost view only" claim**: the first cached read of a brand-revenue request
+  is the effective-rates cell, so claiming the first call left brand-revenue's own refresh on the server
+  loop (measured: p95 still 2.2s). Outside a request (boot warms, fleet sweeps) computes stay in-process.
+- Measured on the two reported brands after the change (30 rounds, 4s apart, while refreshes ran):
+  every money read p95 70-221ms against 0.3-2.5s in-process; live-vs-served figures: 0 value differences
+  on all ten reads. Memory: server ~95 MB + refresher ~320 MB (was one ~275 MB process).
+- Guards: the refresher suite at the end of `lib/view-cache.test.ts`. (Set 2026-09-26.)
+
 ## A SNAPSHOT MUST PERSIST — a body jsonb refuses is stored as its JSON text, and a FINGERPRINT rotation serves the previous cell
 
 `feature_view_snapshots.body` is `jsonb`, which REFUSES a `\u0000` escape and an unpaired surrogate escape
@@ -25,6 +51,21 @@ refreshes failed forever while serving an ever older body ("unsupported Unicode 
   scope") re-snapshots the scope** (`lib/lead-copy.ts`) instead of failing every refresh that reads it.
 - Guards: the jsonb + rotation suites at the end of `lib/view-cache.test.ts`, the refused-cursor case in
   `lib/lead-copy.test.ts`. (Set 2026-09-26.)
+
+## A LEGACY MANUAL QUALIFICATION COUNTS ONLY WHILE IT STANDS — the latest non-withdrawn statement per (campaign, lead), never the earliest ever made
+
+`qualifications-client.ts` reads instantly-service's manual-qualification HISTORY (append-only: superseded
+and withdrawn statements included). It used to keep the EARLIEST `lead_meeting_booked` / `lead_closed` row
+per email, so a correction never took effect — prod 2026-09-26, Doc Dinners: a lead marked "meeting booked"
+on 06-11 and restated "interested" on 09-26 still read `meetingBooked: true` and the reply → meeting rate
+read 6/26 instead of 5/26.
+
+- **Standing = the producer's rule** (`findStandingManualQualification`): per (instantlyCampaignId, lead),
+  the latest row with `withdrawnAt` null. A withdrawn latest row lets the earlier standing one answer.
+- Standing `lead_meeting_booked` → meeting at its date. Standing `lead_closed` → close at its date AND the
+  meeting it came through (earliest non-withdrawn booked row of the pair before it). Any other kind → nothing.
+- Across a lead's campaigns the earliest standing date wins. Legacy source kept; no lead special-cased.
+- Guard: `src/lib/qualifications-client.test.ts`. (Set 2026-09-26.)
 
 ## WAVE C2 — THE FUNNEL-KEYED HTTP SURFACE IS GONE; `?funnel=` IS REFUSED (400 `funnel_retired`), NEVER IGNORED
 
@@ -94,6 +135,23 @@ Supersedes every "declared funnel" statement in the sections below; their pricin
   dist on every live offer is in the PR.
 - Tests: `lib/reading-funnels.test.ts`; route suites mock `offer-economics` via `lib/leg-economics-fixture.ts`
   (a pre-C1 declared fixture → the leg statements + offer brand-service's carry-over produced).
+
+## A LEAD THAT WENT COLD IS PRICED LIKE A STATED `never` — lead-service's `coldByStep`, beside `byStep`, pricing only
+
+lead-service derives "went cold" (sales-lead-service#608) and serves it on
+`GET /internal/brands/:brandId/step-disqualifications` as `coldByStep` (canonical emails) BESIDE the unchanged
+`byStep`. Rule, owned THERE and never re-derived here: CRM-connected brands only; positive reply with no
+meeting booked in 30 days → cold at `meeting_booked`; booked and not attended within 30 days of its date →
+cold at `meeting_attended`; attended or later → never cold; later progress un-colds; a human statement wins.
+
+- `fetchStepDisqualifications` returns `{byStep, coldByStep}`; `fetchObservedStepFacts` folds BOTH into
+  `deadStepSignals`, so the existing `deadLegSignalsFor` → `EnginePerson.deadSignals` path zeroes the lead's
+  funnel legs. Headline pipeline, ROI, CAC, return history and every grain on the revenue engine follow.
+- **Pricing only.** `deadSignals` is read by `evForPerson` and nothing else: reached rungs, `funnelSteps`,
+  `leads[]` flags, measured conversion rates and every count are untouched.
+- `coldByStep` ABSENT (producer predating #608) or empty (no usable CRM — lead-service's `coldRule` says why)
+  ⇒ byte-identical to before. A non-object `coldByStep` fails loud (lands in the fail-soft statements degrade).
+- Guards: the went-cold block in `routes/observed-step-value.test.ts`. (Set 2026-09-26.)
 
 ## AN AUDIENCE ROW SAYS HOW MANY PEOPLE IT CAN STILL BE SERVED — `availableToContactCount` on `workflow-projection`, read LIVE
 
