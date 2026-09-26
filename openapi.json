@@ -13191,10 +13191,11 @@
                   "enum": [
                     "active",
                     "payment_declined",
+                    "no_payment_method",
                     "paused",
                     "inactive"
                   ],
-                  "description": "Precedence payment_declined > active > paused > inactive: 'payment_declined' iff billing cannot charge the org (payment-outlook state charge_blocked — card declined, unusable, retries exhausted, no chargeable card, or unsupported card country; campaign-service stops such an org's campaigns with stopReason payment_declined), whatever budget is configured or still reported running; billing's reason rides paymentDeclinedReason. Else 'active' iff runningDailyBudgetUsd>0 && (autoTopupEnabled || orgActualBalanceUsd>runningDailyBudgetUsd); else 'paused' iff configuredDailyBudgetUsd>0 (money posted, nothing running against it); else 'inactive'. There is no brand-level pause flag in this rule: that control was removed from the product and the flag lied in both directions."
+                  "description": "Precedence payment_declined / no_payment_method > active > paused > inactive: 'no_payment_method' iff billing cannot charge the org because it has no chargeable card (payment-outlook charge_blocked / no_chargeable_card; campaign-service stops it with stopReason no_payment_method); 'payment_declined' iff billing cannot charge it for any other reason (card declined, unusable, retries exhausted, or unsupported card country; stopReason payment_declined), whatever budget is configured or still reported running; billing's reason rides paymentDeclinedReason. Else 'active' iff runningDailyBudgetUsd>0 && (autoTopupEnabled || orgActualBalanceUsd>runningDailyBudgetUsd); else 'paused' iff configuredDailyBudgetUsd>0 (money posted, nothing running against it); else 'inactive'. There is no brand-level pause flag in this rule: that control was removed from the product and the flag lied in both directions."
                 },
                 "paymentDeclinedReason": {
                   "type": "string",
@@ -13255,6 +13256,10 @@
                 "type": "integer",
                 "description": "Rows billing cannot charge (status payment_declined). Excluded from every running/MRR/ARR total, like paused and inactive."
               },
+              "noPaymentMethodCount": {
+                "type": "integer",
+                "description": "Rows with no chargeable card (status no_payment_method). Excluded from every running/MRR/ARR total, like paused and inactive."
+              },
               "pausedCount": {
                 "type": "integer"
               },
@@ -13272,6 +13277,7 @@
               "arrUsd",
               "activeCount",
               "paymentDeclinedCount",
+              "noPaymentMethodCount",
               "pausedCount",
               "inactiveCount",
               "totalCount"
@@ -13360,6 +13366,7 @@
                   "enum": [
                     "active",
                     "payment_declined",
+                    "no_payment_method",
                     "paused",
                     "inactive"
                   ],
@@ -13862,6 +13869,10 @@
                 "type": "integer",
                 "description": "Rows billing cannot charge (status payment_declined). Excluded from every running/MRR/ARR total, like paused and inactive."
               },
+              "noPaymentMethodCount": {
+                "type": "integer",
+                "description": "Rows with no chargeable card (status no_payment_method). Excluded from every running/MRR/ARR total, like paused and inactive."
+              },
               "pausedCount": {
                 "type": "integer"
               },
@@ -13882,6 +13893,7 @@
               "totalCustomers",
               "activeCount",
               "paymentDeclinedCount",
+              "noPaymentMethodCount",
               "pausedCount",
               "inactiveCount",
               "greenCount",
