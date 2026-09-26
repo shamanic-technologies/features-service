@@ -90,7 +90,6 @@ export function legCampaignRows(
     // A channel of its own by default, so a read scoped to a feature's campaigns (the ROI maturity
     // cohort, the identity families) is not moved by the rows that only say what the brand sells.
     featureSlug: opts.featureSlug ?? "leg-fixture-channel",
-    funnelKey: f.funnelKey,
     legKey: ENTRY_LEG[f.funnelKey] ?? null,
     offerId: opts.offerId ?? null,
     status: "stopped",

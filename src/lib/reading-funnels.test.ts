@@ -76,15 +76,17 @@ describe("offerLegKeys — the legs ONE offer's campaigns perform", () => {
     { id: "a", featureSlug: "sales-cold-email-outreach", legKey: "start_to_conversation", offerId: "offer-1", status: "stopped" },
     { id: "b", featureSlug: "ai-meeting-booking", legKey: "conversation_to_meeting_booked", offerId: "offer-1", status: "ongoing" },
     { id: "c", featureSlug: "sales-cold-email-outreach", legKey: "start_to_website_visit", offerId: "offer-2", status: "ongoing" },
-    // A pre-leg ancestor: the one leg its channel performs inside the funnel it states.
-    { id: "d", featureSlug: "sales-cold-email-outreach", funnelKey: "website_purchases", offerId: null, status: "stopped" },
+    // A row predating the offer column, stating its leg.
+    { id: "d", featureSlug: "sales-cold-email-outreach", legKey: "start_to_website_visit", offerId: null, status: "stopped" },
+    // A pre-leg ancestor: no leg is derived for it (wave C3), so it adds nothing.
+    { id: "e", featureSlug: "sales-cold-email-outreach", legKey: null, offerId: "offer-1", status: "stopped" },
   ];
   it("every status and channel of THIS offer — never the other offer's", () => {
     expect(offerLegKeys(rows, "offer-1")).toEqual(["conversation_to_meeting_booked", "start_to_conversation"]);
     expect(offerLegKeys(rows, "offer-2")).toEqual(["start_to_website_visit"]);
   });
   it("a row predating the offer is the SOLE offer's, and only when the brand sells one", () => {
-    expect(offerLegKeys(rows, "offer-2", true)).toEqual(["start_to_website_visit"]);
+    expect(offerLegKeys([rows[2], rows[3]], "offer-2", true)).toEqual(["start_to_website_visit"]);
     expect(offerLegKeys([rows[3]], "offer-9", true)).toEqual(["start_to_website_visit"]);
     expect(offerLegKeys([rows[3]], "offer-9", false)).toEqual([]);
   });

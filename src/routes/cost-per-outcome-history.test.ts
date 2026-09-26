@@ -358,6 +358,8 @@ describe("what one outcome has cost, day by day", () => {
         o && { ...o, ratioBasis: { ...o.ratioBasis, maturityDays: "by leg" } };
       return {
         ...rest,
+        // The identity key carries the leg (campaign-service's own index), so it names the leg too.
+        campaignIdentity: { ...rest.campaignIdentity, key: "by leg" },
         costEconomics: { ...rest.costEconomics, maturityDays: "by leg" },
         outcomes: byLeg(rest.outcomes),
         spend: byLeg(rest.spend),

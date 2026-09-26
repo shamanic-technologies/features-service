@@ -78,13 +78,13 @@ const dynastyOf = (slug: string) => WORKFLOWS.find((w) => w.workflowSlug === slu
 
 /**
  * ONE campaign IDENTITY of two rows (the live one and the ancestor it switched away from), beside a
- * SECOND campaign on another channel. campaign-service's key is (org, brand, funnel, channel), so
+ * SECOND campaign on another channel. campaign-service's key is (org, brand, offer, leg, channel), so
  * `other` is a different campaign — and it is what makes the brand's numbers diverge from this one's.
  */
 const CAMPAIGNS = [
-  { id: "stopped", orgId: "org-1", brandId: BRAND, featureSlug: SALES, funnelKey: "sales_meetings_from_conversation", acquisitionChannel: SALES, status: "stopped", createdAt: "2026-01-01T00:00:00.000Z" },
-  { id: "live", orgId: "org-1", brandId: BRAND, featureSlug: SALES, funnelKey: "sales_meetings_from_conversation", acquisitionChannel: SALES, status: "ongoing", createdAt: "2026-02-01T00:00:00.000Z" },
-  { id: "other", orgId: "org-1", brandId: BRAND, featureSlug: SALES, funnelKey: "sales_meetings_from_conversation", acquisitionChannel: "crm_email", status: "ongoing", createdAt: "2026-02-01T00:00:00.000Z" },
+  { id: "stopped", orgId: "org-1", brandId: BRAND, featureSlug: SALES, legKey: "start_to_conversation", acquisitionChannel: SALES, status: "stopped", createdAt: "2026-01-01T00:00:00.000Z" },
+  { id: "live", orgId: "org-1", brandId: BRAND, featureSlug: SALES, legKey: "start_to_conversation", acquisitionChannel: SALES, status: "ongoing", createdAt: "2026-02-01T00:00:00.000Z" },
+  { id: "other", orgId: "org-1", brandId: BRAND, featureSlug: SALES, legKey: "start_to_conversation", acquisitionChannel: "crm_email", status: "ongoing", createdAt: "2026-02-01T00:00:00.000Z" },
 ];
 
 type LeadShape = { clicked?: boolean; positive?: boolean };
