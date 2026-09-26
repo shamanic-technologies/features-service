@@ -1,0 +1,167 @@
+import { describe, it, expect } from "vitest";
+import { priceContactedLeads, fleetEntryCountsOf } from "./contacted-value.js";
+import { computeRevenue, type EnginePerson, type ResolvedPath } from "./revenue-engine.js";
+
+// LTR $1,000. A website visit is worth $100 (10% visit→paid), a positive reply $400 (40% reply→paid).
+const LTR = 1000;
+const PATHS: ResolvedPath[] = [
+  { tag: "visit", signal: "clicked", expectedRevenueUsd: 100, engagementRoute: true },
+  { tag: "reply", signal: "positiveReply", expectedRevenueUsd: 400, engagementRoute: true },
+  { tag: "meeting", signal: "meeting", expectedRevenueUsd: 500 },
+  { tag: "closeWin", signal: "closeWin", expectedRevenueUsd: 1000, terminal: true },
+];
+const NOW = new Date("2026-09-26T12:00:00Z");
+const OLD = "2026-08-01T10:00:00Z"; // before the 14-day cutoff (2026-09-12)
+const YOUNG = "2026-09-24T10:00:00Z";
+
+let seq = 0;
+function person(opts: { signals?: Record<string, boolean>; contactedAt?: string | null; orgId?: string | null; dead?: string[] } = {}): EnginePerson {
+  seq += 1;
+  return {
+    leadId: `lead-${String(seq).padStart(4, "0")}`,
+    firstName: null,
+    lastName: null,
+    photoUrl: null,
+    orgId: opts.orgId === undefined ? `org-${seq}` : opts.orgId,
+    orgName: null,
+    orgLogoUrl: null,
+    orgDomain: null,
+    title: null,
+    seniority: null,
+    orgIndustry: null,
+    orgEmployeeCount: null,
+    orgCity: null,
+    orgCountry: null,
+    signals: { contacted: true, sent: true, delivered: true, ...(opts.signals ?? {}) },
+    signalDates: { contacted: opts.contactedAt === undefined ? YOUNG : opts.contactedAt },
+    ...(opts.dead ? { deadSignals: opts.dead } : {}),
+  };
+}
+
+// Fleet: 2% of contacted click, 0.5% reply positively.
+const FLEET = { clicked: { contacted: 10_000, reached: 200 }, positiveReply: { contacted: 10_000, reached: 50 } };
+// P(paid | contacted) = 1 − (1 − 0.02×0.1)(1 − 0.005×0.4) = 1 − 0.998 × 0.998 = 0.003996
+const FLEET_P = 1 - (1 - 0.02 * 0.1) * (1 - 0.005 * 0.4);
+
+describe("priceContactedLeads — a brand whose contacts have not engaged yet (webprime's shape)", () => {
+  const persons = Array.from({ length: 69 }, () => person());
+  const result = priceContactedLeads({ paths: PATHS, persons, lifetimeRevenueUsd: LTR, fleet: FLEET, now: NOW });
+
+  it("prices every one of the 69 contacted leads, non-null, on the fleet entry rates", () => {
+    expect(result.unmeasuredReason).toBeNull();
+    expect(result.leads).toHaveLength(69);
+    for (const l of result.leads) expect(l.expectedValueUsd).toBeCloseTo(LTR * FLEET_P, 6);
+    expect(result.routes.map((r) => [r.signal, r.entryRateSource, r.entryRatePct])).toEqual([
+      ["clicked", "fleet_measured", 2],
+      ["positiveReply", "fleet_measured", 0.5],
+    ]);
+    expect(result.contactedToPaidClientPct).toBeCloseTo(FLEET_P * 100, 6);
+  });
+
+  it("the total is the sum over organisations (one lead per organisation here)", () => {
+    expect(result.totalExpectedValueUsd).toBeCloseTo(69 * LTR * FLEET_P, 4);
+    expect(result.population).toEqual({ contactedOnly: 69, organizations: 69, engaged: 0, cannotConvert: 0 });
+  });
+
+  it("a route's value at its step IS the engine's own path value", () => {
+    expect(result.routes.map((r) => [r.valueAtStepUsd, r.paidClientGivenStepPct])).toEqual([
+      [100, 10],
+      [400, 40],
+    ]);
+  });
+});
+
+describe("priceContactedLeads — who is priced", () => {
+  it("an engaged lead is not in the read, and the pipeline's figure for it is untouched", () => {
+    const clicker = person({ signals: { clicked: true } });
+    const negative = person({ signals: { negativeReply: true } });
+    const bounced = person({ signals: { bounced: true } });
+    const quiet = person({ signals: { open: true } });
+    const persons = [clicker, negative, bounced, quiet];
+    const before = computeRevenue(PATHS, persons, LTR);
+    const result = priceContactedLeads({ paths: PATHS, persons, lifetimeRevenueUsd: LTR, fleet: FLEET, now: NOW });
+    const after = computeRevenue(PATHS, persons, LTR);
+    expect(result.leads.map((l) => l.leadId)).toEqual([quiet.leadId]);
+    expect(result.population).toEqual({ contactedOnly: 1, organizations: 1, engaged: 2, cannotConvert: 1 });
+    // The engine's answer for the clicker ($100) does not move and gains no contacted value.
+    expect(after).toEqual(before);
+    expect(after.leads.find((l) => l.leadId === clicker.leadId)?.expectedRevenueUsd).toBe(100);
+    expect(after.headline.totalPipelineUsd).toBe(100);
+  });
+
+  it("people of one organisation are one client at most: the total combines them, never adds", () => {
+    const a = person({ orgId: "acme" });
+    const b = person({ orgId: "acme" });
+    const result = priceContactedLeads({ paths: PATHS, persons: [a, b], lifetimeRevenueUsd: LTR, fleet: FLEET, now: NOW });
+    const each = LTR * FLEET_P;
+    expect(result.population.organizations).toBe(1);
+    expect(result.totalExpectedValueUsd).toBeCloseTo(LTR * (1 - (1 - each / LTR) ** 2), 6);
+    expect(result.totalExpectedValueUsd!).toBeLessThan(2 * each);
+  });
+
+  it("a route a human ruled the lead out of contributes nothing", () => {
+    const ruledOut = person({ dead: ["positiveReply"] });
+    const result = priceContactedLeads({ paths: PATHS, persons: [ruledOut], lifetimeRevenueUsd: LTR, fleet: FLEET, now: NOW });
+    expect(result.leads[0].expectedValueUsd).toBeCloseTo(LTR * 0.02 * 0.1, 6);
+  });
+});
+
+describe("priceContactedLeads — where P(entry | contacted) is measured", () => {
+  it("the brand's own MATURE cohort wins once it holds 10 outcomes; young sends stay out of the rate", () => {
+    // 500 mature contacted, 20 clicked (4%); 2 replied (below the bar → fleet). 1,000 young, none engaged.
+    const persons: EnginePerson[] = [];
+    for (let i = 0; i < 20; i++) persons.push(person({ contactedAt: OLD, signals: { clicked: true } }));
+    for (let i = 0; i < 2; i++) persons.push(person({ contactedAt: OLD, signals: { positiveReply: true } }));
+    for (let i = 0; i < 478; i++) persons.push(person({ contactedAt: OLD }));
+    for (let i = 0; i < 1000; i++) persons.push(person({ contactedAt: YOUNG }));
+    const result = priceContactedLeads({ paths: PATHS, persons, lifetimeRevenueUsd: LTR, fleet: FLEET, now: NOW });
+    const click = result.routes.find((r) => r.signal === "clicked")!;
+    const reply = result.routes.find((r) => r.signal === "positiveReply")!;
+    expect(click).toMatchObject({ entryRateSource: "brand_measured", entryRatePct: 4, brand: { contacted: 500, reached: 20 } });
+    expect(reply).toMatchObject({ entryRateSource: "fleet_measured", entryRatePct: 0.5, brand: { contacted: 500, reached: 2 } });
+    expect(result.perLeadExpectedValueUsd).toBeCloseTo(LTR * (1 - (1 - 0.04 * 0.1) * (1 - 0.005 * 0.4)), 6);
+  });
+
+  it("undated leads are left out of the brand cohort", () => {
+    const persons = [person({ contactedAt: null }), person({ contactedAt: OLD })];
+    const result = priceContactedLeads({ paths: PATHS, persons, lifetimeRevenueUsd: LTR, fleet: FLEET, now: NOW });
+    expect(result.routes[0].brand.contacted).toBe(1);
+    expect(result.leads).toHaveLength(2);
+  });
+
+  it("only the routes of the funnels the brand is priced on count (a reply-only funnel prices no click)", () => {
+    const replyOnly = PATHS.filter((p) => p.signal !== "clicked");
+    const result = priceContactedLeads({ paths: replyOnly, persons: [person()], lifetimeRevenueUsd: LTR, fleet: FLEET, now: NOW });
+    expect(result.routes.map((r) => r.signal)).toEqual(["positiveReply"]);
+    expect(result.perLeadExpectedValueUsd).toBeCloseTo(LTR * 0.005 * 0.4, 6);
+  });
+});
+
+describe("priceContactedLeads — no measurable probability is said, never a 0", () => {
+  const persons = [person(), person()];
+  it.each([
+    ["no_economics", { lifetimeRevenueUsd: null, paths: PATHS, fleet: FLEET }],
+    ["no_client_value", { lifetimeRevenueUsd: 0, paths: PATHS, fleet: FLEET }],
+    ["no_entry_path", { lifetimeRevenueUsd: LTR, paths: PATHS.filter((p) => !p.engagementRoute), fleet: FLEET }],
+    ["no_entry_rate", { lifetimeRevenueUsd: LTR, paths: PATHS, fleet: null }],
+  ] as const)("%s", (reason, input) => {
+    const result = priceContactedLeads({ ...input, persons, now: NOW });
+    expect(result.unmeasuredReason).toBe(reason);
+    expect(result.perLeadExpectedValueUsd).toBeNull();
+    expect(result.totalExpectedValueUsd).toBeNull();
+    expect(result.contactedToPaidClientPct).toBeNull();
+    expect(result.leads.map((l) => l.expectedValueUsd)).toEqual([null, null]);
+    expect(result.population.contactedOnly).toBe(2);
+  });
+});
+
+describe("fleetEntryCountsOf", () => {
+  it("pools email-gateway's per-workflow recipient stats", () => {
+    expect(
+      fleetEntryCountsOf([
+        { recipientsContacted: 100, recipientsClicked: 3, recipientsRepliesPositive: 1 },
+        { recipientsContacted: 50, recipientsClicked: 1 },
+      ]),
+    ).toEqual({ clicked: { contacted: 150, reached: 4 }, positiveReply: { contacted: 150, reached: 1 } });
+  });
+});
