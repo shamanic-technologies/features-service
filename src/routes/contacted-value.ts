@@ -24,12 +24,12 @@ import type { EffectiveEconomics } from "../lib/sales-economics-client.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { fetchLeadsForRevenue } from "../lib/leads-client.js";
 import { fetchEventTimestamps } from "../lib/email-status-client.js";
-import { fetchObservedStepFacts } from "../lib/observed-steps.js";
+import { fetchObservedStepFacts, type ObservedStepFacts } from "../lib/observed-steps.js";
 import { fetchQualifications } from "../lib/qualifications-client.js";
 import { fetchConversionEmails } from "../lib/conversion-emails-client.js";
 import { applySignalOverlays } from "../lib/signal-overlays.js";
 import { dedupPersonsByLead, type EnginePerson, type ResolvedPath } from "../lib/revenue-engine.js";
-import { DEFAULT_PRICED_CAUSES } from "../lib/outcome-cause.js";
+import { DEFAULT_PRICED_CAUSES, type OutcomeCause } from "../lib/outcome-cause.js";
 import { fetchPublicEmailStats } from "../lib/public-stats-clients.js";
 import {
   priceContactedLeads,
@@ -61,14 +61,21 @@ export async function loadBrandPricedPopulation(
   brandId: string,
   headers: DownstreamHeaders,
   pre: BrandPricingPre,
-  opts: { fleetEntryStats: boolean },
+  opts: {
+    fleetEntryStats: boolean;
+    /** Which cause states are PRICED (the pipeline's default: our outreach only). */
+    pricedCauses?: readonly OutcomeCause[];
+  },
 ): Promise<{
   persons: EnginePerson[];
   paths: ResolvedPath[];
   lifetimeRevenueUsd: number | null;
   fleetGroups: Map<string, Record<string, number>> | null;
+  /** The step statements, per canonical email (null when unreadable). */
+  observed: ObservedStepFacts | null;
 }> {
   const { channels, declared, effective } = pre;
+  const pricedCauses = opts.pricedCauses ?? DEFAULT_PRICED_CAUSES;
   const featureSlugs = brandFeatureSlugs(channels);
   const funnels = distinctChannelFunnels(channels);
   if (funnels.length > 1) throw new BrandPricesDifferentlyError(brandId);
@@ -93,12 +100,12 @@ export async function loadBrandPricedPopulation(
   const emails = [...new Set(persons.map((p) => p.email).filter((e): e is string => Boolean(e)))];
   const [timestamps, observed, quals, signupEmails, formEmails] = await Promise.all([
     soft("event timestamps", fetchEventTimestamps(brandId, undefined, emails, headers)),
-    soft("observed step statements", fetchObservedStepFacts(brandId, DEFAULT_PRICED_CAUSES)),
+    soft("observed step statements", fetchObservedStepFacts(brandId, pricedCauses)),
     soft("legacy qualifications", fetchQualifications(brandId, undefined, emails, headers)),
     soft("signup attribution", fetchConversionEmails(brandId, "signup")),
     soft("form-submission attribution", fetchConversionEmails(brandId, "form_submission")),
   ]);
-  applySignalOverlays(persons, timestamps, observed?.byEmail ?? null, quals, priced.pricedFunnelKeys, DEFAULT_PRICED_CAUSES);
+  applySignalOverlays(persons, timestamps, observed?.byEmail ?? null, quals, priced.pricedFunnelKeys, pricedCauses);
   for (const person of persons) {
     const email = person.email?.trim().toLowerCase();
     if (!email) continue;
@@ -118,6 +125,7 @@ export async function loadBrandPricedPopulation(
     paths,
     lifetimeRevenueUsd: economics ? economics.lifetimeRevenueUsd : null,
     fleetGroups: fleetGroups as Map<string, Record<string, number>> | null,
+    observed,
   };
 }
 

@@ -6,7 +6,7 @@
  * WHICH people sit in a column is lead-service's standing (its `?standing=` filter, read here); what
  * they are worth is priced on the byte-same inputs the brand's pipeline is priced on
  * (`loadBrandPricedPopulation`, shared with contacted-value), so an Interested card reads the same
- * number the pipeline holds for that person.
+ * number the engine prices that person at (on every outcome cause — see computeBrandDealsValue).
  */
 import { Router } from "express";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
@@ -15,7 +15,6 @@ import { fetchEffectiveEconomics, economicsFingerprint } from "../lib/sales-econ
 import { resolveBrandChannels, brandFeatureSlugs, BrandHasNoChannelsError } from "../lib/brand-channels.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { fetchLeadIdsByStanding } from "../lib/leads-client.js";
-import { fetchObservedStepFacts } from "../lib/observed-steps.js";
 import { ALL_OUTCOME_CAUSES } from "../lib/outcome-cause.js";
 import { loadBrandPricedPopulation, BrandPricesDifferentlyError, type BrandPricingPre } from "./contacted-value.js";
 import { priceDealsColumns, type DealsValueResult } from "../lib/deals-value.js";
@@ -28,27 +27,23 @@ export async function computeBrandDealsValue(
   headers: DownstreamHeaders,
   pre: BrandPricingPre,
 ): Promise<DealsValueResult> {
+  // A DEALS board shows what each deal is worth to the customer, whoever caused it — so both columns
+  // are priced on EVERY cause state (the engine basis `/revenue?cause=outreach,other,unstated` serves),
+  // never on the pipeline's "our outreach only" default. Measured in prod 2026-09-26 (Doc Dinners): on
+  // the default, 45 of 54 Interested cards read $0 because their meetings came through the CRM.
   const [population, interested, won] = await Promise.all([
-    loadBrandPricedPopulation(brandId, headers, pre, { fleetEntryStats: false }),
+    loadBrandPricedPopulation(brandId, headers, pre, { fleetEntryStats: false, pricedCauses: ALL_OUTCOME_CAUSES }),
     fetchLeadIdsByStanding(brandId, "sales_interest", headers),
     fetchLeadIdsByStanding(brandId, "customer", headers),
   ]);
 
-  // The WON amount is the deal's, whoever caused it — so it is read over every cause state, apart from
-  // the pipeline's overlay (which prices our wins only). Only asked when somebody stands at customer.
-  // Fail-soft: without it every won card falls back to the brand's value of a client, and says so.
+  // The WON amount is the one stated on the SALE. Unreadable statements (fail-soft in the loader) leave
+  // every won card on the brand's value of a client, and each card says so.
   let statedWonAmountUsdByEmail: Map<string, number> | null = null;
-  if (won.size > 0) {
-    try {
-      const facts = await fetchObservedStepFacts(brandId, ALL_OUTCOME_CAUSES);
-      statedWonAmountUsdByEmail = new Map();
-      for (const [email, f] of facts.byEmail) {
-        if ("closeWin" in f.reached && f.valueUsd !== null) statedWonAmountUsdByEmail.set(email, f.valueUsd);
-      }
-    } catch (err) {
-      console.warn(
-        `[features-service] deals value (brand ${brandId}): stated sale amounts unreadable — won cards fall back to lifetime revenue: ${(err as Error).message}`,
-      );
+  if (population.observed) {
+    statedWonAmountUsdByEmail = new Map();
+    for (const [email, f] of population.observed.byEmail) {
+      if ("closeWin" in f.reached && f.valueUsd !== null) statedWonAmountUsdByEmail.set(email, f.valueUsd);
     }
   }
 
@@ -58,6 +53,7 @@ export async function computeBrandDealsValue(
     lifetimeRevenueUsd: population.lifetimeRevenueUsd,
     members: { sales_interest: interested, customer: won },
     statedWonAmountUsdByEmail,
+    pricedCauses: ALL_OUTCOME_CAUSES,
   });
 }
 
@@ -79,7 +75,7 @@ router.get("/brands/:brandId/deals-value", apiKeyAuth, async (rawReq, res) => {
         channels: brandFeatureSlugs(channels).join("+"),
         decl: declared.map((f) => f.funnelKey).sort().join("+") || "none",
         econ: economicsFingerprint(priced.economics),
-        m: "deals-value-v1",
+        m: "deals-value-v2",
       }),
       orgId: headers.orgId,
       compute: () => computeBrandDealsValue(brandId, headers, { channels, declared, effective }),
