@@ -63,10 +63,10 @@ interface AudienceCostEvidence {
 
 interface AudienceOutcomeEvidence {
   // Distinct MEMBER count of the audience (people served under it — human-service membership provenance).
-  // The audience's addressable pool size; `contacted` ⊆ this. Lets a consumer derive remaining-to-contact
-  // (memberCount − contacted) + %used (contacted / memberCount) without a second human-service fetch — the
-  // member emails are ALREADY fetched here for the outcome join, so this is free. 0 when the audience has
-  // no members.
+  // `contacted` ⊆ this, so memberCount − contacted is people SERVED BUT NOT YET EMAILED — a sending
+  // backlog that trends to 0 on any brand sending well. It is NOT the pool left: how many people an
+  // audience can still be served is human-service's `availableToContactCount` (the customer-health board
+  // reads it as `audiences.totalRemaining`). 0 when the audience has no members.
   memberCount: number;
   contacted: number;
   opened: number;

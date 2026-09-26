@@ -6241,7 +6241,7 @@
                     },
                     "memberCount": {
                       "type": "number",
-                      "description": "Distinct MEMBER count of the audience (people served under it — human-service membership provenance). The addressable pool size; contacted ⊆ memberCount. Remaining-to-contact = memberCount − contacted; %used = contacted / memberCount. 0 when the audience has no members."
+                      "description": "Distinct MEMBER count of the audience (people served under it — human-service membership provenance). contacted ⊆ memberCount, so memberCount − contacted is people SERVED BUT NOT YET EMAILED (a sending backlog that trends to 0 on a brand sending well) — NOT the pool left. How many people the audience can still be served is human-service's `availableToContactCount` on GET /orgs/audiences (surfaced on the customer-health board as audiences.totalRemaining). 0 when the audience has no members."
                     },
                     "contacted": {
                       "type": "number",
@@ -9495,7 +9495,7 @@
                     },
                     "memberCount": {
                       "type": "number",
-                      "description": "Distinct MEMBER count of the audience (people served under it — human-service membership provenance). The addressable pool size; contacted ⊆ memberCount. Remaining-to-contact = memberCount − contacted; %used = contacted / memberCount. 0 when the audience has no members."
+                      "description": "Distinct MEMBER count of the audience (people served under it — human-service membership provenance). contacted ⊆ memberCount, so memberCount − contacted is people SERVED BUT NOT YET EMAILED (a sending backlog that trends to 0 on a brand sending well) — NOT the pool left. How many people the audience can still be served is human-service's `availableToContactCount` on GET /orgs/audiences (surfaced on the customer-health board as audiences.totalRemaining). 0 when the audience has no members."
                     },
                     "contacted": {
                       "type": "number",
@@ -12515,7 +12515,7 @@
                     },
                     "memberCount": {
                       "type": "number",
-                      "description": "Distinct MEMBER count of the audience (people served under it — human-service membership provenance). The addressable pool size; contacted ⊆ memberCount. Remaining-to-contact = memberCount − contacted; %used = contacted / memberCount. 0 when the audience has no members."
+                      "description": "Distinct MEMBER count of the audience (people served under it — human-service membership provenance). contacted ⊆ memberCount, so memberCount − contacted is people SERVED BUT NOT YET EMAILED (a sending backlog that trends to 0 on a brand sending well) — NOT the pool left. How many people the audience can still be served is human-service's `availableToContactCount` on GET /orgs/audiences (surfaced on the customer-health board as audiences.totalRemaining). 0 when the audience has no members."
                     },
                     "contacted": {
                       "type": "number",
@@ -15675,7 +15675,7 @@
                     },
                     "memberCount": {
                       "type": "number",
-                      "description": "Distinct MEMBER count of the audience (people served under it — human-service membership provenance). The addressable pool size; contacted ⊆ memberCount. Remaining-to-contact = memberCount − contacted; %used = contacted / memberCount. 0 when the audience has no members."
+                      "description": "Distinct MEMBER count of the audience (people served under it — human-service membership provenance). contacted ⊆ memberCount, so memberCount − contacted is people SERVED BUT NOT YET EMAILED (a sending backlog that trends to 0 on a brand sending well) — NOT the pool left. How many people the audience can still be served is human-service's `availableToContactCount` on GET /orgs/audiences (surfaced on the customer-health board as audiences.totalRemaining). 0 when the audience has no members."
                     },
                     "contacted": {
                       "type": "number",
@@ -16906,27 +16906,45 @@
                   "properties": {
                     "count": {
                       "type": "integer",
-                      "description": "Number of the brand's active audiences with evidence."
+                      "description": "Number of the brand's ACTIVE audiences (human-service's list when readable, else those with evidence)."
                     },
                     "totalSize": {
                       "type": "integer",
-                      "description": "Total addressable members across the brand's audiences (Σ memberCount)."
+                      "nullable": true,
+                      "description": "The brand's contactable pool = Σ human-service sizeCount over its active audiences (its audiences table's Size). null when unreadable (see poolUnreadableReason), never 0."
                     },
                     "totalRemaining": {
                       "type": "integer",
-                      "description": "Total remaining-to-contact (Σ max(memberCount − contacted, 0))."
+                      "nullable": true,
+                      "description": "How many people the brand's active audiences can still be served = Σ human-service availableToContactCount (its audiences table's Remaining; pool members outside the 3-month re-contact window). null when unreadable, never a fabricated 0 — 0 means human-service says the pool is served out."
                     },
                     "pctUsed": {
                       "type": "number",
                       "nullable": true,
-                      "description": "% of the addressable pool already contacted = Σcontacted / Σsize × 100. null when totalSize is 0."
+                      "description": "% of the pool no longer servable = (totalSize − totalRemaining) / totalSize × 100. null when unreadable or totalSize is 0."
+                    },
+                    "servedNotContacted": {
+                      "type": "integer",
+                      "description": "People already SERVED to the brand's audiences but not yet emailed (Σ max(memberCount − contacted, 0)) — a sending backlog, not pool left."
+                    },
+                    "poolUnreadableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "human_service_unreadable",
+                        "counts_not_stated",
+                        "not_read"
+                      ],
+                      "description": "Set exactly when totalSize/totalRemaining are null: the human-service read failed, an active audience came back without its counts (a partial sum would understate), or this row's enrichment never reached the read."
                     }
                   },
                   "required": [
                     "count",
                     "totalSize",
                     "totalRemaining",
-                    "pctUsed"
+                    "pctUsed",
+                    "servedNotContacted",
+                    "poolUnreadableReason"
                   ]
                 },
                 "bestAudience": {
@@ -16945,10 +16963,14 @@
                       "description": "The audience's CAC (cost per goal outcome) USD — cpc for visit-driven goals, cppr for reply-driven. null when unmeasured."
                     },
                     "size": {
-                      "type": "integer"
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "The audience's contactable pool (human-service sizeCount). null when unreadable."
                     },
                     "remaining": {
-                      "type": "integer"
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "How many people this audience can still be served (human-service availableToContactCount). null when unreadable, never 0."
                     },
                     "pctRemaining": {
                       "type": "number",
@@ -24239,7 +24261,7 @@
                               },
                               "memberCount": {
                                 "type": "number",
-                                "description": "Distinct MEMBER count of the audience (people served under it — human-service membership provenance). The addressable pool size; contacted ⊆ memberCount. Remaining-to-contact = memberCount − contacted; %used = contacted / memberCount. 0 when the audience has no members."
+                                "description": "Distinct MEMBER count of the audience (people served under it — human-service membership provenance). contacted ⊆ memberCount, so memberCount − contacted is people SERVED BUT NOT YET EMAILED (a sending backlog that trends to 0 on a brand sending well) — NOT the pool left. How many people the audience can still be served is human-service's `availableToContactCount` on GET /orgs/audiences (surfaced on the customer-health board as audiences.totalRemaining). 0 when the audience has no members."
                               },
                               "contacted": {
                                 "type": "number",

@@ -45,6 +45,21 @@ Supersedes every "declared funnel" statement in the sections below; their pricin
 - Tests: `lib/reading-funnels.test.ts`; route suites mock `offer-economics` via `lib/leg-economics-fixture.ts`
   (a pre-C1 declared fixture → the leg statements + offer brand-service's carry-over produced).
 
+## "REMAINING" ON THE CUSTOMER-HEALTH BOARD IS HUMAN-SERVICE'S POOL LEFT — never served-minus-contacted
+
+`audiences.totalRemaining` / `pctUsed` / `bestAudience.remaining` used to be `memberCount − contacted`
+off the audience evidence. `memberCount` is people ALREADY SERVED, so that is a sending BACKLOG, and it
+trends to 0 on every brand that sends well: prod 2026-09-26 read Living Vital and webprime "0 left"
+(human-service: 361 and 3,874) and the daily brief started a refill project on it.
+
+- **The pool is `Σ sizeCount` and what is left is `Σ availableToContactCount`** over EVERY active audience
+  human-service lists (`fetchActiveAudienceContactabilitySoft`) — its own audiences table's Size and
+  Remaining. Nothing here recomputes suppression or pool size.
+- **Unreadable is `null` + `poolUnreadableReason`, never 0** — a 0 reads as "out of people" and
+  triggers spend. An active audience with no stated counts nulls the whole sum (no partial).
+- The backlog survives as `servedNotContacted`, named for what it is. `evidence.memberCount` on
+  `/audience-stats` carries the same warning: do not derive "remaining" from it.
+
 ## AN AUDIENCE ROW SAYS HOW MANY PEOPLE IT CAN STILL BE SERVED — `availableToContactCount` on `workflow-projection`, read LIVE
 
 campaign-service picks the audience for each serve off `workflow-projection`'s audience rows, and those

@@ -51,6 +51,13 @@ export interface Audience {
    * OPTIONAL: an absent count is "not stated", never 0.
    */
   availableToContactCount?: number;
+  /**
+   * The audience's whole contactable POOL as human-service counts it on its list item (the committed
+   * provider count minus the people the pre-pay screen judged off target). The denominator human-service
+   * divides `availableToContactCount` by, so a consumer's "% used" agrees with its own. OPTIONAL for the
+   * same reason: an absent count is "not stated", never 0.
+   */
+  sizeCount?: number;
 }
 
 interface AudienceFetchHeaders {
@@ -158,6 +165,50 @@ export async function fetchActiveAudienceAvailabilitySoft(
   } catch (err) {
     console.error(
       `[features-service] audience availability read failed for brand=${brandId} — audience rows state availableToContactCount: null:`,
+      err,
+    );
+    return null;
+  }
+}
+
+/** One active audience's pool and what is left of it, as human-service states them. */
+export interface AudienceContactability {
+  /** `sizeCount` — the audience's whole contactable pool. null when the producer did not state it. */
+  sizeCount: number | null;
+  /** `availableToContactCount` — pool members still servable (outside the 3-month window). null when not stated. */
+  availableToContactCount: number | null;
+}
+
+function finiteOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * Every ACTIVE audience of a brand with its pool and its remaining-to-contact, keyed by audience id —
+ * the SAME list and the SAME two numbers human-service's own audiences table renders as "Size" and
+ * "Remaining", so a board summing them cannot disagree with that table. Every active audience is
+ * present, including one nobody has been served from yet (a stat keyed on evidence would miss it).
+ *
+ * FAIL-SOFT to `null` ("we could not read this") with a loud log. Never a 0: a 0 remaining reads as
+ * "this brand is out of people" and would send somebody off buying a refill.
+ */
+export async function fetchActiveAudienceContactabilitySoft(
+  brandId: string,
+  headers: AudienceFetchHeaders,
+): Promise<Map<string, AudienceContactability> | null> {
+  try {
+    const audiences = await fetchActiveAudiences(brandId, headers);
+    const byId = new Map<string, AudienceContactability>();
+    for (const a of audiences) {
+      byId.set(a.id, {
+        sizeCount: finiteOrNull(a.sizeCount),
+        availableToContactCount: finiteOrNull(a.availableToContactCount),
+      });
+    }
+    return byId;
+  } catch (err) {
+    console.error(
+      `[features-service] audience contactability read failed for brand=${brandId} — remaining-to-contact is unreadable, not 0:`,
       err,
     );
     return null;

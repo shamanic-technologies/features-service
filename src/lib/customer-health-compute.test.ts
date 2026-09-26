@@ -158,6 +158,12 @@ function makeDeps(fixtures: {
     audiences?: AudienceStatsRow[];
     workflow?: WorkflowProjectionResponse["rows"];
     throwOwnership?: boolean;
+    /**
+     * human-service's per-audience pool + remaining. Absent → derived from the audience rows as if
+     * human-service agreed with the served-minus-contacted backlog (keeps the older cases' numbers);
+     * `null` → the read failed.
+     */
+    pool?: Record<string, { sizeCount: number | null; availableToContactCount: number | null }> | null;
     budgetHistory?: BudgetChangeEntry[];
     pauseHistory?: PauseTransition[];
     budgetHistoryThrow?: boolean;
@@ -205,6 +211,22 @@ function makeDeps(fixtures: {
       // the basis. ROI/CAC on the row ride `committedCostUsd`.
       return { committedCostUsd: r.committedCostUsd ?? r.actualCostUsd, ...r };
     },
+    audienceContactability: async (brandId) => {
+      const f = fixtures.perBrand[brandId];
+      if (f?.pool === null) return null;
+      const map = new Map<string, { sizeCount: number | null; availableToContactCount: number | null }>();
+      if (f?.pool) {
+        for (const [id, c] of Object.entries(f.pool)) map.set(id, c);
+      } else {
+        for (const r of f?.audiences ?? []) {
+          map.set(r.audienceId, {
+            sizeCount: r.evidence.memberCount,
+            availableToContactCount: Math.max(r.evidence.memberCount - r.evidence.contacted, 0),
+          });
+        }
+      }
+      return map;
+    },
     audienceStats: async (_f, brandId) => {
       const a = fixtures.perBrand[brandId]?.audiences;
       return a ? audienceEnvelope(brandId, a) : null;
@@ -224,6 +246,81 @@ function makeDeps(fixtures: {
     },
   };
 }
+
+describe("customer-health audience pool is human-service's remaining, never served-minus-contacted", () => {
+  const base = { economics: econ(100), funnels: ["website_purchases"] as SalesFunnelKey[], revenue: { actualCostUsd: 50, expectedPipelineUsd: 200, roiMultiple: 4, cacPct: 25 }, workflow: [] };
+
+  it("a brand that has emailed everyone it was served reads the pool left, not 0 (the Living Vital case)", async () => {
+    const deps = makeDeps({
+      accounts: [account({ orgId: "lv", brandId: "blv", status: "active", runningDailyBudgetUsd: 20 })],
+      recencies: [recency("lv", "2026-07-14")],
+      perBrand: {
+        // served 45, contacted 45 → backlog 0; human-service says 361 of 500 still servable
+        blv: { ...base, audiences: [audienceRow("a1", 45, 45, 300)], pool: { a1: { sizeCount: 500, availableToContactCount: 361 } } },
+      },
+    });
+    const row = (await buildCustomerHealthBoard(COLD_CSV, NOW, deps)).customers[0];
+    expect(row.audiences.totalRemaining).toBe(361);
+    expect(row.audiences.totalSize).toBe(500);
+    expect(row.audiences.pctUsed).toBeCloseTo(27.8, 1);
+    expect(row.audiences.servedNotContacted).toBe(0);
+    expect(row.audiences.poolUnreadableReason).toBeNull();
+    expect(row.bestAudience).toMatchObject({ size: 500, remaining: 361 });
+    expect(row.health.inputs.audienceNearExhausted).toBe(false);
+  });
+
+  it("sums EVERY active audience human-service lists, including one with no evidence yet", async () => {
+    const deps = makeDeps({
+      accounts: [account({ orgId: "s", brandId: "bs", status: "active" })],
+      recencies: [recency("s", "2026-07-14")],
+      perBrand: {
+        bs: {
+          ...base,
+          audiences: [audienceRow("a1", 10, 10, 300)],
+          pool: { a1: { sizeCount: 1000, availableToContactCount: 600 }, fresh: { sizeCount: 400, availableToContactCount: 400 } },
+        },
+      },
+    });
+    const row = (await buildCustomerHealthBoard(COLD_CSV, NOW, deps)).customers[0];
+    expect(row.audiences).toMatchObject({ count: 2, totalSize: 1400, totalRemaining: 1000 });
+  });
+
+  it("a brand whose active audiences are all served out reads 0 remaining and 100% used", async () => {
+    const deps = makeDeps({
+      accounts: [account({ orgId: "z", brandId: "bz", status: "active" })],
+      recencies: [recency("z", "2026-07-14")],
+      perBrand: {
+        bz: { ...base, audiences: [audienceRow("a1", 100, 10, 300)], pool: { a1: { sizeCount: 200, availableToContactCount: 0 }, a2: { sizeCount: 50, availableToContactCount: 0 } } },
+      },
+    });
+    const row = (await buildCustomerHealthBoard(COLD_CSV, NOW, deps)).customers[0];
+    expect(row.audiences.totalRemaining).toBe(0);
+    expect(row.audiences.pctUsed).toBe(100);
+    expect(row.health.inputs.audienceNearExhausted).toBe(true);
+  });
+
+  it("an unreadable human-service list states null with a reason, never 0", async () => {
+    const deps = makeDeps({
+      accounts: [account({ orgId: "u", brandId: "bu", status: "active" })],
+      recencies: [recency("u", "2026-07-14")],
+      perBrand: { bu: { ...base, audiences: [audienceRow("a1", 100, 100, 300)], pool: null } },
+    });
+    const row = (await buildCustomerHealthBoard(COLD_CSV, NOW, deps)).customers[0];
+    expect(row.audiences).toMatchObject({ totalSize: null, totalRemaining: null, pctUsed: null, poolUnreadableReason: "human_service_unreadable" });
+    expect(row.bestAudience).toMatchObject({ size: null, remaining: null, pctRemaining: null });
+    expect(row.health.inputs.audienceNearExhausted).toBe(false);
+  });
+
+  it("an audience whose counts human-service did not state makes the sum unreadable rather than partial", async () => {
+    const deps = makeDeps({
+      accounts: [account({ orgId: "p", brandId: "bp", status: "active" })],
+      recencies: [recency("p", "2026-07-14")],
+      perBrand: { bp: { ...base, audiences: [], pool: { a1: { sizeCount: 100, availableToContactCount: 50 }, a2: { sizeCount: null, availableToContactCount: null } } } },
+    });
+    const row = (await buildCustomerHealthBoard(COLD_CSV, NOW, deps)).customers[0];
+    expect(row.audiences).toMatchObject({ totalRemaining: null, poolUnreadableReason: "counts_not_stated" });
+  });
+});
 
 describe("buildCustomerHealthBoard", () => {
   it("composes a GREEN row: active, ROI>=1, audience not near-exhausted; economics coherent", async () => {
@@ -265,7 +362,7 @@ describe("buildCustomerHealthBoard", () => {
     expect(row.conversionTracker.inferred).toBe(true);
 
     // audiences rollup: size 150, contacted 60, remaining 90, pctUsed 40
-    expect(row.audiences).toEqual({ count: 2, totalSize: 150, totalRemaining: 90, pctUsed: 40 });
+    expect(row.audiences).toEqual({ count: 2, totalSize: 150, totalRemaining: 90, pctUsed: 40, servedNotContacted: 90, poolUnreadableReason: null });
     // best audience = lowest cpc (aud1 500) — sorted first in the envelope we pass; cac=5.00
     expect(row.bestAudience).toEqual({ audienceId: "aud1", name: "Aud aud1", cacUsd: 5, size: 100, remaining: 80, pctRemaining: 80 });
 
