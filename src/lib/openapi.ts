@@ -1627,7 +1627,7 @@ const brandContactedValueResponseSchema = z.object({
   lifetimeRevenueUsd: z.number().nullable().describe("The client value every figure is priced on — the same LTR the brand's pipeline uses. Null at cold start."),
   contactedToPaidClientPct: z.number().nullable().describe("P(paid client | contacted), 0..100, for a lead no human ruled out of a route. Null exactly when `unmeasuredReason` is set."),
   perLeadExpectedValueUsd: z.number().nullable().describe("LTR × that probability."),
-  totalExpectedValueUsd: z.number().nullable().describe("Company-level total over the brand's contacted-only leads: people of one organisation combined as independent shots at ONE client, then summed over organisations. NOT part of totalPipelineUsd, ROI or any cost of acquisition."),
+  totalExpectedValueUsd: z.number().nullable().describe("Company-level total over the brand's contacted-only leads, on the pipeline's own rule: each organisation at its most valuable member, summed over organisations. It IS what these leads add to the brand's totalPipelineUsd (and so to ROI / cost of acquisition); expired leads count 0."),
   unmeasuredReason: z.enum(["no_economics", "no_client_value", "no_entry_path", "no_entry_rate"]).nullable(),
   routes: z.array(z.object({
     signal: z.string().describe("The engine signal of the entry route (`clicked`, `positiveReply`)."),
@@ -1641,14 +1641,21 @@ const brandContactedValueResponseSchema = z.object({
   })),
   matureBefore: z.string(),
   maturityDays: z.number(),
+  expiryDays: z.number().describe("A contacted lead whose LAST email sent is older than this many days (or who was never sent one) is worth 0."),
+  lastSentOnOrAfter: z.string().describe("Leads whose last send is strictly before this instant have expired."),
   minBrandOutcomes: z.number(),
   population: z.object({
     contactedOnly: z.number().describe("Contacted leads with no conversion signal (no click, no reply, no meeting, no signup, no form, no sale) that did not bounce or unsubscribe."),
     organizations: z.number(),
     engaged: z.number().describe("Contacted leads that engaged — their value, if any, is the pipeline's."),
     cannotConvert: z.number().describe("Contacted leads that bounced or unsubscribed."),
+    expired: z.number().describe("Contacted-only leads with no email sent in the last `expiryDays` days — valued at 0."),
   }),
-  leads: z.array(z.object({ leadId: z.string(), expectedValueUsd: z.number().nullable() })).describe("One page of contacted-only leads, ordered by lead id."),
+  leads: z.array(z.object({
+    leadId: z.string(),
+    expectedValueUsd: z.number().nullable().describe("The value this lead carries in the pipeline; 0 when expired."),
+    expired: z.boolean().describe("No email sent in the last `expiryDays` days (or never sent)."),
+  })).describe("One page of contacted-only leads, ordered by lead id."),
   nextCursor: z.string().nullable(),
 });
 const brandContactedValueResponseRef = registry.register("BrandContactedValueResponse", brandContactedValueResponseSchema);
@@ -1658,7 +1665,7 @@ registry.registerPath({
   path: "/brands/{brandId}/contacted-value",
   summary: "What a brand's contacted-but-not-yet-engaged leads are worth in expectation",
   description:
-    "A SEPARATE figure, added to no pipeline, ROI or cost figure. value = LTR × P(paid client | contacted), where P combines the brand's entry routes (click, positive reply) as independent shots at one close: P(route | contacted) × P(paid client | route). P(paid client | route) and the LTR are the byte-same ladder and value the brand's pipeline prices an engaged lead on, so a lead that engages moves onto the pipeline at the price this read forecast through. Paged: `limit`/`cursor`, or `leadIds` to price exactly the cards on screen; the summary rides every page.",
+    "The SAME value these leads carry in the brand's pipeline (and so its ROI / cost of acquisition), at every grain, until 30 days after the last email SENT to the lead. value = LTR × P(paid client | contacted), where P combines the brand's entry routes (click, positive reply) as independent shots at one close: P(route | contacted) × P(paid client | route). P(paid client | route) and the LTR are the byte-same ladder and value the brand's pipeline prices an engaged lead on, so a lead that engages moves onto the pipeline at the price this read forecast through. Paged: `limit`/`cursor`, or `leadIds` to price exactly the cards on screen; the summary rides every page.",
   tags: ["Stats"],
   request: {
     headers: identityHeaders,

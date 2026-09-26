@@ -487,7 +487,11 @@ export function dedupPersonsByLead(rows: EnginePerson[]): EnginePerson[] {
     if (row.signalDates) {
       existing.signalDates = existing.signalDates ?? {};
       for (const [key, value] of Object.entries(row.signalDates)) {
-        existing.signalDates[key] = minDate(existing.signalDates[key] ?? null, value ?? null);
+        // Every signal date is a FIRST occurrence (MIN) — except the last email sent, which is a LAST.
+        existing.signalDates[key] =
+          key === "lastSent"
+            ? maxDate(existing.signalDates[key] ?? null, value ?? null)
+            : minDate(existing.signalDates[key] ?? null, value ?? null);
       }
     }
     if (!existing.orgId && row.orgId) {
@@ -545,6 +549,82 @@ export function combineIndependent(evs: number[], closeValueUsd: number): number
   return closeValueUsd * (1 - surviveProduct);
 }
 
+/** Signals that mean a contacted lead did something beyond receiving the email. */
+export const ENGAGED_SIGNALS = [
+  "clicked",
+  "positiveReply",
+  "negativeReply",
+  "neutralReply",
+  "meeting",
+  "meetingAttended",
+  "closeWin",
+  "signup",
+  "formSubmission",
+] as const;
+
+/**
+ * Contacted, able to convert (no bounce, no unsubscribe) and no conversion signal of any kind yet. An
+ * opener is still contacted-only: an open is a delivery milestone, not a funnel leg.
+ */
+export function isContactedOnly(person: EnginePerson): boolean {
+  if (!person.signals.contacted) return false;
+  if (person.signals.bounced || person.signals.unsubscribed) return false;
+  return !ENGAGED_SIGNALS.some((s) => person.signals[s]);
+}
+
+/** How long after the LAST email sent a contacted lead with no signal still carries value. */
+export const CONTACTED_VALUE_EXPIRY_DAYS = 30;
+
+/** The instant before which a contacted lead's last send has expired. */
+export function contactedExpiryCutoffIso(now: Date): string {
+  return new Date(now.getTime() - CONTACTED_VALUE_EXPIRY_DAYS * 86_400_000).toISOString();
+}
+
+/**
+ * WHAT A CONTACTED LEAD WHO HAS NOT ENGAGED IS WORTH, inside the pipeline.
+ *
+ * `value = combineIndependent over the entry routes r of P(r | contacted) × pathValue(r)` — the same
+ * formula `lib/contacted-value.ts` serves, on the same paths as every engaged lead, so a lead that
+ * clicks moves from `P(click | contacted) × pathValue` to `pathValue`, never onto another price.
+ *
+ * It EXPIRES: measured on the whole fleet, every positive reply and every click landed within 30 days
+ * of the last email sent before it, so a lead whose last SENT email (`signalDates.lastSent`, the
+ * provider's per-step sent event) is older than `CONTACTED_VALUE_EXPIRY_DAYS` — or who was never sent
+ * one — is worth nothing. Engaged leads are untouched by this.
+ */
+export interface ContactedPricing {
+  /** P(entry step | contacted), 0..100, per engine signal (`clicked`, `positiveReply`). */
+  entryRatePct: Readonly<Record<string, number>>;
+  /** ISO instant: a last send strictly before this has expired. */
+  lastSentOnOrAfter: string;
+}
+
+/** The value of a contacted-only lead, or 0 when it has expired / no route is priced. PURE. */
+export function contactedLeadValue(
+  person: EnginePerson,
+  paths: readonly ResolvedPath[],
+  closeValueUsd: number,
+  pricing: ContactedPricing,
+): number {
+  if (!isContactedOnly(person)) return 0;
+  const lastSent = person.signalDates?.lastSent ?? null;
+  if (!lastSent || lastSent < pricing.lastSentOnOrAfter) return 0;
+  const statedValueUsd =
+    typeof person.valueUsd === "number" && Number.isFinite(person.valueUsd) && person.valueUsd >= 0
+      ? person.valueUsd
+      : null;
+  const scale = statedValueUsd !== null && closeValueUsd > 0 ? statedValueUsd / closeValueUsd : 1;
+  const dead = new Set(person.deadSignals ?? []);
+  const evs: number[] = [];
+  for (const path of paths) {
+    if (!path.engagementRoute || dead.has(path.signal)) continue;
+    const rate = pricing.entryRatePct[path.signal];
+    if (typeof rate !== "number" || !Number.isFinite(rate)) continue;
+    evs.push((rate / 100) * path.expectedRevenueUsd * scale);
+  }
+  return combineIndependent(evs, closeValueUsd * scale);
+}
+
 /**
  * Per-person EV — mutually-exclusive positions (meeting, closeWin) contribute via MAX; paths flagged
  * `engagementRoute` (click + reply) are combined as independent probabilities bounded by
@@ -560,6 +640,7 @@ function evForPerson(
   paths: ResolvedPath[],
   milestones: readonly FunnelMilestone[],
   closeValueUsd: number,
+  contacted?: ContactedPricing | null,
 ): PersonEv {
   let maxPositionEv = 0;
   const routeEvs: number[] = [];
@@ -629,7 +710,11 @@ function evForPerson(
   // would add the forecast of an event to the event itself. A `max` alone would not do it: a brand
   // whose self-serve rate beats its booked→paid rate can have the click route out-value the meeting the
   // lead is actually sitting in.
-  const ev = reachedPosition ? maxPositionEv : combineIndependent(routeEvs, scaledCloseValueUsd);
+  let ev = reachedPosition ? maxPositionEv : combineIndependent(routeEvs, scaledCloseValueUsd);
+  // A contacted lead that has not engaged: what its outreach is already worth, until it expires.
+  if (contacted && !reachedPosition && routeEvs.length === 0) {
+    ev = contactedLeadValue(person, paths, closeValueUsd, contacted);
+  }
 
   const tags = legTags.length > 0 ? legTags : furthestMilestoneTag ? [furthestMilestoneTag] : [];
   return { person, ev, tags, date, firedEvents, reachedMilestone: furthestMilestoneTag !== null };
@@ -653,6 +738,11 @@ export function computeRevenue(
   rawPersons: EnginePerson[],
   closeValueUsd = 0,
   milestones: readonly FunnelMilestone[] = [],
+  /**
+   * How a contacted lead that has not engaged is priced (see `ContactedPricing`). Omitted / null →
+   * such a lead is worth nothing, as a bare delivery always was.
+   */
+  contacted: ContactedPricing | null = null,
 ): RevenueResult {
   const persons = dedupPersonsByLead(rawPersons);
 
@@ -668,7 +758,7 @@ export function computeRevenue(
   // delivery milestone — the milestone-only lead carries 0 and is filtered out of the organizations,
   // the time series and the total below, but stays in `leads[]` so the count series stay whole.
   const scored = persons
-    .map((person) => evForPerson(person, paths, milestones, closeValueUsd))
+    .map((person) => evForPerson(person, paths, milestones, closeValueUsd, contacted))
     .filter((p) => p.ev > 0 || p.reachedMilestone);
 
   // Leads table — one row per engaged person.

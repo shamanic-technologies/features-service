@@ -2,8 +2,8 @@
  * GET /brands/:brandId/contacted-value — what the brand's contacted-but-not-yet-engaged leads are worth
  * in expectation (`lib/contacted-value.ts`), per lead and as a company-level total.
  *
- * A SEPARATE figure: it is added to no pipeline, no ROI, no cost of acquisition and no existing body.
- * Priced on the byte-same inputs the brand's `/brands/:brandId/revenue` pipeline is priced on — the same
+ * The SAME figure the pipeline counts for these leads (their value is added to the pipeline and the
+ * ROI at every grain, until the lead's last send is 30 days old — `lib/revenue-engine.ts`). Priced on the byte-same inputs the brand's `/brands/:brandId/revenue` pipeline is priced on — the same
  * channels, the same funnel definition, the same declared-funnel economics and LTR, the same engine
  * paths restricted to the same legs, the same lead population and overlays — so a contacted lead that
  * engages moves onto the pipeline at the price this read was already forecasting through.
@@ -28,7 +28,13 @@ import { fetchObservedStepFacts, type ObservedStepFacts } from "../lib/observed-
 import { fetchQualifications } from "../lib/qualifications-client.js";
 import { fetchConversionEmails } from "../lib/conversion-emails-client.js";
 import { applySignalOverlays } from "../lib/signal-overlays.js";
-import { dedupPersonsByLead, type EnginePerson, type ResolvedPath } from "../lib/revenue-engine.js";
+import {
+  contactedExpiryCutoffIso,
+  dedupPersonsByLead,
+  type ContactedPricing,
+  type EnginePerson,
+  type ResolvedPath,
+} from "../lib/revenue-engine.js";
 import { DEFAULT_PRICED_CAUSES, type OutcomeCause } from "../lib/outcome-cause.js";
 import { fetchPublicEmailStats } from "../lib/public-stats-clients.js";
 import {
@@ -184,6 +190,55 @@ export function pageContactedValue(result: ContactedValueResult, page: PageQuery
   return { ...summary, leads: slice, nextCursor: next < leads.length ? String(next) : null };
 }
 
+/**
+ * The brand's contacted-value figure through its ONE Gold cell — shared by this route and by every
+ * pipeline read (`contactedPricingSoft`), so the Contacted column and the pipeline can never be priced
+ * off two different entry rates.
+ */
+export async function getBrandContactedValue(brandId: string, headers: DownstreamHeaders): Promise<ContactedValueResult> {
+  // Keyed on what moves the figure without a query parameter moving: the channel set, the declared
+  // funnels and the economics (an economics write lands on a new cell, never replays the old price).
+  const channels = await resolveBrandChannels(brandId, headers);
+  const [declared, effective] = await Promise.all([
+    fetchDeclaredFunnelsSoft(brandId, headers.orgId),
+    fetchEffectiveEconomics(brandId, headers),
+  ]);
+  const priced = priceOnDeclaredFunnel(declared, effective);
+  return servedCached({
+    view: "brand-contacted-value",
+    scopeKey: buildScopeKey(brandId, {
+      orgId: headers.orgId,
+      channels: brandFeatureSlugs(channels).join("+"),
+      decl: declared.map((f) => f.funnelKey).sort().join("+") || "none",
+      econ: economicsFingerprint(priced.economics),
+      m: "contacted-value-v2",
+    }),
+    orgId: headers.orgId,
+    compute: () => computeBrandContactedValue(brandId, { orgId: headers.orgId, userId: headers.userId, runId: headers.runId }, { channels, declared, effective }),
+  });
+}
+
+/**
+ * How a pipeline read prices this brand's contacted-but-not-engaged leads: the brand's entry rates
+ * (P(click | contacted), P(positive reply | contacted), measured brand-wide, else the fleet's) and the
+ * 30-day last-send expiry. FAIL-SOFT with a loud log, like every other per-lead enrichment of the
+ * pipeline: unreadable → null → those leads carry nothing, never a guessed rate.
+ */
+export async function contactedPricingSoft(brandId: string, headers: DownstreamHeaders): Promise<ContactedPricing | null> {
+  try {
+    const result = await getBrandContactedValue(brandId, headers);
+    if (result.unmeasuredReason !== null) return null;
+    const entryRatePct: Record<string, number> = {};
+    for (const route of result.routes) if (route.entryRatePct !== null) entryRatePct[route.signal] = route.entryRatePct;
+    return { entryRatePct, lastSentOnOrAfter: contactedExpiryCutoffIso(new Date()) };
+  } catch (err) {
+    console.warn(
+      `[features-service] contacted-lead pricing unreadable for brand ${brandId} — contacted leads add nothing to this pipeline: ${(err as Error).message}`,
+    );
+    return null;
+  }
+}
+
 router.get("/brands/:brandId/contacted-value", apiKeyAuth, async (rawReq, res) => {
   const req = rawReq as unknown as AuthenticatedRequest;
   const brandId = rawReq.params.brandId as string;
@@ -191,26 +246,7 @@ router.get("/brands/:brandId/contacted-value", apiKeyAuth, async (rawReq, res) =
   if ("error" in page) return res.status(400).json({ error: page.error });
   const headers: DownstreamHeaders = { orgId: req.orgId, userId: req.userId, runId: req.runId };
   try {
-    // Keyed on what moves the figure without a query parameter moving: the channel set, the declared
-    // funnels and the economics (an economics write lands on a new cell, never replays the old price).
-    const channels = await resolveBrandChannels(brandId, headers);
-    const [declared, effective] = await Promise.all([
-      fetchDeclaredFunnelsSoft(brandId, headers.orgId),
-      fetchEffectiveEconomics(brandId, headers),
-    ]);
-    const priced = priceOnDeclaredFunnel(declared, effective);
-    const result = await servedCached({
-      view: "brand-contacted-value",
-      scopeKey: buildScopeKey(brandId, {
-        orgId: headers.orgId,
-        channels: brandFeatureSlugs(channels).join("+"),
-        decl: declared.map((f) => f.funnelKey).sort().join("+") || "none",
-        econ: economicsFingerprint(priced.economics),
-        m: "contacted-value-v1",
-      }),
-      orgId: headers.orgId,
-      compute: () => computeBrandContactedValue(brandId, headers, { channels, declared, effective }),
-    });
+    const result = await getBrandContactedValue(brandId, headers);
     return res.json({ brandId, ...pageContactedValue(result, page) });
   } catch (error) {
     if (error instanceof BrandHasNoChannelsError) {
