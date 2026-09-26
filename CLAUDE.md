@@ -101,6 +101,28 @@ read 6/26 instead of 5/26.
 - Across a lead's campaigns the earliest standing date wins. Legacy source kept; no lead special-cased.
 - Guard: `src/lib/qualifications-client.test.ts`. (Set 2026-09-26.)
 
+## WAVE C3 — NOTHING HERE READS A CAMPAIGN'S `funnelKey`; a campaign IDENTITY is (org, brand, offer, leg, channel)
+
+campaign-service drops `Campaign.funnelKey` (and brand-service its frozen sales-funnels tables). Neither
+is read here any more — brand-service's `/sales-funnels` route was already unused since C1. Supersedes the
+"(org, brand, sales funnel, acquisition channel)" identity described in the sections below.
+
+- **`identityKeyOf` = campaign-service's own `uniq_campaigns_org_brand_offer_leg_channel`**, a missing
+  offer / leg pooled like the producer's `coalesce(..., '')`. `campaignIdentity.funnelKey` is GONE from
+  every body (no consumer read it — checked distribute.you + campaign-service). A row stating no leg is
+  its own leg-less family; NO leg is ever inferred for it (campaign-service migration 0059 backfilled
+  the 5 prod rows that stated a funnel and no leg, before dropping the column).
+- **Offer outcomes**: a leg-less campaign is `unattributedCampaignIds`; `legSource` is always `stated`
+  (`derived_from_funnel` retired). **Reading funnels**: the campaign-stated tie-break (rule 3) is gone —
+  nothing stated and nothing priceable ⇒ every candidate path, the engine's max deciding. **Showcase**:
+  the paths a brand sells = its reading paths over every offer (`fetchPricingFunnelsAllOffers`), not what
+  its campaign rows stated. **Learning**: the leg alone resolves the outcome.
+- **The word stays on PUBLISHED wire fields** (`funnelKey` on showcase / channel-funnel economics /
+  funnelSteps, `salesFunnels` on `/public/channels`, …): the landing and admin read them, so renaming them
+  here would break a customer surface. They name a catalogue PATH, not a sales funnel anybody declares.
+- Guards: `lib/campaign-identity.test.ts` (the key, leg-less pooling, a retired funnel on the row ignored),
+  `lib/offer-outcomes.test.ts`, `routes/showcase-funnels.test.ts`. (Set 2026-09-26.)
+
 ## WAVE C2 — THE FUNNEL-KEYED HTTP SURFACE IS GONE; `?funnel=` IS REFUSED (400 `funnel_retired`), NEVER IGNORED
 
 A fleet-wide search found no caller left, so wave C2 deleted: `GET /features/:slug/funnel-ranking` and its

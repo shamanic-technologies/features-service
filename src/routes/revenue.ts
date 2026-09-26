@@ -333,9 +333,8 @@ function fetchSpendCostParentsSoft(
  * funnel's legs alone; two things narrow it, in this precedence:
  *
  *   - a requested funnel (the public per-funnel reads) when the brand reads it, else
- *   - the funnel the CAMPAIGN itself states, on a campaign-scoped read. A campaign sells one funnel and
- *     campaign-service stores which (`campaignIdentity.funnelKey`), so a campaign's figures are that
- *     funnel's figures — not the brand's first declared one.
+ *   - on a campaign-scoped read, the reading funnels containing the campaign's own LEGS (wave C3: the
+ *     funnel a campaign row stated is retired and never read).
  *
  * THE TERMS. The narrowed funnel when there is one, else the brand's FIRST DECLARED funnel in
  * catalogue order — a deterministic pick over the brand's OWN declarations, not a default and not an

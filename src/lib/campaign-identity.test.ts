@@ -15,7 +15,8 @@ function row(over: Partial<CampaignIdentityRow> & { id: string }): CampaignIdent
     brandId: BRAND,
     featureSlug: "sales-cold-email-outreach",
     acquisitionChannel: "cold_email",
-    funnelKey: null,
+    offerId: "offer-1",
+    legKey: "start_to_conversation",
     status: "stopped",
     createdAt: "2026-06-01T00:00:00.000Z",
     ...over,
@@ -23,7 +24,7 @@ function row(over: Partial<CampaignIdentityRow> & { id: string }): CampaignIdent
 }
 
 describe("campaign identity", () => {
-  it("pools every campaign sharing (org, brand, funnel, channel) — the workflow is NOT part of it", () => {
+  it("pools every campaign sharing (org, brand, offer, leg, channel) — the workflow is NOT part of it", () => {
     // The exact shape of the reported prod case: one brand, one identity, dozens of stopped rows
     // left behind by workflow switches, and one live campaign.
     const rows = [
@@ -39,30 +40,36 @@ describe("campaign identity", () => {
     expect(families.identityOf("live")?.liveCampaignIds).toEqual(["live"]);
   });
 
-  it("keeps two funnels on one brand+channel apart, and neither is inferred from a goal", () => {
+  it("keeps two legs, and two offers, on one brand+channel apart", () => {
     const families = buildCampaignFamilies([
-      row({ id: "a", funnelKey: "sales_meetings_from_conversation" }),
-      row({ id: "b", funnelKey: "sales_meetings_from_website" }),
+      row({ id: "a", legKey: "start_to_conversation" }),
+      row({ id: "b", legKey: "start_to_website_visit" }),
+      row({ id: "c", offerId: "offer-2" }),
     ]);
-
-    // Both funnels answer to the goal `meetingBooked`; only the stated funnel separates them.
     expect(families.familyOf("a")).toEqual(["a"]);
     expect(families.familyOf("b")).toEqual(["b"]);
+    expect(families.familyOf("c")).toEqual(["c"]);
+    expect(families.identityOf("c")?.offerId).toBe("offer-2");
   });
 
-  it("keeps an UNSTATED funnel distinguishable from a stated one", () => {
+  it("pools the rows stating NO leg together, never onto a leg-stating campaign (the producer's coalesce)", () => {
+    // The prod shape wave C3 meets: a stopped pre-leg ancestor beside the live leg-stating campaign of
+    // the same (org, brand, offer, channel). No leg is ever inferred for it.
     const families = buildCampaignFamilies([
-      row({ id: "unstated-1", funnelKey: null }),
-      row({ id: "unstated-2", funnelKey: null }),
-      row({ id: "stated", funnelKey: "website_purchases" }),
+      row({ id: "legless-1", legKey: null }),
+      row({ id: "legless-2", legKey: null }),
+      row({ id: "stated", status: "ongoing" }),
     ]);
-
-    // The unstated ones pool together (campaign-service's own `coalesce(funnel_key,'')` key)…
-    expect(families.familyOf("unstated-1")).toEqual(["unstated-1", "unstated-2"]);
-    // …and never fold onto a campaign that DID state a funnel.
+    expect(families.familyOf("legless-1")).toEqual(["legless-1", "legless-2"]);
     expect(families.familyOf("stated")).toEqual(["stated"]);
-    expect(families.identityOf("unstated-1")?.funnelKey).toBeNull();
-    expect(families.identityOf("stated")?.funnelKey).toBe("website_purchases");
+    expect(families.identityOf("legless-1")?.legKeys).toEqual([]);
+    expect(families.identityOf("stated")?.legKeys).toEqual(["start_to_conversation"]);
+  });
+
+  it("the key is the producer's own index — a campaign row's retired funnel is not part of it", () => {
+    const withRetired = { ...row({ id: "a" }), funnelKey: "form_magnet" } as CampaignIdentityRow;
+    expect(identityKeyOf(withRetired)).toBe(identityKeyOf(row({ id: "a" })));
+    expect(identityKeyOf(row({ id: "a" }))).toBe("org-1|brand-1|offer-1|start_to_conversation|cold_email");
   });
 
   it("separates channels, brands and orgs", () => {
@@ -110,7 +117,6 @@ describe("campaign identity", () => {
     const view = describeIdentity(null, "unknown-1");
     expect(view).toEqual({
       key: "campaign:unknown-1",
-      funnelKey: null,
       acquisitionChannel: null,
       campaignIds: ["unknown-1"],
       liveCampaignIds: [],

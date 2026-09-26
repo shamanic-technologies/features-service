@@ -13,7 +13,6 @@ const row = (over: Partial<CampaignIdentityRow> & { id: string }): CampaignIdent
   orgId: "org-1",
   brandId: "b1",
   featureSlug: "sales-cold-email-outreach",
-  funnelKey: "sales_meetings_from_conversation",
   acquisitionChannel: "sales-cold-email-outreach",
   status: "ongoing",
   ...over,

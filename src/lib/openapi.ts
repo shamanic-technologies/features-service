@@ -29,12 +29,10 @@ const systemStatsSchema = z.object({
  * keyed on a campaign is therefore reported for the whole family, and each member id resolves to the
  * same, complete campaign. `representativeId` is the LIVE campaign when there is one, so a consumer
  * renders exactly ONE line per identity while the stopped ancestors it folds in stay listed in
- * `campaignIds`. `funnelKey` is null when the campaign states no sales funnel — a real state, and
- * never inferred from its goal (two funnels answer to one goal).
+ * `campaignIds`. The identity is campaign-service's own (org, brand, offer, leg, channel).
  */
 const campaignIdentitySchema = z.object({
   key: z.string().describe("Stable identity key. Opaque — compare it, do not parse it."),
-  funnelKey: z.string().nullable().describe("The sales funnel the campaign states, or null when it states none."),
   acquisitionChannel: z.string().nullable().describe("The channel it acquires through, e.g. cold_email."),
   campaignIds: z.array(z.string()).describe("Every campaign id answering to this identity, this one included."),
   liveCampaignIds: z.array(z.string()).describe("The members still ongoing — at most one."),
@@ -1309,7 +1307,7 @@ const offerOutcomeLegSchema = z.object({
   featureSlug: z.string().describe("The channel performing the leg."),
   channelName: z.string(),
   campaignIds: z.array(z.string()),
-  legSource: z.enum(["stated", "derived_from_funnel"]).describe("`derived_from_funnel`: a pre-leg campaign placed on the ONE leg its channel performs inside the funnel it states."),
+  legSource: z.enum(["stated"]).describe("Always `stated`: a campaign stating no leg is in `unattributedCampaignIds`."),
   countBasis: z.enum(["campaign_leads", "acted_leads", "offer_leads_at_step"]).describe("`campaign_leads`: an entry leg counts its own campaigns' leads. `acted_leads`: an internal leg's campaigns serve no lead of their own, so it counts the leads lead-service records its workers ANSWERED that reached its TO step, and its cost per outcome and ROI divide its spend by them. `offer_leads_at_step`: the degrade when that record is unreadable — the offer's leads at the TO step, not attributable to the channel, so cost per outcome and ROI read null with reason `not_attributable`."),
   ...outcomeFiguresShape,
 });
