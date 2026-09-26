@@ -18,6 +18,12 @@ import conversionRatesRoutes from "./routes/conversion-rates.js";
 import audienceStatsRoutes from "./routes/audience-stats.js";
 import publicRoutes, { warmFleetReturnSnapshotsOnBoot, warmShowcaseFunnelsOnBoot } from "./routes/public.js";
 import { registerSeedFeatures } from "./seed/register.js";
+import {
+  announceViewRefresherReady,
+  captureRequestReplay,
+  startViewRefresher,
+  viewCacheRole,
+} from "./lib/view-refresher.js";
 
 // ── Required env vars — crash at startup if missing ─────────────────────────
 import { validateRequiredEnv } from "./lib/env.js";
@@ -38,6 +44,8 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json());
+// Every view compute is asked of the refresher process (lib/view-refresher.ts), which needs the request.
+app.use(captureRequestReplay);
 
 // Routes
 app.use(healthRoutes);
@@ -68,13 +76,22 @@ app.use((err: Error, req: express.Request, res: express.Response, next: express.
 });
 
 // Only start server if not in test environment
-if (process.env.NODE_ENV !== "test") {
+if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
+  // The REFRESHER (forked by the server below): computes Gold views off the serving event loop. The
+  // server already migrated and seeded, and the boot warms are the server's; it only listens, locally.
+  app.listen(Number(PORT), "127.0.0.1", () => {
+    console.log(`[features-service] view refresher listening on 127.0.0.1:${PORT}`);
+    announceViewRefresherReady();
+  });
+} else if (process.env.NODE_ENV !== "test") {
   migrate(db, { migrationsFolder: "./drizzle" })
     .then(async () => {
       console.log("[features-service] Migrations complete");
       await registerSeedFeatures();
       app.listen(Number(PORT), "::", () => {
         console.log(`Features service running on port ${PORT}`);
+        // Fork the view refresher after the port binds: its boot must never hold up the health check.
+        startViewRefresher(process.argv[1]);
         // AFTER listen(), fire-and-forget: this is an O(brands) engine fan-out that takes MINUTES, so
         // awaiting it before the port bind would fail the deploy health check and roll the service back.
         warmFleetReturnSnapshotsOnBoot();

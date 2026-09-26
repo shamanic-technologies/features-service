@@ -2,6 +2,7 @@ import { and, desc, eq, isNull, lt, or } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { featureViewSnapshots } from "../db/schema.js";
 import { withLiveLeadCopy } from "./lead-copy.js";
+import { computeViaRefresher, forcedRefresh, refresherDelegation } from "./view-refresher.js";
 
 /**
  * Gold serving layer — stale-while-revalidate read-through cache for expensive feature views.
@@ -207,8 +208,27 @@ interface CachedViewArgs<T> {
 export async function servedCached<T>({ view, scopeKey, orgId, ttlMs, maxStaleMs, compute: rawCompute }: CachedViewArgs<T>): Promise<T> {
   // Every view compute reads leads through the live copy (lib/lead-copy.ts): these are the views a
   // customer polls, which is exactly the population the change feed exists for.
-  const compute = () => withLiveLeadCopy(rawCompute);
-  if (!cacheEnabled()) return compute();
+  const localCompute = () => withLiveLeadCopy(rawCompute);
+  if (!cacheEnabled()) return localCompute();
+  const family = familyKeyOf(scopeKey);
+  // Refresher role: the server asked for THIS cell to be computed and persisted — never served.
+  const answer = forcedRefresh(view, family);
+  if (answer) {
+    const body = await computeAndPersistSingleFlight(view, scopeKey, orgId, async () => ({ body: await localCompute(), persisted: false }));
+    answer(body);
+    return body;
+  }
+  // Server role, inside a request: every compute runs in the refresher process, never on the serving
+  // event loop (lib/view-refresher.ts). Outside a request (boot warms, fleet sweeps) it runs here.
+  const delegation = refresherDelegation(view, family);
+  const compute: () => Promise<Computed<T>> =
+    delegation
+      ? async () => {
+          const remote = await computeViaRefresher(delegation.url, delegation.headers);
+          // The refresher ran the same handler, which persisted the cell itself.
+          return remote ? { body: remote.body as T, persisted: true } : { body: await localCompute(), persisted: false };
+        }
+      : async () => ({ body: await localCompute(), persisted: false });
   const ttl = ttlMs ?? defaultTtlFor(view, scopeKey);
   const maxStale = maxStaleMs ?? defaultMaxStaleMs();
 
@@ -222,7 +242,7 @@ export async function servedCached<T>({ view, scopeKey, orgId, ttlMs, maxStaleMs
   } catch (err) {
     // Cache unreachable → fall through to the authoritative live compute (loud, not silent).
     console.error(`[features-service] view-cache read failed (computing live) view=${view}: ${(err as Error).message}`);
-    return compute();
+    return (await compute()).body;
   }
 
   if (row) {
@@ -241,7 +261,7 @@ export async function servedCached<T>({ view, scopeKey, orgId, ttlMs, maxStaleMs
   // Miss on the EXACT key. When the only thing that moved is a FINGERPRINT part (the economics or the
   // declaration the body is priced on), the previous cell of the SAME org + view + every other key part
   // is served NOW and the new cell is computed behind the response. See `familyKeyOf`.
-  const familyKey = familyKeyOf(scopeKey);
+  const familyKey = family;
   if (familyKey !== scopeKey) {
     let prior: { body: unknown } | undefined;
     try {
@@ -327,21 +347,29 @@ export function decodeSnapshotBody(stored: unknown): unknown {
   return stored;
 }
 
+/** A computed body, and whether the process that computed it already persisted it. */
+interface Computed<T> {
+  body: T;
+  persisted: boolean;
+}
+
 async function computeAndPersistSingleFlight<T>(
   view: string,
   scopeKey: string,
   orgId: string,
-  compute: () => Promise<T>,
+  compute: () => Promise<Computed<T>>,
 ): Promise<T> {
   const key = `${view}\0${scopeKey}`;
   const existing = inFlightComputes.get(key) as Promise<T> | undefined;
   if (existing) return existing;
 
   const promise = (async () => {
-    const body = await compute();
-    await upsertSnapshot(view, scopeKey, orgId, body).catch((err) => {
-      console.error(`[features-service] view-cache persist failed view=${view}: ${(err as Error).message}`);
-    });
+    const { body, persisted } = await compute();
+    if (!persisted) {
+      await upsertSnapshot(view, scopeKey, orgId, body).catch((err) => {
+        console.error(`[features-service] view-cache persist failed view=${view}: ${(err as Error).message}`);
+      });
+    }
     return body;
   })();
 
@@ -356,11 +384,17 @@ async function computeAndPersistSingleFlight<T>(
 }
 
 /** Background refresh of one stale cell. Single-flight via a conditional claim; never throws. */
-async function revalidate<T>(view: string, scopeKey: string, orgId: string, compute: () => Promise<T>): Promise<void> {
+async function revalidate<T>(view: string, scopeKey: string, orgId: string, compute: () => Promise<Computed<T>>): Promise<void> {
   try {
     const claimed = await claimRefresh(view, scopeKey);
     if (!claimed) return; // another request/replica is already refreshing this cell
-    const body = await compute();
+    const { body, persisted } = await compute();
+    if (persisted) {
+      // The refresher persisted under the key IT resolved; if an input moved in between, that is a
+      // different cell, so this one's claim is released here rather than left to expire.
+      await releaseRefresh(view, scopeKey);
+      return;
+    }
     await upsertSnapshot(view, scopeKey, orgId, body);
   } catch (err) {
     // Keep serving the stale body; release the claim so a later read can retry.
