@@ -64,7 +64,7 @@ describe("a brand-scoped pricing read of a brand selling several offers", () => 
 });
 
 describe("a campaign identity carries the offer its members sell", () => {
-  const base = { orgId: "org-1", brandId: "brand-1", featureSlug: "f", funnelKey: "website_purchases", acquisitionChannel: "cold_email" };
+  const base = { orgId: "org-1", brandId: "brand-1", featureSlug: "f", legKey: "start_to_website_visit", acquisitionChannel: "cold_email" };
 
   it("reads the offer off the members, so a campaign-scoped read can name it", () => {
     const families = buildCampaignFamilies([
@@ -76,12 +76,14 @@ describe("a campaign identity carries the offer its members sell", () => {
     expect(families.identityOf("old")?.offerId).toBe("offer-b");
   });
 
-  it("skips a member predating the column rather than pinning the identity to null", () => {
+  it("the offer is PART of the identity (campaign-service's own index): a member predating the column is not folded in", () => {
     const families = buildCampaignFamilies([
       { ...base, id: "old", status: "stopped", createdAt: "2026-07-01T00:00:00.000Z" },
       { ...base, id: "live", offerId: "offer-a", status: "ongoing", createdAt: "2026-09-01T00:00:00.000Z" },
     ]);
-    expect(families.identityOf("old")?.offerId).toBe("offer-a");
+    expect(families.identityOf("live")?.offerId).toBe("offer-a");
+    expect(families.familyOf("old")).toEqual(["old"]);
+    expect(families.identityOf("old")?.offerId).toBeNull();
   });
 
   it("is null when no member states one — a real state, never a default offer", () => {

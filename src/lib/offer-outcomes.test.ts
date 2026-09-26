@@ -49,11 +49,10 @@ const CATALOGUE: Record<string, AcquisitionChannel> = {
 };
 const channelOf = (slug: string) => CATALOGUE[slug] ?? null;
 
-const row = (id: string, featureSlug: string, legKey: string | null, funnelKey: string | null = null, offerId = OFFER): CampaignIdentityRow => ({
+const row = (id: string, featureSlug: string, legKey: string | null, offerId = OFFER): CampaignIdentityRow => ({
   id,
   featureSlug,
   legKey,
-  funnelKey,
   offerId,
 });
 
@@ -80,24 +79,24 @@ function person(leadId: string, campaignId: string, signals: Record<string, bool
 }
 
 describe("buildOfferLegPartition", () => {
-  it("groups by leg × channel, derives the one leg a pre-leg ancestor's channel performs, hides by-hand legs", () => {
+  it("groups by leg × channel, leaves a pre-leg ancestor unattributed (no leg is derived), hides by-hand legs", () => {
     const rows = [
       row("c1", "sales-cold-email-outreach", "start_to_conversation"),
-      row("c2", "sales-cold-email-outreach", null, "sales_meetings_from_conversation"), // derived
+      row("c2", "sales-cold-email-outreach", null), // pre-leg ancestor: unattributed since wave C3
       row("f1", "feedback-request-cold-email-outreach", "start_to_conversation"),
       row("a1", "ai-meeting-booking", "conversation_to_meeting_booked"),
       row("t1", "your-team-meeting-booking", "conversation_to_meeting_booked"),
       row("g1", "agency-meeting-booking", "conversation_to_meeting_booked"),
-      row("x1", "sales-cold-email-outreach", null, null), // no leg, no funnel
-      row("o1", "sales-cold-email-outreach", "start_to_conversation", null, "other-offer"),
+      row("x1", "sales-cold-email-outreach", null), // no leg
+      row("o1", "sales-cold-email-outreach", "start_to_conversation", "other-offer"),
     ];
     const p = buildOfferLegPartition(rows, OFFER, channelOf);
     expect(p.groups.map((g) => [g.legKey, g.featureSlug, g.campaignIds, g.legSource])).toEqual([
       ["start_to_conversation", "feedback-request-cold-email-outreach", ["f1"], "stated"],
-      ["start_to_conversation", "sales-cold-email-outreach", ["c1", "c2"], "derived_from_funnel"],
+      ["start_to_conversation", "sales-cold-email-outreach", ["c1"], "stated"],
       ["conversation_to_meeting_booked", "ai-meeting-booking", ["a1"], "stated"],
     ]);
-    expect(p.unattributedCampaignIds).toEqual(["x1"]);
+    expect(p.unattributedCampaignIds).toEqual(["c2", "x1"]);
     expect(p.hiddenCampaignIds).toEqual(["g1", "t1"]);
   });
 

@@ -70,9 +70,10 @@ import { matureBasisOf, type CostEconomics } from "../lib/cost-economics.js";
 import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel } from "./revenue.js";
 import { distinctChannelFunnels } from "./offer-economics.js";
 import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
+import { fetchPricingFunnelsAllOffers } from "../lib/reading-funnels.js";
 import { buildBrandChannels, brandFeatureSlugs } from "../lib/brand-channels.js";
 import {
-  brandSoldFunnels,
+  brandReadingFunnels,
   showcaseFunnelOf,
   type ShowcaseBrandFunnels,
   type ShowcaseFunnel,
@@ -2997,14 +2998,16 @@ async function computeShowcaseBrand(
   }
 
   const headers: DownstreamHeaders = { orgId };
-  // ONE campaign read per brand, reused for BOTH questions it answers: which channels the brand runs
-  // (the feature scope its evidence is read over) and which funnels its campaigns state they sell.
+  // Which channels the brand runs (the feature scope its evidence is read over).
   const rows = await fetchBrandCampaignRows(brandId, undefined, { orgId });
   const channels = buildBrandChannels(rows);
   if (channels.length === 0) {
     return { brand, funnels: [], measured: false, unmeasuredReason: "brand_has_no_channels" };
   }
-  const soldFunnels = brandSoldFunnels(rows);
+  // Which paths it sells through = the reading paths of the LEGS its campaigns perform, every offer —
+  // the same set every pricing read resolves (wave C3: the funnel a campaign row stated is retired).
+  // An unreadable leg economics read fails loud and lands on this brand's `read_failed`.
+  const soldFunnels = brandReadingFunnels(await fetchPricingFunnelsAllOffers(brandId, orgId));
   if (soldFunnels.length === 0) {
     return { brand, funnels: [], measured: false, unmeasuredReason: "no_funnel_sold" };
   }

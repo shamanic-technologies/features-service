@@ -187,8 +187,6 @@ export interface LearningCampaignInput {
   campaignIdentityKey: string | null;
   /** campaign-service's stated leg. */
   legKey: string | null;
-  /** campaign-service's stated funnel — the basis the leg is priced through when it contains the leg. */
-  funnelKey: string | null;
   live: boolean;
   /**
    * The campaign's raw counts of the two signals a grain observes. NULL for BOTH means the counts

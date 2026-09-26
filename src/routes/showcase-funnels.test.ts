@@ -77,7 +77,8 @@ process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
 const { __resetShowcaseFunnelsCache } = await import("./public.js");
-const { brandSoldFunnels } = await import("../lib/showcase-funnels.js");
+const { brandReadingFunnels } = await import("../lib/showcase-funnels.js");
+const { offerEconomicsFromDeclared } = await import("../lib/leg-economics-fixture.js");
 
 const DOC = "75d7e3e8-6926-4f85-a557-976895400666";
 const OPS = "6e21bb6c-67bc-45f3-8a6d-52230338d7e4";
@@ -135,8 +136,14 @@ const declaredFunnel = (funnelKey: string, steps: string[]) => ({
 
 const ALL_DECLARED = [
   declaredFunnel(CONVERSATION, ["Positive reply", "Meeting booked", "Meeting attended", "Paid client"]),
-  declaredFunnel(FORM, ["Website visit", "Form submitted", "Paid client"]),
+  {
+    ...declaredFunnel(FORM, ["Website visit", "Form submitted", "Paid client"]),
+    rates: { visitToFormSubmissionPct: 25, formSubmissionToPaidClientPct: 20 },
+  },
 ];
+
+/** The entry leg a campaign selling each fixture path performs. */
+const ENTRY_LEG: Record<string, string> = { [CONVERSATION]: "start_to_conversation", [FORM]: "start_to_website_visit" };
 
 const emailOf = (brandId: string, leadId: string) => `${brandId}-${leadId}@x.com`;
 
@@ -164,7 +171,10 @@ function lead(brandId: string, leadId: string, signal: "reply" | "click" | "none
 }
 
 interface BrandFixture {
-  /** The funnel this brand's campaigns state they sell. `null` = it states none. */
+  /**
+   * The path this brand sells through — its campaign performs that path's ENTRY leg and the brand
+   * states the path's onward rates. `null` = its campaign performs no leg.
+   */
   funnelKey: string | null;
   leads: Array<Record<string, unknown>>;
   /** lead ids a HUMAN stated reached each rung. */
@@ -253,7 +263,7 @@ function mockFetch(fixture: Fixture): void {
             orgId: `org-${brandId}`,
             brandId,
             featureSlug: PITCH,
-            funnelKey: row.funnelKey,
+            legKey: row.funnelKey ? ENTRY_LEG[row.funnelKey] : null,
             acquisitionChannel: PITCH,
             offerId: null,
             status: "ongoing",
@@ -263,7 +273,11 @@ function mockFetch(fixture: Fixture): void {
       });
     }
 
-    if (path.includes("/sales-funnels")) return json({ funnels: ALL_DECLARED });
+    if (path.includes("/offer-economics")) {
+      const brandId = path.split("/brands/")[1]?.split("/")[0] ?? "";
+      const key = fixture.brands[brandId]?.funnelKey;
+      return json(offerEconomicsFromDeclared(ALL_DECLARED.filter((f) => f.funnelKey === key)));
+    }
     if (path.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
 
     if (path.includes("/costs/timeseries")) return json({ buckets: [] });
@@ -814,24 +828,14 @@ describe("GET /public/stats/showcase-funnels", () => {
   });
 });
 
-describe("brandSoldFunnels", () => {
-  it("takes the funnels the campaigns THEMSELVES state, deduped, in catalogue order", () => {
+describe("brandReadingFunnels", () => {
+  it("takes the brand's reading paths, deduped, in catalogue order", () => {
     expect(
-      brandSoldFunnels([
-        { id: "a", funnelKey: FORM },
-        { id: "b", funnelKey: CONVERSATION },
-        { id: "c", funnelKey: CONVERSATION },
-      ]),
+      brandReadingFunnels([{ funnelKey: FORM }, { funnelKey: CONVERSATION }, { funnelKey: CONVERSATION }]),
     ).toEqual([CONVERSATION, FORM]);
   });
 
-  it("parks nothing on a default — a campaign stating no funnel, or an unknown word, contributes nothing", () => {
-    expect(brandSoldFunnels([{ id: "a", funnelKey: null }, { id: "b" }, { id: "c", funnelKey: "not_a_funnel" }])).toEqual(
-      [],
-    );
-  });
-
-  it("accepts a pre-retirement spelling, because the catalogue does", () => {
-    expect(brandSoldFunnels([{ id: "a", funnelKey: "reply_meeting" }])).toEqual([CONVERSATION]);
+  it("a brand whose campaigns perform no leg reads none — nothing is parked on a default", () => {
+    expect(brandReadingFunnels([])).toEqual([]);
   });
 });

@@ -221,7 +221,7 @@ describe("campaign figures are the campaign IDENTITY's figures", () => {
       expect(byId[id].campaignIdentity.representativeId).toBe("live");
       expect(byId[id].campaignIdentity.liveCampaignIds).toEqual(["live"]);
       // The funnel is UNSTATED here, and stays so — never inferred from the campaign's goal.
-      expect(byId[id].campaignIdentity.funnelKey).toBeNull();
+      expect(byId[id].campaignIdentity).not.toHaveProperty("funnelKey");
       expect(byId[id].campaignIdentity.acquisitionChannel).toBe("cold_email");
     }
 

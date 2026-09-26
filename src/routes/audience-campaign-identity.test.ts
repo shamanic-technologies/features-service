@@ -112,10 +112,10 @@ const LEGS: Leg[] = [
 ];
 
 const CAMPAIGN_ROWS = [
-  { id: LIVE, orgId: "org-1", brandId: "brand-1", featureSlug: FEATURE.slug, funnelKey: "sales_meetings_from_conversation", acquisitionChannel: "cold_email", offerId: "offer-1", status: "ongoing", createdAt: "2026-09-01T00:00:00.000Z" },
-  { id: OLD_1, orgId: "org-1", brandId: "brand-1", featureSlug: FEATURE.slug, funnelKey: "sales_meetings_from_conversation", acquisitionChannel: "cold_email", offerId: "offer-1", status: "stopped", createdAt: "2026-08-01T00:00:00.000Z" },
-  { id: OLD_2, orgId: "org-1", brandId: "brand-1", featureSlug: FEATURE.slug, funnelKey: "sales_meetings_from_conversation", acquisitionChannel: "cold_email", offerId: "offer-1", status: "stopped", createdAt: "2026-07-01T00:00:00.000Z" },
-  { id: SOLO, orgId: "org-1", brandId: "brand-1", featureSlug: FEATURE.slug, funnelKey: "website_purchases", acquisitionChannel: "cold_email", offerId: "offer-1", status: "ongoing", createdAt: "2026-08-15T00:00:00.000Z" },
+  { id: LIVE, orgId: "org-1", brandId: "brand-1", featureSlug: FEATURE.slug, legKey: "start_to_conversation", acquisitionChannel: "cold_email", offerId: "offer-1", status: "ongoing", createdAt: "2026-09-01T00:00:00.000Z" },
+  { id: OLD_1, orgId: "org-1", brandId: "brand-1", featureSlug: FEATURE.slug, legKey: "start_to_conversation", acquisitionChannel: "cold_email", offerId: "offer-1", status: "stopped", createdAt: "2026-08-01T00:00:00.000Z" },
+  { id: OLD_2, orgId: "org-1", brandId: "brand-1", featureSlug: FEATURE.slug, legKey: "start_to_conversation", acquisitionChannel: "cold_email", offerId: "offer-1", status: "stopped", createdAt: "2026-07-01T00:00:00.000Z" },
+  { id: SOLO, orgId: "org-1", brandId: "brand-1", featureSlug: FEATURE.slug, legKey: "start_to_website_visit", acquisitionChannel: "cold_email", offerId: "offer-1", status: "ongoing", createdAt: "2026-08-15T00:00:00.000Z" },
 ];
 
 const IDENTITY_MEMBERS = [LIVE, OLD_1, OLD_2].sort();
@@ -290,7 +290,7 @@ describe("a campaign-scoped /audience-stats read answers for the campaign IDENTI
     expect(body.campaignIdentity.campaignIds).toEqual(IDENTITY_MEMBERS);
     expect(body.campaignIdentity.liveCampaignIds).toEqual([LIVE]);
     expect(body.campaignIdentity.representativeId).toBe(LIVE);
-    expect(body.campaignIdentity.funnelKey).toBe("sales_meetings_from_conversation");
+    expect(body.campaignIdentity).not.toHaveProperty("funnelKey");
     expect(body.campaignIdentity.acquisitionChannel).toBe("cold_email");
   });
 

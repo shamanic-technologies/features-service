@@ -72,8 +72,6 @@ export function readingFunnelsForLegs(
   legKeys: readonly string[],
   statedLeg: (from: ChannelStepKey, to: ChannelStepKey) => boolean,
   ownPathScore: (funnelKey: SalesFunnelKey, fromStep: ChannelStepKey) => number | null,
-  /** The funnels the scope's campaign rows still state (C1 compatibility; the column dies in C2). */
-  hintedFunnels: ReadonlySet<SalesFunnelKey> = new Set(),
 ): SalesFunnelKey[] {
   const out = new Set<SalesFunnelKey>();
   const performed = new Set(legKeys.map((k) => matchFunnelLegKey(k)).filter((k): k is string => k !== null));
@@ -120,13 +118,7 @@ export function readingFunnelsForLegs(
       out.add(best.f);
       continue;
     }
-    // 3. The funnel the scope's campaign rows still state — C1 compatibility only, gone with the column.
-    const hinted = branching.filter((f) => hintedFunnels.has(f));
-    if (hinted.length > 0) {
-      for (const f of hinted) out.add(f);
-      continue;
-    }
-    // 4. Nothing to choose on: every candidate, the engine's own max deciding — never a guessed one.
+    // 3. Nothing to choose on: every candidate, the engine's own max deciding — never a guessed one.
     for (const f of branching) out.add(f);
   }
   return [...out].sort(byCatalogue);
@@ -162,17 +154,6 @@ function channelOf(slug: string): AcquisitionChannel | null {
  * the offer's history), every channel including the customer-operated ones (they perform a leg of the
  * offer too). Same leg resolution as the offer's outcome read.
  */
-/** PURE: the funnels ONE offer's campaign rows state (C1 compatibility hint; the column dies in C2). */
-export function offerStatedFunnels(rows: readonly CampaignIdentityRow[], offerId: string, soleOffer = false): Set<SalesFunnelKey> {
-  const out = new Set<SalesFunnelKey>();
-  for (const r of rows) {
-    if ((r.offerId ?? (soleOffer ? offerId : null)) !== offerId || !r.funnelKey) continue;
-    const key = matchSalesFunnelKey(r.funnelKey);
-    if (key) out.add(key);
-  }
-  return out;
-}
-
 export function offerLegKeys(
   rows: readonly CampaignIdentityRow[],
   offerId: string,
@@ -182,7 +163,7 @@ export function offerLegKeys(
   const scoped = soleOffer ? rows.map((r) => (r.offerId ? r : { ...r, offerId })) : rows;
   // Every channel's leg counts HERE, including the ones a person performs: the outcome read hides those
   // from its rows, but their leg is still a leg this offer runs. Reading the partition with the channel
-  // stripped keeps its leg resolution (stated, else derived from the row's funnel) and nothing else.
+  // stripped keeps its leg resolution (the leg the row states) and nothing else.
   const partition = buildOfferLegPartition(scoped, offerId, (slug) => {
     const channel = channelOf(slug);
     return channel ? { ...channel, performedBy: "software" as const } : channel;
@@ -268,21 +249,15 @@ export async function fetchPricingFunnels(
 
   const soleOffer = legEconomics.offers.length === 1;
   let legKeys: readonly string[] = opts.legKeys ?? [];
-  let hints = new Set<SalesFunnelKey>();
-  if (!opts.legKeys || opts.legKeys.length > 0) {
-    let rows: readonly CampaignIdentityRow[] = [];
+  if (!opts.legKeys) {
+    let rows: readonly CampaignIdentityRow[];
     try {
       rows = opts.rows ?? (await fetchBrandCampaignRows(brandId, undefined, { orgId }));
     } catch (error) {
-      // The legs come from the campaigns → their read is the answer, fail loud. A caller that NAMED its
-      // legs only loses the tie-break hint, loudly.
-      if (!opts.legKeys) {
-        throw new SalesFunnelsUnavailableError(`the campaigns of brand ${brandId} could not be read: ${(error as Error).message}`);
-      }
-      console.warn(`[features-service] reading funnels: campaigns of brand ${brandId} unreadable, no campaign-stated tie-break: ${(error as Error).message}`);
+      // The legs come from the campaigns → their read is the answer, fail loud.
+      throw new SalesFunnelsUnavailableError(`the campaigns of brand ${brandId} could not be read: ${(error as Error).message}`);
     }
-    if (!opts.legKeys) legKeys = offerLegKeys(rows, offer.offerId, soleOffer);
-    hints = offerStatedFunnels(rows, offer.offerId, soleOffer);
+    legKeys = offerLegKeys(rows, offer.offerId, soleOffer);
   }
 
   let effective: BrandEffectiveRates | null = null;
@@ -317,7 +292,6 @@ export async function fetchPricingFunnels(
       legKeys,
       (from, to) => statedByLeg.has(`${from}>${to}`),
       (funnelKey, step) => onwardPathScore(funnelKey, step, ownRate),
-      hints,
     ),
   );
   // A scope whose campaigns perform no leg (a brand before its first campaign) walks no path: an EMPTY

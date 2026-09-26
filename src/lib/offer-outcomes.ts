@@ -47,15 +47,14 @@
  * — the customer's own team (`your-team-*`) or somebody of ours by hand (`agency-*`, a caller, an SEO
  * specialist) — is hidden (its id rides `hiddenCampaignIds`, never dropped in silence). The catalogue
  * states it per channel; nothing here reads a slug. A campaign on a slug the catalogue does not describe
- * is not hidden (nothing says a person performs it). A campaign stating no leg is placed on the one
- * leg its channel performs inside the funnel it states, when there is exactly one (`legSource:
- * "derived_from_funnel"`); otherwise it is in `unattributedCampaignIds`.
+ * is not hidden (nothing says a person performs it). A campaign stating no leg is in
+ * `unattributedCampaignIds` (wave C3: the campaign's stated funnel that once placed it is retired).
  */
 import { funnelStepKeys, CHANNEL_STEPS, CHANNEL_STEP_KEYS, type AcquisitionChannel, type ChannelStepKey } from "./acquisition-channels.js";
 import type { CampaignIdentityRow } from "./campaign-identity.js";
 import { observedCostPerOutcome } from "./cost-engine.js";
 import { declaredEconomicsForFunnel, mergeFunnelEconomics } from "./declared-funnels.js";
-import { funnelLeg, legKeyFor, legKeysOfFunnel, matchFunnelLegKey } from "./funnel-legs.js";
+import { funnelLeg, matchFunnelLegKey } from "./funnel-legs.js";
 import { getFunnel, type SalesEconomics } from "./funnel-registry.js";
 import { LEAD_FIELD_TO_SIGNAL, stepMeasured, type LeadStepField, type StepEvidence } from "./funnel-steps.js";
 import { dedupPersonsByLead, type EnginePerson } from "./revenue-engine.js";
@@ -74,8 +73,8 @@ export const STEP_LEAD_FIELD: Record<ChannelStepKey, LeadStepField | null> = {
   paid_client: "purchased",
 };
 
-/** How a campaign's leg was known. */
-export type LegSource = "stated" | "derived_from_funnel";
+/** How a campaign's leg was known — always stated since wave C3 (nothing is derived any more). */
+export type LegSource = "stated";
 
 /** One (leg × channel) of the offer, and the campaigns carrying it. */
 export interface OfferLegGroup {
@@ -84,7 +83,6 @@ export interface OfferLegGroup {
   toStep: ChannelStepKey;
   featureSlug: string;
   campaignIds: string[];
-  /** `derived_from_funnel` when ANY member's leg was derived rather than stated. */
   legSource: LegSource;
 }
 
@@ -118,23 +116,10 @@ export function buildOfferLegPartition(
       continue;
     }
 
-    let legKey: string | null = null;
-    let source: LegSource = "stated";
-    if (row.legKey) {
-      legKey = matchFunnelLegKey(row.legKey);
-    } else {
-      // A pre-leg ancestor: the funnel it states names the ONE leg its channel performs inside it, when
-      // there is exactly one. Two candidates would be a guess, so the row stays unattributed instead.
-      const funnelKey = row.funnelKey ? matchSalesFunnelKey(row.funnelKey) : null;
-      if (funnelKey && channel) {
-        const inFunnel = new Set(legKeysOfFunnel(funnelKey));
-        const candidates = [...new Set(channel.stepTransitions.map(legKeyFor))].filter((k) => inFunnel.has(k));
-        if (candidates.length === 1) {
-          legKey = candidates[0];
-          source = "derived_from_funnel";
-        }
-      }
-    }
+    // A row stating no leg (a pre-leg ancestor) is unattributed — wave C3 retired the campaign's
+    // stated funnel, the only thing that could have placed it, and a leg is never guessed.
+    const legKey: string | null = row.legKey ? matchFunnelLegKey(row.legKey) : null;
+    const source: LegSource = "stated";
     const leg = legKey ? funnelLeg(legKey) : null;
     if (!legKey || !leg) {
       unattributed.push(row.id);
@@ -145,7 +130,6 @@ export function buildOfferLegPartition(
     const existing = byGroup.get(id);
     if (existing) {
       existing.campaignIds.push(row.id);
-      if (source === "derived_from_funnel") existing.legSource = source;
     } else {
       byGroup.set(id, {
         legKey,
