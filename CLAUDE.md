@@ -44,7 +44,7 @@ computed by ONE engine function, `contactedLeadValue` (`lib/revenue-engine.ts`),
 which `/brands/:brandId/contacted-value` (the Deals board's Contacted column) serves per lead.
 
 - **Entry rates come from ONE cell**: `getBrandContactedValue` (view `brand-contacted-value`, `m:
-  contacted-value-v2`) — the route and every pipeline read (`contactedPricingSoft`) share it, so the column
+  contacted-value-v3`) — the route and every pipeline read (`contactedPricingSoft`) share it, so the column
   and the pipeline cannot price off two rates. `P(r | contacted)`: the brand's MATURE cohort once it holds
   ≥10 outcomes, else the fleet's pooled email-gateway rate, else null. Path values `P(paid | r) × LTR` are the
   scope's own engine paths (same as every engaged lead). FAIL-SOFT: unreadable → those leads add nothing (loud log).
@@ -52,7 +52,9 @@ which `/brands/:brandId/contacted-value` (the Deals board's Contacted column) se
   leads are valued exactly as before (guarded: identical `computeRevenue` output with and without the pricing).
 - **EXPIRY**: worth $0 once the LAST email SENT (`signalDates.lastSent` = email-gateway `/orgs/status`
   `lastDeliveredAt` = instantly `MAX(email_sent)`, MAX across providers and across a lead's rows) is older than
-  `CONTACTED_VALUE_EXPIRY_DAYS` (30), or when none was ever sent. Never the contacted or first-send date. Why 30:
+  `CONTACTED_VALUE_EXPIRY_DAYS` (30). Never the contacted or first-send date. A lead with NO send yet (queued,
+  first email pending — webprime had 21 of 71 on 2026-09-26) has not started its clock: it counts while pending,
+  bounded to 30 days after hand-off (`contactedExpired`), so a lead never sent does not count forever. Why 30:
   fleet-measured, 100% of positive replies (65) and clicks (981) land within 30 days of the last send before
   them. Note instantly's MAX includes inferred sends (opened ⇒ sent), which date at the trigger event.
 - **Company rule = the pipeline's**: an organisation is worth its most valuable member; the contacted-value
