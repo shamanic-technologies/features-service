@@ -11867,6 +11867,117 @@
           "nextCursor"
         ]
       },
+      "BrandDealsValueResponse": {
+        "type": "object",
+        "properties": {
+          "brandId": {
+            "type": "string"
+          },
+          "lifetimeRevenueUsd": {
+            "type": "number",
+            "nullable": true,
+            "description": "The brand's value of a client — the same LTR the pipeline is priced on."
+          },
+          "columns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "standing": {
+                  "type": "string",
+                  "description": "lead-service's standing state the column shows (`sales_interest`, `customer`, `disqualified`, `opted_out`, `not_contacted`, `unresolved`, `contacted`, `engaged`)."
+                },
+                "valueUsd": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Company-level value of the column: one organisation = one client = the MAX over its members in the column, organisations summed. Null exactly when `unvaluedReason` is set — never 0 for 'no value'."
+                },
+                "unvaluedReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "no_economics",
+                    "no_client_value",
+                    "ruled_out",
+                    "opted_out",
+                    "not_placed",
+                    "standing_unresolved",
+                    "see_contacted_value",
+                    "not_a_deal_column"
+                  ],
+                  "description": "Why the column states no value. `ruled_out` / `opted_out`: nothing to win going forward. `not_placed`: never contacted. `see_contacted_value`: GET /brands/{brandId}/contacted-value values that column. `no_economics` / `no_client_value`: the brand states nothing a value could be priced on."
+                },
+                "basis": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "expected_value",
+                    "won_value"
+                  ],
+                  "description": "`expected_value` (Interested): each person at the byte-same expected value the brand's pipeline prices them on — the column is a SUBSET of the pipeline. `won_value` (Won): the amount a human stated on the sale (whoever caused it), else the brand's lifetime revenue per client."
+                },
+                "leadCount": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "organizationCount": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "unpricedLeadCount": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "People lead-service places in the column that this read's lead population did not hold yet (their card reads null)."
+                },
+                "leads": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "leadId": {
+                        "type": "string"
+                      },
+                      "valueUsd": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "valueSource": {
+                        "type": "string",
+                        "nullable": true,
+                        "enum": [
+                          "stated_amount",
+                          "lifetime_revenue"
+                        ],
+                        "description": "Won column only."
+                      }
+                    },
+                    "required": [
+                      "leadId",
+                      "valueUsd"
+                    ]
+                  },
+                  "description": "One card per person in the column, ordered by lead id (valued columns only)."
+                }
+              },
+              "required": [
+                "standing",
+                "valueUsd",
+                "unvaluedReason",
+                "basis",
+                "leadCount",
+                "organizationCount",
+                "unpricedLeadCount",
+                "leads"
+              ]
+            }
+          }
+        },
+        "required": [
+          "brandId",
+          "lifetimeRevenueUsd",
+          "columns"
+        ]
+      },
       "BrandAudienceStatsResponse": {
         "type": "object",
         "properties": {
@@ -20932,6 +21043,134 @@
                   "required": [
                     "error"
                   ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "reason='brand_has_no_channels'",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "reason='brand_channels_price_differently'",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "A producer the figure is computed from could not be read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/brands/{brandId}/deals-value": {
+      "get": {
+        "summary": "The dollar value of each Deals-board column (lead-service standing), per column and per card",
+        "description": "A SEPARATE figure, added to no pipeline, ROI or cost figure. Column membership is lead-service's standing (its `?standing=` filter). Interested (`sales_interest`) = each person's expected value exactly as the brand's pipeline prices them (same paths, LTR, overlays, priced causes), company-deduped like the pipeline. Won (`customer`) = the stated sale amount, else the lifetime revenue per client. Disqualified, opted out and not placed state no value, with a reason. The Contacted column's value is GET /brands/{brandId}/contacted-value.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The brand's Deals column values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrandDealsValueResponse"
                 }
               }
             }

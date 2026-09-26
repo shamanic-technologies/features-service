@@ -28,7 +28,7 @@ import { fetchObservedStepFacts } from "../lib/observed-steps.js";
 import { fetchQualifications } from "../lib/qualifications-client.js";
 import { fetchConversionEmails } from "../lib/conversion-emails-client.js";
 import { applySignalOverlays } from "../lib/signal-overlays.js";
-import { dedupPersonsByLead } from "../lib/revenue-engine.js";
+import { dedupPersonsByLead, type EnginePerson, type ResolvedPath } from "../lib/revenue-engine.js";
 import { DEFAULT_PRICED_CAUSES } from "../lib/outcome-cause.js";
 import { fetchPublicEmailStats } from "../lib/public-stats-clients.js";
 import {
@@ -44,13 +44,30 @@ export const CONTACTED_VALUE_DEFAULT_LIMIT = 1000;
 export const CONTACTED_VALUE_MAX_LIMIT = 5000;
 export const CONTACTED_VALUE_MAX_LEAD_IDS = 1000;
 
-/** The brand's figure, computed once per refresh (the Gold snapshot layer caches it). */
-export async function computeBrandContactedValue(
+/** The brand-scoped reads a route makes to key its cache — handed down, never read twice. */
+export interface BrandPricingPre {
+  channels: BrandChannel[];
+  declared: DeclaredSalesFunnel[];
+  effective: EffectiveEconomics;
+}
+
+/**
+ * The brand's lead population with every overlay the pipeline applies, plus the engine paths and LTR
+ * it prices them on — the byte-same inputs `/brands/:brandId/revenue` prices its pipeline from. Shared
+ * by every per-lead valuation read (contacted value, Deals column values) so none of them can come to
+ * price a lead differently from the pipeline.
+ */
+export async function loadBrandPricedPopulation(
   brandId: string,
   headers: DownstreamHeaders,
-  /** The brand-scoped reads the route already made to key the cache — never read twice. */
-  pre: { channels: BrandChannel[]; declared: DeclaredSalesFunnel[]; effective: EffectiveEconomics },
-): Promise<ContactedValueResult> {
+  pre: BrandPricingPre,
+  opts: { fleetEntryStats: boolean },
+): Promise<{
+  persons: EnginePerson[];
+  paths: ResolvedPath[];
+  lifetimeRevenueUsd: number | null;
+  fleetGroups: Map<string, Record<string, number>> | null;
+}> {
   const { channels, declared, effective } = pre;
   const featureSlugs = brandFeatureSlugs(channels);
   const funnels = distinctChannelFunnels(channels);
@@ -60,13 +77,13 @@ export async function computeBrandContactedValue(
 
   const soft = <T>(what: string, p: Promise<T>): Promise<T | null> =>
     p.catch((err) => {
-      console.warn(`[features-service] contacted value (brand ${brandId}): ${what} unreadable — degrading: ${(err as Error).message}`);
+      console.warn(`[features-service] brand lead valuation (brand ${brandId}): ${what} unreadable — degrading: ${(err as Error).message}`);
       return null;
     });
 
   const [persons, fleetGroups] = await Promise.all([
     fetchLeadsForRevenue(brandId, undefined, headers),
-    measuredSlugs.length > 0
+    opts.fleetEntryStats && measuredSlugs.length > 0
       ? soft("fleet email stats", fetchPublicEmailStats(measuredSlugs.join(","), "workflowSlug"))
       : Promise.resolve(null),
   ]);
@@ -96,14 +113,26 @@ export async function computeBrandContactedValue(
           priced.pricedFunnelKeys,
         )
       : [];
-  const fleet: FleetEntryCounts = fleetGroups ? fleetEntryCountsOf(fleetGroups.values()) : null;
-
-  return priceContactedLeads({
-    paths,
+  return {
     persons: dedupPersonsByLead(persons),
+    paths,
     lifetimeRevenueUsd: economics ? economics.lifetimeRevenueUsd : null,
-    fleet,
+    fleetGroups: fleetGroups as Map<string, Record<string, number>> | null,
+  };
+}
+
+/** The brand's figure, computed once per refresh (the Gold snapshot layer caches it). */
+export async function computeBrandContactedValue(
+  brandId: string,
+  headers: DownstreamHeaders,
+  /** The brand-scoped reads the route already made to key the cache — never read twice. */
+  pre: BrandPricingPre,
+): Promise<ContactedValueResult> {
+  const { persons, paths, lifetimeRevenueUsd, fleetGroups } = await loadBrandPricedPopulation(brandId, headers, pre, {
+    fleetEntryStats: true,
   });
+  const fleet: FleetEntryCounts = fleetGroups ? fleetEntryCountsOf(fleetGroups.values()) : null;
+  return priceContactedLeads({ paths, persons, lifetimeRevenueUsd, fleet });
 }
 
 export class BrandPricesDifferentlyError extends Error {
