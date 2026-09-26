@@ -45,6 +45,7 @@ describe("GET /brands/:brandId/conversion-rates", () => {
     vi.mocked(getBrandEffectiveRates).mockReset();
     vi.mocked(getBrandEffectiveRates).mockResolvedValue({
       brandId: "brand-1",
+      crm: { status: "no_connection", totalContacts: null, lastSyncedAt: null },
       minMeasuredFromReached: 10,
       contactedRecipients: 400,
       funnels: [funnel("sales_meetings_from_conversation"), funnel("form_magnet"), funnel("website_purchases")] as never,

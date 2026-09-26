@@ -10582,6 +10582,38 @@
           "brandId": {
             "type": "string"
           },
+          "crm": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "used",
+                  "no_connection",
+                  "not_synced",
+                  "stage_meanings_pending",
+                  "unreadable"
+                ],
+                "description": "used: the CRM took part in the measurement. Otherwise why not, and every rate is measured on our leads counting every outcome, exactly as before the CRM existed. unreadable: crm-service could not be read (logged loud)."
+              },
+              "totalContacts": {
+                "type": "integer",
+                "nullable": true,
+                "description": "Contacts in the brand's CRM, per crm-service. Null when not used."
+              },
+              "lastSyncedAt": {
+                "type": "string",
+                "nullable": true,
+                "description": "When the CRM was last synced. Null when not used."
+              }
+            },
+            "required": [
+              "status",
+              "totalContacts",
+              "lastSyncedAt"
+            ],
+            "description": "The brand's CRM in this measurement."
+          },
           "minMeasuredFromReached": {
             "type": "integer",
             "description": "The learning bar: leads needed on an arrow's FROM step before its measured rate is used (10, the fleet's learning bar)."
@@ -10644,10 +10676,27 @@
                       "measured": {
                         "type": "object",
                         "properties": {
+                          "basis": {
+                            "type": "string",
+                            "enum": [
+                              "our_leads",
+                              "crm"
+                            ],
+                            "description": "WHERE this leg was measured. crm: the brand's CRM directly evidences BOTH ends of the leg, so it is measured on the client's WHOLE CRM history (crm-service funnel reach, contactsAtOrBeyond(TO) / contactsAtOrBeyond(FROM)). our_leads: on this brand's leads. fromReached is the population either way, so a consumer can say 'measured on 251 contacts in your CRM' or 'measured on 26 of our leads'."
+                          },
+                          "outcomesCounted": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "all",
+                              "caused_by_our_outreach"
+                            ],
+                            "description": "On our_leads, which outcomes the counts include: caused_by_our_outreach whenever the brand's CRM is available (crm.status used) — a leg only our outreach can observe is not credited with CRM outcomes our outreach did not cause; all otherwise (today's rule). Null on a crm-measured leg. Measurement only: what the ROI prices is unchanged."
+                          },
                           "fromReached": {
                             "type": "integer",
                             "nullable": true,
-                            "description": "Distinct leads of this brand that reached the arrow's FROM step. Null when that step is not counted by anything in the fleet, or its evidence was unreadable."
+                            "description": "Distinct leads (basis our_leads) or CRM contacts (basis crm) that reached the arrow's FROM step — the population the rate is measured on. Null when that step is not counted by anything in the fleet, or its evidence was unreadable."
                           },
                           "toReached": {
                             "type": "integer",
@@ -10676,6 +10725,8 @@
                           }
                         },
                         "required": [
+                          "basis",
+                          "outcomesCounted",
                           "fromReached",
                           "toReached",
                           "ratePct",
@@ -10733,6 +10784,7 @@
         },
         "required": [
           "brandId",
+          "crm",
           "minMeasuredFromReached",
           "contactedRecipients",
           "funnels"
