@@ -214,6 +214,34 @@ not landed. Owner decision 2026-09-25 (do not re-litigate), `lib/roi-maturity.ts
   funnelSteps, leads, series and spend stay byte-identical; `maturity_unknown`; and the lens.
   (Set 2026-09-25.)
 
+## A MEASURED CONVERSION RATE IS READ WHERE THE LEG'S DATA LIVES — the client's WHOLE CRM when it evidences both ends, else OUR leads counting only outcomes OUR outreach caused
+
+Supersedes, for a brand whose CRM is available, the "measured on the brand's own leads" source below
+(`lib/effective-conversion-rates.ts`, owner rule 2026-09-26). Prod before (Doc Dinners `75d7e3e8…`, the
+only CRM brand): every measured leg counted our leads INCLUDING CRM outcomes lead-service paired onto
+them (last-name-only matches, clients closed before we wrote) — reply → meeting read 45/26 (impossible,
+fell back to the stated 61%), booked → attended 15/45, attended → won 9/15.
+
+- **THE RULE IS DATA-DRIVEN, NOT A PER-LEG TABLE**: crm-service `GET /internal/gohighlevel/funnel-reach`
+  (crm-service#37, `lib/crm-funnel-reach-client.ts`, `CRM_SERVICE_URL`/`CRM_SERVICE_API_KEY`) directly
+  evidences BOTH ends of the leg (`contacts > 0` on each mapped step: form submitted / meeting booked /
+  meeting attended / paid client = sale) → measured on the WHOLE CRM, `contactsAtOrBeyond(TO) ÷
+  contactsAtOrBeyond(FROM)` (the division crm-service names). Otherwise → our leads, counting a rung only
+  when an outcome OUR outreach caused reached it (`unpricedSignals`, the same per-lead mark #1058 prices
+  on; legacy qualifications judged by the delivery rule, their delivery dates read for those emails only).
+- **ONLY WHEN THE CRM IS `available`.** No connection / not synced / meanings pending / read failed →
+  today's behaviour byte for byte (every outcome on our leads), and `crm.status` says which. Brands with
+  no CRM: every rate unchanged; the response only gains `crm` and each `measured.basis` /
+  `measured.outcomesCounted`.
+- **Every measured rate names its basis**: `measured.basis` (`our_leads` | `crm`), `measured.outcomesCounted`
+  (`all` | `caused_by_our_outreach`, null on crm), and `fromReached` IS the population it was measured on.
+- **Measurement only.** What the ROI prices (#1058: count every conversion, price only ours) is untouched;
+  the rates it prices ON move, which is the point. The same bar (10 on FROM) and `to_exceeds_from` rule
+  apply on both bases. The CRM read rides the cached step counts (scope `m: funnel-step-crm-v1`).
+- Guards: the Doc-Dinners-shaped suite at the end of `effective-conversion-rates.test.ts` (6/26 ours vs
+  45/26 all; 43/251 and 28/43 on the CRM; each unavailable reason reading today's numbers; a one-ended
+  leg staying on our leads) + `crm-funnel-reach-client.test.ts`. (Set 2026-09-26.)
+
 ## A BRAND'S CONVERSION RATE IS THE BEST ONE WE HAVE PER ARROW — measured, else stated, else the fleet MEDIAN; and every fleet aggregate of rates is a MEDIAN of what brands STATED
 
 Conversion rates moved from the OFFER to the BRAND (owner decision, 2026-09-25): ONE rate per (brand,

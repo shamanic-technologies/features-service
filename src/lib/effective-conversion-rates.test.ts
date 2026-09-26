@@ -8,6 +8,8 @@ import {
   measuredArrowRate,
   MIN_MEASURED_FROM_REACHED,
   resolveArrow,
+  crmMeasurementOf,
+  crmArrowRate,
   type BrandStepMeasurement,
 } from "./effective-conversion-rates.js";
 import { ALL_STEP_EVIDENCE, type LeadStepField } from "./funnel-steps.js";
@@ -43,7 +45,7 @@ describe("measuredArrowRate — the funnel-step conversion, the bar on the denom
     const m = measuredArrowRate(MEASUREMENT, "repliedPositive", "meetingBooked");
     // 16 meetings over 20 replies. The intersection would have read 8 / 20 = 40%, under-stating every
     // brand whose bookings are recorded without a reply flag (prod: 21.7% against the rung's 60.9%).
-    expect(m).toEqual({ fromReached: 20, toReached: 16, ratePct: 80, sufficient: true, gap: null });
+    expect(m).toEqual({ basis: "our_leads", outcomesCounted: "all", fromReached: 20, toReached: 16, ratePct: 80, sufficient: true, gap: null });
   });
 
   it("more leads at TO than at FROM is no probability: unmeasurable, never clamped", () => {
@@ -187,5 +189,97 @@ describe("each arrow is named in brand-service's own step wording", () => {
       ["Website visit", "Form filled", 16.5],
       ["Form filled", "Paid client", null],
     ]);
+  });
+});
+
+/**
+ * ONE fixture shaped like Doc Dinners (brand 75d7e3e8…, prod 2026-09-26): 26 positive replies; 45 booked
+ * meetings on our leads, of which only 6 our outreach caused (the rest paired from the CRM, many from
+ * before we ever wrote); 15 attended, 9 won. The CRM itself: 251 booked, 43 attended, 28 won.
+ */
+describe("a leg is measured WHERE ITS DATA LIVES — the client's CRM, or our leads counting only our outcomes", () => {
+  const ours = (reached: Partial<Record<LeadStepField, boolean>>) => lead(reached);
+  const DOC_DINNERS: BrandStepMeasurement = {
+    contactedRecipients: 17000,
+    evidence: ALL_STEP_EVIDENCE,
+    reached: [
+      ...times(6, lead({ repliedPositive: true, meetingBooked: true })),
+      ...times(20, lead({ repliedPositive: true })),
+      ...times(15, lead({ meetingBooked: true, meetingAttended: true })),
+      ...times(24, lead({ meetingBooked: true })),
+    ].map((r, i) => (i >= 26 && i < 35 ? { ...r, purchased: true } : r)),
+    // Only the 6 reply-born meetings are ours; every CRM-paired outcome is not.
+    ourReached: [
+      ...times(6, ours({ repliedPositive: true, meetingBooked: true })),
+      ...times(20, ours({ repliedPositive: true })),
+      ...times(15, ours({})),
+      ...times(24, ours({})),
+    ],
+  };
+  const CRM = crmMeasurementOf({
+    available: true,
+    totalContacts: 2696,
+    lastSyncedAt: "2026-09-26T09:45:51.909Z",
+    steps: [
+      { step: "form_submitted", contacts: 0, contactsAtOrBeyond: 0 },
+      { step: "meeting_booked", contacts: 249, contactsAtOrBeyond: 251 },
+      { step: "meeting_attended", contacts: 41, contactsAtOrBeyond: 43 },
+      { step: "meeting_not_held", contacts: 37, contactsAtOrBeyond: 37 },
+      { step: "sale", contacts: 28, contactsAtOrBeyond: 28 },
+      { step: "deal_lost", contacts: 0, contactsAtOrBeyond: 0 },
+    ],
+  });
+  const build = (crm: ReturnType<typeof crmMeasurementOf> | undefined) =>
+    buildBrandEffectiveRates({
+      brandId: "b1",
+      funnelKeys: ["sales_meetings_from_conversation"],
+      measurement: { ...DOC_DINNERS, ...(crm ? { crm } : {}) },
+      manual: [{ fromStep: "Positive reply", toStep: "Meeting booked", ratePct: 61, stated: true }],
+      medians: new Map(),
+    });
+  const arrows = (r: ReturnType<typeof build>) => r.funnels[0].arrows;
+
+  it("CRM available: reply → meeting on OUR leads with only our meetings (6/26), the client-run legs on the whole CRM", () => {
+    const [reply, show, close] = arrows(build(CRM));
+    expect(reply).toMatchObject({ source: "measured", effectiveRatePct: (6 / 26) * 100 });
+    expect(reply.measured).toMatchObject({ basis: "our_leads", outcomesCounted: "caused_by_our_outreach", fromReached: 26, toReached: 6 });
+    expect(show).toMatchObject({ source: "measured", effectiveRatePct: (43 / 251) * 100 });
+    expect(show.measured).toMatchObject({ basis: "crm", outcomesCounted: null, fromReached: 251, toReached: 43 });
+    expect(close).toMatchObject({ source: "measured", effectiveRatePct: (28 / 43) * 100 });
+    expect(close.measured).toMatchObject({ basis: "crm", fromReached: 43, toReached: 28 });
+  });
+
+  it("the SAME brand without a usable CRM reads today's numbers: 45 > 26 is no probability, so the hand-stated 61% wins", () => {
+    for (const status of ["no_connection", "not_synced", "stage_meanings_pending"] as const) {
+      const r = build(crmMeasurementOf({ available: false, reason: status }));
+      expect(r.crm).toEqual({ status, totalContacts: null, lastSyncedAt: null });
+      const [reply, show, close] = arrows(r);
+      expect(reply).toMatchObject({ source: "manual", effectiveRatePct: 61 });
+      expect(reply.measured).toMatchObject({ basis: "our_leads", outcomesCounted: "all", fromReached: 26, toReached: 45, gap: "to_exceeds_from" });
+      expect(show.measured).toMatchObject({ basis: "our_leads", outcomesCounted: "all", fromReached: 45, toReached: 15 });
+      expect(close.measured).toMatchObject({ basis: "our_leads", fromReached: 15, toReached: 9 });
+    }
+  });
+
+  it("an unreadable CRM is stated, and degrades to today's numbers rather than to zero", () => {
+    const r = build(crmMeasurementOf(null));
+    expect(r.crm?.status).toBe("unreadable");
+    expect(arrows(r)[1].measured).toMatchObject({ basis: "our_leads", outcomesCounted: "all", fromReached: 45, toReached: 15 });
+  });
+
+  it("a brand measured without any CRM answer is byte-identical to the lead-only rates, apart from the basis fields", () => {
+    const withNoConnection = build(crmMeasurementOf({ available: false, reason: "no_connection" }));
+    const legacy = build(undefined);
+    expect({ ...withNoConnection, crm: null }).toEqual(legacy);
+  });
+
+  it("a leg the CRM evidences only ONE end of stays on our leads (the CRM holds no form submission here)", () => {
+    expect(crmArrowRate(CRM, "Form submitted", "Paid client")).toBeNull();
+    expect(crmArrowRate(CRM, "Positive reply", "Meeting booked")).toBeNull();
+    expect(crmArrowRate(CRM, "Meeting booked", "Meeting attended")).toMatchObject({ basis: "crm", fromReached: 251 });
+  });
+
+  it("an outreach-caused rate on a measurement that never split the causes fails loud", () => {
+    expect(() => measuredArrowRate(MEASUREMENT, "repliedPositive", "meetingBooked", "caused_by_our_outreach")).toThrow(/ourReachedCounts/);
   });
 });

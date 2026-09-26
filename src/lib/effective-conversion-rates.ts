@@ -34,6 +34,28 @@
  * later rung and misses the earlier one makes the intersection understate, silently. When TO exceeds
  * FROM the ratio is no probability: `gap: "to_exceeds_from"`, never clamped, and the next source wins.
  *
+ * ── WHERE A LEG IS MEASURED: THE CLIENT'S CRM, OR OUR LEADS (owner rule, 2026-09-26) ────────────
+ *
+ * A leg is measured WHERE ITS DATA LIVES, decided by the data rather than a per-leg table:
+ *
+ *   - the brand's CRM (crm-service funnel reach, the WHOLE CRM history) directly evidences BOTH ends
+ *     of the leg → the leg is measured on the CRM: `contactsAtOrBeyond(TO) ÷ contactsAtOrBeyond(FROM)`,
+ *     the division crm-service itself names. That is the client's own sales team at work (booked →
+ *     attended, attended → won), and the few CRM contacts paired with our leads are a small, biased
+ *     sample of it (many last-name-only matches, many clients who closed before we ever wrote).
+ *   - otherwise → measured on OUR leads, counting only outcomes OUR OUTREACH caused (lead-service's
+ *     `causedByOutreach`; the legacy qualifications judged by the same delivery rule). A leg only our
+ *     outreach can observe (a reply becoming a meeting) must not be credited with meetings the CRM
+ *     pairing attached to our leads for reasons that had nothing to do with us.
+ *
+ * Both halves apply ONLY when the brand's CRM is `available`. No connection, not synced yet, meanings
+ * still pending, or the read failing → today's behaviour for that brand, byte for byte (every outcome
+ * counted on our leads), and `crm.status` on the response says which. Every measured rate names its
+ * `basis` and, on our leads, which outcomes it counted.
+ *
+ * This filter is about MEASURING a leg. What the ROI PRICES (count every conversion, price only ours —
+ * #1058) is untouched.
+ *
  * ── RIGHT-CENSORING IS ACCEPTED ─────────────────────────────────────────────────────────────────
  *
  * A meeting booked yesterday cannot have been attended yet, so a measured rate reads slightly low for
@@ -61,6 +83,13 @@ import { FUNNEL_STEP_LABEL_TO_KEY } from "./acquisition-channels.js";
 import { median } from "./stated-economics.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { servedCached, buildScopeKey } from "./view-cache.js";
+import { fetchEventTimestamps, type SignalDates } from "./email-status-client.js";
+import {
+  fetchCrmFunnelReach,
+  type CrmFunnelReach,
+  type CrmReachStep,
+  type CrmReachUnavailableReason,
+} from "./crm-funnel-reach-client.js";
 
 /** The fleet's learning bar: a measured rate needs at least this many leads on its FROM step. */
 export const MIN_MEASURED_FROM_REACHED = LEARNING_OUTCOMES_REQUIRED;
@@ -78,8 +107,18 @@ export type MeasuredRateGap =
   /** More leads reached TO than FROM — the FROM step is under-counted, so the ratio is no probability. */
   | "to_exceeds_from";
 
+/** WHERE a measured rate was read: this brand's leads, or the client's whole CRM. */
+export type MeasurementBasis = "our_leads" | "crm";
+
+/** On our leads, WHICH outcomes the counts include. Null on a CRM-measured rate. */
+export type MeasuredOutcomes = "all" | "caused_by_our_outreach";
+
 export interface MeasuredArrowRate {
-  /** Distinct leads that reached the FROM step. Null when that step is not counted or unreadable. */
+  /** Where the counts below were read. `fromReached` is the population the rate is measured on. */
+  basis: MeasurementBasis;
+  /** On our leads: every outcome, or only the ones our outreach caused. Null on the CRM. */
+  outcomesCounted: MeasuredOutcomes | null;
+  /** Distinct leads (or CRM contacts) that reached the FROM step. Null when that step is not counted or unreadable. */
   fromReached: number | null;
   /** Of those, the leads that ALSO reached the TO step. Same null rule. */
   toReached: number | null;
@@ -114,8 +153,25 @@ export interface EffectiveFunnelRates {
   arrows: EffectiveArrowRate[];
 }
 
+/** Whether the brand's CRM took part in the measurement, and why not when it did not. */
+export type CrmMeasurementStatus = "used" | CrmReachUnavailableReason | "unreadable";
+
+export interface CrmMeasurement {
+  status: CrmMeasurementStatus;
+  /** Contacts in the CRM, per crm-service's coverage. Null when not used. */
+  totalContacts: number | null;
+  lastSyncedAt: string | null;
+  /** Per CRM step, direct evidence and at-or-beyond reach. Null when not used. */
+  reach: Partial<Record<CrmReachStep, { contacts: number; contactsAtOrBeyond: number }>> | null;
+}
+
 export interface BrandEffectiveRates {
   brandId: string;
+  /**
+   * The brand's CRM in this measurement. Null only for a measurement that never asked (a pure caller
+   * passing counts without it) — the served read always carries it.
+   */
+  crm: { status: CrmMeasurementStatus; totalContacts: number | null; lastSyncedAt: string | null } | null;
   minMeasuredFromReached: number;
   /** Distinct leads this brand has contacted — the population every measured rate is read from. */
   contactedRecipients: number;
@@ -172,6 +228,9 @@ export interface BrandStepMeasurement {
   contactedRecipients: number;
   evidence: StepEvidence;
   reached: Array<Record<LeadStepField, boolean>>;
+  /** Per lead, the steps it reached through an outcome OUR outreach caused. Same order as `reached`. */
+  ourReached?: Array<Record<LeadStepField, boolean>>;
+  crm?: CrmMeasurement;
 }
 
 /**
@@ -186,6 +245,12 @@ export async function measureBrandSteps(
   orgId: string,
   pricedFunnelKeys: readonly SalesFunnelKey[],
 ): Promise<BrandStepMeasurement> {
+  // The CRM read rides beside the lead read. Fail-soft and LOUD: a CRM we cannot read leaves the brand
+  // on today's lead-only measurement, stated as `crm.status: "unreadable"`, never a zero.
+  const crmPromise: Promise<CrmFunnelReach | null> = fetchCrmFunnelReach(brandId, orgId).catch((err) => {
+    console.error(`[features-service] effective conversion rates: CRM funnel reach unreadable for brand ${brandId} (measured on our leads, every outcome, as before): ${(err as Error).message}`);
+    return null;
+  });
   const headers = { orgId };
   const persons = await fetchLeadsForRevenue(brandId, undefined, headers);
   const emails = [...new Set(persons.map((p) => p.email).filter((e): e is string => Boolean(e)))];
@@ -201,7 +266,21 @@ export async function measureBrandSteps(
     soft("form-submission attribution", fetchConversionEmails(brandId, "form_submission")),
   ]);
 
-  applySignalOverlays(persons, null, observed?.byEmail ?? null, quals, pricedFunnelKeys);
+  const crmReach = await crmPromise;
+  const crm = crmMeasurementOf(crmReach);
+
+  // Only when the CRM is used do we need to know WHOSE outcome each one was: a legacy qualification
+  // carries no cause, so it is judged by the delivery rule against our first delivered email — read
+  // for those few emails alone. Unreadable → those outcomes are undecided (never ours), loudly.
+  let legacyDelivery: Map<string, SignalDates> | null = null;
+  if (crm.status === "used" && quals && quals.size > 0) {
+    legacyDelivery = await fetchEventTimestamps(brandId, undefined, [...quals.keys()], headers).catch((err) => {
+      console.error(`[features-service] effective conversion rates: delivery dates unreadable for brand ${brandId}'s legacy qualifications (they count as not ours): ${(err as Error).message}`);
+      return null;
+    });
+  }
+
+  applySignalOverlays(persons, legacyDelivery, observed?.byEmail ?? null, quals, pricedFunnelKeys);
   for (const person of persons) {
     const email = person.email?.trim().toLowerCase();
     if (!email) continue;
@@ -222,7 +301,28 @@ export async function measureBrandSteps(
     reached: deduped.map(
       (p) => Object.fromEntries(fields.map((f) => [f, Boolean(p.signals[LEAD_FIELD_TO_SIGNAL[f]])])) as Record<LeadStepField, boolean>,
     ),
+    // A rung reached ONLY through outcomes our outreach did not cause is not ours (`unpricedSignals`,
+    // the same per-lead mark the #1058 pricing reads, default cause set = outreach).
+    ourReached: deduped.map((p) => {
+      const notOurs = new Set(p.unpricedSignals ?? []);
+      return Object.fromEntries(
+        fields.map((f) => {
+          const signal = LEAD_FIELD_TO_SIGNAL[f];
+          return [f, Boolean(p.signals[signal]) && !notOurs.has(signal)];
+        }),
+      ) as Record<LeadStepField, boolean>;
+    }),
+    crm,
   };
+}
+
+/** PURE: the CRM half of a measurement, from crm-service's answer (null = the read failed). */
+export function crmMeasurementOf(reach: CrmFunnelReach | null): CrmMeasurement {
+  if (reach === null) return { status: "unreadable", totalContacts: null, lastSyncedAt: null, reach: null };
+  if (!reach.available) return { status: reach.reason, totalContacts: null, lastSyncedAt: null, reach: null };
+  const byStep: Partial<Record<CrmReachStep, { contacts: number; contactsAtOrBeyond: number }>> = {};
+  for (const s of reach.steps) byStep[s.step] = { contacts: s.contacts, contactsAtOrBeyond: s.contactsAtOrBeyond };
+  return { status: "used", totalContacts: reach.totalContacts, lastSyncedAt: reach.lastSyncedAt, reach: byStep };
 }
 
 /**
@@ -234,15 +334,27 @@ export interface BrandStepCounts {
   contactedRecipients: number;
   evidence: StepEvidence;
   reachedCounts: Record<LeadStepField, number>;
+  /** Leads that reached each step through an outcome our outreach caused. */
+  ourReachedCounts?: Record<LeadStepField, number>;
+  crm?: CrmMeasurement;
 }
 
 /** PURE: a measurement's per-step counts. Idempotent on counts already summarised. */
 export function summariseMeasurement(measurement: BrandStepMeasurement | BrandStepCounts): BrandStepCounts {
   if ("reachedCounts" in measurement) return measurement;
   const fields = Object.keys(LEAD_FIELD_TO_SIGNAL) as LeadStepField[];
-  const reachedCounts = Object.fromEntries(fields.map((f) => [f, 0])) as Record<LeadStepField, number>;
-  for (const lead of measurement.reached) for (const f of fields) if (lead[f]) reachedCounts[f] += 1;
-  return { contactedRecipients: measurement.contactedRecipients, evidence: measurement.evidence, reachedCounts };
+  const tally = (rows: ReadonlyArray<Record<LeadStepField, boolean>>): Record<LeadStepField, number> => {
+    const counts = Object.fromEntries(fields.map((f) => [f, 0])) as Record<LeadStepField, number>;
+    for (const lead of rows) for (const f of fields) if (lead[f]) counts[f] += 1;
+    return counts;
+  };
+  return {
+    contactedRecipients: measurement.contactedRecipients,
+    evidence: measurement.evidence,
+    reachedCounts: tally(measurement.reached),
+    ...(measurement.ourReached ? { ourReachedCounts: tally(measurement.ourReached) } : {}),
+    ...(measurement.crm ? { crm: measurement.crm } : {}),
+  };
 }
 
 /** PURE: the measured rate of one arrow over one measurement. */
@@ -250,24 +362,64 @@ export function measuredArrowRate(
   input: BrandStepMeasurement | BrandStepCounts,
   fromField: LeadStepField | null,
   toField: LeadStepField | null,
+  outcomesCounted: MeasuredOutcomes = "all",
 ): MeasuredArrowRate {
   const measurement = summariseMeasurement(input);
+  const basis = { basis: "our_leads" as const, outcomesCounted };
   if (fromField === null || toField === null) {
-    return { fromReached: null, toReached: null, ratePct: null, sufficient: false, gap: "step_not_counted" };
+    return { ...basis, fromReached: null, toReached: null, ratePct: null, sufficient: false, gap: "step_not_counted" };
   }
   if (!stepMeasured(fromField, measurement.evidence) || !stepMeasured(toField, measurement.evidence)) {
-    return { fromReached: null, toReached: null, ratePct: null, sufficient: false, gap: "evidence_unreadable" };
+    return { ...basis, fromReached: null, toReached: null, ratePct: null, sufficient: false, gap: "evidence_unreadable" };
   }
-  const fromReached = measurement.reachedCounts[fromField] ?? 0;
-  const toReached = measurement.reachedCounts[toField] ?? 0;
+  let counts = measurement.reachedCounts;
+  if (outcomesCounted === "caused_by_our_outreach") {
+    if (!measurement.ourReachedCounts) {
+      throw new Error("measuredArrowRate: an outreach-caused rate needs ourReachedCounts, and this measurement carries none");
+    }
+    counts = measurement.ourReachedCounts;
+  }
+  return fromCounts(basis, counts[fromField] ?? 0, counts[toField] ?? 0);
+}
+
+/** PURE: the rate, bar and gap of two counts — one rule, whichever population they were read on. */
+function fromCounts(
+  basis: { basis: MeasurementBasis; outcomesCounted: MeasuredOutcomes | null },
+  fromReached: number,
+  toReached: number,
+): MeasuredArrowRate {
   const ratePct = fromReached > 0 ? (toReached / fromReached) * 100 : null;
   // More leads at TO than at FROM: the FROM step is under-counted (a producer records the later rung
   // but not the earlier one), so the ratio is not a probability. Unmeasurable, never clamped to 100%.
   if (ratePct !== null && ratePct > 100) {
-    return { fromReached, toReached, ratePct, sufficient: false, gap: "to_exceeds_from" };
+    return { ...basis, fromReached, toReached, ratePct, sufficient: false, gap: "to_exceeds_from" };
   }
   const sufficient = fromReached >= MIN_MEASURED_FROM_REACHED;
-  return { fromReached, toReached, ratePct, sufficient, gap: sufficient ? null : "below_learning_bar" };
+  return { ...basis, fromReached, toReached, ratePct, sufficient, gap: sufficient ? null : "below_learning_bar" };
+}
+
+/** Our step wording → the CRM step that evidences it. A step absent here is one no CRM records. */
+const STEP_CRM_STEP: Record<string, CrmReachStep> = {
+  "form submitted": "form_submitted",
+  "meeting booked": "meeting_booked",
+  "meeting attended": "meeting_attended",
+  "paid client": "sale",
+};
+
+/**
+ * PURE: the leg measured on the client's WHOLE CRM, or null when the CRM does not directly evidence
+ * BOTH ends (at least one contact with direct evidence of each step). Divides `contactsAtOrBeyond`, as
+ * crm-service states (monotone, so never over 100% along its own ladder).
+ */
+export function crmArrowRate(crm: CrmMeasurement, fromStep: string, toStep: string): MeasuredArrowRate | null {
+  if (crm.status !== "used" || !crm.reach) return null;
+  const from = STEP_CRM_STEP[normaliseStep(fromStep)];
+  const to = STEP_CRM_STEP[normaliseStep(toStep)];
+  if (!from || !to) return null;
+  const f = crm.reach[from];
+  const t = crm.reach[to];
+  if (!f || !t || f.contacts === 0 || t.contacts === 0) return null;
+  return fromCounts({ basis: "crm", outcomesCounted: null }, f.contactsAtOrBeyond, t.contactsAtOrBeyond);
 }
 
 // ── MEDIAN: what the fleet stated ────────────────────────────────────────────────────────────
@@ -422,6 +574,11 @@ export function buildBrandEffectiveRates(input: {
     if (leg.stated && leg.ratePct !== null && !manualByLeg.has(key)) manualByLeg.set(key, leg.ratePct);
   }
   const legs = new Map<string, EffectiveArrowRate>();
+  const crm = measurement.crm ?? null;
+  const crmUsed = crm?.status === "used";
+  const measureLeg = (fromStep: string, toStep: string): MeasuredArrowRate =>
+    (crmUsed ? crmArrowRate(crm!, fromStep, toStep) : null) ??
+    measuredArrowRate(measurement, leadFieldOfStep(fromStep), leadFieldOfStep(toStep), crmUsed ? "caused_by_our_outreach" : "all");
   const resolveLeg = (fromStep: string, toStep: string): EffectiveArrowRate => {
     const key = legPairKey(fromStep, toStep);
     const cached = legs.get(key);
@@ -430,7 +587,7 @@ export function buildBrandEffectiveRates(input: {
     const resolved = resolveArrow(
       label.fromStep,
       label.toStep,
-      measuredArrowRate(measurement, leadFieldOfStep(fromStep), leadFieldOfStep(toStep)),
+      measureLeg(fromStep, toStep),
       manualByLeg.get(key) ?? null,
       input.medians.get(key) ?? { ratePct: null, brandCount: 0 },
     );
@@ -449,6 +606,7 @@ export function buildBrandEffectiveRates(input: {
     }));
   return {
     brandId: input.brandId,
+    crm: crm ? { status: crm.status, totalContacts: crm.totalContacts, lastSyncedAt: crm.lastSyncedAt } : null,
     minMeasuredFromReached: MIN_MEASURED_FROM_REACHED,
     contactedRecipients: measurement.contactedRecipients,
     funnels,
@@ -471,7 +629,7 @@ export function getBrandStepCounts(brandId: string, orgId: string): Promise<Bran
   return servedCached({
     view: "brand-conversion-step-counts",
     // `m` names the measurement rule, so a snapshot computed under a retired rule is never served.
-    scopeKey: buildScopeKey(brandId, { orgId, m: "funnel-step" }),
+    scopeKey: buildScopeKey(brandId, { orgId, m: "funnel-step-crm-v1" }),
     orgId,
     compute: async () => summariseMeasurement(await measureBrandSteps(brandId, orgId, [])),
   });
