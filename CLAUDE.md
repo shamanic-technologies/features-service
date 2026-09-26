@@ -103,8 +103,8 @@ read 6/26 instead of 5/26.
 
 ## WAVE C3 — NOTHING HERE READS A CAMPAIGN'S `funnelKey`; a campaign IDENTITY is (org, brand, offer, leg, channel)
 
-campaign-service drops `Campaign.funnelKey` (and brand-service its frozen sales-funnels tables). Neither
-is read here any more — brand-service's `/sales-funnels` route was already unused since C1. Supersedes the
+campaign-service dropped `Campaign.funnelKey` (#519) and brand-service its frozen sales-funnels tables
+(#546), both 2026-09-26. Neither was read here any more — brand-service's `/sales-funnels` route was already unused since C1. Supersedes the
 "(org, brand, sales funnel, acquisition channel)" identity described in the sections below.
 
 - **`identityKeyOf` = campaign-service's own `uniq_campaigns_org_brand_offer_leg_channel`**, a missing
@@ -266,8 +266,8 @@ funnels, so summing funnel rungs in a browser counts a lead twice; this read tak
   `operatedBy: platform`, so the operator alone could not tell them apart (supersedes the customer-only
   rule of v0.174.1; 0 agency campaigns in prod at the switch, 2026-09-25, so no offer's rows moved). A
   slug the catalogue does not describe is not hidden. A campaign stating
-  no leg is placed on the ONE leg its channel performs inside its stated funnel, else
-  `unattributedCampaignIds` (prod: 5 funnel-stating, leg-less rows, all derivable).
+  no leg is in `unattributedCampaignIds` (wave C3: the stated funnel that once placed it is retired;
+  campaign-service backfilled the 5 prod rows' legs before dropping the column).
 - The catalogue is read from `SEED_FEATURES` in-process (no DB), which is what the table is upserted from.
 - Gateway: api-service forwards `/offers/*` per suffix, so `outcomes` needs its own `OFFER_ROUTES` line
   there. Guards: `lib/offer-outcomes.test.ts`, `routes/offer-outcomes.test.ts`. (Set 2026-09-25.)
@@ -839,7 +839,7 @@ goal, never a leg — verified on its `origin/main`).
 - **THE CAMPAIGN GRAIN, so a screen comparing grains reads them all from ONE answer.** `?campaignId=`
   adds a `campaign` block to `estimatesByGrain`, between brand and audience in the cascade, floored
   against the brand so a campaign that has barely spent reads its brand's price rather than looking
-  free. It answers for the campaign's whole **IDENTITY** (org × brand × sales funnel × acquisition
+  free. It answers for the campaign's whole **IDENTITY** (org × brand × offer × leg × acquisition
   channel — the byte-same family `/revenue?campaignId=` and `/audience-stats` total over), because
   campaign-service mints a new row on every workflow switch and keeps the ancestors. Both legs narrow
   through the producer that froze the attribution: runs takes `campaignId=` for a one-member identity
@@ -1438,8 +1438,8 @@ A customer opened one campaign's Audiences page and read **0 sales interests on 
 the stat card at the top of the same screen read **20**. Both figures came from this service, about the
 same campaign id, minutes apart.
 
-A campaign as a customer knows it is **(org, brand, sales funnel, acquisition channel)** —
-campaign-service's own key. It mints a NEW row every time the campaign's workflow switches and keeps the
+A campaign as a customer knows it is **(org, brand, offer, leg, acquisition channel)** since wave C3
+(it was (org, brand, sales funnel, channel) when this was written) — campaign-service's own key. It mints a NEW row every time the campaign's workflow switches and keeps the
 ancestors, so ONE campaign arrives here as many ids: on brand `75d7e3e8…`, offer `d5ecba00…`, funnel
 `sales_meetings_from_conversation`, channel `sales-cold-email-outreach` — **47 stored rows, one
 `ongoing`**. `/revenue` has totalled the whole family since features-service#749; `/audience-stats` had
@@ -1732,11 +1732,11 @@ hardcoded the same three in its own HTML.
   would silently change the shape of somebody's funnel. The base carries the same shape as every other
   rung rather than a special-cased field a consumer must branch on; `key` is the canonical LEG key, so
   nobody keys off buyer-facing wording.
-- **ONE CHAIN PER FUNNEL THE BRAND'S OWN CAMPAIGNS STATE THEY SELL** (`brandSoldFunnels`), in catalogue
-  order. Two funnels share legs, so their figures overlap and must never be summed, and picking one
-  would state a funnel nobody asked about. A campaign stating no funnel — or a word the catalogue does
-  not know — contributes NOTHING; it is never parked on a default. Every showcase brand sells exactly
-  one today.
+- **ONE CHAIN PER READING PATH OF THE BRAND'S LEGS** (`brandReadingFunnels` over
+  `fetchPricingFunnelsAllOffers`, every offer), in catalogue order — the same set its pricing reads
+  (wave C3: the funnel a campaign row stated is retired). Two paths share legs, so their figures overlap
+  and must never be summed. A brand whose campaigns perform no leg reads none (`no_funnel_sold`); an
+  unreadable leg read fails loud into that brand's `read_failed`.
 - **IT IS THE BYTE-SAME COMPUTE `/brands/:brandId/revenue?funnel=<key>` MAKES** — the brand's whole
   channel set, no campaign narrowing, ONE engine pass. So a showcase figure and the customer's own
   dashboard can never disagree about how many people reached a rung. **`includeSpend` is TRUE even
@@ -3786,23 +3786,22 @@ the day either side changes.
   shapes). The api-service gateway already forwards `groupBy` on this read — no gateway change.
   (Set 2026-08-15.)
 
-## A campaign's figures are its IDENTITY's figures — (org, brand, sales funnel, acquisition channel), read from campaign-service, never re-derived
+## A campaign's figures are its IDENTITY's figures — (org, brand, offer, leg, acquisition channel), read from campaign-service, never re-derived
 
 campaign-service used to create a NEW campaign row every time workflow selection switched workflows,
 so one real campaign arrives here split across many rows. Brand `f4d73dab…` showed **48 groups for
 what is one campaign**, 27 of them at 0 pipeline / no ROI, beside the single row carrying six weeks
 of history. Every figure keyed on a campaign is therefore reported for the campaign's whole
-IDENTITY — campaign-service's own key (its `uniq_campaigns_org_brand_funnel_channel`, migration
-0044), which the WORKFLOW is explicitly not part of.
+IDENTITY — campaign-service's own key (`uniq_campaigns_org_brand_offer_leg_channel`, migration 0058;
+it was the funnel-keyed index 0044 until wave C3), which the WORKFLOW is explicitly not part of.
 
 - **Nothing is rewritten or repointed.** The stopped rows keep their runs and their costs in
   runs-service, keyed on their own campaign id. This service only decides which ids are TOTALLED
   together before anything is displayed.
-- **All four parts come from campaign-service** (`GET /campaigns?brandId=&featureSlug=`,
-  `src/lib/campaign-identity-client.ts` → `campaign-identity.ts`). **NEVER infer the funnel from the
-  goal** — two funnels answer to `meetingBooked`, so that inference prints a funnel the campaign never
-  stated. An UNSTATED funnel (`funnelKey: null`) is a REAL state: those pool together (the producer's
-  own `coalesce(funnel_key,'')` rule) and never fold onto a campaign that DID state one.
+- **Every part comes from campaign-service** (`GET /campaigns?brandId=&featureSlug=`,
+  `src/lib/campaign-identity-client.ts` → `campaign-identity.ts`). An UNSTATED offer or leg is a REAL
+  state: those pool together (the producer's own `coalesce(..., '')` rule) and never fold onto a campaign
+  that DID state one; a leg is never inferred.
 - **A row that states no brand or no channel** (predating migration 0044) is its OWN family of one —
   campaign-service could not police it either, so pooling it would invent an identity nobody asserted.
 - **Wired on `/revenue` (`?campaignId=` + `?groupBy=campaignId`) and `/stats` (both).** Every member
@@ -5942,10 +5941,9 @@ contract through the platform-global open/click/reply rates.
   **`closeWin` is always a leg** — every funnel terminates in a paid client.
 - **Which funnels are "being priced"** is `FunnelPricedEconomics.pricedFunnelKeys` (`routes/revenue.ts`).
   A brand that declared SEVERAL is priced on the UNION of their legs. A read NARROWED to one funnel is
-  priced on that funnel's legs alone, in this precedence: the caller's `?funnel=` when the brand declared
-  it, else **the funnel the CAMPAIGN itself states** on a campaign-scoped read
-  (`campaignIdentity.funnelKey`, `matchSalesFunnelKey`) — a campaign sells one funnel, so its figures are
-  that funnel's figures, not the brand's first-declared one. The brand-scoped read keeps the deterministic
+  priced on that funnel's legs alone, in this precedence: a requested funnel (the public per-funnel
+  reads), else on a campaign-scoped read **the reading funnels containing the campaign's own LEGS**
+  (`CampaignIdentity.legKeys`; wave C3 retired the funnel a campaign row stated). The brand-scoped read keeps the deterministic
   first-declared pick for the TERMS.
 - **NO DECLARED FUNNEL ⇒ every conversion leg is priced, exactly as before.** We do not know which funnel
   the brand sells, and inventing one to narrow against is the same fiction the defaulted goal produced.
