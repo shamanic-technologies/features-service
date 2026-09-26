@@ -41,6 +41,7 @@ process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
+const { offerEconomicsFromDeclared } = await import("../lib/leg-economics-fixture.js");
 
 const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
 // The feature must DECLARE the recipient keys — /stats scopes its fan-out to a feature's declared
@@ -136,6 +137,10 @@ function mockFetch(fixture: Fixture): void {
       new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
 
     if (url.includes("/campaigns?")) return json({ campaigns: fixture.campaigns });
+    if (url.includes("/offer-economics")) {
+      if (!fixture.salesFunnels) return new Response("not found", { status: 404 });
+      return json(offerEconomicsFromDeclared(fixture.salesFunnels as any[]));
+    }
     if (url.includes("/sales-funnels")) {
       if (!fixture.salesFunnels) return new Response("not found", { status: 404 });
       return json({ funnels: fixture.salesFunnels });
@@ -398,7 +403,7 @@ describe("campaign figures are the campaign IDENTITY's figures", () => {
  * scoped to that campaign is priced on THAT funnel — its legs and its terms — not on the brand's first
  * declared funnel. The brand-scoped read keeps the deterministic first-declared pick it has today.
  */
-describe("a campaign is priced on ITS OWN declared funnel, not the brand's first", () => {
+describe("a campaign is priced on the funnels ITS OWN leg is read through, not the brand's first (wave C1)", () => {
   beforeEach(() => {
     vi.mocked(db.query.features.findFirst).mockResolvedValue(SALES_FEATURE as never);
   });
@@ -406,8 +411,8 @@ describe("a campaign is priced on ITS OWN declared funnel, not the brand's first
 
   /** Two campaigns on the same brand, each stating a different funnel. */
   const TWO_FUNNELS = [
-    { id: "conv", orgId: "org-1", brandId: "b1", brandIds: ["b1"], featureSlug: "sales-cold-email-outreach", funnelKey: "sales_meetings_from_conversation", acquisitionChannel: "cold_email", status: "ongoing", createdAt: "2026-06-01T00:00:00.000Z" },
-    { id: "web", orgId: "org-1", brandId: "b1", brandIds: ["b1"], featureSlug: "sales-cold-email-outreach", funnelKey: "website_purchases", acquisitionChannel: "cold_email", status: "ongoing", createdAt: "2026-06-02T00:00:00.000Z" },
+    { id: "conv", orgId: "org-1", brandId: "b1", brandIds: ["b1"], featureSlug: "sales-cold-email-outreach", funnelKey: "sales_meetings_from_conversation", legKey: "start_to_conversation", acquisitionChannel: "cold_email", status: "ongoing", createdAt: "2026-06-01T00:00:00.000Z" },
+    { id: "web", orgId: "org-1", brandId: "b1", brandIds: ["b1"], featureSlug: "sales-cold-email-outreach", funnelKey: "website_purchases", legKey: "start_to_website_visit", acquisitionChannel: "cold_email", status: "ongoing", createdAt: "2026-06-02T00:00:00.000Z" },
   ];
   // The conversation funnel is FIRST in catalogue order, so it is what the brand-scoped read prices on.
   const DECLARED = [
@@ -420,7 +425,7 @@ describe("a campaign is priced on ITS OWN declared funnel, not the brand's first
     {
       funnelKey: "website_purchases", active: true, name: "Website purchases",
       steps: ["Website visit", "Signup", "Paid client"],
-      rates: { visitToClosePct: 4 }, // visit→paid 4%
+      rates: { visitToSignupPct: 20, signupToPaidClientPct: 20 }, // visit→paid 4%, as its two legs
       lifetimeRevenueUsd: 2500, destinationUrl: null, bookingUrl: null, updatedAt: "2026-06-01T00:00:00.000Z",
     },
   ];
@@ -476,7 +481,7 @@ describe("a campaign is priced on ITS OWN declared funnel, not the brand's first
     expect(res.body.headline.totalPipelineUsd).toBe(0);
   });
 
-  it("a campaign that states NO funnel falls back to the brand's deterministic pick", async () => {
+  it("a brand whose campaigns state NO leg reads no funnel, and is priced on the brand-wide record (wave C1)", async () => {
     mockFetch({
       campaigns: FAMILY, // every member states funnelKey: null
       costByCampaign: { "stopped-1": 0, "stopped-2": 0, live: 1000 },
@@ -485,6 +490,8 @@ describe("a campaign is priced on ITS OWN declared funnel, not the brand's first
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&campaignId=live").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.headline.totalPipelineUsd).toBe(875); // the first declared funnel's own terms
+    // No campaign performs a leg, so no funnel is read: the brand-wide record prices the reply (the
+    // declared set this used to fall back on is no longer read).
+    expect(res.body.headline.totalPipelineUsd).toBe(120);
   });
 });

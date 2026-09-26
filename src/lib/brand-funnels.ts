@@ -32,32 +32,13 @@
  *   inference: every candidate is a funnel the brand said it sells through. Any surface that can carry
  *   several (the ranking, and any caller passing an explicit `?funnel=`) prices each on its own funnel
  *   instead, which is always the better answer where the shape allows it.
- */
-
-import { fetchDeclaredSalesFunnels } from "./sales-funnels-client.js";
-import { salesFunnelIndex, type SalesFunnelKey } from "./sales-funnels.js";
-
-/**
- * The funnel keys an org declared it sells this brand through, in catalogue order.
  *
- * Throws `SalesFunnelsUnavailableError` when the declaration cannot be READ **or is empty** — the
- * producer's own rule is that "answered, but sells through nothing" does not exist (brand-service
- * refuses to switch off an org's last active funnel), so an empty list is a gap, never an answer.
+ * WAVE C1 (2026-09-25): no declared set is read any more. The set a surface prices on is the scope's
+ * READING FUNNELS — derived from its campaigns' legs and the legs the brand states (`reading-funnels.ts`).
+ * This module keeps only the pure single-funnel pick over such a set.
  */
-export async function fetchDeclaredFunnelKeys(
-  brandId: string,
-  orgId: string,
-  /**
-   * WHICH offer's funnels, when the caller knows one. A brand selling SEVERAL offers has several
-   * declared sets, and brand-service refuses (409 `SEVERAL_OFFERS`) to pick between them — so a FLEET
-   * sweep, which has no campaign to resolve an offer from, legitimately gets that refusal and must
-   * degrade rather than fail (both callers here already `.catch` it to `[]`, loudly).
-   */
-  offerId?: string | null,
-): Promise<SalesFunnelKey[]> {
-  const declared = await fetchDeclaredSalesFunnels(brandId, orgId, offerId);
-  return declared.map((f) => f.funnelKey).sort((a, b) => salesFunnelIndex(a) - salesFunnelIndex(b));
-}
+
+import { salesFunnelIndex, type SalesFunnelKey } from "./sales-funnels.js";
 
 /**
  * The ONE funnel a single-valued surface prices on: the brand's first declared funnel in catalogue

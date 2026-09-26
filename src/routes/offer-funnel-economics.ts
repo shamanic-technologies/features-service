@@ -249,7 +249,8 @@ router.get("/offers/:offerId/funnels/:funnelKey/revenue", apiKeyAuth, async (req
     // money, not about our ability to turn it into a return.
     const [declaredFunnels, brandEconomics, stepCosts] = funnel
       ? await Promise.all([
-          fetchDeclaredFunnelsSoft(brandId, headers.orgId, offerId),
+          // The funnel this route NAMES is always priced (wave C1: no declared set to check it against).
+          fetchDeclaredFunnelsSoft(brandId, headers.orgId, offerId, [row.funnelKey]),
           fetchEffectiveEconomics(brandId, headers),
           fetchBrandStepCostsSoft(brandId),
         ])

@@ -156,7 +156,7 @@ function mockFetch(fixture: Fixture): void {
           })),
       });
     }
-    if (path.includes("/sales-funnels")) return new Response("not found", { status: 404 });
+    if (path.includes("/offer-economics")) return new Response("not found", { status: 404 });
     // The cross-org FLEET reads. Empty on purpose: an offer's own figures are realized money, never a
     // fleet benchmark, so a fleet with nothing in it must not move a single number asserted below.
     if (path.includes("/public/workflows")) return json({ workflows: [] });
@@ -476,8 +476,9 @@ describe("GET /offers/:offerId/pipeline-activity — per-day activity across cha
     const seen = vi.mocked(globalThis.fetch).mock.calls.map(([input]) =>
       typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url,
     );
-    const funnelReads = seen.filter((u: string) => u.includes("/sales-funnels"));
-    expect(funnelReads.length).toBeGreaterThan(0);
-    for (const url of funnelReads) expect(url).toContain(`offerId=${OFFER}`);
+    // Wave C1: the offer's statements come from brand-service's offer-economics (resolved to THIS offer
+    // here), and the declared-funnel read is gone.
+    expect(seen.filter((u: string) => u.includes("/offer-economics")).length).toBeGreaterThan(0);
+    expect(seen.filter((u: string) => u.includes("/sales-funnels"))).toEqual([]);
   });
 });

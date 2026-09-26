@@ -32,12 +32,11 @@ import { SalesFunnelsUnavailableError, type DeclaredSalesFunnel } from "./sales-
 import { salesFunnelIndex, type SalesFunnelKey } from "./sales-funnels.js";
 import {
   brandStatedEconomics,
-  fetchDeclaredFunnelsAllOffers,
   median,
   medianFleetEconomics,
   type BrandStatedEconomics,
 } from "./stated-economics.js";
-import { fetchBrandFunnelRates, type BrandFunnelRates } from "./brand-funnel-rates-client.js";
+import { fetchBrandStatedFunnels } from "./reading-funnels.js";
 
 /** The objective family the admin page charts, = the brand optimization-goal set. */
 export const OBJECTIVES: readonly Goal[] = GOALS;
@@ -802,30 +801,25 @@ export async function fetchFunnelBucketDataset(featureSlug: string): Promise<Buc
           }
           throw error;
         }),
-        // EVERY offer's declaration: a several-offer brand is read offer by offer rather than dropped.
-        fetchDeclaredFunnelsAllOffers(brandId, orgId).catch((error): DeclaredSalesFunnel[] => {
+        // EVERY offer's reading funnels (wave C1: its campaigns' legs, stated leg rates, the offer's own
+        // lifetime revenue) — a several-offer brand is read offer by offer rather than dropped.
+        fetchBrandStatedFunnels(brandId, orgId).catch((error): { reading: DeclaredSalesFunnel[]; stated: DeclaredSalesFunnel[] } => {
           if (error instanceof SalesFunnelsUnavailableError) {
             console.warn(
-              `[features-service] funnel-bucket dataset: brand ${brandId} (org ${orgId}) has declared no readable sales funnel — omitted from every bucket rather than placed on a substituted funnel: ${error.message}`,
+              `[features-service] funnel-bucket dataset: brand ${brandId} (org ${orgId}) has no readable offer statements or leg-running campaign — omitted from every bucket rather than placed on a substituted funnel: ${error.message}`,
             );
-            return [];
+            return { reading: [], stated: [] };
           }
           throw error;
         }),
       ]);
-      const funnels = [...new Set(declared.map((f) => f.funnelKey))].sort(
+      // Bucket membership: the funnels the brand's campaigns READ. Stated economics: every leg the brand
+      // stated, whichever funnel reads it (the population the fleet medians are taken over).
+      const funnels = [...new Set(declared.reading.map((f) => f.funnelKey))].sort(
         (a, b) => salesFunnelIndex(a) - salesFunnelIndex(b),
       );
       if (!economics || funnels.length === 0) return null;
-      // The RATES this brand stated live on the brand grain; lifetime revenue on the declared offers.
-      // An unreadable statement set costs this brand its data point, loudly — never a substituted rate.
-      const brandRates = await fetchBrandFunnelRates(brandId, orgId).catch((error): BrandFunnelRates[] => {
-        console.warn(
-          `[features-service] funnel-bucket dataset: brand ${brandId} (org ${orgId}) stated rates unreadable — it contributes no rate to any fleet median: ${(error as Error).message}`,
-        );
-        return [];
-      });
-      const stated = brandStatedEconomics(declared, brandRates);
+      const stated = brandStatedEconomics(declared.stated);
 
       const [spendByDay, dayOutcomeMap] = await Promise.all([
         fetchFleetSpendByDay(featureSlug, brandId),

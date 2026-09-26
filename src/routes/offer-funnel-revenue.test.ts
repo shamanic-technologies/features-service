@@ -56,6 +56,7 @@ process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
+const { offerEconomicsFromDeclared } = await import("../lib/leg-economics-fixture.js");
 
 const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
 const PITCH = "sales-cold-email-outreach";
@@ -191,6 +192,16 @@ function mockFetch(fixture: Fixture): void {
             createdAt: "2026-01-01T00:00:00.000Z",
           })),
       });
+    }
+    if (path.includes("/offer-economics")) {
+      // Wave C1: the brand's leg rates (what its funnels stated) and every offer its campaigns sell.
+      const declared = fixture.declared === undefined ? DECLARED : fixture.declared;
+      if (declared === null) return new Response("not found", { status: 404 });
+      const offerIds = [...new Set(Object.values(fixture.campaigns).map((row: any) => row.offerId).filter(Boolean))] as string[];
+      const ltr = (declared as any[]).map((d) => d.lifetimeRevenueUsd).find((v) => typeof v === "number") ?? null;
+      return json(
+        offerEconomicsFromDeclared(declared as any[], offerIds.length > 0 ? { offers: offerIds.map((offerId) => ({ offerId, lifetimeRevenueUsd: ltr })) } : {}),
+      );
     }
     if (path.includes("/sales-funnels")) {
       const declared = fixture.declared === undefined ? DECLARED : fixture.declared;
@@ -428,22 +439,22 @@ describe("GET /offers/:offerId/funnels — an offer's money, one row per sales f
     const by = funnelsOf(res.body);
     // A positive reply on the conversation funnel: $1,000 x 40% reply->booked x (50% x 60%) booked->paid.
     expect(by[CONVERSATION].headline.totalPipelineUsd).toBeCloseTo(120, 6);
-    // A website visit on the website funnel: $4,000 x 20% visit->booked x 30% booked->paid, combined
-    // with the brand-wide self-serve route the funnel does not restate (1% visit->close).
-    // Priced on the brand's own $500 record instead, the same click would be worth a fraction of it.
-    expect(by[WEBSITE].headline.totalPipelineUsd as number).toBeGreaterThan(240);
+    // A website visit on the website funnel: the OFFER's $1,000 (wave C1: one lifetime revenue per
+    // offer) x orP(1% brand-wide visit->close, 20% visit->booked x 30% booked->paid) = $69.40 — its own
+    // legs, never the conversation funnel's reply route.
+    expect(by[WEBSITE].headline.totalPipelineUsd as number).toBeCloseTo(1000 * (1 - 0.99 * 0.94), 6);
     // $CAC is the third unit of the same statement, and it is each funnel's own.
     expect(by[CONVERSATION].costEconomics.costPerAcquisitionUsd).toBeCloseTo(
       1000 / (by[CONVERSATION].costEconomics.roiMultiple as number),
       6,
     );
     expect(by[WEBSITE].costEconomics.costPerAcquisitionUsd).toBeCloseTo(
-      4000 / (by[WEBSITE].costEconomics.roiMultiple as number),
+      1000 / (by[WEBSITE].costEconomics.roiMultiple as number),
       6,
     );
   });
 
-  it("a funnel the brand never declared reports its real spend and a NULL return, naming the gap", async () => {
+  it("a funnel whose legs the brand never stated is still PRICED, on the brand-wide record (wave C1: no declared set)", async () => {
     mockFetch({
       campaigns: {
         c1: { featureSlug: PITCH, funnelKey: CONVERSATION, offerId: OFFER },
@@ -456,18 +467,10 @@ describe("GET /offers/:offerId/funnels — an offer's money, one row per sales f
     expect(res.status).toBe(200);
 
     const row = funnelsOf(res.body)["website_purchases"];
-    expect(row.priced).toBe(false);
-    expect(row.unpricedReason).toBe("funnel_not_declared");
-    // The customer paid it, so it is reported.
+    expect(row.priced).toBe(true);
+    expect(row.unpricedReason).toBeNull();
     expect(row.costEconomics.committedCostUsd).toBeCloseTo(25, 6);
-    // Nothing is borrowed from the funnel beside it: no pipeline, no return, no cost of acquisition.
-    expect(row.headline.totalPipelineUsd).toBeNull();
-    expect(row.costEconomics.roiMultiple).toBeNull();
-    expect(row.costEconomics.costOfAcquisitionPct).toBeNull();
-    expect(row.costEconomics.costPerAcquisitionUsd).toBeNull();
-    // "We could not price this" and "this reached nobody" are different statements: the volume is real.
     expect(row.outcomes?.recipientsContacted).toBe(1);
-    // Its declared sibling is unaffected.
     expect(funnelsOf(res.body)[CONVERSATION].priced).toBe(true);
   });
 

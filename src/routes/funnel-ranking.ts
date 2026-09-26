@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from "express";
-import { fetchDeclaredFunnelsOnEffectiveRates } from "../lib/effective-conversion-rates.js";
+import { fetchPricingFunnels } from "../lib/reading-funnels.js";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
@@ -8,7 +8,6 @@ import { fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
 import { declaredFunnelsToRank } from "../lib/declared-funnels.js";
 import {
   describeSeveralOffers,
-  fetchDeclaredSalesFunnels,
   SalesFunnelsUnavailableError,
   SeveralOffersDeclaredError,
   UnknownSalesFunnelError,
@@ -106,12 +105,9 @@ const handleFunnelRanking = async (req: Request, res: Response) => {
       // Economics is read LIVE on every request (never cached) — an arbitration run right after an
       // economics write must rank on the NEW terms. Same rule as /workflow-projection.
       fetchEffectiveEconomics(brandId, identity),
-      // The DECLARED SET, likewise live: the funnels this org sells this brand through. A read that
-      // cannot be answered — transport, non-OK, or an empty list (never stated) — throws and is
-      // reported below with its own reason, never as a substituted set.
-      // The org is part of the QUESTION, not just of the auth: a brand id is shared by every org that
-      // claims the same domain, so we must say whose declared set we want.
-      fetchDeclaredFunnelsOnEffectiveRates(brandId, identity.orgId),
+      // The funnels this brand's campaigns READ (wave C1: their legs, never a declared set), likewise
+      // live. A read that cannot be answered throws and is reported below with its own reason.
+      fetchPricingFunnels(brandId, identity.orgId),
     ]);
 
     const response = rankDeclaredFunnels({

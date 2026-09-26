@@ -601,7 +601,9 @@ router.get("/offers/:offerId/funnels", apiKeyAuth, async (req, res) => {
     // brand-scoped read serves every row, exactly as the economics pair beside it does.
     const [declaredFunnels, brandEconomics, stepCosts] = anyFunnel
       ? await Promise.all([
-          fetchDeclaredFunnelsSoft(brandId, headers.orgId, offerId),
+          // Every funnel the table lists is priced on its own terms (wave C1: no declared set to check
+          // a row against — a row IS a funnel the offer's campaigns state).
+          fetchDeclaredFunnelsSoft(brandId, headers.orgId, offerId, funnels.map((f) => f.funnelKey)),
           fetchEffectiveEconomics(brandId, headers),
           fetchBrandStepCostsSoft(brandId),
         ])

@@ -13,6 +13,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
+import { offerEconomicsFromDeclared } from "../lib/leg-economics-fixture.js";
 
 vi.mock("../db/index.js", () => ({
   db: { query: { features: { findFirst: vi.fn(), findMany: vi.fn() } } },
@@ -134,6 +135,7 @@ function mockFetch(opts: MockOpts = {}): void {
       return json({ groups: stats });
     }
     if (url.includes("/public/stats")) return json({ groups: stats });
+    if (url.includes("/offer-economics")) return json(offerEconomicsFromDeclared(opts.funnels ?? [CONVERSATION_FUNNEL, WEBSITE_FUNNEL]));
     if (url.includes("/sales-funnels")) return json({ funnels: opts.funnels ?? [CONVERSATION_FUNNEL, WEBSITE_FUNNEL] });
     if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
     if (url.includes("/orgs/audiences")) return json({ audiences: [] });
@@ -167,7 +169,10 @@ describe("workflow-projection: a LEG is answerable with no sales funnel named", 
     expect(res.body.leg.toStep.key).toBe("meeting_attended");
   });
 
-  it("a leg on SEVERAL declared funnels yields ONE answer, priced through the BEST-RETURNING one — the cheapest leg is not the best buy", async () => {
+  it("a leg on SEVERAL reading funnels yields ONE answer, priced through the BEST-RETURNING one", async () => {
+    // Wave C1: one rate per leg and ONE lifetime revenue per offer ($1,000 here — the first funnel
+    // fixture's). With the value of a client fixed, the best-returning path is the one that buys a
+    // paying client cheapest: the reply route ($5 a client) over the click route ($50).
     mockFetch();
     const res = await get("leg=meeting_booked_to_meeting_attended");
 
@@ -176,28 +181,25 @@ describe("workflow-projection: a LEG is answerable with no sales funnel named", 
       "sales_meetings_from_website",
     ]);
     expect(res.body.leg.basis).toBe("best_returning_declared_funnel");
-    expect(res.body.leg.basisFunnelKey).toBe("sales_meetings_from_website");
-    expect(res.body.funnelKey).toBe("sales_meetings_from_website");
-    // 20000 / 50 — the return the pick was made on, stated so nobody has to re-derive it.
-    expect(res.body.leg.returnPerDollar).toBeCloseTo(400, 6);
+    expect(res.body.leg.basisFunnelKey).toBe("sales_meetings_from_conversation");
+    expect(res.body.funnelKey).toBe("sales_meetings_from_conversation");
+    // 1000 / 5 — the return the pick was made on, stated so nobody has to re-derive it.
+    expect(res.body.leg.returnPerDollar).toBeCloseTo(200, 6);
 
-    // And it is emphatically NOT the cheap one: the funnel chosen costs ten times more per outcome
-    // than the funnel rejected. A cost-ranked pick would have taken the conversation funnel.
-    const cheap = await get("funnel=sales_meetings_from_conversation");
+    const other = await get("funnel=sales_meetings_from_website");
     const chosen = res.body.rows.find((r: any) => r.audienceId === null).resolved.costPerOutcomeUsd;
-    const rejected = cheap.body.rows.find((r: any) => r.audienceId === null).resolved.costPerOutcomeUsd;
-    expect(chosen).toBeCloseTo(20, 6);
-    expect(rejected).toBeCloseTo(2, 6);
-    expect(chosen).toBeGreaterThan(rejected);
+    const rejected = other.body.rows.find((r: any) => r.audienceId === null).resolved.costPerOutcomeUsd;
+    expect(chosen).toBeCloseTo(2, 6);
+    expect(rejected).toBeCloseTo(20, 6);
   });
 
   it("asking for the leg and asking for its basis funnel do not contradict each other", async () => {
     mockFetch();
     const byLeg = await get("leg=meeting_booked_to_meeting_attended");
-    const byFunnel = await get("funnel=sales_meetings_from_website");
+    const byFunnel = await get("funnel=sales_meetings_from_conversation");
 
     const { leg, ...withoutLeg } = byLeg.body;
-    expect(leg.basisFunnelKey).toBe("sales_meetings_from_website");
+    expect(leg.basisFunnelKey).toBe("sales_meetings_from_conversation");
     // Identical apart from what ONLY a leg-keyed answer carries: the leg block that states which
     // funnel answered, the two ranks (`rank` per workflow, `scopeRank` per column), the model-tier
     // verdict (whose rule is keyed on the leg's own step), and the per-grain statement of that step.
@@ -241,8 +243,8 @@ describe("workflow-projection: a LEG is answerable with no sales funnel named", 
     const measured = await get("leg=meeting_booked_to_meeting_attended");
     expect(measured.body.leg.evidence.measured).toBe(true);
     expect(measured.body.leg.evidence.grain).toBe("brand");
-    // 10 clicks × 50% visit→meeting: the volume behind the pick, stated rather than implied.
-    expect(measured.body.leg.evidence.resolvedOutcomeCount).toBeCloseTo(5, 6);
+    // 100 positive replies × 50% reply→meeting: the volume behind the pick, stated rather than implied.
+    expect(measured.body.leg.evidence.resolvedOutcomeCount).toBeCloseTo(50, 6);
 
     // With nothing measured anywhere the leg is STILL answerable, and it says the pick rests on no
     // return at all — never a fabricated 0 return, never a silent basis change.
@@ -256,14 +258,14 @@ describe("workflow-projection: a LEG is answerable with no sales funnel named", 
     expect(cold.body.leg.basisFunnelKey).toBe("sales_meetings_from_conversation");
   });
 
-  it("a leg NONE of the brand's declared funnels contains is a named 404, never an empty body", async () => {
+  it("a leg NONE of the brand's statements reaches is still answered through the funnels that contain it (wave C1: no declared set to 404 against)", async () => {
     mockFetch({ funnels: [FORM_FUNNEL] });
     const res = await get("leg=conversation_to_meeting_booked");
 
-    expect(res.status).toBe(404);
-    expect(res.body.reason).toBe("leg_not_declared");
-    expect(res.body.legKey).toBe("conversation_to_meeting_booked");
-    expect(res.body.declaredFunnelKeys).toEqual(["form_magnet"]);
+    expect(res.status).toBe(200);
+    expect(res.body.leg.legKey).toBe("conversation_to_meeting_booked");
+    expect(res.body.leg.candidateFunnelKeys).toEqual(["sales_meetings_from_conversation"]);
+    expect(res.body.leg.basis).toBe("sole_declared_funnel");
   });
 
   it("an unrecognised leg FAILS LOUD, and a legacy-shaped spelling of a real one is accepted", async () => {

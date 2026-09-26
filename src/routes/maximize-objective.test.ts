@@ -19,8 +19,9 @@
  *    dyn-precise — reached 200 people, 20 clicks, 30 positive replies. Dear per outcome and it
  *                  converts a large share of the small list it touches.
  *
- *  Website funnel (click-bought, $20,000 a client):   return 400,000%; conversion rate 5%.
- *  Conversation funnel (reply-bought, $1,000 a client): return  200,000%; conversion rate 7.5%.
+ *  At the FUNNEL grain (FUNNEL_STATS, one $1,000 lifetime revenue for the offer — wave C1):
+ *  Website funnel (click-bought):      return 4,000x; conversion rate 5%.
+ *  Conversation funnel (reply-bought): return 2,000x; conversion rate 7.5%.
  *
  * So the return question answers "the website funnel, run by dyn-volume" and the conversion-rate
  * question answers "the conversation funnel, run by dyn-precise" — different on every axis.
@@ -58,11 +59,14 @@ process.env.BRAND_SERVICE_URL = "http://brand:3000";
 process.env.BRAND_SERVICE_API_KEY = "brand-key";
 process.env.HUMAN_SERVICE_URL = "http://human:3000";
 process.env.HUMAN_SERVICE_API_KEY = "human-key";
+process.env.CAMPAIGN_SERVICE_URL = "http://campaign:3000";
+process.env.CAMPAIGN_SERVICE_API_KEY = "campaign-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
 process.env.NODE_ENV = "test";
 
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
+const { offerEconomicsFromDeclared, legCampaignRows } = await import("../lib/leg-economics-fixture.js");
 
 const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
 const FEATURE = { id: "feat-1", slug: "x", name: "X", description: "x", status: "active", createdAt: new Date(), updatedAt: new Date() };
@@ -116,8 +120,16 @@ const email = (slug: string, contacted: number, clicked: number, repliesPositive
 
 const COSTS = [cost("wf-v", 10000), cost("wf-p", 10000)];
 const STATS = [email("wf-v", 10000, 100, 1000), email("wf-p", 200, 20, 30)];
+/**
+ * The FUNNEL-grain fixture. Wave C1: an offer has ONE lifetime revenue, so two funnels can no longer
+ * diverge through their value per client — they diverge through the workflows each objective picks.
+ * dyn-volume now reaches 100,000 people for 2,000 clicks and 1,000 replies (cheapest on both channels,
+ * converts almost nobody); dyn-precise is unchanged. Website: return 4,000x ($0.05 a click), best rate
+ * 5% (dyn-precise). Conversation: return 2,000x, best rate 7.5% (dyn-precise).
+ */
+const FUNNEL_STATS = [email("wf-v", 100000, 2000, 1000), email("wf-p", 200, 20, 30)];
 
-function mockFetch(funnels: unknown[] = [CONVERSATION_FUNNEL, WEBSITE_FUNNEL]): void {
+function mockFetch(funnels: unknown[] = [CONVERSATION_FUNNEL, WEBSITE_FUNNEL], stats: unknown[] = STATS): void {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
     const u = new URL(url, "http://x");
@@ -130,10 +142,11 @@ function mockFetch(funnels: unknown[] = [CONVERSATION_FUNNEL, WEBSITE_FUNNEL]): 
     }
     if (url.includes("/orgs/stats")) {
       if (u.searchParams.get("audienceId")) return json({ groups: [] });
-      return json({ groups: STATS });
+      return json({ groups: stats });
     }
-    if (url.includes("/public/stats")) return json({ groups: STATS });
-    if (url.includes("/sales-funnels")) return json({ funnels });
+    if (url.includes("/public/stats")) return json({ groups: stats });
+    if (url.includes("/offer-economics")) return json(offerEconomicsFromDeclared(funnels as any[]));
+    if (url.includes("campaign:3000/campaigns")) return json({ campaigns: legCampaignRows(funnels as any[], { brandId: BRAND }) });
     if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
     if (url.includes("/orgs/audiences")) return json({ audiences: [] });
     return json({});
@@ -216,13 +229,13 @@ describe("a caller says WHAT to maximise: a RETURN, or a CONVERSION RATE", () =>
   });
 
   it("the LEG is priced through the funnel that is best AT WHAT WAS ASKED FOR, and the basis says which", async () => {
-    mockFetch();
+    mockFetch(undefined, FUNNEL_STATS);
     const byReturn = await project(`leg=${SHARED_LEG}`);
-    mockFetch();
+    mockFetch(undefined, FUNNEL_STATS);
     const byRate = await project(`leg=${SHARED_LEG}&maximize=conversionRate`);
 
     // The website funnel returns twice as much per dollar; the conversation funnel converts half as
-    // many people again. Neither answer is a compromise between them.
+    // many people again (one lifetime revenue per offer — the divergence is the workflows'). Neither answer is a compromise between them.
     expect(byReturn.body.leg.basisFunnelKey).toBe("sales_meetings_from_website");
     expect(byReturn.body.leg.basis).toBe("best_returning_declared_funnel");
     expect(byRate.body.leg.basisFunnelKey).toBe("sales_meetings_from_conversation");
@@ -238,9 +251,9 @@ describe("a caller says WHAT to maximise: a RETURN, or a CONVERSION RATE", () =>
   });
 
   it("`/funnel-ranking` re-orders the SAME declared funnels under the two objectives", async () => {
-    mockFetch();
+    mockFetch(undefined, FUNNEL_STATS);
     const byReturn = await rank();
-    mockFetch();
+    mockFetch(undefined, FUNNEL_STATS);
     const byRate = await rank("maximize=conversionRate");
 
     expect(byReturn.body.ranking.map((r: any) => r.funnelKey)).toEqual([
@@ -263,7 +276,7 @@ describe("a caller says WHAT to maximise: a RETURN, or a CONVERSION RATE", () =>
   });
 
   it("VOLUME still governs: the evidence block is stated under both objectives, on the basis it used", async () => {
-    mockFetch();
+    mockFetch(undefined, FUNNEL_STATS);
     const byRate = await project(`leg=${SHARED_LEG}&maximize=conversionRate`);
     // dyn-precise is what was recommended, so the count is ITS outcomes — 30 replies × 50%, not the
     // volume workflow's 500. A recommendation resting on 15 outcomes says 15.
@@ -271,9 +284,9 @@ describe("a caller says WHAT to maximise: a RETURN, or a CONVERSION RATE", () =>
     expect(byRate.body.leg.evidence.grain).toBe("brand");
     expect(byRate.body.leg.evidence.resolvedOutcomeCount).toBeCloseTo(15, 6);
 
-    mockFetch();
+    mockFetch(undefined, FUNNEL_STATS);
     const byReturn = await project(`leg=${SHARED_LEG}`);
-    expect(byReturn.body.leg.evidence.resolvedOutcomeCount).toBeCloseTo(50, 6);
+    expect(byReturn.body.leg.evidence.resolvedOutcomeCount).toBeCloseTo(1000, 6); // 2,000 clicks × 50%
   });
 
   it("an UNRECOGNISED word FAILS LOUD on both surfaces rather than quietly ranking on return", async () => {

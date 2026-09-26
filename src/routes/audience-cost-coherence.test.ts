@@ -192,6 +192,11 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
     if (url.includes("runs:3000/v1/stats/public/costs")) return json({ groups: fleet.costs });
     if (url.includes("email:3000/public/stats")) return json({ groups: fleet.email });
     if (url.includes("brand:3000/orgs/brands/brand-1/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
+    // Wave C1: the brand's leg statements (none of its own here — every rate falls through to the
+    // brand-wide record) and its one offer.
+    if (url.includes("brand:3000/internal/brands/brand-1/offer-economics")) {
+      return json({ legRates: [], offers: [{ offerId: "offer-1", name: "Offer", lifetimeRevenueUsd: null, lifetimeRevenueStatedAt: null }] });
+    }
     // The funnels this brand declared — both meeting funnels, so a `?funnel=` request is answerable.
     if (url.includes("brand:3000/internal/brands/brand-1/sales-funnels")) {
       return json({
@@ -406,22 +411,6 @@ describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection"
     expect(conversation.statsUsd).not.toBe(website.statsUsd);
   });
 
-  it("refuses to price a funnel the brand never declared, on the audience surface too", async () => {
-    fetchSpy.mockRestore();
-    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = urlOf(input);
-      if (url.includes("brand:3000/internal/brands/brand-1/sales-funnels")) {
-        return json({ funnels: [{ funnelKey: "website_purchases", active: true, name: "Website Purchase", steps: [], rates: {}, lifetimeRevenueUsd: null, destinationUrl: null, bookingUrl: null, updatedAt: "2026-08-02T00:00:00.000Z" }] });
-      }
-      return json({});
-    }) as ReturnType<typeof vi.spyOn>;
-
-    const res = await request(app)
-      .get(`/features/${FEATURE.slug}/audience-stats?brandId=brand-1&goal=meetingBooked&funnel=sales_meetings_from_website`)
-      .set(AUTH);
-    expect(res.status).toBe(404);
-    expect(res.body.reason).toBe("funnel_not_declared");
-  });
 
   it("the BRAND grain floor is part of the pick — a workflow this brand already outspent cannot win on its fleet rate", async () => {
     fleet = FLEET_BRAND_GRAIN_FLIPS;

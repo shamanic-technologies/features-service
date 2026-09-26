@@ -17,6 +17,8 @@
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
 
+vi.mock("../db/index.js", () => ({ db: { query: { features: { findMany: async () => [] } } }, sql: {} }));
+
 process.env.BRAND_SERVICE_URL = "http://brand:3000";
 process.env.BRAND_SERVICE_API_KEY = "brand-key";
 process.env.LEAD_SERVICE_URL = "http://lead:3000";
@@ -26,7 +28,11 @@ process.env.RUNS_SERVICE_API_KEY = "runs-key";
 process.env.EMAIL_GATEWAY_SERVICE_URL = "http://email:3000";
 process.env.EMAIL_GATEWAY_SERVICE_API_KEY = "email-key";
 
-const { fetchDeclaredSalesFunnels, SalesFunnelsUnavailableError } = await import("./sales-funnels-client.js");
+process.env.CAMPAIGN_SERVICE_URL = "http://campaign:3000";
+process.env.CAMPAIGN_SERVICE_API_KEY = "campaign-key";
+
+const { SalesFunnelsUnavailableError } = await import("./sales-funnels-client.js");
+const { fetchBrandLegEconomics } = await import("./brand-leg-economics-client.js");
 const { fetchBrandSavedEconomics, fetchEffectiveEconomics, fetchSalesEconomics } = await import(
   "./sales-economics-client.js"
 );
@@ -61,14 +67,12 @@ const SAVED_ECONOMICS = {
 describe("internal brand-service config reads carry the org whose configuration is wanted", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("GET /internal/brands/:id/sales-funnels sends x-org-id (a brand id alone cannot name whose funnels)", async () => {
-    // A non-empty list: an empty one now means "this org never stated a set" and fails loud,
-    // which would abort before the headers this test is about could be asserted.
-    const seen = captureFetch({ funnels: [{ funnelKey: "reply_meeting", currentGoal: "meetingBooked" }] });
+  it("GET /internal/brands/:id/offer-economics sends x-org-id (a brand id alone cannot name whose leg rates)", async () => {
+    const seen = captureFetch({ legRates: [], offers: [] });
 
-    await fetchDeclaredSalesFunnels("brand-1", "org-A");
+    await fetchBrandLegEconomics("brand-1", "org-A");
 
-    expect(seen.url()).toBe("http://brand:3000/internal/brands/brand-1/sales-funnels");
+    expect(seen.url()).toBe("http://brand:3000/internal/brands/brand-1/offer-economics");
     expect(seen.headers()["x-api-key"]).toBe("brand-key");
     expect(seen.headers()["x-org-id"]).toBe("org-A");
   });
@@ -112,10 +116,10 @@ describe("internal brand-service config reads carry the org whose configuration 
   it("a caller with NO org FAILS LOUD on both reads — never a substituted stand-in, never an org-less read", async () => {
     // A non-empty list: an empty one now means "this org never stated a set" and fails loud,
     // which would abort before the headers this test is about could be asserted.
-    const seen = captureFetch({ funnels: [{ funnelKey: "reply_meeting", currentGoal: "meetingBooked" }] });
+    const seen = captureFetch({ legRates: [], offers: [] });
 
-    await expect(fetchDeclaredSalesFunnels("brand-1", "")).rejects.toBeInstanceOf(SalesFunnelsUnavailableError);
-    await expect(fetchDeclaredSalesFunnels("brand-1", "")).rejects.toThrow(/requires the org/);
+    await expect(fetchBrandLegEconomics("brand-1", "")).rejects.toBeInstanceOf(SalesFunnelsUnavailableError);
+    await expect(fetchBrandLegEconomics("brand-1", "")).rejects.toThrow(/requires the org/);
     await expect(fetchBrandSavedEconomics("brand-1", "")).rejects.toThrow(/requires the org/);
 
     // The point of failing loud: nothing was asked of brand-service without an org.
@@ -142,9 +146,15 @@ describe("internal brand-service config reads carry the org whose configuration 
           ],
         });
       }
-      if (url.includes("/internal/brands/") && url.includes("/sales-funnels")) {
+      if (url.includes("/internal/brands/") && url.includes("/offer-economics")) {
         seenFunnelOrgs.push(headers["x-org-id"]);
-        return json({ funnels: [{ funnelKey: "sales_meetings_from_conversation", name: "Reply", steps: [], rates: {}, lifetimeRevenueUsd: null }] });
+        return json({
+          legRates: [{ fromStep: "Positive reply", toStep: "Meeting booked", ratePct: 30, stated: true, statedAt: "x" }],
+          offers: [{ offerId: "offer-1", name: "O", lifetimeRevenueUsd: null, lifetimeRevenueStatedAt: null }],
+        });
+      }
+      if (url.includes("campaign:3000/campaigns")) {
+        return json({ campaigns: [{ id: "c1", orgId: "org-A", brandId: "shared", featureSlug: "sales-cold-email-outreach", legKey: "start_to_conversation", offerId: "offer-1", status: "ongoing" }] });
       }
       if (url.includes("/internal/brands/") && url.includes("/sales-economics")) {
         seenEconomicsOrgs.push(headers["x-org-id"]);
@@ -161,7 +171,7 @@ describe("internal brand-service config reads carry the org whose configuration 
     const dataset = await fetchFunnelBucketDataset("sales-cold-email-outreach");
 
     // Asked under a REAL claimant — never org-less, never a stand-in. BOTH per-brand configuration
-    // reads (the economics and the declared funnels) name that same claiming org.
+    // reads (the economics and the leg statements) name that same claiming org.
     expect(seenEconomicsOrgs).toEqual(["org-A"]);
     expect(seenFunnelOrgs).toEqual(["org-A"]);
     // ...and the brand's fleet spend is read (and so counted) exactly ONCE.

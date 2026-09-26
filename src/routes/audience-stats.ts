@@ -4,11 +4,8 @@ import { computeAudienceStats, validateAudienceStatsQuery, type ComputeResult } 
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { parsePricing } from "../lib/pricing.js";
 import { fetchEffectiveEconomics, economicsFingerprint } from "../lib/sales-economics-client.js";
-import {
-  fetchDeclaredSalesFunnels,
-  SalesFunnelsUnavailableError,
-  SeveralOffersDeclaredError,
-} from "../lib/sales-funnels-client.js";
+import { SalesFunnelsUnavailableError, SeveralOffersDeclaredError } from "../lib/sales-funnels-client.js";
+import { fetchReadingFunnelKeys } from "../lib/reading-funnels.js";
 import { resolveOfferCampaignIds, OfferHasNoCampaignsError } from "../lib/offer-scope.js";
 import { fetchCampaignFamiliesSoft } from "../lib/campaign-identity-client.js";
 import { describeIdentity } from "../lib/campaign-identity.js";
@@ -99,37 +96,9 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
     // every brand selling one thing, so a single-offer brand is byte-unchanged.
     const scopeOfferId = offerId ?? identity?.offerId ?? null;
 
-    // A funnel the brand never declared has no cost to serve — "we could not estimate this" and "it
-    // costs zero" are different statements, and only the first is true. 404 with the reason rather than
-    // pricing a funnel the org never said it sells through. Fires ONLY on `?funnel=`, so every existing
-    // goal-keyed request takes no extra read.
-    if (validated.funnelKey) {
-      let declared: string[] | null;
-      try {
-        declared = (await fetchDeclaredSalesFunnels(validated.brandId, orgId, scopeOfferId)).map(
-          (f) => f.funnelKey,
-        );
-      } catch (err) {
-        // SEVERAL OFFERS, none named: there is no single declared set to check the funnel against, so
-        // this gate cannot fire at all. Skipping it is the honest move — 404-ing "not declared" would
-        // assert something nobody told us, and 502-ing is the blank page this fixes. The compute below
-        // degrades the projected columns and states the reason on the body.
-        if (err instanceof SeveralOffersDeclaredError) {
-          declared = null;
-        } else if (err instanceof SalesFunnelsUnavailableError) {
-          return res.status(502).json({ error: err.message, reason: "declared_funnels_unavailable" });
-        } else {
-          throw err;
-        }
-      }
-      if (declared && !declared.includes(validated.funnelKey)) {
-        return res.status(404).json({
-          error: `this brand has not declared the ${validated.funnelKey} funnel, so there is no cost to estimate for it`,
-          reason: "funnel_not_declared",
-          declaredFunnelKeys: declared,
-        });
-      }
-    }
+    // A NAMED funnel is always priced (wave C1): a funnel is a way of reading legs, and the brand's leg
+    // rates price any of them — there is no declared set left to check it against, so the historical
+    // `funnel_not_declared` 404 is unreachable.
 
     // The derived cost columns (cost per form submission / signup / sale) project through the brand's
     // economics via `fetchBrandProjectedParents`, so the body goes stale the moment the economics change.
@@ -143,7 +112,7 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
     // would not see. This read feeds a cache KEY, not the response, so its failure must not change the
     // endpoint's HTTP semantics — degrade to "no fingerprint in the key" and let the compute (which reads
     // economics fail-loud) decide the status.
-    // THE BRAND-LEVEL read's body is priced on the brand's DECLARED SET, which is not a query parameter —
+    // THE BRAND-LEVEL read's body is priced on the scope's READING FUNNELS (its campaigns' legs), which is not a query parameter —
     // so a brand that adds or drops a funnel would keep being served the previous set's answer (with a
     // `funnelCoverage` naming funnels it no longer sells through) until the hard-stale cap. Folding the
     // declared keys into the key makes a re-declaration land on a DIFFERENT cell, exactly as the economics
@@ -152,10 +121,7 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
     let decl: string | undefined;
     if (!validated.funnelKey && validated.goal === null) {
       try {
-        decl = (await fetchDeclaredSalesFunnels(validated.brandId, orgId, scopeOfferId))
-          .map((f) => f.funnelKey)
-          .sort()
-          .join(",");
+        decl = (await fetchReadingFunnelKeys(validated.brandId, orgId, scopeOfferId)).sort().join(",");
       } catch (err) {
         // A brand whose declaration could not be resolved to one offer's set serves a DIFFERENT body
         // (the degraded projection), so it must land on its own cell rather than share the resolved
