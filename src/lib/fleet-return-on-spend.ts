@@ -85,6 +85,19 @@ export interface BrandReturnRow {
    * kept apart because only the first is a statement about the client.
    */
   outcomeCount?: number | null;
+  /**
+   * THE LEGS this brand's campaigns on the channel are bought for (campaign-service's own `legKey`,
+   * canonicalised) — the population key of the outcome-keyed realized return (wave C4). Read by no
+   * channel-wide median. OPTIONAL: absent on every row written before it existed; `null` = the
+   * campaign read failed on that warm, so the brand joins no leg population rather than a guessed one.
+   */
+  legKeys?: string[] | null;
+  /**
+   * Expected PAYING CLIENTS on the mature cohort (spend ÷ cost per acquisition), or null when the brand
+   * states no lifetime revenue. Stored as a COUNT so it composes across the orgs claiming one brand.
+   * Read only by the outcome-keyed cost-per-paid-client median. OPTIONAL, same reason as `legKeys`.
+   */
+  expectedPaidClients?: number | null;
 }
 
 /** Why a median could not be stated. Both are real answers; neither is an error. */
