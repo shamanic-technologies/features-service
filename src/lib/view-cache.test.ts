@@ -7,6 +7,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 //   update().set(s).where().returning()          → claim (returns [{id}] | [])
 //   update().set(s).where()                      → release (awaited, no returning)
 let storedRow: Record<string, unknown> | undefined;
+/** The newest row of the requested cell's FAMILY (another fingerprint of the same key), for the rotation read. */
+let familyRow: Record<string, unknown> | undefined;
 let claimSucceeds: boolean;
 let readThrows: boolean;
 let pruneThrows: boolean;
@@ -25,6 +27,9 @@ const dbMock = {
           if (readThrows) throw new Error("snapshot table unreachable");
           return storedRow ? [storedRow] : [];
         },
+        orderBy: () => ({
+          limit: async () => (familyRow ? [familyRow] : []),
+        }),
       }),
     }),
   }),
@@ -82,14 +87,23 @@ function findDate(node: unknown, depth = 0): Date | undefined {
 
 vi.mock("../db/index.js", () => ({ db: dbMock, sql: {} }));
 
-const { servedCached, buildScopeKey, PLATFORM_SCOPE_ORG_ID, viewCacheRetentionMs, __resetViewCachePruneState } =
-  await import("./view-cache.js");
+const {
+  servedCached,
+  buildScopeKey,
+  PLATFORM_SCOPE_ORG_ID,
+  viewCacheRetentionMs,
+  __resetViewCachePruneState,
+  familyKeyOf,
+  encodeSnapshotBody,
+  decodeSnapshotBody,
+} = await import("./view-cache.js");
 const PLATFORM = PLATFORM_SCOPE_ORG_ID;
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
 beforeEach(() => {
   storedRow = undefined;
+  familyRow = undefined;
   claimSucceeds = true;
   readThrows = false;
   pruneThrows = false;
@@ -336,5 +350,89 @@ describe("servedCached", () => {
       expect(compute).toHaveBeenCalledTimes(1);
       expect(storedRow?.orgId).toBe(PLATFORM);
     });
+  });
+});
+
+// ── A body jsonb refuses must still be cached, byte for byte ─────────────────────────────────────────
+// Prod 2026-09-26: `brand-revenue` had ZERO stored cells because a lead's text carried a NUL, jsonb
+// rejected the persist ("unsupported Unicode escape sequence"), and every read recomputed cold (3-13s).
+describe("a body carrying text jsonb refuses", () => {
+  const nulBody = { leads: [{ name: "Ada\u0000Lovelace", value: 12.5 }], total: 3 };
+  const surrogateBody = { orgs: [{ name: "broken \ud83d emoji" }], n: null };
+
+  it("round-trips byte for byte through the stored shape", () => {
+    for (const body of [nulBody, surrogateBody]) {
+      const stored = encodeSnapshotBody(body);
+      expect(stored).not.toEqual(body); // wrapped: the raw body is what jsonb refused
+      expect(JSON.stringify(stored)).not.toMatch(/(^|[^\\])\\u0000/); // no raw NUL escape reaches jsonb
+      expect(JSON.stringify(decodeSnapshotBody(stored))).toBe(JSON.stringify(body));
+    }
+  });
+
+  it("leaves every ordinary body exactly as it was", () => {
+    const body = { pipeline: 100, name: "Zoë — ok", nested: [{ a: 1 }] };
+    expect(encodeSnapshotBody(body)).toBe(body);
+    expect(decodeSnapshotBody(body)).toBe(body);
+  });
+
+  it("is persisted, and the next read serves the SAME body without recomputing", async () => {
+    const compute = vi.fn().mockResolvedValue(nulBody);
+    const first = await servedCached({ view: "brand-revenue", scopeKey: "k", orgId: "o", compute });
+    expect(storedRow).toBeDefined();
+    const second = await servedCached({ view: "brand-revenue", scopeKey: "k", orgId: "o", compute });
+    expect(compute).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(second)).toBe(JSON.stringify(first));
+    expect(JSON.stringify(second)).toBe(JSON.stringify(nulBody));
+  });
+});
+
+// ── A fingerprint rotation serves the previous cell instead of blocking ──────────────────────────────
+describe("familyKeyOf", () => {
+  it("drops ONLY the fingerprint parts", () => {
+    const key = buildScopeKey("b1", { orgId: "o", econ: "abc", decl: "x+y", pricing: "net", cause: "priced:outreach" });
+    expect(familyKeyOf(key)).toBe(buildScopeKey("b1", { orgId: "o", pricing: "net", cause: "priced:outreach" }));
+  });
+
+  it("is the key itself when there is no fingerprint to drop", () => {
+    const key = buildScopeKey("b1", { orgId: "o", pricing: "net" });
+    expect(familyKeyOf(key)).toBe(key);
+  });
+});
+
+describe("servedCached on a fingerprint rotation", () => {
+  const newKey = buildScopeKey("b1", { orgId: "o", econ: "new", pricing: "net" });
+
+  it("serves the family's previous cell NOW and computes the new cell behind the response", async () => {
+    familyRow = { body: { pipeline: 7 } };
+    let resolveCompute!: (value: { pipeline: number }) => void;
+    const compute = vi.fn(() => new Promise<{ pipeline: number }>((resolve) => { resolveCompute = resolve; }));
+    const body = await servedCached({ view: "brand-revenue", scopeKey: newKey, orgId: "o", compute });
+    expect(body).toEqual({ pipeline: 7 }); // answered while the new compute is still pending
+    expect(compute).toHaveBeenCalledTimes(1);
+    resolveCompute({ pipeline: 42 });
+    await flush();
+    await flush();
+    expect(storedRow?.body).toEqual({ pipeline: 42 });
+    expect(storedRow?.scopeKey).toBe(newKey);
+    expect(storedRow?.familyKey).toBe(familyKeyOf(newKey));
+  });
+
+  it("decodes an encoded previous cell", async () => {
+    familyRow = { body: encodeSnapshotBody({ name: "a\u0000b" }) };
+    const body = await servedCached({ view: "brand-revenue", scopeKey: newKey, orgId: "o", compute: vi.fn().mockResolvedValue({}) });
+    expect(JSON.stringify(body)).toBe(JSON.stringify({ name: "a\u0000b" }));
+  });
+
+  it("with no previous cell, computes on the request path exactly as a miss always did", async () => {
+    const compute = vi.fn().mockResolvedValue({ pipeline: 42 });
+    const body = await servedCached({ view: "brand-revenue", scopeKey: newKey, orgId: "o", compute });
+    expect(body).toEqual({ pipeline: 42 });
+  });
+
+  it("never looks for a family when the key carries no fingerprint", async () => {
+    familyRow = { body: { pipeline: 7 } };
+    const compute = vi.fn().mockResolvedValue({ pipeline: 42 });
+    const body = await servedCached({ view: "revenue", scopeKey: "plain|a=1", orgId: "o", compute });
+    expect(body).toEqual({ pipeline: 42 });
   });
 });

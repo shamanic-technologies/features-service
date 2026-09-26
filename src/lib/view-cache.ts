@@ -1,4 +1,4 @@
-import { and, eq, isNull, lt, or } from "drizzle-orm";
+import { and, desc, eq, isNull, lt, or } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { featureViewSnapshots } from "../db/schema.js";
 import { withLiveLeadCopy } from "./lead-copy.js";
@@ -228,18 +228,103 @@ export async function servedCached<T>({ view, scopeKey, orgId, ttlMs, maxStaleMs
   if (row) {
     const ageMs = Date.now() - new Date(row.computedAt).getTime();
     if (ageMs < ttl) {
-      return row.body as T; // fresh hit
+      return decodeSnapshotBody(row.body) as T; // fresh hit
     }
     if (ageMs >= maxStale) {
       return computeAndPersistSingleFlight(view, scopeKey, orgId, compute);
     }
     // Stale hit — serve immediately, refresh in the background (single-flight across replicas).
     void revalidate(view, scopeKey, orgId, compute);
-    return row.body as T;
+    return decodeSnapshotBody(row.body) as T;
+  }
+
+  // Miss on the EXACT key. When the only thing that moved is a FINGERPRINT part (the economics or the
+  // declaration the body is priced on), the previous cell of the SAME org + view + every other key part
+  // is served NOW and the new cell is computed behind the response. See `familyKeyOf`.
+  const familyKey = familyKeyOf(scopeKey);
+  if (familyKey !== scopeKey) {
+    let prior: { body: unknown } | undefined;
+    try {
+      [prior] = await db
+        .select({ body: featureViewSnapshots.body })
+        .from(featureViewSnapshots)
+        .where(
+          and(
+            eq(featureViewSnapshots.view, view),
+            eq(featureViewSnapshots.familyKey, familyKey),
+            eq(featureViewSnapshots.orgId, orgId),
+          ),
+        )
+        .orderBy(desc(featureViewSnapshots.computedAt))
+        .limit(1);
+    } catch (err) {
+      console.error(`[features-service] view-cache family read failed (computing live) view=${view}: ${(err as Error).message}`);
+    }
+    if (prior) {
+      void computeAndPersistSingleFlight(view, scopeKey, orgId, compute).catch((err) => {
+        console.error(`[features-service] view-cache rotation refresh failed (serving previous cell) view=${view}: ${(err as Error).message}`);
+      });
+      return decodeSnapshotBody(prior.body) as T;
+    }
   }
 
   // Miss — compute live ONCE (fail-loud on error: propagate to the endpoint), then persist.
   return computeAndPersistSingleFlight(view, scopeKey, orgId, compute);
+}
+
+/**
+ * Key parts that are FINGERPRINTS of an input read on every request (the brand's economics, the funnels
+ * it is priced on), not a question the caller asked. They move whenever a measured conversion rate
+ * moves — measured in prod 2026-09-26, brand `75d7e3e8…` held four `brand-offers` cells differing only
+ * by `econ` — and every move used to make the next read a full blocking recompute (7-13s on the brand
+ * reads). A cell's FAMILY is its key with these parts removed; see the rotation branch in `servedCached`.
+ *
+ * The fingerprint still keys the cell, so a write still lands on a new cell and the new answer is
+ * computed at once — it is served one refresh later instead of blocking the read that noticed it,
+ * the same eventual-consistency the stale-while-revalidate branch already documents.
+ */
+const FINGERPRINT_KEY_PARTS = ["econ", "decl"] as const;
+
+export function familyKeyOf(scopeKey: string): string {
+  const bar = scopeKey.indexOf("|");
+  if (bar < 0) return scopeKey;
+  const params = new URLSearchParams(scopeKey.slice(bar + 1));
+  let moved = false;
+  for (const part of FINGERPRINT_KEY_PARTS) {
+    if (params.has(part)) {
+      params.delete(part);
+      moved = true;
+    }
+  }
+  return moved ? `${scopeKey.slice(0, bar)}|${params.toString()}` : scopeKey;
+}
+
+/**
+ * Postgres `jsonb` refuses a `\u0000` (NUL) escape and an unpaired surrogate escape anywhere in a
+ * document, and a response body legitimately carries whatever text a producer stored (a lead's name, an
+ * organisation, a job title). The refusal made the persist throw on every compute, so the cell was never
+ * written and EVERY read recomputed cold — measured in prod 2026-09-26: `brand-revenue` had zero stored
+ * cells fleet-wide and answered in 3-13s on every call, and `revenue-grouped` refreshes failed forever
+ * ("unsupported Unicode escape sequence").
+ *
+ * Such a body is stored as its JSON TEXT inside a wrapper, which `jsonb` accepts (the escape is then an
+ * ordinary backslash in a string), and `JSON.parse` restores it byte for byte. Every other body is
+ * stored as before, untouched.
+ */
+const ENCODED_MARKER = "__featureViewSnapshotJson";
+const JSONB_UNSAFE = /\\u0000|\\ud[89a-f][0-9a-f]{2}/i;
+
+export function encodeSnapshotBody(body: unknown): unknown {
+  const text = JSON.stringify(body);
+  return text !== undefined && JSONB_UNSAFE.test(text) ? { [ENCODED_MARKER]: text } : body;
+}
+
+export function decodeSnapshotBody(stored: unknown): unknown {
+  if (stored && typeof stored === "object" && !Array.isArray(stored)) {
+    const text = (stored as Record<string, unknown>)[ENCODED_MARKER];
+    if (typeof text === "string" && Object.keys(stored).length === 1) return JSON.parse(text);
+  }
+  return stored;
 }
 
 async function computeAndPersistSingleFlight<T>(
@@ -308,13 +393,15 @@ async function releaseRefresh(view: string, scopeKey: string): Promise<void> {
     .where(and(eq(featureViewSnapshots.view, view), eq(featureViewSnapshots.scopeKey, scopeKey)));
 }
 
-async function upsertSnapshot(view: string, scopeKey: string, orgId: string, body: unknown): Promise<void> {
+async function upsertSnapshot(view: string, scopeKey: string, orgId: string, rawBody: unknown): Promise<void> {
+  const body = encodeSnapshotBody(rawBody);
+  const familyKey = familyKeyOf(scopeKey);
   await db
     .insert(featureViewSnapshots)
-    .values({ view, scopeKey, orgId, body, computedAt: new Date(), refreshingAt: null })
+    .values({ view, scopeKey, familyKey, orgId, body, computedAt: new Date(), refreshingAt: null })
     .onConflictDoUpdate({
       target: [featureViewSnapshots.view, featureViewSnapshots.scopeKey],
-      set: { body, orgId, computedAt: new Date(), refreshingAt: null },
+      set: { body, familyKey, orgId, computedAt: new Date(), refreshingAt: null },
     });
   void maybePruneStaleSnapshots();
 }
