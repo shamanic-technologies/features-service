@@ -82,6 +82,8 @@ interface Fixture {
   allYoung?: boolean;
   /** campaign-service unreachable. */
   campaignsDown?: boolean;
+  /** Legacy closed-won statements: l1 (mature, closed after our email) and l5 (young). */
+  closes?: boolean;
 }
 
 /** Ten leads, each its own company. Clickers: l1-l3 mature, l4-l6 young, l7 undated; l8-l10 silent. */
@@ -181,12 +183,21 @@ function mockFetch(fixture: Fixture = {}): void {
     if (url.includes("/orgs/status")) {
       return json({
         results: Object.entries(CONTACTED).map(([id, at]) => {
-          const scope = { firstContactedAt: at, firstClickedAt: CLICKERS.has(id) && at ? at : null };
+          const scope = { firstContactedAt: at, firstDeliveredAt: at, firstClickedAt: CLICKERS.has(id) && at ? at : null };
           return { email: `${id}@example.com`, broadcast: { campaign: scope, brand: scope } };
         }),
       });
     }
-    if (url.includes("/manual-qualifications")) return json({ qualifications: [] });
+    if (url.includes("/manual-qualifications")) {
+      return json({
+        qualifications: fixture.closes
+          ? [
+              { email: "l1@example.com", status: "lead_closed", qualifiedAt: "2026-09-15T10:00:00.000Z", instantlyCampaignId: "i1" },
+              { email: "l5@example.com", status: "lead_closed", qualifiedAt: "2026-09-28T10:00:00.000Z", instantlyCampaignId: "i5" },
+            ]
+          : [],
+      });
+    }
     return json({});
   });
 }
@@ -265,15 +276,103 @@ describe("ROI, %CAC and $CAC are measured on the MATURE cohort", () => {
     expect(immediate.costEconomics.roiMultiple).toBeCloseTo(immediate.headline.totalPipelineUsd / 100, 6);
     expect(maturing.costEconomics.roiMultiple).not.toBeCloseTo(immediate.costEconomics.roiMultiple, 3);
 
-    // AC: only the ROI-side economics move.
+    // AC: every TOTAL keeps the whole history; only the RATIOS (and the basis they state) move.
+    const totals = (b: Record<string, any>) => ({
+      outcomes: { ...b.outcomes, cpcCents: "ratio", cpprCents: "ratio", ratioBasis: "basis" },
+      funnelSteps: b.funnelSteps && {
+        ...b.funnelSteps,
+        ratioBasis: "basis",
+        steps: b.funnelSteps.steps.map((st: Record<string, unknown>) => ({
+          ...st,
+          costPerReachCents: "ratio",
+          ratioBasisRecipientsReached: "basis",
+        })),
+      },
+      spend: {
+        ...b.spend,
+        totalCpcCents: "ratio",
+        actualCpcCents: "ratio",
+        provisionedCpcCents: "ratio",
+        cpprCents: "ratio",
+        ratioBasis: "basis",
+      },
+    });
     expect(maturing.headline).toEqual(immediate.headline);
-    expect(maturing.outcomes).toEqual(immediate.outcomes);
-    expect(maturing.funnelSteps).toEqual(immediate.funnelSteps);
+    expect(totals(maturing)).toEqual(totals(immediate));
     expect(maturing.leads).toEqual(immediate.leads);
     expect(maturing.recipientsContacted).toEqual(immediate.recipientsContacted);
     expect(maturing.recipientsClicked).toEqual(immediate.recipientsClicked);
-    expect(maturing.spend).toEqual(immediate.spend);
     expect(maturing.costEconomics.committedCostUsd).toBe(immediate.costEconomics.committedCostUsd);
+    // …and the zero-delay read's ratios are the whole history's: $100 over 7 clickers.
+    expect(immediate.outcomes.cpcCents).toBeCloseTo(10000 / 7, 6);
+    expect(immediate.spend.totalCpcCents).toBeCloseTo(10000 / 7, 6);
+    expect(immediate.spend.ratioBasis).toMatchObject({ maturityDays: 0, committedSpentCents: 10000, clicksCount: 7 });
+  });
+
+  it("ONE BASIS: every cost per outcome divides the mature spend by the mature cohort's outcomes, and the totals it divides are served", async () => {
+    mockFetch();
+    const res = await body();
+    const ce = res.costEconomics;
+    // The ROI reconciles from the totals it divides — nobody inverts the ratio.
+    expect(ce.ratioBasis.committedCostUsd).toBeCloseTo(60, 6);
+    expect(ce.ratioBasis.totalPipelineUsd).toBeCloseTo((res.headline.totalPipelineUsd * 4) / 7, 6);
+    expect(ce.roiMultiple).toBeCloseTo(ce.ratioBasis.totalPipelineUsd / ce.ratioBasis.committedCostUsd, 9);
+    expect(ce.costOfAcquisitionPct).toBeCloseTo((ce.ratioBasis.committedCostUsd / ce.ratioBasis.totalPipelineUsd) * 100, 9);
+
+    // THE DIVERGENCE: $60 over the 4 mature clickers (3 dated + 1 undated) = $15, not $100 / 7.
+    expect(res.spend.ratioBasis).toMatchObject({
+      maturityDays: 14,
+      committedSpentCents: 6000,
+      actualSpentCents: 6000,
+      provisionedSpentCents: 0,
+      clicksCount: 4,
+      unmeasuredReason: null,
+    });
+    expect(res.spend.totalCpcCents).toBeCloseTo(1500, 6);
+    expect(res.spend.totalCpcCents).not.toBeCloseTo(10000 / 7, 3);
+    expect(res.spend.totalCpcCents).toBeCloseTo(res.spend.ratioBasis.committedSpentCents / res.spend.ratioBasis.clicksCount, 9);
+    // The ratio's spend is the ROI's spend — one basis on one screen.
+    expect(res.spend.ratioBasis.committedSpentCents / 100).toBeCloseTo(ce.ratioBasis.committedCostUsd, 9);
+    // The displayed totals keep the whole history.
+    expect(res.spend.totalSpentCents).toBe(10000);
+    expect(res.recipientsClicked.total).toBe(7);
+
+    expect(res.outcomes.cpcCents).toBeCloseTo(1500, 6);
+    expect(res.outcomes.ratioBasis).toMatchObject({ maturityDays: 14, committedSpentCents: 6000, recipientsClicked: 4 });
+    expect(res.outcomes.recipientsClicked).toBe(7);
+
+    // (The funnel rungs ride the same basis — pinned in lib/ratio-basis.test.ts; this brand walks none.)
+  });
+
+  it("a young campaign's cost per outcome reads NULL `maturing`, exactly as its ROI does — never the whole-history ratio", async () => {
+    mockFetch({ allYoung: true });
+    const res = await body();
+    expect(res.spend.totalCpcCents).toBeNull();
+    expect(res.spend.ratioBasis).toMatchObject({ maturityDays: 14, committedSpentCents: null, unmeasuredReason: "maturing" });
+    expect(res.outcomes.cpcCents).toBeNull();
+    expect(res.outcomes.ratioBasis.unmeasuredReason).toBe("maturing");
+    expect(res.spend.totalSpentCents).toBe(4000);
+  });
+
+  it("serves a MEASURED return beside the pipeline one: closed-won revenue in the mature cohort over the mature spend", async () => {
+    mockFetch({ closes: true });
+    const res = await body();
+    // l1 closed after our email and was contacted before the cutoff; l5 is young → out of the cohort.
+    expect(res.costEconomics.realizedReturn).toEqual({
+      closedWonCount: 1,
+      closedWonRevenueUsd: 5000,
+      roiMultiple: 5000 / 60,
+    });
+    expect(res.costEconomics.realizedReturn.roiMultiple).toBeCloseTo(
+      res.costEconomics.realizedReturn.closedWonRevenueUsd / res.costEconomics.ratioBasis.committedCostUsd,
+      9,
+    );
+  });
+
+  it("nothing closed is a MEASURED 0, not a null", async () => {
+    mockFetch();
+    const res = await body();
+    expect(res.costEconomics.realizedReturn).toEqual({ closedWonCount: 0, closedWonRevenueUsd: 0, roiMultiple: 0 });
   });
 
   it("states it cannot separate the cohort when campaign-service is unreachable — null, never the whole-history ratio", async () => {
@@ -282,6 +381,12 @@ describe("ROI, %CAC and $CAC are measured on the MATURE cohort", () => {
     const res = await body();
     expect(res.costEconomics.unmeasuredReason).toBe("maturity_unknown");
     expect(res.costEconomics.roiMultiple).toBeNull();
+    expect(res.costEconomics.ratioBasis).toEqual({ committedCostUsd: null, totalPipelineUsd: null });
+    expect(res.costEconomics.realizedReturn).toBeNull();
+    // Every other ratio follows the ROI into the named degrade.
+    expect(res.spend.totalCpcCents).toBeNull();
+    expect(res.spend.ratioBasis.unmeasuredReason).toBe("maturity_unknown");
+    expect(res.outcomes.cpcCents).toBeNull();
     expect(res.headline.totalPipelineUsd).toBeGreaterThan(0);
     expect(err).toHaveBeenCalled();
   });

@@ -1032,6 +1032,79 @@
                 "type": "number",
                 "nullable": true,
                 "description": "REAL cost per positive reply = totalSpentCents (COMMITTED = actual + provisioned, the SAME denominator as totalCpcCents/cpsCents) / positiveRepliesCount, USD cents. So cpprCents × positiveRepliesCount ≈ committed spend by construction. null when positiveRepliesCount is 0 (no denominator — never a false $0). Real tracked data, not a projection. (features-service#482)"
+              },
+              "ratioBasis": {
+                "type": "object",
+                "properties": {
+                  "maturityDays": {
+                    "type": "integer",
+                    "description": "The maturity delay the ratios were measured under — costEconomics.maturityDays."
+                  },
+                  "committedSpentCents": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "COMMITTED spend every committed ratio above divides (totalCpcCents, cpprCents, cpsCents, cpsmCents, cpfsCents, cpSaleCents): the mature cohort's when maturityDays > 0, totalSpentCents otherwise. Equals costEconomics.ratioBasis.committedCostUsd × 100."
+                  },
+                  "actualSpentCents": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "Billed spend actualCpcCents divides, on the same basis."
+                  },
+                  "provisionedSpentCents": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "Open holds provisionedCpcCents divides, on the same basis."
+                  },
+                  "clicksCount": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "Website visits the CPCs divide: the mature cohort's visitors when maturityDays > 0."
+                  },
+                  "positiveRepliesCount": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "Positive replies cpprCents divides, on the same basis."
+                  },
+                  "signupsCount": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "Signups cpsCents divides. On a matured basis read off the cohort's own leads (lead-service's counts are undated). ABSENT when the top-level count is."
+                  },
+                  "salesMeetingsCount": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "Meetings booked cpsmCents divides, same rules."
+                  },
+                  "formSubmissionsCount": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "Form submissions cpfsCents divides, same rules."
+                  },
+                  "salesCount": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "Sales cpSaleCents divides, same rules."
+                  },
+                  "unmeasuredReason": {
+                    "type": "string",
+                    "nullable": true,
+                    "enum": [
+                      "maturing",
+                      "maturity_unknown"
+                    ],
+                    "description": "Why every ratio above is null: maturing = nothing spent is mature yet; maturity_unknown = campaign legs unreadable. Spend and counts here are null too."
+                  }
+                },
+                "required": [
+                  "maturityDays",
+                  "committedSpentCents",
+                  "actualSpentCents",
+                  "provisionedSpentCents",
+                  "clicksCount",
+                  "positiveRepliesCount",
+                  "unmeasuredReason"
+                ],
+                "description": "WHAT EVERY COST PER OUTCOME IN THIS BLOCK DIVIDES — the ROI's own basis, so the ratios and costEconomics.roiMultiple are one basis on one screen. Each ratio = the matching spend here ÷ the matching count here (outside the zero-outcome benchmark floor). The block's top-level totals and counts keep the WHOLE history."
               }
             },
             "required": [
@@ -1046,7 +1119,8 @@
               "actualCpcCents",
               "provisionedCpcCents",
               "positiveRepliesCount",
-              "cpprCents"
+              "cpprCents",
+              "ratioBasis"
             ],
             "description": "Canonical spend block for the Overview card — Total spent / Budget spent today / CPC each in three variants (total=committed, actual=billed, provisioned=holds; total = actual + provisioned), plus top sources. Present on the OVERVIEW response; null on the lensed (?lens=) response (lens pages use costPerConversionUsd); absent on grouped (?groupBy=campaignId) groups. (features-service#396, committed naming features-service#402)"
           },
@@ -1481,6 +1555,51 @@
                   "maturity_unknown"
                 ],
                 "description": "Why the ratios are null for a reason other than having nothing to divide. 'maturing' = the scope has spent, but none of that spend is older than maturityDays yet, so there is no mature cohort to measure — a young campaign, not a bad one. 'maturity_unknown' = campaign-service could not say which campaigns wait for their outcomes, so the mature cohort could not be separated (a degraded read, not a property of the scope). Null otherwise."
+              },
+              "ratioBasis": {
+                "type": "object",
+                "properties": {
+                  "committedCostUsd": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "The committed spend (dollars) the ratios divide: the MATURE cohort's when maturityDays > 0 (runs old enough to have produced their outcomes), the whole scope's otherwise. Smaller than committedCostUsd by exactly the spend still maturing. Null under maturity_unknown."
+                  },
+                  "totalPipelineUsd": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads first contacted before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
+                  }
+                },
+                "required": [
+                  "committedCostUsd",
+                  "totalPipelineUsd"
+                ],
+                "description": "THE TOTALS THE RATIOS DIVIDE, served so nobody inverts a ratio: roiMultiple = totalPipelineUsd / committedCostUsd; costOfAcquisitionPct = committedCostUsd / totalPipelineUsd × 100. Every cost per outcome on this body (spend.*Cents, outcomes.cpcCents/cpprCents, funnelSteps costPerReachCents, costPerOutcomeHistory) divides this same spend."
+              },
+              "realizedReturn": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "closedWonCount": {
+                    "type": "integer",
+                    "description": "Deals actually CLOSED WON in the same cohort the ratios divide, PRICED to our outreach (?cause=, default outreach) — the rule the pipeline's won rung follows. 0 is measured."
+                  },
+                  "closedWonRevenueUsd": {
+                    "type": "number",
+                    "description": "What those deals are worth: each at the amount stated on it, else the lifetime revenue a paying client is priced at."
+                  },
+                  "roiMultiple": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "closedWonRevenueUsd / ratioBasis.committedCostUsd — the MEASURED return, beside the pipeline ROI and never instead of it. Null when that spend is 0 (maturing)."
+                  }
+                },
+                "required": [
+                  "closedWonCount",
+                  "closedWonRevenueUsd",
+                  "roiMultiple"
+                ],
+                "description": "THE MEASURED RETURN — revenue from deals actually closed won over the same matured spend the ROI divides. NULL when it cannot be measured on this read: no source of closed deals could be read, the legs are unknown, or the grain never computes it (lens, per-workflow, cross-org reads). Never a fabricated 0."
               }
             },
             "required": [
@@ -1490,7 +1609,9 @@
               "roiMultiple",
               "costPerAcquisitionUsd",
               "maturityDays",
-              "unmeasuredReason"
+              "unmeasuredReason",
+              "ratioBasis",
+              "realizedReturn"
             ],
             "description": "Derived cost economics. Always present; ratios are null per the documented null semantics."
           },
@@ -2022,12 +2143,51 @@
               "cpcCents": {
                 "type": "number",
                 "nullable": true,
-                "description": "Realized spend ÷ website visits, in cents. OBSERVED accounting: null when this grain bought no visit or spent nothing — 'we could not measure this', never 0 and never floored to a benchmark (projection lives on /workflow-projection)."
+                "description": "ratioBasis.committedSpentCents ÷ ratioBasis.recipientsClicked (the ROI's mature cohort), in cents. OBSERVED accounting: null when this grain bought no visit or spent nothing — 'we could not measure this', never 0 and never floored to a benchmark (projection lives on /workflow-projection)."
               },
               "cpprCents": {
                 "type": "number",
                 "nullable": true,
                 "description": "Realized spend ÷ positive replies, in cents. Same null rule as cpcCents."
+              },
+              "ratioBasis": {
+                "type": "object",
+                "properties": {
+                  "maturityDays": {
+                    "type": "integer"
+                  },
+                  "committedSpentCents": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "The committed spend the two rates divide — the ROI's mature cohort when maturityDays > 0, committedSpentCents otherwise."
+                  },
+                  "recipientsClicked": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "Distinct visitors cpcCents divides, on that basis."
+                  },
+                  "recipientsRepliesPositive": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "Distinct positive repliers cpprCents divides, on that basis."
+                  },
+                  "unmeasuredReason": {
+                    "type": "string",
+                    "nullable": true,
+                    "enum": [
+                      "maturing",
+                      "maturity_unknown"
+                    ]
+                  }
+                },
+                "required": [
+                  "maturityDays",
+                  "committedSpentCents",
+                  "recipientsClicked",
+                  "recipientsRepliesPositive",
+                  "unmeasuredReason"
+                ],
+                "description": "The totals cpcCents / cpprCents divide — the ROI's basis (costEconomics.ratioBasis). The counts and spend above keep the whole history."
               }
             },
             "required": [
@@ -2040,7 +2200,8 @@
               "committedSpentCents",
               "actualSpentCents",
               "cpcCents",
-              "cpprCents"
+              "cpprCents",
+              "ratioBasis"
             ],
             "description": "The VOLUME half of this scope's answer — how much real outcome evidence the money above rests on: outreach volume, website visits, positive replies, committed spend, and the cost of a visit and of a reply. Built from the SAME deduped leads and the SAME committed cents as the money, so the two are coherent by construction rather than by correction. NULL only when this scope's leads were never read — a feature with no funnel wired, whose money half is honestly null too; null is 'we could not count this', never 'it reached nobody' (that is 0). Null on the lensed (?lens=) response for the same reason `spend` is: a lens is a SUBSET of the brand's leads while its spend leg is the brand's whole spend."
           },
@@ -2150,7 +2311,34 @@
               },
               "committedSpentCents": {
                 "type": "number",
-                "description": "COMMITTED cents behind every costPerReachCents — the one basis costEconomics rides."
+                "description": "COMMITTED cents this scope spent over its whole history (the invested figure)."
+              },
+              "ratioBasis": {
+                "type": "object",
+                "properties": {
+                  "maturityDays": {
+                    "type": "integer"
+                  },
+                  "committedSpentCents": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "The committed spend every rung's costPerReachCents divides — costEconomics.ratioBasis.committedCostUsd × 100."
+                  },
+                  "unmeasuredReason": {
+                    "type": "string",
+                    "nullable": true,
+                    "enum": [
+                      "maturing",
+                      "maturity_unknown"
+                    ]
+                  }
+                },
+                "required": [
+                  "maturityDays",
+                  "committedSpentCents",
+                  "unmeasuredReason"
+                ],
+                "description": "What every rung's costPerReachCents divides — the ROI's basis."
               },
               "contactedRecipients": {
                 "type": "integer",
@@ -2194,7 +2382,12 @@
                     "costPerReachCents": {
                       "type": "number",
                       "nullable": true,
-                      "description": "COMMITTED spend ÷ recipientsReached, in cents. OBSERVED accounting — null when nobody reached the rung, when nothing was spent, or when the count is unmeasured; never 0 and never floored to a benchmark (projection lives on /workflow-projection). Every rung divides the SAME committed total: the spend bought the whole funnel, not one rung of it."
+                      "description": "ratioBasis.committedSpentCents ÷ ratioBasisRecipientsReached, in cents — the ROI's basis. OBSERVED accounting — null when nobody reached the rung, when nothing was spent, or when the count is unmeasured; never 0 and never floored to a benchmark (projection lives on /workflow-projection). Every rung divides the SAME committed total: the spend bought the whole funnel, not one rung of it."
+                    },
+                    "ratioBasisRecipientsReached": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "The count costPerReachCents divides: recipientsReached restricted to the ROI's mature cohort (equal to it when ratioBasis.maturityDays is 0)."
                     },
                     "fromStep": {
                       "type": "string",
@@ -2257,6 +2450,7 @@
                     "leadField",
                     "recipientsReached",
                     "costPerReachCents",
+                    "ratioBasisRecipientsReached",
                     "fromStep",
                     "fromRecipientsReached",
                     "conversionFromPreviousPct",
@@ -2270,6 +2464,7 @@
               "funnelKey",
               "name",
               "committedSpentCents",
+              "ratioBasis",
               "contactedRecipients",
               "convertibleRecipients",
               "steps"
@@ -2904,6 +3099,51 @@
                         "maturity_unknown"
                       ],
                       "description": "Why the ratios are null for a reason other than having nothing to divide. 'maturing' = the scope has spent, but none of that spend is older than maturityDays yet, so there is no mature cohort to measure — a young campaign, not a bad one. 'maturity_unknown' = campaign-service could not say which campaigns wait for their outcomes, so the mature cohort could not be separated (a degraded read, not a property of the scope). Null otherwise."
+                    },
+                    "ratioBasis": {
+                      "type": "object",
+                      "properties": {
+                        "committedCostUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The committed spend (dollars) the ratios divide: the MATURE cohort's when maturityDays > 0 (runs old enough to have produced their outcomes), the whole scope's otherwise. Smaller than committedCostUsd by exactly the spend still maturing. Null under maturity_unknown."
+                        },
+                        "totalPipelineUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads first contacted before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
+                        }
+                      },
+                      "required": [
+                        "committedCostUsd",
+                        "totalPipelineUsd"
+                      ],
+                      "description": "THE TOTALS THE RATIOS DIVIDE, served so nobody inverts a ratio: roiMultiple = totalPipelineUsd / committedCostUsd; costOfAcquisitionPct = committedCostUsd / totalPipelineUsd × 100. Every cost per outcome on this body (spend.*Cents, outcomes.cpcCents/cpprCents, funnelSteps costPerReachCents, costPerOutcomeHistory) divides this same spend."
+                    },
+                    "realizedReturn": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "closedWonCount": {
+                          "type": "integer",
+                          "description": "Deals actually CLOSED WON in the same cohort the ratios divide, PRICED to our outreach (?cause=, default outreach) — the rule the pipeline's won rung follows. 0 is measured."
+                        },
+                        "closedWonRevenueUsd": {
+                          "type": "number",
+                          "description": "What those deals are worth: each at the amount stated on it, else the lifetime revenue a paying client is priced at."
+                        },
+                        "roiMultiple": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "closedWonRevenueUsd / ratioBasis.committedCostUsd — the MEASURED return, beside the pipeline ROI and never instead of it. Null when that spend is 0 (maturing)."
+                        }
+                      },
+                      "required": [
+                        "closedWonCount",
+                        "closedWonRevenueUsd",
+                        "roiMultiple"
+                      ],
+                      "description": "THE MEASURED RETURN — revenue from deals actually closed won over the same matured spend the ROI divides. NULL when it cannot be measured on this read: no source of closed deals could be read, the legs are unknown, or the grain never computes it (lens, per-workflow, cross-org reads). Never a fabricated 0."
                     }
                   },
                   "required": [
@@ -2913,7 +3153,9 @@
                     "roiMultiple",
                     "costPerAcquisitionUsd",
                     "maturityDays",
-                    "unmeasuredReason"
+                    "unmeasuredReason",
+                    "ratioBasis",
+                    "realizedReturn"
                   ]
                 },
                 "outcomes": {
@@ -2955,12 +3197,51 @@
                     "cpcCents": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Realized spend ÷ website visits, in cents. OBSERVED accounting: null when this grain bought no visit or spent nothing — 'we could not measure this', never 0 and never floored to a benchmark (projection lives on /workflow-projection)."
+                      "description": "ratioBasis.committedSpentCents ÷ ratioBasis.recipientsClicked (the ROI's mature cohort), in cents. OBSERVED accounting: null when this grain bought no visit or spent nothing — 'we could not measure this', never 0 and never floored to a benchmark (projection lives on /workflow-projection)."
                     },
                     "cpprCents": {
                       "type": "number",
                       "nullable": true,
                       "description": "Realized spend ÷ positive replies, in cents. Same null rule as cpcCents."
+                    },
+                    "ratioBasis": {
+                      "type": "object",
+                      "properties": {
+                        "maturityDays": {
+                          "type": "integer"
+                        },
+                        "committedSpentCents": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The committed spend the two rates divide — the ROI's mature cohort when maturityDays > 0, committedSpentCents otherwise."
+                        },
+                        "recipientsClicked": {
+                          "type": "integer",
+                          "nullable": true,
+                          "description": "Distinct visitors cpcCents divides, on that basis."
+                        },
+                        "recipientsRepliesPositive": {
+                          "type": "integer",
+                          "nullable": true,
+                          "description": "Distinct positive repliers cpprCents divides, on that basis."
+                        },
+                        "unmeasuredReason": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "maturing",
+                            "maturity_unknown"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "maturityDays",
+                        "committedSpentCents",
+                        "recipientsClicked",
+                        "recipientsRepliesPositive",
+                        "unmeasuredReason"
+                      ],
+                      "description": "The totals cpcCents / cpprCents divide — the ROI's basis (costEconomics.ratioBasis). The counts and spend above keep the whole history."
                     }
                   },
                   "required": [
@@ -2973,7 +3254,8 @@
                     "committedSpentCents",
                     "actualSpentCents",
                     "cpcCents",
-                    "cpprCents"
+                    "cpprCents",
+                    "ratioBasis"
                   ],
                   "description": "The VOLUME half of this campaign's answer — how much real outcome evidence its ROI, %CAC and pipeline rest on. It exists because those three are derived from however many outcomes the campaign has produced so far: with one or two behind them they are decided by whichever one landed and swing by whole multiples on the next reply, so a consumer that cannot see the volume reads noise as a measurement. Totalled over the campaign's IDENTITY exactly as the money is — its stopped ancestors included — and deduped inside it, so a lead served under two member rows is ONE person here as it is one person to the brand, and every member of an identity carries the identical block. Across identities the counts do NOT sum to the brand (a lead worked under two campaigns is one lead to the brand and belongs to both), the same counting-people property the money half carries. NULL only when no funnel is wired for the feature and the leads were never read — never a fabricated 0."
                 }
@@ -3151,6 +3433,51 @@
                         "maturity_unknown"
                       ],
                       "description": "Why the ratios are null for a reason other than having nothing to divide. 'maturing' = the scope has spent, but none of that spend is older than maturityDays yet, so there is no mature cohort to measure — a young campaign, not a bad one. 'maturity_unknown' = campaign-service could not say which campaigns wait for their outcomes, so the mature cohort could not be separated (a degraded read, not a property of the scope). Null otherwise."
+                    },
+                    "ratioBasis": {
+                      "type": "object",
+                      "properties": {
+                        "committedCostUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The committed spend (dollars) the ratios divide: the MATURE cohort's when maturityDays > 0 (runs old enough to have produced their outcomes), the whole scope's otherwise. Smaller than committedCostUsd by exactly the spend still maturing. Null under maturity_unknown."
+                        },
+                        "totalPipelineUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads first contacted before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
+                        }
+                      },
+                      "required": [
+                        "committedCostUsd",
+                        "totalPipelineUsd"
+                      ],
+                      "description": "THE TOTALS THE RATIOS DIVIDE, served so nobody inverts a ratio: roiMultiple = totalPipelineUsd / committedCostUsd; costOfAcquisitionPct = committedCostUsd / totalPipelineUsd × 100. Every cost per outcome on this body (spend.*Cents, outcomes.cpcCents/cpprCents, funnelSteps costPerReachCents, costPerOutcomeHistory) divides this same spend."
+                    },
+                    "realizedReturn": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "closedWonCount": {
+                          "type": "integer",
+                          "description": "Deals actually CLOSED WON in the same cohort the ratios divide, PRICED to our outreach (?cause=, default outreach) — the rule the pipeline's won rung follows. 0 is measured."
+                        },
+                        "closedWonRevenueUsd": {
+                          "type": "number",
+                          "description": "What those deals are worth: each at the amount stated on it, else the lifetime revenue a paying client is priced at."
+                        },
+                        "roiMultiple": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "closedWonRevenueUsd / ratioBasis.committedCostUsd — the MEASURED return, beside the pipeline ROI and never instead of it. Null when that spend is 0 (maturing)."
+                        }
+                      },
+                      "required": [
+                        "closedWonCount",
+                        "closedWonRevenueUsd",
+                        "roiMultiple"
+                      ],
+                      "description": "THE MEASURED RETURN — revenue from deals actually closed won over the same matured spend the ROI divides. NULL when it cannot be measured on this read: no source of closed deals could be read, the legs are unknown, or the grain never computes it (lens, per-workflow, cross-org reads). Never a fabricated 0."
                     }
                   },
                   "required": [
@@ -3160,7 +3487,9 @@
                     "roiMultiple",
                     "costPerAcquisitionUsd",
                     "maturityDays",
-                    "unmeasuredReason"
+                    "unmeasuredReason",
+                    "ratioBasis",
+                    "realizedReturn"
                   ]
                 },
                 "outcomes": {
@@ -3201,12 +3530,51 @@
                     "cpcCents": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Realized spend ÷ website visits, in cents. OBSERVED accounting: null when this grain bought no visit or spent nothing — 'we could not measure this', never 0 and never floored to a benchmark (projection lives on /workflow-projection)."
+                      "description": "ratioBasis.committedSpentCents ÷ ratioBasis.recipientsClicked (the ROI's mature cohort), in cents. OBSERVED accounting: null when this grain bought no visit or spent nothing — 'we could not measure this', never 0 and never floored to a benchmark (projection lives on /workflow-projection)."
                     },
                     "cpprCents": {
                       "type": "number",
                       "nullable": true,
                       "description": "Realized spend ÷ positive replies, in cents. Same null rule as cpcCents."
+                    },
+                    "ratioBasis": {
+                      "type": "object",
+                      "properties": {
+                        "maturityDays": {
+                          "type": "integer"
+                        },
+                        "committedSpentCents": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The committed spend the two rates divide — the ROI's mature cohort when maturityDays > 0, committedSpentCents otherwise."
+                        },
+                        "recipientsClicked": {
+                          "type": "integer",
+                          "nullable": true,
+                          "description": "Distinct visitors cpcCents divides, on that basis."
+                        },
+                        "recipientsRepliesPositive": {
+                          "type": "integer",
+                          "nullable": true,
+                          "description": "Distinct positive repliers cpprCents divides, on that basis."
+                        },
+                        "unmeasuredReason": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "maturing",
+                            "maturity_unknown"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "maturityDays",
+                        "committedSpentCents",
+                        "recipientsClicked",
+                        "recipientsRepliesPositive",
+                        "unmeasuredReason"
+                      ],
+                      "description": "The totals cpcCents / cpprCents divide — the ROI's basis (costEconomics.ratioBasis). The counts and spend above keep the whole history."
                     }
                   },
                   "required": [
@@ -3219,7 +3587,8 @@
                     "committedSpentCents",
                     "actualSpentCents",
                     "cpcCents",
-                    "cpprCents"
+                    "cpprCents",
+                    "ratioBasis"
                   ],
                   "description": "The VOLUME half of this workflow's answer — this brand's own outreach through this dynasty and what it cost, the same figures the un-grouped brand read gives for the whole brand. Every figure rides COMMITTED spend, the single basis costEconomics rides, so cpcCents × recipientsClicked ≈ committedSpentCents by construction. This block once rode billed-only spend to avoid a committed numerator beside a realized ROI; the ROI moved to committed, so that divergence would now BE the incoherence. Counts are distinct leads: a lead served under two workflows is one lead to the brand and belongs to both groups, so the groups do not sum to the brand (the same counting-people property the money half carries); a lead served under no workflow is in no group."
                 }
@@ -3347,6 +3716,51 @@
                         "maturity_unknown"
                       ],
                       "description": "Why the ratios are null for a reason other than having nothing to divide. 'maturing' = the scope has spent, but none of that spend is older than maturityDays yet, so there is no mature cohort to measure — a young campaign, not a bad one. 'maturity_unknown' = campaign-service could not say which campaigns wait for their outcomes, so the mature cohort could not be separated (a degraded read, not a property of the scope). Null otherwise."
+                    },
+                    "ratioBasis": {
+                      "type": "object",
+                      "properties": {
+                        "committedCostUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The committed spend (dollars) the ratios divide: the MATURE cohort's when maturityDays > 0 (runs old enough to have produced their outcomes), the whole scope's otherwise. Smaller than committedCostUsd by exactly the spend still maturing. Null under maturity_unknown."
+                        },
+                        "totalPipelineUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads first contacted before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
+                        }
+                      },
+                      "required": [
+                        "committedCostUsd",
+                        "totalPipelineUsd"
+                      ],
+                      "description": "THE TOTALS THE RATIOS DIVIDE, served so nobody inverts a ratio: roiMultiple = totalPipelineUsd / committedCostUsd; costOfAcquisitionPct = committedCostUsd / totalPipelineUsd × 100. Every cost per outcome on this body (spend.*Cents, outcomes.cpcCents/cpprCents, funnelSteps costPerReachCents, costPerOutcomeHistory) divides this same spend."
+                    },
+                    "realizedReturn": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "closedWonCount": {
+                          "type": "integer",
+                          "description": "Deals actually CLOSED WON in the same cohort the ratios divide, PRICED to our outreach (?cause=, default outreach) — the rule the pipeline's won rung follows. 0 is measured."
+                        },
+                        "closedWonRevenueUsd": {
+                          "type": "number",
+                          "description": "What those deals are worth: each at the amount stated on it, else the lifetime revenue a paying client is priced at."
+                        },
+                        "roiMultiple": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "closedWonRevenueUsd / ratioBasis.committedCostUsd — the MEASURED return, beside the pipeline ROI and never instead of it. Null when that spend is 0 (maturing)."
+                        }
+                      },
+                      "required": [
+                        "closedWonCount",
+                        "closedWonRevenueUsd",
+                        "roiMultiple"
+                      ],
+                      "description": "THE MEASURED RETURN — revenue from deals actually closed won over the same matured spend the ROI divides. NULL when it cannot be measured on this read: no source of closed deals could be read, the legs are unknown, or the grain never computes it (lens, per-workflow, cross-org reads). Never a fabricated 0."
                     }
                   },
                   "required": [
@@ -3356,7 +3770,9 @@
                     "roiMultiple",
                     "costPerAcquisitionUsd",
                     "maturityDays",
-                    "unmeasuredReason"
+                    "unmeasuredReason",
+                    "ratioBasis",
+                    "realizedReturn"
                   ]
                 }
               },
@@ -5464,6 +5880,79 @@
                 "type": "number",
                 "nullable": true,
                 "description": "REAL cost per positive reply = totalSpentCents (COMMITTED = actual + provisioned, the SAME denominator as totalCpcCents/cpsCents) / positiveRepliesCount, USD cents. So cpprCents × positiveRepliesCount ≈ committed spend by construction. null when positiveRepliesCount is 0 (no denominator — never a false $0). Real tracked data, not a projection. (features-service#482)"
+              },
+              "ratioBasis": {
+                "type": "object",
+                "properties": {
+                  "maturityDays": {
+                    "type": "integer",
+                    "description": "The maturity delay the ratios were measured under — costEconomics.maturityDays."
+                  },
+                  "committedSpentCents": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "COMMITTED spend every committed ratio above divides (totalCpcCents, cpprCents, cpsCents, cpsmCents, cpfsCents, cpSaleCents): the mature cohort's when maturityDays > 0, totalSpentCents otherwise. Equals costEconomics.ratioBasis.committedCostUsd × 100."
+                  },
+                  "actualSpentCents": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "Billed spend actualCpcCents divides, on the same basis."
+                  },
+                  "provisionedSpentCents": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "Open holds provisionedCpcCents divides, on the same basis."
+                  },
+                  "clicksCount": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "Website visits the CPCs divide: the mature cohort's visitors when maturityDays > 0."
+                  },
+                  "positiveRepliesCount": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "Positive replies cpprCents divides, on the same basis."
+                  },
+                  "signupsCount": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "Signups cpsCents divides. On a matured basis read off the cohort's own leads (lead-service's counts are undated). ABSENT when the top-level count is."
+                  },
+                  "salesMeetingsCount": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "Meetings booked cpsmCents divides, same rules."
+                  },
+                  "formSubmissionsCount": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "Form submissions cpfsCents divides, same rules."
+                  },
+                  "salesCount": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "Sales cpSaleCents divides, same rules."
+                  },
+                  "unmeasuredReason": {
+                    "type": "string",
+                    "nullable": true,
+                    "enum": [
+                      "maturing",
+                      "maturity_unknown"
+                    ],
+                    "description": "Why every ratio above is null: maturing = nothing spent is mature yet; maturity_unknown = campaign legs unreadable. Spend and counts here are null too."
+                  }
+                },
+                "required": [
+                  "maturityDays",
+                  "committedSpentCents",
+                  "actualSpentCents",
+                  "provisionedSpentCents",
+                  "clicksCount",
+                  "positiveRepliesCount",
+                  "unmeasuredReason"
+                ],
+                "description": "WHAT EVERY COST PER OUTCOME IN THIS BLOCK DIVIDES — the ROI's own basis, so the ratios and costEconomics.roiMultiple are one basis on one screen. Each ratio = the matching spend here ÷ the matching count here (outside the zero-outcome benchmark floor). The block's top-level totals and counts keep the WHOLE history."
               }
             },
             "required": [
@@ -5478,7 +5967,8 @@
               "actualCpcCents",
               "provisionedCpcCents",
               "positiveRepliesCount",
-              "cpprCents"
+              "cpprCents",
+              "ratioBasis"
             ],
             "description": "Canonical spend block for the Overview card — Total spent / Budget spent today / CPC each in three variants (total=committed, actual=billed, provisioned=holds; total = actual + provisioned), plus top sources. Present on the OVERVIEW response; null on the lensed (?lens=) response (lens pages use costPerConversionUsd); absent on grouped (?groupBy=campaignId) groups. (features-service#396, committed naming features-service#402)"
           },
@@ -5913,6 +6403,51 @@
                   "maturity_unknown"
                 ],
                 "description": "Why the ratios are null for a reason other than having nothing to divide. 'maturing' = the scope has spent, but none of that spend is older than maturityDays yet, so there is no mature cohort to measure — a young campaign, not a bad one. 'maturity_unknown' = campaign-service could not say which campaigns wait for their outcomes, so the mature cohort could not be separated (a degraded read, not a property of the scope). Null otherwise."
+              },
+              "ratioBasis": {
+                "type": "object",
+                "properties": {
+                  "committedCostUsd": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "The committed spend (dollars) the ratios divide: the MATURE cohort's when maturityDays > 0 (runs old enough to have produced their outcomes), the whole scope's otherwise. Smaller than committedCostUsd by exactly the spend still maturing. Null under maturity_unknown."
+                  },
+                  "totalPipelineUsd": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads first contacted before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
+                  }
+                },
+                "required": [
+                  "committedCostUsd",
+                  "totalPipelineUsd"
+                ],
+                "description": "THE TOTALS THE RATIOS DIVIDE, served so nobody inverts a ratio: roiMultiple = totalPipelineUsd / committedCostUsd; costOfAcquisitionPct = committedCostUsd / totalPipelineUsd × 100. Every cost per outcome on this body (spend.*Cents, outcomes.cpcCents/cpprCents, funnelSteps costPerReachCents, costPerOutcomeHistory) divides this same spend."
+              },
+              "realizedReturn": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "closedWonCount": {
+                    "type": "integer",
+                    "description": "Deals actually CLOSED WON in the same cohort the ratios divide, PRICED to our outreach (?cause=, default outreach) — the rule the pipeline's won rung follows. 0 is measured."
+                  },
+                  "closedWonRevenueUsd": {
+                    "type": "number",
+                    "description": "What those deals are worth: each at the amount stated on it, else the lifetime revenue a paying client is priced at."
+                  },
+                  "roiMultiple": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "closedWonRevenueUsd / ratioBasis.committedCostUsd — the MEASURED return, beside the pipeline ROI and never instead of it. Null when that spend is 0 (maturing)."
+                  }
+                },
+                "required": [
+                  "closedWonCount",
+                  "closedWonRevenueUsd",
+                  "roiMultiple"
+                ],
+                "description": "THE MEASURED RETURN — revenue from deals actually closed won over the same matured spend the ROI divides. NULL when it cannot be measured on this read: no source of closed deals could be read, the legs are unknown, or the grain never computes it (lens, per-workflow, cross-org reads). Never a fabricated 0."
               }
             },
             "required": [
@@ -5922,7 +6457,9 @@
               "roiMultiple",
               "costPerAcquisitionUsd",
               "maturityDays",
-              "unmeasuredReason"
+              "unmeasuredReason",
+              "ratioBasis",
+              "realizedReturn"
             ],
             "description": "Derived cost economics. Always present; ratios are null per the documented null semantics."
           },
@@ -6454,12 +6991,51 @@
               "cpcCents": {
                 "type": "number",
                 "nullable": true,
-                "description": "Realized spend ÷ website visits, in cents. OBSERVED accounting: null when this grain bought no visit or spent nothing — 'we could not measure this', never 0 and never floored to a benchmark (projection lives on /workflow-projection)."
+                "description": "ratioBasis.committedSpentCents ÷ ratioBasis.recipientsClicked (the ROI's mature cohort), in cents. OBSERVED accounting: null when this grain bought no visit or spent nothing — 'we could not measure this', never 0 and never floored to a benchmark (projection lives on /workflow-projection)."
               },
               "cpprCents": {
                 "type": "number",
                 "nullable": true,
                 "description": "Realized spend ÷ positive replies, in cents. Same null rule as cpcCents."
+              },
+              "ratioBasis": {
+                "type": "object",
+                "properties": {
+                  "maturityDays": {
+                    "type": "integer"
+                  },
+                  "committedSpentCents": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "The committed spend the two rates divide — the ROI's mature cohort when maturityDays > 0, committedSpentCents otherwise."
+                  },
+                  "recipientsClicked": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "Distinct visitors cpcCents divides, on that basis."
+                  },
+                  "recipientsRepliesPositive": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "Distinct positive repliers cpprCents divides, on that basis."
+                  },
+                  "unmeasuredReason": {
+                    "type": "string",
+                    "nullable": true,
+                    "enum": [
+                      "maturing",
+                      "maturity_unknown"
+                    ]
+                  }
+                },
+                "required": [
+                  "maturityDays",
+                  "committedSpentCents",
+                  "recipientsClicked",
+                  "recipientsRepliesPositive",
+                  "unmeasuredReason"
+                ],
+                "description": "The totals cpcCents / cpprCents divide — the ROI's basis (costEconomics.ratioBasis). The counts and spend above keep the whole history."
               }
             },
             "required": [
@@ -6472,7 +7048,8 @@
               "committedSpentCents",
               "actualSpentCents",
               "cpcCents",
-              "cpprCents"
+              "cpprCents",
+              "ratioBasis"
             ],
             "description": "The VOLUME half of this scope's answer — how much real outcome evidence the money above rests on: outreach volume, website visits, positive replies, committed spend, and the cost of a visit and of a reply. Built from the SAME deduped leads and the SAME committed cents as the money, so the two are coherent by construction rather than by correction. NULL only when this scope's leads were never read — a feature with no funnel wired, whose money half is honestly null too; null is 'we could not count this', never 'it reached nobody' (that is 0). Null on the lensed (?lens=) response for the same reason `spend` is: a lens is a SUBSET of the brand's leads while its spend leg is the brand's whole spend."
           },
@@ -6582,7 +7159,34 @@
               },
               "committedSpentCents": {
                 "type": "number",
-                "description": "COMMITTED cents behind every costPerReachCents — the one basis costEconomics rides."
+                "description": "COMMITTED cents this scope spent over its whole history (the invested figure)."
+              },
+              "ratioBasis": {
+                "type": "object",
+                "properties": {
+                  "maturityDays": {
+                    "type": "integer"
+                  },
+                  "committedSpentCents": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "The committed spend every rung's costPerReachCents divides — costEconomics.ratioBasis.committedCostUsd × 100."
+                  },
+                  "unmeasuredReason": {
+                    "type": "string",
+                    "nullable": true,
+                    "enum": [
+                      "maturing",
+                      "maturity_unknown"
+                    ]
+                  }
+                },
+                "required": [
+                  "maturityDays",
+                  "committedSpentCents",
+                  "unmeasuredReason"
+                ],
+                "description": "What every rung's costPerReachCents divides — the ROI's basis."
               },
               "contactedRecipients": {
                 "type": "integer",
@@ -6626,7 +7230,12 @@
                     "costPerReachCents": {
                       "type": "number",
                       "nullable": true,
-                      "description": "COMMITTED spend ÷ recipientsReached, in cents. OBSERVED accounting — null when nobody reached the rung, when nothing was spent, or when the count is unmeasured; never 0 and never floored to a benchmark (projection lives on /workflow-projection). Every rung divides the SAME committed total: the spend bought the whole funnel, not one rung of it."
+                      "description": "ratioBasis.committedSpentCents ÷ ratioBasisRecipientsReached, in cents — the ROI's basis. OBSERVED accounting — null when nobody reached the rung, when nothing was spent, or when the count is unmeasured; never 0 and never floored to a benchmark (projection lives on /workflow-projection). Every rung divides the SAME committed total: the spend bought the whole funnel, not one rung of it."
+                    },
+                    "ratioBasisRecipientsReached": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "The count costPerReachCents divides: recipientsReached restricted to the ROI's mature cohort (equal to it when ratioBasis.maturityDays is 0)."
                     },
                     "fromStep": {
                       "type": "string",
@@ -6689,6 +7298,7 @@
                     "leadField",
                     "recipientsReached",
                     "costPerReachCents",
+                    "ratioBasisRecipientsReached",
                     "fromStep",
                     "fromRecipientsReached",
                     "conversionFromPreviousPct",
@@ -6702,6 +7312,7 @@
               "funnelKey",
               "name",
               "committedSpentCents",
+              "ratioBasis",
               "contactedRecipients",
               "convertibleRecipients",
               "steps"
@@ -7255,6 +7866,51 @@
                         "maturity_unknown"
                       ],
                       "description": "Why the ratios are null for a reason other than having nothing to divide. 'maturing' = the scope has spent, but none of that spend is older than maturityDays yet, so there is no mature cohort to measure — a young campaign, not a bad one. 'maturity_unknown' = campaign-service could not say which campaigns wait for their outcomes, so the mature cohort could not be separated (a degraded read, not a property of the scope). Null otherwise."
+                    },
+                    "ratioBasis": {
+                      "type": "object",
+                      "properties": {
+                        "committedCostUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The committed spend (dollars) the ratios divide: the MATURE cohort's when maturityDays > 0 (runs old enough to have produced their outcomes), the whole scope's otherwise. Smaller than committedCostUsd by exactly the spend still maturing. Null under maturity_unknown."
+                        },
+                        "totalPipelineUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads first contacted before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
+                        }
+                      },
+                      "required": [
+                        "committedCostUsd",
+                        "totalPipelineUsd"
+                      ],
+                      "description": "THE TOTALS THE RATIOS DIVIDE, served so nobody inverts a ratio: roiMultiple = totalPipelineUsd / committedCostUsd; costOfAcquisitionPct = committedCostUsd / totalPipelineUsd × 100. Every cost per outcome on this body (spend.*Cents, outcomes.cpcCents/cpprCents, funnelSteps costPerReachCents, costPerOutcomeHistory) divides this same spend."
+                    },
+                    "realizedReturn": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "closedWonCount": {
+                          "type": "integer",
+                          "description": "Deals actually CLOSED WON in the same cohort the ratios divide, PRICED to our outreach (?cause=, default outreach) — the rule the pipeline's won rung follows. 0 is measured."
+                        },
+                        "closedWonRevenueUsd": {
+                          "type": "number",
+                          "description": "What those deals are worth: each at the amount stated on it, else the lifetime revenue a paying client is priced at."
+                        },
+                        "roiMultiple": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "closedWonRevenueUsd / ratioBasis.committedCostUsd — the MEASURED return, beside the pipeline ROI and never instead of it. Null when that spend is 0 (maturing)."
+                        }
+                      },
+                      "required": [
+                        "closedWonCount",
+                        "closedWonRevenueUsd",
+                        "roiMultiple"
+                      ],
+                      "description": "THE MEASURED RETURN — revenue from deals actually closed won over the same matured spend the ROI divides. NULL when it cannot be measured on this read: no source of closed deals could be read, the legs are unknown, or the grain never computes it (lens, per-workflow, cross-org reads). Never a fabricated 0."
                     }
                   },
                   "required": [
@@ -7264,7 +7920,9 @@
                     "roiMultiple",
                     "costPerAcquisitionUsd",
                     "maturityDays",
-                    "unmeasuredReason"
+                    "unmeasuredReason",
+                    "ratioBasis",
+                    "realizedReturn"
                   ],
                   "description": "Derived cost economics. Always present; ratios are null per the documented null semantics."
                 }
@@ -8567,6 +9225,79 @@
                 "type": "number",
                 "nullable": true,
                 "description": "REAL cost per positive reply = totalSpentCents (COMMITTED = actual + provisioned, the SAME denominator as totalCpcCents/cpsCents) / positiveRepliesCount, USD cents. So cpprCents × positiveRepliesCount ≈ committed spend by construction. null when positiveRepliesCount is 0 (no denominator — never a false $0). Real tracked data, not a projection. (features-service#482)"
+              },
+              "ratioBasis": {
+                "type": "object",
+                "properties": {
+                  "maturityDays": {
+                    "type": "integer",
+                    "description": "The maturity delay the ratios were measured under — costEconomics.maturityDays."
+                  },
+                  "committedSpentCents": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "COMMITTED spend every committed ratio above divides (totalCpcCents, cpprCents, cpsCents, cpsmCents, cpfsCents, cpSaleCents): the mature cohort's when maturityDays > 0, totalSpentCents otherwise. Equals costEconomics.ratioBasis.committedCostUsd × 100."
+                  },
+                  "actualSpentCents": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "Billed spend actualCpcCents divides, on the same basis."
+                  },
+                  "provisionedSpentCents": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "Open holds provisionedCpcCents divides, on the same basis."
+                  },
+                  "clicksCount": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "Website visits the CPCs divide: the mature cohort's visitors when maturityDays > 0."
+                  },
+                  "positiveRepliesCount": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "Positive replies cpprCents divides, on the same basis."
+                  },
+                  "signupsCount": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "Signups cpsCents divides. On a matured basis read off the cohort's own leads (lead-service's counts are undated). ABSENT when the top-level count is."
+                  },
+                  "salesMeetingsCount": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "Meetings booked cpsmCents divides, same rules."
+                  },
+                  "formSubmissionsCount": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "Form submissions cpfsCents divides, same rules."
+                  },
+                  "salesCount": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "Sales cpSaleCents divides, same rules."
+                  },
+                  "unmeasuredReason": {
+                    "type": "string",
+                    "nullable": true,
+                    "enum": [
+                      "maturing",
+                      "maturity_unknown"
+                    ],
+                    "description": "Why every ratio above is null: maturing = nothing spent is mature yet; maturity_unknown = campaign legs unreadable. Spend and counts here are null too."
+                  }
+                },
+                "required": [
+                  "maturityDays",
+                  "committedSpentCents",
+                  "actualSpentCents",
+                  "provisionedSpentCents",
+                  "clicksCount",
+                  "positiveRepliesCount",
+                  "unmeasuredReason"
+                ],
+                "description": "WHAT EVERY COST PER OUTCOME IN THIS BLOCK DIVIDES — the ROI's own basis, so the ratios and costEconomics.roiMultiple are one basis on one screen. Each ratio = the matching spend here ÷ the matching count here (outside the zero-outcome benchmark floor). The block's top-level totals and counts keep the WHOLE history."
               }
             },
             "required": [
@@ -8581,7 +9312,8 @@
               "actualCpcCents",
               "provisionedCpcCents",
               "positiveRepliesCount",
-              "cpprCents"
+              "cpprCents",
+              "ratioBasis"
             ],
             "description": "Canonical spend block for the Overview card — Total spent / Budget spent today / CPC each in three variants (total=committed, actual=billed, provisioned=holds; total = actual + provisioned), plus top sources. Present on the OVERVIEW response; null on the lensed (?lens=) response (lens pages use costPerConversionUsd); absent on grouped (?groupBy=campaignId) groups. (features-service#396, committed naming features-service#402)"
           },
@@ -9016,6 +9748,51 @@
                   "maturity_unknown"
                 ],
                 "description": "Why the ratios are null for a reason other than having nothing to divide. 'maturing' = the scope has spent, but none of that spend is older than maturityDays yet, so there is no mature cohort to measure — a young campaign, not a bad one. 'maturity_unknown' = campaign-service could not say which campaigns wait for their outcomes, so the mature cohort could not be separated (a degraded read, not a property of the scope). Null otherwise."
+              },
+              "ratioBasis": {
+                "type": "object",
+                "properties": {
+                  "committedCostUsd": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "The committed spend (dollars) the ratios divide: the MATURE cohort's when maturityDays > 0 (runs old enough to have produced their outcomes), the whole scope's otherwise. Smaller than committedCostUsd by exactly the spend still maturing. Null under maturity_unknown."
+                  },
+                  "totalPipelineUsd": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads first contacted before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
+                  }
+                },
+                "required": [
+                  "committedCostUsd",
+                  "totalPipelineUsd"
+                ],
+                "description": "THE TOTALS THE RATIOS DIVIDE, served so nobody inverts a ratio: roiMultiple = totalPipelineUsd / committedCostUsd; costOfAcquisitionPct = committedCostUsd / totalPipelineUsd × 100. Every cost per outcome on this body (spend.*Cents, outcomes.cpcCents/cpprCents, funnelSteps costPerReachCents, costPerOutcomeHistory) divides this same spend."
+              },
+              "realizedReturn": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "closedWonCount": {
+                    "type": "integer",
+                    "description": "Deals actually CLOSED WON in the same cohort the ratios divide, PRICED to our outreach (?cause=, default outreach) — the rule the pipeline's won rung follows. 0 is measured."
+                  },
+                  "closedWonRevenueUsd": {
+                    "type": "number",
+                    "description": "What those deals are worth: each at the amount stated on it, else the lifetime revenue a paying client is priced at."
+                  },
+                  "roiMultiple": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "closedWonRevenueUsd / ratioBasis.committedCostUsd — the MEASURED return, beside the pipeline ROI and never instead of it. Null when that spend is 0 (maturing)."
+                  }
+                },
+                "required": [
+                  "closedWonCount",
+                  "closedWonRevenueUsd",
+                  "roiMultiple"
+                ],
+                "description": "THE MEASURED RETURN — revenue from deals actually closed won over the same matured spend the ROI divides. NULL when it cannot be measured on this read: no source of closed deals could be read, the legs are unknown, or the grain never computes it (lens, per-workflow, cross-org reads). Never a fabricated 0."
               }
             },
             "required": [
@@ -9025,7 +9802,9 @@
               "roiMultiple",
               "costPerAcquisitionUsd",
               "maturityDays",
-              "unmeasuredReason"
+              "unmeasuredReason",
+              "ratioBasis",
+              "realizedReturn"
             ],
             "description": "Derived cost economics. Always present; ratios are null per the documented null semantics."
           },
@@ -9557,12 +10336,51 @@
               "cpcCents": {
                 "type": "number",
                 "nullable": true,
-                "description": "Realized spend ÷ website visits, in cents. OBSERVED accounting: null when this grain bought no visit or spent nothing — 'we could not measure this', never 0 and never floored to a benchmark (projection lives on /workflow-projection)."
+                "description": "ratioBasis.committedSpentCents ÷ ratioBasis.recipientsClicked (the ROI's mature cohort), in cents. OBSERVED accounting: null when this grain bought no visit or spent nothing — 'we could not measure this', never 0 and never floored to a benchmark (projection lives on /workflow-projection)."
               },
               "cpprCents": {
                 "type": "number",
                 "nullable": true,
                 "description": "Realized spend ÷ positive replies, in cents. Same null rule as cpcCents."
+              },
+              "ratioBasis": {
+                "type": "object",
+                "properties": {
+                  "maturityDays": {
+                    "type": "integer"
+                  },
+                  "committedSpentCents": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "The committed spend the two rates divide — the ROI's mature cohort when maturityDays > 0, committedSpentCents otherwise."
+                  },
+                  "recipientsClicked": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "Distinct visitors cpcCents divides, on that basis."
+                  },
+                  "recipientsRepliesPositive": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "Distinct positive repliers cpprCents divides, on that basis."
+                  },
+                  "unmeasuredReason": {
+                    "type": "string",
+                    "nullable": true,
+                    "enum": [
+                      "maturing",
+                      "maturity_unknown"
+                    ]
+                  }
+                },
+                "required": [
+                  "maturityDays",
+                  "committedSpentCents",
+                  "recipientsClicked",
+                  "recipientsRepliesPositive",
+                  "unmeasuredReason"
+                ],
+                "description": "The totals cpcCents / cpprCents divide — the ROI's basis (costEconomics.ratioBasis). The counts and spend above keep the whole history."
               }
             },
             "required": [
@@ -9575,7 +10393,8 @@
               "committedSpentCents",
               "actualSpentCents",
               "cpcCents",
-              "cpprCents"
+              "cpprCents",
+              "ratioBasis"
             ],
             "description": "The VOLUME half of this scope's answer — how much real outcome evidence the money above rests on: outreach volume, website visits, positive replies, committed spend, and the cost of a visit and of a reply. Built from the SAME deduped leads and the SAME committed cents as the money, so the two are coherent by construction rather than by correction. NULL only when this scope's leads were never read — a feature with no funnel wired, whose money half is honestly null too; null is 'we could not count this', never 'it reached nobody' (that is 0). Null on the lensed (?lens=) response for the same reason `spend` is: a lens is a SUBSET of the brand's leads while its spend leg is the brand's whole spend."
           },
@@ -9685,7 +10504,34 @@
               },
               "committedSpentCents": {
                 "type": "number",
-                "description": "COMMITTED cents behind every costPerReachCents — the one basis costEconomics rides."
+                "description": "COMMITTED cents this scope spent over its whole history (the invested figure)."
+              },
+              "ratioBasis": {
+                "type": "object",
+                "properties": {
+                  "maturityDays": {
+                    "type": "integer"
+                  },
+                  "committedSpentCents": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "The committed spend every rung's costPerReachCents divides — costEconomics.ratioBasis.committedCostUsd × 100."
+                  },
+                  "unmeasuredReason": {
+                    "type": "string",
+                    "nullable": true,
+                    "enum": [
+                      "maturing",
+                      "maturity_unknown"
+                    ]
+                  }
+                },
+                "required": [
+                  "maturityDays",
+                  "committedSpentCents",
+                  "unmeasuredReason"
+                ],
+                "description": "What every rung's costPerReachCents divides — the ROI's basis."
               },
               "contactedRecipients": {
                 "type": "integer",
@@ -9729,7 +10575,12 @@
                     "costPerReachCents": {
                       "type": "number",
                       "nullable": true,
-                      "description": "COMMITTED spend ÷ recipientsReached, in cents. OBSERVED accounting — null when nobody reached the rung, when nothing was spent, or when the count is unmeasured; never 0 and never floored to a benchmark (projection lives on /workflow-projection). Every rung divides the SAME committed total: the spend bought the whole funnel, not one rung of it."
+                      "description": "ratioBasis.committedSpentCents ÷ ratioBasisRecipientsReached, in cents — the ROI's basis. OBSERVED accounting — null when nobody reached the rung, when nothing was spent, or when the count is unmeasured; never 0 and never floored to a benchmark (projection lives on /workflow-projection). Every rung divides the SAME committed total: the spend bought the whole funnel, not one rung of it."
+                    },
+                    "ratioBasisRecipientsReached": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "The count costPerReachCents divides: recipientsReached restricted to the ROI's mature cohort (equal to it when ratioBasis.maturityDays is 0)."
                     },
                     "fromStep": {
                       "type": "string",
@@ -9792,6 +10643,7 @@
                     "leadField",
                     "recipientsReached",
                     "costPerReachCents",
+                    "ratioBasisRecipientsReached",
                     "fromStep",
                     "fromRecipientsReached",
                     "conversionFromPreviousPct",
@@ -9805,6 +10657,7 @@
               "funnelKey",
               "name",
               "committedSpentCents",
+              "ratioBasis",
               "contactedRecipients",
               "convertibleRecipients",
               "steps"
@@ -10355,6 +11208,51 @@
                         "maturity_unknown"
                       ],
                       "description": "Why the ratios are null for a reason other than having nothing to divide. 'maturing' = the scope has spent, but none of that spend is older than maturityDays yet, so there is no mature cohort to measure — a young campaign, not a bad one. 'maturity_unknown' = campaign-service could not say which campaigns wait for their outcomes, so the mature cohort could not be separated (a degraded read, not a property of the scope). Null otherwise."
+                    },
+                    "ratioBasis": {
+                      "type": "object",
+                      "properties": {
+                        "committedCostUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The committed spend (dollars) the ratios divide: the MATURE cohort's when maturityDays > 0 (runs old enough to have produced their outcomes), the whole scope's otherwise. Smaller than committedCostUsd by exactly the spend still maturing. Null under maturity_unknown."
+                        },
+                        "totalPipelineUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads first contacted before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
+                        }
+                      },
+                      "required": [
+                        "committedCostUsd",
+                        "totalPipelineUsd"
+                      ],
+                      "description": "THE TOTALS THE RATIOS DIVIDE, served so nobody inverts a ratio: roiMultiple = totalPipelineUsd / committedCostUsd; costOfAcquisitionPct = committedCostUsd / totalPipelineUsd × 100. Every cost per outcome on this body (spend.*Cents, outcomes.cpcCents/cpprCents, funnelSteps costPerReachCents, costPerOutcomeHistory) divides this same spend."
+                    },
+                    "realizedReturn": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "closedWonCount": {
+                          "type": "integer",
+                          "description": "Deals actually CLOSED WON in the same cohort the ratios divide, PRICED to our outreach (?cause=, default outreach) — the rule the pipeline's won rung follows. 0 is measured."
+                        },
+                        "closedWonRevenueUsd": {
+                          "type": "number",
+                          "description": "What those deals are worth: each at the amount stated on it, else the lifetime revenue a paying client is priced at."
+                        },
+                        "roiMultiple": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "closedWonRevenueUsd / ratioBasis.committedCostUsd — the MEASURED return, beside the pipeline ROI and never instead of it. Null when that spend is 0 (maturing)."
+                        }
+                      },
+                      "required": [
+                        "closedWonCount",
+                        "closedWonRevenueUsd",
+                        "roiMultiple"
+                      ],
+                      "description": "THE MEASURED RETURN — revenue from deals actually closed won over the same matured spend the ROI divides. NULL when it cannot be measured on this read: no source of closed deals could be read, the legs are unknown, or the grain never computes it (lens, per-workflow, cross-org reads). Never a fabricated 0."
                     }
                   },
                   "required": [
@@ -10364,7 +11262,9 @@
                     "roiMultiple",
                     "costPerAcquisitionUsd",
                     "maturityDays",
-                    "unmeasuredReason"
+                    "unmeasuredReason",
+                    "ratioBasis",
+                    "realizedReturn"
                   ],
                   "description": "Derived cost economics. Always present; ratios are null per the documented null semantics."
                 }
@@ -10545,6 +11445,51 @@
                         "maturity_unknown"
                       ],
                       "description": "Why the ratios are null for a reason other than having nothing to divide. 'maturing' = the scope has spent, but none of that spend is older than maturityDays yet, so there is no mature cohort to measure — a young campaign, not a bad one. 'maturity_unknown' = campaign-service could not say which campaigns wait for their outcomes, so the mature cohort could not be separated (a degraded read, not a property of the scope). Null otherwise."
+                    },
+                    "ratioBasis": {
+                      "type": "object",
+                      "properties": {
+                        "committedCostUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The committed spend (dollars) the ratios divide: the MATURE cohort's when maturityDays > 0 (runs old enough to have produced their outcomes), the whole scope's otherwise. Smaller than committedCostUsd by exactly the spend still maturing. Null under maturity_unknown."
+                        },
+                        "totalPipelineUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads first contacted before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
+                        }
+                      },
+                      "required": [
+                        "committedCostUsd",
+                        "totalPipelineUsd"
+                      ],
+                      "description": "THE TOTALS THE RATIOS DIVIDE, served so nobody inverts a ratio: roiMultiple = totalPipelineUsd / committedCostUsd; costOfAcquisitionPct = committedCostUsd / totalPipelineUsd × 100. Every cost per outcome on this body (spend.*Cents, outcomes.cpcCents/cpprCents, funnelSteps costPerReachCents, costPerOutcomeHistory) divides this same spend."
+                    },
+                    "realizedReturn": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "closedWonCount": {
+                          "type": "integer",
+                          "description": "Deals actually CLOSED WON in the same cohort the ratios divide, PRICED to our outreach (?cause=, default outreach) — the rule the pipeline's won rung follows. 0 is measured."
+                        },
+                        "closedWonRevenueUsd": {
+                          "type": "number",
+                          "description": "What those deals are worth: each at the amount stated on it, else the lifetime revenue a paying client is priced at."
+                        },
+                        "roiMultiple": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "closedWonRevenueUsd / ratioBasis.committedCostUsd — the MEASURED return, beside the pipeline ROI and never instead of it. Null when that spend is 0 (maturing)."
+                        }
+                      },
+                      "required": [
+                        "closedWonCount",
+                        "closedWonRevenueUsd",
+                        "roiMultiple"
+                      ],
+                      "description": "THE MEASURED RETURN — revenue from deals actually closed won over the same matured spend the ROI divides. NULL when it cannot be measured on this read: no source of closed deals could be read, the legs are unknown, or the grain never computes it (lens, per-workflow, cross-org reads). Never a fabricated 0."
                     }
                   },
                   "required": [
@@ -10554,7 +11499,9 @@
                     "roiMultiple",
                     "costPerAcquisitionUsd",
                     "maturityDays",
-                    "unmeasuredReason"
+                    "unmeasuredReason",
+                    "ratioBasis",
+                    "realizedReturn"
                   ],
                   "description": "Derived cost economics. Always present; ratios are null per the documented null semantics."
                 }
@@ -11689,6 +12636,51 @@
                         "maturity_unknown"
                       ],
                       "description": "Why the ratios are null for a reason other than having nothing to divide. 'maturing' = the scope has spent, but none of that spend is older than maturityDays yet, so there is no mature cohort to measure — a young campaign, not a bad one. 'maturity_unknown' = campaign-service could not say which campaigns wait for their outcomes, so the mature cohort could not be separated (a degraded read, not a property of the scope). Null otherwise."
+                    },
+                    "ratioBasis": {
+                      "type": "object",
+                      "properties": {
+                        "committedCostUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The committed spend (dollars) the ratios divide: the MATURE cohort's when maturityDays > 0 (runs old enough to have produced their outcomes), the whole scope's otherwise. Smaller than committedCostUsd by exactly the spend still maturing. Null under maturity_unknown."
+                        },
+                        "totalPipelineUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads first contacted before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
+                        }
+                      },
+                      "required": [
+                        "committedCostUsd",
+                        "totalPipelineUsd"
+                      ],
+                      "description": "THE TOTALS THE RATIOS DIVIDE, served so nobody inverts a ratio: roiMultiple = totalPipelineUsd / committedCostUsd; costOfAcquisitionPct = committedCostUsd / totalPipelineUsd × 100. Every cost per outcome on this body (spend.*Cents, outcomes.cpcCents/cpprCents, funnelSteps costPerReachCents, costPerOutcomeHistory) divides this same spend."
+                    },
+                    "realizedReturn": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "closedWonCount": {
+                          "type": "integer",
+                          "description": "Deals actually CLOSED WON in the same cohort the ratios divide, PRICED to our outreach (?cause=, default outreach) — the rule the pipeline's won rung follows. 0 is measured."
+                        },
+                        "closedWonRevenueUsd": {
+                          "type": "number",
+                          "description": "What those deals are worth: each at the amount stated on it, else the lifetime revenue a paying client is priced at."
+                        },
+                        "roiMultiple": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "closedWonRevenueUsd / ratioBasis.committedCostUsd — the MEASURED return, beside the pipeline ROI and never instead of it. Null when that spend is 0 (maturing)."
+                        }
+                      },
+                      "required": [
+                        "closedWonCount",
+                        "closedWonRevenueUsd",
+                        "roiMultiple"
+                      ],
+                      "description": "THE MEASURED RETURN — revenue from deals actually closed won over the same matured spend the ROI divides. NULL when it cannot be measured on this read: no source of closed deals could be read, the legs are unknown, or the grain never computes it (lens, per-workflow, cross-org reads). Never a fabricated 0."
                     }
                   },
                   "required": [
@@ -11698,7 +12690,9 @@
                     "roiMultiple",
                     "costPerAcquisitionUsd",
                     "maturityDays",
-                    "unmeasuredReason"
+                    "unmeasuredReason",
+                    "ratioBasis",
+                    "realizedReturn"
                   ]
                 },
                 "timeline": {

@@ -76,6 +76,7 @@ import type { SalesFunnelKey } from "./sales-funnels.js";
 import { buildCostEconomics, type CostEconomics } from "./cost-economics.js";
 import { computeRevenue, dedupPersonsByLead, type EnginePerson } from "./revenue-engine.js";
 import { buildRevenueOutcomes, type RevenueOutcomes } from "./revenue-outcomes.js";
+import { WHOLE_BASIS, type RatioBasis } from "./ratio-basis.js";
 import { fetchLeadsForRevenue } from "./leads-client.js";
 import { fetchRunsCostCentsByWorkflowSlug, fetchMatureSpendCents, type RunsCostCents } from "./runs-cost-client.js";
 import { fetchBrandCampaignRows } from "./campaign-identity-client.js";
@@ -243,9 +244,23 @@ export function buildWorkflowRevenueGroups(input: {
       // reads its brand's own ratios at both grains.
       const known = maturity && maturity !== "unknown" ? maturity : undefined;
       let matureCents = 0;
+      let matureActualCents = 0;
       for (const slug of slugsByDynasty.get(dynasty) ?? []) {
         matureCents += known?.matureCostBySlug.get(slug)?.committedCents ?? 0;
+        matureActualCents += known?.matureCostBySlug.get(slug)?.actualCents ?? 0;
       }
+      // The ratios on the volume half divide the SAME cohort the ROI divides (`lib/ratio-basis.ts`).
+      const ratioBasis: RatioBasis =
+        maturity === "unknown"
+          ? { kind: "unknown" }
+          : known
+            ? {
+                kind: "mature",
+                days: known.plan.days,
+                cost: { committedCents: matureCents, actualCents: matureActualCents },
+                persons: matureCohortPersons(mine, known.plan),
+              }
+            : WHOLE_BASIS;
       const maturePipelineUsd =
         known && paths && economics && funnel
           ? computeRevenue(paths, matureCohortPersons(mine, known.plan), economics.lifetimeRevenueUsd, funnel.milestones)
@@ -273,7 +288,7 @@ export function buildWorkflowRevenueGroups(input: {
         // The volume half is funnel-INDEPENDENT on purpose: how many people a workflow reached is a
         // measured fact, so it is answered even for a brand with no funnel wired and no economics —
         // exactly the brand whose money half is honestly null.
-        outcomes: buildWorkflowOutcomes(mine, cost),
+        outcomes: buildWorkflowOutcomes(mine, cost, ratioBasis),
       };
     });
 }

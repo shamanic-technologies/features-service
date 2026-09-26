@@ -383,6 +383,15 @@ const revenueCostEconomicsSchema = z.object({
   costPerConversionUsd: z.number().nullable().optional().describe("LENS ONLY — the mature cohort's committed spend / its expected conversions (see maturityDays). Null when that count is 0 or the scope is maturing. Present only on a lensed (?lens=) response; absent on the default/grouped responses."),
   maturityDays: z.number().int().describe("The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 14 days for its replies and visits; every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads FIRST CONTACTED before it (their outcomes count whenever they happened; a lead with no contact date is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."),
   unmeasuredReason: z.enum(["maturing", "maturity_unknown"]).nullable().describe("Why the ratios are null for a reason other than having nothing to divide. 'maturing' = the scope has spent, but none of that spend is older than maturityDays yet, so there is no mature cohort to measure — a young campaign, not a bad one. 'maturity_unknown' = campaign-service could not say which campaigns wait for their outcomes, so the mature cohort could not be separated (a degraded read, not a property of the scope). Null otherwise."),
+  ratioBasis: z.object({
+    committedCostUsd: z.number().nullable().describe("The committed spend (dollars) the ratios divide: the MATURE cohort's when maturityDays > 0 (runs old enough to have produced their outcomes), the whole scope's otherwise. Smaller than committedCostUsd by exactly the spend still maturing. Null under maturity_unknown."),
+    totalPipelineUsd: z.number().nullable().describe("The pipeline (dollars) the ratios divide: the mature cohort's (leads first contacted before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."),
+  }).describe("THE TOTALS THE RATIOS DIVIDE, served so nobody inverts a ratio: roiMultiple = totalPipelineUsd / committedCostUsd; costOfAcquisitionPct = committedCostUsd / totalPipelineUsd × 100. Every cost per outcome on this body (spend.*Cents, outcomes.cpcCents/cpprCents, funnelSteps costPerReachCents, costPerOutcomeHistory) divides this same spend."),
+  realizedReturn: z.object({
+    closedWonCount: z.number().int().describe("Deals actually CLOSED WON in the same cohort the ratios divide, PRICED to our outreach (?cause=, default outreach) — the rule the pipeline's won rung follows. 0 is measured."),
+    closedWonRevenueUsd: z.number().describe("What those deals are worth: each at the amount stated on it, else the lifetime revenue a paying client is priced at."),
+    roiMultiple: z.number().nullable().describe("closedWonRevenueUsd / ratioBasis.committedCostUsd — the MEASURED return, beside the pipeline ROI and never instead of it. Null when that spend is 0 (maturing)."),
+  }).nullable().describe("THE MEASURED RETURN — revenue from deals actually closed won over the same matured spend the ROI divides. NULL when it cannot be measured on this read: no source of closed deals could be read, the legs are unknown, or the grain never computes it (lens, per-workflow, cross-org reads). Never a fabricated 0."),
 });
 
 const roiHistoryPointSchema = z.object({
@@ -457,6 +466,19 @@ const spendSchema = z.object({
   cpSaleCents: z.number().nullable().optional().describe("REAL cost per sale = totalSpentCents (COMMITTED, SAME denominator as cpsCents/totalCpcCents) / salesCount, USD cents. So cpSaleCents × salesCount ≈ committed spend by construction. null when salesCount is 0 (no denominator — never a false $0). ABSENT when salesCount is absent. Real tracked data, not a projection. (Renamed from cppCents — features-service combined-sales slice.)"),
   positiveRepliesCount: z.number().int().describe("REAL attributed positive replies for the brand — the single-step positive_replies goal's outcome (reply-goal sibling of signups/meetings/form-submissions), the Positive Replies tile. Deduped by lead from the SAME leads[] snapshot as recipientsRepliesPositive.total (a positive reply is an email engagement signal, NOT a lead-service conversion event), so ALWAYS present (leads are a fail-loud core input) — never absent, unlike the conversion-counts tiles. 0 when none. (features-service#482)"),
   cpprCents: z.number().nullable().describe("REAL cost per positive reply = totalSpentCents (COMMITTED = actual + provisioned, the SAME denominator as totalCpcCents/cpsCents) / positiveRepliesCount, USD cents. So cpprCents × positiveRepliesCount ≈ committed spend by construction. null when positiveRepliesCount is 0 (no denominator — never a false $0). Real tracked data, not a projection. (features-service#482)"),
+  ratioBasis: z.object({
+    maturityDays: z.number().int().describe("The maturity delay the ratios were measured under — costEconomics.maturityDays."),
+    committedSpentCents: z.number().nullable().describe("COMMITTED spend every committed ratio above divides (totalCpcCents, cpprCents, cpsCents, cpsmCents, cpfsCents, cpSaleCents): the mature cohort's when maturityDays > 0, totalSpentCents otherwise. Equals costEconomics.ratioBasis.committedCostUsd × 100."),
+    actualSpentCents: z.number().nullable().describe("Billed spend actualCpcCents divides, on the same basis."),
+    provisionedSpentCents: z.number().nullable().describe("Open holds provisionedCpcCents divides, on the same basis."),
+    clicksCount: z.number().int().nullable().describe("Website visits the CPCs divide: the mature cohort's visitors when maturityDays > 0."),
+    positiveRepliesCount: z.number().int().nullable().describe("Positive replies cpprCents divides, on the same basis."),
+    signupsCount: z.number().int().nullable().optional().describe("Signups cpsCents divides. On a matured basis read off the cohort's own leads (lead-service's counts are undated). ABSENT when the top-level count is."),
+    salesMeetingsCount: z.number().int().nullable().optional().describe("Meetings booked cpsmCents divides, same rules."),
+    formSubmissionsCount: z.number().int().nullable().optional().describe("Form submissions cpfsCents divides, same rules."),
+    salesCount: z.number().int().nullable().optional().describe("Sales cpSaleCents divides, same rules."),
+    unmeasuredReason: z.enum(["maturing", "maturity_unknown"]).nullable().describe("Why every ratio above is null: maturing = nothing spent is mature yet; maturity_unknown = campaign legs unreadable. Spend and counts here are null too."),
+  }).describe("WHAT EVERY COST PER OUTCOME IN THIS BLOCK DIVIDES — the ROI's own basis, so the ratios and costEconomics.roiMultiple are one basis on one screen. Each ratio = the matching spend here ÷ the matching count here (outside the zero-outcome benchmark floor). The block's top-level totals and counts keep the WHOLE history."),
 });
 
 // THE VOLUME HALF of a money answer — how much real outcome evidence the figures beside it rest on.
@@ -471,8 +493,15 @@ const revenueOutcomesSchema = z.object({
   recipientsRepliesPositive: z.number().describe("Distinct leads that replied positively — twin of recipientsRepliesPositive.total."),
   committedSpentCents: z.number().describe("COMMITTED spend attributed to this grain, in cents — costEconomics.committedCostUsd in the unit the two rates are denominated in."),
   actualSpentCents: z.number().describe("Billed-only spend for this grain, in cents. TRANSITIONAL — reported for consumer migration, divided by nowhere."),
-  cpcCents: z.number().nullable().describe("Realized spend ÷ website visits, in cents. OBSERVED accounting: null when this grain bought no visit or spent nothing — 'we could not measure this', never 0 and never floored to a benchmark (projection lives on /workflow-projection)."),
+  cpcCents: z.number().nullable().describe("ratioBasis.committedSpentCents ÷ ratioBasis.recipientsClicked (the ROI's mature cohort), in cents. OBSERVED accounting: null when this grain bought no visit or spent nothing — 'we could not measure this', never 0 and never floored to a benchmark (projection lives on /workflow-projection)."),
   cpprCents: z.number().nullable().describe("Realized spend ÷ positive replies, in cents. Same null rule as cpcCents."),
+  ratioBasis: z.object({
+    maturityDays: z.number().int(),
+    committedSpentCents: z.number().nullable().describe("The committed spend the two rates divide — the ROI's mature cohort when maturityDays > 0, committedSpentCents otherwise."),
+    recipientsClicked: z.number().int().nullable().describe("Distinct visitors cpcCents divides, on that basis."),
+    recipientsRepliesPositive: z.number().int().nullable().describe("Distinct positive repliers cpprCents divides, on that basis."),
+    unmeasuredReason: z.enum(["maturing", "maturity_unknown"]).nullable(),
+  }).describe("The totals cpcCents / cpprCents divide — the ROI's basis (costEconomics.ratioBasis). The counts and spend above keep the whole history."),
 });
 
 // WHICH DOLLARS A FIGURE IS MADE OF. Declared once, here, because it is answered at two grains — per
@@ -507,7 +536,8 @@ const funnelStepSchema = z.object({
   step: z.string().describe("The funnel's own label for this rung, in brand-service's words (e.g. 'Positive reply', 'Meeting booked', 'Meeting attended', 'Paid client')."),
   leadField: z.enum(["clicked", "repliedPositive", "meetingBooked", "meetingAttended", "signup", "formSubmission", "purchased"]).describe("The leads[] boolean this rung counts, so a consumer can reconcile the count against the rows on the same response."),
   recipientsReached: z.number().int().nullable().describe("DISTINCT leads that reached this rung. 0 is MEASURED — 'nobody got here', which is the answer a customer asking 'is this working?' is owed. NULL is 'we could not measure this': the producer behind this rung's signal degraded on this request (the observed-step statements and the website-conversion attribution sets are each fail-soft) or was never read on this path. A null count nulls its cost and both rates that touch it."),
-  costPerReachCents: z.number().nullable().describe("COMMITTED spend ÷ recipientsReached, in cents. OBSERVED accounting — null when nobody reached the rung, when nothing was spent, or when the count is unmeasured; never 0 and never floored to a benchmark (projection lives on /workflow-projection). Every rung divides the SAME committed total: the spend bought the whole funnel, not one rung of it."),
+  costPerReachCents: z.number().nullable().describe("ratioBasis.committedSpentCents ÷ ratioBasisRecipientsReached, in cents — the ROI's basis. OBSERVED accounting — null when nobody reached the rung, when nothing was spent, or when the count is unmeasured; never 0 and never floored to a benchmark (projection lives on /workflow-projection). Every rung divides the SAME committed total: the spend bought the whole funnel, not one rung of it."),
+  ratioBasisRecipientsReached: z.number().int().nullable().describe("The count costPerReachCents divides: recipientsReached restricted to the ROI's mature cohort (equal to it when ratioBasis.maturityDays is 0)."),
   fromStep: z.string().describe("The rung this one converts FROM — the previous step of the funnel, or 'Contacted' for the first (outreach is a step of no funnel but the base of every one)."),
   fromRecipientsReached: z.number().int().nullable().describe("Distinct leads that reached fromStep — the base of the rate below, stated here so a consumer renders '3 of 40' without looking it up. Same null rule as recipientsReached."),
   conversionFromPreviousPct: z.number().nullable().describe("recipientsReached ÷ fromRecipientsReached × 100. Null when either side is unmeasured, or when the base is 0 (no denominator — never a fabricated 0% or 100%). Served rather than divided in the browser: a client-side ratio drifts from this service the moment either side changes."),
@@ -517,7 +547,12 @@ const funnelStepSchema = z.object({
 const funnelStepBreakdownSchema = z.object({
   funnelKey: z.enum(SALES_FUNNEL_KEYS as unknown as [string, ...string[]]).describe("The sales funnel these rungs belong to."),
   name: z.string().describe("The funnel's own name, so a consumer renders the chain without holding the catalogue."),
-  committedSpentCents: z.number().describe("COMMITTED cents behind every costPerReachCents — the one basis costEconomics rides."),
+  committedSpentCents: z.number().describe("COMMITTED cents this scope spent over its whole history (the invested figure)."),
+  ratioBasis: z.object({
+    maturityDays: z.number().int(),
+    committedSpentCents: z.number().nullable().describe("The committed spend every rung's costPerReachCents divides — costEconomics.ratioBasis.committedCostUsd × 100."),
+    unmeasuredReason: z.enum(["maturing", "maturity_unknown"]).nullable(),
+  }).describe("What every rung's costPerReachCents divides — the ROI's basis."),
   contactedRecipients: z.number().int().describe("REACH — DISTINCT leads this scope emailed, bounced and unsubscribed INCLUDED. It is the base the FIRST rung converts from (its fromRecipientsReached, under the label 'Contacted'), and the reason that rung's rate is answerable at all. Always measured wherever the leads were read. The first rung converts from REACH and not from the smaller convertible base on purpose: a bounce is a real loss at the very first rung and it was paid for, so a rate that quietly divided by the survivors would hide the people this campaign bought and never reached. Byte-equal to outcomes.recipientsContacted for the same scope."),
   convertibleRecipients: z.number().int().describe("THE PIPELINE BASE — of those reached, the ones still able to convert (contactedRecipients minus everyone a bounce or an unsubscribe removed). Stated BESIDE the reach it is drawn from so nobody has to work out which of the two a rate divided by. Byte-equal to outcomes.recipientsConvertible for the same scope — one count, read off one deduped person set."),
   steps: z.array(funnelStepSchema).describe("The funnel's rungs in the funnel's own order, first to last — four for either meeting funnel (reply-or-visit → booked → attended → paid), three for website purchases (visit → signup → paid) and for the form magnet (visit → form filled → paid)."),
