@@ -173,7 +173,7 @@ function makeDeps(fixtures: {
 }): CustomerHealthDeps {
   const audit: AccountsAudit = {
     rows: fixtures.accounts,
-    stats: { totalRunningDailyBudgetUsd: 0, totalConfiguredDailyBudgetUsd: 0, mrrUsd: 0, arrUsd: 0, activeCount: 0, paymentDeclinedCount: 0, pausedCount: 0, inactiveCount: 0, totalCount: fixtures.accounts.length },
+    stats: { totalRunningDailyBudgetUsd: 0, totalConfiguredDailyBudgetUsd: 0, mrrUsd: 0, arrUsd: 0, activeCount: 0, paymentDeclinedCount: 0, noPaymentMethodCount: 0, pausedCount: 0, inactiveCount: 0, totalCount: fixtures.accounts.length },
     asOf: NOW.toISOString(),
   };
   const byUser: ActiveUsersByUser = {

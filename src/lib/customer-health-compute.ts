@@ -193,7 +193,7 @@ export interface CustomerHealthRow {
 
   // ── Current brand status (same composition as the accounts audit) ───────────
   status: AccountStatus;
-  /** billing's reason it cannot charge the org when `status` is "payment_declined" (e.g. `card_declined`); null otherwise. */
+  /** billing's reason it cannot charge the org when `status` is "payment_declined" (e.g. `card_declined`) or "no_payment_method" (`no_chargeable_card`); null otherwise. */
   paymentDeclinedReason: string | null;
   /** Every ceiling this (org, brand) configured, in USD — what they set. */
   configuredDailyBudgetUsd: number;
@@ -247,6 +247,7 @@ export interface CustomerHealthStats {
   totalCustomers: number;
   activeCount: number;
   paymentDeclinedCount: number;
+  noPaymentMethodCount: number;
   pausedCount: number;
   inactiveCount: number;
   greenCount: number;
@@ -510,7 +511,7 @@ function composeHealth(
   };
 }
 
-const STATUS_RANK: Record<AccountStatus, number> = { active: 0, payment_declined: 1, paused: 2, inactive: 3 };
+const STATUS_RANK: Record<AccountStatus, number> = { active: 0, payment_declined: 1, no_payment_method: 2, paused: 3, inactive: 4 };
 
 /**
  * Build the full customer-health board. Reuses the accounts audit (identity + status + budget + balance)
@@ -750,6 +751,7 @@ export async function buildCustomerHealthBoard(
   let activeCount = 0;
   let pausedCount = 0;
   let paymentDeclinedCount = 0;
+  let noPaymentMethodCount = 0;
   let greenCount = 0;
   let yellowCount = 0;
   let redCount = 0;
@@ -757,6 +759,7 @@ export async function buildCustomerHealthBoard(
     if (row.status === "active") activeCount += 1;
     else if (row.status === "paused") pausedCount += 1;
     else if (row.status === "payment_declined") paymentDeclinedCount += 1;
+    else if (row.status === "no_payment_method") noPaymentMethodCount += 1;
     if (row.health.badge === "green") greenCount += 1;
     else if (row.health.badge === "yellow") yellowCount += 1;
     else redCount += 1;
@@ -768,8 +771,9 @@ export async function buildCustomerHealthBoard(
       totalCustomers: rows.length,
       activeCount,
       paymentDeclinedCount,
+      noPaymentMethodCount,
       pausedCount,
-      inactiveCount: rows.length - activeCount - pausedCount - paymentDeclinedCount,
+      inactiveCount: rows.length - activeCount - pausedCount - paymentDeclinedCount - noPaymentMethodCount,
       greenCount,
       yellowCount,
       redCount,

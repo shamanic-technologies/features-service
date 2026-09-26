@@ -109,6 +109,14 @@ describe("accountStatus — a payment billing cannot collect beats every budget"
     // The same account with a card billing CAN charge reads active — the hold is the only difference.
     expect(accountStatus(49, 49, 1000, true, null)).toBe("active");
   });
+  it("an org held for having no chargeable card is no_payment_method, never payment_declined (nothing was declined)", () => {
+    expect(accountStatus(5, 5, 12, false, { blockedReason: "no_chargeable_card" })).toBe("no_payment_method");
+    expect(accountStatus(5, 0, 12, false, { blockedReason: "no_chargeable_card" })).toBe("no_payment_method");
+    for (const r of ["card_declined", "card_unusable", "retries_exhausted", "card_country_unsupported"]) {
+      expect(accountStatus(5, 5, 12, false, { blockedReason: r })).toBe("payment_declined");
+    }
+  });
+
   it("a held org whose campaigns are already stopped is payment_declined, not paused (paused is the customer's choice)", () => {
     // The Federal Architect: configured $10, nothing running, card country unsupported.
     expect(accountStatus(10, 0, 18, false, { blockedReason: "card_country_unsupported" })).toBe("payment_declined");
@@ -296,6 +304,7 @@ describe("buildAccountsAudit", () => {
       arrUsd: 0,
       activeCount: 0,
       paymentDeclinedCount: 0,
+      noPaymentMethodCount: 0,
       pausedCount: 0,
       inactiveCount: 0,
       totalCount: 0,
