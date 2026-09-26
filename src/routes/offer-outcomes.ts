@@ -38,6 +38,7 @@ import { applySignalOverlays } from "../lib/signal-overlays.js";
 import { fetchMatureSpendCents, fetchRunsCostCents } from "../lib/runs-cost-client.js";
 import { maturityCutoffIso, maturityDaysForLeg } from "../lib/roi-maturity.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
+import { fetchFollowupActedLeads } from "../lib/followup-actions-client.js";
 import type { StepEvidence } from "../lib/funnel-steps.js";
 import type { EnginePerson } from "../lib/revenue-engine.js";
 
@@ -164,7 +165,8 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
       compute: async () => {
         const groupCampaignIds = [...new Set(partition.groups.flatMap((g) => g.campaignIds))].sort();
         const needDates = partition.groups.some((g) => maturityDaysForLeg(g.legKey) > 0);
-        const [people, spends] = await Promise.all([
+        const internalCampaignIds = partition.groups.filter((g) => g.fromStep !== null).flatMap((g) => g.campaignIds);
+        const [people, spends, acted] = await Promise.all([
           groupCampaignIds.length > 0
             ? readOfferPersons({
                 brandId,
@@ -179,6 +181,10 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
                 evidence: { observedSteps: true, legacyQualifications: true, signupAttribution: true, formSubmissionAttribution: true },
               }),
           mapWithConcurrency(partition.groups, 4, (g) => readGroupSpend(g, brandId, headers, pricing)),
+          // Unreadable → the internal legs degrade to the offer's leads at their step, unattributed.
+          internalCampaignIds.length > 0
+            ? soft("follow-up actions", fetchFollowupActedLeads(brandId, internalCampaignIds))
+            : Promise.resolve(new Map<string, Set<string>>()),
         ]);
         const spendByGroup = new Map(partition.groups.map((g, i) => [g, spends[i]] as const));
         const outcomes = assembleOfferOutcomes({
@@ -188,6 +194,7 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
           spendByGroup,
           values: stepValues(declared, brandEconomics.economics),
           channelName: (slug) => catalogueEntry(slug)?.name ?? slug,
+          actedLeadIdsByCampaign: acted,
         });
         const maturityDays = Math.max(0, ...partition.groups.map((g) => maturityDaysForLeg(g.legKey)));
         return {
