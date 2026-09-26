@@ -2407,17 +2407,17 @@ const customerHealthRowSchema = z.object({
     cacPct: z.number().nullable().describe("CAC as a share of LTR, percent = spend / pipeline × 100. null when incomputable."),
   }),
   audiences: z.object({
-    count: z.number().int().describe("Number of the brand's active audiences with evidence."),
-    totalSize: z.number().int().describe("Total addressable members across the brand's audiences (Σ memberCount)."),
-    totalRemaining: z.number().int().describe("Total remaining-to-contact (Σ max(memberCount − contacted, 0))."),
-    pctUsed: z.number().nullable().describe("% of the addressable pool already contacted = Σcontacted / Σsize × 100. null when totalSize is 0."),
+    count: z.number().int().describe("Number of the brand's active audiences."),
+    totalSize: z.number().int().nullable().describe("Total pool across the brand's active audiences as human-service sizes them. null when human-service could not be read."),
+    totalRemaining: z.number().int().nullable().describe("People the brand's active audiences can still be served (human-service's own remaining-to-contact, after brand suppression). null when human-service could not be read — never 0 for unknown."),
+    pctUsed: z.number().nullable().describe("% of the pool that can no longer be served = (totalSize − totalRemaining) / totalSize × 100. null when totalSize is 0 or unreadable."),
   }),
   bestAudience: z.object({
     audienceId: z.string(),
     name: z.string(),
     cacUsd: z.number().nullable().describe("The audience's CAC (cost per goal outcome) USD — cpc for visit-driven goals, cppr for reply-driven. null when unmeasured."),
-    size: z.number().int(),
-    remaining: z.number().int(),
+    size: z.number().int().nullable().describe("The audience's pool size (human-service). null when unreadable."),
+    remaining: z.number().int().nullable().describe("People it can still be served (human-service). null when unreadable."),
     pctRemaining: z.number().nullable(),
   }).nullable().describe("The single best-performing audience by CAC. null when there is no goal to rank on or no audiences."),
   bestWorkflow: z.object({

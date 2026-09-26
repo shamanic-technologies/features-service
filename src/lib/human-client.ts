@@ -51,6 +51,12 @@ export interface Audience {
    * OPTIONAL: an absent count is "not stated", never 0.
    */
   availableToContactCount?: number;
+  /**
+   * The audience's contactable pool size as human-service counts it (its committed provider's own count
+   * snapshot). `availableToContactCount` is a subset of it. OPTIONAL for the same reason: absent is
+   * "not stated", never 0.
+   */
+  sizeCount?: number;
 }
 
 interface AudienceFetchHeaders {
@@ -160,6 +166,42 @@ export async function fetchActiveAudienceAvailabilitySoft(
       `[features-service] audience availability read failed for brand=${brandId} — audience rows state availableToContactCount: null:`,
       err,
     );
+    return null;
+  }
+}
+
+/** One active audience's pool as human-service states it: its size and how many of it can still be served. */
+export interface AudiencePool {
+  size: number;
+  remaining: number;
+}
+
+/**
+ * The POOL of each of a brand's ACTIVE audiences, keyed by audience id — human-service's own `sizeCount`
+ * and `availableToContactCount`, the only numbers that answer "how many people can this audience still be
+ * served". (An audience's served-member count minus its contacted count is NOT that: it is the backlog of
+ * people served and not yet emailed, which a healthy pipeline drains to 0.)
+ *
+ * FAIL-SOFT to `null` ("we could not read this") with a loud log, never to a 0 that would read as
+ * "exhausted". An audience whose producer states neither figure is ABSENT from the map.
+ */
+export async function fetchActiveAudiencePoolSoft(
+  brandId: string,
+  headers: AudienceFetchHeaders,
+): Promise<Map<string, AudiencePool> | null> {
+  try {
+    const audiences = await fetchActiveAudiences(brandId, headers);
+    const byId = new Map<string, AudiencePool>();
+    for (const a of audiences) {
+      const size = a.sizeCount;
+      const remaining = a.availableToContactCount;
+      if (typeof size === "number" && Number.isFinite(size) && typeof remaining === "number" && Number.isFinite(remaining)) {
+        byId.set(a.id, { size, remaining });
+      }
+    }
+    return byId;
+  } catch (err) {
+    console.error(`[features-service] audience pool read failed for brand=${brandId} — remaining-to-contact reads null:`, err);
     return null;
   }
 }

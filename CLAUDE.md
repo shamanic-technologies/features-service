@@ -6464,3 +6464,13 @@ counts × per-stage-EV approximation — that loses company-dedup and reads "low
 `(brand × workflow)` cell — each run/recipient is single-brand, so cells are exact. Needs workflow-scoped
 COST (runs `groupBy=workflowSlug`) + a lead-service `workflowSlug` filter on `/orgs/leads`. Tracked as a
 follow-up in features-service#225.
+
+## Customer-health audience "remaining" is human-service's pool, never served-minus-contacted
+
+The board's `audiences.totalRemaining` / `pctUsed` / `bestAudience.remaining` and the near-exhausted
+badge read human-service's own `sizeCount` + `availableToContactCount` for the brand's ACTIVE audiences
+(`fetchActiveAudiencePoolSoft`), live. `memberCount − contacted` from the audience-stats evidence is the
+backlog of people SERVED and not yet emailed: it drains to 0 on every brand that sends well, and on
+2026-09-26 it made Living Vital (361 of 609 still servable) and webprime (3,874) read "0 left, CRITICAL"
+in the daily brief. An unreadable pool reads `null`, never 0 (0 would read as exhausted). Guarded in
+`src/lib/customer-health-compute.test.ts`.

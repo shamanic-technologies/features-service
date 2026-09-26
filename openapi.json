@@ -16905,20 +16905,22 @@
                   "properties": {
                     "count": {
                       "type": "integer",
-                      "description": "Number of the brand's active audiences with evidence."
+                      "description": "Number of the brand's active audiences."
                     },
                     "totalSize": {
                       "type": "integer",
-                      "description": "Total addressable members across the brand's audiences (Σ memberCount)."
+                      "nullable": true,
+                      "description": "Total pool across the brand's active audiences as human-service sizes them. null when human-service could not be read."
                     },
                     "totalRemaining": {
                       "type": "integer",
-                      "description": "Total remaining-to-contact (Σ max(memberCount − contacted, 0))."
+                      "nullable": true,
+                      "description": "People the brand's active audiences can still be served (human-service's own remaining-to-contact, after brand suppression). null when human-service could not be read — never 0 for unknown."
                     },
                     "pctUsed": {
                       "type": "number",
                       "nullable": true,
-                      "description": "% of the addressable pool already contacted = Σcontacted / Σsize × 100. null when totalSize is 0."
+                      "description": "% of the pool that can no longer be served = (totalSize − totalRemaining) / totalSize × 100. null when totalSize is 0 or unreadable."
                     }
                   },
                   "required": [
@@ -16944,10 +16946,14 @@
                       "description": "The audience's CAC (cost per goal outcome) USD — cpc for visit-driven goals, cppr for reply-driven. null when unmeasured."
                     },
                     "size": {
-                      "type": "integer"
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "The audience's pool size (human-service). null when unreadable."
                     },
                     "remaining": {
-                      "type": "integer"
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "People it can still be served (human-service). null when unreadable."
                     },
                     "pctRemaining": {
                       "type": "number",
