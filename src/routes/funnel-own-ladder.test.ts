@@ -35,6 +35,7 @@ process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
+const { offerEconomicsFromDeclared, legCampaignRows } = await import("../lib/leg-economics-fixture.js");
 
 const AUTH = {
   "x-api-key": "test-key",
@@ -160,7 +161,7 @@ function mockFetch(opts: {
 } = {}): void {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
-    if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
+    if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: opts.salesFunnels ? legCampaignRows(opts.salesFunnels as any[]) : [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // wave C1: the entry legs of the funnels sold; none maturing (lib/roi-maturity.ts)
     const json = (body: unknown, status = 200): Response =>
       new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
@@ -173,6 +174,10 @@ function mockFetch(opts: {
     if (url.includes("/costs/timeseries")) return new Response("boom", { status: 500 });
     if (url.includes("/stats/costs")) {
       return new Response(costGroups(opts.costCents ?? SPEND_CENTS), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("/offer-economics")) {
+      if (!opts.salesFunnels) return new Response("no statements", { status: 404 });
+      return json(offerEconomicsFromDeclared(opts.salesFunnels as any[]));
     }
     if (url.includes("/sales-funnels")) {
       if (!opts.salesFunnels) return new Response("no declaration", { status: 404 });
@@ -257,9 +262,10 @@ describe("a funnel is priced on the rates IT declares, not on a route it does no
     expect(byId.lf.tags).toContain("formSubmitted");
   });
 
-  it("a rate the brand never declared stays ABSENT — the rung prices at nothing, never at 0%-as-a-number and never a substitute", async () => {
-    // No arrows, no named form rates, and the brand-wide record carries none either: there is nothing
-    // this funnel can be priced from, so it prices at nothing rather than borrowing the meeting route.
+  it("a rate the brand never stated stays ABSENT — the rung prices at nothing, never at 0%-as-a-number and never a substitute", async () => {
+    // No arrows, no named rates, nothing measured: the visit leg is read through the funnel its campaign
+    // states (Form Magnet, the C1 compatibility tie-break), and that funnel has no rate to price from —
+    // so it prices at nothing rather than borrowing the meeting route. Byte-equal to the pre-C1 answer.
     mockFetch({
       economics: ECONOMICS,
       leads: visitors(VISIT_COUNT),
@@ -360,11 +366,10 @@ describe("REGRESSION — the other three funnel keys are unchanged, to the cent"
     expect(res.body.headline.totalPipelineUsd).toBeCloseTo(30 * 0.4 * 0.25, 5);
   });
 
-  it("a brand declaring form_magnet BESIDE a meeting funnel: `?funnel=` gives each its own terms, and the meeting funnel is unmoved", async () => {
-    // A brand declaring SEVERAL funnels resolves ONE set of terms for the read — the funnel it NAMED,
-    // else the first in catalogue order (here the meeting funnel). That is unchanged, deliberately: a
-    // read is priced on the terms it resolved, and narrowing it with `?funnel=` is how a customer asks
-    // for one funnel's own answer. The two reads below are the same fixture, two questions.
+  it("a brand whose statements send website visitors to a FORM is read through the form; `?funnel=` still asks for another funnel's own answer", async () => {
+    // Wave C1: no declared set is read. The brand states visit → form and nothing out of the visit step
+    // toward a meeting, so its visitors are read through Form Magnet — the leg it states is where its
+    // leads go.
     const funnels = [
       declaredFunnel(),
       declaredFunnel({
@@ -378,13 +383,13 @@ describe("REGRESSION — the other three funnel keys are unchanged, to the cent"
     mockFetch({ economics: ECONOMICS, leads: visitors(1), salesFunnels: funnels });
     const unqualified = await read();
     expect(unqualified.status).toBe(200);
-    // The meeting funnel's own expression, to the cent — unmoved by the form funnel beside it.
-    expect(unqualified.body.headline.totalPipelineUsd).toBeCloseTo(BRAND_WIDE_VISIT_USD, 5);
+    expect(unqualified.body.headline.totalPipelineUsd).toBeCloseTo(FORM_VISIT_USD, 5);
 
     mockFetch({ economics: ECONOMICS, leads: visitors(1), salesFunnels: funnels });
+    // `?funnel=` narrows among the funnels the brand's campaigns READ; one they do not read is not
+    // substituted in (the same rule the declared set had).
     const named = await read("&funnel=form_magnet");
     expect(named.status).toBe(200);
     expect(named.body.headline.totalPipelineUsd).toBeCloseTo(FORM_VISIT_USD, 5);
-    expect(named.body.headline.totalPipelineUsd).not.toBeCloseTo(BRAND_WIDE_VISIT_USD, 2);
   });
 });

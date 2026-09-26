@@ -39,6 +39,8 @@ process.env.BRAND_SERVICE_API_KEY = "brand-key";
 process.env.LEAD_SERVICE_URL = "http://lead:3000";
 process.env.LEAD_SERVICE_API_KEY = "lead-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
+process.env.CAMPAIGN_SERVICE_URL = "http://campaign:3000";
+process.env.CAMPAIGN_SERVICE_API_KEY = "campaign-key";
 process.env.NODE_ENV = "test";
 
 const app = (await import("../index.js")).default;
@@ -97,16 +99,18 @@ function installFetchMock(state: { runsCostCents: string; runsCalls: number; fai
     // declared funnels (the fleet figures read those, never the brand-wide record) and its brand-filtered
     // dated spend / outcomes. Not the ledger scan this suite counts.
     const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
-    if (/http:\/\/brand:3000\/internal\/brands\/[^/]+\/sales-funnels/.test(url)) {
-      const { lifetimeRevenueUsd, ...rates } = ECONOMICS;
-      return json({ funnels: [{ funnelKey: "sales_meetings_from_conversation", name: "x", steps: [], rates, lifetimeRevenueUsd, destinationUrl: null, bookingUrl: null, updatedAt: "2026-08-01T00:00:00.000Z" }] });
+    // Wave C1: the brand's leg statements + its one offer, and one campaign performing the reply leg.
+    if (/http:\/\/brand:3000\/internal\/brands\/[^/]+\/offer-economics/.test(url)) {
+      return json({
+        legRates: [
+          { fromStep: "Positive reply", toStep: "Meeting booked", ratePct: ECONOMICS.replyToMeetingPct, stated: true, statedAt: "x" },
+          { fromStep: "Meeting attended", toStep: "Paid client", ratePct: ECONOMICS.meetingToClosePct, stated: true, statedAt: "x" },
+        ],
+        offers: [{ offerId: "offer-1", name: "Offer", lifetimeRevenueUsd: ECONOMICS.lifetimeRevenueUsd, lifetimeRevenueStatedAt: "x" }],
+      });
     }
-    if (/http:\/\/brand:3000\/internal\/brands\/[^/]+\/funnel-rates/.test(url)) {
-      return json({ funnels: [{ funnelKey: "sales_meetings_from_conversation", arrows: [
-        { fromStep: "Positive reply", toStep: "Meeting booked", ratePct: ECONOMICS.replyToMeetingPct, stated: true },
-        { fromStep: "Meeting booked", toStep: "Meeting attended", ratePct: null, stated: false },
-        { fromStep: "Meeting attended", toStep: "Paid client", ratePct: ECONOMICS.meetingToClosePct, stated: true },
-      ] }] });
+    if (url.startsWith("http://campaign:3000/campaigns") && !new URL(url).searchParams.has("featureSlug")) {
+      return json({ campaigns: [{ id: "c1", orgId: "org-A", brandId: "brand-1", featureSlug: "sales-cold-email-outreach", legKey: "start_to_conversation", offerId: "offer-1", status: "ongoing" }] });
     }
     if (/http:\/\/brand:3000\/internal\/brands\/[^/]+\/sales-economics/.test(url)) return json({ salesEconomics: ECONOMICS });
     if (new URL(url).searchParams.has("brandId") && url.startsWith("http://runs:3000/v1/stats/public/costs/timeseries")) return json({ buckets: [] });

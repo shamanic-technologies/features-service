@@ -90,7 +90,8 @@ const OFFER_LTR: Record<string, number> = {
 };
 
 const SEVERAL_OFFERS_BODY = {
-  error: "This brand sells several offers; name the offer.",
+  // Raised by this service since wave C1 (the offers come from brand-service's offer-economics).
+  error: `brand ${"brand-multi"} sells several offers and this read named none`,
   code: "SEVERAL_OFFERS",
   offers: [
     { offerId: OFFER_PRODUCT_LED, name: "Product-led" },
@@ -152,16 +153,24 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
 
     if (url.includes("campaign:3000/campaigns")) return json({ campaigns: CAMPAIGN_ROWS });
 
-    const declared = url.match(/brand:3000\/internal\/brands\/([^/?]+)\/sales-funnels/);
-    if (declared) {
+    // Wave C1: brand-service's offer-economics — the brand's leg rates and EVERY offer's lifetime
+    // revenue. No offer is named on the wire any more: the pricing read resolves it locally, and a
+    // brand-scoped read of the multi-offer brand refuses with the same several-offers answer.
+    const legs = url.match(/brand:3000\/internal\/brands\/([^/?]+)\/offer-economics/);
+    if (legs) {
       funnelReads.push(url);
-      const offerId = params.get("offerId");
-      // The SOLE-offer brand answers whatever is asked, with or without an offer — which is exactly
-      // why naming one costs a single-offer brand nothing.
-      if (declared[1] === SOLO_BRAND) return json(funnelsFor(offerId));
-      // The MULTI-offer brand refuses a read that names none. This is brand-service's deployed 409.
-      if (!offerId) return json(SEVERAL_OFFERS_BODY, 409);
-      return json(funnelsFor(offerId));
+      const legRates = [
+        { fromStep: "Website visit", toStep: "Signup", ratePct: 20, stated: true, statedAt: "x" },
+        { fromStep: "Signup", toStep: "Paid client", ratePct: 40, stated: true, statedAt: "x" },
+      ];
+      const offers =
+        legs[1] === SOLO_BRAND
+          ? [{ offerId: OFFER_SALES_LED, name: "Sales-led", lifetimeRevenueUsd: 1000, lifetimeRevenueStatedAt: "x" }]
+          : [
+              { offerId: OFFER_PRODUCT_LED, name: "Product-led", lifetimeRevenueUsd: OFFER_LTR[OFFER_PRODUCT_LED], lifetimeRevenueStatedAt: "x" },
+              { offerId: OFFER_SALES_LED, name: "Sales-led", lifetimeRevenueUsd: OFFER_LTR[OFFER_SALES_LED], lifetimeRevenueStatedAt: "x" },
+            ];
+      return json({ legRates, offers });
     }
 
     if (url.includes("workflow:3000/public/workflows")) return json({ workflows: [workflow("wf-a")] });
@@ -219,9 +228,9 @@ describe("a campaign names the offer its declared funnels are read under", () =>
     expect(res.body.brandProjection.lifetimeRevenueUsd).toBe(OFFER_LTR[OFFER_SALES_LED]);
     expect(res.body.brandProjection.lifetimeRevenueUsd).not.toBe(OFFER_LTR[OFFER_PRODUCT_LED]);
     expect(res.body.declaredFunnelsUnresolved).toBeUndefined();
-    // …and it got there by NAMING the offer on the wire, not by brand-service guessing.
+    // Wave C1: the offer is resolved HERE from brand-service's offer-economics (no offer on the wire);
+    // the lifetime revenue above is what proves which one.
     expect(funnelReads.length).toBeGreaterThan(0);
-    for (const url of funnelReads) expect(url).toContain(`offerId=${OFFER_SALES_LED}`);
   });
 
   it("answers a campaign-scoped `?funnel=` read 200 instead of the 502 that blanked the page", async () => {
@@ -239,7 +248,6 @@ describe("a campaign names the offer its declared funnels are read under", () =>
     expect(res.status).toBe(200);
     expect(res.body.leg.basisFunnelKey).toBe("website_purchases");
     expect(res.body.declaredFunnelsUnresolved).toBeUndefined();
-    for (const url of funnelReads) expect(url).toContain(`offerId=${OFFER_SALES_LED}`);
   });
 });
 

@@ -23,6 +23,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
+import { offerEconomicsFromDeclared } from "../lib/leg-economics-fixture.js";
 
 vi.mock("../db/index.js", () => ({
   db: { query: { features: { findFirst: vi.fn(), findMany: vi.fn() } } },
@@ -137,6 +138,7 @@ function mockFetch(): void {
       return json({ groups: [email("wf-lithium", 1000, 10), email("wf-sodium", 2000, 10)] });
     }
     if (url.includes("/public/stats")) return json({ groups: [email("wf-lithium", 9000, 100), email("wf-sodium", 9000, 100)] });
+    if (url.includes("/offer-economics")) return json(offerEconomicsFromDeclared([CONVERSATION_FUNNEL]));
     if (url.includes("/sales-funnels")) return json({ funnels: [CONVERSATION_FUNNEL] });
     if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
     if (url.includes("/orgs/audiences")) {

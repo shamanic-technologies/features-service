@@ -161,10 +161,14 @@ function mockFetch(options: Options = {}): FetchImpl {
       return json({ workflows: WORKFLOWS });
     }
     if (url.pathname.endsWith("/campaigns")) return json({ campaigns: CAMPAIGNS });
-    // The brand declares the funnel its campaigns sell — so the funnel walk has ONE chain to state.
-    // No per-funnel rates: every term falls through to the brand-wide economics, unchanged.
-    if (url.pathname.includes("/sales-funnels")) {
-      return json({ funnels: [{ funnelKey: "sales_meetings_from_conversation", name: "Meetings from a conversation" }] });
+    // The funnel its campaigns read is ONE chain — so the funnel walk has one to state.
+    // Wave C1: the brand states where its replies go (a meeting) — at the brand-wide value, so every
+    // term still falls through unchanged — and sells one offer.
+    if (url.pathname.includes("/offer-economics")) {
+      return json({
+        legRates: [{ fromStep: "Positive reply", toStep: "Meeting booked", ratePct: ECONOMICS.replyToMeetingPct, stated: true, statedAt: "x" }],
+        offers: [{ offerId: "offer-1", name: "Offer", lifetimeRevenueUsd: null, lifetimeRevenueStatedAt: null }],
+      });
     }
     if (url.pathname.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
 

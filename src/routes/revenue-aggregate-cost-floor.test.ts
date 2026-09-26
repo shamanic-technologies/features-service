@@ -48,6 +48,7 @@ process.env.NODE_ENV = "test";
 
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
+const { offerEconomicsFromDeclared, legCampaignRows } = await import("../lib/leg-economics-fixture.js");
 
 const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
 const FEATURE = { id: "feat-1", slug: "sales-cold-email-outreach", name: "Sales", description: "x", status: "active", createdAt: new Date(), updatedAt: new Date() };
@@ -113,6 +114,23 @@ let brandCommittedCents = 2874;
 let brandActualCents = 2874;
 /** The SALES FUNNELS the brand declared it sells through (brand-service INTERNAL declared set). An
  * empty array means it declared nothing — the read fails loud there and the columns stay OBSERVED. */
+/** Wave C1: the brand STATES the legs of the funnels it runs, at the brand-wide values. */
+function legEconomicsOf(funnelKeys: string[]) {
+  const OWN: Record<string, string[]> = {
+    website_purchases: ["visitToSignupPct", "signupToPaidClientPct"],
+    sales_meetings_from_conversation: ["replyToMeetingPct", "meetingToClosePct"],
+    sales_meetings_from_website: ["visitToMeetingPct", "meetingToClosePct"],
+    form_magnet: ["visitToFormSubmissionPct", "formSubmissionToPaidClientPct"],
+  };
+  return offerEconomicsFromDeclared(
+    funnelKeys.map((funnelKey) => ({
+      funnelKey,
+      rates: Object.fromEntries((OWN[funnelKey] ?? []).map((k) => [k, (ECONOMICS as any)[k]])),
+      lifetimeRevenueUsd: null,
+    })),
+  );
+}
+
 let brandFunnels: string[] = ["website_purchases"];
 /** The brand's leads snapshot — drives the observed click / positive-reply denominators. */
 let leads: Array<Record<string, unknown>> = [leadRow({ leadId: "l1", email: "quiet@x.com" })];
@@ -124,7 +142,7 @@ let conversionCounts: { signup: number; meeting_booked: number; form_submission:
 function mockFetch(): ReturnType<typeof vi.spyOn> {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = urlOf(input);
-    if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
+    if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: new URL(url).searchParams.has("featureSlug") ? [] : legCampaignRows(brandFunnels.map((funnelKey) => ({ funnelKey }))) }), { status: 200, headers: { "Content-Type": "application/json" } }); // wave C1: the entry legs of the funnels sold; none maturing (lib/roi-maturity.ts)
     const params = new URL(url, "http://x").searchParams;
 
     // ── Cross-org projection inputs (shared by both surfaces) ──────────────
@@ -135,7 +153,9 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
     if (url.includes("email:3000/public/stats")) return json({ groups: FLEET_EMAIL });
 
     // ── Brand economics: effective (both surfaces) + INTERNAL saved (the declared goal) ────
-    if (url.includes("brand:3000/internal/brands/brand-1/sales-funnels")) {
+    if (url.includes("brand:3000/internal/brands/brand-1/offer-economics")) return json(legEconomicsOf(brandFunnels));
+    if (url.includes("brand:3000/internal/brands/brand-1/offer-economics")) return json(legEconomicsOf(brandFunnels));
+  if (url.includes("brand:3000/internal/brands/brand-1/sales-funnels")) {
       // What the brand DECLARED it sells through — the funnel the spend columns are priced on. An empty
       // list is brand-service's "this org never stated a set": the client throws on it, and the columns
       // degrade to observed rather than being priced on a substituted funnel.
@@ -350,7 +370,7 @@ describe("aggregate cost coherence: /revenue spend ↔ /workflow-projection", ()
     fetchSpy.mockRestore();
     fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = urlOf(input);
-      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
+      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: new URL(url).searchParams.has("featureSlug") ? [] : legCampaignRows(brandFunnels.map((funnelKey) => ({ funnelKey }))) }), { status: 200, headers: { "Content-Type": "application/json" } }); // wave C1: the entry legs of the funnels sold; none maturing (lib/roi-maturity.ts)
       if (url.includes("workflow:3000/public/workflows")) return new Response("boom", { status: 500 });
       return (await mockFetchOnce(url)) as Response;
     });

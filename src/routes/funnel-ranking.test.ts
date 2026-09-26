@@ -31,10 +31,33 @@ process.env.BRAND_SERVICE_URL = "http://brand:3000";
 process.env.BRAND_SERVICE_API_KEY = "brand-key";
 process.env.HUMAN_SERVICE_URL = "http://human:3000";
 process.env.HUMAN_SERVICE_API_KEY = "human-key";
+process.env.CAMPAIGN_SERVICE_URL = "http://campaign:3000";
+process.env.CAMPAIGN_SERVICE_API_KEY = "campaign-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
 process.env.NODE_ENV = "test";
 
 const { db } = await import("../db/index.js");
+const { offerEconomicsFromDeclared, legCampaignRows } = await import("../lib/leg-economics-fixture.js");
+
+/**
+ * Wave C1: a brand states ONE rate per leg (no declared funnel is read). A fixture funnel that states no
+ * rate of its own is read as the brand having stated ITS legs at the brand-wide values below — which is
+ * what brand-service's carry-over produced for every brand in prod.
+ */
+const FUNNEL_OWN_RATE_KEYS: Record<string, string[]> = {
+  website_purchases: ["visitToSignupPct", "signupToPaidClientPct"],
+  sales_meetings_from_conversation: ["replyToMeetingPct", "meetingToClosePct"],
+  sales_meetings_from_website: ["visitToMeetingPct", "meetingToClosePct"],
+  form_magnet: ["visitToFormSubmissionPct", "formSubmissionToPaidClientPct"],
+};
+function withStatedLegs(funnels: any[]): any[] {
+  return funnels.map((f) => {
+    if (f.rates && Object.keys(f.rates).length > 0) return f;
+    const rates: Record<string, number> = {};
+    for (const k of FUNNEL_OWN_RATE_KEYS[f.funnelKey] ?? []) rates[k] = (ECONOMICS as any)[k];
+    return { ...f, rates };
+  });
+}
 const app = (await import("../index.js")).default;
 
 const AUTH = {
@@ -128,11 +151,14 @@ function mockFetch(opts: MockOpts = {}): void {
     if (url.includes("/v1/stats/costs")) return json({ groups: [] }); // brand + audience grains: no spend
     if (url.includes("/orgs/stats")) return json({ groups: [] });
     if (url.includes("/public/stats")) return json({ groups: CROSSORG_EMAIL });
-    if (url.includes("/sales-funnels")) {
+    if (url.includes("/offer-economics")) {
       if (!("funnels" in opts)) {
         return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
       }
-      return json({ funnels: opts.funnels });
+      return json(offerEconomicsFromDeclared(withStatedLegs(opts.funnels as any[])));
+    }
+    if (url.includes("campaign:3000/campaigns")) {
+      return json({ campaigns: legCampaignRows((opts.funnels ?? []) as any[], { brandId: "b1" }) });
     }
     if (url.includes("/sales-economics-effective")) {
       const economics = "economics" in opts ? opts.economics : ECONOMICS;
@@ -195,7 +221,7 @@ describe("GET /features/:featureSlug/funnel-ranking", () => {
     expect(Array.isArray(legacy.body.rows)).toBe(true);
   });
 
-  it("asks brand-service for the CALLER'S org's declared set — a brand id alone cannot name whose funnels", async () => {
+  it("asks brand-service for the CALLER'S org's leg statements — a brand id alone cannot name whose rates", async () => {
     // A brand row is a shared global identity (every org claiming the same domain gets the same brand
     // id), so the authorized set is the (org, brand) pair's data. brand-service refuses to guess for a
     // multi-org brand, so the org whose answer we want has to be on the wire.
@@ -204,7 +230,7 @@ describe("GET /features/:featureSlug/funnel-ranking", () => {
     const inner = vi.mocked(globalThis.fetch).getMockImplementation()!;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
-      if (url.includes("/sales-funnels")) {
+      if (url.includes("/offer-economics")) {
         funnelsOrg = ((init?.headers as Record<string, string>) ?? {})["x-org-id"];
       }
       return inner(input, init);
@@ -372,15 +398,14 @@ describe("GET /features/:featureSlug/funnel-ranking", () => {
     expect(projected.body.economics.lifetimeRevenueUsd).toBe(2500);
   });
 
-  it("refuses to price a funnel the brand never declared — a gap is not a zero", async () => {
+  it("prices a NAMED funnel on the brand's leg rates even when no campaign reads it (wave C1: no declared set to 404 against)", async () => {
     mockFetch({ funnels: [declaredFunnel("website_purchases")] });
     const res = await request(app)
-      .get(`/features/sales-cold-email-outreach/workflow-projection?brandId=b1&funnel=form_magnet`)
+      .get(`/features/sales-cold-email-outreach/workflow-projection?brandId=b1&funnel=sales_meetings_from_website`)
       .set(AUTH);
 
-    expect(res.status).toBe(404);
-    expect(res.body.reason).toBe("funnel_not_declared");
-    expect(res.body.declaredFunnelKeys).toEqual(["website_purchases"]);
+    expect(res.status).toBe(200);
+    expect(res.body.funnelKey).toBe("sales_meetings_from_website");
     // ...and a word that names no funnel at all fails loud rather than falling back to the goal.
     const bogus = await request(app)
       .get(`/features/sales-cold-email-outreach/workflow-projection?brandId=b1&funnel=telepathy`)
@@ -448,26 +473,21 @@ describe("GET /features/:featureSlug/funnel-ranking", () => {
     expect(res.body.error).toContain("sales funnels");
   });
 
-  it("502 with an explicit reason on a declared funnel we cannot map — never silently dropped", async () => {
-    mockFetch({ funnels: [declaredFunnel("website_purchases"), declaredFunnel("telepathy")] });
-    const res = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
-
-    expect(res.status).toBe(502);
-    expect(res.body.reason).toBe("authorized_goal_unrecognised");
-    expect(res.body.error).toContain("telepathy");
-  });
-
-  it("an EMPTY funnel list is a producer gap, never the org answering \"I sell through none\"", async () => {
-    // There is no "answered, but sells through nothing" state to confuse this with: brand-service
-    // refuses to switch off an org's last active funnel, so having answered always leaves at least
-    // one. An empty list therefore means only that this org has never stated a set — a gap to
-    // surface, not an answer to act on.
-    mockFetch({ funnels: [] });
+  it("502 with an explicit reason when the brand's statements cannot be read — never a substituted set", async () => {
+    mockFetch();
     const res = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
 
     expect(res.status).toBe(502);
     expect(res.body.reason).toBe("authorized_goals_unavailable");
-    expect(res.body.error).toContain("never stated");
+  });
+
+  it("a brand whose campaigns run no leg has nothing to rank — a 200 saying so, never a substituted set", async () => {
+    mockFetch({ funnels: [] });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
+
+    expect(res.status).toBe(200);
+    expect(res.body.ranking).toEqual([]);
+    expect(res.body.arbitration.status).toBe("unrankable");
   });
 
   it("reads the list alone — a payload with no `declared` flag is answered normally", async () => {
@@ -482,7 +502,8 @@ describe("GET /features/:featureSlug/funnel-ranking", () => {
 
   it("200 unrankable with a per-funnel reason when nothing can be ranked", async () => {
     mockFetch({
-      funnels: [declaredFunnel("sales_meetings_from_conversation", { rates: { meetingToClosePct: 0 } })],
+      // The brand states where its replies go (a meeting) and that a meeting never closes.
+      funnels: [declaredFunnel("sales_meetings_from_conversation", { rates: { replyToMeetingPct: 40, meetingToClosePct: 0 } })],
     });
     const res = await request(app).get(`${URL_BASE}?brandId=b1`).set(AUTH);
 

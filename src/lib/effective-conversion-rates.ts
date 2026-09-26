@@ -1,9 +1,10 @@
 /**
- * THE BEST CONVERSION RATE WE HAVE FOR EACH ARROW OF A BRAND'S FUNNEL — and which one it is.
+ * THE BEST CONVERSION RATE WE HAVE FOR EACH LEG OF A BRAND — and which one it is.
  *
- * Conversion rates moved from the OFFER to the BRAND (owner decision, 2026-09-25): a brand converts
- * the way it converts whatever it is selling, so there is ONE rate per (brand, sales funnel, arrow).
- * Lifetime revenue stays per offer. Every money figure this service states — pipeline, ROI, CAC, every
+ * Conversion rates live on the BRAND, per LEG (owner decisions, 2026-09-25): a brand converts the way it
+ * converts whatever it is selling, and no sales funnel is part of the key — ONE rate per (brand, leg),
+ * shared by every funnel that reads that leg (wave C1: nothing here reads a declared funnel). Lifetime
+ * revenue stays per offer. Every money figure this service states — pipeline, ROI, CAC, every
  * projection — rests on the rate resolved here, and the customer can see which source it came from.
  *
  * ── THREE SOURCES, IN THIS ORDER, AND NOTHING ELSE ──────────────────────────────────────────────
@@ -14,8 +15,8 @@
  *      measured, and a bar on the outcome count would keep it on a stated guess forever. Our lead data
  *      already merges the customer's own statements, our tracker and their CRM (the same overlays
  *      `funnelSteps` counts on), so this is the brand's reality, not a sample of it.
- *   2. MANUAL — what the brand stated by hand in brand-service's brand-grain store.
- *   3. MEDIAN — the cross-org median of what OTHER brands stated for the same (funnel, arrow). Stated
+ *   2. MANUAL — what the brand stated by hand for the leg (brand-service `offer-economics` leg rates).
+ *   3. MEDIAN — the cross-org median of what OTHER brands stated for the same leg. Stated
  *      values only: the store has no default behind it, so a brand that stated nothing contributes
  *      nothing.
  *
@@ -55,9 +56,8 @@ import {
 } from "./funnel-steps.js";
 import { LEARNING_OUTCOMES_REQUIRED } from "./learning-phase.js";
 import { SALES_FUNNELS, SALES_FUNNEL_KEYS, salesFunnelIndex, type SalesFunnelKey } from "./sales-funnels.js";
-import { fetchBrandFunnelRates, type BrandFunnelRates } from "./brand-funnel-rates-client.js";
-import { fetchDeclaredSalesFunnels, type DeclaredSalesFunnel } from "./sales-funnels-client.js";
-import type { DeclaredFunnelLeg } from "./funnel-leg-rates.js";
+import { fetchBrandLegEconomics, type BrandLegEconomics, type BrandLegRate } from "./brand-leg-economics-client.js";
+import { FUNNEL_STEP_LABEL_TO_KEY } from "./acquisition-channels.js";
 import { median } from "./stated-economics.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { servedCached, buildScopeKey } from "./view-cache.js";
@@ -120,6 +120,8 @@ export interface BrandEffectiveRates {
   /** Distinct leads this brand has contacted — the population every measured rate is read from. */
   contactedRecipients: number;
   funnels: EffectiveFunnelRates[];
+  /** Every leg of the catalogue, once — the grain a rate actually lives at. */
+  legs: EffectiveArrowRate[];
 }
 
 // ── Steps and the lead flags that count them ──────────────────────────────────────────────────
@@ -146,9 +148,12 @@ const STEP_LEAD_FIELD: Record<string, LeadStepField | null> = {
   purchase: null,
 };
 
-/** The FROM step of an ad funnel's first arrow is DELIVERED by the ad platform and counted by nothing. */
-function leadFieldOfStep(funnelKey: SalesFunnelKey, step: string, index: number): LeadStepField | null {
-  if (index === 0 && (funnelKey === "sales_meetings_from_ads" || funnelKey === "lead_forms_from_ads")) return null;
+/**
+ * The lead flag counting a step. A leg is measured the same way whichever funnel reads it: a rate is a
+ * property of the (brand, leg) pair, never of a funnel, so a booked meeting becoming an attended one is
+ * one measurement for the brand.
+ */
+function leadFieldOfStep(step: string): LeadStepField | null {
   return STEP_LEAD_FIELD[normaliseStep(step)] ?? null;
 }
 
@@ -267,23 +272,31 @@ export function measuredArrowRate(
 
 // ── MEDIAN: what the fleet stated ────────────────────────────────────────────────────────────
 
-const arrowKey = (funnelKey: SalesFunnelKey, fromStep: string, toStep: string): string =>
-  `${funnelKey}|${normaliseStep(fromStep)}|${normaliseStep(toStep)}`;
+/**
+ * One key per LEG — the two steps it connects, resolved to our step keys so brand-service's wording
+ * ("Form filled") and ours ("Form submitted") meet. No funnel is part of it: a brand states ONE rate
+ * per leg, shared by every funnel that reads the leg.
+ */
+export function legPairKey(fromStep: string, toStep: string): string {
+  const key = (label: string): string => FUNNEL_STEP_LABEL_TO_KEY[label.trim()] ?? normaliseStep(label);
+  return `${key(fromStep)}>${key(toStep)}`;
+}
 
 export type FleetArrowMedians = Map<string, { ratePct: number | null; brandCount: number }>;
 
-/** PURE: the median per (funnel, arrow) over the brands that STATED it — one data point per brand. */
-export function buildFleetArrowMedians(perBrand: readonly BrandFunnelRates[][]): FleetArrowMedians {
+/** PURE: the median per LEG over the brands that STATED it — one data point per brand. */
+export function buildFleetArrowMedians(perBrand: readonly (readonly BrandLegRate[])[]): FleetArrowMedians {
   const values = new Map<string, number[]>();
-  for (const funnels of perBrand) {
-    for (const funnel of funnels) {
-      for (const arrow of funnel.arrows) {
-        if (!arrow.stated || arrow.ratePct === null) continue;
-        const key = arrowKey(funnel.funnelKey, arrow.fromStep, arrow.toStep);
-        const list = values.get(key) ?? [];
-        list.push(arrow.ratePct);
-        values.set(key, list);
-      }
+  for (const legs of perBrand) {
+    const seen = new Set<string>();
+    for (const leg of legs) {
+      if (!leg.stated || leg.ratePct === null) continue;
+      const key = legPairKey(leg.fromStep, leg.toStep);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const list = values.get(key) ?? [];
+      list.push(leg.ratePct);
+      values.set(key, list);
     }
   }
   const out: FleetArrowMedians = new Map();
@@ -313,10 +326,12 @@ async function computeFleetArrowMedians(): Promise<FleetArrowMedians> {
 
   // One brand's unreadable statements cost the median ONE data point, loudly — never the whole fleet.
   const perBrand = await mapWithConcurrency([...orgByBrand.entries()], FLEET_BRAND_CONCURRENCY, ([brandId, orgId]) =>
-    fetchBrandFunnelRates(brandId, orgId).catch((err) => {
-      console.warn(`[features-service] fleet conversion-rate median: brand ${brandId} (org ${orgId}) statements unreadable, contributes no data point: ${(err as Error).message}`);
-      return [] as BrandFunnelRates[];
-    }),
+    fetchBrandLegEconomics(brandId, orgId)
+      .then((e) => e.legRates)
+      .catch((err) => {
+        console.warn(`[features-service] fleet conversion-rate median: brand ${brandId} (org ${orgId}) leg rates unreadable, contributes no data point: ${(err as Error).message}`);
+        return [] as BrandLegRate[];
+      }),
   );
   return buildFleetArrowMedians(perBrand);
 }
@@ -383,55 +398,68 @@ export function resolveArrow(
   };
 }
 
-/** PURE: every arrow of every funnel, from the three inputs. */
+/**
+ * PURE: every LEG of the catalogue resolved once — keyed by `legPairKey` — and every funnel of
+ * `funnelKeys` read as the legs it is made of. A leg shared by several funnels carries ONE effective
+ * rate in all of them (owner model, 2026-09-25: one rate per (brand, leg)).
+ */
 export function buildBrandEffectiveRates(input: {
   brandId: string;
   funnelKeys: readonly SalesFunnelKey[];
   measurement: BrandStepMeasurement | BrandStepCounts;
-  manual: readonly BrandFunnelRates[];
+  manual: readonly BrandLegRate[];
   medians: FleetArrowMedians;
 }): BrandEffectiveRates {
   const measurement = summariseMeasurement(input.measurement);
-  const manualByArrow = new Map<string, number>();
-  // brand-service's OWN wording for each arrow (it owns the step vocabulary — its form rung reads
-  // "Form filled" where ours reads "Form submitted"), so a consumer joins a served arrow to the
-  // brand-service write without translating. Ours stands in only where brand-service names none.
+  const manualByLeg = new Map<string, number>();
+  // brand-service's OWN wording for each leg (it owns the step vocabulary — its form rung reads "Form
+  // filled" where ours reads "Form submitted"), so a consumer joins a served arrow to the brand-service
+  // write without translating. Ours stands in only where brand-service names none.
   const producerLabels = new Map<string, { fromStep: string; toStep: string }>();
-  for (const funnel of input.manual) {
-    for (const arrow of funnel.arrows) {
-      const key = arrowKey(funnel.funnelKey, arrow.fromStep, arrow.toStep);
-      producerLabels.set(key, { fromStep: arrow.fromStep, toStep: arrow.toStep });
-      if (arrow.stated && arrow.ratePct !== null) manualByArrow.set(key, arrow.ratePct);
-    }
+  for (const leg of input.manual) {
+    const key = legPairKey(leg.fromStep, leg.toStep);
+    if (!producerLabels.has(key)) producerLabels.set(key, { fromStep: leg.fromStep, toStep: leg.toStep });
+    if (leg.stated && leg.ratePct !== null && !manualByLeg.has(key)) manualByLeg.set(key, leg.ratePct);
   }
+  const legs = new Map<string, EffectiveArrowRate>();
+  const resolveLeg = (fromStep: string, toStep: string): EffectiveArrowRate => {
+    const key = legPairKey(fromStep, toStep);
+    const cached = legs.get(key);
+    if (cached) return cached;
+    const label = producerLabels.get(key) ?? { fromStep, toStep };
+    const resolved = resolveArrow(
+      label.fromStep,
+      label.toStep,
+      measuredArrowRate(measurement, leadFieldOfStep(fromStep), leadFieldOfStep(toStep)),
+      manualByLeg.get(key) ?? null,
+      input.medians.get(key) ?? { ratePct: null, brandCount: 0 },
+    );
+    legs.set(key, resolved);
+    return resolved;
+  };
+  // Every leg of the whole catalogue is resolved, so a pricing read can walk any path from any step.
+  for (const funnelKey of SALES_FUNNEL_KEYS) for (const a of funnelArrows(funnelKey)) resolveLeg(a.fromStep, a.toStep);
   const funnels = [...input.funnelKeys]
     .sort((a, b) => salesFunnelIndex(a) - salesFunnelIndex(b))
     .map((funnelKey): EffectiveFunnelRates => ({
       funnelKey,
       name: SALES_FUNNELS[funnelKey].name,
       steps: SALES_FUNNELS[funnelKey].steps,
-      arrows: funnelArrows(funnelKey).map(({ fromStep, toStep, fromIndex }) => {
-        const key = arrowKey(funnelKey, fromStep, toStep);
-        const label = producerLabels.get(key) ?? { fromStep, toStep };
-        return resolveArrow(
-          label.fromStep,
-          label.toStep,
-          measuredArrowRate(
-            measurement,
-            leadFieldOfStep(funnelKey, fromStep, fromIndex),
-            leadFieldOfStep(funnelKey, toStep, fromIndex + 1),
-          ),
-          manualByArrow.get(key) ?? null,
-          input.medians.get(key) ?? { ratePct: null, brandCount: 0 },
-        );
-      }),
+      arrows: funnelArrows(funnelKey).map(({ fromStep, toStep }) => resolveLeg(fromStep, toStep)),
     }));
   return {
     brandId: input.brandId,
     minMeasuredFromReached: MIN_MEASURED_FROM_REACHED,
     contactedRecipients: measurement.contactedRecipients,
     funnels,
+    legs: [...legs.values()],
   };
+}
+
+/** PURE: the effective rate of the leg between two steps, or null when nothing prices it. */
+export function effectiveLegRatePct(rates: BrandEffectiveRates, fromStep: string, toStep: string): number | null {
+  const key = legPairKey(fromStep, toStep);
+  return rates.legs.find((l) => legPairKey(l.fromStep, l.toStep) === key)?.effectiveRatePct ?? null;
 }
 
 /**
@@ -450,69 +478,19 @@ export function getBrandStepCounts(brandId: string, orgId: string): Promise<Bran
 }
 
 /**
- * The brand's effective rates: the cached measurement, the fleet medians, and the brand's OWN
+ * The brand's effective rates: the cached measurement, the fleet medians, and the brand's OWN leg
  * statements read LIVE on every call. The statements are what a person just edited, so they must never
- * come off a snapshot — caching the whole body served the pre-write value right after a save (a rate
- * saved at 14% read back as the 50% it replaced), and every surface pricing on it lagged the same way.
- * The live read is one indexed brand-service query; the lead walk stays cached.
+ * come off a snapshot. `legEconomics` lets a caller that already read the statements pass them in.
  */
-export async function getBrandEffectiveRates(brandId: string, orgId: string): Promise<BrandEffectiveRates> {
-  const [measurement, manual, medians] = await Promise.all([
-    getBrandStepCounts(brandId, orgId),
-    fetchBrandFunnelRates(brandId, orgId),
-    getFleetArrowMedians(),
-  ]);
-  return buildBrandEffectiveRates({ brandId, funnelKeys: SALES_FUNNEL_KEYS, measurement, manual, medians });
-}
-
-// ── Pricing: the declared funnels, carried on the effective rates ─────────────────────────────
-
-/**
- * PURE: the brand's declared funnels with every arrow replaced by its EFFECTIVE rate — the one input
- * every pricing surface reads (`declaredEconomics` → `statedLegRates`). An arrow with an effective
- * rate is marked `stated_<source>`, so it wins over the funnel's named rate exactly as a stated arrow
- * does. The named per-offer rates are DROPPED: they are the declared values this replaces, and an
- * arrow with no effective rate must read as "we have no rate" rather than resurrect one of them.
- * Lifetime revenue stays the offer's own, untouched.
- */
-export function applyEffectiveRates(
-  funnels: readonly DeclaredSalesFunnel[],
-  rates: BrandEffectiveRates,
-): DeclaredSalesFunnel[] {
-  const byKey = new Map(rates.funnels.map((f) => [f.funnelKey, f]));
-  return funnels.map((funnel) => {
-    const effective = byKey.get(funnel.funnelKey);
-    if (!effective) return funnel;
-    const arrows: DeclaredFunnelLeg[] = effective.arrows.map((a) => ({
-      fromStep: a.fromStep,
-      toStep: a.toStep,
-      ratePct: a.effectiveRatePct,
-      provenance: a.source ? `stated_${a.source}` : "unstated",
-      rateKey: null,
-    }));
-    return { ...funnel, rates: {}, arrows };
-  });
-}
-
-/**
- * The brand's declared funnels as every PRICING surface must read them: the offer's lifetime revenue,
- * on the brand's EFFECTIVE rates. Throws exactly as the declared read does (an unreadable or several-
- * offer declaration is the caller's to handle, unchanged). If the effective rates themselves cannot be
- * resolved, the declared funnels are returned as they were — the pre-effective answer, a real one — and
- * the failure is logged loud rather than 502-ing a page whose every other figure is right.
- */
-export async function fetchDeclaredFunnelsOnEffectiveRates(
+export async function getBrandEffectiveRates(
   brandId: string,
   orgId: string,
-  offerId?: string | null,
-): Promise<DeclaredSalesFunnel[]> {
-  const declared = await fetchDeclaredSalesFunnels(brandId, orgId, offerId);
-  try {
-    return applyEffectiveRates(declared, await getBrandEffectiveRates(brandId, orgId));
-  } catch (error) {
-    console.error(
-      `[features-service] effective conversion rates unavailable for brand ${brandId} (org ${orgId}); pricing on the declared rates: ${(error as Error).message}`,
-    );
-    return declared;
-  }
+  legEconomics?: BrandLegEconomics,
+): Promise<BrandEffectiveRates> {
+  const [measurement, statements, medians] = await Promise.all([
+    getBrandStepCounts(brandId, orgId),
+    legEconomics ? Promise.resolve(legEconomics) : fetchBrandLegEconomics(brandId, orgId),
+    getFleetArrowMedians(),
+  ]);
+  return buildBrandEffectiveRates({ brandId, funnelKeys: SALES_FUNNEL_KEYS, measurement, manual: statements.legRates, medians });
 }

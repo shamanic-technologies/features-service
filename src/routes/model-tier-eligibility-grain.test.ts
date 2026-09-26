@@ -20,6 +20,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
+import { offerEconomicsFromDeclared } from "../lib/leg-economics-fixture.js";
 
 vi.mock("../db/index.js", () => ({
   db: { query: { features: { findFirst: vi.fn(), findMany: vi.fn() } } },
@@ -207,6 +208,7 @@ function mockFetch(options: Options = {}): void {
     if (url.includes("/public/stats")) {
       return json({ groups: DYNASTIES.map((d) => email(`wf-${d}-v1`, 9000, 100, 900)) });
     }
+    if (url.includes("/offer-economics")) return json(offerEconomicsFromDeclared([CONVERSATION_FUNNEL, WEBSITE_FUNNEL]));
     if (url.includes("/sales-funnels")) return json({ funnels: [CONVERSATION_FUNNEL, WEBSITE_FUNNEL] });
     if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
     if (url.includes("/orgs/audiences")) {

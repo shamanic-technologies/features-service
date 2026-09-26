@@ -29,6 +29,7 @@ process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
+const { offerEconomicsFromDeclared, legCampaignRows } = await import("../lib/leg-economics-fixture.js");
 
 const AUTH = {
   "x-api-key": "test-key",
@@ -131,7 +132,7 @@ const declaredFunnel = (over: Record<string, unknown> = {}): Record<string, unkn
 function mockFetch(opts: Opts = {}): void {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
-    if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
+    if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: opts.salesFunnels ? legCampaignRows(opts.salesFunnels as any[]) : [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // wave C1: the entry legs of the funnels sold; none maturing (lib/roi-maturity.ts)
     const json = (body: unknown, status = 200) =>
       new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
@@ -174,6 +175,10 @@ function mockFetch(opts: Opts = {}): void {
           },
         ],
       });
+    }
+    if (url.includes("/offer-economics")) {
+      if (!opts.salesFunnels) return new Response("no statements", { status: 404 });
+      return json(offerEconomicsFromDeclared(opts.salesFunnels as any[]));
     }
     if (url.includes("/sales-funnels")) {
       if (!opts.salesFunnels) return new Response("no declaration", { status: 404 });

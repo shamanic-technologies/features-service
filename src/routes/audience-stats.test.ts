@@ -346,6 +346,14 @@ describe("GET /features/:featureSlug/audience-stats", () => {
       const inner = mockFetch().getMockImplementation()!;
       return vi.spyOn(globalThis, "fetch").mockImplementation(async (input: any, init?: any) => {
         const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.includes("/offer-economics")) {
+          // Wave C1: no leg of its own stated → the funnel prices on the brand's effective economics,
+          // exactly as the goal it echoes did.
+          return new Response(
+            JSON.stringify({ legRates: [], offers: [{ offerId: "offer-1", name: "Offer", lifetimeRevenueUsd: null, lifetimeRevenueStatedAt: null }] }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
         if (url.includes("/sales-funnels")) {
           // Declared, with NO per-funnel terms of its own → it prices on the brand's effective economics,
           // exactly as the goal it echoes did.

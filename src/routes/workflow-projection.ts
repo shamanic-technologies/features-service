@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { fetchDeclaredFunnelsOnEffectiveRates } from "../lib/effective-conversion-rates.js";
+import { fetchPricingFunnels } from "../lib/reading-funnels.js";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
@@ -14,7 +14,6 @@ import { matchSingleStepGoal, matchFormSubmissionGoal, matchWhatsappGoal, matchC
 import { SALES_FUNNELS, matchSalesFunnelKey, salesFunnelIndex, type PricingChannel, type SalesFunnelKey } from "../lib/sales-funnels.js";
 import {
   describeSeveralOffers,
-  fetchDeclaredSalesFunnels,
   SalesFunnelsUnavailableError,
   SeveralOffersDeclaredError,
   type DeclaredFunnelsUnresolved,
@@ -1198,12 +1197,19 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     // single-offer brand is byte-unchanged.
     const scopeOfferId = campaignIdentity?.offerId ?? null;
 
-    let declaredFunnels: Awaited<ReturnType<typeof fetchDeclaredSalesFunnels>> | null = null;
+    let declaredFunnels: Awaited<ReturnType<typeof fetchPricingFunnels>> | null = null;
     // Set ONLY on the several-offers refusal — see the field's doc on WorkflowProjectionResponse.
     let declaredFunnelsUnresolved: DeclaredFunnelsUnresolved | undefined;
     if (funnelKey || legKey) {
       try {
-        declaredFunnels = await fetchDeclaredFunnelsOnEffectiveRates(brandId, orgId, scopeOfferId);
+        // Wave C1: no declared set is read. A named FUNNEL is priced on its own legs; a named LEG is
+        // read through the funnels the brand's leads walk from the step it lands on (reading-funnels.ts).
+        declaredFunnels = await fetchPricingFunnels(
+          brandId,
+          orgId,
+          scopeOfferId,
+          funnelKey ? { legKeys: [], include: [funnelKey] } : { legKeys: [legKey!] },
+        );
       } catch (error) {
         // SEVERAL OFFERS, none named. Not an outage and not a producer gap — a question with several
         // answers. Degrade rather than 502: the funnel path prices on the brand-wide economics (the
@@ -1222,14 +1228,6 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       }
     }
     if (funnelKey && declaredFunnels) {
-      const declared = declaredFunnels.map((f) => f.funnelKey);
-      if (!declared.includes(funnelKey)) {
-        return res.status(404).json({
-          error: `this brand has not declared the ${funnelKey} funnel, so there is no cost to estimate for it`,
-          reason: "funnel_not_declared",
-          declaredFunnelKeys: declared,
-        });
-      }
       // Price on the funnel's OWN declared terms — the SAME merge the ranking does. Without this the
       // two surfaces print different numbers for one brand + one funnel: prod `b97440f6…` declares
       // `replyToMeetingPct: 100` on its conversation funnel, so the ranking read $73.74 per meeting

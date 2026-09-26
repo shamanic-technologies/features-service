@@ -1,5 +1,6 @@
 import { Router } from "express";
-import { fetchDeclaredFunnelsOnEffectiveRates } from "../lib/effective-conversion-rates.js";
+import { fetchPricingFunnels } from "../lib/reading-funnels.js";
+import { funnelsContainingLeg } from "../lib/funnel-legs.js";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
@@ -56,7 +57,7 @@ import {
   type LeadOutcomeFlag,
 } from "../lib/lead-detail.js";
 import { parsePricing, type Pricing } from "../lib/pricing.js";
-import { fetchDeclaredSalesFunnels, SalesFunnelsUnavailableError, type DeclaredSalesFunnel } from "../lib/sales-funnels-client.js";
+import { SalesFunnelsUnavailableError, type DeclaredSalesFunnel } from "../lib/sales-funnels-client.js";
 import { declaredEconomicsForFunnel, mergeFunnelEconomics } from "../lib/declared-funnels.js";
 import { primaryDeclaredFunnel } from "../lib/brand-funnels.js";
 import { matchSalesFunnelKey, salesFunnelIndex, SALES_FUNNEL_KEYS, SALES_FUNNEL_GOAL_ECHO, type SalesFunnelKey } from "../lib/sales-funnels.js";
@@ -234,7 +235,7 @@ type SpendCostParents = BrandProjectedParentsUsd | null;
  */
 function fetchSpendCostParentsSoft(
   brandId: string,
-  /** The offer being priced, when the caller knows one. See `fetchDeclaredSalesFunnels`. */
+  /** The offer being priced, when the caller knows one. See `fetchPricingFunnels`. */
   offerId: string | undefined,
   // ONE channel, or the SET an offer is sold through. A benchmark belongs to one channel, so a
   // multi-channel scope resolves one PER CHANNEL and takes the best-returning channel's whole —
@@ -247,7 +248,7 @@ function fetchSpendCostParentsSoft(
 ): Promise<SpendCostParents> {
   // The caller's own org names whose configuration we want — a brand id alone is shared across every
   // org claiming the same domain, so what it sells through is the (org, brand) pair's data.
-  return fetchDeclaredFunnelsOnEffectiveRates(brandId, headers.orgId, offerId)
+  return fetchPricingFunnels(brandId, headers.orgId, offerId)
     .then(async (declared) => {
       const declaredKeys = declared.map((f) => f.funnelKey).sort((a, b) => salesFunnelIndex(a) - salesFunnelIndex(b));
       // An explicit `?funnel=` is honoured only when the brand actually declared it — pricing a brand on
@@ -336,7 +337,8 @@ export interface FunnelPricedEconomics {
 }
 
 /**
- * Read the brand's declaration for this org, SOFT: `[]` when there is none or it cannot be read.
+ * Read the funnels this scope is priced on (wave C1: its campaigns' legs, the brand's leg rates, the
+ * offer's lifetime revenue — `lib/reading-funnels.ts`), SOFT: `[]` when there is none or it cannot be read.
  *
  * An unreadable declaration degrades the pipeline to the brand-wide economics and to every conversion
  * leg — a real, if poorer, answer — rather than 502-ing the customer's Overview, the same
@@ -347,13 +349,15 @@ export interface FunnelPricedEconomics {
 export async function fetchDeclaredFunnelsSoft(
   brandId: string,
   orgId: string,
-  /** The offer being priced, when the read knows one. See `fetchDeclaredSalesFunnels`. */
+  /** The offer being priced, when the read knows one. See `fetchPricingFunnels`. */
   offerId?: string | null,
+  /** Funnels a route NAMES in its own path: always priced, whatever the campaigns' legs read. */
+  include?: readonly SalesFunnelKey[],
 ): Promise<DeclaredSalesFunnel[]> {
   try {
     // The caller's own org names whose configuration we want: a brand id alone is shared across every
     // org claiming the same domain, so what it sells through is the (org, brand) pair's data.
-    return await fetchDeclaredFunnelsOnEffectiveRates(brandId, orgId, offerId);
+    return await fetchPricingFunnels(brandId, orgId, offerId, include ? { include } : {});
   } catch (err) {
     const what =
       err instanceof SalesFunnelsUnavailableError
@@ -1840,16 +1844,19 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
     const decl = funnel ? declaredFunnels.map((f) => f.funnelKey).sort().join("+") || "none" : undefined;
 
     /**
-     * The pricing for one campaign identity. A campaign states the funnel it sells, so a campaign-scoped
-     * read is priced on THAT funnel — not on the brand's first declared one. An explicit `?funnel=`
-     * still wins (the caller asked for a specific funnel); a campaign that states none, or one the brand
-     * no longer declares, falls back to the brand-level pick. Pure — reuses the one declaration read.
+     * The pricing for one campaign identity. A campaign is offer × LEG × channel (wave C1: the funnel a
+     * campaign row states is no longer read to price it), so a campaign-scoped read is priced on the
+     * brand's reading funnels that contain the campaign's OWN legs — not on the brand's whole set. An
+     * explicit `?funnel=` still wins (the caller asked for a specific funnel); a campaign stating no leg,
+     * or one no reading funnel contains, falls back to the brand-level pick. Pure — reuses the one read.
      */
-    const pricingForIdentity = (identityFunnelKey: string | null | undefined): FunnelPricedEconomics | undefined => {
+    const pricingForIdentity = (identity: { legKeys: string[] } | null | undefined): FunnelPricedEconomics | undefined => {
       if (!brandEconomics || !brandPriced) return undefined;
       if (requestedFunnel) return brandPriced;
-      const stated = identityFunnelKey ? matchSalesFunnelKey(identityFunnelKey) : null;
-      return stated ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics, stated) : brandPriced;
+      const legs = identity?.legKeys ?? [];
+      const own = declaredFunnels.filter((f) => legs.some((leg) => funnelsContainingLeg(leg).includes(f.funnelKey)));
+      if (own.length === 0) return brandPriced;
+      return priceOnDeclaredFunnel(own, brandEconomics, own.length === 1 ? own[0].funnelKey : undefined);
     };
 
     // ── Grouped: one lean group per WORKFLOW the brand has run ──────────────────
@@ -1909,7 +1916,7 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
             // and so does an OFFER scope: an offer states no funnel to this service and its campaigns
             // may state several, so pricing on one member's funnel would answer for the offer with one
             // campaign's vocabulary — the byte-same reasoning `?groupBy=offerId` states one grain up.
-            priced: (campaignId ? pricingForIdentity(workflowIdentity?.funnelKey) : brandPriced) ?? null,
+            priced: (campaignId ? pricingForIdentity(workflowIdentity) : brandPriced) ?? null,
             causes,
             campaignScope: workflowCampaignScope,
           });
@@ -2016,7 +2023,7 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
                 // own still belongs to the campaign, and dropping it would drop its leads.
                 const identity = families.identityOf(idsWithRuns[0]);
                 const scope = identity?.campaignIds ?? idsWithRuns;
-                const body = await computeFeatureRevenue(featureSlug, brandId, scope, funnel, headers, undefined, pricingForIdentity(identity?.funnelKey), false, pricing, requestedFunnel, undefined, undefined, causes);
+                const body = await computeFeatureRevenue(featureSlug, brandId, scope, funnel, headers, undefined, pricingForIdentity(identity), false, pricing, requestedFunnel, undefined, undefined, causes);
                 return idsWithRuns.map((cid) => ({
                   campaignId: cid,
                   campaignIdentity: describeIdentity(identity, cid),
@@ -2100,7 +2107,7 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
         traceEvent(runId, { service: "features-service", event: "feature-revenue-start", detail: `featureSlug=${featureSlug}, brandId=${brandId}, campaignId=${campaignId ?? "none"}` }, req.headers).catch(() => {});
 
         // Overview (no lens) emits the canonical spend block; the lens path omits it (brand-total concept).
-        const body = await computeFeatureRevenue(featureSlug, brandId, campaignScope, funnel, headers, lens, pricingForIdentity(campaignId ? identity?.funnelKey : null), !lens, pricing, requestedFunnel, undefined, undefined, causes, workflowScope);
+        const body = await computeFeatureRevenue(featureSlug, brandId, campaignScope, funnel, headers, lens, pricingForIdentity(campaignId ? identity : null), !lens, pricing, requestedFunnel, undefined, undefined, causes, workflowScope);
 
         traceEvent(runId, { service: "features-service", event: "feature-revenue-done", detail: `featureSlug=${featureSlug}, orgs=${body.organizations.length}, pipelineUsd=${body.headline.totalPipelineUsd}` }, req.headers).catch(() => {});
 

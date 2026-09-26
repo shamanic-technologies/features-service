@@ -3,7 +3,6 @@ import { describe, it, expect, vi } from "vitest";
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
 import {
-  applyEffectiveRates,
   buildBrandEffectiveRates,
   buildFleetArrowMedians,
   measuredArrowRate,
@@ -13,7 +12,7 @@ import {
 } from "./effective-conversion-rates.js";
 import { ALL_STEP_EVIDENCE, type LeadStepField } from "./funnel-steps.js";
 import { declaredEconomicsForFunnel } from "./declared-funnels.js";
-import type { DeclaredSalesFunnel } from "./sales-funnels-client.js";
+import { buildPricingFunnels } from "./reading-funnels.js";
 
 const NONE: Record<LeadStepField, boolean> = {
   clicked: false,
@@ -107,38 +106,30 @@ describe("resolveArrow — measured, else manual, else median, else null", () =>
   });
 });
 
-describe("buildFleetArrowMedians — the median of what brands STATED", () => {
-  const stated = (ratePct: number | null) => [{
-    funnelKey: "sales_meetings_from_conversation" as const,
-    arrows: [{ fromStep: "Positive reply", toStep: "Meeting booked", ratePct, stated: ratePct !== null }],
-  }];
-  it("is the median, never the mean, over stated values only", () => {
+describe("buildFleetArrowMedians — the median of what brands STATED, per LEG", () => {
+  const stated = (ratePct: number | null) => [
+    { fromStep: "Positive reply", toStep: "Meeting booked", ratePct, stated: ratePct !== null },
+  ];
+  it("is the median, never the mean, over stated values only — keyed on the leg, no funnel in the key", () => {
     const medians = buildFleetArrowMedians([stated(10), stated(20), stated(90), stated(null)]);
-    expect(medians.get("sales_meetings_from_conversation|positive reply|meeting booked")).toEqual({ ratePct: 20, brandCount: 3 });
+    expect(medians.get("conversation>meeting_booked")).toEqual({ ratePct: 20, brandCount: 3 });
+  });
+  it("brand-service's 'Form filled' and our 'Form submitted' are ONE leg", () => {
+    const medians = buildFleetArrowMedians([
+      [{ fromStep: "Website visit", toStep: "Form filled", ratePct: 10, stated: true }],
+      [{ fromStep: "Website visit", toStep: "Form submitted", ratePct: 30, stated: true }],
+    ]);
+    expect(medians.get("website_visit>form_submitted")).toEqual({ ratePct: 20, brandCount: 2 });
   });
 });
 
 describe("pricing rests on the EFFECTIVE rate", () => {
-  const declared: DeclaredSalesFunnel = {
-    funnelKey: "sales_meetings_from_conversation",
-    name: "Sales Meeting from Positive Reply",
-    steps: ["Positive reply", "Meeting booked", "Meeting attended", "Paid client"],
-    // What the offer declared: 90% reply → meeting, a 50% close.
-    rates: { replyToMeetingPct: 90, meetingToClosePct: 50 },
-    lifetimeRevenueUsd: 5000,
-    destinationUrl: null,
-    bookingUrl: null,
-    updatedAt: "2026-09-25T00:00:00Z",
-  };
   const effective = buildBrandEffectiveRates({
     brandId: "b1",
     funnelKeys: ["sales_meetings_from_conversation"],
     measurement: MEASUREMENT,
-    manual: [{
-      funnelKey: "sales_meetings_from_conversation",
-      arrows: [{ fromStep: "Meeting attended", toStep: "Paid client", ratePct: 25, stated: true }],
-    }],
-    medians: new Map([["sales_meetings_from_conversation|meeting booked|meeting attended", { ratePct: 60, brandCount: 4 }]]),
+    manual: [{ fromStep: "Meeting attended", toStep: "Paid client", ratePct: 25, stated: true }],
+    medians: new Map([["meeting_booked>meeting_attended", { ratePct: 60, brandCount: 4 }]]),
   });
 
   it("each arrow resolves from its own best source", () => {
@@ -150,19 +141,33 @@ describe("pricing rests on the EFFECTIVE rate", () => {
     ]);
   });
 
-  it("the funnel is priced on the effective rates, not the offer's declared ones; its lifetime revenue stays the offer's", () => {
-    const [onEffective] = applyEffectiveRates([declared], effective);
+  it("a funnel is priced on the effective LEG rates, and carries the offer's lifetime revenue", () => {
+    const [onEffective] = buildPricingFunnels({
+      funnelKeys: ["sales_meetings_from_conversation"],
+      lifetimeRevenueUsd: 5000,
+      rateOf: (from, to) => {
+        const leg = effective.legs.find((l) => l.fromStep === from && l.toStep === to);
+        return { ratePct: leg?.effectiveRatePct ?? null, provenance: leg?.source ? `stated_${leg.source}` : "unstated" };
+      },
+    });
     const econ = declaredEconomicsForFunnel([onEffective], "sales_meetings_from_conversation")!;
-    expect(econ.replyToMeetingPct).toBeCloseTo(80, 9); // not the declared 90
+    expect(econ.replyToMeetingPct).toBeCloseTo(80, 9);
     expect(econ.meetingAttendedToPaidClientPct).toBeCloseTo(25, 9);
-    // booked → paid = show-up (measured 31.25%) × attended → paid (25%), not the declared 50%.
+    // booked → paid = show-up (measured 31.25%) × attended → paid (25%).
     expect(econ.meetingToClosePct).toBeCloseTo(31.25 * 0.25, 9);
     expect(econ.lifetimeRevenueUsd).toBe(5000);
   });
 
-  it("a funnel the effective set does not cover keeps its declaration", () => {
-    const other = { ...declared, funnelKey: "form_magnet" as const };
-    expect(applyEffectiveRates([other], effective)[0]).toBe(other);
+  it("a leg shared by several funnels carries ONE rate in all of them", () => {
+    const both = buildBrandEffectiveRates({
+      brandId: "b1",
+      funnelKeys: ["sales_meetings_from_conversation", "sales_meetings_from_website"],
+      measurement: MEASUREMENT,
+      manual: [{ fromStep: "Meeting attended", toStep: "Paid client", ratePct: 25, stated: true }],
+      medians: new Map(),
+    });
+    const close = both.funnels.map((f) => f.arrows.find((a) => a.toStep === "Paid client")!.effectiveRatePct);
+    expect(close).toEqual([25, 25]);
   });
 });
 
@@ -172,13 +177,10 @@ describe("each arrow is named in brand-service's own step wording", () => {
       brandId: "b1",
       funnelKeys: ["form_magnet"],
       measurement: MEASUREMENT,
-      manual: [{
-        funnelKey: "form_magnet",
-        arrows: [
-          { fromStep: "Website visit", toStep: "Form filled", ratePct: 16.5, stated: true },
-          { fromStep: "Form filled", toStep: "Paid client", ratePct: null, stated: false },
-        ],
-      }],
+      manual: [
+        { fromStep: "Website visit", toStep: "Form filled", ratePct: 16.5, stated: true },
+        { fromStep: "Form filled", toStep: "Paid client", ratePct: null, stated: false },
+      ],
       medians: new Map(),
     });
     expect(rates.funnels[0].arrows.map((a) => [a.fromStep, a.toStep, a.manualRatePct])).toEqual([
