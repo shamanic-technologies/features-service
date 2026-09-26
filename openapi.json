@@ -4476,6 +4476,11 @@
                   "type": "boolean",
                   "description": "TRUE ⟺ the row rests on real evidence (≥1 grain with spend) — every row an established channel serves. FALSE marks a row for a workflow this channel has measured NOTHING for: estimatesByGrain is empty and resolved carries the EXPLORE ALLOWANCE (a cost floor, no return), so a serving consumer that ranks on resolved.costPerOutcomeUsd can REACH an active workflow with no history — which is the only way it can earn a first run — while every display / benchmark surface filters on this flag instead of probing for nulls. Unmeasured rows appear beside measured ones in an established channel (the mixed case): an active dynasty with no grain anywhere is offered here, never recommended. When the channel has measured nothing whatsoever there is no allowance to state either and every resolved figure is null."
                 },
+                "availableToContactCount": {
+                  "type": "integer",
+                  "nullable": true,
+                  "description": "HOW MANY PEOPLE THIS ROW'S AUDIENCE CAN STILL BE SERVED — human-service's own `availableToContactCount` (pool members not suppressed inside the brand's 3-month re-contact window), read LIVE on every request, never from the cached evidence. Present on every audience row, absent on the brand / campaign column (audienceId null). `0` = the producer says the audience is served out, so a consumer picking an audience for a serve can skip it while another audience still has people (features-service#1035). `null` = we could not read it (human-service unreachable, or it stated no count) — treat as unknown, never as 0. Moves no figure and no order on this body."
+                },
                 "retired": {
                   "type": "boolean",
                   "enum": [
@@ -5673,6 +5678,11 @@
                 "measured": {
                   "type": "boolean",
                   "description": "TRUE ⟺ the row rests on real evidence (≥1 grain with spend) — every row an established channel serves. FALSE marks a row for a workflow this channel has measured NOTHING for: estimatesByGrain is empty and resolved carries the EXPLORE ALLOWANCE (a cost floor, no return), so a serving consumer that ranks on resolved.costPerOutcomeUsd can REACH an active workflow with no history — which is the only way it can earn a first run — while every display / benchmark surface filters on this flag instead of probing for nulls. Unmeasured rows appear beside measured ones in an established channel (the mixed case): an active dynasty with no grain anywhere is offered here, never recommended. When the channel has measured nothing whatsoever there is no allowance to state either and every resolved figure is null."
+                },
+                "availableToContactCount": {
+                  "type": "integer",
+                  "nullable": true,
+                  "description": "HOW MANY PEOPLE THIS ROW'S AUDIENCE CAN STILL BE SERVED — human-service's own `availableToContactCount` (pool members not suppressed inside the brand's 3-month re-contact window), read LIVE on every request, never from the cached evidence. Present on every audience row, absent on the brand / campaign column (audienceId null). `0` = the producer says the audience is served out, so a consumer picking an audience for a serve can skip it while another audience still has people (features-service#1035). `null` = we could not read it (human-service unreachable, or it stated no count) — treat as unknown, never as 0. Moves no figure and no order on this body."
                 },
                 "retired": {
                   "type": "boolean",
@@ -21844,6 +21854,11 @@
                             "type": "boolean",
                             "description": "TRUE ⟺ the row rests on real evidence (≥1 grain with spend) — every row an established channel serves. FALSE marks a row for a workflow this channel has measured NOTHING for: estimatesByGrain is empty and resolved carries the EXPLORE ALLOWANCE (a cost floor, no return), so a serving consumer that ranks on resolved.costPerOutcomeUsd can REACH an active workflow with no history — which is the only way it can earn a first run — while every display / benchmark surface filters on this flag instead of probing for nulls. Unmeasured rows appear beside measured ones in an established channel (the mixed case): an active dynasty with no grain anywhere is offered here, never recommended. When the channel has measured nothing whatsoever there is no allowance to state either and every resolved figure is null."
                           },
+                          "availableToContactCount": {
+                            "type": "integer",
+                            "nullable": true,
+                            "description": "HOW MANY PEOPLE THIS ROW'S AUDIENCE CAN STILL BE SERVED — human-service's own `availableToContactCount` (pool members not suppressed inside the brand's 3-month re-contact window), read LIVE on every request, never from the cached evidence. Present on every audience row, absent on the brand / campaign column (audienceId null). `0` = the producer says the audience is served out, so a consumer picking an audience for a serve can skip it while another audience still has people (features-service#1035). `null` = we could not read it (human-service unreachable, or it stated no count) — treat as unknown, never as 0. Moves no figure and no order on this body."
+                          },
                           "retired": {
                             "type": "boolean",
                             "enum": [
@@ -23228,6 +23243,11 @@
                           "measured": {
                             "type": "boolean",
                             "description": "TRUE ⟺ the row rests on real evidence (≥1 grain with spend) — every row an established channel serves. FALSE marks a row for a workflow this channel has measured NOTHING for: estimatesByGrain is empty and resolved carries the EXPLORE ALLOWANCE (a cost floor, no return), so a serving consumer that ranks on resolved.costPerOutcomeUsd can REACH an active workflow with no history — which is the only way it can earn a first run — while every display / benchmark surface filters on this flag instead of probing for nulls. Unmeasured rows appear beside measured ones in an established channel (the mixed case): an active dynasty with no grain anywhere is offered here, never recommended. When the channel has measured nothing whatsoever there is no allowance to state either and every resolved figure is null."
+                          },
+                          "availableToContactCount": {
+                            "type": "integer",
+                            "nullable": true,
+                            "description": "HOW MANY PEOPLE THIS ROW'S AUDIENCE CAN STILL BE SERVED — human-service's own `availableToContactCount` (pool members not suppressed inside the brand's 3-month re-contact window), read LIVE on every request, never from the cached evidence. Present on every audience row, absent on the brand / campaign column (audienceId null). `0` = the producer says the audience is served out, so a consumer picking an audience for a serve can skip it while another audience still has people (features-service#1035). `null` = we could not read it (human-service unreachable, or it stated no count) — treat as unknown, never as 0. Moves no figure and no order on this body."
                           },
                           "retired": {
                             "type": "boolean",

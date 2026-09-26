@@ -44,6 +44,13 @@ export interface Audience {
   name: string;
   status: AudienceStatus;
   filters: AudienceFilters | null;
+  /**
+   * How many of this audience's people are still contactable — pool members NOT suppressed inside the
+   * brand's 3-month re-contact window, as human-service counts them on its own list item. 0 on an
+   * audience that has been served out (features-service#1035). Absent from an older producer, so
+   * OPTIONAL: an absent count is "not stated", never 0.
+   */
+  availableToContactCount?: number;
 }
 
 interface AudienceFetchHeaders {
@@ -123,6 +130,38 @@ export async function fetchActiveAudiences(
   headers: AudienceFetchHeaders,
 ): Promise<Audience[]> {
   return fetchAudiencesByStatuses(brandId, ["active"], headers);
+}
+
+/**
+ * How many people each of a brand's ACTIVE audiences can still be served, keyed by audience id —
+ * human-service's own `availableToContactCount`, read off the same list the audience grain
+ * enumerates (shared 30s, so it usually costs no extra call).
+ *
+ * FAIL-SOFT, returning `null` ("we could not read this") with a loud log: the figure only lets a
+ * consumer skip an audience it would otherwise probe, so an outage must degrade to probing — never to
+ * a 502 on a page whose every other figure is right, and never to a 0 that would read as "exhausted".
+ * An audience whose count the producer does not state is ABSENT from the map for the same reason.
+ */
+export async function fetchActiveAudienceAvailabilitySoft(
+  brandId: string,
+  headers: AudienceFetchHeaders,
+): Promise<Map<string, number> | null> {
+  try {
+    const audiences = await fetchActiveAudiences(brandId, headers);
+    const byId = new Map<string, number>();
+    for (const a of audiences) {
+      if (typeof a.availableToContactCount === "number" && Number.isFinite(a.availableToContactCount)) {
+        byId.set(a.id, a.availableToContactCount);
+      }
+    }
+    return byId;
+  } catch (err) {
+    console.error(
+      `[features-service] audience availability read failed for brand=${brandId} — audience rows state availableToContactCount: null:`,
+      err,
+    );
+    return null;
+  }
 }
 
 /**

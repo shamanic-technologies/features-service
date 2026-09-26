@@ -45,6 +45,27 @@ Supersedes every "declared funnel" statement in the sections below; their pricin
 - Tests: `lib/reading-funnels.test.ts`; route suites mock `offer-economics` via `lib/leg-economics-fixture.ts`
   (a pre-C1 declared fixture → the leg statements + offer brand-service's carry-over produced).
 
+## AN AUDIENCE ROW SAYS HOW MANY PEOPLE IT CAN STILL BE SERVED — `availableToContactCount` on `workflow-projection`, read LIVE
+
+campaign-service picks the audience for each serve off `workflow-projection`'s audience rows, and those
+rows enumerated a served-out audience exactly like one with thousands left. Its only way to learn an
+audience was dry was to spend a serve on it (and forget after its 24h exhaustion TTL). Prod
+2026-09-20 → 09-24: human-service logged **15,413 `serve_next status=exhausted` vs 342 served**, 97.8% on
+three audiences human-service already reported at `availableToContactCount: 0` (features-service#1035).
+
+- **Every audience row carries `availableToContactCount`** — human-service's own count off its
+  `GET /orgs/audiences` list item (pool members not suppressed inside the brand's 3-month window).
+  Absent on the brand / campaign column. `0` = the producer says served out; **`null` = we could not
+  read it** (read failed, or the producer stated no count) and must never be read as 0.
+- **LIVE, never from the Gold evidence snapshot** — same reason as the economics: an audience served
+  out an hour ago must not be offered off a cell that predates it. One list read, shared 30s with the
+  evidence compute's own. FAIL-SOFT (`fetchActiveAudienceAvailabilitySoft`, loud log) → every audience
+  row reads null and the rest of the body is byte-identical.
+- **It moves no figure and no order here.** The decision is the picker's: campaign-service skips a
+  `0` audience while another eligible one has people, and when ALL are `0` it still probes, so its
+  existing exhausted → auto-stop / extend-audience path keeps firing.
+- Guard: `src/routes/workflow-projection-audience-availability.test.ts`. (Set 2026-09-26.)
+
 ## AN OFFER IS READ ONE ROW PER OUTCOME — `GET /offers/:offerId/outcomes`, distinct leads, the spend of the legs that land on each step
 
 The fleet is retiring the sales funnel as an identity (org > brand > offer > outcome > leg): a campaign is
