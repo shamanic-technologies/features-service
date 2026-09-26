@@ -1,5 +1,39 @@
 # Features Service — CLAUDE.md
 
+## A STALE CELL IS RECOMPUTED ONLY WHEN ITS BRAND'S FACTS MOVED, AND A SIBLING SCOPE IS PRECOMPUTED BEFORE ANYONE OPENS IT — `lib/view-facts.ts`, `lib/view-keeper.ts`
+
+Two gaps the refresher left (#1106): a stale cell recomputed the brand's whole population on a clock (3s for a
+campaign's views, 30s otherwise) whether or not anything happened, and a scope nobody had read yet (a new
+campaign, an offer opened for the first time) was a blocking cold compute on the customer's first read —
+7.6-9.0s measured 2026-09-26 on the two largest brands (warm reads: 67-189ms).
+
+- **The FACTS GATE runs inside the background revalidate, never on the read path.** It takes the brand's
+  fingerprint (runs `org-actual-total`, lead-service brand `bucket-counts` + `standing-counts`), and when it
+  equals the one stored on the cell (`facts_fingerprint`, taken BEFORE that cell's compute) and the cell is
+  younger than `VIEW_FACTS_GATE_MAX_MS` (5 min), the recompute is skipped. The fingerprint cannot see a hold
+  cancelled on its own, a deal value edited on a lead already won, an audience edit, or any CROSS-ORG input
+  (the fleet benchmark) — that is what the 5-min ceiling bounds. `null` fingerprint = gate nothing.
+  `VIEW_FACTS_GATE_ENABLED=false` is the kill switch. Do NOT add the org COMMITTED total
+  (`org-usage-total`): it is an 800ms aggregate scan on runs-service. The brand read models the counts come
+  from are pinned (lead-service refreshes the brand model of every brand that served in 30 days whether or
+  not anybody reads it), so reading them adds no rebuild load.
+- **Every CUSTOMER read records its request on the cell** (`replay_url`, `replay_headers` minus the api key,
+  `brand_id`, `last_read_at`; at most once a minute per cell). Retention prunes on
+  `coalesce(last_read_at, computed_at)`.
+- **The KEEPER (every 5 min, ≤12 computes a round, `VIEW_KEEPER_*`)** takes each campaign- or offer-scoped
+  request read in the last 3 days and asks the SAME request of the brand's other campaigns (one per identity,
+  the representative) and offers, through the refresher (`x-view-precompute: 1`). One id swapped, same
+  handler — no figure is derived a second way. A precompute is not a read: no `last_read_at`.
+- **The DRIFT CHECK** (`GET /internal/view-cache/drift?mode=moment|stored`) replays a cell against the
+  refresher in VERIFY mode (compute, never persist) and diffs it path by path against what is stored;
+  `moment` refreshes first then verifies (stored vs fresh at the same moment). Logs `VIEW DRIFT` loudly.
+- **NOT built (and why), so nobody reads this as done:** figures are not maintained per fact landing. Pipeline
+  is a sum over DISTINCT orgs of a max per-person EV, people dedupe across channels, ratios divide a mature
+  cohort whose cutoff moves daily, and every EV re-prices when a measured rate moves — a per-(campaign, day)
+  sum cannot reproduce them. That needs a change signal from every source (only lead-service has a feed;
+  runs-service has none) and a per-person store the engine re-runs over. A never-read scope of a brand
+  nobody has read in 3 days (or a brand-new org) is still a cold compute.
+
 ## NO VIEW IS COMPUTED ON THE SERVING EVENT LOOP — every Gold compute runs in a forked REFRESHER process
 
 A view compute (an engine pass over a brand's whole lead population) is CPU work, and it ran on the same

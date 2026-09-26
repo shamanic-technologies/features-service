@@ -28,6 +28,17 @@ import type { NextFunction, Request, Response } from "express";
  */
 
 export const REFRESH_HEADER = "x-view-refresh";
+/**
+ * Sent by the keeper (`lib/view-keeper.ts`) on a request it replays to PRECOMPUTE a cell nobody has read
+ * yet: the refresher answers it through the ordinary read path, and the cell it persists carries its
+ * replay but no `last_read_at` — a precompute is not a customer read.
+ */
+export const PRECOMPUTE_HEADER = "x-view-precompute";
+/**
+ * Sent with {@link REFRESH_HEADER} by the drift check: compute the target view and return its value
+ * WITHOUT persisting it, so the stored cell can be compared against a fresh computation.
+ */
+export const VERIFY_HEADER = "x-view-verify";
 
 export function viewCacheRole(): "server" | "refresher" {
   return process.env.VIEW_CACHE_ROLE === "refresher" ? "refresher" : "server";
@@ -47,6 +58,10 @@ interface RequestReplay {
   target?: RefreshTarget;
   /** Refresher role: sends the computed value to the server, once. */
   answer?: (value: unknown) => void;
+  /** Refresher role: the target is computed for comparison only — never persisted. */
+  verify?: boolean;
+  /** A keeper precompute, not a customer read. */
+  precompute?: boolean;
 }
 
 /**
@@ -86,8 +101,10 @@ function decodeTarget(raw: string): RefreshTarget | undefined {
 export function captureRequestReplay(req: Request, res: Response, next: NextFunction): void {
   const replay: RequestReplay = {};
   const rawTarget = req.headers[REFRESH_HEADER];
+  replay.precompute = req.headers[PRECOMPUTE_HEADER] === "1";
   if (viewCacheRole() === "refresher" && typeof rawTarget === "string") {
     replay.target = decodeTarget(rawTarget);
+    replay.verify = req.headers[VERIFY_HEADER] === "1";
     if (replay.target) {
       // The moment the target view has its value, the server gets it — the rest of the handler (other
       // views, the response shaping) runs on here but answers nobody: its status and body are dropped.
@@ -107,7 +124,9 @@ export function captureRequestReplay(req: Request, res: Response, next: NextFunc
   if (req.method === "GET") {
     const headers: Record<string, string> = {};
     for (const [name, value] of Object.entries(req.headers)) {
-      if (HOP_HEADERS.has(name) || name === REFRESH_HEADER || value === undefined) continue;
+      if (HOP_HEADERS.has(name) || name === REFRESH_HEADER || name === VERIFY_HEADER || name === PRECOMPUTE_HEADER || value === undefined) {
+        continue;
+      }
       headers[name] = Array.isArray(value) ? value.join(", ") : value;
     }
     replay.url = req.originalUrl;
@@ -136,12 +155,38 @@ export function refresherDelegation(view: string, familyKey: string): { url: str
  * (the call must then compute + persist, never serve a snapshot). Matched on the key FAMILY, so a
  * fingerprint that moved between the two processes still finds its call. First match only.
  */
-export function forcedRefresh(view: string, familyKey: string): ((value: unknown) => void) | null {
+export function forcedRefresh(
+  view: string,
+  familyKey: string,
+): ((value: unknown) => void) & { verifyOnly?: boolean } | null {
   const replay = replayStore.getStore();
   if (!replay?.target || !replay.answer || replay.target.view !== view || replay.target.familyKey !== familyKey) return null;
-  const answer = replay.answer;
+  const answer: ((value: unknown) => void) & { verifyOnly?: boolean } = replay.answer;
+  answer.verifyOnly = replay.verify === true;
   replay.target = undefined; // first match only
   return answer;
+}
+
+/**
+ * The request this async context is answering, as the keeper would replay it: its path + query and its
+ * headers minus the api key (never stored — the keeper injects this service's own). `null` outside a
+ * GET request. `precompute` is true when the keeper itself sent the request.
+ */
+export function currentRequestReplay(): { url: string; headers: Record<string, string>; precompute: boolean } | null {
+  const replay = replayStore.getStore();
+  if (!replay?.url || !replay.headers) return null;
+  const headers: Record<string, string> = {};
+  for (const [name, value] of Object.entries(replay.headers)) {
+    if (name === "x-api-key") continue;
+    headers[name] = value;
+  }
+  return { url: replay.url, headers, precompute: replay.precompute === true };
+}
+
+/** The refresher's base URL when it is up (server role), else null. */
+export function refresherBaseUrl(): string | null {
+  const port = process.env.VIEW_REFRESHER_PORT;
+  return viewCacheRole() === "server" && port ? `http://127.0.0.1:${port}` : null;
 }
 
 /**

@@ -3256,6 +3256,118 @@ registry.registerPath({
   },
 });
 
+// ── Gold serving layer: the view keeper (internal, service-key only) ──────
+
+const keeperRoundSchema = z
+  .object({
+    at: z.string(),
+    templates: z.number().describe("Customer requests read in the last 3 days, each a template"),
+    brands: z.number(),
+    candidates: z.number().describe("Sibling scopes (other campaigns / offers of the brand) those templates imply"),
+    asked: z.number(),
+    computed: z.number(),
+    refused: z.array(z.object({ url: z.string(), status: z.number() })),
+    skippedKnown: z.number(),
+    deferred: z.number(),
+    errors: z.array(z.string()),
+  })
+  .passthrough();
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/view-cache/keeper",
+  summary: "View keeper status: last precompute round + facts-gate counters (internal, service key)",
+  tags: ["Internal"],
+  responses: {
+    200: {
+      description: "Keeper status",
+      content: {
+        "application/json": {
+          schema: z
+            .object({
+              lastRound: keeperRoundSchema.nullable(),
+              running: z.boolean(),
+              factsGate: z.object({ skipped: z.number(), recomputed: z.number(), noFingerprint: z.number() }),
+            })
+            .passthrough(),
+        },
+      },
+    },
+    401: { description: "Invalid or missing API key", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/internal/view-cache/keeper/run",
+  summary: "Run one precompute round now (internal, service key)",
+  description:
+    "Asks the refresher to compute, for every campaign- or offer-scoped request a customer read in the last 3 days, the same request for " +
+    "the brand's OTHER campaigns and offers, so their first read is a stored cell. Same handler, one id swapped — no figure is derived twice.",
+  tags: ["Internal"],
+  responses: {
+    200: { description: "The round's report", content: { "application/json": { schema: keeperRoundSchema } } },
+    401: { description: "Invalid or missing API key", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "The round could not run", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/view-cache/drift",
+  summary: "Compare stored Gold cells with a fresh computation (internal, service key)",
+  description:
+    "mode=moment refreshes each cell then recomputes it at once without persisting and compares the two (stored vs fresh at the same moment); " +
+    "mode=stored compares what is served right now (measures how stale the facts gate lets a cell get). Every difference is logged loudly.",
+  tags: ["Internal"],
+  request: {
+    query: z.object({
+      mode: z.enum(["moment", "stored"]).optional(),
+      brandId: z.string().optional(),
+      view: z.string().optional(),
+      limit: z.string().optional().describe("1-2000, default 50"),
+      readWithinHours: z.string().optional().describe("Only cells a customer read within this many hours"),
+    }),
+  },
+  responses: {
+    200: {
+      description: "Per-cell comparison",
+      content: {
+        "application/json": {
+          schema: z
+            .object({
+              mode: z.enum(["moment", "stored"]),
+              cells: z.number(),
+              brands: z.number(),
+              equal: z.number(),
+              different: z.number(),
+              errors: z.number(),
+              results: z.array(
+                z
+                  .object({
+                    view: z.string(),
+                    scopeKey: z.string(),
+                    brandId: z.string().nullable(),
+                    equal: z.boolean(),
+                    differences: z.number(),
+                    paths: z.array(z.string()),
+                    storedAgeMs: z.number(),
+                    factsMoved: z.boolean().nullable(),
+                    error: z.string().optional(),
+                  })
+                  .passthrough(),
+              ),
+            })
+            .passthrough(),
+        },
+      },
+    },
+    400: { description: "Invalid query", content: { "application/json": { schema: errorResponse } } },
+    401: { description: "Invalid or missing API key", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "No refresher up", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 // ── Security scheme ──────────────────────────────────────────────────────
 
 registry.registerComponent("securitySchemes", "ApiKeyAuth", {
