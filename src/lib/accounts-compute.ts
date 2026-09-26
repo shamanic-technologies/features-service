@@ -13,7 +13,8 @@
  * customer's own settings screen must still be able to state what they set.
  *
  * STATUS rule (exact, precedence order):
- *   0. billing cannot charge the org (payment-outlook `charge_blocked`)                            → "payment_declined"
+ *   0a. billing cannot charge the org because it has NO chargeable card (`no_chargeable_card`)     → "no_payment_method"
+ *   0b. billing cannot charge the org for any other reason (payment-outlook `charge_blocked`)      → "payment_declined"
  *   1. runningDailyBudgetUsd > 0 && (autoTopupEnabled || actualBalanceUsd > runningDailyBudgetUsd) → "active"
  *   2. else configuredDailyBudgetUsd > 0                                                          → "paused"
  *   3. else                                                                                       → "inactive"
@@ -64,7 +65,16 @@ import {
 } from "./accounts-client.js";
 import { readStatedAmountsSoft } from "./stated-monthly-amounts-store.js";
 
-export type AccountStatus = "active" | "payment_declined" | "paused" | "inactive";
+/**
+ * `no_payment_method` is billing's `charge_blocked` with blockedReason `no_chargeable_card`: the card
+ * was removed, or never added, so nothing was ever declined. campaign-service stops such an org with
+ * its own stop reason (`no_payment_method`) and the customer dashboard says "no payment method"; the
+ * audit says the same thing rather than calling it a declined payment (owner rule 2026-09-27).
+ */
+export type AccountStatus = "active" | "payment_declined" | "no_payment_method" | "paused" | "inactive";
+
+/** billing's blockedReason for an org with no chargeable card. */
+export const NO_CHARGEABLE_CARD = "no_chargeable_card";
 
 /**
  * Which side of the revenue split an org is on. `agency` = the org holds at least one stated monthly
@@ -103,7 +113,7 @@ export interface AccountRow {
   status: AccountStatus;
   /**
    * billing's reason it cannot charge this org (`card_declined`, `card_country_unsupported`, …) when
-   * `status` is "payment_declined"; null otherwise (and null if billing blocked without naming one).
+   * `status` is "payment_declined" or "no_payment_method"; null otherwise (and null if billing blocked without naming one).
    */
   paymentDeclinedReason: string | null;
   /**
@@ -124,6 +134,8 @@ export interface AccountsStats {
   arrUsd: number;
   activeCount: number;
   paymentDeclinedCount: number;
+  /** Rows with no chargeable card (status no_payment_method); excluded from every money total. */
+  noPaymentMethodCount: number;
   pausedCount: number;
   inactiveCount: number;
   totalCount: number;
@@ -165,7 +177,7 @@ const REAL_DEPS: AccountsDeps = {
 
 /**
  * The exact status rule (single source, used by the accounts row builder, the send-forecast active
- * gate, and asserted directly in tests). Precedence: payment_declined > active > paused > inactive.
+ * gate, and asserted directly in tests). Precedence: payment_declined / no_payment_method > active > paused > inactive.
  *
  * PAYMENT_DECLINED first: when billing cannot charge the org, nothing it has configured or running is
  * money in play, so it can never read active (nor paused, which is the customer's own choice).
@@ -184,7 +196,7 @@ export function accountStatus(
   autoTopupEnabled: boolean,
   paymentHold: PaymentHold | null,
 ): AccountStatus {
-  if (paymentHold) return "payment_declined";
+  if (paymentHold) return paymentHold.blockedReason === NO_CHARGEABLE_CARD ? "no_payment_method" : "payment_declined";
   if (runningDailyBudgetUsd > 0 && (autoTopupEnabled || actualBalanceUsd > runningDailyBudgetUsd)) return "active";
   if (configuredDailyBudgetUsd > 0) return "paused";
   return "inactive";
@@ -271,9 +283,9 @@ export async function buildAccountsAudit(
       };
   });
 
-  // Deterministic order: active → payment_declined → paused → inactive, then running budget desc, tiebreak on the
+  // Deterministic order: active → payment_declined → no_payment_method → paused → inactive, then running budget desc, tiebreak on the
   // configured one (a paused row runs nothing, so its posted money is what ranks it), then brandId.
-  const statusRank: Record<AccountStatus, number> = { active: 0, payment_declined: 1, paused: 2, inactive: 3 };
+  const statusRank: Record<AccountStatus, number> = { active: 0, payment_declined: 1, no_payment_method: 2, paused: 3, inactive: 4 };
   rows.sort((a, b) => {
     if (a.status !== b.status) return statusRank[a.status] - statusRank[b.status];
     if (a.runningDailyBudgetUsd !== b.runningDailyBudgetUsd) {
@@ -294,6 +306,7 @@ export async function buildAccountsAudit(
   let activeCount = 0;
   let pausedCount = 0;
   let paymentDeclinedCount = 0;
+  let noPaymentMethodCount = 0;
   for (const row of rows) {
     if (row.status === "active") {
       totalRunningDailyBudgetUsd += row.runningDailyBudgetUsd;
@@ -303,9 +316,11 @@ export async function buildAccountsAudit(
       pausedCount += 1;
     } else if (row.status === "payment_declined") {
       paymentDeclinedCount += 1;
+    } else if (row.status === "no_payment_method") {
+      noPaymentMethodCount += 1;
     }
   }
-  const inactiveCount = rows.length - activeCount - pausedCount - paymentDeclinedCount;
+  const inactiveCount = rows.length - activeCount - pausedCount - paymentDeclinedCount - noPaymentMethodCount;
   // Round the fleet totals to cents defensively (per-row budgets are already dollars-and-cents).
   totalRunningDailyBudgetUsd = Math.round(totalRunningDailyBudgetUsd * 100) / 100;
   totalConfiguredDailyBudgetUsd = Math.round(totalConfiguredDailyBudgetUsd * 100) / 100;
@@ -319,6 +334,7 @@ export async function buildAccountsAudit(
       arrUsd: totalRunningDailyBudgetUsd * 365,
       activeCount,
       paymentDeclinedCount,
+      noPaymentMethodCount,
       pausedCount,
       inactiveCount,
       totalCount: rows.length,
