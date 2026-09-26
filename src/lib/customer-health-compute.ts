@@ -188,6 +188,8 @@ export interface CustomerHealthRow {
 
   // ── Current brand status (same composition as the accounts audit) ───────────
   status: AccountStatus;
+  /** billing's reason it cannot charge the org when `status` is "payment_declined" (e.g. `card_declined`); null otherwise. */
+  paymentDeclinedReason: string | null;
   /** Every ceiling this (org, brand) configured, in USD — what they set. */
   configuredDailyBudgetUsd: number;
   /** The part of it standing behind an ongoing campaign, in USD — what is actually in play. */
@@ -239,6 +241,7 @@ export interface CustomerHealthRow {
 export interface CustomerHealthStats {
   totalCustomers: number;
   activeCount: number;
+  paymentDeclinedCount: number;
   pausedCount: number;
   inactiveCount: number;
   greenCount: number;
@@ -467,7 +470,7 @@ function pickBestWorkflow(projection: WorkflowProjectionResponse): BestWorkflow 
 
 /**
  * Compose the health badge (owned thresholds):
- *   red    — not active (paused / inactive / no budget). Value can't be assessed while campaigns are held/stopped.
+ *   red    — not active (payment declined / paused / inactive / no budget). Value can't be assessed while campaigns are held/stopped.
  *   green  — active AND ROI ≥ 1 (CAC below breakeven, known) AND audience NOT near-exhausted.
  *   yellow — active but ROI < 1 (or unknown) OR the audience is near-exhausted.
  */
@@ -495,7 +498,7 @@ function composeHealth(
   };
 }
 
-const STATUS_RANK: Record<AccountStatus, number> = { active: 0, paused: 1, inactive: 2 };
+const STATUS_RANK: Record<AccountStatus, number> = { active: 0, payment_declined: 1, paused: 2, inactive: 3 };
 
 /**
  * Build the full customer-health board. Reuses the accounts audit (identity + status + budget + balance)
@@ -687,6 +690,7 @@ export async function buildCustomerHealthBoard(
       activeThisMonth: recency?.activeThisMonth ?? false,
       activeDays: recency?.activeDays ?? [],
       status: account.status,
+      paymentDeclinedReason: account.paymentDeclinedReason,
       configuredDailyBudgetUsd: account.configuredDailyBudgetUsd,
       runningDailyBudgetUsd: account.runningDailyBudgetUsd,
       orgBalanceUsd: account.orgBalanceUsd,
@@ -729,12 +733,14 @@ export async function buildCustomerHealthBoard(
   // 4. Fleet stats.
   let activeCount = 0;
   let pausedCount = 0;
+  let paymentDeclinedCount = 0;
   let greenCount = 0;
   let yellowCount = 0;
   let redCount = 0;
   for (const row of rows) {
     if (row.status === "active") activeCount += 1;
     else if (row.status === "paused") pausedCount += 1;
+    else if (row.status === "payment_declined") paymentDeclinedCount += 1;
     if (row.health.badge === "green") greenCount += 1;
     else if (row.health.badge === "yellow") yellowCount += 1;
     else redCount += 1;
@@ -745,8 +751,9 @@ export async function buildCustomerHealthBoard(
     stats: {
       totalCustomers: rows.length,
       activeCount,
+      paymentDeclinedCount,
       pausedCount,
-      inactiveCount: rows.length - activeCount - pausedCount,
+      inactiveCount: rows.length - activeCount - pausedCount - paymentDeclinedCount,
       greenCount,
       yellowCount,
       redCount,

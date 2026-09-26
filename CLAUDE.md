@@ -4944,11 +4944,23 @@ mrrUsd, arrUsd, activeCount, pausedCount, inactiveCount, totalCount }` + `asOf`.
 **AN ACCOUNT IS ACTIVE WHEN ITS MONEY IS RUNNING, NOT MERELY CONFIGURED — and the brand PAUSE FLAG is
 GONE from the rule, not kept as an override (supersedes the pause-first precedence of #427/#502).**
 Single source `accountStatus(configuredDailyBudgetUsd, runningDailyBudgetUsd, actualBalanceUsd,
-autoTopupEnabled)`, precedence **active > paused > inactive**: (1) `runningDailyBudgetUsd > 0 &&
+autoTopupEnabled, paymentHold)`, precedence **payment_declined > active > paused > inactive**: (0) billing
+cannot charge the org (`GET /internal/accounts/by-org/:orgId/payment-outlook` → `state: "charge_blocked"`,
+`fetchOrgPaymentHold`) → `"payment_declined"`, billing's `blockedReason` on `paymentDeclinedReason`; (1) `runningDailyBudgetUsd > 0 &&
 (autoTopupEnabled || orgActualBalanceUsd > runningDailyBudgetUsd)` → `"active"`; (2) else
 `configuredDailyBudgetUsd > 0` → `"paused"` (money POSTED with nothing running against it — the honest
 reading of a customer who set a ceiling and stopped, or never created, the campaign behind it); (3) else
 `"inactive"`.
+- **A DECLINED CARD IS ITS OWN STATE, NEVER ACTIVE AND NEVER PAUSED** (set 2026-09-26). campaign-service
+  stops a held org's campaigns (`stopReason: "payment_declined"`), but the RUNNING figure can lag the stop:
+  prod that day, PPE Pro Solutions read `running $49/day`, auto-topup on, card declined — so the old rule
+  said ACTIVE and the board (and the daily brief reading it) reported a customer we could not charge as
+  running. Billing owns the payment verdict, so the status reads billing, not the stop reason. It wins over
+  every budget, is excluded from every running/MRR/ARR total and from send-forecast série 3 (same as
+  paused/inactive), sorts right after active, badges red, and counts as `stats.paymentDeclinedCount`
+  (NOT folded into `inactiveCount`). PAUSED stays the customer's own choice. The outlook read is once per
+  org; 404 (no billing account) = no hold; any other failure fails loud — an unread verdict is not a clean
+  one. Guards: the payment cases in `accounts-compute.test.ts` + `send-forecast-aggregate.test.ts`.
 - **The pause flag LIED IN BOTH DIRECTIONS and is no longer written by any product surface.** That
   customer control was removed; the campaign-service brand-pause table holds 8 rows, none written since
   early August. Prod 2026-08-27: `a179bbd9` was flagged paused since 21 July while spending **$55.69 in

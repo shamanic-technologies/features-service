@@ -7,7 +7,7 @@ import { vi } from "vitest";
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
 import { buildAccountsAudit, accountStatus, type AccountsDeps } from "./accounts-compute.js";
-import { spendableKey, type OrgIdentity, type BrandBasic, type BrandSpendableBudget } from "./accounts-client.js";
+import { spendableKey, type PaymentHold, type OrgIdentity, type BrandBasic, type BrandSpendableBudget } from "./accounts-client.js";
 
 const NOW = new Date("2026-07-01T12:00:00Z");
 const COLD = "sales-cold-email-outreach,pr-cold-email-outreach";
@@ -30,6 +30,8 @@ function deps(fixture: {
   // i.e. "everything this brand funded is actually running".
   runningUsd?: Record<string, number>;
   brands?: Record<string, BrandBasic>;
+  // billing's payment hold per org (charge_blocked → its reason); absent = billing can charge it.
+  paymentHold?: Record<string, PaymentHold>;
 }): AccountsDeps {
   return {
     featureMemberships: async () => fixture.memberships,
@@ -39,6 +41,7 @@ function deps(fixture: {
       autoTopupEnabled: fixture.autoTopup?.[orgId] ?? false,
     }),
     orgIdentity: async (orgId) => fixture.identity?.[orgId] ?? { orgExternalId: null, ownerEmail: null },
+    paymentHold: async (orgId) => fixture.paymentHold?.[orgId] ?? null,
     spendableBudgets: async (pairs) => {
       const out = new Map<string, BrandSpendableBudget>();
       for (const p of pairs) {
@@ -59,41 +62,57 @@ describe("accountStatus — the exact status rule (active > paused > inactive)",
   it("money posted with NOTHING running is paused, however well funded the org is", () => {
     // The production shape this rule exists for: a brand funds a funnel whose campaign is stopped, or
     // was never created at all. It cannot spend a cent, so it is not an active customer.
-    expect(accountStatus(10, 0, 1000, false)).toBe("paused");
-    expect(accountStatus(10, 0, 1000, true)).toBe("paused"); // auto-topup does not rescue it
-    expect(accountStatus(15, 0, 100, false)).toBe("paused");
+    expect(accountStatus(10, 0, 1000, false, null)).toBe("paused");
+    expect(accountStatus(10, 0, 1000, true, null)).toBe("paused"); // auto-topup does not rescue it
+    expect(accountStatus(15, 0, 100, false, null)).toBe("paused");
   });
 
   it("running money decides active, not the configured ceiling above it", () => {
     // A brand configured at 60 with only 50 of it running is active on the 50 — and a balance that
     // covers the running figure but not the configured one is enough.
-    expect(accountStatus(60, 50, 55, false)).toBe("active");
+    expect(accountStatus(60, 50, 55, false, null)).toBe("active");
     // The same brand read on its configured ceiling loses its active status: 55 no longer covers a
     // day, so it falls to paused — money posted that the org cannot fund.
-    expect(accountStatus(60, 60, 55, false)).toBe("paused");
+    expect(accountStatus(60, 60, 55, false, null)).toBe("paused");
   });
 
   it("auto-topup enabled + running>0 → active even when the actual balance is below one day's budget", () => {
     // The concrete case: distribute.you — running 20, actual 53.17, auto-topup ON.
-    expect(accountStatus(20, 20, 53.17, true)).toBe("active");
+    expect(accountStatus(20, 20, 53.17, true, null)).toBe("active");
     // Auto-topup covers even a near-empty balance (never runs dry).
-    expect(accountStatus(20, 20, 1, true)).toBe("active");
-    expect(accountStatus(20, 20, 0, true)).toBe("active");
+    expect(accountStatus(20, 20, 1, true, null)).toBe("active");
+    expect(accountStatus(20, 20, 0, true, null)).toBe("active");
   });
 
   it("actual balance > running budget + auto-topup OFF → active", () => {
-    expect(accountStatus(10, 10, 100, false)).toBe("active");
-    expect(accountStatus(20, 20, 53.17, false)).toBe("active");
+    expect(accountStatus(10, 10, 100, false, null)).toBe("active");
+    expect(accountStatus(20, 20, 53.17, false, null)).toBe("active");
   });
 
   it("nothing configured and nothing running → inactive, whatever the balance", () => {
-    expect(accountStatus(0, 0, 100, false)).toBe("inactive");
-    expect(accountStatus(0, 0, 100, true)).toBe("inactive"); // auto-topup does not rescue a 0 budget
+    expect(accountStatus(0, 0, 100, false, null)).toBe("inactive");
+    expect(accountStatus(0, 0, 100, true, null)).toBe("inactive"); // auto-topup does not rescue a 0 budget
   });
 
   it("actual balance <= running budget AND auto-topup OFF → paused, not inactive: the money is posted", () => {
-    expect(accountStatus(10, 10, 10, false)).toBe("paused"); // actual == budget → cannot cover next day
-    expect(accountStatus(10, 10, 9, false)).toBe("paused");
+    expect(accountStatus(10, 10, 10, false, null)).toBe("paused"); // actual == budget → cannot cover next day
+    expect(accountStatus(10, 10, 9, false, null)).toBe("paused");
+  });
+});
+
+describe("accountStatus — a payment billing cannot collect beats every budget", () => {
+  const declined: PaymentHold = { blockedReason: "card_declined" };
+  it("a charge_blocked org is payment_declined even while its budget still reads running and funded", () => {
+    // PPE Pro Solutions, prod 2026-09-26: $49/day running, auto-topup on, card declined.
+    expect(accountStatus(49, 49, 1000, true, declined)).toBe("payment_declined");
+    expect(accountStatus(49, 49, -50, false, declined)).toBe("payment_declined");
+    // The same account with a card billing CAN charge reads active — the hold is the only difference.
+    expect(accountStatus(49, 49, 1000, true, null)).toBe("active");
+  });
+  it("a held org whose campaigns are already stopped is payment_declined, not paused (paused is the customer's choice)", () => {
+    // The Federal Architect: configured $10, nothing running, card country unsupported.
+    expect(accountStatus(10, 0, 18, false, { blockedReason: "card_country_unsupported" })).toBe("payment_declined");
+    expect(accountStatus(10, 0, 18, false, null)).toBe("paused");
   });
 });
 
@@ -276,6 +295,7 @@ describe("buildAccountsAudit", () => {
       mrrUsd: 0,
       arrUsd: 0,
       activeCount: 0,
+      paymentDeclinedCount: 0,
       pausedCount: 0,
       inactiveCount: 0,
       totalCount: 0,
@@ -338,5 +358,34 @@ describe("buildAccountsAudit", () => {
     });
     const r = await buildAccountsAudit(COLD, NOW, d);
     expect(r.rows.map((row) => row.brandId)).toEqual(["b_big", "b_small", "b_paused", "b_off"]);
+  });
+
+  it("a payment-declined account is listed with billing's reason and counted in NO running/MRR total", async () => {
+    const audit = await buildAccountsAudit(
+      COLD,
+      NOW,
+      deps({
+        memberships: [
+          { orgId: "ppe", brandId: "b-ppe" },
+          { orgId: "doc", brandId: "b-doc" },
+        ],
+        balanceUsd: { ppe: -50, doc: 500 },
+        autoTopup: { ppe: true, doc: true },
+        configuredUsd: { "b-ppe": 49, "b-doc": 20 },
+        paymentHold: { ppe: { blockedReason: "card_declined" } },
+      }),
+    );
+    const ppe = audit.rows.find((r) => r.orgId === "ppe")!;
+    const doc = audit.rows.find((r) => r.orgId === "doc")!;
+    expect(ppe.status).toBe("payment_declined");
+    expect(ppe.paymentDeclinedReason).toBe("card_declined");
+    expect(ppe.runningDailyBudgetUsd).toBe(49); // stated, never counted
+    expect(doc.status).toBe("active");
+    expect(doc.paymentDeclinedReason).toBeNull();
+    // Only the healthy account is money in play: $20, not $69.
+    expect(audit.stats.totalRunningDailyBudgetUsd).toBe(20);
+    expect(audit.stats.mrrUsd).toBe(600);
+    expect(audit.stats).toMatchObject({ activeCount: 1, paymentDeclinedCount: 1, pausedCount: 0, inactiveCount: 0, totalCount: 2 });
+    expect(audit.rows.map((r) => r.status)).toEqual(["active", "payment_declined"]);
   });
 });
