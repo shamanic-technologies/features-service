@@ -16,6 +16,8 @@ import { fetchWithRetry } from "./fetch-retry.js";
 import { emailFingerprints, fingerprintScopeKey, liveLeadCopyRequested } from "./lead-copy.js";
 
 interface StatusScope {
+  /** MAX timestamp of the provider's per-step `email_sent` event in this scope (instantly-service). */
+  lastDeliveredAt?: string | null;
   firstContactedAt?: string | null;
   firstSentAt?: string | null;
   firstDeliveredAt?: string | null;
@@ -42,6 +44,13 @@ export interface SignalDates {
   open: string | null;
   clicked: string | null;
   positiveReply: string | null;
+  /**
+   * The LAST email actually SENT to this person — the provider's per-step `email_sent` event, MAX over
+   * every step (email-gateway's `lastDeliveredAt`, which instantly-service computes as
+   * `MAX(timestamp) FILTER (event_type = 'email_sent')`). Not the contacted date and not the first
+   * send: it is what a contacted lead's expiry is counted from (lib/revenue-engine.ts).
+   */
+  lastSent: string | null;
 }
 
 /** Boolean/classification fields on a StatusScope (distinct from the first*At timestamps). */
@@ -143,6 +152,12 @@ const minDate = (a: string | null, b: string | null): string | null => {
   if (!a) return b;
   if (!b) return a;
   return a <= b ? a : b;
+};
+
+const maxDate = (a: string | null, b: string | null): string | null => {
+  if (!a) return b;
+  if (!b) return a;
+  return a >= b ? a : b;
 };
 
 function scopeFor(provider: ProviderStatus | undefined, campaignScoped: boolean): StatusScope | null {
@@ -275,6 +290,7 @@ async function fetchEventTimestampsFor(
       open: minDate(broadcast?.firstOpenedAt ?? null, transactional?.firstOpenedAt ?? null),
       clicked: minDate(broadcast?.firstClickedAt ?? null, transactional?.firstClickedAt ?? null),
       positiveReply: minDate(broadcast?.firstRepliedAt ?? null, transactional?.firstRepliedAt ?? null),
+      lastSent: maxDate(broadcast?.lastDeliveredAt ?? null, transactional?.lastDeliveredAt ?? null),
     });
   }
 

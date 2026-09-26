@@ -1,12 +1,10 @@
 /**
- * WHAT A CONTACTED LEAD WHO HAS NOT CONVERTED YET IS ALREADY WORTH — in expectation, and SEPARATE from
- * the pipeline.
+ * WHAT A CONTACTED LEAD WHO HAS NOT CONVERTED YET IS ALREADY WORTH — in expectation.
  *
- * The pipeline prices a lead only once it reached a leg of a funnel (a website visit, a positive
- * reply…): a delivery is a step of no funnel, so an email that reached somebody who has not engaged is
- * worth $0 there, on purpose (#863). That stays true. This module answers a DIFFERENT question the brand
- * owner asks of the people sitting in the "Contacted" column: given the brand's own conversion ladder
- * and client value, what is somebody we emailed worth BEFORE they do anything?
+ * A delivery is a step of no funnel, so it prices nothing on its own (#863). But a contacted lead has a
+ * known chance of reaching a funnel's first step, and the brand owner asks of the people sitting in
+ * the "Contacted" column: given the brand's own conversion ladder and client value, what is somebody we
+ * emailed worth BEFORE they do anything? That value now COUNTS in the pipeline (see below).
  *
  *   value(contacted lead) = LTR × P(paid client | contacted)
  *   P(paid client | contacted) = orP over the ENTRY ROUTES r of  P(r | contacted) × P(paid client | r)
@@ -40,25 +38,29 @@
  * meeting, no signup, no form, no sale (`engaged`: its value, if any, is the pipeline's). An opener is
  * still contacted-only: an open is a delivery milestone, not a funnel leg.
  *
- * The TOTAL is company-level: people of one organisation are combined as independent shots at one
- * client (the same bound the engine applies per organisation), then summed over organisations.
+ * ── IT IS PIPELINE, AND IT EXPIRES ─────────────────────────────────────────────────────────────────
+ *
+ * The per-lead value is the engine's own `contactedLeadValue` — the byte-same function the pipeline
+ * prices a contacted-only lead with (`computeRevenue`'s `contacted` pricing), so this read states
+ * exactly what these leads add to the brand's pipeline and ROI. A lead with no email SENT in the last
+ * `CONTACTED_VALUE_EXPIRY_DAYS` (30) days — counted from the provider's per-step sent event, never the
+ * contacted or first-send date — is worth 0 (`expired`). The TOTAL is the pipeline's per-company rule:
+ * Σ over organisations of the most valuable member.
  */
-import { combineIndependent, type EnginePerson, type ResolvedPath } from "./revenue-engine.js";
+import {
+  combineIndependent,
+  contactedExpiryCutoffIso,
+  contactedLeadValue,
+  CONTACTED_VALUE_EXPIRY_DAYS,
+  ENGAGED_SIGNALS,
+  type ContactedPricing,
+  type EnginePerson,
+  type ResolvedPath,
+} from "./revenue-engine.js";
 import { LEARNING_OUTCOMES_REQUIRED, OUTCOME_LAG_DAYS } from "./learning-phase.js";
 import { maturityCutoffIso } from "./roi-maturity.js";
 
-/** Signals that mean the lead did something beyond receiving the email. */
-export const ENGAGED_SIGNALS = [
-  "clicked",
-  "positiveReply",
-  "negativeReply",
-  "neutralReply",
-  "meeting",
-  "meetingAttended",
-  "closeWin",
-  "signup",
-  "formSubmission",
-] as const;
+export { ENGAGED_SIGNALS };
 
 /** The funnel step each entry route lands on, in the catalogue's own wording. */
 const ROUTE_STEP: Record<string, string> = {
@@ -103,8 +105,13 @@ export interface ContactedEntryRoute {
 
 export interface ContactedLeadValue {
   leadId: string;
-  /** LTR × P(paid client | contacted). Null exactly when the response's `unmeasuredReason` is set. */
+  /**
+   * LTR × P(paid client | contacted) — the SAME value this lead carries in the pipeline. `0` once it has
+   * EXPIRED (`expired`). Null exactly when the response's `unmeasuredReason` is set.
+   */
   expectedValueUsd: number | null;
+  /** True when no email was sent in the last `expiryDays` days (or none was ever sent): worth nothing. */
+  expired: boolean;
 }
 
 export interface ContactedValueResult {
@@ -114,13 +121,20 @@ export interface ContactedValueResult {
   contactedToPaidClientPct: number | null;
   /** LTR × that probability — every contacted-only lead's value unless a human ruled out a route. */
   perLeadExpectedValueUsd: number | null;
-  /** Σ over organisations of the combined value of that organisation's contacted-only leads. */
+  /**
+   * Σ over organisations of the MOST valuable contacted-only member — the pipeline's own per-company
+   * rule (1 organisation = 1 client), so this is exactly what these leads add to the pipeline.
+   */
   totalExpectedValueUsd: number | null;
   unmeasuredReason: ContactedValueUnmeasuredReason | null;
   routes: ContactedEntryRoute[];
   /** The brand cohort's cutoff: leads first contacted before this instant count toward the brand rate. */
   matureBefore: string;
   maturityDays: number;
+  /** A contacted lead whose last send is older than this many days is worth nothing. */
+  expiryDays: number;
+  /** Leads whose last send is strictly before this instant have expired. */
+  lastSentOnOrAfter: string;
   minBrandOutcomes: number;
   population: {
     contactedOnly: number;
@@ -129,6 +143,8 @@ export interface ContactedValueResult {
     engaged: number;
     /** Contacted leads that bounced or unsubscribed. */
     cannotConvert: number;
+    /** Contacted-only leads with no email sent in the last `expiryDays` days — valued at 0. */
+    expired: number;
   };
   /** One row per contacted-only lead, ordered by lead id. */
   leads: ContactedLeadValue[];
@@ -216,30 +232,38 @@ export function priceContactedLeads(input: {
             ? "no_entry_rate"
             : null;
 
-  const valueOf = (person: EnginePerson): number | null => {
-    if (unmeasuredReason !== null) return null;
-    const dead = new Set(person.deadSignals ?? []);
-    const evs = routes.filter((r) => r._p !== null && !dead.has(r.signal)).map((r) => r._p! * r._pathValue);
-    return combineIndependent(evs, ltr!);
+  // ONE pricing, the engine's: the byte-same function the pipeline prices these leads with.
+  const now = input.now ?? new Date();
+  const pricing: ContactedPricing = {
+    entryRatePct: Object.fromEntries(routes.filter((r) => r._p !== null).map((r) => [r.signal, r._p! * 100])),
+    lastSentOnOrAfter: contactedExpiryCutoffIso(now),
   };
+  const isExpired = (p: EnginePerson): boolean => {
+    const at = p.signalDates?.lastSent ?? null;
+    return !at || at < pricing.lastSentOnOrAfter;
+  };
+  const valueOf = (person: EnginePerson): number | null =>
+    unmeasuredReason !== null ? null : contactedLeadValue(person, input.paths, ltr!, pricing);
 
   const leads: ContactedLeadValue[] = contactedOnly.map((p) => {
     const v = valueOf(p);
-    return { leadId: p.leadId, expectedValueUsd: v === null ? null : round(v) };
+    return {
+      leadId: p.leadId,
+      expectedValueUsd: v === null ? null : round(v),
+      expired: isExpired(p),
+    };
   });
 
-  // Company-level total: one organisation = one client at most.
-  const byOrg = new Map<string, number[]>();
-  contactedOnly.forEach((p, i) => {
-    const v = leads[i].expectedValueUsd;
+  // Company-level total, the pipeline's own rule: an organisation is worth its most valuable member.
+  const byOrg = new Map<string, number>();
+  contactedOnly.forEach((p) => {
+    const v = valueOf(p);
     if (v === null) return;
     const key = p.orgId ? `org:${p.orgId}` : `lead:${p.leadId}`;
-    const list = byOrg.get(key) ?? [];
-    list.push(valueOf(p)!);
-    byOrg.set(key, list);
+    byOrg.set(key, Math.max(byOrg.get(key) ?? 0, v));
   });
   const totalExpectedValueUsd =
-    unmeasuredReason !== null ? null : round([...byOrg.values()].reduce((sum, evs) => sum + combineIndependent(evs, ltr!), 0));
+    unmeasuredReason !== null ? null : round([...byOrg.values()].reduce((sum, v) => sum + v, 0));
 
   const perLead = unmeasuredReason !== null ? null : combineIndependent(
     routes.filter((r) => r._p !== null).map((r) => r._p! * r._pathValue),
@@ -255,12 +279,15 @@ export function priceContactedLeads(input: {
     routes: routes.map(({ _pathValue, _p, ...r }) => r),
     matureBefore,
     maturityDays: OUTCOME_LAG_DAYS,
+    expiryDays: CONTACTED_VALUE_EXPIRY_DAYS,
+    lastSentOnOrAfter: pricing.lastSentOnOrAfter,
     minBrandOutcomes: LEARNING_OUTCOMES_REQUIRED,
     population: {
       contactedOnly: contactedOnly.length,
       organizations: new Set(contactedOnly.map((p) => (p.orgId ? `org:${p.orgId}` : `lead:${p.leadId}`))).size,
       engaged,
       cannotConvert,
+      expired: contactedOnly.filter(isExpired).length,
     },
     leads,
   };

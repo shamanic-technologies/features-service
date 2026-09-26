@@ -70,6 +70,8 @@
  * never a floored estimate. Projection per workflow already has its own surface:
  * `/workflow-projection`.
  */
+import { contactedPricingSoft } from "../routes/contacted-value.js";
+import type { ContactedPricing } from "./revenue-engine.js";
 import { restrictPathsToDeclaredLegs, type EconomicsSource, type getFunnel } from "./funnel-registry.js";
 import type { EffectiveEconomics } from "./sales-economics-client.js";
 import type { SalesFunnelKey } from "./sales-funnels.js";
@@ -184,8 +186,11 @@ export function buildWorkflowRevenueGroups(input: {
    * rides the whole scope, exactly as before.
    */
   maturity?: { plan: MaturityPlan; matureCostBySlug: Map<string, RunsCostCents> } | "unknown";
+  /** How a contacted lead that has not engaged is priced — the brand read's own (`ContactedPricing`). */
+  contacted?: ContactedPricing | null;
 }): WorkflowRevenueGroup[] {
   const { persons, costCentsBySlug, workflows, funnel, priced, maturity } = input;
+  const contacted = input.contacted ?? null;
   const dynastyOf = dynastyOfSlug(workflows);
   const names = dynastyNames(workflows);
 
@@ -237,7 +242,7 @@ export function buildWorkflowRevenueGroups(input: {
       // "we could not price this", never "it returned nothing".
       const totalPipelineUsd =
         paths && economics && funnel
-          ? computeRevenue(paths, mine, economics.lifetimeRevenueUsd, funnel.milestones).headline.totalPipelineUsd
+          ? computeRevenue(paths, mine, economics.lifetimeRevenueUsd, funnel.milestones, contacted).headline.totalPipelineUsd
           : null;
       // The same dynasty's MATURE cohort: its versions' mature spend, and its leads first contacted
       // before the cutoff — the byte-same rule the brand read applies, so a single-workflow brand still
@@ -263,7 +268,7 @@ export function buildWorkflowRevenueGroups(input: {
             : WHOLE_BASIS;
       const maturePipelineUsd =
         known && paths && economics && funnel
-          ? computeRevenue(paths, matureCohortPersons(mine, known.plan), economics.lifetimeRevenueUsd, funnel.milestones)
+          ? computeRevenue(paths, matureCohortPersons(mine, known.plan), economics.lifetimeRevenueUsd, funnel.milestones, contacted)
               .headline.totalPipelineUsd
           : null;
       return {
@@ -352,13 +357,15 @@ export async function computeWorkflowRevenueGroups(input: {
       const mature = await fetchMatureSpendCents(brandId, campaignScope, featureSlug, headers, pricing, plan);
       return { plan, matureCostBySlug: mature.bySlug };
     });
-  const [costCentsBySlug, persons, workflows, maturity] = await Promise.all([
+  const [costCentsBySlug, persons, workflows, maturity, contacted] = await Promise.all([
     fetchRunsCostCentsByWorkflowSlug(brandId, featureSlug, headers, pricing, campaignScope),
     // The workflow grain PARTITIONS the leads of its scope: brand-wide by default, the campaign's own
     // rows when one is named. Never narrower than the scope, never wider.
     fetchLeadsForRevenue(brandId, campaignScope, headers),
     fetchWorkflowMetadataSoft(featureSlug),
     maturityPromise,
+    // The brand read's own contacted-lead pricing, so a workflow row prices a contacted lead the same.
+    contactedPricingSoft(brandId, headers),
   ]);
 
   // The overlays are brand-wide too (a lead's open date does not depend on which workflow reached
@@ -382,5 +389,5 @@ export async function computeWorkflowRevenueGroups(input: {
   ]);
   applySignalOverlays(persons, timestamps, observed?.byEmail ?? null, quals, priced?.pricedFunnelKeys ?? [], causes);
 
-  return buildWorkflowRevenueGroups({ persons, costCentsBySlug, workflows, funnel, priced, maturity });
+  return buildWorkflowRevenueGroups({ persons, costCentsBySlug, workflows, funnel, priced, maturity, contacted });
 }

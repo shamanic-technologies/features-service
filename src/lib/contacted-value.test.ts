@@ -1,6 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { priceContactedLeads, fleetEntryCountsOf } from "./contacted-value.js";
-import { computeRevenue, type EnginePerson, type ResolvedPath } from "./revenue-engine.js";
+import { computeRevenue, type ContactedPricing, type EnginePerson, type ResolvedPath } from "./revenue-engine.js";
+import type { ContactedValueResult } from "./contacted-value.js";
+
+/** The pricing a pipeline read takes off this result (what `contactedPricingSoft` hands the engine). */
+function contactedPricingOf(r: ContactedValueResult): ContactedPricing {
+  return {
+    entryRatePct: Object.fromEntries(r.routes.filter((x) => x.entryRatePct !== null).map((x) => [x.signal, x.entryRatePct!])),
+    lastSentOnOrAfter: r.lastSentOnOrAfter,
+  };
+}
 
 // LTR $1,000. A website visit is worth $100 (10% visit→paid), a positive reply $400 (40% reply→paid).
 const LTR = 1000;
@@ -15,7 +24,10 @@ const OLD = "2026-08-01T10:00:00Z"; // before the 14-day cutoff (2026-09-12)
 const YOUNG = "2026-09-24T10:00:00Z";
 
 let seq = 0;
-function person(opts: { signals?: Record<string, boolean>; contactedAt?: string | null; orgId?: string | null; dead?: string[] } = {}): EnginePerson {
+const RECENT_SEND = "2026-09-25T09:00:00Z"; // within 30 days of NOW
+const STALE_SEND = "2026-08-26T11:59:59Z"; // just past 30 days before NOW (cutoff 2026-08-27T12:00:00Z)
+
+function person(opts: { signals?: Record<string, boolean>; contactedAt?: string | null; lastSent?: string | null; orgId?: string | null; dead?: string[] } = {}): EnginePerson {
   seq += 1;
   return {
     leadId: `lead-${String(seq).padStart(4, "0")}`,
@@ -33,7 +45,10 @@ function person(opts: { signals?: Record<string, boolean>; contactedAt?: string 
     orgCity: null,
     orgCountry: null,
     signals: { contacted: true, sent: true, delivered: true, ...(opts.signals ?? {}) },
-    signalDates: { contacted: opts.contactedAt === undefined ? YOUNG : opts.contactedAt },
+    signalDates: {
+      contacted: opts.contactedAt === undefined ? YOUNG : opts.contactedAt,
+      lastSent: opts.lastSent === undefined ? RECENT_SEND : opts.lastSent,
+    },
     ...(opts.dead ? { deadSignals: opts.dead } : {}),
   };
 }
@@ -60,7 +75,7 @@ describe("priceContactedLeads — a brand whose contacts have not engaged yet (w
 
   it("the total is the sum over organisations (one lead per organisation here)", () => {
     expect(result.totalExpectedValueUsd).toBeCloseTo(69 * LTR * FLEET_P, 4);
-    expect(result.population).toEqual({ contactedOnly: 69, organizations: 69, engaged: 0, cannotConvert: 0 });
+    expect(result.population).toEqual({ contactedOnly: 69, organizations: 69, engaged: 0, cannotConvert: 0, expired: 0 });
   });
 
   it("a route's value at its step IS the engine's own path value", () => {
@@ -82,21 +97,24 @@ describe("priceContactedLeads — who is priced", () => {
     const result = priceContactedLeads({ paths: PATHS, persons, lifetimeRevenueUsd: LTR, fleet: FLEET, now: NOW });
     const after = computeRevenue(PATHS, persons, LTR);
     expect(result.leads.map((l) => l.leadId)).toEqual([quiet.leadId]);
-    expect(result.population).toEqual({ contactedOnly: 1, organizations: 1, engaged: 2, cannotConvert: 1 });
+    expect(result.population).toEqual({ contactedOnly: 1, organizations: 1, engaged: 2, cannotConvert: 1, expired: 0 });
     // The engine's answer for the clicker ($100) does not move and gains no contacted value.
     expect(after).toEqual(before);
     expect(after.leads.find((l) => l.leadId === clicker.leadId)?.expectedRevenueUsd).toBe(100);
     expect(after.headline.totalPipelineUsd).toBe(100);
   });
 
-  it("people of one organisation are one client at most: the total combines them, never adds", () => {
+  it("people of one organisation are one client: the total takes the MOST valuable member, the pipeline's rule", () => {
     const a = person({ orgId: "acme" });
-    const b = person({ orgId: "acme" });
+    const b = person({ orgId: "acme", dead: ["positiveReply"] });
     const result = priceContactedLeads({ paths: PATHS, persons: [a, b], lifetimeRevenueUsd: LTR, fleet: FLEET, now: NOW });
-    const each = LTR * FLEET_P;
     expect(result.population.organizations).toBe(1);
-    expect(result.totalExpectedValueUsd).toBeCloseTo(LTR * (1 - (1 - each / LTR) ** 2), 6);
-    expect(result.totalExpectedValueUsd!).toBeLessThan(2 * each);
+    expect(result.totalExpectedValueUsd).toBeCloseTo(LTR * FLEET_P, 6);
+    // …and it is exactly what these leads add to the pipeline.
+    expect(computeRevenue(PATHS, [a, b], LTR, [], contactedPricingOf(result)).headline.totalPipelineUsd).toBeCloseTo(
+      result.totalExpectedValueUsd!,
+      6,
+    );
   });
 
   it("a route a human ruled the lead out of contributes nothing", () => {
@@ -163,5 +181,47 @@ describe("fleetEntryCountsOf", () => {
         { recipientsContacted: 50, recipientsClicked: 1 },
       ]),
     ).toEqual({ clicked: { contacted: 150, reached: 4 }, positiveReply: { contacted: 150, reached: 1 } });
+  });
+});
+
+describe("a contacted lead's value EXPIRES 30 days after the LAST email sent to it", () => {
+  const recent = person({ lastSent: RECENT_SEND });
+  const stale = person({ lastSent: STALE_SEND, contactedAt: OLD });
+  const neverSent = person({ lastSent: null });
+  // First contacted long ago, but re-sent recently: the LAST send counts, never the contacted date.
+  const reSent = person({ contactedAt: OLD, lastSent: RECENT_SEND });
+  const persons = [recent, stale, neverSent, reSent];
+  const result = priceContactedLeads({ paths: PATHS, persons, lifetimeRevenueUsd: LTR, fleet: FLEET, now: NOW });
+  const byId = new Map(result.leads.map((l) => [l.leadId, l]));
+
+  it("a lead whose last send is older than 30 days, or who was never sent one, is worth $0", () => {
+    expect(result.lastSentOnOrAfter).toBe("2026-08-27T12:00:00.000Z");
+    expect(byId.get(stale.leadId)).toMatchObject({ expectedValueUsd: 0, expired: true });
+    expect(byId.get(neverSent.leadId)).toMatchObject({ expectedValueUsd: 0, expired: true });
+    expect(result.population.expired).toBe(2);
+  });
+
+  it("the last send, not the first contact, decides", () => {
+    expect(byId.get(reSent.leadId)).toMatchObject({ expired: false });
+    expect(byId.get(reSent.leadId)!.expectedValueUsd).toBeCloseTo(LTR * FLEET_P, 6);
+  });
+
+  it("the pipeline counts exactly the non-expired value, and nothing for an expired lead", () => {
+    const pricing = contactedPricingOf(result);
+    const pipeline = computeRevenue(PATHS, persons, LTR, [], pricing);
+    expect(result.totalExpectedValueUsd).toBeCloseTo(2 * LTR * FLEET_P, 6);
+    expect(pipeline.headline.totalPipelineUsd).toBeCloseTo(result.totalExpectedValueUsd!, 6);
+    expect(computeRevenue(PATHS, [stale, neverSent], LTR, [], pricing).headline.totalPipelineUsd).toBe(0);
+  });
+
+  it("without contacted pricing the pipeline is unchanged (a bare delivery is worth nothing)", () => {
+    expect(computeRevenue(PATHS, persons, LTR).headline.totalPipelineUsd).toBe(0);
+  });
+
+  it("an engaged lead is valued exactly as before, contacted pricing or not", () => {
+    const clicker = person({ signals: { clicked: true }, lastSent: STALE_SEND });
+    const replier = person({ signals: { positiveReply: true } });
+    const pricing = contactedPricingOf(result);
+    expect(computeRevenue(PATHS, [clicker, replier], LTR, [], pricing)).toEqual(computeRevenue(PATHS, [clicker, replier], LTR));
   });
 });

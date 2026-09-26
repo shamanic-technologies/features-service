@@ -1,4 +1,5 @@
 import { FUNNEL_RETIRED_BODY, namesRetiredFunnel } from "../lib/retired-funnel-param.js";
+import { contactedPricingSoft } from "./contacted-value.js";
 import { Router } from "express";
 import { fetchPricingFunnels } from "../lib/reading-funnels.js";
 import { funnelsContainingLeg } from "../lib/funnel-legs.js";
@@ -1450,6 +1451,11 @@ export async function computeFeatureRevenue(
   // Read once, used twice: the priced population (below) and the learning gate's CRM-only positive
   // repliers per campaign (unfiltered by workflow — a campaign's count is the whole campaign's).
   const leadsRead = fetchLeadsForRevenue(brandId, campaignScope, headers);
+  // HOW A CONTACTED LEAD THAT HAS NOT ENGAGED IS PRICED — the brand's entry rates + the 30-day
+  // last-send expiry, off the brand's contacted-value cell (the Contacted column's own figure). Kicked
+  // alongside the lead read so the brand-wide page it walks is shared in flight. Soft: null → those
+  // leads carry nothing.
+  const contactedPricingPromise = lens ? Promise.resolve(null) : contactedPricingSoft(brandId, headers);
   const [costResult, priced, persons, sequences, counts, conversionEmails, parents, spendByDay, plan, matureCost, maturingByDay] = await Promise.all([
     includeSpend
       ? fetchSpendBreakdown(brandId, campaignScope, featureScope, headers, new Date(), pricing, workflowScope?.producerSlugs)
@@ -1671,14 +1677,15 @@ export async function computeFeatureRevenue(
   };
   // closeValueUsd = LTR — the per-lead cap for combining independent engagement routes (click +
   // reply) as independent probabilities of one close (`undefined` keeps the wall-clock `now`).
-  const result = computeRevenue(paths, persons, economics.lifetimeRevenueUsd, funnel.milestones);
+  const contactedPricing = await contactedPricingPromise;
+  const result = computeRevenue(paths, persons, economics.lifetimeRevenueUsd, funnel.milestones, contactedPricing);
   // THE MATURE COHORT (`lib/roi-maturity.ts`): the same engine over the leads first contacted before the
   // cutoff (undated leads stay in), priced on the same paths — the pipeline the ratios divide. Only when
   // something in scope is maturing; otherwise the cohort IS the scope and the one pass answers both.
   const maturePersons = plan.cutoffIso && matureCost ? matureCohortPersons(persons, plan) : persons;
   const matureResult =
     plan.cutoffIso && matureCost
-      ? computeRevenue(paths, maturePersons, economics.lifetimeRevenueUsd, funnel.milestones)
+      ? computeRevenue(paths, maturePersons, economics.lifetimeRevenueUsd, funnel.milestones, contactedPricing)
       : result;
   // THE ONE BASIS every ratio on this body divides (`lib/ratio-basis.ts`) — the cohort the ROI divides.
   const ratioBasis: RatioBasis = plan.unknown

@@ -68,6 +68,8 @@ export function applySignalOverlays(
           // A reply known ONLY from the customer's CRM is dated by the CRM (leads-client): the sender's
           // first-reply timestamp would be a reply it did NOT classify positive.
           positiveReply: person.crmPositiveReplyAt ?? dates.positiveReply,
+          // The last email actually sent — what a contacted lead's expiry counts from.
+          lastSent: dates.lastSent ?? null,
         };
         // `open` has no boolean in the leads overlay — a known open timestamp IS the signal.
         if (dates.open) person.signals.open = true;
