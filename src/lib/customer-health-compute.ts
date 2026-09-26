@@ -49,6 +49,7 @@ import {
   type PauseTransition,
 } from "./history-clients.js";
 import { computeAudienceStats, type AudienceStatsEnvelope } from "./audience-stats-compute.js";
+import { fetchActiveAudiencePoolSoft, type AudiencePool } from "./human-client.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { getFunnel, type SalesEconomics } from "./funnel-registry.js";
 import type { Goal } from "./goals.js";
@@ -67,7 +68,7 @@ import {
 /** Cap the per-customer enrichment fan-out so a cold-Neon sibling is not hit with N heavy composites at once. */
 const CUSTOMER_FANOUT_CONCURRENCY = 4;
 
-/** Audience is "near exhausted" (a yellow flag) once this % of its addressable members have been contacted. */
+/** Audience is "near exhausted" (a yellow flag) once this % of the brand's active audience pool can no longer be served. */
 export const AUDIENCE_NEAR_EXHAUSTED_PCT = 80;
 
 export type HealthBadge = "green" | "yellow" | "red";
@@ -101,13 +102,17 @@ interface ConversionTracker {
 }
 
 interface AudiencesRollup {
-  /** Number of the brand's active audiences with evidence. */
+  /** Number of the brand's active audiences (human-service's list; the evidence count when the list is unreadable). */
   count: number;
-  /** Total addressable members across the brand's audiences (Σ memberCount). */
-  totalSize: number;
-  /** Total remaining-to-contact across the brand's audiences (Σ max(memberCount − contacted, 0)). */
-  totalRemaining: number;
-  /** % of the addressable pool already contacted = Σcontacted / Σsize × 100. null when totalSize is 0. */
+  /** Total pool across the brand's active audiences, as human-service sizes them (Σ sizeCount). null when unreadable. */
+  totalSize: number | null;
+  /**
+   * People the brand's active audiences can still be served = Σ human-service `availableToContactCount`.
+   * NOT served-minus-contacted: that is the backlog of people served and not yet emailed, which drains to 0
+   * in a healthy pipeline and made every brand that sends well read as out of audience. null when unreadable.
+   */
+  totalRemaining: number | null;
+  /** % of the pool that can no longer be served = (Σsize − Σremaining) / Σsize × 100. null when totalSize is 0 or unreadable. */
   pctUsed: number | null;
 }
 
@@ -116,11 +121,11 @@ interface BestAudience {
   name: string;
   /** The audience's CAC (cost per funnel outcome) in USD — cpc for a click-bought funnel, cppr for a reply-bought one. null when unmeasured. */
   cacUsd: number | null;
-  /** Addressable member count. */
-  size: number;
-  /** Remaining-to-contact = max(size − contacted, 0). */
-  remaining: number;
-  /** % of the audience still un-contacted = remaining / size × 100. null when size is 0. */
+  /** The audience's pool size (human-service `sizeCount`). null when unreadable. */
+  size: number | null;
+  /** People it can still be served (human-service `availableToContactCount`). null when unreadable. */
+  remaining: number | null;
+  /** remaining / size × 100. null when size is 0 or unreadable. */
   pctRemaining: number | null;
 }
 
@@ -287,6 +292,8 @@ export interface CustomerHealthDeps {
   brandRevenue: (featureSlug: string, brandId: string, orgId: string, economics: SalesEconomics, declaredFunnels: SalesFunnelKey[]) => Promise<BrandRevenueResult>;
   /** Ranked audience evidence for one (org, brand, sales funnel). null when the feature is unknown (404). */
   audienceStats: (featureSlug: string, brandId: string, orgId: string, funnel: SalesFunnelKey) => Promise<AudienceStatsEnvelope | null>;
+  /** Each ACTIVE audience's pool (size + still servable) for one (org, brand), from human-service. Fail-soft: null when unreadable. */
+  audiencePool: (brandId: string, orgId: string) => Promise<Map<string, AudiencePool> | null>;
   /** Workflow projection for one (org, brand, sales funnel) — priced on that funnel's own channel. */
   workflowProjection: (featureSlug: string, brandId: string, orgId: string, funnel: SalesFunnelKey) => Promise<WorkflowProjectionResponse>;
   /** Per-org dashboard-return signal for the WHOLE fleet (PostHog), keyed on the Clerk org id (= orgExternalId). Fail-loud; the builder wraps it soft. */
@@ -341,6 +348,7 @@ const REAL_DEPS: CustomerHealthDeps = {
     }
     return result.envelope;
   },
+  audiencePool: (brandId, orgId) => fetchActiveAudiencePoolSoft(brandId, { orgId }),
   workflowProjection: async (featureSlug, brandId, orgId, funnel) => {
     // Priced on the funnel's OWN funnel — `meetingChannel` is the whole difference between a meeting
     // bought with a reply and one bought with a click, which one blended goal could never express.
@@ -398,48 +406,52 @@ function observedConversionsForFunnel(funnel: SalesFunnelKey | null, counts: Con
   }
 }
 
-/** Rollup a brand's audience rows into totals + best-audience pick (best = the funnel-ranked audiences[0]). */
+/**
+ * Rollup a brand's audiences into totals + best-audience pick (best = the funnel-ranked audiences[0]).
+ *
+ * Size and remaining come from human-service's POOL (`pool`), read live — the only source that counts
+ * who can still be served. The evidence envelope still supplies the ranking (which audience is best) and
+ * nothing else here.
+ */
 function summarizeAudiences(
   envelope: AudienceStatsEnvelope | null,
+  pool: Map<string, AudiencePool> | null,
   funnelPresent: boolean,
 ): { rollup: AudiencesRollup; best: BestAudience | null } {
-  if (!envelope || envelope.audiences.length === 0) {
-    return { rollup: { count: 0, totalSize: 0, totalRemaining: 0, pctUsed: null }, best: null };
+  let rollup: AudiencesRollup;
+  if (pool === null) {
+    rollup = { count: envelope?.audiences.length ?? 0, totalSize: null, totalRemaining: null, pctUsed: null };
+  } else {
+    let totalSize = 0;
+    let totalRemaining = 0;
+    for (const { size, remaining } of pool.values()) {
+      totalSize += size;
+      totalRemaining += remaining;
+    }
+    rollup = {
+      count: pool.size,
+      totalSize,
+      totalRemaining,
+      pctUsed: totalSize > 0 ? ((totalSize - totalRemaining) / totalSize) * 100 : null,
+    };
   }
-  let totalSize = 0;
-  let totalContacted = 0;
-  let totalRemaining = 0;
-  for (const row of envelope.audiences) {
-    const size = row.evidence.memberCount;
-    const contacted = row.evidence.contacted;
-    totalSize += size;
-    totalContacted += contacted;
-    totalRemaining += Math.max(size - contacted, 0);
-  }
-  const rollup: AudiencesRollup = {
-    count: envelope.audiences.length,
-    totalSize,
-    totalRemaining,
-    pctUsed: totalSize > 0 ? (totalContacted / totalSize) * 100 : null,
-  };
 
   // Best = the first row (envelope.audiences is sorted ascending by the funnel's sort metric). Only
   // meaningful with a funnel the brand actually declared; a placeholder funnel (used only to fetch the
   // rollup) → no best, because ranking on a funnel nobody declared would name a winner for a race the
   // brand never entered.
   let best: BestAudience | null = null;
-  if (funnelPresent) {
+  if (funnelPresent && envelope && envelope.audiences.length > 0) {
     const top = envelope.audiences[0];
     const cents = envelope.sortMetric === "cpc" ? top.metrics.cpcCents : top.metrics.cpprCents;
-    const size = top.evidence.memberCount;
-    const remaining = Math.max(size - top.evidence.contacted, 0);
+    const p = pool?.get(top.audienceId) ?? null;
     best = {
       audienceId: top.audienceId,
       name: top.audience.name,
       cacUsd: cents != null ? cents / 100 : null,
-      size,
-      remaining,
-      pctRemaining: size > 0 ? (remaining / size) * 100 : null,
+      size: p ? p.size : null,
+      remaining: p ? p.remaining : null,
+      pctRemaining: p && p.size > 0 ? (p.remaining / p.size) * 100 : null,
     };
   }
   return { rollup, best };
@@ -581,6 +593,9 @@ export async function buildCustomerHealthBoard(
       cacPct: null,
     };
     let audienceEnvelope: AudienceStatsEnvelope | null = null;
+    // Read beside the enrichment, not inside it: it is already fail-soft, and a row whose economics
+    // throw must still say how many people its audiences can be served.
+    const audiencePoolP = deps.audiencePool(account.brandId, account.orgId);
     let workflowProjection: WorkflowProjectionResponse | null = null;
     let ownershipSkipped = false;
 
@@ -655,7 +670,8 @@ export async function buildCustomerHealthBoard(
     }
 
     const ltrUsd = economics?.lifetimeRevenueUsd ?? null;
-    const { rollup: audiencesRollup, best: bestAudience } = summarizeAudiences(audienceEnvelope, primaryFunnel !== null);
+    const audiencePool = ownershipSkipped ? null : await audiencePoolP;
+    const { rollup: audiencesRollup, best: bestAudience } = summarizeAudiences(audienceEnvelope, audiencePool, primaryFunnel !== null);
     const bestWorkflow = workflowProjection ? pickBestWorkflow(workflowProjection) : null;
 
     const needed = primaryFunnel != null && TRACKER_NEEDED_FUNNELS.has(primaryFunnel);
