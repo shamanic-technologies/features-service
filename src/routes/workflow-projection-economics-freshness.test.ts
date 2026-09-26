@@ -131,6 +131,9 @@ function mockFetch(): void {
 
     // The brand's economics — read LIVE on every request, never cached.
     if (url.includes("/sales-economics-effective")) return json(economicsBody());
+    // Each audience's contactability — also read LIVE on every request (features-service#1035). With
+    // the cache off the evidence compute reads the same list, so neither is counted as fan-out.
+    if (url.includes("/orgs/audiences")) return json({ audiences: [] });
 
     fanOutCalls += 1;
     if (url.includes("/public/workflows")) return json({ workflows: WORKFLOWS });

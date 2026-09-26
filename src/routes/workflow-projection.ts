@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { fetchActiveAudienceAvailabilitySoft } from "../lib/human-client.js";
 import { fetchPricingFunnels } from "../lib/reading-funnels.js";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
@@ -226,6 +227,16 @@ export interface ProjectionRow {
    * recommended and skipped by every consumer that selects on `resolved.costPerOutcomeUsd`.
    */
   retired?: true;
+  /**
+   * HOW MANY PEOPLE THIS ROW'S AUDIENCE CAN STILL BE SERVED — human-service's own
+   * `availableToContactCount`, read LIVE beside the cached evidence (features-service#1035). Present on
+   * every audience row (`audienceId` non-null), absent on the brand / campaign column. `0` is the
+   * producer saying the audience is served out (every member inside the 3-month re-contact window), so
+   * a consumer picking an audience for a serve can skip it while another still has people instead of
+   * paying a serve round-trip to learn it; `null` is "we could not read this" and must be treated as
+   * unknown, never as 0. It moves no figure and no order here — the rows are what they were.
+   */
+  availableToContactCount?: number | null;
   /**
    * THIS WORKFLOW'S POSITION IN THE ORDER THIS SERVICE SELECTS ON — 1-based, present ⟺ the caller
    * named a `?leg=`, so every existing body is byte-unchanged.
@@ -1270,7 +1281,7 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     // job is to say what is happening right now cannot be served from a cell half an hour old. Fired in
     // the same round trip as the fan-out (it needs only the campaign ids, not the ladder), so it costs
     // no extra wall-clock, and FAIL-SOFT so a runs blip nulls one block rather than a whole page.
-    const [evidence, effective, triggerRuns, contentModels, tierCatalogue] = await Promise.all([
+    const [evidence, effective, triggerRuns, contentModels, tierCatalogue, audienceAvailability] = await Promise.all([
       servedCached({
         view: "workflow-projection-evidence",
         scopeKey: buildScopeKey(featureSlug, {
@@ -1296,6 +1307,10 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       // be half an hour old. Fired in the same round trip as the fan-out, so they cost no wall-clock.
       legKey ? fetchWorkflowContentModelsSoft(featureSlug, identity) : Promise.resolve(null),
       legKey ? fetchModelTierCatalogueSoft() : Promise.resolve(null),
+      // HOW MANY PEOPLE EACH AUDIENCE CAN STILL BE SERVED — live, never from the snapshot: an audience
+      // served out an hour ago must not be offered for a serve off a cell that predates it
+      // (features-service#1035). Shared 30s with the evidence compute's own list read; fail-soft.
+      fetchActiveAudienceAvailabilitySoft(brandId, { orgId, userId, runId, featureSlug: headerFeatureSlug }),
     ]);
     // THE LEG'S BASIS FUNNEL. Ranked on the IDENTICAL `returnPerDollar` `/funnel-ranking` ranks a
     // brand's declared funnels on — one implementation, so the two surfaces can never name different
@@ -1455,8 +1470,11 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
           : null
         : undefined;
 
+    const rows = withAudienceAvailability(response.rows, audienceAvailability);
+
     res.json({
       ...response,
+      rows,
       ...(legBlock ? { leg: legBlock } : {}),
       ...(campaignIdentityView ? { campaignIdentity: campaignIdentityView } : {}),
       ...(declaredFunnelsUnresolved ? { declaredFunnelsUnresolved } : {}),
@@ -1604,6 +1622,21 @@ export async function computeWorkflowProjection(input: {
  * therefore the new `roiMultiple` / `cacPct`) without a cache-bypass param and without re-fanning out.
  * NEVER cache this output keyed on the evidence inputs alone; economics is not one of them.
  */
+/**
+ * Stamp each AUDIENCE row with how many people its audience can still be served (features-service#1035).
+ * The brand / campaign column (`audienceId: null`) carries nothing. An audience the producer did not
+ * state a count for — or a read that failed (`availability` null) — reads `null`, never 0: only
+ * human-service may say an audience is served out.
+ */
+export function withAudienceAvailability(
+  rows: ProjectionRow[],
+  availability: Map<string, number> | null,
+): ProjectionRow[] {
+  return rows.map((r) =>
+    r.audienceId == null ? r : { ...r, availableToContactCount: availability?.get(r.audienceId) ?? null },
+  );
+}
+
 export function projectFromEvidence(input: {
   featureSlug: string;
   objective: Objective;
