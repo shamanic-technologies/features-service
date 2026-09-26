@@ -536,7 +536,7 @@ function mergeUnpriced(a: EnginePerson, b: EnginePerson): readonly string[] | un
  * (1 lead = 1 LTR). Degrades to a plain sum when each evᵢ ≪ closeValueUsd. Empty list → 0. A
  * non-positive close value (LTR 0 ⇒ every route EV is 0 too) → the bare max, which is 0.
  */
-function combineIndependent(evs: number[], closeValueUsd: number): number {
+export function combineIndependent(evs: number[], closeValueUsd: number): number {
   if (evs.length === 0) return 0;
   if (evs.length === 1) return evs[0]; // single route → exact value, no float drift from the OR formula
   if (closeValueUsd <= 0) return Math.max(...evs);
