@@ -239,6 +239,28 @@ async function sharedLeadPage(baseUrl: string, reqHeaders: Record<string, string
 }
 
 /**
+ * The ids of the brand's leads lead-service places at `standing` (its `?standing=` filter — the same
+ * set a Deals column pages through). Standing is lead-service's policy and is never re-derived here.
+ * A standing is decided per (lead, campaign) row, so one lead may appear under two standings; the ids
+ * are deduped within the set. Walked in bounded pages, fail loud.
+ */
+export async function fetchLeadIdsByStanding(
+  brandId: string,
+  standing: string,
+  headers: { orgId: string; userId?: string; runId?: string },
+): Promise<Set<string>> {
+  const url = process.env.LEAD_SERVICE_URL;
+  const apiKey = process.env.LEAD_SERVICE_API_KEY;
+  if (!url || !apiKey) throw new Error("LEAD_SERVICE_URL or LEAD_SERVICE_API_KEY not configured");
+  const params = new URLSearchParams({ brandId, standing, view: "compact", limit: String(LEAD_PAGE_SIZE) });
+  const reqHeaders: Record<string, string> = { "x-api-key": apiKey, "x-org-id": headers.orgId, "x-brand-id": brandId };
+  if (headers.userId) reqHeaders["x-user-id"] = headers.userId;
+  if (headers.runId) reqHeaders["x-run-id"] = headers.runId;
+  const rows = await walkLeadPages(`${url}/orgs/leads?${params}`, reqHeaders);
+  return new Set(rows.map((r) => r.leadId).filter((id): id is string => typeof id === "string" && id !== ""));
+}
+
+/**
  * Fetch all leads for a brand (optionally one campaign) with delivery-status overlay,
  * mapped into engine persons. Fails loud on any transport / non-OK error — a swallowed
  * error would silently under-report pipeline.
