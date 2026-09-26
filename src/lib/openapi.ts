@@ -1527,7 +1527,9 @@ registry.registerPath({
 });
 
 const measuredArrowRateSchema = z.object({
-  fromReached: z.number().int().nullable().describe("Distinct leads of this brand that reached the arrow's FROM step. Null when that step is not counted by anything in the fleet, or its evidence was unreadable."),
+  basis: z.enum(["our_leads", "crm"]).describe("WHERE this leg was measured. crm: the brand's CRM directly evidences BOTH ends of the leg, so it is measured on the client's WHOLE CRM history (crm-service funnel reach, contactsAtOrBeyond(TO) / contactsAtOrBeyond(FROM)). our_leads: on this brand's leads. fromReached is the population either way, so a consumer can say 'measured on 251 contacts in your CRM' or 'measured on 26 of our leads'."),
+  outcomesCounted: z.enum(["all", "caused_by_our_outreach"]).nullable().describe("On our_leads, which outcomes the counts include: caused_by_our_outreach whenever the brand's CRM is available (crm.status used) — a leg only our outreach can observe is not credited with CRM outcomes our outreach did not cause; all otherwise (today's rule). Null on a crm-measured leg. Measurement only: what the ROI prices is unchanged."),
+  fromReached: z.number().int().nullable().describe("Distinct leads (basis our_leads) or CRM contacts (basis crm) that reached the arrow's FROM step — the population the rate is measured on. Null when that step is not counted by anything in the fleet, or its evidence was unreadable."),
   toReached: z.number().int().nullable().describe("Distinct leads that reached the TO step. Same null rule."),
   ratePct: z.number().nullable().describe("toReached / fromReached × 100 — the brand's funnel-step conversion for this arrow, byte-equal to funnelSteps.conversionFromPreviousPct for the rung. Null when either count is null or fromReached is 0."),
   sufficient: z.boolean().describe("True exactly when fromReached ≥ minMeasuredFromReached, i.e. this measured rate is the effective one. The bar is on the DENOMINATOR, so an arrow truly at 0% still becomes measured."),
@@ -1550,6 +1552,11 @@ const brandConversionRatesResponseRef = registry.register(
   "BrandConversionRatesResponse",
   z.object({
     brandId: z.string(),
+    crm: z.object({
+      status: z.enum(["used", "no_connection", "not_synced", "stage_meanings_pending", "unreadable"]).describe("used: the CRM took part in the measurement. Otherwise why not, and every rate is measured on our leads counting every outcome, exactly as before the CRM existed. unreadable: crm-service could not be read (logged loud)."),
+      totalContacts: z.number().int().nullable().describe("Contacts in the brand's CRM, per crm-service. Null when not used."),
+      lastSyncedAt: z.string().nullable().describe("When the CRM was last synced. Null when not used."),
+    }).describe("The brand's CRM in this measurement."),
     minMeasuredFromReached: z.number().int().describe("The learning bar: leads needed on an arrow's FROM step before its measured rate is used (10, the fleet's learning bar)."),
     contactedRecipients: z.number().int().describe("Distinct leads this brand has contacted — the population every measured rate is read from."),
     funnels: z.array(z.object({
