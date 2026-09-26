@@ -12860,6 +12860,15 @@
                   "type": "string",
                   "nullable": true,
                   "description": "billing's own reason it cannot charge this org (payment-outlook blockedReason: card_declined, card_unusable, retries_exhausted, no_chargeable_card, card_country_unsupported) when status is 'payment_declined'; null otherwise, and null if billing blocked without naming a reason."
+                },
+                "revenueSide": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "agency",
+                    "self_serve"
+                  ],
+                  "description": "The ORG's side of the revenue split, derived from the stated-monthly-amounts store exactly as the agency/self-serve MRR split derives it (no org id lives in code). 'agency' = the org holds at least one stated monthly amount: it pays cash up front at its own discretion, so its budget burn is an allocation of money already received, NOT revenue still to come. 'self_serve' = it holds none: it pays through the product, so its budget burn IS its recurring revenue. Same value on every brand row of one org. null = the stated-amounts store could not be read on this build (unknown, never guessed). This service has no notion of the platform's own internal org; a consumer that must exclude it does so itself. Informational: no status, total, MRR or ARR on this payload reads it."
                 }
               },
               "required": [
@@ -12875,7 +12884,8 @@
                 "orgActualBalanceUsd",
                 "autoTopupEnabled",
                 "status",
-                "paymentDeclinedReason"
+                "paymentDeclinedReason",
+                "revenueSide"
               ]
             }
           },
