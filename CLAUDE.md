@@ -5157,7 +5157,18 @@ the active determination + MRR/ARR are computed HERE; the dashboard renders only
 
 Each row: `{ orgId, orgExternalId, ownerEmail, brandId, brandName, brandDomain,
 configuredDailyBudgetUsd, runningDailyBudgetUsd, orgBalanceUsd, orgActualBalanceUsd, autoTopupEnabled,
-status }`. Response also carries `stats { totalRunningDailyBudgetUsd, totalConfiguredDailyBudgetUsd,
+status }`.
+
+**`revenueSide` (`agency` | `self_serve` | null) says which side of the revenue split the ORG is on**
+(set 2026-09-26): `agency` = the org holds ≥1 stated monthly amount — the SAME derivation as
+`agencyOrgIdsOf` in the MRR split (restated inline in `accounts-compute.ts` because importing it would
+close an import cycle through active-users-compute). An agency pays cash up front, so its burn is money
+already received, not revenue to come; a self-serve org's burn IS its revenue. Same value on every brand
+row of one org. The store read is FAIL-SOFT (`readStatedAmountsSoft`) → `null` = unknown, never a guessed
+self-serve, and never a new way for this fail-loud audit (and its revenue-history / send-forecast /
+customer-health consumers) to fail. Informational ONLY: no status, total, MRR or ARR reads it. This
+service has NO notion of the platform's own internal org — do not invent one here (no org id in code);
+the consumer excludes it. Response also carries `stats { totalRunningDailyBudgetUsd, totalConfiguredDailyBudgetUsd,
 mrrUsd, arrUsd, activeCount, pausedCount, inactiveCount, totalCount }` + `asOf`.
 
 **AN ACCOUNT IS ACTIVE WHEN ITS MONEY IS RUNNING, NOT MERELY CONFIGURED — and the brand PAUSE FLAG is

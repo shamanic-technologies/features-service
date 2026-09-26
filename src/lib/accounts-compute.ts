@@ -62,8 +62,19 @@ import {
   type BrandBasic,
   type BrandSpendableBudget,
 } from "./accounts-client.js";
+import { readStatedAmountsSoft } from "./stated-monthly-amounts-store.js";
 
 export type AccountStatus = "active" | "payment_declined" | "paused" | "inactive";
+
+/**
+ * Which side of the revenue split an org is on. `agency` = the org holds at least one stated monthly
+ * amount (the SAME derivation the agency/self-serve MRR split uses, `agencyOrgIdsOf`): it pays its
+ * cash up front at its own discretion, so its budget burn is an allocation of money already received,
+ * not revenue still to come. `self_serve` = it holds none: it pays THROUGH the product, so its budget
+ * burn IS its recurring revenue. A property of the ORG — every brand row of one org carries the same
+ * value. This service holds no notion of "our own internal org"; that half is the consumer's.
+ */
+export type RevenueSide = "agency" | "self_serve";
 
 export interface AccountRow {
   orgId: string;
@@ -95,6 +106,11 @@ export interface AccountRow {
    * `status` is "payment_declined"; null otherwise (and null if billing blocked without naming one).
    */
   paymentDeclinedReason: string | null;
+  /**
+   * The org's side of the revenue split (see `RevenueSide`). `null` = the stated-amounts store could
+   * not be read on this build, so the side is unknown — never guessed as self-serve.
+   */
+  revenueSide: RevenueSide | null;
 }
 
 export interface AccountsStats {
@@ -130,6 +146,11 @@ export interface AccountsDeps {
     pairs: Array<{ orgId: string; brandId: string }>,
   ) => Promise<Map<string, BrandSpendableBudget>>;
   brandsBasic: (ids: string[]) => Promise<Map<string, BrandBasic>>;
+  /**
+   * Every stated monthly amount, fail-SOFT (`null` = unreadable). Optional so a fixture that does not
+   * care about the revenue side need not state it; absent ⇒ every row reads `revenueSide: null`.
+   */
+  statedAmounts?: () => Promise<Array<{ orgId: string }> | null>;
 }
 
 const REAL_DEPS: AccountsDeps = {
@@ -139,6 +160,7 @@ const REAL_DEPS: AccountsDeps = {
   paymentHold: fetchOrgPaymentHold,
   spendableBudgets: fetchSpendableBudgets,
   brandsBasic: fetchBrandsBasic,
+  statedAmounts: readStatedAmountsSoft,
 };
 
 /**
@@ -182,7 +204,16 @@ export async function buildAccountsAudit(
   const brandIds = [...new Set([...pairs.values()].map((p) => p.brandId))];
   // One batched call for every pair's configured + running budget — a fleet audit cannot afford a
   // request per brand, and both figures come from the same producer computation.
-  const budgets = await deps.spendableBudgets([...pairs.values()]);
+  const [budgets, statedRows] = await Promise.all([
+    deps.spendableBudgets([...pairs.values()]),
+    // Fail-soft: the side is additive information on a fail-loud audit whose other consumers (revenue
+    // history, send-forecast, customer-health) must not gain a new way to fail. Unreadable ⇒ null side.
+    deps.statedAmounts ? deps.statedAmounts() : Promise.resolve(null),
+  ]);
+  // The agency rule, byte-for-byte `agencyOrgIdsOf` (agency-self-serve-compute.ts): any org carrying a
+  // stated amount, whatever its date range. Restated rather than imported because that module imports
+  // active-users-compute, which imports this one.
+  const agencyOrgIds = statedRows === null ? null : new Set(statedRows.map((r) => r.orgId));
 
   // 2. Org-level reads once per org (balance + identity + billing's payment hold); brand name/domain in one batched call.
   const [orgInfoEntries, brandInfo] = await Promise.all([
@@ -236,6 +267,7 @@ export async function buildAccountsAudit(
           info.hold,
         ),
         paymentDeclinedReason: info.hold?.blockedReason ?? null,
+        revenueSide: agencyOrgIds === null ? null : agencyOrgIds.has(p.orgId) ? "agency" : "self_serve",
       };
   });
 
