@@ -25023,6 +25023,470 @@
           }
         }
       }
+    },
+    "/internal/view-cache/keeper": {
+      "get": {
+        "summary": "View keeper status: last precompute round + facts-gate counters (internal, service key)",
+        "tags": [
+          "Internal"
+        ],
+        "responses": {
+          "200": {
+            "description": "Keeper status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "lastRound": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "at": {
+                          "type": "string"
+                        },
+                        "templates": {
+                          "type": "number",
+                          "description": "Customer requests read in the last 3 days, each a template"
+                        },
+                        "brands": {
+                          "type": "number"
+                        },
+                        "candidates": {
+                          "type": "number",
+                          "description": "Sibling scopes (other campaigns / offers of the brand) those templates imply"
+                        },
+                        "asked": {
+                          "type": "number"
+                        },
+                        "computed": {
+                          "type": "number"
+                        },
+                        "refused": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "url": {
+                                "type": "string"
+                              },
+                              "status": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "url",
+                              "status"
+                            ]
+                          }
+                        },
+                        "skippedKnown": {
+                          "type": "number"
+                        },
+                        "deferred": {
+                          "type": "number"
+                        },
+                        "errors": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "at",
+                        "templates",
+                        "brands",
+                        "candidates",
+                        "asked",
+                        "computed",
+                        "refused",
+                        "skippedKnown",
+                        "deferred",
+                        "errors"
+                      ]
+                    },
+                    "running": {
+                      "type": "boolean"
+                    },
+                    "factsGate": {
+                      "type": "object",
+                      "properties": {
+                        "skipped": {
+                          "type": "number"
+                        },
+                        "recomputed": {
+                          "type": "number"
+                        },
+                        "noFingerprint": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "skipped",
+                        "recomputed",
+                        "noFingerprint"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "lastRound",
+                    "running",
+                    "factsGate"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/view-cache/keeper/run": {
+      "post": {
+        "summary": "Run one precompute round now (internal, service key)",
+        "description": "Asks the refresher to compute, for every campaign- or offer-scoped request a customer read in the last 3 days, the same request for the brand's OTHER campaigns and offers, so their first read is a stored cell. Same handler, one id swapped — no figure is derived twice.",
+        "tags": [
+          "Internal"
+        ],
+        "responses": {
+          "200": {
+            "description": "The round's report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "at": {
+                      "type": "string"
+                    },
+                    "templates": {
+                      "type": "number",
+                      "description": "Customer requests read in the last 3 days, each a template"
+                    },
+                    "brands": {
+                      "type": "number"
+                    },
+                    "candidates": {
+                      "type": "number",
+                      "description": "Sibling scopes (other campaigns / offers of the brand) those templates imply"
+                    },
+                    "asked": {
+                      "type": "number"
+                    },
+                    "computed": {
+                      "type": "number"
+                    },
+                    "refused": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "url": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "url",
+                          "status"
+                        ]
+                      }
+                    },
+                    "skippedKnown": {
+                      "type": "number"
+                    },
+                    "deferred": {
+                      "type": "number"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "at",
+                    "templates",
+                    "brands",
+                    "candidates",
+                    "asked",
+                    "computed",
+                    "refused",
+                    "skippedKnown",
+                    "deferred",
+                    "errors"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The round could not run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/view-cache/drift": {
+      "get": {
+        "summary": "Compare stored Gold cells with a fresh computation (internal, service key)",
+        "description": "mode=moment refreshes each cell then recomputes it at once without persisting and compares the two (stored vs fresh at the same moment); mode=stored compares what is served right now (measures how stale the facts gate lets a cell get). Every difference is logged loudly.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "moment",
+                "stored"
+              ]
+            },
+            "required": false,
+            "name": "mode",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "brandId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "view",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "1-2000, default 50"
+            },
+            "required": false,
+            "description": "1-2000, default 50",
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Only cells a customer read within this many hours"
+            },
+            "required": false,
+            "description": "Only cells a customer read within this many hours",
+            "name": "readWithinHours",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Per-cell comparison",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "moment",
+                        "stored"
+                      ]
+                    },
+                    "cells": {
+                      "type": "number"
+                    },
+                    "brands": {
+                      "type": "number"
+                    },
+                    "equal": {
+                      "type": "number"
+                    },
+                    "different": {
+                      "type": "number"
+                    },
+                    "errors": {
+                      "type": "number"
+                    },
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "view": {
+                            "type": "string"
+                          },
+                          "scopeKey": {
+                            "type": "string"
+                          },
+                          "brandId": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "equal": {
+                            "type": "boolean"
+                          },
+                          "differences": {
+                            "type": "number"
+                          },
+                          "paths": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "storedAgeMs": {
+                            "type": "number"
+                          },
+                          "factsMoved": {
+                            "type": "boolean",
+                            "nullable": true
+                          },
+                          "error": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "view",
+                          "scopeKey",
+                          "brandId",
+                          "equal",
+                          "differences",
+                          "paths",
+                          "storedAgeMs",
+                          "factsMoved"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "mode",
+                    "cells",
+                    "brands",
+                    "equal",
+                    "different",
+                    "errors",
+                    "results"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "No refresher up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

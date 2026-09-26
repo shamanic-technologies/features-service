@@ -1,8 +1,15 @@
-import { and, desc, eq, isNull, lt, or } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, lt, or, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { featureViewSnapshots } from "../db/schema.js";
 import { withLiveLeadCopy } from "./lead-copy.js";
-import { computeViaRefresher, forcedRefresh, refresherDelegation } from "./view-refresher.js";
+import {
+  computeViaRefresher,
+  currentRequestReplay,
+  forcedRefresh,
+  refresherDelegation,
+  viewCacheRole,
+} from "./view-refresher.js";
+import { brandIdOfRequest, factsFingerprint } from "./view-facts.js";
 
 /**
  * Gold serving layer — stale-while-revalidate read-through cache for expensive feature views.
@@ -211,13 +218,61 @@ export async function servedCached<T>({ view, scopeKey, orgId, ttlMs, maxStaleMs
   const localCompute = () => withLiveLeadCopy(rawCompute);
   if (!cacheEnabled()) return localCompute();
   const family = familyKeyOf(scopeKey);
+  const meta = cellMetaOfRequest(orgId);
   // Refresher role: the server asked for THIS cell to be computed and persisted — never served.
   const answer = forcedRefresh(view, family);
   if (answer) {
-    const body = await computeAndPersistSingleFlight(view, scopeKey, orgId, async () => ({ body: await localCompute(), persisted: false }));
+    if (answer.verifyOnly) {
+      // The drift check: a FRESH computation of this cell, compared by the caller against what is
+      // stored — so it must never overwrite what it is being compared with.
+      const body = await localCompute();
+      answer(body);
+      return body;
+    }
+    const body = await computeAndPersistSingleFlight(view, scopeKey, orgId, async () => ({ body: await localCompute(), persisted: false }), meta);
     answer(body);
     return body;
   }
+  const served = await serveCell<T>(view, scopeKey, orgId, family, meta, ttlMs, maxStaleMs, localCompute);
+  if (meta?.read) touchRead(view, scopeKey, meta);
+  return served;
+}
+
+/**
+ * What a cell remembers about the request that reads it: its replay (so the keeper can precompute a
+ * sibling scope or verify it), the brand it names (whose facts fingerprint gates its refresh), and
+ * whether it is a CUSTOMER read (a server-role request the keeper did not send). Null outside a GET.
+ */
+interface CellMeta {
+  replayUrl: string;
+  replayHeaders: Record<string, string>;
+  brandId: string | null;
+  orgId: string;
+  read: boolean;
+}
+
+function cellMetaOfRequest(orgId: string): CellMeta | null {
+  const replay = currentRequestReplay();
+  if (!replay) return null;
+  return {
+    replayUrl: replay.url,
+    replayHeaders: replay.headers,
+    brandId: brandIdOfRequest(replay.url, replay.headers),
+    orgId,
+    read: viewCacheRole() === "server" && !replay.precompute,
+  };
+}
+
+async function serveCell<T>(
+  view: string,
+  scopeKey: string,
+  orgId: string,
+  family: string,
+  meta: CellMeta | null,
+  ttlMs: number | undefined,
+  maxStaleMs: number | undefined,
+  localCompute: () => Promise<T>,
+): Promise<T> {
   // Server role, inside a request: every compute runs in the refresher process, never on the serving
   // event loop (lib/view-refresher.ts). Outside a request (boot warms, fleet sweeps) it runs here.
   const delegation = refresherDelegation(view, family);
@@ -251,10 +306,12 @@ export async function servedCached<T>({ view, scopeKey, orgId, ttlMs, maxStaleMs
       return decodeSnapshotBody(row.body) as T; // fresh hit
     }
     if (ageMs >= maxStale) {
-      return computeAndPersistSingleFlight(view, scopeKey, orgId, compute);
+      return computeAndPersistSingleFlight(view, scopeKey, orgId, compute, meta);
     }
-    // Stale hit — serve immediately, refresh in the background (single-flight across replicas).
-    void revalidate(view, scopeKey, orgId, compute);
+    // Stale hit — serve immediately, refresh in the background (single-flight across replicas). The
+    // background refresh first asks whether the brand's FACTS moved (lib/view-facts.ts) and skips the
+    // whole-population compute when they did not.
+    void revalidate(view, scopeKey, orgId, compute, meta, { storedFingerprint: row.factsFingerprint ?? null, ageMs });
     return decodeSnapshotBody(row.body) as T;
   }
 
@@ -281,7 +338,7 @@ export async function servedCached<T>({ view, scopeKey, orgId, ttlMs, maxStaleMs
       console.error(`[features-service] view-cache family read failed (computing live) view=${view}: ${(err as Error).message}`);
     }
     if (prior) {
-      void computeAndPersistSingleFlight(view, scopeKey, orgId, compute).catch((err) => {
+      void computeAndPersistSingleFlight(view, scopeKey, orgId, compute, meta).catch((err) => {
         console.error(`[features-service] view-cache rotation refresh failed (serving previous cell) view=${view}: ${(err as Error).message}`);
       });
       return decodeSnapshotBody(prior.body) as T;
@@ -289,7 +346,7 @@ export async function servedCached<T>({ view, scopeKey, orgId, ttlMs, maxStaleMs
   }
 
   // Miss — compute live ONCE (fail-loud on error: propagate to the endpoint), then persist.
-  return computeAndPersistSingleFlight(view, scopeKey, orgId, compute);
+  return computeAndPersistSingleFlight(view, scopeKey, orgId, compute, meta);
 }
 
 /**
@@ -358,17 +415,22 @@ async function computeAndPersistSingleFlight<T>(
   scopeKey: string,
   orgId: string,
   compute: () => Promise<Computed<T>>,
+  meta: CellMeta | null = null,
+  factsFp: string | null = null,
 ): Promise<T> {
   const key = `${view}\0${scopeKey}`;
   const existing = inFlightComputes.get(key) as Promise<T> | undefined;
   if (existing) return existing;
 
   const promise = (async () => {
+    const startedAt = new Date();
     const { body, persisted } = await compute();
     if (!persisted) {
-      await upsertSnapshot(view, scopeKey, orgId, body).catch((err) => {
+      await upsertSnapshot(view, scopeKey, orgId, body, meta, factsFp).catch((err) => {
         console.error(`[features-service] view-cache persist failed view=${view}: ${(err as Error).message}`);
       });
+    } else if (factsFp) {
+      await stampFingerprint(view, scopeKey, factsFp, startedAt);
     }
     return body;
   })();
@@ -383,19 +445,66 @@ async function computeAndPersistSingleFlight<T>(
   }
 }
 
+/**
+ * THE FACTS GATE's ceiling: a cell whose brand's fingerprint did not move is still recomputed once it is
+ * this old, because the fingerprint cannot see every input (cross-org benchmarks, a hold cancelled on its
+ * own, an audience edit — see lib/view-facts.ts). `VIEW_FACTS_GATE_MAX_MS`; `VIEW_FACTS_GATE_ENABLED=false`
+ * is the kill switch (every stale read recomputes, as before).
+ */
+const DEFAULT_FACTS_GATE_MAX_MS = 5 * 60_000;
+
+export function factsGateMaxMs(): number {
+  const raw = process.env.VIEW_FACTS_GATE_MAX_MS;
+  if (!raw) return DEFAULT_FACTS_GATE_MAX_MS;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_FACTS_GATE_MAX_MS;
+}
+
+function factsGateEnabled(): boolean {
+  return process.env.VIEW_FACTS_GATE_ENABLED !== "false";
+}
+
+/** In-process count of refreshes the gate skipped / let through — read by the keeper's status route. */
+export const factsGateStats = { skipped: 0, recomputed: 0, noFingerprint: 0 };
+
 /** Background refresh of one stale cell. Single-flight via a conditional claim; never throws. */
-async function revalidate<T>(view: string, scopeKey: string, orgId: string, compute: () => Promise<Computed<T>>): Promise<void> {
+async function revalidate<T>(
+  view: string,
+  scopeKey: string,
+  orgId: string,
+  compute: () => Promise<Computed<T>>,
+  meta: CellMeta | null = null,
+  gate: { storedFingerprint: string | null; ageMs: number } | null = null,
+): Promise<void> {
   try {
     const claimed = await claimRefresh(view, scopeKey);
     if (!claimed) return; // another request/replica is already refreshing this cell
+    // Taken BEFORE the compute reads anything: a fact landing mid-compute then moves the next
+    // fingerprint and forces another refresh, never the other way round.
+    const factsFp = await currentFingerprint(meta);
+    if (
+      factsGateEnabled() &&
+      gate &&
+      factsFp !== null &&
+      gate.storedFingerprint === factsFp &&
+      gate.ageMs < factsGateMaxMs()
+    ) {
+      factsGateStats.skipped += 1;
+      await releaseRefresh(view, scopeKey);
+      return;
+    }
+    if (factsFp === null) factsGateStats.noFingerprint += 1;
+    factsGateStats.recomputed += 1;
+    const startedAt = new Date();
     const { body, persisted } = await compute();
     if (persisted) {
       // The refresher persisted under the key IT resolved; if an input moved in between, that is a
       // different cell, so this one's claim is released here rather than left to expire.
+      if (factsFp) await stampFingerprint(view, scopeKey, factsFp, startedAt);
       await releaseRefresh(view, scopeKey);
       return;
     }
-    await upsertSnapshot(view, scopeKey, orgId, body);
+    await upsertSnapshot(view, scopeKey, orgId, body, meta, factsFp);
   } catch (err) {
     // Keep serving the stale body; release the claim so a later read can retry.
     console.error(`[features-service] view-cache revalidate failed (serving stale) view=${view}: ${(err as Error).message}`);
@@ -427,17 +536,96 @@ async function releaseRefresh(view: string, scopeKey: string): Promise<void> {
     .where(and(eq(featureViewSnapshots.view, view), eq(featureViewSnapshots.scopeKey, scopeKey)));
 }
 
-async function upsertSnapshot(view: string, scopeKey: string, orgId: string, rawBody: unknown): Promise<void> {
+/** The brand's facts fingerprint for a cell's request, or null when it names no brand / is unreadable. */
+async function currentFingerprint(meta: CellMeta | null): Promise<string | null> {
+  if (!meta?.brandId) return null;
+  return factsFingerprint({
+    orgId: meta.orgId,
+    brandId: meta.brandId,
+    userId: meta.replayHeaders["x-user-id"],
+    runId: meta.replayHeaders["x-run-id"],
+  });
+}
+
+/** Record the fingerprint a refresher-persisted body was computed under (only if nothing older overwrote it). */
+async function stampFingerprint(view: string, scopeKey: string, factsFp: string, startedAt: Date): Promise<void> {
+  try {
+    await db
+      .update(featureViewSnapshots)
+      .set({ factsFingerprint: factsFp })
+      .where(
+        and(
+          eq(featureViewSnapshots.view, view),
+          eq(featureViewSnapshots.scopeKey, scopeKey),
+          gte(featureViewSnapshots.computedAt, startedAt),
+        ),
+      );
+  } catch (err) {
+    // A cell left without its fingerprint is simply never gated — the old behaviour, never a figure.
+    console.error(`[features-service] view-cache fingerprint stamp failed view=${view}: ${(err as Error).message}`);
+  }
+}
+
+async function upsertSnapshot(
+  view: string,
+  scopeKey: string,
+  orgId: string,
+  rawBody: unknown,
+  meta: CellMeta | null = null,
+  factsFp: string | null = null,
+): Promise<void> {
   const body = encodeSnapshotBody(rawBody);
   const familyKey = familyKeyOf(scopeKey);
+  const computedAt = new Date();
+  // A compute always states the fingerprint it ran under (null = unknown, which gates nothing); the
+  // replay is only ever ADDED, never cleared, so a boot warm (no request) keeps what a read recorded.
+  const replay = meta
+    ? { replayUrl: meta.replayUrl, replayHeaders: meta.replayHeaders, brandId: meta.brandId }
+    : {};
   await db
     .insert(featureViewSnapshots)
-    .values({ view, scopeKey, familyKey, orgId, body, computedAt: new Date(), refreshingAt: null })
+    .values({ view, scopeKey, familyKey, orgId, body, computedAt, refreshingAt: null, factsFingerprint: factsFp, ...replay })
     .onConflictDoUpdate({
       target: [featureViewSnapshots.view, featureViewSnapshots.scopeKey],
-      set: { body, familyKey, orgId, computedAt: new Date(), refreshingAt: null },
+      set: { body, familyKey, orgId, computedAt, refreshingAt: null, factsFingerprint: factsFp, ...replay },
     });
   void maybePruneStaleSnapshots();
+}
+
+/**
+ * Record a CUSTOMER read of a cell — when, and the request that made it (the keeper's template). At most
+ * once a minute per cell per process: this runs on the serving path, fire-and-forget, and a poll every
+ * few seconds must not turn into a write every few seconds.
+ */
+const READ_TOUCH_MIN_INTERVAL_MS = 60_000;
+const lastTouched = new Map<string, number>();
+
+function touchRead(view: string, scopeKey: string, meta: CellMeta): void {
+  const key = `${view}\0${scopeKey}`;
+  const now = Date.now();
+  const last = lastTouched.get(key);
+  if (last !== undefined && now - last < READ_TOUCH_MIN_INTERVAL_MS) return;
+  lastTouched.set(key, now);
+  if (lastTouched.size > 5_000) {
+    for (const [k, at] of lastTouched) if (now - at > READ_TOUCH_MIN_INTERVAL_MS) lastTouched.delete(k);
+  }
+  void (async () => {
+    try {
+      await db
+        .update(featureViewSnapshots)
+        .set({ lastReadAt: new Date(now), replayUrl: meta.replayUrl, replayHeaders: meta.replayHeaders, brandId: meta.brandId })
+        .where(and(eq(featureViewSnapshots.view, view), eq(featureViewSnapshots.scopeKey, scopeKey)));
+    } catch (err) {
+      // Bookkeeping on a derived table: a failure costs the keeper a template and retention one read,
+      // never a figure — logged, not propagated onto a request whose body is already served.
+      console.error(`[features-service] view-cache read touch failed view=${view}: ${(err as Error).message}`);
+    }
+  })();
+}
+
+/** Test seam. */
+export function __resetReadTouches(): void {
+  lastTouched.clear();
 }
 
 /**
@@ -457,7 +645,10 @@ async function maybePruneStaleSnapshots(): Promise<void> {
   try {
     const deleted = await db
       .delete(featureViewSnapshots)
-      .where(lt(featureViewSnapshots.computedAt, new Date(now - viewCacheRetentionMs())))
+      // "Unread for the retention window" is the last CUSTOMER read when there is one: with the facts
+      // gate a cell a customer reads every day may go unrecomputed for a while, and a precomputed cell
+      // nobody ever opened ages out on its compute time.
+      .where(sql`coalesce(${featureViewSnapshots.lastReadAt}, ${featureViewSnapshots.computedAt}) < ${new Date(now - viewCacheRetentionMs())}`)
       .returning({ id: featureViewSnapshots.id });
     if (deleted.length > 0) {
       console.log(`[features-service] view-cache pruned ${deleted.length} snapshot(s) unread for over the retention window`);

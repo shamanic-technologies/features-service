@@ -17,7 +17,9 @@ import brandEconomicsRoutes from "./routes/brand-economics.js";
 import conversionRatesRoutes from "./routes/conversion-rates.js";
 import audienceStatsRoutes from "./routes/audience-stats.js";
 import publicRoutes, { warmFleetReturnSnapshotsOnBoot, warmShowcaseFunnelsOnBoot } from "./routes/public.js";
+import viewCacheAdminRoutes from "./routes/view-cache-admin.js";
 import { registerSeedFeatures } from "./seed/register.js";
+import { startViewKeeper } from "./lib/view-keeper.js";
 import {
   announceViewRefresherReady,
   captureRequestReplay,
@@ -60,6 +62,7 @@ app.use(offerEconomicsRoutes);
 app.use(offerOutcomesRoutes);
 app.use(brandEconomicsRoutes);
 app.use(conversionRatesRoutes);
+app.use(viewCacheAdminRoutes);
 
 // 404 handler
 app.use((req, res) => {
@@ -92,6 +95,9 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
         console.log(`Features service running on port ${PORT}`);
         // Fork the view refresher after the port binds: its boot must never hold up the health check.
         startViewRefresher(process.argv[1]);
+        // Precompute the sibling scopes of every brand a customer reads (lib/view-keeper.ts). Timers are
+        // unref'd and the first round waits a minute, so nothing here sits between boot and the port.
+        startViewKeeper();
         // AFTER listen(), fire-and-forget: this is an O(brands) engine fan-out that takes MINUTES, so
         // awaiting it before the port bind would fail the deploy health check and roll the service back.
         warmFleetReturnSnapshotsOnBoot();
