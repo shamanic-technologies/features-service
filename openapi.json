@@ -193,11 +193,6 @@
                 "type": "string",
                 "description": "Stable identity key. Opaque — compare it, do not parse it."
               },
-              "funnelKey": {
-                "type": "string",
-                "nullable": true,
-                "description": "The sales funnel the campaign states, or null when it states none."
-              },
               "acquisitionChannel": {
                 "type": "string",
                 "nullable": true,
@@ -224,7 +219,6 @@
             },
             "required": [
               "key",
-              "funnelKey",
               "acquisitionChannel",
               "campaignIds",
               "liveCampaignIds",
@@ -367,11 +361,6 @@
                       "type": "string",
                       "description": "Stable identity key. Opaque — compare it, do not parse it."
                     },
-                    "funnelKey": {
-                      "type": "string",
-                      "nullable": true,
-                      "description": "The sales funnel the campaign states, or null when it states none."
-                    },
                     "acquisitionChannel": {
                       "type": "string",
                       "nullable": true,
@@ -398,7 +387,6 @@
                   },
                   "required": [
                     "key",
-                    "funnelKey",
                     "acquisitionChannel",
                     "campaignIds",
                     "liveCampaignIds",
@@ -553,11 +541,6 @@
                       "type": "string",
                       "description": "Stable identity key. Opaque — compare it, do not parse it."
                     },
-                    "funnelKey": {
-                      "type": "string",
-                      "nullable": true,
-                      "description": "The sales funnel the campaign states, or null when it states none."
-                    },
                     "acquisitionChannel": {
                       "type": "string",
                       "nullable": true,
@@ -584,7 +567,6 @@
                   },
                   "required": [
                     "key",
-                    "funnelKey",
                     "acquisitionChannel",
                     "campaignIds",
                     "liveCampaignIds",
@@ -870,11 +852,6 @@
                 "type": "string",
                 "description": "Stable identity key. Opaque — compare it, do not parse it."
               },
-              "funnelKey": {
-                "type": "string",
-                "nullable": true,
-                "description": "The sales funnel the campaign states, or null when it states none."
-              },
               "acquisitionChannel": {
                 "type": "string",
                 "nullable": true,
@@ -901,7 +878,6 @@
             },
             "required": [
               "key",
-              "funnelKey",
               "acquisitionChannel",
               "campaignIds",
               "liveCampaignIds",
@@ -2990,11 +2966,6 @@
                       "type": "string",
                       "description": "Stable identity key. Opaque — compare it, do not parse it."
                     },
-                    "funnelKey": {
-                      "type": "string",
-                      "nullable": true,
-                      "description": "The sales funnel the campaign states, or null when it states none."
-                    },
                     "acquisitionChannel": {
                       "type": "string",
                       "nullable": true,
@@ -3021,7 +2992,6 @@
                   },
                   "required": [
                     "key",
-                    "funnelKey",
                     "acquisitionChannel",
                     "campaignIds",
                     "liveCampaignIds",
@@ -3303,11 +3273,6 @@
                 "type": "string",
                 "description": "Stable identity key. Opaque — compare it, do not parse it."
               },
-              "funnelKey": {
-                "type": "string",
-                "nullable": true,
-                "description": "The sales funnel the campaign states, or null when it states none."
-              },
               "acquisitionChannel": {
                 "type": "string",
                 "nullable": true,
@@ -3334,7 +3299,6 @@
             },
             "required": [
               "key",
-              "funnelKey",
               "acquisitionChannel",
               "campaignIds",
               "liveCampaignIds",
@@ -5650,11 +5614,6 @@
                 "type": "string",
                 "description": "Stable identity key. Opaque — compare it, do not parse it."
               },
-              "funnelKey": {
-                "type": "string",
-                "nullable": true,
-                "description": "The sales funnel the campaign states, or null when it states none."
-              },
               "acquisitionChannel": {
                 "type": "string",
                 "nullable": true,
@@ -5681,7 +5640,6 @@
             },
             "required": [
               "key",
-              "funnelKey",
               "acquisitionChannel",
               "campaignIds",
               "liveCampaignIds",
@@ -5718,11 +5676,6 @@
                 "type": "string",
                 "description": "Stable identity key. Opaque — compare it, do not parse it."
               },
-              "funnelKey": {
-                "type": "string",
-                "nullable": true,
-                "description": "The sales funnel the campaign states, or null when it states none."
-              },
               "acquisitionChannel": {
                 "type": "string",
                 "nullable": true,
@@ -5749,7 +5702,6 @@
             },
             "required": [
               "key",
-              "funnelKey",
               "acquisitionChannel",
               "campaignIds",
               "liveCampaignIds",
@@ -8126,10 +8078,9 @@
                       "legSource": {
                         "type": "string",
                         "enum": [
-                          "stated",
-                          "derived_from_funnel"
+                          "stated"
                         ],
-                        "description": "`derived_from_funnel`: a pre-leg campaign placed on the ONE leg its channel performs inside the funnel it states."
+                        "description": "Always `stated`: a campaign stating no leg is in `unattributedCampaignIds`."
                       },
                       "countBasis": {
                         "type": "string",
@@ -8720,11 +8671,6 @@
                 "type": "string",
                 "description": "Stable identity key. Opaque — compare it, do not parse it."
               },
-              "funnelKey": {
-                "type": "string",
-                "nullable": true,
-                "description": "The sales funnel the campaign states, or null when it states none."
-              },
               "acquisitionChannel": {
                 "type": "string",
                 "nullable": true,
@@ -8751,7 +8697,6 @@
             },
             "required": [
               "key",
-              "funnelKey",
               "acquisitionChannel",
               "campaignIds",
               "liveCampaignIds",
@@ -9063,11 +9008,6 @@
                 "type": "string",
                 "description": "Stable identity key. Opaque — compare it, do not parse it."
               },
-              "funnelKey": {
-                "type": "string",
-                "nullable": true,
-                "description": "The sales funnel the campaign states, or null when it states none."
-              },
               "acquisitionChannel": {
                 "type": "string",
                 "nullable": true,
@@ -9094,7 +9034,6 @@
             },
             "required": [
               "key",
-              "funnelKey",
               "acquisitionChannel",
               "campaignIds",
               "liveCampaignIds",
@@ -12213,11 +12152,6 @@
                 "type": "string",
                 "description": "Stable identity key. Opaque — compare it, do not parse it."
               },
-              "funnelKey": {
-                "type": "string",
-                "nullable": true,
-                "description": "The sales funnel the campaign states, or null when it states none."
-              },
               "acquisitionChannel": {
                 "type": "string",
                 "nullable": true,
@@ -12244,7 +12178,6 @@
             },
             "required": [
               "key",
-              "funnelKey",
               "acquisitionChannel",
               "campaignIds",
               "liveCampaignIds",
@@ -16573,11 +16506,6 @@
                                 "type": "string",
                                 "description": "Stable identity key. Opaque — compare it, do not parse it."
                               },
-                              "funnelKey": {
-                                "type": "string",
-                                "nullable": true,
-                                "description": "The sales funnel the campaign states, or null when it states none."
-                              },
                               "acquisitionChannel": {
                                 "type": "string",
                                 "nullable": true,
@@ -16604,7 +16532,6 @@
                             },
                             "required": [
                               "key",
-                              "funnelKey",
                               "acquisitionChannel",
                               "campaignIds",
                               "liveCampaignIds",
@@ -19410,11 +19337,6 @@
                           "type": "string",
                           "description": "Stable identity key. Opaque — compare it, do not parse it."
                         },
-                        "funnelKey": {
-                          "type": "string",
-                          "nullable": true,
-                          "description": "The sales funnel the campaign states, or null when it states none."
-                        },
                         "acquisitionChannel": {
                           "type": "string",
                           "nullable": true,
@@ -19441,7 +19363,6 @@
                       },
                       "required": [
                         "key",
-                        "funnelKey",
                         "acquisitionChannel",
                         "campaignIds",
                         "liveCampaignIds",
@@ -21212,11 +21133,6 @@
                                 "type": "string",
                                 "description": "Stable identity key. Opaque — compare it, do not parse it."
                               },
-                              "funnelKey": {
-                                "type": "string",
-                                "nullable": true,
-                                "description": "The sales funnel the campaign states, or null when it states none."
-                              },
                               "acquisitionChannel": {
                                 "type": "string",
                                 "nullable": true,
@@ -21243,7 +21159,6 @@
                             },
                             "required": [
                               "key",
-                              "funnelKey",
                               "acquisitionChannel",
                               "campaignIds",
                               "liveCampaignIds",

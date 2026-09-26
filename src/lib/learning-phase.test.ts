@@ -45,7 +45,6 @@ function campaign(over: Partial<LearningCampaignInput> = {}): LearningCampaignIn
     campaignIds: ["c-live"],
     campaignIdentityKey: "org-1|b1|sales_meetings_from_conversation|cold_email",
     legKey: CONVERSATION_LEG,
-    funnelKey: FUNNEL,
     live: true,
     observed: { clicks: 0, replies: 4 },
     ...over,
@@ -215,12 +214,12 @@ describe("a campaign is measured on its OWN leg's step", () => {
     // The ENTRY leg of the form funnel is observable whatever the brand declared — rate 1, its count
     // is the driver itself — so it is the DEEPER leg alone that goes unpriceable.
     const entry = build({
-      campaigns: [campaign({ legKey: "start_to_website_visit", funnelKey: "form_magnet", observed: { clicks: 4, replies: 0 } })],
+      campaigns: [campaign({ legKey: "start_to_website_visit", observed: { clicks: 4, replies: 0 } })],
       leadingCells: [{ spentUsd: 310.73, clicks: 4, replies: 0 }],
       economics: { ...ECONOMICS, visitToFormSubmissionPct: undefined },
     });
     const deeper = build({
-      campaigns: [campaign({ legKey: "website_visit_to_form_submitted", funnelKey: "form_magnet", observed: { clicks: 4, replies: 0 } })],
+      campaigns: [campaign({ legKey: "website_visit_to_form_submitted", observed: { clicks: 4, replies: 0 } })],
       leadingCells: [{ spentUsd: 310.73, clicks: 4, replies: 0 }],
       economics: { ...ECONOMICS, visitToFormSubmissionPct: undefined },
     });

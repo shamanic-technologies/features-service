@@ -262,10 +262,10 @@ describe("a funnel is priced on the rates IT declares, not on a route it does no
     expect(byId.lf.tags).toContain("formSubmitted");
   });
 
-  it("a rate the brand never stated stays ABSENT — the rung prices at nothing, never at 0%-as-a-number and never a substitute", async () => {
-    // No arrows, no named rates, nothing measured: the visit leg is read through the funnel its campaign
-    // states (Form Magnet, the C1 compatibility tie-break), and that funnel has no rate to price from —
-    // so it prices at nothing rather than borrowing the meeting route. Byte-equal to the pre-C1 answer.
+  it("with nothing stated past the entry leg, no retired campaign funnel narrows the read — every candidate path is read (wave C3)", async () => {
+    // No arrows, no named rates, nothing measured: the visit leg has nothing to choose its onward path
+    // on. The campaign row's stated funnel used to break that tie (C1 compatibility); it is retired and
+    // never read, so every path from the visit is read and the engine's max decides — never a guess.
     mockFetch({
       economics: ECONOMICS,
       leads: visitors(VISIT_COUNT),
@@ -273,8 +273,7 @@ describe("a funnel is priced on the rates IT declares, not on a route it does no
     });
     const res = await read();
     expect(res.status).toBe(200);
-    expect(res.body.headline.totalPipelineUsd).toBe(0);
-    expect(res.body.headline.totalPipelineUsd).not.toBeCloseTo(VISIT_COUNT * BRAND_WIDE_VISIT_USD, 2);
+    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(VISIT_COUNT * BRAND_WIDE_VISIT_USD, 2);
   });
 
   it("a leg whose LAST arrow is unstated is unpriceable — half a chain is not a rate", async () => {

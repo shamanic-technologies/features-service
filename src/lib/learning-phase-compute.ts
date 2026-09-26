@@ -178,7 +178,6 @@ export async function computeLearningPhase(scope: LearningPhaseScope): Promise<L
       // The leg the CAMPAIGN states. A family's members share their identity, not necessarily their
       // leg, so the representative — the live member when there is one — is the one that answers.
       legKey: representative.legKey ?? memberIds.map((id) => byId.get(id)?.legKey).find((l) => l) ?? null,
-      funnelKey: representative.funnelKey ?? family?.funnelKey ?? null,
       live: (family?.liveCampaignIds.length ?? 0) > 0 || representative.status === "ongoing",
       observed: { clicks, replies },
     });

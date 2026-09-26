@@ -292,11 +292,12 @@ function mockFetch(fixture: Fixture): void {
             status: "ongoing", createdAt: "2026-07-01T00:00:00.000Z",
           },
           {
-            // The brand's OTHER campaign — its own funnel, so its own identity. A campaign-scoped
+            // The brand's OTHER campaign — its own channel, so its own identity. A campaign-scoped
             // read must never see it, and a brand-scoped read must.
             id: "c-second", orgId: "org-1", brandId: "b1", brandIds: ["b1"], featureSlug: SALES,
-            funnelKey: "website_purchases", acquisitionChannel: "linkedin",
-            legKey: fixture.legKey === undefined ? VISIT_LEG : fixture.legKey,
+            acquisitionChannel: "linkedin",
+            // Always states its leg: the brand-level pick a leg-less campaign falls back to reads it.
+            legKey: VISIT_LEG,
             status: "ongoing", createdAt: "2026-09-10T00:00:00.000Z",
           },
         ],
@@ -534,6 +535,8 @@ describe("what share of this campaign's outreach converts, day by day", () => {
         o && { ...o, ratioBasis: { ...o.ratioBasis, maturityDays: "by leg" } };
       return {
         ...rest,
+        // The identity key carries the leg (campaign-service's own index), so it names the leg too.
+        campaignIdentity: { ...rest.campaignIdentity, key: "by leg" },
         costEconomics: { ...rest.costEconomics, maturityDays: "by leg" },
         outcomes: byLeg(rest.outcomes),
         spend: byLeg(rest.spend),

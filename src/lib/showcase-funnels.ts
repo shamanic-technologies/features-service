@@ -84,8 +84,7 @@
  * funnel nobody asked about. So the answer is one chain PER funnel the brand's own campaigns state,
  * in catalogue order. Every showcase brand sells exactly one today.
  */
-import { matchSalesFunnelKey, salesFunnelIndex, type SalesFunnelKey } from "./sales-funnels.js";
-import type { CampaignIdentityRow } from "./campaign-identity.js";
+import { salesFunnelIndex, type SalesFunnelKey } from "./sales-funnels.js";
 import type { FunnelStepBreakdown } from "./funnel-steps.js";
 import type { CostEconomics } from "./cost-economics.js";
 import type { ShowcaseGroupUnmeasuredReason } from "./showcase-clients.js";
@@ -211,19 +210,11 @@ export interface ShowcaseFunnelsPayload {
 }
 
 /**
- * PURE: the SALES FUNNELS a brand's own campaigns state they sell, in catalogue order, deduped.
- *
- * A campaign stating no funnel (or a word this catalogue does not know) contributes NOTHING — it is
- * never parked on a default, which would print a funnel the campaign never stated.
+ * PURE: the paths a brand sells through — the reading paths of the legs its campaigns perform, every
+ * offer — deduped, in catalogue order. A brand whose campaigns perform no leg reads none.
  */
-export function brandSoldFunnels(rows: CampaignIdentityRow[]): SalesFunnelKey[] {
-  const keys = new Set<SalesFunnelKey>();
-  for (const row of rows) {
-    if (!row.funnelKey) continue;
-    const matched = matchSalesFunnelKey(row.funnelKey);
-    if (matched) keys.add(matched);
-  }
-  return [...keys].sort((a, b) => salesFunnelIndex(a) - salesFunnelIndex(b));
+export function brandReadingFunnels(reading: ReadonlyArray<{ funnelKey: SalesFunnelKey }>): SalesFunnelKey[] {
+  return [...new Set(reading.map((f) => f.funnelKey))].sort((a, b) => salesFunnelIndex(a) - salesFunnelIndex(b));
 }
 
 /**
