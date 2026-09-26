@@ -85,11 +85,14 @@ const ECONOMICS = {
   formSubmissionToPaidClientPct: 10,
 };
 
-const declaredFunnel = (funnelKey: string, steps: string[]) => ({
+// A funnel states the rates of ITS OWN arrows — a website funnel stating a visit → meeting rate would be
+// read as selling meetings too (wave C1 reads a scope's funnels off the legs its brand states).
+const MEETING_RATES = { replyToMeetingPct: 40, visitToMeetingPct: 20, meetingBookedToAttendedPct: 50, meetingToClosePct: 60 };
+const declaredFunnel = (funnelKey: string, steps: string[], rates: Record<string, number> = MEETING_RATES) => ({
   funnelKey,
   name: funnelKey,
   steps,
-  rates: { replyToMeetingPct: 40, visitToMeetingPct: 20, meetingBookedToAttendedPct: 50, meetingToClosePct: 60 },
+  rates,
   lifetimeRevenueUsd: 1000,
   destinationUrl: null,
   bookingUrl: null,
@@ -99,8 +102,11 @@ const declaredFunnel = (funnelKey: string, steps: string[]) => ({
 const ALL_DECLARED = [
   declaredFunnel(CONVERSATION, ["Positive reply", "Meeting booked", "Meeting attended", "Paid client"]),
   declaredFunnel(WEBSITE, ["Website visit", "Meeting booked", "Meeting attended", "Paid client"]),
-  declaredFunnel(PURCHASES, ["Website visit", "Signup", "Paid client"]),
-  declaredFunnel(FORM, ["Website visit", "Form submitted", "Paid client"]),
+  declaredFunnel(PURCHASES, ["Website visit", "Signup", "Paid client"], { visitToSignupPct: 10, signupToPaidClientPct: 10 }),
+  declaredFunnel(FORM, ["Website visit", "Form submitted", "Paid client"], {
+    visitToFormSubmissionPct: 10,
+    formSubmissionToPaidClientPct: 10,
+  }),
 ];
 
 const emailOf = (leadId: string) => `${leadId}@x.com`;
@@ -146,7 +152,23 @@ interface Fixture {
   declared?: typeof ALL_DECLARED | null;
 }
 
+/** The entry leg a campaign selling each funnel performs (wave C1: a campaign is priced on its LEG). */
+const ENTRY_LEG: Record<string, string> = {
+  [CONVERSATION]: "start_to_conversation",
+  [WEBSITE]: "start_to_website_visit",
+  [PURCHASES]: "start_to_website_visit",
+  [FORM]: "start_to_website_visit",
+};
+
+/** The fixture the last `mockFetch` installed — `funnelRevenue` narrows it to one funnel. */
+let current: Fixture;
+
 function mockFetch(fixture: Fixture): void {
+  current = fixture;
+  installFetch(fixture);
+}
+
+function installFetch(fixture: Fixture): void {
   const inScope = (cid: string, q: URLSearchParams): boolean => {
     const row = fixture.campaigns[cid];
     if (!row) return false;
@@ -176,6 +198,7 @@ function mockFetch(fixture: Fixture): void {
             brandId: BRAND,
             featureSlug: row.featureSlug,
             funnelKey: row.funnelKey,
+            legKey: row.funnelKey ? (ENTRY_LEG[row.funnelKey] ?? null) : null,
             acquisitionChannel: row.featureSlug,
             offerId: row.offerId,
             status: "ongoing",
@@ -341,10 +364,22 @@ const CONVERSATION_FIXTURE: Fixture = {
   stated: { meeting_booked: ["l1", "l2"], meeting_attended: ["l1", "l2"], sale: ["l1"] },
 };
 
-const funnelRevenue = (funnelKey: string, query = "") =>
-  request(app)
-    .get(`/offers/${OFFER}/funnels/${funnelKey}/revenue?brandId=${BRAND}${query}`)
-    .set(AUTH);
+/**
+ * ONE funnel's read, now that the funnel-keyed route is retired (wave C2): the brand-wide revenue read
+ * over ONLY the campaigns (and leads, and spend) selling that funnel, with the brand stating ONLY that
+ * funnel's legs — so the scope reads through exactly one funnel and the chain is that funnel's.
+ */
+const funnelRevenue = (funnelKey: string, query = "") => {
+  const ids = new Set(Object.entries(current.campaigns).filter(([, r]) => r.funnelKey === funnelKey).map(([id]) => id));
+  installFetch({
+    ...current,
+    campaigns: Object.fromEntries(Object.entries(current.campaigns).filter(([id]) => ids.has(id))),
+    costByCampaign: Object.fromEntries(Object.entries(current.costByCampaign).filter(([id]) => ids.has(id))),
+    leads: current.leads.filter((l) => ids.has(l.campaignId as string)),
+    declared: current.declared === undefined ? ALL_DECLARED.filter((f) => f.funnelKey === funnelKey) : current.declared,
+  });
+  return request(app).get(`/features/${PITCH}/revenue?brandId=${BRAND}${query}`).set(AUTH);
+};
 
 describe("a funnel read step by step", () => {
   beforeEach(() => {
@@ -516,27 +551,6 @@ describe("a funnel read step by step", () => {
     expect(purchases.steps[1].recipientsReached).toBeNull();
   });
 
-  it("walks the chain of a funnel it cannot PRICE — volume is measurable when money is not", async () => {
-    mockFetch({ ...CONVERSATION_FIXTURE, declared: null });
-    const res = await funnelRevenue(CONVERSATION);
-    expect(res.status).toBe(200);
-    expect(res.body.priced).toBe(false);
-    expect(res.body.unpricedReason).toBe("no_economics_declared");
-    const band = res.body.funnelSteps as Breakdown;
-    expect(band.funnelKey).toBe(CONVERSATION);
-    expect(band.contactedRecipients).toBe(4);
-    expect(band.steps.map((s) => s.step)).toEqual([
-      "Positive reply",
-      "Meeting booked",
-      "Meeting attended",
-      "Paid client",
-    ]);
-    // The engagement rungs are real; the statement-backed rungs were never read on this path, so they
-    // say "we could not measure this" rather than 0.
-    expect(band.steps[0].recipientsReached).toBe(3);
-    expect(band.steps.slice(1).every((s) => s.recipientsReached === null)).toBe(true);
-  });
-
   it("states no chain when there is no ONE funnel to walk", async () => {
     mockFetch({
       campaigns: {
@@ -552,11 +566,12 @@ describe("a funnel read step by step", () => {
     expect(brand.status).toBe(200);
     expect(brand.body.funnelSteps).toBeNull();
 
-    // Naming one gives the chain back.
+    // A caller can no longer NAME one to get a chain back: the parameter is retired, and refused.
     const named = await request(app)
       .get(`/features/${PITCH}/revenue?brandId=${BRAND}&funnel=${CONVERSATION}`)
       .set(AUTH);
-    expect((named.body.funnelSteps as Breakdown).funnelKey).toBe(CONVERSATION);
+    expect(named.status).toBe(400);
+    expect(named.body.reason).toBe("funnel_retired");
 
     // A lens is a SUBSET of the brand's leads beside the brand's whole spend — the same gate as spend.
     const lensed = await request(app)
@@ -575,19 +590,6 @@ describe("a funnel read step by step", () => {
     expect(res.body.outcomes.recipientsContacted).toBe(4);
     expect(res.body.spend.totalSpentCents).toBe(12000);
     expect(Array.isArray(res.body.leads)).toBe(true);
-    expect(res.body.steps).toEqual([
-      "Positive reply",
-      "Meeting booked",
-      "Meeting attended",
-      "Paid client",
-    ]);
-
-    // The offer's own table row is byte-unchanged: it is LEAN, and a chain is a page's shape.
-    const table = await request(app).get(`/offers/${OFFER}/funnels?brandId=${BRAND}`).set(AUTH);
-    expect(table.status).toBe(200);
-    const row = (table.body.funnels as Array<Record<string, unknown>>).find((f) => f.funnelKey === CONVERSATION)!;
-    expect(row).not.toHaveProperty("funnelSteps");
-    expect(row.headline).toEqual(res.body.headline);
   });
 });
 
@@ -682,11 +684,6 @@ describe("what the customer states each rung of a funnel cost them", () => {
     expect(withCosts.costEconomics).toEqual(without.costEconomics);
     expect((withCosts.funnelSteps as Breakdown).committedSpentCents).toBe(12000);
 
-    // The funnel-WIDE answer a consumer already reads is exactly the sum of the same statements —
-    // unchanged in shape, and never replaced by the per-rung one.
-    expect(withCosts.customerCost).toEqual({ declaredCostUsd: 100, statedCount: 3, unstatedCount: 2 });
-    expect(withCosts.costCoverage).toBe("platform_and_partial_customer_spend");
-    expect(without.customerCost).toEqual({ declaredCostUsd: 0, statedCount: 0, unstatedCount: 0 });
   });
 
   it("tells a stated ZERO apart from a rung nobody was ever asked about", async () => {
@@ -720,7 +717,6 @@ describe("what the customer states each rung of a funnel cost them", () => {
     const band = res.body.funnelSteps as Breakdown;
     expect(band.steps.every((s) => s.customerCost === null)).toBe(true);
     expect(band.steps[1].recipientsReached).toBe(2);
-    expect(res.body.customerCost).toBeNull();
   });
 
   it("scopes a rung's statements by the SAME campaigns its committed cents are scoped by", async () => {
@@ -748,7 +744,7 @@ describe("what the customer states each rung of a funnel cost them", () => {
     // statement naming no campaign cannot be placed inside a narrowed scope, so it is left out rather
     // than parked on a rung nobody attributed it to.
     const narrowed = await request(app)
-      .get(`/features/${PITCH}/revenue?brandId=${BRAND}&funnel=${CONVERSATION}&campaignId=c1`)
+      .get(`/features/${PITCH}/revenue?brandId=${BRAND}&campaignId=c1`)
       .set(AUTH);
     expect((narrowed.body.funnelSteps as Breakdown).steps[1].customerCost).toMatchObject({
       costCents: 10000,
@@ -758,9 +754,9 @@ describe("what the customer states each rung of a funnel cost them", () => {
 
     // The brand-wide read's spend leg is the brand's WHOLE spend, so its counterpart is every
     // statement the brand has made — the unplaceable one included.
-    const brand = await request(app)
-      .get(`/features/${PITCH}/revenue?brandId=${BRAND}&funnel=${CONVERSATION}`)
-      .set(AUTH);
+    // Read over the conversation funnel's campaigns alone (so the brand reads through ONE funnel), with
+    // every statement the brand has made still in play.
+    const brand = await funnelRevenue(CONVERSATION);
     expect((brand.body.funnelSteps as Breakdown).steps[1].customerCost).toMatchObject({
       costCents: 22221,
       statedCount: 4,

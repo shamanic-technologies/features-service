@@ -186,46 +186,8 @@ describe("workflow-projection: a LEG is answerable with no sales funnel named", 
     // 1000 / 5 — the return the pick was made on, stated so nobody has to re-derive it.
     expect(res.body.leg.returnPerDollar).toBeCloseTo(200, 6);
 
-    const other = await get("funnel=sales_meetings_from_website");
     const chosen = res.body.rows.find((r: any) => r.audienceId === null).resolved.costPerOutcomeUsd;
-    const rejected = other.body.rows.find((r: any) => r.audienceId === null).resolved.costPerOutcomeUsd;
     expect(chosen).toBeCloseTo(2, 6);
-    expect(rejected).toBeCloseTo(20, 6);
-  });
-
-  it("asking for the leg and asking for its basis funnel do not contradict each other", async () => {
-    mockFetch();
-    const byLeg = await get("leg=meeting_booked_to_meeting_attended");
-    const byFunnel = await get("funnel=sales_meetings_from_conversation");
-
-    const { leg, ...withoutLeg } = byLeg.body;
-    expect(leg.basisFunnelKey).toBe("sales_meetings_from_conversation");
-    // Identical apart from what ONLY a leg-keyed answer carries: the leg block that states which
-    // funnel answered, the two ranks (`rank` per workflow, `scopeRank` per column), the model-tier
-    // verdict (whose rule is keyed on the leg's own step), and the per-grain statement of that step.
-    // Every figure a funnel-keyed request has ever served is unmoved — including, on this leg, the
-    // cost per outcome, because the leg's step and this funnel's priced step happen to coincide.
-    const stripLegOnly = (body: any) => ({
-      ...body,
-      rows: body.rows.map(({ rank, scopeRank, modelEligibility, ...row }: any) => ({
-        ...row,
-        estimatesByGrain: Object.fromEntries(
-          Object.entries(row.estimatesByGrain).map(([g, block]: [string, any]) => {
-            const { legOutcome, ...rest } = block;
-            return [g, rest];
-          }),
-        ),
-      })),
-    });
-    expect(stripLegOnly(withoutLeg)).toEqual(stripLegOnly(byFunnel.body));
-    // …and the rank IS on the leg-keyed body, where the funnel-keyed one carries none.
-    expect(byLeg.body.rows.every((r: any) => typeof r.rank === "number")).toBe(true);
-    expect(byLeg.body.rows.every((r: any) => typeof r.scopeRank === "number")).toBe(true);
-    expect(byFunnel.body.rows.every((r: any) => r.rank === undefined)).toBe(true);
-    expect(byFunnel.body.rows.every((r: any) => r.scopeRank === undefined)).toBe(true);
-    // …and so is the model-tier verdict, whose rule is keyed on the leg's own step.
-    expect(byLeg.body.rows.every((r: any) => r.modelEligibility !== undefined)).toBe(true);
-    expect(byFunnel.body.rows.every((r: any) => r.modelEligibility === undefined)).toBe(true);
   });
 
   it("a leg only ONE declared funnel contains says so, rather than claiming a comparison it never made", async () => {
@@ -279,24 +241,21 @@ describe("workflow-projection: a LEG is answerable with no sales funnel named", 
     expect(tolerated.body.leg.legKey).toBe("meeting_booked_to_meeting_attended");
   });
 
-  it("naming BOTH a funnel and a leg is a 400 — two questions at once, either answer contradicting the other parameter", async () => {
+  it("naming a funnel is a 400 funnel_retired — beside a leg or alone, the parameter is retired", async () => {
     mockFetch();
-    const res = await get("leg=meeting_booked_to_meeting_attended&funnel=sales_meetings_from_conversation");
-    expect(res.status).toBe(400);
-    expect(res.body.reason).toBe("leg_and_funnel");
+    for (const query of ["leg=meeting_booked_to_meeting_attended&funnel=sales_meetings_from_conversation", "funnel=sales_meetings_from_conversation"]) {
+      const res = await get(query);
+      expect(res.status).toBe(400);
+      expect(res.body.reason).toBe("funnel_retired");
+    }
   });
 
-  it("every existing request answers exactly what it answered before — no leg, no funnel, no declared read", async () => {
+  it("a goal-keyed request answers exactly what it answered before — no leg, no funnel", async () => {
     mockFetch();
     const goal = await get("goal=meetingBooked");
     expect(goal.status).toBe(200);
     expect(goal.body.leg).toBeUndefined();
     expect(goal.body.funnelKey).toBeUndefined();
     expect(goal.body.goal).toBe("meetingBooked");
-
-    const funnel = await get("funnel=sales_meetings_from_conversation");
-    expect(funnel.status).toBe(200);
-    expect(funnel.body.leg).toBeUndefined();
-    expect(funnel.body.funnelKey).toBe("sales_meetings_from_conversation");
   });
 });

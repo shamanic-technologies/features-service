@@ -482,3 +482,24 @@ describe("GET /offers/:offerId/pipeline-activity — per-day activity across cha
     expect(seen.filter((u: string) => u.includes("/sales-funnels"))).toEqual([]);
   });
 });
+
+describe("`?funnel=` is retired on the offer grain (wave C2)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(db.query.features.findFirst).mockImplementation((async () => FEATURE_ROW(PITCH)) as never);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("refuses it on /revenue and /audience-stats with funnel_retired, before any downstream read", async () => {
+    mockFetch(TWO_CHANNELS);
+    for (const path of ["revenue", "audience-stats"]) {
+      const res = await request(app).get(`/offers/${OFFER}/${path}?brandId=b1&funnel=sales_meetings_from_conversation`).set(AUTH);
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({
+        error: "the funnel parameter is retired; name a leg (?leg=) or nothing",
+        reason: "funnel_retired",
+      });
+    }
+    expect(vi.mocked(globalThis.fetch)).not.toHaveBeenCalled();
+  });
+});

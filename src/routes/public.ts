@@ -852,9 +852,8 @@ async function computePairRevenue(
   orgId: string,
   brandId: string,
   // The SALES FUNNEL to price the pipeline through, when the caller wants one funnel's answer rather
-  // than the brand's whole declared set. Threaded to `computeFeatureRevenue`'s own `?funnel=` parameter,
-  // so a per-funnel row here is the byte-same statement `/revenue?funnel=` makes for that brand — one
-  // implementation, which cannot come to price a funnel two ways. Omitted → today's whole-brand answer.
+  // than the brand's whole declared set. Threaded to `computeFeatureRevenue`'s own `requestedFunnel` parameter —
+  // one implementation, which cannot come to price a funnel two ways. Omitted → today's whole-brand answer.
   requestedFunnel?: SalesFunnelKey,
 ) {
   const headers: DownstreamHeaders = { orgId, featureSlug };
@@ -3033,7 +3032,7 @@ async function computeShowcaseBrand(
     const brandPriced = brandEconomics
       ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics, funnelKey)
       : undefined;
-    // The byte-same call `/brands/:brandId/revenue?funnel=<key>` makes for its own body: the brand's
+    // The byte-same call the brand revenue read makes for its own body: the brand's
     // whole channel set, no campaign narrowing, ONE engine pass, the named funnel walked.
     //
     // `includeSpend` is TRUE even though nothing here is money, and that is load-bearing: the per-lead

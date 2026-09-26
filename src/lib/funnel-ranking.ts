@@ -2,20 +2,13 @@
  * FUNNEL RANKING — which of the sales funnels a brand DECLARED returns the most per dollar, how every
  * other declared funnel compares, and the per-audience evidence for the best-returning pairing.
  *
- * ── IT IS A RECOMMENDATION, NOT A SELECTION ───────────────────────────────────────────────────────
+ * ── WHO READS IT ─────────────────────────────────────────────────────────────────────────────────
  *
- * This used to BE the decision. campaign-service asked which goal to work and ran the one that came
- * back. That is over: the customer now funds each funnel separately (billing-service
- * brand_funnel_budgets) and campaign-service works EVERY funded funnel, pacing each against its own
- * ceiling and taking whichever has spent the least relative to what it may spend
- * (campaign-service#308). The money is what decides which funnel runs.
- *
- * So what this endpoint owes is a RANKING — advice a customer reads to decide where to put their
- * money, not an instruction a scheduler obeys. The value is the COMPARISON, not the winner: `ranking`
- * is the answer, and `recommendation` is simply its head. The legacy `arbitration` / `workflow` /
- * `rows` fields are kept byte-compatible because campaign-service still reads them in prod for a brand
- * with no per-funnel funding (its pre-funnel campaigns carry no goal of their own, so they still
- * inherit the top of this ranking). They are DERIVED from the same pick, so the two can never disagree.
+ * In-process only. The HTTP surface that served this ranking (`/funnel-ranking`, and its deprecated
+ * `/goal-arbitration` alias) was retired in wave C2 once no caller was left on it. What survives is the
+ * ranking itself, which `/workflow-projection?leg=` uses to pick the funnel a leg is priced through, so
+ * the leg's basis funnel is the best-returning one on the identical `returnPerDollar` definition. The
+ * `arbitration` / `workflow` / `rows` fields are no longer read by anyone outside this module's tests.
  *
  * ── AN UNFUNDED FUNNEL IS STILL RANKED, AND THIS SERVICE NEVER ASKS BILLING ───────────────────────
  *
@@ -73,7 +66,6 @@ import { DEFAULT_MAXIMIZE, type Maximize } from "./maximize.js";
 import type { RankableFunnel } from "./declared-funnels.js";
 import type { SalesEconomics } from "./funnel-registry.js";
 import { salesFunnelIndex, type SalesFunnelKey } from "./sales-funnels.js";
-import type { DeclaredFunnelsUnresolved } from "./sales-funnels-client.js";
 
 /** Why a declared funnel could not be ranked. Never a substituted value — the reason IS the answer. */
 export type UnrankableReason =
@@ -149,15 +141,7 @@ export interface FunnelRecommendation {
 export type ArbitrationStatus = "resolved" | "unrankable";
 export type ArbitrationReason =
   | "no_declared_funnels"
-  | "no_rankable_funnel"
-  /**
-   * The brand sells SEVERAL OFFERS and this read named none, so brand-service refused to pick between
-   * them — each offer carries its own conversion rates, its own lifetime revenue and its own value
-   * proposition, and there is genuinely no single declared set to rank. `declaredFunnelsUnresolved`
-   * names the offers. A 200 rather than a 502 on purpose: nothing is broken, the question has several
-   * answers, and campaign-service already treats any non-`resolved` status as "no ranking yet".
-   */
-  | "several_offers_unnamed";
+  | "no_rankable_funnel";
 
 export interface GoalArbitrationResponse {
   featureSlug: string;
@@ -202,47 +186,6 @@ export interface GoalArbitrationResponse {
    */
   rows: ProjectionRow[];
   recommendedBudgetUsd: number | null;
-  /**
-   * Present ONLY when `arbitration.reason` is `several_offers_unnamed`: brand-service's own sentence
-   * plus the offers it refused to choose between, so a consumer can let someone pick one. Absent for
-   * every brand selling one offer, so their bodies are byte-unchanged.
-   */
-  declaredFunnelsUnresolved?: DeclaredFunnelsUnresolved;
-}
-
-/**
- * The 200 a brand selling several offers gets when nothing named one. It is `unrankable` in the exact
- * shape an empty declaration already produces — no substituted funnel, no fabricated number — with its
- * own reason so a consumer can tell "we cannot rank this yet" from "name which offer you mean".
- */
-export function severalOffersUnrankable(
-  featureSlug: string,
-  maximize: Maximize,
-  unresolved: DeclaredFunnelsUnresolved,
-): GoalArbitrationResponse {
-  return {
-    featureSlug,
-    maximize,
-    ranking: [],
-    recommendation: null,
-    arbitration: {
-      status: "unrankable",
-      funnelKey: null,
-      goal: null,
-      objective: null,
-      reason: "several_offers_unnamed",
-      returnPerDollar: null,
-      conversionRatePct: null,
-      costPerOutcomeUsd: null,
-      costPerPaidClientUsd: null,
-      grain: null,
-    },
-    workflow: null,
-    economics: null,
-    rows: [],
-    recommendedBudgetUsd: null,
-    declaredFunnelsUnresolved: unresolved,
-  };
 }
 
 /** Per-funnel economics override merged OVER the brand's effective set (only stated fields win). */

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { fetchActiveAudienceAvailabilitySoft } from "../lib/human-client.js";
 import { fetchPricingFunnels } from "../lib/reading-funnels.js";
+import { FUNNEL_RETIRED_BODY, namesRetiredFunnel } from "../lib/retired-funnel-param.js";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
@@ -12,12 +13,11 @@ import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { parsePricing, type Pricing } from "../lib/pricing.js";
 import { type CostBasis } from "../lib/cost-basis.js";
 import { matchSingleStepGoal, matchFormSubmissionGoal, matchWhatsappGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal, type SingleStepGoal, type Goal } from "../lib/goals.js";
-import { SALES_FUNNELS, matchSalesFunnelKey, salesFunnelIndex, type PricingChannel, type SalesFunnelKey } from "../lib/sales-funnels.js";
+import { salesFunnelIndex, type PricingChannel, type SalesFunnelKey } from "../lib/sales-funnels.js";
 import {
   describeSeveralOffers,
   SalesFunnelsUnavailableError,
   SeveralOffersDeclaredError,
-  type DeclaredFunnelsUnresolved,
 } from "../lib/sales-funnels-client.js";
 import { declaredEconomicsForFunnel, declaredFunnelsToRank, mergeFunnelEconomics } from "../lib/declared-funnels.js";
 import {
@@ -338,7 +338,7 @@ interface EconomicsEcho {
  * through is chosen HERE rather than by whichever funnel the caller happened to have in mind.
  *
  * The choice is the brand's BEST-RETURNING declared funnel containing the leg — the identical
- * `returnPerDollar` basis `/funnel-ranking` ranks a brand's funnels on, so the two surfaces can never
+ * `returnPerDollar` basis the audience-stats brand-level read combines on, so the two surfaces can never
  * name two different funnels for one brand. It is deliberately NOT the cheapest leg: a dollar buys
  * a paying client through whichever route converts best, and the cheap leg of a funnel worth little
  * is a worse buy than the dear leg of one worth a lot. Same doctrine as the brand-level `max` over
@@ -400,7 +400,7 @@ export interface WorkflowProjectionResponse {
   maximize: Maximize;
   goal: GoalEcho;
   /**
-   * The SALES FUNNEL this projection is priced on, when the caller named one (`?funnel=`). Absent on a
+   * The SALES FUNNEL a LEG-keyed projection was priced through (equals `leg.basisFunnelKey`). Absent on a
    * goal-keyed request, so a consumer that still sends a goal reads a byte-identical body. Present, it is
    * the authoritative answer to "what was this priced as" — `goal`/`objective` are then only echoes, and
    * the two meeting funnels carry the same echo while carrying different numbers.
@@ -421,20 +421,6 @@ export interface WorkflowProjectionResponse {
    * it from a number that moved.
    */
   campaignIdentity?: CampaignIdentityView;
-  /**
-   * Present ONLY when this brand sells SEVERAL offers and the read could name none — brand-service
-   * refuses to pick between them, because each offer carries its own conversion rates, its own lifetime
-   * revenue and its own value proposition.
-   *
-   * A `?funnel=` or `?goal=` read then prices on the brand-wide effective economics, which is the SAME
-   * documented path a brand that has declared no funnel at all takes; the `funnel_not_declared` gate
-   * cannot fire, because there is no single declared set to check against. A read naming a
-   * `?campaignId=` never sees this: a campaign sells exactly one offer, so it names the offer
-   * transitively and gets the fully-priced answer.
-   *
-   * Absent for every brand selling one offer, so their bodies are byte-unchanged.
-   */
-  declaredFunnelsUnresolved?: DeclaredFunnelsUnresolved;
   economics: EconomicsEcho | null;
   rows: ProjectionRow[];
   recommendedWorkflowDynastySlug: string | null;
@@ -599,7 +585,7 @@ function resolveGoalInputs(raw: string | undefined): ({ ok: true } & GoalInputs)
  *
  * EXPORTED for the SAME reason `outcomeCostForGoal` is: /audience-stats now reports each audience's
  * RETURN PER DOLLAR (`lifetimeRevenueUsd / costPerPaidClientUsd`), which is the identical quantity
- * `/funnel-ranking` ranks a brand's declared funnels on. Routing both through this one function is
+ * the funnel ranking (`lib/funnel-ranking.ts`) ranks a leg's candidate funnels on. Routing both through this one function is
  * what stops one brand reading two different returns on two pages.
  */
 export function paidClientCostForGoal(
@@ -1046,19 +1032,9 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
   // Resolve the queried goal → (objective echo, goal echo, singleStep flag, form flag) across every
   // fleet spelling. An ABSENT goalParam defaults to meeting-booked (preserved); a PRESENT but
   // UNRECOGNISED goalParam FAILS LOUD (400) rather than silently defaulting.
-  // A caller may name the SALES FUNNEL it wants priced (`?funnel=`) — the vocabulary brand-service now
-  // emits, and the only one that can tell the two meeting funnels apart. When it does, the funnel WINS
-  // over any goal param: the goal is the coarser question and cannot answer the finer one. When it does
-  // not, nothing below changes and the goal path stays byte-identical.
-  const funnelParam = req.query.funnel as string | undefined;
-  let funnelKey: SalesFunnelKey | null = null;
-  if (funnelParam != null && funnelParam !== "") {
-    funnelKey = matchSalesFunnelKey(funnelParam);
-    if (!funnelKey) {
-      return res.status(400).json({
-        error: `funnel must be one of: ${Object.keys(SALES_FUNNELS).join(", ")} (pre-retirement spellings reply_meeting / visit_meeting / visit_signup / visit_form also accepted)`,
-      });
-    }
+  // `?funnel=` is RETIRED (wave C2): refused, never silently ignored. See lib/retired-funnel-param.ts.
+  if (namesRetiredFunnel(req.query as Record<string, unknown>)) {
+    return res.status(400).json(FUNNEL_RETIRED_BODY);
   }
 
   // A caller may instead name ONE LEG (`?leg=`) — the leg it is putting a budget behind — with no
@@ -1073,15 +1049,6 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       return res.status(400).json({
         error: `leg must be one of: ${FUNNEL_LEG_KEYS.join(", ")}`,
         reason: "leg_unrecognised",
-      });
-    }
-    // Naming both would ask two questions at once — "price this funnel" and "price this leg through
-    // whichever funnel returns best" — and either answer would contradict the other parameter. Loud.
-    if (funnelKey) {
-      return res.status(400).json({
-        error:
-          "name either a sales funnel or a leg, never both: a leg is priced through the brand's best-returning declared funnel that contains it",
-        reason: "leg_and_funnel",
       });
     }
   }
@@ -1100,7 +1067,7 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     });
   }
 
-  const resolved = funnelKey || legKey ? null : resolveGoalInputs(goalParam);
+  const resolved = legKey ? null : resolveGoalInputs(goalParam);
   if (resolved && !resolved.ok) {
     return res.status(400).json({
       error:
@@ -1113,11 +1080,9 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
   };
   // On a LEG request these are placeholders until the basis funnel is resolved inside the try below
   // (it needs the brand's declared set and the shared evidence). Nothing is projected from them.
-  const inputs = funnelKey
-    ? inputsForFunnel(funnelKey)
-    : legKey
-      ? inputsForFunnel(funnelsContainingLeg(legKey)[0])
-      : { ...(resolved as { ok: true } & GoalInputs), meetingChannel: null as PricingChannel };
+  const inputs = legKey
+    ? inputsForFunnel(funnelsContainingLeg(legKey)[0])
+    : { ...(resolved as { ok: true } & GoalInputs), meetingChannel: null as PricingChannel };
   let { objective, goal, singleStepGoal, formSubmissionGoal, meetingChannel } = inputs;
   const budgetUsd = budgetRaw != null && budgetRaw !== "" ? Number(budgetRaw) : null;
 
@@ -1173,13 +1138,9 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     // opt-in param, and without re-running the fan-out. See "economics is never cached" below.
     const identity: Identity = { orgId, userId, runId, featureSlug: headerFeatureSlug };
 
-    // A funnel the brand never declared has no cost to serve. "We could not estimate this" and "it costs
-    // zero" are different statements, and only the first one is true here — so this 404s with the reason
-    // rather than pricing a funnel the org never said it sells through. Fires ONLY on `?funnel=`, so the
-    // goal path takes no extra read.
+    // The basis funnel's own terms, merged over the brand's effective economics. Set only on a LEG
+    // read (priced through one of the funnels the brand's leads walk); the goal path takes no extra read.
     let funnelEconomics: Partial<SalesEconomics> | null = null;
-    // The brand's DECLARED set is needed by both narrowed reads — a named funnel must be one of them,
-    // and a named leg is priced through one of them. The goal path takes no extra read.
     // THE CAMPAIGN'S IDENTITY, resolved BEFORE the declared-funnel read below — it is what names the
     // OFFER that read is priced on. A campaign as a customer knows it is (org, brand, sales funnel,
     // acquisition channel) — campaign-service mints a new row on every workflow switch and keeps the
@@ -1209,60 +1170,36 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     const scopeOfferId = campaignIdentity?.offerId ?? null;
 
     let declaredFunnels: Awaited<ReturnType<typeof fetchPricingFunnels>> | null = null;
-    // Set ONLY on the several-offers refusal — see the field's doc on WorkflowProjectionResponse.
-    let declaredFunnelsUnresolved: DeclaredFunnelsUnresolved | undefined;
-    if (funnelKey || legKey) {
+    if (legKey) {
       try {
-        // Wave C1: no declared set is read. A named FUNNEL is priced on its own legs; a named LEG is
-        // read through the funnels the brand's leads walk from the step it lands on (reading-funnels.ts).
-        declaredFunnels = await fetchPricingFunnels(
-          brandId,
-          orgId,
-          scopeOfferId,
-          funnelKey ? { legKeys: [], include: [funnelKey] } : { legKeys: [legKey!] },
-        );
+        // Wave C1: no declared set is read. A named LEG is read through the funnels the brand's leads
+        // walk from the step it lands on (reading-funnels.ts).
+        declaredFunnels = await fetchPricingFunnels(brandId, orgId, scopeOfferId, { legKeys: [legKey] });
       } catch (error) {
-        // SEVERAL OFFERS, none named. Not an outage and not a producer gap — a question with several
-        // answers. Degrade rather than 502: the funnel path prices on the brand-wide economics (the
-        // documented no-declaration path) and says so on the body. The LEG path cannot degrade, because
-        // choosing which funnel a leg is priced through IS the declared set — handled below.
+        // SEVERAL OFFERS, none named. A LEG read cannot degrade: the funnel set is not a refinement
+        // here, it is the ANSWER to "which of this brand's funnels is this leg priced through" —
+        // widening to every catalogue funnel containing the leg would price the brand on propositions
+        // it may not sell. So the refusal is passed on as what it is: a question with several answers,
+        // naming them, and naming the one thing that resolves it. A 409 rather than a 502 — the caller
+        // is not looking at an outage, it is looking at a choice it can make.
         if (error instanceof SeveralOffersDeclaredError) {
-          declaredFunnelsUnresolved = describeSeveralOffers(error)!;
-          console.warn(
-            `[features-service] workflow-projection: brand ${brandId} sells several offers and this read named none: ${error.message}`,
-          );
-        } else if (error instanceof SalesFunnelsUnavailableError) {
-          return res.status(502).json({ error: error.message, reason: "declared_funnels_unavailable" });
-        } else {
-          throw error;
+          const unresolved = describeSeveralOffers(error)!;
+          return res.status(409).json({
+            error: `${unresolved.message} A leg is priced through one of the brand's declared funnels, so name the campaign this leg is bought for (a campaign sells exactly one offer).`,
+            reason: "several_offers",
+            offers: unresolved.offers,
+          });
         }
+        if (error instanceof SalesFunnelsUnavailableError) {
+          return res.status(502).json({ error: error.message, reason: "declared_funnels_unavailable" });
+        }
+        throw error;
       }
     }
-    if (funnelKey && declaredFunnels) {
-      // Price on the funnel's OWN declared terms — the SAME merge the ranking does. Without this the
-      // two surfaces print different numbers for one brand + one funnel: prod `b97440f6…` declares
-      // `replyToMeetingPct: 100` on its conversation funnel, so the ranking read $73.74 per meeting
-      // while this endpoint, on the brand-wide ~31%, read $237.87. Read off the list already fetched
-      // for the declared-set check, so it costs no extra IO.
-      funnelEconomics = declaredEconomicsForFunnel(declaredFunnels, funnelKey);
-    }
 
-    // A leg the brand's declared funnels do not contain has no cost to serve — the same statement,
-    // and the same shape, as a funnel it never declared. Never an empty body, never a substituted funnel.
+    // A leg the brand's funnels do not contain has no cost to serve. Never an empty body, never a
+    // substituted funnel.
     let legCandidates: SalesFunnelKey[] = [];
-    // A LEG read cannot degrade the way a funnel read can. The declared set is not a refinement here, it
-    // is the ANSWER to "which of this brand's funnels is this leg priced through" — widening to every
-    // catalogue funnel containing the leg would price the brand on propositions it may not sell, which
-    // is the fabricated funnel set this service refuses to serve. So the refusal is passed on as what it
-    // is: a question with several answers, naming them, and naming the one thing that resolves it. A 409
-    // rather than a 502 — the caller is not looking at an outage, it is looking at a choice it can make.
-    if (legKey && declaredFunnelsUnresolved) {
-      return res.status(409).json({
-        error: `${declaredFunnelsUnresolved.message} A leg is priced through one of the brand's declared funnels, so name the campaign this leg is bought for (a campaign sells exactly one offer).`,
-        reason: "several_offers",
-        offers: declaredFunnelsUnresolved.offers,
-      });
-    }
     if (legKey && declaredFunnels) {
       const containing = funnelsContainingLeg(legKey);
       const declared = declaredFunnels.map((f) => f.funnelKey);
@@ -1312,9 +1249,8 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       // (features-service#1035). Shared 30s with the evidence compute's own list read; fail-soft.
       fetchActiveAudienceAvailabilitySoft(brandId, { orgId, userId, runId, featureSlug: headerFeatureSlug }),
     ]);
-    // THE LEG'S BASIS FUNNEL. Ranked on the IDENTICAL `returnPerDollar` `/funnel-ranking` ranks a
-    // brand's declared funnels on — one implementation, so the two surfaces can never name different
-    // funnels for one brand — and restricted to the funnels that actually contain the leg. Pure: it
+    // THE LEG'S BASIS FUNNEL. Ranked on the IDENTICAL `returnPerDollar` every per-brand return uses
+    // (`rankDeclaredFunnels`, one implementation) and restricted to the funnels that actually contain the leg. Pure: it
     // projects the SAME already-fetched evidence once per candidate and issues no further IO.
     let legBlock: ProjectionLeg | undefined;
     let legBasisFunnelKey: SalesFunnelKey | null = null;
@@ -1415,7 +1351,7 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       }
     }
 
-    const pricedFunnelKey = funnelKey ?? legBasisFunnelKey;
+    const pricedFunnelKey = legBasisFunnelKey;
     const response = projectFromEvidence({
       featureSlug,
       objective,
@@ -1477,7 +1413,6 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       rows,
       ...(legBlock ? { leg: legBlock } : {}),
       ...(campaignIdentityView ? { campaignIdentity: campaignIdentityView } : {}),
-      ...(declaredFunnelsUnresolved ? { declaredFunnelsUnresolved } : {}),
       ...(observedPicks !== undefined ? { observedPicks } : {}),
     });
   } catch (error) {
@@ -1911,7 +1846,7 @@ export function projectFromEvidence(input: {
     //     it spends, exactly as a barely-tried workflow's does today.
     //   • it is stated UNMEASURED (`measured: false`, `grain: null`, `estimatesByGrain: {}`), so nothing
     //     can read it as this brand's own result, it can never be RECOMMENDED (below), and every
-    //     DISPLAY / benchmark surface ranks measured rows only (`funnel-ranking`, the customer-health
+    //     DISPLAY / benchmark surface ranks measured rows only (the funnel ranking, the customer-health
     //     board, the audience-stats floor parent — which builds its own brand rows and never sees these
     //     — and the dashboard's Strategy pick).
     //   • it states a COST FLOOR and nothing else: no paid-client cost, no return, no %CAC.

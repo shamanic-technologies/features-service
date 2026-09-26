@@ -136,12 +136,6 @@ describe("fetchPricingFunnels — the brand's leg rates and the OFFER's lifetime
     await expect(fetchPricingFunnels("b1", "org-1", null, { rates: "stated" })).rejects.toBeInstanceOf(SeveralOffersDeclaredError);
   });
 
-  it("a funnel a route NAMES is priced even when no campaign reads it", async () => {
-    mock();
-    const named = await fetchPricingFunnels("b1", "org-1", "offer-self", { rates: "stated", legKeys: [], include: ["form_magnet"] });
-    expect(named.map((f) => f.funnelKey)).toEqual(["form_magnet"]);
-  });
-
   it("a scope whose campaigns perform no leg reads NO funnel — never a substituted one", async () => {
     mock();
     expect(await fetchPricingFunnels("b1", "org-1", "offer-self", { rates: "stated", legKeys: [] })).toEqual([]);

@@ -5,8 +5,8 @@
  * A declared sales funnel hangs off an OFFER: each carries its own conversion rates, its own lifetime
  * revenue and its own value proposition. So brand-service refuses (409 `SEVERAL_OFFERS`) a
  * brand-scoped declared-funnel read for a brand selling more than one, rather than serve one
- * proposition's economics under another's name. `audience-stats`, `workflow-projection` and
- * `funnel-ranking` turned that refusal into a 502, and the day a customer declared a second offer
+ * proposition's economics under another's name. `audience-stats`, `workflow-projection` and the
+ * (since retired) funnel ranking turned that refusal into a 502, and the day a customer declared a second offer
  * their campaign Workflows matrix, their audience cost columns and their best-model figures all went
  * blank — with no retry and no fallback masking it.
  *
@@ -233,14 +233,6 @@ describe("a campaign names the offer its declared funnels are read under", () =>
     expect(funnelReads.length).toBeGreaterThan(0);
   });
 
-  it("answers a campaign-scoped `?funnel=` read 200 instead of the 502 that blanked the page", async () => {
-    const res = await get(
-      `/features/${FEATURE.slug}/audience-stats?brandId=${MULTI_BRAND}&funnel=website_purchases&campaignId=${CAMPAIGN}&pricing=net`,
-    );
-    expect(res.status).toBe(200);
-    expect(res.body.declaredFunnelsUnresolved).toBeUndefined();
-  });
-
   it("prices a campaign-scoped workflow-projection LEG read on the campaign's offer", async () => {
     const res = await get(
       `/features/${FEATURE.slug}/workflow-projection?brandId=${MULTI_BRAND}&leg=start_to_website_visit&campaignId=${CAMPAIGN}&pricing=net`,
@@ -268,25 +260,6 @@ describe("a brand-scoped read of a several-offer brand degrades, it never 502s",
     expect(res.body.brandProjection.returnPerDollar).toBeNull();
   });
 
-  it("answers a brand-grain `?funnel=` audience-stats read 200 rather than 404 funnel_not_declared", async () => {
-    const res = await get(`/features/${FEATURE.slug}/audience-stats?brandId=${MULTI_BRAND}&funnel=website_purchases`);
-    expect(res.status).toBe(200);
-    expect(res.body.declaredFunnelsUnresolved?.reason).toBe("several_offers");
-  });
-
-  it("answers a brand-grain funnel-keyed workflow-projection 200 with the reason on the body", async () => {
-    const res = await get(
-      `/features/${FEATURE.slug}/workflow-projection?brandId=${MULTI_BRAND}&funnel=website_purchases&objective=self-serve&pricing=net`,
-    );
-    expect(res.status).toBe(200);
-    expect(res.body.declaredFunnelsUnresolved).toEqual({
-      reason: "several_offers",
-      message: SEVERAL_OFFERS_BODY.error,
-      offers: SEVERAL_OFFERS_BODY.offers,
-    });
-    expect(Array.isArray(res.body.rows)).toBe(true);
-  });
-
   it("refuses a brand-grain LEG read with a 409 naming the offers — never a fabricated funnel set", async () => {
     const res = await get(
       `/features/${FEATURE.slug}/workflow-projection?brandId=${MULTI_BRAND}&leg=start_to_website_visit`,
@@ -298,17 +271,6 @@ describe("a brand-scoped read of a several-offer brand degrades, it never 502s",
     expect(res.body.offers).toEqual(SEVERAL_OFFERS_BODY.offers);
   });
 
-  it("answers funnel-ranking 200 unrankable with its own reason rather than 502", async () => {
-    const res = await get(`/features/${FEATURE.slug}/funnel-ranking?brandId=${MULTI_BRAND}`);
-    expect(res.status).toBe(200);
-    expect(res.body.arbitration.status).toBe("unrankable");
-    expect(res.body.arbitration.reason).toBe("several_offers_unnamed");
-    expect(res.body.declaredFunnelsUnresolved?.offers).toEqual(SEVERAL_OFFERS_BODY.offers);
-    // campaign-service reads `arbitration.status === "resolved"` to decide whether a ranking exists,
-    // so an unrankable body must still carry the shape it parses.
-    expect(res.body.rows).toEqual([]);
-    expect(res.body.recommendation).toBeNull();
-  });
 });
 
 describe("a brand selling ONE offer is byte-unchanged", () => {
@@ -321,18 +283,8 @@ describe("a brand selling ONE offer is byte-unchanged", () => {
     for (const url of funnelReads) expect(url).not.toContain("offerId=");
   });
 
-  it("reads funnel-ranking resolved, with no offer on the wire", async () => {
-    const res = await get(`/features/${FEATURE.slug}/funnel-ranking?brandId=${SOLO_BRAND}`);
-    expect(res.status).toBe(200);
-    expect(res.body.arbitration.reason).not.toBe("several_offers_unnamed");
-    expect(res.body.declaredFunnelsUnresolved).toBeUndefined();
-    for (const url of funnelReads) expect(url).not.toContain("offerId=");
-  });
-
   it("reads workflow-projection with no offer on the wire and no unresolved block", async () => {
-    const res = await get(
-      `/features/${FEATURE.slug}/workflow-projection?brandId=${SOLO_BRAND}&funnel=website_purchases&objective=self-serve`,
-    );
+    const res = await get(`/features/${FEATURE.slug}/workflow-projection?brandId=${SOLO_BRAND}&objective=self-serve`);
     expect(res.status).toBe(200);
     expect(res.body.declaredFunnelsUnresolved).toBeUndefined();
     for (const url of funnelReads) expect(url).not.toContain("offerId=");
@@ -340,33 +292,16 @@ describe("a brand selling ONE offer is byte-unchanged", () => {
 });
 
 describe("the refusal stays distinguishable from an outage", () => {
-  it("still 502s audience-stats when the declared-funnel read genuinely fails", async () => {
-    fetchSpy.mockRestore();
-    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = urlOf(input);
-      if (url.includes("/sales-funnels")) return json({ error: "boom" }, 503);
-      if (url.includes("campaign:3000/campaigns")) return json({ campaigns: CAMPAIGN_ROWS });
-      if (url.includes("sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
-      return json({});
-    });
-    const res = await get(`/features/${FEATURE.slug}/audience-stats?brandId=${MULTI_BRAND}&funnel=website_purchases`);
+  it("still 502s audience-stats when the brand's funnel read genuinely fails", async () => {
+    // Everything else answers as in every other case; only the read the brand-level projection is
+    // priced on fails — an outage, not a question with several answers.
+    const base = fetchSpy.getMockImplementation()!;
+    fetchSpy.mockImplementation(async (input: Parameters<typeof fetch>[0], init?: RequestInit) =>
+      urlOf(input).includes("/offer-economics") ? json({ error: "boom" }, 503) : base(input, init),
+    );
+    const res = await get(`/features/${FEATURE.slug}/audience-stats?brandId=${SOLO_BRAND}`);
     expect(res.status).toBe(502);
     expect(res.body.reason).toBe("declared_funnels_unavailable");
   });
 
-  it("still 502s funnel-ranking when the declared-funnel read genuinely fails", async () => {
-    fetchSpy.mockRestore();
-    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = urlOf(input);
-      if (url.includes("/sales-funnels")) return json({ error: "boom" }, 503);
-      if (url.includes("sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
-      if (url.includes("workflow:3000/public/workflows")) return json({ workflows: [workflow("wf-a")] });
-      if (url.includes("runs:3000/v1/stats/public/costs")) return json({ groups: [] });
-      if (url.includes("email:3000/public/stats")) return json({ groups: [] });
-      return json({});
-    });
-    const res = await get(`/features/${FEATURE.slug}/funnel-ranking?brandId=${MULTI_BRAND}`);
-    expect(res.status).toBe(502);
-    expect(res.body.reason).toBe("authorized_goals_unavailable");
-  });
 });

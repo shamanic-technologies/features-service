@@ -30,7 +30,7 @@
  * - **A surface that can only carry ONE funnel takes the brand's FIRST DECLARED one in catalogue
  *   order.** That is a deterministic pick over the brand's OWN declarations — not a default, and not an
  *   inference: every candidate is a funnel the brand said it sells through. Any surface that can carry
- *   several (the ranking, and any caller passing an explicit `?funnel=`) prices each on its own funnel
+ *   several (the ranking, and the public per-funnel reads that request one funnel) prices each on its own funnel
  *   instead, which is always the better answer where the shape allows it.
  *
  * WAVE C1 (2026-09-25): no declared set is read any more. The set a surface prices on is the scope's

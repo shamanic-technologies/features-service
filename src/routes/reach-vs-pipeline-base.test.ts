@@ -52,6 +52,7 @@ process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
+const { offerEconomicsFromDeclared } = await import("../lib/leg-economics-fixture.js");
 
 const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
 const PITCH = "sales-cold-email-outreach";
@@ -173,12 +174,20 @@ function mockFetch(fixture: Fixture): void {
             brandId: BRAND,
             featureSlug: row.featureSlug,
             funnelKey: row.funnelKey,
+            // Wave C1: a campaign is priced on its LEG, which is the entry leg of the funnel it sells.
+            legKey: row.funnelKey === CONVERSATION ? "start_to_conversation" : row.funnelKey ? "start_to_website_visit" : null,
             acquisitionChannel: row.featureSlug,
             offerId: row.offerId,
             status: "ongoing",
             createdAt: "2026-01-01T00:00:00.000Z",
           })),
       });
+    }
+    if (path.includes("/offer-economics")) {
+      // Wave C1: the brand's leg rates (what its funnels stated) and the offer its campaigns sell.
+      const declared = fixture.declared === undefined ? ALL_DECLARED : fixture.declared;
+      if (declared === null) return new Response("not found", { status: 404 });
+      return json(offerEconomicsFromDeclared(declared as any[], { offers: [{ offerId: OFFER, lifetimeRevenueUsd: 1000 }] }));
     }
     if (path.includes("/sales-funnels")) {
       const declared = fixture.declared === undefined ? ALL_DECLARED : fixture.declared;
@@ -382,7 +391,7 @@ describe("reach and the pipeline base", () => {
   });
 
   it("the first funnel rung converts from the reach this service states, and the two agree", async () => {
-    const res = await revenue(`&funnel=${CONVERSATION}`);
+    const res = await revenue();
     const steps = res.body.funnelSteps;
     expect(steps.funnelKey).toBe(CONVERSATION);
     // The base is REACH — a bounce is a real loss at the very first rung, and it was paid for.
