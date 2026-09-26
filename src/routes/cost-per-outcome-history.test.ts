@@ -354,7 +354,15 @@ describe("what one outcome has cost, day by day", () => {
       const { costPerOutcomeHistory, conversionRateHistory, learningPhase, ...rest } = b;
       // A campaign stating no leg waits for nothing (lib/roi-maturity.ts), so the delay it states
       // differs by design; on this clock the cohort is the whole fixture, so every figure agrees.
-      return { ...rest, costEconomics: { ...rest.costEconomics, maturityDays: "by leg" } };
+      const byLeg = (o: Record<string, any> | null) =>
+        o && { ...o, ratioBasis: { ...o.ratioBasis, maturityDays: "by leg" } };
+      return {
+        ...rest,
+        costEconomics: { ...rest.costEconomics, maturityDays: "by leg" },
+        outcomes: byLeg(rest.outcomes),
+        spend: byLeg(rest.spend),
+        funnelSteps: byLeg(rest.funnelSteps),
+      };
     };
     expect(strip(unstated)).toEqual(strip(priced));
   });

@@ -299,6 +299,13 @@ describe("a campaign group states how much outcome evidence its money rests on",
       actualSpentCents: 0,
       cpcCents: null,
       cpprCents: null,
+      ratioBasis: {
+        maturityDays: 0,
+        committedSpentCents: 4000,
+        recipientsClicked: 0,
+        recipientsRepliesPositive: 0,
+        unmeasuredReason: null,
+      },
     });
     // Reached someone on no attributed spend — the rates are unmeasurable, not $0 each.
     expect(byId.crm.outcomes.recipientsClicked).toBe(1);

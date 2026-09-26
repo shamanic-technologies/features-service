@@ -248,6 +248,34 @@ every brand's lead walk. Do NOT re-derive the fact from CRM data here — lead-s
 happened. Prod 2026-09-25 (Doc Dinners): 23 → 26,
 equal to lead-service's `positive_reply` bucket. (Set 2026-09-25.)
 
+## EVERY RATIO ON A `/revenue` BODY DIVIDES THE ROI'S BASIS — the totals it divides are served, and a MEASURED return rides beside the pipeline one
+
+Supersedes "ONLY THE RATIOS MOVE … ROI, %CAC, $CAC" below: EVERY cost per outcome moved with them.
+Prod before (Doc Dinners `75d7e3e8…`, net, 2026-09-26): ROI 1.51x on the mature cohort ($3,984 spend)
+while cost per positive reply read $211.67 = ALL $5,503 / ALL 26 replies, i.e. it charged the client for
+the last fortnight's sending whose replies had not landed. `lib/ratio-basis.ts` (`RatioBasis`:
+`whole` | `mature` | `unknown`) is built ONCE in `computeFeatureRevenue` and every ratio reads it:
+the spend block's cost per click (×3) / reply / signup / meeting / form / sale, `outcomes.cpcCents` /
+`cpprCents` (per-workflow grain too), each funnel rung's `costPerReachCents` and `costPerOutcomeHistory`
+(mature spend by day ÷ mature leads' outcomes, so its last point is `outcomes.cpcCents`).
+
+- **Every block states what its ratios divide — `ratioBasis`**: `costEconomics.ratioBasis`
+  `{committedCostUsd, totalPipelineUsd}` (roiMultiple = pipeline ÷ spend), `spend.ratioBasis` (spend
+  ×3 + every count), `outcomes.ratioBasis`, `funnelSteps.ratioBasis` + each step's
+  `ratioBasisRecipientsReached`. TOTALS NEVER MOVE (invested, headline pipeline, counts, series).
+- **Mature conversion counts come from the cohort's own lead flags** (lead-service's counts are brand-level
+  and undated, so they cannot be cut to a cohort); whole-history ratios keep lead-service's counts.
+- **`maturing` / `maturity_unknown` null EVERY ratio**, exactly as they null the ROI (and
+  `roiHistory` / `costPerOutcomeHistory` read null under `maturity_unknown`). Never the whole-history ratio.
+- **`costEconomics.realizedReturn`** `{closedWonCount, closedWonRevenueUsd, roiMultiple}` = deals CLOSED
+  WON in the mature cohort, PRICED to our outreach and not ruled dead (`closedWonOf`, the engine's won-rung
+  predicate), each at its stated amount else the LTR, over `ratioBasis.committedCostUsd`. `0` won is a
+  measured 0; NULL when neither closed-deal source (step statements, legacy qualifications) was read, the
+  legs are unknown, or the grain does not compute it (lens, per-workflow, cross-org).
+- The showcase's `costPerReachUsd` rides the funnel rungs, so it moved onto the cohort too — intended.
+- Guards: `lib/ratio-basis.test.ts` (Doc Dinners' shape: $3,984.27 / 23 against $5,503.46 / 26), the ONE
+  BASIS / maturing / measured-return cases in `routes/roi-maturity-grain.test.ts`. (Set 2026-09-26.)
+
 ## ROI, %CAC AND $CAC ARE MEASURED ON THE MATURE COHORT — a campaign's leg says how long its outcomes lag, and a young campaign reads `maturing`, never a terrible ratio
 
 A cold email's replies and visits keep arriving ~two weeks after it is sent, so a campaign that spent
@@ -277,12 +305,9 @@ not landed. Owner decision 2026-09-25 (do not re-litigate), `lib/roi-maturity.ts
   `startedBefore=cutoff` + the post-cutoff runs of zero-delay campaigns, both co-grouped
   `workflowSlug,campaignId`). Per-group rounding would leave an all-young scope a few cents of phantom
   "mature" spend and hide `maturing` behind a meaningless ratio.
-- **NO COHORT SPEND FIGURE IS SERVED.** The mature basis rides each `CostEconomics` block in-process only
-  (`matureBasisOf`, a WeakMap filled by `buildCostEconomics`); a block rebuilt from JSON has none and every
-  reader FAILS LOUD. Its two in-process readers: `buildCombinedCostEconomics` (the charged + customer
-  return rides the same cohort, customer costs undated so all in) and the public fleet
-  (`computePairRevenue` → `matureIngredients`), whose return medians, spend floor and paying-client
-  counts compose from mature ingredients — the statistic each client reads on its own dashboard.
+- **THE COHORT TOTALS ARE SERVED NOW (supersedes "no cohort spend figure is served", 2026-09-26)** as
+  `costEconomics.ratioBasis` — see the one-basis section above. `matureBasisOf` (the in-process WeakMap)
+  stays for the public fleet (`computePairRevenue` → `matureIngredients`), which needs cents.
 - **EVERY GRAIN MOVED AT ONCE**: brand / offer / funnel / campaign (identity) / `?groupBy=campaignId` /
   `?workflow=` / lens (reads the per-email contact dates it otherwise skips) via `computeFeatureRevenue`;
   `?groupBy=workflow` per dynasty (`workflow-revenue.ts`); `/public/stats/revenue` + the fleet return

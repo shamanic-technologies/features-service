@@ -46,6 +46,23 @@
 import { dedupPersonsByLead, type EnginePerson } from "./revenue-engine.js";
 import { observedCostPerOutcome } from "./cost-engine.js";
 import type { RunsCostCents } from "./runs-cost-client.js";
+import type { MaturityReason } from "./cost-economics.js";
+import { basisCost, basisDays, basisPersons, basisUnmeasuredReason, type RatioBasis } from "./ratio-basis.js";
+
+/**
+ * WHAT THE TWO RATES DIVIDE — the ROI's own basis (`lib/ratio-basis.ts`), stated so a reader
+ * reconciles `cpcCents = committedSpentCents ÷ recipientsClicked` from served totals. Equal to the
+ * block's whole-history figures when `maturityDays` is 0; the MATURE cohort's otherwise (spend old
+ * enough to have produced its outcomes, and the distinct leads that spend reached). Every figure null
+ * when `unmeasuredReason` is set.
+ */
+export interface OutcomesRatioBasis {
+  maturityDays: number;
+  committedSpentCents: number | null;
+  recipientsClicked: number | null;
+  recipientsRepliesPositive: number | null;
+  unmeasuredReason: MaturityReason | null;
+}
 
 /** The volume half of one grain's answer. See the module header for every rule behind it. */
 export interface RevenueOutcomes {
@@ -77,10 +94,15 @@ export interface RevenueOutcomes {
   committedSpentCents: number;
   /** Billed-only spend for this grain, in cents. TRANSITIONAL — reported, divided by nowhere. */
   actualSpentCents: number;
-  /** Committed spend ÷ website visits. Null when this grain bought no visit, or spent nothing. */
+  /**
+   * Committed spend ÷ website visits, on `ratioBasis` (the ROI's mature cohort). Null when the basis
+   * bought no visit, spent nothing, or is unmeasurable.
+   */
   cpcCents: number | null;
-  /** Committed spend ÷ positive replies. Null when this grain bought no reply, or spent nothing. */
+  /** Committed spend ÷ positive replies, on `ratioBasis`. Same null rules. */
   cpprCents: number | null;
+  /** The totals the two rates above divide. See {@link OutcomesRatioBasis}. */
+  ratioBasis: OutcomesRatioBasis;
 }
 
 /**
@@ -92,7 +114,12 @@ export interface RevenueOutcomes {
  * reaches a delivery milestone and a lead carrying any conversion signal scores above zero, so every
  * lead counted here is a row there.
  */
-export function buildRevenueOutcomes(persons: EnginePerson[], cost: RunsCostCents): RevenueOutcomes {
+export function buildRevenueOutcomes(
+  persons: EnginePerson[],
+  cost: RunsCostCents,
+  /** The ROI's basis (`lib/ratio-basis.ts`). Omitted → the whole scope, byte-identical to before. */
+  basis?: RatioBasis,
+): RevenueOutcomes {
   const deduped = dedupPersonsByLead(persons);
   let recipientsContacted = 0;
   let recipientsConvertible = 0;
@@ -121,8 +148,45 @@ export function buildRevenueOutcomes(persons: EnginePerson[], cost: RunsCostCent
     recipientsRepliesPositive,
     committedSpentCents: cost.committedCents,
     actualSpentCents: cost.actualCents,
+    ...ratesOnBasis(persons, cost, basis),
+  };
+}
+
+/** The two rates, on the ROI's basis, and the totals they divide. OBSERVED, never floored. */
+function ratesOnBasis(
+  persons: EnginePerson[],
+  cost: RunsCostCents,
+  basis: RatioBasis | undefined,
+): Pick<RevenueOutcomes, "cpcCents" | "cpprCents" | "ratioBasis"> {
+  const unmeasuredReason = basisUnmeasuredReason(basis, cost);
+  const spend = basisCost(basis, cost);
+  const cohort = basisPersons(basis, cost, persons);
+  if (!spend || !cohort) {
+    return {
+      cpcCents: null,
+      cpprCents: null,
+      ratioBasis: {
+        maturityDays: basisDays(basis),
+        committedSpentCents: null,
+        recipientsClicked: null,
+        recipientsRepliesPositive: null,
+        unmeasuredReason,
+      },
+    };
+  }
+  const deduped = dedupPersonsByLead(cohort);
+  const clicked = deduped.reduce((n, p) => n + (p.signals.clicked ? 1 : 0), 0);
+  const replied = deduped.reduce((n, p) => n + (p.signals.positiveReply ? 1 : 0), 0);
+  return {
     // OBSERVED, never floored: null is "this grain bought none of these", not "$0 each".
-    cpcCents: observedCostPerOutcome(cost.committedCents, recipientsClicked),
-    cpprCents: observedCostPerOutcome(cost.committedCents, recipientsRepliesPositive),
+    cpcCents: observedCostPerOutcome(spend.committedCents, clicked),
+    cpprCents: observedCostPerOutcome(spend.committedCents, replied),
+    ratioBasis: {
+      maturityDays: basisDays(basis),
+      committedSpentCents: spend.committedCents,
+      recipientsClicked: clicked,
+      recipientsRepliesPositive: replied,
+      unmeasuredReason,
+    },
   };
 }

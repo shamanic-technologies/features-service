@@ -74,6 +74,34 @@ export interface CostEconomics {
    * cohort to measure yet — a young campaign, not a bad one. Never 0 in its place.
    */
   unmeasuredReason: MaturityReason | null;
+  /**
+   * THE TOTALS THE THREE RATIOS DIVIDE, served so nobody has to invert a ratio to find them:
+   * `roiMultiple = totalPipelineUsd ÷ committedCostUsd`, `costOfAcquisitionPct` its reciprocal × 100.
+   * The MATURE cohort's committed spend and pipeline when `maturityDays` > 0 (so they are SMALLER than
+   * the invested / headline figures beside them — that difference is the spend still maturing and the
+   * leads it reached); the whole scope's otherwise. Both null under `maturity_unknown`.
+   * (Supersedes the 2026-09-25 rule that kept the cohort spend off the wire: a client emailed a 1.5x
+   * ROI beside $5,503 invested and $7,759 of pipeline divides them and gets 1.4x.)
+   */
+  ratioBasis: { committedCostUsd: number | null; totalPipelineUsd: number | null };
+  /**
+   * THE MEASURED RETURN — revenue from deals actually CLOSED WON over the same matured spend the ROI
+   * divides. Beside the pipeline ROI, never instead of it: the pipeline projects every lead forward,
+   * this counts only sales that happened. A won deal is valued at the amount stated on it, else the
+   * lifetime revenue the pipeline prices a paying client at. Only deals PRICED to our outreach
+   * (`?cause=`, default `outreach`) count — the same rule the pipeline's won rung follows.
+   * `closedWonCount: 0` is a MEASURED answer (nothing closed yet) and reads `roiMultiple: 0` when spend
+   * is mature. NULL when it cannot be measured: no source of closed deals could be read on this path,
+   * the legs are unknown, or the grain never computes it (lens / grouped / cross-org reads).
+   */
+  realizedReturn: RealizedReturn | null;
+}
+
+export interface RealizedReturn {
+  closedWonCount: number;
+  closedWonRevenueUsd: number;
+  /** `closedWonRevenueUsd ÷ ratioBasis.committedCostUsd`. Null when that spend is 0 (maturing). */
+  roiMultiple: number | null;
 }
 
 /**
@@ -90,10 +118,10 @@ export interface MatureBasis {
 }
 
 /**
- * The mature basis behind each block this module built, kept OFF the wire on purpose: the owner's rule
- * is that no cohort spend figure is displayed anywhere, while an in-process consumer needs it — the
- * fleet warm, which stores ingredients and divides later. A block rebuilt from JSON (a cached snapshot) carries no
- * entry, and every reader FAILS LOUD on that rather than dividing the whole history instead.
+ * The mature basis behind each block this module built, for in-process consumers that need it in CENTS
+ * (the fleet warm, which stores ingredients and divides later). The same figures are on the wire as
+ * `ratioBasis` since 2026-09-26. A block rebuilt from JSON (a cached snapshot) carries no entry, and
+ * every reader FAILS LOUD on that rather than dividing the whole history instead.
  */
 const MATURE_BASIS = new WeakMap<object, MatureBasis>();
 
@@ -125,8 +153,13 @@ export function buildCostEconomics(input: {
    * its outcomes, and the ratios ride the whole scope (`maturityDays: 0`), byte-identical to before.
    */
   maturity?: { days: number; committedCostInUsdCents: number; totalPipelineUsd: number | null } | { unknown: true };
+  /**
+   * The deals CLOSED WON in the SAME cohort the ratios divide (the mature one when `maturity` is given).
+   * Omitted / null → `realizedReturn: null` ("not measured on this read"), never a fabricated 0.
+   */
+  realized?: { closedWonCount: number; closedWonRevenueUsd: number } | null;
 }): CostEconomics {
-  const { committedCostInUsdCents, actualCostInUsdCents, totalPipelineUsd, lifetimeRevenueUsd, maturity } = input;
+  const { committedCostInUsdCents, actualCostInUsdCents, totalPipelineUsd, lifetimeRevenueUsd, maturity, realized } = input;
   const committedCostUsd = committedCostInUsdCents / 100;
   const actualCostUsd = actualCostInUsdCents / 100;
   if (maturity && "unknown" in maturity) {
@@ -138,6 +171,8 @@ export function buildCostEconomics(input: {
       costPerAcquisitionUsd: null,
       maturityDays: 0,
       unmeasuredReason: "maturity_unknown",
+      ratioBasis: { committedCostUsd: null, totalPipelineUsd: null },
+      realizedReturn: null,
     };
     MATURE_BASIS.set(block, { committedCents: 0, pipelineUsd: null, days: 0 });
     return block;
@@ -157,6 +192,14 @@ export function buildCostEconomics(input: {
     ...ratios,
     maturityDays: days,
     unmeasuredReason: maturing ? "maturing" : null,
+    ratioBasis: { committedCostUsd: basisCents / 100, totalPipelineUsd: basisPipeline },
+    realizedReturn: realized
+      ? {
+          closedWonCount: realized.closedWonCount,
+          closedWonRevenueUsd: realized.closedWonRevenueUsd,
+          roiMultiple: basisCents > 0 ? realized.closedWonRevenueUsd / (basisCents / 100) : null,
+        }
+      : null,
   };
   MATURE_BASIS.set(block, { committedCents: basisCents, pipelineUsd: basisPipeline, days });
   return block;
