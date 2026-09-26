@@ -160,13 +160,26 @@ export async function fetchStepOutcomes(
 }
 
 /**
- * WHO IS DEAD AT WHICH STEP for the brand, keyed by step, as the canonical emails this service joins
- * on. A brand nobody has ruled anyone out for answers with empty sets — which is every brand today,
- * so this read costs nothing and changes nothing until somebody states a first `never`.
+ * Who is out of the running at which step, per the two sources lead-service serves beside each other.
+ *
+ *   - `byStep` — a HUMAN stated `never` at the step.
+ *   - `coldByStep` — the lead WENT COLD there: lead-service's own rule (sales-lead-service#608), applied
+ *     only when the brand's CRM is connected and readable, so a missing answer is visible. A positive
+ *     reply with no meeting booked within 30 days is cold at `meeting_booked`; a booked meeting not
+ *     attended within 30 days of its date is cold at `meeting_attended`. The rule, the CRM gate and the
+ *     "a later step un-colds it" / "a human statement wins" precedence all live in lead-service; nothing
+ *     here re-derives any of it.
+ *
+ * Both are keyed by step, as the canonical emails this service joins on. A brand nobody ruled out and
+ * nobody went cold for answers with empty sets. `coldByStep` ABSENT (a lead-service predating #608) is
+ * read as empty, never as an error: the producer added it beside a contract that did not move.
  */
-export async function fetchStepDisqualifications(
-  brandId: string,
-): Promise<Map<LeadStepOutcome, Set<string>>> {
+export interface StepDisqualifications {
+  byStep: Map<LeadStepOutcome, Set<string>>;
+  coldByStep: Map<LeadStepOutcome, Set<string>>;
+}
+
+export async function fetchStepDisqualifications(brandId: string): Promise<StepDisqualifications> {
   const { url, apiKey } = leadServiceConfig();
   const response = await fetchWithRetry(
     `${url}/internal/brands/${encodeURIComponent(brandId)}/step-disqualifications`,
@@ -179,18 +192,27 @@ export async function fetchStepDisqualifications(
     );
   }
 
-  const data = (await response.json()) as { byStep?: unknown };
+  const data = (await response.json()) as { byStep?: unknown; coldByStep?: unknown };
   if (!data.byStep || typeof data.byStep !== "object") {
     throw new Error("lead-service /internal/brands/:brandId/step-disqualifications returned no byStep object");
   }
+  if (data.coldByStep !== undefined && (data.coldByStep === null || typeof data.coldByStep !== "object")) {
+    throw new Error("lead-service /internal/brands/:brandId/step-disqualifications returned a malformed coldByStep");
+  }
+  return {
+    byStep: parseStepEmails(data.byStep as Record<string, unknown>, "byStep"),
+    coldByStep: parseStepEmails((data.coldByStep ?? {}) as Record<string, unknown>, "coldByStep"),
+  };
+}
 
+function parseStepEmails(raw: Record<string, unknown>, field: string): Map<LeadStepOutcome, Set<string>> {
   const out = new Map<LeadStepOutcome, Set<string>>();
-  for (const [step, raw] of Object.entries(data.byStep as Record<string, unknown>)) {
-    if (!Array.isArray(raw)) {
-      throw new Error("lead-service /internal/brands/:brandId/step-disqualifications returned a non-array step");
+  for (const [step, list] of Object.entries(raw)) {
+    if (!Array.isArray(list)) {
+      throw new Error(`lead-service /internal/brands/:brandId/step-disqualifications returned a non-array ${field} step`);
     }
     const emails = new Set<string>();
-    for (const email of raw) {
+    for (const email of list) {
       const normalized = nonEmpty(email);
       if (normalized) emails.add(normalized.trim().toLowerCase());
     }

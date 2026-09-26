@@ -201,12 +201,17 @@ export async function fetchObservedStepFacts(
     }
   }
 
-  for (const [step, emails] of dead) {
-    const signal = STEP_TO_SIGNAL[step];
-    if (!signal) continue;
-    for (const email of emails) {
-      const entry = facts(email);
-      if (!entry.deadStepSignals.includes(signal)) entry.deadStepSignals.push(signal);
+  // A lead that WENT COLD at a step (lead-service's rule, CRM-connected brands only) is priced exactly
+  // like one a human ruled out there: it did not convert, and a forecast of the step it stalled before
+  // is worth nothing. Pricing only — it reaches no rung and leaves every count and measured rate alone.
+  for (const source of [dead.byStep, dead.coldByStep]) {
+    for (const [step, emails] of source) {
+      const signal = STEP_TO_SIGNAL[step];
+      if (!signal) continue;
+      for (const email of emails) {
+        const entry = facts(email);
+        if (!entry.deadStepSignals.includes(signal)) entry.deadStepSignals.push(signal);
+      }
     }
   }
 

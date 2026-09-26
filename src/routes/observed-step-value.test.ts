@@ -111,6 +111,8 @@ interface Opts {
   outcomes?: Partial<Record<"meeting_booked" | "meeting_attended" | "sale", Outcome[]>>;
   /** step → the emails a human ruled out at it. */
   deadByStep?: Record<string, string[]>;
+  /** step → the emails lead-service reports as WENT COLD there. Absent ⇒ a producer predating #608. */
+  coldByStep?: Record<string, string[]>;
   /** The funnels the brand declared. Absent ⇒ 404, i.e. declared nothing. */
   salesFunnels?: unknown[];
   outcomesFail?: boolean;
@@ -161,7 +163,7 @@ function mockFetch(opts: Opts = {}): void {
       }));
       return json({ event, outcomes: rows });
     }
-    if (url.includes("/step-disqualifications")) return json({ counts: {}, byStep: opts.deadByStep ?? {} });
+    if (url.includes("/step-disqualifications")) return json({ counts: {}, byStep: opts.deadByStep ?? {}, ...(opts.coldByStep ? { coldByStep: opts.coldByStep, coldCounts: {} } : {}) });
     if (url.includes("/stats/costs")) {
       return json({
         groups: [
@@ -349,6 +351,42 @@ describe("a lead is worth what a human observed, not what we forecast", () => {
   it("a step nobody ruled out changes nothing — an empty disqualification set is the state today", async () => {
     mockFetch({ deadByStep: { sale: [], meeting_booked: [] } });
     expect(await pipeline()).toBeCloseTo(150.536, 3);
+  });
+
+  // ── A lead that WENT COLD is priced like one a human ruled out ─────────────
+
+  it("a lead COLD at meeting_booked is worth nothing on a conversation funnel, exactly like a stated never", async () => {
+    const funnels = [declaredFunnel({ rates: { replyToMeetingPct: 40, meetingToClosePct: 30 } })];
+    mockFetch({ salesFunnels: funnels, deadByStep: { meeting_booked: ["jane@acme.com"] } });
+    const never = await pipeline();
+    vi.restoreAllMocks();
+    vi.mocked(db.query.features.findFirst).mockResolvedValue(SALES_FEATURE as never);
+    mockFetch({ salesFunnels: funnels, coldByStep: { meeting_booked: ["jane@acme.com"] } });
+    const cold = await pipeline();
+    expect(cold).toBe(0);
+    expect(cold).toBe(never);
+  });
+
+  it("a booked meeting COLD at meeting_attended loses its value; the reached rung is still counted", async () => {
+    mockFetch({
+      outcomes: { meeting_booked: [{ email: "jane@acme.com" }] },
+      coldByStep: { meeting_attended: ["jane@acme.com"] },
+    });
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&leads=full").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.headline.totalPipelineUsd).toBe(0);
+    // Still booked: going cold prices the lead, it does not un-happen the meeting.
+    expect(res.body.leads.some((l: { meetingBooked?: boolean }) => l.meetingBooked === true)).toBe(true);
+  });
+
+  it("no coldByStep on the wire (lead-service predating it) or an empty one reads byte-identically", async () => {
+    mockFetch({});
+    const before = await pipeline();
+    vi.restoreAllMocks();
+    vi.mocked(db.query.features.findFirst).mockResolvedValue(SALES_FEATURE as never);
+    mockFetch({ coldByStep: { meeting_booked: [], meeting_attended: [] } });
+    expect(await pipeline()).toBe(before);
+    expect(before).toBeCloseTo(150.536, 3);
   });
 
   // ── The legacy source, and who wins ───────────────────────────────────────

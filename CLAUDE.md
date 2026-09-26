@@ -95,6 +95,23 @@ Supersedes every "declared funnel" statement in the sections below; their pricin
 - Tests: `lib/reading-funnels.test.ts`; route suites mock `offer-economics` via `lib/leg-economics-fixture.ts`
   (a pre-C1 declared fixture → the leg statements + offer brand-service's carry-over produced).
 
+## A LEAD THAT WENT COLD IS PRICED LIKE A STATED `never` — lead-service's `coldByStep`, beside `byStep`, pricing only
+
+lead-service derives "went cold" (sales-lead-service#608) and serves it on
+`GET /internal/brands/:brandId/step-disqualifications` as `coldByStep` (canonical emails) BESIDE the unchanged
+`byStep`. Rule, owned THERE and never re-derived here: CRM-connected brands only; positive reply with no
+meeting booked in 30 days → cold at `meeting_booked`; booked and not attended within 30 days of its date →
+cold at `meeting_attended`; attended or later → never cold; later progress un-colds; a human statement wins.
+
+- `fetchStepDisqualifications` returns `{byStep, coldByStep}`; `fetchObservedStepFacts` folds BOTH into
+  `deadStepSignals`, so the existing `deadLegSignalsFor` → `EnginePerson.deadSignals` path zeroes the lead's
+  funnel legs. Headline pipeline, ROI, CAC, return history and every grain on the revenue engine follow.
+- **Pricing only.** `deadSignals` is read by `evForPerson` and nothing else: reached rungs, `funnelSteps`,
+  `leads[]` flags, measured conversion rates and every count are untouched.
+- `coldByStep` ABSENT (producer predating #608) or empty (no usable CRM — lead-service's `coldRule` says why)
+  ⇒ byte-identical to before. A non-object `coldByStep` fails loud (lands in the fail-soft statements degrade).
+- Guards: the went-cold block in `routes/observed-step-value.test.ts`. (Set 2026-09-26.)
+
 ## AN AUDIENCE ROW SAYS HOW MANY PEOPLE IT CAN STILL BE SERVED — `availableToContactCount` on `workflow-projection`, read LIVE
 
 campaign-service picks the audience for each serve off `workflow-projection`'s audience rows, and those
