@@ -389,3 +389,48 @@ describe("buildAccountsAudit", () => {
     expect(audit.rows.map((r) => r.status)).toEqual(["active", "payment_declined"]);
   });
 });
+
+describe("buildAccountsAudit — each row states the ORG's side of the revenue split", () => {
+  // Doc Dinners' shape (an agency: a stated monthly amount, two brands, auto-topup) beside a
+  // self-serve org (Shockwavecenters' shape: no stated amount). Both active, both burning budget.
+  const fixture = {
+    memberships: [
+      { orgId: "doc", brandId: "b-doc-1" },
+      { orgId: "doc", brandId: "b-doc-2" },
+      { orgId: "shock", brandId: "b-shock" },
+    ],
+    balanceUsd: { doc: 500, shock: 500 },
+    autoTopup: { doc: true, shock: true },
+    configuredUsd: { "b-doc-1": 100, "b-doc-2": 7, "b-shock": 8 },
+  };
+
+  it("an org holding a stated amount reads agency on EVERY one of its brands; an org holding none reads self_serve", async () => {
+    // The stated row names only one of the agency's brands — the side is a property of the org.
+    const audit = await buildAccountsAudit(COLD, NOW, {
+      ...deps(fixture),
+      statedAmounts: async () => [{ orgId: "doc" }],
+    });
+    const side = Object.fromEntries(audit.rows.map((r) => [r.brandId, r.revenueSide]));
+    expect(side).toEqual({ "b-doc-1": "agency", "b-doc-2": "agency", "b-shock": "self_serve" });
+  });
+
+  it("the side moves NO status and NO fleet total — the payload is byte-identical but for the added field", async () => {
+    const withSide = await buildAccountsAudit(COLD, NOW, { ...deps(fixture), statedAmounts: async () => [{ orgId: "doc" }] });
+    const without = await buildAccountsAudit(COLD, NOW, deps(fixture));
+    expect(withSide.stats).toEqual(without.stats);
+    expect(withSide.stats.totalRunningDailyBudgetUsd).toBe(115); // the agency's burn still counts here
+    const strip = (rows: typeof withSide.rows) => rows.map(({ revenueSide: _s, ...rest }) => rest);
+    expect(strip(withSide.rows)).toEqual(strip(without.rows));
+  });
+
+  it("an unreadable store is an unknown side (null), never a guessed self_serve, and never fails the audit", async () => {
+    const audit = await buildAccountsAudit(COLD, NOW, { ...deps(fixture), statedAmounts: async () => null });
+    expect(audit.rows.map((r) => r.revenueSide)).toEqual([null, null, null]);
+    expect(audit.rows).toHaveLength(3);
+  });
+
+  it("an empty store is a measured answer: nobody is agency", async () => {
+    const audit = await buildAccountsAudit(COLD, NOW, { ...deps(fixture), statedAmounts: async () => [] });
+    expect(new Set(audit.rows.map((r) => r.revenueSide))).toEqual(new Set(["self_serve"]));
+  });
+});

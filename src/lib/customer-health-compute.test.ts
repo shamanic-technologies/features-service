@@ -47,6 +47,7 @@ function account(over: Partial<AccountRow> & { orgId: string; brandId: string; s
     orgActualBalanceUsd: 1000,
     autoTopupEnabled: false,
     paymentDeclinedReason: null,
+    revenueSide: "self_serve",
     ...over,
   };
   return merged;
