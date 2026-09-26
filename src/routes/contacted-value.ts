@@ -211,7 +211,7 @@ export async function getBrandContactedValue(brandId: string, headers: Downstrea
       channels: brandFeatureSlugs(channels).join("+"),
       decl: declared.map((f) => f.funnelKey).sort().join("+") || "none",
       econ: economicsFingerprint(priced.economics),
-      m: "contacted-value-v2",
+      m: "contacted-value-v3",
     }),
     orgId: headers.orgId,
     compute: () => computeBrandContactedValue(brandId, { orgId: headers.orgId, userId: headers.userId, runId: headers.runId }, { channels, declared, effective }),

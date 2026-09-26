@@ -1641,7 +1641,7 @@ const brandContactedValueResponseSchema = z.object({
   })),
   matureBefore: z.string(),
   maturityDays: z.number(),
-  expiryDays: z.number().describe("A contacted lead whose LAST email sent is older than this many days (or who was never sent one) is worth 0."),
+  expiryDays: z.number().describe("A contacted lead whose LAST email sent is older than this many days is worth 0. A lead not sent anything yet counts while pending, up to this many days after hand-off."),
   lastSentOnOrAfter: z.string().describe("Leads whose last send is strictly before this instant have expired."),
   minBrandOutcomes: z.number(),
   population: z.object({
@@ -1654,7 +1654,7 @@ const brandContactedValueResponseSchema = z.object({
   leads: z.array(z.object({
     leadId: z.string(),
     expectedValueUsd: z.number().nullable().describe("The value this lead carries in the pipeline; 0 when expired."),
-    expired: z.boolean().describe("No email sent in the last `expiryDays` days (or never sent)."),
+    expired: z.boolean().describe("Last send older than `expiryDays` days (or, never sent, handed off longer ago than that)."),
   })).describe("One page of contacted-only leads, ordered by lead id."),
   nextCursor: z.string().nullable(),
 });

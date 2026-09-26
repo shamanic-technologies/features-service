@@ -589,14 +589,27 @@ export function contactedExpiryCutoffIso(now: Date): string {
  *
  * It EXPIRES: measured on the whole fleet, every positive reply and every click landed within 30 days
  * of the last email sent before it, so a lead whose last SENT email (`signalDates.lastSent`, the
- * provider's per-step sent event) is older than `CONTACTED_VALUE_EXPIRY_DAYS` — or who was never sent
- * one — is worth nothing. Engaged leads are untouched by this.
+ * provider's per-step sent event) is older than `CONTACTED_VALUE_EXPIRY_DAYS` is worth nothing; a lead
+ * not sent anything yet counts while pending (`contactedExpired`). Engaged leads are untouched by this.
  */
 export interface ContactedPricing {
   /** P(entry step | contacted), 0..100, per engine signal (`clicked`, `positiveReply`). */
   entryRatePct: Readonly<Record<string, number>>;
   /** ISO instant: a last send strictly before this has expired. */
   lastSentOnOrAfter: string;
+}
+
+/**
+ * Has this contacted lead's value expired? Counted from the LAST email SENT. A lead with no send yet
+ * (queued, first email pending) has not started its clock: it counts while pending, bounded by 30 days
+ * after it was handed to the provider (`signalDates.contacted`) so a lead that is never sent does not
+ * count forever. Once any email is sent, only the last send decides.
+ */
+export function contactedExpired(person: EnginePerson, cutoffIso: string): boolean {
+  const lastSent = person.signalDates?.lastSent ?? null;
+  if (lastSent) return lastSent < cutoffIso;
+  const handedOff = person.signalDates?.contacted ?? null;
+  return !handedOff || handedOff < cutoffIso;
 }
 
 /** The value of a contacted-only lead, or 0 when it has expired / no route is priced. PURE. */
@@ -607,8 +620,7 @@ export function contactedLeadValue(
   pricing: ContactedPricing,
 ): number {
   if (!isContactedOnly(person)) return 0;
-  const lastSent = person.signalDates?.lastSent ?? null;
-  if (!lastSent || lastSent < pricing.lastSentOnOrAfter) return 0;
+  if (contactedExpired(person, pricing.lastSentOnOrAfter)) return 0;
   const statedValueUsd =
     typeof person.valueUsd === "number" && Number.isFinite(person.valueUsd) && person.valueUsd >= 0
       ? person.valueUsd

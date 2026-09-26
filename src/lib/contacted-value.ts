@@ -44,12 +44,14 @@
  * prices a contacted-only lead with (`computeRevenue`'s `contacted` pricing), so this read states
  * exactly what these leads add to the brand's pipeline and ROI. A lead with no email SENT in the last
  * `CONTACTED_VALUE_EXPIRY_DAYS` (30) days — counted from the provider's per-step sent event, never the
- * contacted or first-send date — is worth 0 (`expired`). The TOTAL is the pipeline's per-company rule:
+ * contacted or first-send date — is worth 0 (`expired`). A lead not sent anything yet counts while
+ * pending, bounded to 30 days after hand-off. The TOTAL is the pipeline's per-company rule:
  * Σ over organisations of the most valuable member.
  */
 import {
   combineIndependent,
   contactedExpiryCutoffIso,
+  contactedExpired,
   contactedLeadValue,
   CONTACTED_VALUE_EXPIRY_DAYS,
   ENGAGED_SIGNALS,
@@ -110,7 +112,7 @@ export interface ContactedLeadValue {
    * EXPIRED (`expired`). Null exactly when the response's `unmeasuredReason` is set.
    */
   expectedValueUsd: number | null;
-  /** True when no email was sent in the last `expiryDays` days (or none was ever sent): worth nothing. */
+  /** True when the last send is older than `expiryDays` days (or, never sent, it was handed off longer ago): worth nothing. */
   expired: boolean;
 }
 
@@ -238,10 +240,7 @@ export function priceContactedLeads(input: {
     entryRatePct: Object.fromEntries(routes.filter((r) => r._p !== null).map((r) => [r.signal, r._p! * 100])),
     lastSentOnOrAfter: contactedExpiryCutoffIso(now),
   };
-  const isExpired = (p: EnginePerson): boolean => {
-    const at = p.signalDates?.lastSent ?? null;
-    return !at || at < pricing.lastSentOnOrAfter;
-  };
+  const isExpired = (p: EnginePerson): boolean => contactedExpired(p, pricing.lastSentOnOrAfter);
   const valueOf = (person: EnginePerson): number | null =>
     unmeasuredReason !== null ? null : contactedLeadValue(person, input.paths, ltr!, pricing);
 

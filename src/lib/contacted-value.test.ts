@@ -187,18 +187,24 @@ describe("fleetEntryCountsOf", () => {
 describe("a contacted lead's value EXPIRES 30 days after the LAST email sent to it", () => {
   const recent = person({ lastSent: RECENT_SEND });
   const stale = person({ lastSent: STALE_SEND, contactedAt: OLD });
-  const neverSent = person({ lastSent: null });
+  const neverSent = person({ lastSent: null, contactedAt: OLD }); // handed off 8 weeks ago, never sent
+  const pendingFirstSend = person({ lastSent: null, contactedAt: YOUNG }); // queued two days ago
   // First contacted long ago, but re-sent recently: the LAST send counts, never the contacted date.
   const reSent = person({ contactedAt: OLD, lastSent: RECENT_SEND });
-  const persons = [recent, stale, neverSent, reSent];
+  const persons = [recent, stale, neverSent, reSent, pendingFirstSend];
   const result = priceContactedLeads({ paths: PATHS, persons, lifetimeRevenueUsd: LTR, fleet: FLEET, now: NOW });
   const byId = new Map(result.leads.map((l) => [l.leadId, l]));
 
-  it("a lead whose last send is older than 30 days, or who was never sent one, is worth $0", () => {
+  it("a lead whose last send is older than 30 days, or never sent and handed off >30 days ago, is worth $0", () => {
     expect(result.lastSentOnOrAfter).toBe("2026-08-27T12:00:00.000Z");
     expect(byId.get(stale.leadId)).toMatchObject({ expectedValueUsd: 0, expired: true });
     expect(byId.get(neverSent.leadId)).toMatchObject({ expectedValueUsd: 0, expired: true });
     expect(result.population.expired).toBe(2);
+  });
+
+  it("a lead whose first email is still pending counts: its clock has not started", () => {
+    expect(byId.get(pendingFirstSend.leadId)!.expired).toBe(false);
+    expect(byId.get(pendingFirstSend.leadId)!.expectedValueUsd).toBeCloseTo(LTR * FLEET_P, 6);
   });
 
   it("the last send, not the first contact, decides", () => {
@@ -209,7 +215,7 @@ describe("a contacted lead's value EXPIRES 30 days after the LAST email sent to 
   it("the pipeline counts exactly the non-expired value, and nothing for an expired lead", () => {
     const pricing = contactedPricingOf(result);
     const pipeline = computeRevenue(PATHS, persons, LTR, [], pricing);
-    expect(result.totalExpectedValueUsd).toBeCloseTo(2 * LTR * FLEET_P, 6);
+    expect(result.totalExpectedValueUsd).toBeCloseTo(3 * LTR * FLEET_P, 6);
     expect(pipeline.headline.totalPipelineUsd).toBeCloseTo(result.totalExpectedValueUsd!, 6);
     expect(computeRevenue(PATHS, [stale, neverSent], LTR, [], pricing).headline.totalPipelineUsd).toBe(0);
   });

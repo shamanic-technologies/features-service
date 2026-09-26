@@ -11799,7 +11799,7 @@
           },
           "expiryDays": {
             "type": "number",
-            "description": "A contacted lead whose LAST email sent is older than this many days (or who was never sent one) is worth 0."
+            "description": "A contacted lead whose LAST email sent is older than this many days is worth 0. A lead not sent anything yet counts while pending, up to this many days after hand-off."
           },
           "lastSentOnOrAfter": {
             "type": "string",
@@ -11854,7 +11854,7 @@
                 },
                 "expired": {
                   "type": "boolean",
-                  "description": "No email sent in the last `expiryDays` days (or never sent)."
+                  "description": "Last send older than `expiryDays` days (or, never sent, handed off longer ago than that)."
                 }
               },
               "required": [
