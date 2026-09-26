@@ -6,10 +6,13 @@
  * answer (its `?standing=` filter), never re-derived here; what they are worth is this service's.
  *
  *   - `sales_interest` (Interested) — each person at the engine's OWN expected value, the byte-same
- *     `evForPerson` the brand's pipeline prices them on (same paths, same LTR, same overlays, same
- *     priced causes). The column total is company-level exactly as the pipeline is: an organisation is
- *     one client, so it is worth the MAX over its members in the column, and organisations are summed.
- *     So the column is a SUBSET of the pipeline and can never exceed it.
+ *     `evForPerson` the pipeline prices them on (same paths, same LTR, same overlays) — on EVERY cause
+ *     state (`pricedCauses`), because a deals board shows what a deal is worth to the customer, not our
+ *     share of it: the pipeline's "our outreach only" default read 45 of 54 Interested cards at $0 in
+ *     prod (Doc Dinners, meetings booked through the CRM). The column total is company-level exactly as
+ *     the pipeline is: an organisation is one client, worth the MAX over its members, organisations
+ *     summed — a SUBSET of the all-cause pipeline (`/revenue?cause=outreach,other,unstated`).
+ *     A card the engine still prices at 0 says why (`zeroValueReason`).
  *   - `customer` (Won) — what was won: the amount a human STATED on the sale (whoever caused it — this
  *     column shows the deal, not our share of it), else the brand's lifetime revenue per client, and
  *     each card says which (`valueSource`). One organisation is one client: MAX over its members.
@@ -48,10 +51,18 @@ export type DealsColumnUnvaluedReason =
 
 export type WonValueSource = "stated_amount" | "lifetime_revenue";
 
+export type DealCardZeroReason =
+  /** A human ruled the lead out of every funnel it could close through, or it went cold. */
+  | "ruled_out"
+  /** The steps it reached are on no funnel the brand is priced on. */
+  | "step_not_priced";
+
 export interface DealCard {
   leadId: string;
   /** Null when the column has no value, or this service holds no such lead yet. */
   valueUsd: number | null;
+  /** Interested only: why the engine prices this card at exactly 0 (null otherwise). */
+  zeroValueReason?: DealCardZeroReason | null;
   /** Won column only: where the amount comes from. */
   valueSource?: WonValueSource | null;
 }
@@ -74,6 +85,8 @@ export interface DealsColumn {
 
 export interface DealsValueResult {
   lifetimeRevenueUsd: number | null;
+  /** The outcome causes the values are priced on (every cause: the deal's value, not our share). */
+  pricedCauses: readonly string[];
   columns: DealsColumn[];
 }
 
@@ -104,7 +117,7 @@ function unvalued(standing: string, reason: DealsColumnUnvaluedReason): DealsCol
 
 /** PURE. Every column's value from the pipeline's own inputs and lead-service's column membership. */
 export function priceDealsColumns(input: {
-  /** Deduped persons with every pipeline overlay applied (default priced causes). */
+  /** Deduped persons with every pipeline overlay applied, priced on `pricedCauses`. */
   persons: readonly EnginePerson[];
   /** The engine's paths for this brand, already restricted to the priced funnels' legs. */
   paths: ResolvedPath[];
@@ -113,6 +126,7 @@ export function priceDealsColumns(input: {
   members: Record<ValuedStanding, ReadonlySet<string>>;
   /** Per canonical email: the amount a human stated on the SALE, whoever caused it. */
   statedWonAmountUsdByEmail: ReadonlyMap<string, number> | null;
+  pricedCauses: readonly string[];
 }): DealsValueResult {
   const ltr = input.lifetimeRevenueUsd;
   const byLead = new Map(input.persons.map((p) => [p.leadId, p] as const));
@@ -131,7 +145,13 @@ export function priceDealsColumns(input: {
         ...base,
         ...companyTotal(held, values, reason),
         basis: reason === null ? "expected_value" : null,
-        leads: ids.map((leadId, i) => ({ leadId, valueUsd: values[i] === null ? null : round(values[i]!) })),
+        leads: ids.map((leadId, i) => {
+          const v = values[i];
+          const p = held[i];
+          const zeroValueReason: DealCardZeroReason | null =
+            v === 0 && p ? ((p.deadSignals?.length ?? 0) > 0 ? "ruled_out" : "step_not_priced") : null;
+          return { leadId, valueUsd: v === null ? null : round(v), zeroValueReason };
+        }),
       };
     }
 
@@ -167,6 +187,7 @@ export function priceDealsColumns(input: {
 
   return {
     lifetimeRevenueUsd: ltr,
+    pricedCauses: [...input.pricedCauses],
     columns: [
       column("sales_interest"),
       column("customer"),

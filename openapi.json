@@ -11899,6 +11899,13 @@
             "nullable": true,
             "description": "The brand's value of a client — the same LTR the pipeline is priced on."
           },
+          "pricedCauses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The outcome causes the values are priced on: EVERY cause (`outreach`, `other`, `unstated`) — a deals board shows what a deal is worth to the customer, not our share of it. The all-cause pipeline is GET /brands/{brandId}/revenue?cause=outreach,other,unstated."
+          },
           "columns": {
             "type": "array",
             "items": {
@@ -11935,7 +11942,7 @@
                     "expected_value",
                     "won_value"
                   ],
-                  "description": "`expected_value` (Interested): each person at the byte-same expected value the brand's pipeline prices them on — the column is a SUBSET of the pipeline. `won_value` (Won): the amount a human stated on the sale (whoever caused it), else the brand's lifetime revenue per client."
+                  "description": "`expected_value` (Interested): each person at the byte-same expected value the engine prices them on, on every cause — the column is a SUBSET of the all-cause pipeline. `won_value` (Won): the amount a human stated on the sale (whoever caused it), else the brand's lifetime revenue per client."
                 },
                 "leadCount": {
                   "type": "number",
@@ -11970,6 +11977,15 @@
                           "lifetime_revenue"
                         ],
                         "description": "Won column only."
+                      },
+                      "zeroValueReason": {
+                        "type": "string",
+                        "nullable": true,
+                        "enum": [
+                          "ruled_out",
+                          "step_not_priced"
+                        ],
+                        "description": "Interested only: why the engine prices this card at exactly 0 — `ruled_out` (a human ruled it out, or it went cold), `step_not_priced` (the steps it reached are on no funnel the brand is priced on)."
                       }
                     },
                     "required": [
@@ -11996,6 +12012,7 @@
         "required": [
           "brandId",
           "lifetimeRevenueUsd",
+          "pricedCauses",
           "columns"
         ]
       },
@@ -21128,7 +21145,7 @@
     "/brands/{brandId}/deals-value": {
       "get": {
         "summary": "The dollar value of each Deals-board column (lead-service standing), per column and per card",
-        "description": "A SEPARATE figure, added to no pipeline, ROI or cost figure. Column membership is lead-service's standing (its `?standing=` filter). Interested (`sales_interest`) = each person's expected value exactly as the brand's pipeline prices them (same paths, LTR, overlays, priced causes), company-deduped like the pipeline. Won (`customer`) = the stated sale amount, else the lifetime revenue per client. Disqualified, opted out and not placed state no value, with a reason. The Contacted column's value is GET /brands/{brandId}/contacted-value.",
+        "description": "A SEPARATE figure, added to no pipeline, ROI or cost figure. Column membership is lead-service's standing (its `?standing=` filter). Interested (`sales_interest`) = each person's expected value exactly as the engine prices them (same paths, LTR, overlays), on every outcome cause, company-deduped like the pipeline. Won (`customer`) = the stated sale amount, else the lifetime revenue per client. Disqualified, opted out and not placed state no value, with a reason. The Contacted column's value is GET /brands/{brandId}/contacted-value.",
         "tags": [
           "Stats"
         ],
