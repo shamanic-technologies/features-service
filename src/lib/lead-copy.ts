@@ -131,7 +131,20 @@ export async function readLeadCopy(
   const pending = (async () => {
     const now = Date.now();
     const copy = copies.get(key);
-    const answer = await fetchChanges(copy?.cursor ?? null);
+    let answer: ChangesAnswer;
+    try {
+      answer = await fetchChanges(copy?.cursor ?? null);
+    } catch (error) {
+      // lead-service refuses a cursor it now attributes to ANOTHER feed than the one this scope opens
+      // (400 "since belongs to a different scope than this read names"). The cursor is dead; a read
+      // with no cursor is, by its contract, the whole scope — so re-snapshot instead of failing every
+      // refresh of every view that reads this scope. Measured in prod 2026-09-26: `offer-revenue` and
+      // `revenue-grouped` refreshes failed on it and kept serving an ever older body.
+      if (!copy?.cursor || !/different scope/i.test((error as Error).message)) throw error;
+      console.warn(`[features-service] lead copy cursor refused (${(error as Error).message}); re-snapshotting the scope`);
+      copies.delete(key);
+      answer = { ...(await fetchChanges(null)), full: true };
+    }
     if (!Array.isArray(answer.leads) || !Array.isArray(answer.removed)) {
       throw new Error("lead-service /orgs/leads/changes returned no leads/removed arrays");
     }

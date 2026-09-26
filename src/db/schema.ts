@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, boolean, integer, jsonb, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, boolean, integer, jsonb, timestamp, uniqueIndex, index } from "drizzle-orm/pg-core";
 
 export const features = pgTable(
   "features",
@@ -88,6 +88,8 @@ export const featureViewSnapshots = pgTable(
     view: text("view").notNull(),
     /** Canonical key over ALL inputs that change the body (featureSlug + sorted query string). */
     scopeKey: text("scope_key").notNull(),
+    /** `scope_key` without its fingerprint parts (`view-cache.familyKeyOf`) — finds the previous cell. */
+    familyKey: text("family_key"),
     orgId: uuid("org_id").notNull(),
     /** The exact response body served for this scope. */
     body: jsonb("body").notNull(),
@@ -98,6 +100,7 @@ export const featureViewSnapshots = pgTable(
   },
   (table) => [
     uniqueIndex("idx_feature_view_snapshots_view_scope").on(table.view, table.scopeKey),
+    index("idx_feature_view_snapshots_family").on(table.view, table.familyKey, table.computedAt),
   ]
 );
 

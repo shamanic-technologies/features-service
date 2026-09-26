@@ -1,5 +1,31 @@
 # Features Service — CLAUDE.md
 
+## A SNAPSHOT MUST PERSIST — a body jsonb refuses is stored as its JSON text, and a FINGERPRINT rotation serves the previous cell
+
+`feature_view_snapshots.body` is `jsonb`, which REFUSES a `\u0000` escape and an unpaired surrogate escape
+anywhere in a document — and a response body carries whatever text a producer stored (a lead's name, an
+organisation). The refused persist was logged and dropped, so the cell was never written and EVERY read
+recomputed cold. Measured in prod 2026-09-26: `brand-revenue` had ZERO stored cells fleet-wide and answered
+in 7-27s on every call (brands `f4d73dab…`, `75d7e3e8…`), `offer-revenue` the same, and `revenue-grouped`
+refreshes failed forever while serving an ever older body ("unsupported Unicode escape sequence").
+
+- **`encodeSnapshotBody` / `decodeSnapshotBody` (`lib/view-cache.ts`)**: such a body is stored as
+  `{ __featureViewSnapshotJson: "<JSON text>" }` and `JSON.parse`d back byte for byte on every read path
+  (fresh, stale, rotation). Every other body is stored untouched. Do NOT "fix" it by stripping the
+  character — that would change a served figure's text.
+- **A FINGERPRINT ROTATION NO LONGER BLOCKS.** `econ` and `decl` in a scope key are fingerprints of
+  inputs read on every request (the brand's economics, the funnels it is priced on) and they move whenever
+  a MEASURED conversion rate moves (prod: four `brand-offers` cells of one brand differing only by `econ`).
+  Each move made the next read a full blocking recompute. A cell's FAMILY is its key minus those parts
+  (`familyKeyOf`, stored in `family_key`); on an exact miss, the newest cell of the SAME view + org +
+  family is served NOW and the new cell is computed behind the response (single-flight). The fingerprint
+  still keys the cell, so an economics write still lands on a new cell — it is served one refresh later
+  instead of blocking the read that noticed it. No previous cell ⇒ the ordinary blocking miss.
+- **A lead-copy cursor lead-service refuses as another scope's (400 "since belongs to a different
+  scope") re-snapshots the scope** (`lib/lead-copy.ts`) instead of failing every refresh that reads it.
+- Guards: the jsonb + rotation suites at the end of `lib/view-cache.test.ts`, the refused-cursor case in
+  `lib/lead-copy.test.ts`. (Set 2026-09-26.)
+
 ## WAVE C2 — THE FUNNEL-KEYED HTTP SURFACE IS GONE; `?funnel=` IS REFUSED (400 `funnel_retired`), NEVER IGNORED
 
 A fleet-wide search found no caller left, so wave C2 deleted: `GET /features/:slug/funnel-ranking` and its

@@ -43,6 +43,19 @@ describe("the live lead copy", () => {
     expect(after.map((r) => r.id)).toEqual(["z"]);
   });
 
+  it("re-snapshots the scope when lead-service refuses the cursor as another scope's", async () => {
+    await readLeadCopy("k", async () => ({ full: true, cursor: "c1", leads: [row("a"), row("b")], removed: [] }));
+    const sinces: Array<string | null> = [];
+    const after = await readLeadCopy("k", async (since) => {
+      sinces.push(since);
+      if (since) throw new Error('lead-service /orgs/leads/changes failed (400): {"error":"since belongs to a different scope than this read names"}');
+      return { full: false, cursor: "n1", leads: [row("z")], removed: [] };
+    });
+    expect(sinces).toEqual(["c1", null]);
+    // The no-cursor answer IS the whole scope, so nothing of the dead copy survives.
+    expect(after.map((r) => r.id)).toEqual(["z"]);
+  });
+
   it("fails loud and keeps the previous cursor when a sync fails", async () => {
     await readLeadCopy("k", async () => ({ full: true, cursor: "c1", leads: [row("a")], removed: [] }));
     await expect(
