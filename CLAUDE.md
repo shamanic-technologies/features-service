@@ -26,6 +26,21 @@ refreshes failed forever while serving an ever older body ("unsupported Unicode 
 - Guards: the jsonb + rotation suites at the end of `lib/view-cache.test.ts`, the refused-cursor case in
   `lib/lead-copy.test.ts`. (Set 2026-09-26.)
 
+## A LEGACY MANUAL QUALIFICATION COUNTS ONLY WHILE IT STANDS — the latest non-withdrawn statement per (campaign, lead), never the earliest ever made
+
+`qualifications-client.ts` reads instantly-service's manual-qualification HISTORY (append-only: superseded
+and withdrawn statements included). It used to keep the EARLIEST `lead_meeting_booked` / `lead_closed` row
+per email, so a correction never took effect — prod 2026-09-26, Doc Dinners: a lead marked "meeting booked"
+on 06-11 and restated "interested" on 09-26 still read `meetingBooked: true` and the reply → meeting rate
+read 6/26 instead of 5/26.
+
+- **Standing = the producer's rule** (`findStandingManualQualification`): per (instantlyCampaignId, lead),
+  the latest row with `withdrawnAt` null. A withdrawn latest row lets the earlier standing one answer.
+- Standing `lead_meeting_booked` → meeting at its date. Standing `lead_closed` → close at its date AND the
+  meeting it came through (earliest non-withdrawn booked row of the pair before it). Any other kind → nothing.
+- Across a lead's campaigns the earliest standing date wins. Legacy source kept; no lead special-cased.
+- Guard: `src/lib/qualifications-client.test.ts`. (Set 2026-09-26.)
+
 ## WAVE C2 — THE FUNNEL-KEYED HTTP SURFACE IS GONE; `?funnel=` IS REFUSED (400 `funnel_retired`), NEVER IGNORED
 
 A fleet-wide search found no caller left, so wave C2 deleted: `GET /features/:slug/funnel-ranking` and its
