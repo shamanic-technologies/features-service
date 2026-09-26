@@ -1685,11 +1685,12 @@ const dealsColumnUnvaluedReasons = [
 const brandDealsValueResponseSchema = z.object({
   brandId: z.string(),
   lifetimeRevenueUsd: z.number().nullable().describe("The brand's value of a client — the same LTR the pipeline is priced on."),
+  pricedCauses: z.array(z.string()).describe("The outcome causes the values are priced on: EVERY cause (`outreach`, `other`, `unstated`) — a deals board shows what a deal is worth to the customer, not our share of it. The all-cause pipeline is GET /brands/{brandId}/revenue?cause=outreach,other,unstated."),
   columns: z.array(z.object({
     standing: z.string().describe("lead-service's standing state the column shows (`sales_interest`, `customer`, `disqualified`, `opted_out`, `not_contacted`, `unresolved`, `contacted`, `engaged`)."),
     valueUsd: z.number().nullable().describe("Company-level value of the column: one organisation = one client = the MAX over its members in the column, organisations summed. Null exactly when `unvaluedReason` is set — never 0 for 'no value'."),
     unvaluedReason: z.enum(dealsColumnUnvaluedReasons).nullable().describe("Why the column states no value. `ruled_out` / `opted_out`: nothing to win going forward. `not_placed`: never contacted. `see_contacted_value`: GET /brands/{brandId}/contacted-value values that column. `no_economics` / `no_client_value`: the brand states nothing a value could be priced on."),
-    basis: z.enum(["expected_value", "won_value"]).nullable().describe("`expected_value` (Interested): each person at the byte-same expected value the brand's pipeline prices them on — the column is a SUBSET of the pipeline. `won_value` (Won): the amount a human stated on the sale (whoever caused it), else the brand's lifetime revenue per client."),
+    basis: z.enum(["expected_value", "won_value"]).nullable().describe("`expected_value` (Interested): each person at the byte-same expected value the engine prices them on, on every cause — the column is a SUBSET of the all-cause pipeline. `won_value` (Won): the amount a human stated on the sale (whoever caused it), else the brand's lifetime revenue per client."),
     leadCount: z.number().nullable(),
     organizationCount: z.number().nullable(),
     unpricedLeadCount: z.number().nullable().describe("People lead-service places in the column that this read's lead population did not hold yet (their card reads null)."),
@@ -1697,6 +1698,7 @@ const brandDealsValueResponseSchema = z.object({
       leadId: z.string(),
       valueUsd: z.number().nullable(),
       valueSource: z.enum(["stated_amount", "lifetime_revenue"]).nullable().optional().describe("Won column only."),
+      zeroValueReason: z.enum(["ruled_out", "step_not_priced"]).nullable().optional().describe("Interested only: why the engine prices this card at exactly 0 — `ruled_out` (a human ruled it out, or it went cold), `step_not_priced` (the steps it reached are on no funnel the brand is priced on)."),
     })).describe("One card per person in the column, ordered by lead id (valued columns only)."),
   })),
 });
@@ -1707,7 +1709,7 @@ registry.registerPath({
   path: "/brands/{brandId}/deals-value",
   summary: "The dollar value of each Deals-board column (lead-service standing), per column and per card",
   description:
-    "A SEPARATE figure, added to no pipeline, ROI or cost figure. Column membership is lead-service's standing (its `?standing=` filter). Interested (`sales_interest`) = each person's expected value exactly as the brand's pipeline prices them (same paths, LTR, overlays, priced causes), company-deduped like the pipeline. Won (`customer`) = the stated sale amount, else the lifetime revenue per client. Disqualified, opted out and not placed state no value, with a reason. The Contacted column's value is GET /brands/{brandId}/contacted-value.",
+    "A SEPARATE figure, added to no pipeline, ROI or cost figure. Column membership is lead-service's standing (its `?standing=` filter). Interested (`sales_interest`) = each person's expected value exactly as the engine prices them (same paths, LTR, overlays), on every outcome cause, company-deduped like the pipeline. Won (`customer`) = the stated sale amount, else the lifetime revenue per client. Disqualified, opted out and not placed state no value, with a reason. The Contacted column's value is GET /brands/{brandId}/contacted-value.",
   tags: ["Stats"],
   request: { headers: identityHeaders, params: z.object({ brandId: z.string() }) },
   responses: {

@@ -50,6 +50,7 @@ const MEMBERS = {
   customer: new Set(["c-won-stated", "d-won-unpriced"]),
 };
 const STATED = new Map([["c-won-stated@x.com", 4900]]);
+const ALL = ["outreach", "other", "unstated"];
 
 const result = priceDealsColumns({
   persons: PERSONS,
@@ -57,6 +58,7 @@ const result = priceDealsColumns({
   lifetimeRevenueUsd: LTR,
   members: MEMBERS,
   statedWonAmountUsdByEmail: STATED,
+  pricedCauses: ALL,
 });
 const col = (s: string) => result.columns.find((c) => c.standing === s)!;
 
@@ -80,6 +82,27 @@ describe("priceDealsColumns — Interested", () => {
     expect(col("sales_interest").valueUsd!).toBeLessThan(pipeline);
     // e-other-click is in the pipeline and in no deal column
     expect(col("sales_interest").leads.some((l) => l.leadId === "e-other-click")).toBe(false);
+  });
+
+  it("a card the engine prices at exactly 0 says why — ruled out, or a step on no priced funnel", () => {
+    const r = priceDealsColumns({
+      persons: [
+        person("z-dead", "org-Z", { positiveReply: true }, { deadSignals: ["positiveReply"] }),
+        person("z-offfunnel", "org-Y", { signup: true }),
+        person("z-live", "org-X", { positiveReply: true }),
+      ],
+      paths: PATHS,
+      lifetimeRevenueUsd: LTR,
+      members: { sales_interest: new Set(["z-dead", "z-offfunnel", "z-live"]), customer: new Set() },
+      statedWonAmountUsdByEmail: null,
+      pricedCauses: ALL,
+    });
+    expect(r.columns[0].leads).toEqual([
+      { leadId: "z-dead", valueUsd: 0, zeroValueReason: "ruled_out" },
+      { leadId: "z-live", valueUsd: 400, zeroValueReason: null },
+      { leadId: "z-offfunnel", valueUsd: 0, zeroValueReason: "step_not_priced" },
+    ]);
+    expect(r.pricedCauses).toEqual(ALL);
   });
 
   it("a person lead-service places here that this read does not hold is a null card, counted", () => {
@@ -106,6 +129,7 @@ describe("priceDealsColumns — Won", () => {
       lifetimeRevenueUsd: 0,
       members: { sales_interest: new Set(["b-click"]), customer: new Set(["d-won-unpriced"]) },
       statedWonAmountUsdByEmail: null,
+      pricedCauses: ALL,
     });
     const w = r.columns.find((c) => c.standing === "customer")!;
     expect(w.valueUsd).toBeNull();
@@ -120,6 +144,7 @@ describe("priceDealsColumns — Won", () => {
       lifetimeRevenueUsd: null,
       members: MEMBERS,
       statedWonAmountUsdByEmail: STATED,
+      pricedCauses: ALL,
     });
     expect(r.columns.find((c) => c.standing === "sales_interest")!.unvaluedReason).toBe("no_economics");
     // the stated sale still stands on its own amount
@@ -148,6 +173,7 @@ describe("priceDealsColumns — unvalued columns state a reason, never 0", () =>
       lifetimeRevenueUsd: LTR,
       members: { sales_interest: new Set(many.map((p) => p.leadId)), customer: new Set() },
       statedWonAmountUsdByEmail: null,
+      pricedCauses: ALL,
     });
     expect(JSON.stringify(r).length).toBeLessThan(500_000);
   });

@@ -68,9 +68,11 @@ lead-service's answer (`/orgs/leads?standing=<s>&view=compact`, `fetchLeadIdsByS
 re-derived; WHAT they are worth is priced here (`lib/deals-value.ts`, `routes/deals-value.ts`).
 
 - **Interested (`sales_interest`)**: each card = `expectedValueOfPerson` — the engine's own `evForPerson`,
-  on the byte-same population / overlays / paths / LTR / priced causes the pipeline uses
-  (`loadBrandPricedPopulation`, now shared with contacted-value). Column = Σ over organisations of the MAX
-  member (the pipeline's own per-company rule), so it is a SUBSET of the pipeline and can never exceed it.
+  on the byte-same population / overlays / paths / LTR the pipeline uses (`loadBrandPricedPopulation`,
+  shared with contacted-value) but priced on EVERY outcome cause (`pricedCauses` on the wire): a board shows
+  what a deal is worth, not our share. On the pipeline's default (ours only) prod read 45 of 54 Doc Dinners
+  cards at $0 (meetings via the CRM). Column = Σ over organisations of the MAX member, a SUBSET of the
+  all-cause pipeline (`/revenue?cause=outreach,other,unstated`). A $0 card says why (`zeroValueReason`).
 - **Won (`customer`)**: the amount a human STATED on the sale, read over EVERY cause (the column shows the
   deal, not our share of it), else the brand's LTR per client; `valueSource` says which. Company = MAX.
 - **disqualified / opted_out / not_contacted / unresolved**: `valueUsd: null` + `unvaluedReason`
