@@ -69,6 +69,8 @@ import { legKeysOfFunnel } from "./funnel-legs.js";
 import { FUNNEL_LEG_SIGNALS } from "./funnel-registry.js";
 import { dedupPersonsByLead, type EnginePerson } from "./revenue-engine.js";
 import { SALES_FUNNELS, type SalesFunnelKey } from "./sales-funnels.js";
+import type { MaturityReason } from "./cost-economics.js";
+import { basisCost, basisDays, basisPersons, basisUnmeasuredReason, type RatioBasis } from "./ratio-basis.js";
 
 /** The `leads[]` boolean each funnel leg counts — the field a consumer reconciles a step against. */
 export type LeadStepField =
@@ -238,10 +240,17 @@ export interface FunnelStep {
    */
   recipientsReached: number | null;
   /**
-   * COMMITTED spend ÷ `recipientsReached`, in cents — OBSERVED, never floored to a benchmark. Null
-   * when nobody reached the step, when nothing was spent, or when the count is unmeasured.
+   * COMMITTED spend ÷ distinct leads that reached this step, in cents, on the ROI's basis
+   * (`lib/ratio-basis.ts`): `breakdown.ratioBasis.committedSpentCents ÷ ratioBasisRecipientsReached`.
+   * OBSERVED, never floored to a benchmark. Null when nobody reached the step, nothing was spent, the
+   * count is unmeasured, or the basis is (`ratioBasis.unmeasuredReason`).
    */
   costPerReachCents: number | null;
+  /**
+   * The count `costPerReachCents` divides by — `recipientsReached` restricted to the ROI's cohort
+   * (equal to it when `ratioBasis.maturityDays` is 0). Null under the same conditions as the cost.
+   */
+  ratioBasisRecipientsReached: number | null;
   /** The step this one converts FROM: the previous rung of the funnel, or "Contacted" for the first. */
   fromStep: string;
   /** Distinct leads that reached `fromStep` — the base of the rate below. Same null rule. */
@@ -264,8 +273,14 @@ export interface FunnelStepBreakdown {
   funnelKey: SalesFunnelKey;
   /** The funnel's own name, so a consumer renders the chain without holding the catalogue. */
   name: string;
-  /** COMMITTED cents behind every `costPerReachCents` — the one basis `costEconomics` rides. */
+  /** COMMITTED cents this scope spent over its whole history (the invested figure). */
   committedSpentCents: number;
+  /**
+   * What every rung's `costPerReachCents` divides: the ROI's basis (`lib/ratio-basis.ts`) — the mature
+   * cohort's committed spend when `maturityDays` > 0, the whole scope's otherwise; null (with a reason)
+   * when it cannot be measured.
+   */
+  ratioBasis: { maturityDays: number; committedSpentCents: number | null; unmeasuredReason: MaturityReason | null };
   /**
    * REACH — DISTINCT leads this scope emailed, bounced and unsubscribed included. It is the base the
    * FIRST step converts from, and the reason that step's rate is answerable at all. Always measured
@@ -311,7 +326,15 @@ export function buildFunnelSteps(
    * rather than zero: absent is absent.
    */
   customerCostsByStep: Record<string, CustomerDeclaredCost> | null = null,
+  /** The ROI's basis. Omitted → the whole scope (`committedSpentCents` over every person). */
+  basis?: RatioBasis,
+  /** Billed-only cents, needed only to tell a `maturing` basis apart. */
+  actualSpentCents: number = 0,
 ): FunnelStepBreakdown {
+  const wholeCost = { committedCents: committedSpentCents, actualCents: actualSpentCents };
+  const basisSpend = basisCost(basis, wholeCost);
+  const basisCohort = basisPersons(basis, wholeCost, persons);
+  const basisDeduped = basisCohort ? dedupPersonsByLead(basisCohort) : null;
   const def = SALES_FUNNELS[funnelKey];
   const legs = FUNNEL_LEG_SIGNALS[funnelKey];
   // The labels and the legs are two mirrors of one catalogue. If they ever stop lining up, every rung
@@ -369,8 +392,17 @@ export function buildFunnelSteps(
               recipientsReached === null ? null : observedCostPerOutcome(stated.costCents, recipientsReached),
           }
         : null,
-      costPerReachCents:
-        recipientsReached === null ? null : observedCostPerOutcome(committedSpentCents, recipientsReached),
+      ...(() => {
+        const onBasis =
+          recipientsReached === null || !basisDeduped
+            ? null
+            : basisDeduped.reduce((n, p) => n + (p.signals[personSignal] ? 1 : 0), 0);
+        return {
+          costPerReachCents:
+            onBasis === null || !basisSpend ? null : observedCostPerOutcome(basisSpend.committedCents, onBasis),
+          ratioBasisRecipientsReached: onBasis,
+        };
+      })(),
       fromStep,
       fromRecipientsReached,
       conversionFromPreviousPct:
@@ -383,7 +415,19 @@ export function buildFunnelSteps(
     fromRecipientsReached = recipientsReached;
   }
 
-  return { funnelKey, name: def.name, committedSpentCents, contactedRecipients, convertibleRecipients, steps };
+  return {
+    funnelKey,
+    name: def.name,
+    committedSpentCents,
+    ratioBasis: {
+      maturityDays: basisDays(basis),
+      committedSpentCents: basisSpend ? basisSpend.committedCents : null,
+      unmeasuredReason: basisUnmeasuredReason(basis, wholeCost),
+    },
+    contactedRecipients,
+    convertibleRecipients,
+    steps,
+  };
 }
 
 /**

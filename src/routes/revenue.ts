@@ -88,11 +88,12 @@ import {
   type ConversionRateHistory,
 } from "../lib/conversion-rate-history.js";
 import { fetchBrandCommittedSpendByDay } from "../lib/brand-spend-by-day-client.js";
-import { buildCostEconomics, type CostEconomics } from "../lib/cost-economics.js";
+import { buildCostEconomics, type CostEconomics, type MaturityReason } from "../lib/cost-economics.js";
 import { applySignalOverlays } from "../lib/signal-overlays.js";
 import { computeWorkflowRevenueGroups } from "../lib/workflow-revenue.js";
 import { resolveWorkflowScope, type WorkflowScope } from "../lib/workflow-scope.js";
 import { buildRevenueOutcomes, type RevenueOutcomes } from "../lib/revenue-outcomes.js";
+import { WHOLE_BASIS, closedWonOf, type RatioBasis } from "../lib/ratio-basis.js";
 import {
   buildFunnelSteps,
   funnelForSteps,
@@ -194,7 +195,40 @@ export interface Spend {
   // the RAW floor max(committed spend, the winning workflow's projected cost per positive reply) — the
   // same conservative bound the per-audience row applies. null only when there is neither.
   cpprCents: number | null;
+  /**
+   * WHAT EVERY COST PER OUTCOME ABOVE DIVIDES — the ROI's own basis (`lib/ratio-basis.ts`), so the
+   * spend block and `costEconomics.roiMultiple` can never be two bases on one screen. When
+   * `maturityDays` > 0 it is the MATURE cohort: the committed / actual / provisioned spend of runs old
+   * enough to have produced their outcomes, and the outcomes of the leads that spend reached. Every
+   * ratio reconciles from here: `cpprCents = committedSpentCents ÷ positiveRepliesCount`,
+   * `actualCpcCents = actualSpentCents ÷ clicksCount`, and so on (outside the 0-outcome floor). When
+   * `maturityDays` is 0 it states the whole-history figures the block already carries. The conversion
+   * counts are ABSENT exactly when the top-level ones are, and on a matured basis they are read off the
+   * cohort's own leads. Spend/counts null with `unmeasuredReason` when the basis cannot be measured —
+   * every ratio is then null too, never 0 and never the whole-history ratio.
+   */
+  ratioBasis: SpendRatioBasis;
 }
+
+export interface SpendRatioBasis {
+  maturityDays: number;
+  committedSpentCents: number | null;
+  actualSpentCents: number | null;
+  provisionedSpentCents: number | null;
+  clicksCount: number | null;
+  positiveRepliesCount: number | null;
+  signupsCount?: number | null;
+  salesMeetingsCount?: number | null;
+  formSubmissionsCount?: number | null;
+  salesCount?: number | null;
+  unmeasuredReason: MaturityReason | null;
+}
+
+/** The basis the spend block's ratios divide: the whole scope, the mature cohort's LEADS + spend, or unmeasurable. */
+type SpendBasis =
+  | { kind: "whole" }
+  | { kind: "mature"; days: number; cost: RunsCostCents; leads: LeadRow[] }
+  | { kind: "unknown" };
 
 /**
  * The AGGREGATE (brand / campaign grain) twin of /audience-stats' per-audience floor parents — the
@@ -402,17 +436,44 @@ function buildSpend(
   leads: LeadRow[],
   counts: ConversionCounts | null = null,
   parents: SpendCostParents = null,
+  basis: SpendBasis = { kind: "whole" },
 ): Spend {
   // clicks use the SAME per-lead predicate as the clicked SignalSeries, so the CPC denominator equals
   // the card's displayed "clicks" (clicked.total) — coherent by construction.
-  const clicks = leads.reduce((n, l) => n + (l.clicked ? 1 : 0), 0);
+  const countOf = (rows: LeadRow[], has: (l: LeadRow) => boolean) => rows.reduce((n, l) => n + (has(l) ? 1 : 0), 0);
   // Positive replies use the SAME per-lead predicate as recipientsRepliesPositive (the Overview
   // positive-replies actual series), so cpprCents's denominator equals that card's displayed count —
   // coherent by construction. The single-step positive_replies goal's real outcome economics.
-  const positiveReplies = leads.reduce((n, l) => n + (l.repliedPositive ? 1 : 0), 0);
-  const committed = breakdown.totalSpentCents;
-  const actual = breakdown.actualSpentCents;
-  const provisioned = breakdown.provisionedSpentCents;
+  const positiveRepliesAll = countOf(leads, (l) => l.repliedPositive);
+
+  // THE ONE BASIS every ratio below divides — the ROI's (`lib/ratio-basis.ts`). The totals above keep
+  // the whole history; only the ratios move onto the mature cohort, and `ratioBasis` states it.
+  const maturing =
+    basis.kind === "mature" && basis.cost.committedCents <= 0 && breakdown.totalSpentCents > 0;
+  const unmeasuredReason: MaturityReason | null =
+    basis.kind === "unknown" ? "maturity_unknown" : maturing ? "maturing" : null;
+  const measurable = unmeasuredReason === null;
+  const committed = basis.kind === "mature" ? basis.cost.committedCents : breakdown.totalSpentCents;
+  const actual = basis.kind === "mature" ? basis.cost.actualCents : breakdown.actualSpentCents;
+  const provisioned =
+    basis.kind === "mature" ? basis.cost.committedCents - basis.cost.actualCents : breakdown.provisionedSpentCents;
+  const cohortLeads = basis.kind === "mature" ? basis.leads : leads;
+  const clicks = countOf(cohortLeads, (l) => l.clicked);
+  const positiveReplies = countOf(cohortLeads, (l) => l.repliedPositive);
+  // The conversion counts a ratio divides: lead-service's own counts on the whole history (unchanged),
+  // the cohort's own leads on a matured one (lead-service's counts are brand-level and undated, so they
+  // cannot be cut to a cohort).
+  const basisCounts: ConversionCounts | null = !counts
+    ? null
+    : basis.kind === "mature"
+      ? {
+          ...counts,
+          signup: countOf(cohortLeads, (l) => l.signup),
+          meeting_booked: countOf(cohortLeads, (l) => l.meetingBooked),
+          form_submission: countOf(cohortLeads, (l) => l.formSubmission),
+          sale: countOf(cohortLeads, (l) => l.purchased),
+        }
+      : counts;
 
   // REAL cost-per-conversion (features-service#461): committed spend ÷ the real tracked count. The
   // denominator is the COMMITTED total — the SAME basis the CPC card uses (totalCpcCents) — so
@@ -440,33 +501,58 @@ function buildSpend(
   // this", never a fabricated value and never the raw spend total.
   const usdToCents = (usd: number | null | undefined): number | null => (usd != null ? usd * 100 : null);
   const raw = (spentCents: number, observed: number, parentUsd: number | null | undefined): number | null =>
-    parents ? flooredCostPerOutcome(spentCents, observed, usdToCents(parentUsd)) : observedCostPerOutcome(spentCents, observed);
+    !measurable
+      ? null
+      : parents
+        ? flooredCostPerOutcome(spentCents, observed, usdToCents(parentUsd))
+        : observedCostPerOutcome(spentCents, observed);
   // A funnel column needs its OWN projection to exist (the goal's winning workflow only resolves the
   // rates the brand actually declares — e.g. no visit→form-submission rate ⇒ no cost per form
   // submission). Without it there is no expected cost, and the raw-total fallback would be the units
   // error, so the column stays OBSERVED → null. "We could not estimate this", never a dollar total.
   const funnel = (observed: number, parentUsd: number | null | undefined): number | null =>
-    parents && parentUsd != null
+    !measurable
+      ? null
+      : parents && parentUsd != null
       ? derivedCostPerOutcome(committed, observed, usdToCents(parentUsd))
       : observedCostPerOutcome(committed, observed);
 
-  const conversion: Partial<Spend> = counts
-    ? {
-        signupsCount: counts.signup,
-        salesMeetingsCount: counts.meeting_booked,
-        formSubmissionsCount: counts.form_submission,
-        salesCount: counts.sale,
-        cpsCents: funnel(counts.signup, parents?.cpsUsd),
-        cpsmCents: funnel(counts.meeting_booked, parents?.cpsmUsd),
-        cpfsCents: funnel(counts.form_submission, parents?.cpfsUsd),
-        cpSaleCents: funnel(counts.sale, parents?.cpsaleUsd),
-      }
-    : {};
+  const conversion: Partial<Spend> =
+    counts && basisCounts
+      ? {
+          signupsCount: counts.signup,
+          salesMeetingsCount: counts.meeting_booked,
+          formSubmissionsCount: counts.form_submission,
+          salesCount: counts.sale,
+          cpsCents: funnel(basisCounts.signup, parents?.cpsUsd),
+          cpsmCents: funnel(basisCounts.meeting_booked, parents?.cpsmUsd),
+          cpfsCents: funnel(basisCounts.form_submission, parents?.cpfsUsd),
+          cpSaleCents: funnel(basisCounts.sale, parents?.cpsaleUsd),
+        }
+      : {};
+  const onBasis = <T,>(v: T): T | null => (measurable ? v : null);
+  const ratioBasis: SpendRatioBasis = {
+    maturityDays: basis.kind === "mature" ? basis.days : 0,
+    committedSpentCents: onBasis(committed),
+    actualSpentCents: onBasis(actual),
+    provisionedSpentCents: onBasis(provisioned),
+    clicksCount: onBasis(clicks),
+    positiveRepliesCount: onBasis(positiveReplies),
+    ...(basisCounts
+      ? {
+          signupsCount: onBasis(basisCounts.signup),
+          salesMeetingsCount: onBasis(basisCounts.meeting_booked),
+          formSubmissionsCount: onBasis(basisCounts.form_submission),
+          salesCount: onBasis(basisCounts.sale),
+        }
+      : {}),
+    unmeasuredReason,
+  };
 
   return {
-    totalSpentCents: committed,
-    actualSpentCents: actual,
-    provisionedSpentCents: provisioned,
+    totalSpentCents: breakdown.totalSpentCents,
+    actualSpentCents: breakdown.actualSpentCents,
+    provisionedSpentCents: breakdown.provisionedSpentCents,
     totalSpentTodayCents: breakdown.totalSpentTodayCents,
     actualSpentTodayCents: breakdown.actualSpentTodayCents,
     provisionedSpentTodayCents: breakdown.provisionedSpentTodayCents,
@@ -480,9 +566,10 @@ function buildSpend(
     // Positive-reply outcome economics: committed spend ÷ the real count from the leads snapshot, floored
     // at the winning workflow's projected cost per positive reply when the count is 0. Always present
     // (leads always fetched); null only when there is no benchmark AND no spend to fall back on.
-    positiveRepliesCount: positiveReplies,
+    positiveRepliesCount: positiveRepliesAll,
     cpprCents: raw(committed, positiveReplies, parents?.cpprUsd),
     ...conversion,
+    ratioBasis,
   };
 }
 
@@ -1589,10 +1676,28 @@ export async function computeFeatureRevenue(
   // THE MATURE COHORT (`lib/roi-maturity.ts`): the same engine over the leads first contacted before the
   // cutoff (undated leads stay in), priced on the same paths — the pipeline the ratios divide. Only when
   // something in scope is maturing; otherwise the cohort IS the scope and the one pass answers both.
+  const maturePersons = plan.cutoffIso && matureCost ? matureCohortPersons(persons, plan) : persons;
   const matureResult =
     plan.cutoffIso && matureCost
-      ? computeRevenue(paths, matureCohortPersons(persons, plan), economics.lifetimeRevenueUsd, funnel.milestones)
+      ? computeRevenue(paths, maturePersons, economics.lifetimeRevenueUsd, funnel.milestones)
       : result;
+  // THE ONE BASIS every ratio on this body divides (`lib/ratio-basis.ts`) — the cohort the ROI divides.
+  const ratioBasis: RatioBasis = plan.unknown
+    ? { kind: "unknown" }
+    : plan.cutoffIso && matureCost
+      ? { kind: "mature", days: plan.days, cost: matureCost, persons: maturePersons }
+      : WHOLE_BASIS;
+  const spendBasis: Parameters<typeof buildSpend>[4] =
+    ratioBasis.kind === "mature"
+      ? { kind: "mature", days: ratioBasis.days, cost: ratioBasis.cost, leads: matureResult.leads }
+      : ratioBasis;
+  // THE MEASURED RETURN's numerator: deals actually closed won in the same cohort, priced to our
+  // outreach. Only when a source of closed deals was READ (the human statements or the legacy
+  // qualifications) — with neither, "0 won" would be a fabricated measurement.
+  const realized =
+    plan.unknown || (observed === null && quals === null)
+      ? null
+      : closedWonOf(maturePersons, economics.lifetimeRevenueUsd);
   const maturity = plan.unknown
     ? ({ unknown: true } as const)
     : plan.cutoffIso && matureCost
@@ -1624,6 +1729,7 @@ export async function computeFeatureRevenue(
       totalPipelineUsd: result.headline.totalPipelineUsd,
       lifetimeRevenueUsd: economics.lifetimeRevenueUsd,
       maturity,
+      realized,
     }),
     timeSeries: result.timeSeries,
     // runs' dated COMMITTED buckets against the engine's own dated pipeline — the same basis AND the
@@ -1631,7 +1737,7 @@ export async function computeFeatureRevenue(
     // dated-spend read (or the maturing campaigns' part of it) degraded — a curve is never drawn from
     // one leg.
     roiHistory:
-      spendByDay && maturingByDay
+      spendByDay && maturingByDay && !plan.unknown
         ? buildRoiHistory(
             plan.cutoffIso ? matureSpendByDay(spendByDay, maturingByDay, plan.cutoffIso) : spendByDay,
             matureResult.timeSeries,
@@ -1641,9 +1747,17 @@ export async function computeFeatureRevenue(
     // The SAME dated committed buckets, against the scope's own dated count of the step its leg
     // closes. Null when either ingredient is missing — the dated-spend read degraded, or the scope
     // names no priceable outcome step — and `learningPhase.unmeasuredReason` beside it says which.
+    // Both legs on the ROI's basis too (the mature cohort's dated spend and the outcomes of the leads
+    // it reached), so the curve's last point IS `outcomes.cpcCents` / `cpprCents` on this body.
     costPerOutcomeHistory:
-      spendByDay && outcomeTerms && driverSeries
-        ? buildCostPerOutcomeHistory(spendByDay, driverSeries, outcomeTerms)
+      spendByDay && maturingByDay && outcomeTerms && !plan.unknown
+        ? buildCostPerOutcomeHistory(
+            plan.cutoffIso ? matureSpendByDay(spendByDay, maturingByDay, plan.cutoffIso) : spendByDay,
+            outcomeTerms.driver === "click"
+              ? buildOutcomeSeries(matureResult.leads).recipientsClicked
+              : buildOutcomeSeries(matureResult.leads).recipientsRepliesPositive,
+            outcomeTerms,
+          )
         : null,
     // The scope's own dated count of the step its leg closes, over the people it reached. Needs NO
     // producer read — both legs are the leads already in hand — so it is null only when the scope
@@ -1659,16 +1773,24 @@ export async function computeFeatureRevenue(
     recipientsContacted: contactedSeries,
     ...outcomeSeries,
     sequences,
-    spend: breakdown ? buildSpend(breakdown, result.leads, counts, parents) : null,
+    spend: breakdown ? buildSpend(breakdown, result.leads, counts, parents, spendBasis) : null,
     // The VOLUME half — how much real outcome evidence every money figure above rests on. Built from
     // the SAME deduped persons and the SAME committed cents, so it is coherent with them by
-    // construction rather than by correction. See lib/revenue-outcomes.ts.
-    outcomes: buildRevenueOutcomes(persons, cost),
+    // construction rather than by correction. Its two rates ride the ROI's basis. See lib/revenue-outcomes.ts.
+    outcomes: buildRevenueOutcomes(persons, cost, ratioBasis),
     // The SAME deduped persons and the SAME committed cents, one rung at a time. `stepEvidence` states
     // which producers this request could actually read, so a rung whose source degraded reports null
     // instead of a 0 that would read as a wall nobody climbed.
     funnelSteps: stepsFunnel
-      ? buildFunnelSteps(stepsFunnel, persons, cost.committedCents, stepEvidence, customerStepMap(stepCosts))
+      ? buildFunnelSteps(
+          stepsFunnel,
+          persons,
+          cost.committedCents,
+          stepEvidence,
+          customerStepMap(stepCosts),
+          ratioBasis,
+          cost.actualCents,
+        )
       : null,
     // WHOSE WINS THIS BODY COUNTED, and how many outcomes sit in each state. `counted` is a fact about
     // the REQUEST and is always stated, so a consumer can never be looking at a figure whose basis it

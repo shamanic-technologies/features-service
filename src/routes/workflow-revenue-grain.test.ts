@@ -294,6 +294,14 @@ describe("GET /revenue?groupBy=workflow — which workflows made money", () => {
       actualSpentCents: 5000,
       cpcCents: 2500,
       cpprCents: 5000,
+      // The totals the two rates divide — the whole history here, nothing in scope waits.
+      ratioBasis: {
+        maturityDays: 0,
+        committedSpentCents: 5000,
+        recipientsClicked: 2,
+        recipientsRepliesPositive: 1,
+        unmeasuredReason: null,
+      },
     });
     // Realized spend is the money block's own, in cents — one basis, so the rates and the ROI agree.
     expect(groups.dawn.outcomes.actualSpentCents).toBe(groups.dawn.costEconomics.actualCostUsd * 100);
