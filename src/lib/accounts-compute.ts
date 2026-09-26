@@ -13,9 +13,15 @@
  * customer's own settings screen must still be able to state what they set.
  *
  * STATUS rule (exact, precedence order):
+ *   0. billing cannot charge the org (payment-outlook `charge_blocked`)                            → "payment_declined"
  *   1. runningDailyBudgetUsd > 0 && (autoTopupEnabled || actualBalanceUsd > runningDailyBudgetUsd) → "active"
  *   2. else configuredDailyBudgetUsd > 0                                                          → "paused"
  *   3. else                                                                                       → "inactive"
+ * PAYMENT_DECLINED wins over everything: billing's verdict is that the org's card is refused (or
+ * unusable, or from an unsupported country), campaign-service stops every campaign of such an org, and
+ * any budget still reported as running is money that cannot be collected. `paymentDeclinedReason`
+ * carries billing's own reason so the board says WHY. It is distinct from PAUSED (the customer's own
+ * choice) and INACTIVE (nothing funded), and like them it is excluded from every fleet money total.
  * PAUSED means the customer has money posted and nothing running against it — they stopped their
  * campaigns, or campaign-service never gave them one. There is NO brand-level pause flag in this rule
  * any more: that control was removed from the product, the flag has not been written since early
@@ -46,16 +52,18 @@ import { fetchFeatureMemberships } from "./feature-memberships-client.js";
 import {
   fetchOrgBalance,
   fetchOrgIdentity,
+  fetchOrgPaymentHold,
   fetchBrandsBasic,
   fetchSpendableBudgets,
   spendableKey,
   type OrgBalance,
+  type PaymentHold,
   type OrgIdentity,
   type BrandBasic,
   type BrandSpendableBudget,
 } from "./accounts-client.js";
 
-export type AccountStatus = "active" | "paused" | "inactive";
+export type AccountStatus = "active" | "payment_declined" | "paused" | "inactive";
 
 export interface AccountRow {
   orgId: string;
@@ -82,6 +90,11 @@ export interface AccountRow {
   /** Whether the org has auto-topup enabled (billing has_auto_topup; false when absent). */
   autoTopupEnabled: boolean;
   status: AccountStatus;
+  /**
+   * billing's reason it cannot charge this org (`card_declined`, `card_country_unsupported`, …) when
+   * `status` is "payment_declined"; null otherwise (and null if billing blocked without naming one).
+   */
+  paymentDeclinedReason: string | null;
 }
 
 export interface AccountsStats {
@@ -94,6 +107,7 @@ export interface AccountsStats {
   /** ARR = totalRunningDailyBudgetUsd × 365 (a budget projection, undiscounted). */
   arrUsd: number;
   activeCount: number;
+  paymentDeclinedCount: number;
   pausedCount: number;
   inactiveCount: number;
   totalCount: number;
@@ -110,6 +124,8 @@ export interface AccountsDeps {
   featureMemberships: (featureSlugsCsv: string) => Promise<Array<{ orgId: string; brandId: string }>>;
   orgBalance: (orgId: string) => Promise<OrgBalance>;
   orgIdentity: (orgId: string) => Promise<OrgIdentity>;
+  /** billing's payment hold for the org (null = billing can charge it, or has no account for it). */
+  paymentHold: (orgId: string) => Promise<PaymentHold | null>;
   spendableBudgets: (
     pairs: Array<{ orgId: string; brandId: string }>,
   ) => Promise<Map<string, BrandSpendableBudget>>;
@@ -120,13 +136,17 @@ const REAL_DEPS: AccountsDeps = {
   featureMemberships: async (csv) => (await fetchFeatureMemberships(csv)).map((m) => ({ orgId: m.orgId, brandId: m.brandId })),
   orgBalance: fetchOrgBalance,
   orgIdentity: fetchOrgIdentity,
+  paymentHold: fetchOrgPaymentHold,
   spendableBudgets: fetchSpendableBudgets,
   brandsBasic: fetchBrandsBasic,
 };
 
 /**
  * The exact status rule (single source, used by the accounts row builder, the send-forecast active
- * gate, and asserted directly in tests). Precedence: active > paused > inactive.
+ * gate, and asserted directly in tests). Precedence: payment_declined > active > paused > inactive.
+ *
+ * PAYMENT_DECLINED first: when billing cannot charge the org, nothing it has configured or running is
+ * money in play, so it can never read active (nor paused, which is the customer's own choice).
  *
  * ACTIVE is decided on the RUNNING budget, never the configured one: money posted against a campaign
  * nobody is running cannot be spent, so counting it reads a dormant account as a paying one. PAUSED is
@@ -140,7 +160,9 @@ export function accountStatus(
   runningDailyBudgetUsd: number,
   actualBalanceUsd: number,
   autoTopupEnabled: boolean,
+  paymentHold: PaymentHold | null,
 ): AccountStatus {
+  if (paymentHold) return "payment_declined";
   if (runningDailyBudgetUsd > 0 && (autoTopupEnabled || actualBalanceUsd > runningDailyBudgetUsd)) return "active";
   if (configuredDailyBudgetUsd > 0) return "paused";
   return "inactive";
@@ -162,16 +184,19 @@ export async function buildAccountsAudit(
   // request per brand, and both figures come from the same producer computation.
   const budgets = await deps.spendableBudgets([...pairs.values()]);
 
-  // 2. Org-level reads once per org (balance + identity); brand name/domain in one batched call.
+  // 2. Org-level reads once per org (balance + identity + billing's payment hold); brand name/domain in one batched call.
   const [orgInfoEntries, brandInfo] = await Promise.all([
     Promise.all(
-      orgIds.map(async (orgId): Promise<[string, { balance: OrgBalance; identity: OrgIdentity }]> => {
-        const [balance, identity] = await Promise.all([
-          deps.orgBalance(orgId),
-          deps.orgIdentity(orgId),
-        ]);
-        return [orgId, { balance, identity }];
-      }),
+      orgIds.map(
+        async (orgId): Promise<[string, { balance: OrgBalance; identity: OrgIdentity; hold: PaymentHold | null }]> => {
+          const [balance, identity, hold] = await Promise.all([
+            deps.orgBalance(orgId),
+            deps.orgIdentity(orgId),
+            deps.paymentHold(orgId),
+          ]);
+          return [orgId, { balance, identity, hold }];
+        },
+      ),
     ),
     deps.brandsBasic(brandIds),
   ]);
@@ -208,13 +233,15 @@ export async function buildAccountsAudit(
           budget.runningUsd,
           balance.actualUsd,
           balance.autoTopupEnabled,
+          info.hold,
         ),
+        paymentDeclinedReason: info.hold?.blockedReason ?? null,
       };
   });
 
-  // Deterministic order: active → paused → inactive, then running budget desc, tiebreak on the
+  // Deterministic order: active → payment_declined → paused → inactive, then running budget desc, tiebreak on the
   // configured one (a paused row runs nothing, so its posted money is what ranks it), then brandId.
-  const statusRank: Record<AccountStatus, number> = { active: 0, paused: 1, inactive: 2 };
+  const statusRank: Record<AccountStatus, number> = { active: 0, payment_declined: 1, paused: 2, inactive: 3 };
   rows.sort((a, b) => {
     if (a.status !== b.status) return statusRank[a.status] - statusRank[b.status];
     if (a.runningDailyBudgetUsd !== b.runningDailyBudgetUsd) {
@@ -234,6 +261,7 @@ export async function buildAccountsAudit(
   let totalConfiguredDailyBudgetUsd = 0;
   let activeCount = 0;
   let pausedCount = 0;
+  let paymentDeclinedCount = 0;
   for (const row of rows) {
     if (row.status === "active") {
       totalRunningDailyBudgetUsd += row.runningDailyBudgetUsd;
@@ -241,9 +269,11 @@ export async function buildAccountsAudit(
       activeCount += 1;
     } else if (row.status === "paused") {
       pausedCount += 1;
+    } else if (row.status === "payment_declined") {
+      paymentDeclinedCount += 1;
     }
   }
-  const inactiveCount = rows.length - activeCount - pausedCount;
+  const inactiveCount = rows.length - activeCount - pausedCount - paymentDeclinedCount;
   // Round the fleet totals to cents defensively (per-row budgets are already dollars-and-cents).
   totalRunningDailyBudgetUsd = Math.round(totalRunningDailyBudgetUsd * 100) / 100;
   totalConfiguredDailyBudgetUsd = Math.round(totalConfiguredDailyBudgetUsd * 100) / 100;
@@ -256,6 +286,7 @@ export async function buildAccountsAudit(
       mrrUsd: totalRunningDailyBudgetUsd * 30,
       arrUsd: totalRunningDailyBudgetUsd * 365,
       activeCount,
+      paymentDeclinedCount,
       pausedCount,
       inactiveCount,
       totalCount: rows.length,

@@ -22,6 +22,7 @@ function deps(fixture: {
   balanceUsd?: Record<string, number>; // ACTUAL balance per org (the gate figure)
   autoTopup?: Record<string, boolean>;
   spentTodayUsd?: Record<string, number>;
+  declinedOrgs?: string[]; // orgs billing cannot charge (payment-outlook charge_blocked)
 }): FleetDeps {
   return {
     featureOutreachUsd: async (slug) => fixture.outreachUsd[slug] ?? null,
@@ -30,6 +31,7 @@ function deps(fixture: {
       const actualUsd = fixture.balanceUsd?.[orgId] ?? 1_000_000;
       return { spendableUsd: actualUsd, actualUsd, autoTopupEnabled: fixture.autoTopup?.[orgId] ?? false };
     },
+    paymentHold: async (orgId) => (fixture.declinedOrgs?.includes(orgId) ? { blockedReason: "card_declined" } : null),
     spendableBudgets: async (pairs) => {
       const out = new Map<string, BrandSpendableBudget>();
       for (const p of pairs) {
@@ -203,6 +205,25 @@ describe("aggregateFleetNewSequences", () => {
     expect(r.totalDailyBudgetUsd).toBe(100);
   });
 
+  it("an org billing cannot charge launches nothing, even while its budget still reads running", async () => {
+    const fixture = {
+      outreachUsd: { "sales-cold-email-outreach": 2 },
+      memberships: {
+        "sales-cold-email-outreach": [
+          { orgId: "ppe", brandId: "b-ppe" },
+          { orgId: "doc", brandId: "b-doc" },
+        ],
+      },
+      budgetUsd: { "b-ppe": 49, "b-doc": 20 },
+      autoTopup: { ppe: true, doc: true },
+    };
+    const healthy = await aggregateFleetNewSequences(COLD, NOW, deps(fixture));
+    const held = await aggregateFleetNewSequences(COLD, NOW, deps({ ...fixture, declinedOrgs: ["ppe"] }));
+    expect(healthy.totalDailyBudgetUsd).toBe(69);
+    expect(held.totalDailyBudgetUsd).toBe(20);
+    expect(held.activeBrandCount).toBe(1);
+  });
+
   it("returns all-zero for an empty fleet", async () => {
     const r = await aggregateFleetNewSequences(COLD, NOW, deps({ outreachUsd: {}, memberships: {}, budgetUsd: {} }));
     expect(r).toEqual({ totalNewPerDay: 0, todayNewOverride: 0, totalDailyBudgetUsd: 0, remainingTodayUsd: 0, activeBrandCount: 0 });
@@ -223,6 +244,7 @@ describe("aggregateFleetNewSequences", () => {
         balanceCalls.push(orgId);
         return { spendableUsd: 500, actualUsd: 500, autoTopupEnabled: false };
       },
+      paymentHold: async () => null,
       spendableBudgets: async (pairs) =>
         new Map(pairs.map((p) => [spendableKey(p.orgId, p.brandId), { configuredUsd: 100, runningUsd: 100 }])),
       brandSpentTodayUsd: async () => 0,

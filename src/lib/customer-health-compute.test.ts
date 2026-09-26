@@ -46,6 +46,7 @@ function account(over: Partial<AccountRow> & { orgId: string; brandId: string; s
     orgBalanceUsd: 1000,
     orgActualBalanceUsd: 1000,
     autoTopupEnabled: false,
+    paymentDeclinedReason: null,
     ...over,
   };
   return merged;
@@ -169,7 +170,7 @@ function makeDeps(fixtures: {
 }): CustomerHealthDeps {
   const audit: AccountsAudit = {
     rows: fixtures.accounts,
-    stats: { totalRunningDailyBudgetUsd: 0, totalConfiguredDailyBudgetUsd: 0, mrrUsd: 0, arrUsd: 0, activeCount: 0, pausedCount: 0, inactiveCount: 0, totalCount: fixtures.accounts.length },
+    stats: { totalRunningDailyBudgetUsd: 0, totalConfiguredDailyBudgetUsd: 0, mrrUsd: 0, arrUsd: 0, activeCount: 0, paymentDeclinedCount: 0, pausedCount: 0, inactiveCount: 0, totalCount: fixtures.accounts.length },
     asOf: NOW.toISOString(),
   };
   const byUser: ActiveUsersByUser = {
