@@ -215,6 +215,47 @@ export async function fetchOrgBalance(orgId: string): Promise<OrgBalance> {
 }
 
 /**
+ * The org's PAYMENT HOLD, from billing-service `GET /internal/accounts/by-org/:orgId/payment-outlook`
+ * (api-key only, org in path — a pure read that opens no retry episode and charges nothing).
+ *
+ * Billing owns the payment verdict: `state === "charge_blocked"` means it cannot charge this org (the
+ * card is being refused, is unusable, retries are exhausted, there is no chargeable card, or the card's
+ * country is unsupported) and `blockedReason` says which. campaign-service stops the org's campaigns on
+ * that verdict (`stopReason: "payment_declined"`), so the account is held — never active, whatever its
+ * configured or momentarily-reported running budget says.
+ *
+ * Returns `null` when billing states no hold (any other state) or has no billing account for the org
+ * (404 — an org that never funded a wallet cannot have a declined card). Any other failure THROWS: an
+ * unread payment verdict is not a clean one, and reading it as clean is exactly how a declined account
+ * got listed as active.
+ */
+export interface PaymentHold {
+  /** billing's own reason (`card_declined`, `card_country_unsupported`, …). null only if billing blocked without naming one. */
+  blockedReason: string | null;
+}
+
+export async function fetchOrgPaymentHold(orgId: string): Promise<PaymentHold | null> {
+  const { url, apiKey } = billingConfig();
+  const response = await fetchWithRetry(
+    `${url}/internal/accounts/by-org/${encodeURIComponent(orgId)}/payment-outlook`,
+    { headers: { "x-api-key": apiKey } },
+  );
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(
+      `[features-service] billing-service /internal/accounts/by-org/:orgId/payment-outlook failed (${response.status}): ${body}`,
+    );
+  }
+  const data = (await response.json()) as { state?: unknown; blockedReason?: unknown };
+  if (typeof data.state !== "string") {
+    throw new Error(`[features-service] billing-service payment-outlook returned no state for ${orgId}`);
+  }
+  if (data.state !== "charge_blocked") return null;
+  return { blockedReason: typeof data.blockedReason === "string" ? data.blockedReason : null };
+}
+
+/**
  * Org Clerk external id + owner email. Two client-service reads:
  *   - GET /internal/orgs/:orgId          → { id, externalId, name }  (the org record)
  *   - GET /internal/users?orgId=&limit=  → owner = earliest-created user's email

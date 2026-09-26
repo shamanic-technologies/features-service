@@ -1510,7 +1510,7 @@ const offerOutcomeLegSchema = z.object({
   channelName: z.string(),
   campaignIds: z.array(z.string()),
   legSource: z.enum(["stated", "derived_from_funnel"]).describe("`derived_from_funnel`: a pre-leg campaign placed on the ONE leg its channel performs inside the funnel it states."),
-  countBasis: z.enum(["campaign_leads", "offer_leads_at_step"]).describe("`campaign_leads`: an entry leg counts its own campaigns' leads. `offer_leads_at_step`: an internal leg's campaigns serve no lead of their own and nothing records which leads it acted on, so it states the offer's leads at its TO step; that count is not attributable to the channel, so cost per outcome and ROI read null with reason `not_attributable`."),
+  countBasis: z.enum(["campaign_leads", "acted_leads", "offer_leads_at_step"]).describe("`campaign_leads`: an entry leg counts its own campaigns' leads. `acted_leads`: an internal leg's campaigns serve no lead of their own, so it counts the leads lead-service records its workers ANSWERED that reached its TO step, and its cost per outcome and ROI divide its spend by them. `offer_leads_at_step`: the degrade when that record is unreadable — the offer's leads at the TO step, not attributable to the channel, so cost per outcome and ROI read null with reason `not_attributable`."),
   ...outcomeFiguresShape,
 });
 const offerOutcomesResponseSchema = z.object({
@@ -2301,7 +2301,8 @@ const accountRowSchema = z.object({
   orgBalanceUsd: z.number().describe("Org SPENDABLE credit balance in USD (billing balance_cents/100; committed usage incl. provisioned holds subtracted; 0 if no funded wallet). Display only."),
   orgActualBalanceUsd: z.number().describe("Org ACTUAL credit balance in USD (billing actual_balance_cents/100; only ACTUALIZED usage subtracted). The figure the active verdict gates on."),
   autoTopupEnabled: z.boolean().describe("Whether the org has auto-topup enabled (billing has_auto_topup). An auto-topup org never runs dry → active regardless of momentary balance. false when absent."),
-  status: z.enum(["active", "paused", "inactive"]).describe("Precedence active > paused > inactive: 'active' iff runningDailyBudgetUsd>0 && (autoTopupEnabled || orgActualBalanceUsd>runningDailyBudgetUsd); else 'paused' iff configuredDailyBudgetUsd>0 (money posted, nothing running against it); else 'inactive'. There is no brand-level pause flag in this rule: that control was removed from the product and the flag lied in both directions."),
+  status: z.enum(["active", "payment_declined", "paused", "inactive"]).describe("Precedence payment_declined > active > paused > inactive: 'payment_declined' iff billing cannot charge the org (payment-outlook state charge_blocked — card declined, unusable, retries exhausted, no chargeable card, or unsupported card country; campaign-service stops such an org's campaigns with stopReason payment_declined), whatever budget is configured or still reported running; billing's reason rides paymentDeclinedReason. Else 'active' iff runningDailyBudgetUsd>0 && (autoTopupEnabled || orgActualBalanceUsd>runningDailyBudgetUsd); else 'paused' iff configuredDailyBudgetUsd>0 (money posted, nothing running against it); else 'inactive'. There is no brand-level pause flag in this rule: that control was removed from the product and the flag lied in both directions."),
+  paymentDeclinedReason: z.string().nullable().describe("billing's own reason it cannot charge this org (payment-outlook blockedReason: card_declined, card_unusable, retries_exhausted, no_chargeable_card, card_country_unsupported) when status is 'payment_declined'; null otherwise, and null if billing blocked without naming a reason."),
 });
 
 const accountsStatsSchema = z.object({
@@ -2310,6 +2311,7 @@ const accountsStatsSchema = z.object({
   mrrUsd: z.number().describe("MRR = totalRunningDailyBudgetUsd × 30 (a budget projection, undiscounted)."),
   arrUsd: z.number().describe("ARR = totalRunningDailyBudgetUsd × 365 (a budget projection, undiscounted)."),
   activeCount: z.number().int(),
+  paymentDeclinedCount: z.number().int().describe("Rows billing cannot charge (status payment_declined). Excluded from every running/MRR/ARR total, like paused and inactive."),
   pausedCount: z.number().int(),
   inactiveCount: z.number().int(),
   totalCount: z.number().int(),
@@ -2378,7 +2380,8 @@ const customerHealthRowSchema = z.object({
   activeThisWeek: z.boolean(),
   activeThisMonth: z.boolean(),
   activeDays: z.array(z.string()).describe("The de-facto active-day timeline from billed spend (distinct UTC days, ascending)."),
-  status: z.enum(["active", "paused", "inactive"]).describe("Same composition as GET /internal/stats/accounts (active > paused > inactive; active needs a RUNNING budget > 0 AND funded/auto-topup; paused means money posted with nothing running)."),
+  status: z.enum(["active", "payment_declined", "paused", "inactive"]).describe("Same composition as GET /internal/stats/accounts (payment_declined > active > paused > inactive; payment_declined means billing cannot charge the org, reason on paymentDeclinedReason; active needs a RUNNING budget > 0 AND funded/auto-topup; paused means money posted with nothing running)."),
+  paymentDeclinedReason: z.string().nullable().describe("billing's own reason it cannot charge this org (payment-outlook blockedReason: card_declined, card_unusable, retries_exhausted, no_chargeable_card, card_country_unsupported) when status is 'payment_declined'; null otherwise, and null if billing blocked without naming a reason."),
   configuredDailyBudgetUsd: z.number().describe("Every ceiling this (org, brand) configured, in USD."),
   runningDailyBudgetUsd: z.number().describe("The part of it standing behind an ongoing campaign, in USD — the money in play."),
   orgBalanceUsd: z.number().describe("Org SPENDABLE balance in USD (display)."),
@@ -2458,6 +2461,7 @@ const customerHealthRowSchema = z.object({
 const customerHealthStatsSchema = z.object({
   totalCustomers: z.number().int(),
   activeCount: z.number().int(),
+  paymentDeclinedCount: z.number().int().describe("Rows billing cannot charge (status payment_declined). Excluded from every running/MRR/ARR total, like paused and inactive."),
   pausedCount: z.number().int(),
   inactiveCount: z.number().int(),
   greenCount: z.number().int(),

@@ -74,15 +74,17 @@ the offer's campaign rows, never stored. The same leg (nothing → Website visit
 funnels, so summing funnel rungs in a browser counts a lead twice; this read takes the union here.
 `lib/offer-outcomes.ts` owns the model, `routes/offer-outcomes.ts` the IO. ADDITIVE: no funnel read moved.
 
-- **COUNT = DISTINCT leads that reached the step, every cause counted, whole history** — the union across
-  the outcome's legs, so ≤ the sum of the legs (and of the funnel rungs it replaces). An ENTRY leg counts
-  its own campaigns' leads (`countBasis: campaign_leads`); an INTERNAL leg's campaigns serve no lead of
-  their own (measured: 0 `leads_campaigns` rows on the three `ai-meeting-booking` campaigns) and nothing
-  records which leads it acted on, so it states the offer's leads at its TO step (`offer_leads_at_step`)
-  and its cost per outcome + ROI read NULL, `not_attributable` — on the leg AND on any outcome row holding
-  such a leg. **Do NOT divide its spend by that count**: the first prod probe (offer `d5ecba00…`) read
-  **$0.30 a meeting and a 1288x ROI** on $2.07 of AI spend against 7 reply→meeting crossings the AI did not
-  necessarily book. Fixing it needs the producer to record which leads the channel acted on.
+- **COUNT = DISTINCT leads that reached the step, whole history** — the union across the outcome's legs, so
+  ≤ the sum of the legs (and of the funnel rungs it replaces). An ENTRY leg counts its own campaigns' leads
+  (`countBasis: campaign_leads`, every cause). An INTERNAL leg's campaigns (`ai-meeting-booking`) serve no
+  lead of their own, so it counts the leads lead-service records its workers ANSWERED
+  (`GET /internal/brands/:brandId/followup-actions`, `acted` only — a claim can end with nothing sent)
+  that reached its TO step (`acted_leads`), and its cost per outcome + ROI divide its spend by THEM
+  (supersedes #1069's always-`not_attributable` rule). Only when that read fails — or does not answer
+  one of the leg's campaigns — does it degrade, loudly, to the offer's leads at the step
+  (`offer_leads_at_step`) with cost + ROI NULL, `not_attributable`, on the leg AND its row. **Do NOT
+  divide its spend by that count**: the first prod probe (offer `d5ecba00…`) read **$0.30 a meeting and a
+  1288x ROI** on $2.07 of AI spend against 7 meetings the AI did not necessarily book.
 - **SPEND = COMMITTED spend of the campaigns whose leg LANDS on the step.** A campaign carries one leg, so
   it adds across an outcome's legs. `costPerOutcomeUsd` = spend ÷ count, OBSERVED — for an offer whose one
   funnel is carried by one entry leg this is the funnel rung's `costPerReachCents` (same persons, same
@@ -4944,11 +4946,23 @@ mrrUsd, arrUsd, activeCount, pausedCount, inactiveCount, totalCount }` + `asOf`.
 **AN ACCOUNT IS ACTIVE WHEN ITS MONEY IS RUNNING, NOT MERELY CONFIGURED — and the brand PAUSE FLAG is
 GONE from the rule, not kept as an override (supersedes the pause-first precedence of #427/#502).**
 Single source `accountStatus(configuredDailyBudgetUsd, runningDailyBudgetUsd, actualBalanceUsd,
-autoTopupEnabled)`, precedence **active > paused > inactive**: (1) `runningDailyBudgetUsd > 0 &&
+autoTopupEnabled, paymentHold)`, precedence **payment_declined > active > paused > inactive**: (0) billing
+cannot charge the org (`GET /internal/accounts/by-org/:orgId/payment-outlook` → `state: "charge_blocked"`,
+`fetchOrgPaymentHold`) → `"payment_declined"`, billing's `blockedReason` on `paymentDeclinedReason`; (1) `runningDailyBudgetUsd > 0 &&
 (autoTopupEnabled || orgActualBalanceUsd > runningDailyBudgetUsd)` → `"active"`; (2) else
 `configuredDailyBudgetUsd > 0` → `"paused"` (money POSTED with nothing running against it — the honest
 reading of a customer who set a ceiling and stopped, or never created, the campaign behind it); (3) else
 `"inactive"`.
+- **A DECLINED CARD IS ITS OWN STATE, NEVER ACTIVE AND NEVER PAUSED** (set 2026-09-26). campaign-service
+  stops a held org's campaigns (`stopReason: "payment_declined"`), but the RUNNING figure can lag the stop:
+  prod that day, PPE Pro Solutions read `running $49/day`, auto-topup on, card declined — so the old rule
+  said ACTIVE and the board (and the daily brief reading it) reported a customer we could not charge as
+  running. Billing owns the payment verdict, so the status reads billing, not the stop reason. It wins over
+  every budget, is excluded from every running/MRR/ARR total and from send-forecast série 3 (same as
+  paused/inactive), sorts right after active, badges red, and counts as `stats.paymentDeclinedCount`
+  (NOT folded into `inactiveCount`). PAUSED stays the customer's own choice. The outlook read is once per
+  org; 404 (no billing account) = no hold; any other failure fails loud — an unread verdict is not a clean
+  one. Guards: the payment cases in `accounts-compute.test.ts` + `send-forecast-aggregate.test.ts`.
 - **The pause flag LIED IN BOTH DIRECTIONS and is no longer written by any product surface.** That
   customer control was removed; the campaign-service brand-pause table holds 8 rows, none written since
   early August. Prod 2026-08-27: `a179bbd9` was flagged paused since 21 July while spending **$55.69 in

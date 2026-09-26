@@ -19,6 +19,7 @@ vi.mock("../lib/observed-steps.js", async (orig) => ({ ...(await orig<typeof imp
 vi.mock("../lib/qualifications-client.js", async (orig) => ({ ...(await orig<typeof import("../lib/qualifications-client.js")>()), fetchQualifications: vi.fn() }));
 vi.mock("../lib/conversion-emails-client.js", async (orig) => ({ ...(await orig<typeof import("../lib/conversion-emails-client.js")>()), fetchConversionEmails: vi.fn() }));
 vi.mock("../lib/email-status-client.js", async (orig) => ({ ...(await orig<typeof import("../lib/email-status-client.js")>()), fetchEventTimestamps: vi.fn() }));
+vi.mock("../lib/followup-actions-client.js", () => ({ fetchFollowupActedLeads: vi.fn() }));
 vi.mock("../lib/runs-cost-client.js", async (orig) => ({ ...(await orig<typeof import("../lib/runs-cost-client.js")>()), fetchRunsCostCents: vi.fn(), fetchMatureSpendCents: vi.fn() }));
 
 process.env.FEATURES_SERVICE_API_KEY = "test-key";
@@ -35,6 +36,7 @@ const { fetchQualifications } = await import("../lib/qualifications-client.js");
 const { fetchConversionEmails } = await import("../lib/conversion-emails-client.js");
 const { fetchEventTimestamps } = await import("../lib/email-status-client.js");
 const { fetchRunsCostCents, fetchMatureSpendCents } = await import("../lib/runs-cost-client.js");
+const { fetchFollowupActedLeads } = await import("../lib/followup-actions-client.js");
 const app = (await import("../index.js")).default;
 const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
 
@@ -71,6 +73,7 @@ describe("GET /offers/:offerId/outcomes", () => {
     vi.mocked(fetchRunsCostCents).mockImplementation(async (_b, scope) =>
       ({ committedCents: scope === "c1" ? 6000 : scope === "f1" ? 3000 : 1000, actualCents: 0 }) as never,
     );
+    vi.mocked(fetchFollowupActedLeads).mockResolvedValue(new Map([["a1", new Set(["L1"])]]));
     vi.mocked(fetchMatureSpendCents).mockImplementation(async (_b, scope) =>
       ({ total: { committedCents: scope === "c1" ? 6000 : 3000, actualCents: 0 }, bySlug: new Map() }) as never,
     );
@@ -89,14 +92,25 @@ describe("GET /offers/:offerId/outcomes", () => {
     expect(reply.spentUsd).toBe(90);
     expect(reply.costPerOutcomeUsd).toBe(45);
     expect(reply.valuePerOutcomeUsd).toBeCloseTo(100); // 50% x 20% x $1,000
+    // The AI answered L1, who booked: one attributed meeting on its $10.
     expect(meeting.recipientsReached).toBe(1);
-    expect(meeting.legs[0].countBasis).toBe("offer_leads_at_step");
+    expect(meeting.legs[0].countBasis).toBe("acted_leads");
     expect(meeting.spentUsd).toBe(10);
-    expect(meeting.costPerOutcomeUsd).toBeNull();
-    expect(meeting.roiMultiple).toBeNull();
-    expect(meeting.unmeasuredReason).toBe("not_attributable");
+    expect(meeting.costPerOutcomeUsd).toBe(10);
+    expect(meeting.roiMultiple).toBeCloseTo(20); // 20% x $1,000 over $10
+    expect(fetchFollowupActedLeads).toHaveBeenCalledWith("brand-1", ["a1"]);
     // The two delayed legs' spend is read on the mature cohort; the AI leg is zero-delay.
     expect(fetchMatureSpendCents).toHaveBeenCalledTimes(2);
+  });
+
+  it("an unreadable follow-up record degrades the internal leg to unattributed, never a 502", async () => {
+    vi.mocked(fetchFollowupActedLeads).mockRejectedValue(new Error("lead-service down"));
+    const res = await request(app).get("/offers/offer-1/outcomes?brandId=brand-1").set(AUTH);
+    expect(res.status).toBe(200);
+    const meeting = res.body.outcomes.find((o: { step: { key: string } }) => o.step.key === "meeting_booked");
+    expect(meeting.legs[0].countBasis).toBe("offer_leads_at_step");
+    expect(meeting.costPerOutcomeUsd).toBeNull();
+    expect(meeting.unmeasuredReason).toBe("not_attributable");
   });
 
   it("400 without brandId; 404 for an offer this brand does not sell", async () => {

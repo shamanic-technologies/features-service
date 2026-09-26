@@ -22,7 +22,9 @@
  * NOT the provisioned-holds-subtracted spendable figure — EXCEEDS that budget). This is the fix for the
  * forecast over-count: without it, every brand that ever ran cold-email and still has a stale positive
  * budget was summed in — incl. brands whose campaigns are stopped and churned orgs with $0 credits —
- * inflating the projection several-fold above the observed send rate.
+ * inflating the projection several-fold above the observed send rate. An org billing cannot charge
+ * (payment-outlook `charge_blocked`) reads "payment_declined" and contributes nothing, whatever running
+ * budget campaign-service still reports for it: its campaigns are being stopped and will send nothing.
  *
  * The budget driving `R_b` is the RUNNING one for the same reason: a ceiling nobody is spending against
  * launches no sequences, so projecting from the configured figure forecasts sends that cannot happen.
@@ -38,6 +40,8 @@ import { fetchFeatureMemberships } from "./feature-memberships-client.js";
 import { fetchSpendBreakdown } from "./spend-client.js";
 import {
   fetchOrgBalance,
+  fetchOrgPaymentHold,
+  type PaymentHold,
   fetchSpendableBudgets,
   spendableKey,
   type OrgBalance,
@@ -67,6 +71,7 @@ export interface FleetDeps {
   featureOutreachUsd: (slug: string) => Promise<number | null>;
   featureMemberships: (slug: string) => Promise<Array<{ orgId: string; brandId: string }>>;
   orgBalance: (orgId: string) => Promise<OrgBalance>;
+  paymentHold: (orgId: string) => Promise<PaymentHold | null>;
   spendableBudgets: (
     pairs: Array<{ orgId: string; brandId: string }>,
   ) => Promise<Map<string, BrandSpendableBudget>>;
@@ -79,6 +84,7 @@ const REAL_DEPS: FleetDeps = {
   // Org-less platform reads: campaign spendable-budget takes its pairs in the body; billing balance and
   // runs cost authorize on x-org-id. No user/run identity is forwarded.
   orgBalance: fetchOrgBalance,
+  paymentHold: fetchOrgPaymentHold,
   spendableBudgets: fetchSpendableBudgets,
   brandSpentTodayUsd: async (brandId, featureSlugsCsv, orgId, now) => {
     const spend = await fetchSpendBreakdown(brandId, undefined, featureSlugsCsv, { orgId }, now);
@@ -121,7 +127,14 @@ export async function aggregateFleetNewSequences(
   //    (actual balance + auto-topup, not the provisioned-holds-subtracted spendable figure).
   const orgIds = [...new Set([...brands.values()].map((b) => b.orgId))];
   const balanceByOrg = new Map<string, OrgBalance>();
-  await Promise.all(orgIds.map(async (orgId) => balanceByOrg.set(orgId, await deps.orgBalance(orgId))));
+  const holdByOrg = new Map<string, PaymentHold | null>();
+  await Promise.all(
+    orgIds.map(async (orgId) => {
+      const [balance, hold] = await Promise.all([deps.orgBalance(orgId), deps.paymentHold(orgId)]);
+      balanceByOrg.set(orgId, balance);
+      holdByOrg.set(orgId, hold);
+    }),
+  );
 
   // 4. Per unique (org, brand): running budget + ACTIVE gate (running>0 && balance>running) +
   //    remaining-today. One batched call covers every pair's budgets.
@@ -141,8 +154,13 @@ export async function aggregateFleetNewSequences(
       // Same rule as /internal/stats/accounts: only "active" (running budget > 0, auto-topup OR actual
       // credits cover ≥1 day) contributes.
       if (
-        accountStatus(spendable.configuredUsd, spendable.runningUsd, balance.actualUsd, balance.autoTopupEnabled) !==
-        "active"
+        accountStatus(
+          spendable.configuredUsd,
+          spendable.runningUsd,
+          balance.actualUsd,
+          balance.autoTopupEnabled,
+          holdByOrg.get(b.orgId) ?? null,
+        ) !== "active"
       ) {
         return null;
       }
