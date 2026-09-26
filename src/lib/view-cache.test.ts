@@ -436,3 +436,149 @@ describe("servedCached on a fingerprint rotation", () => {
     expect(body).toEqual({ pipeline: 42 });
   });
 });
+
+// ── Computes run in the refresher process, never on the serving event loop ───────────────────────────
+const { captureRequestReplay, REFRESH_HEADER } = await import("./view-refresher.js");
+const targetHeader = (view: string, familyKey: string) => Buffer.from(JSON.stringify({ view, familyKey })).toString("base64url");
+const decodeTarget = (raw: string) => JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
+
+describe("servedCached with the view refresher", () => {
+  const fakeRes = () => {
+    const res = {
+      statusCode: 200,
+      sent: [] as unknown[],
+      status(code: number) { res.statusCode = code; return res; },
+      json(p: unknown) { res.sent.push(p); return res; },
+    };
+    return res;
+  };
+  const inRequest = <T>(fn: () => Promise<T>, headers: Record<string, string> = {}, res = fakeRes()): Promise<T> =>
+    new Promise((resolve, reject) => {
+      const req = { method: "GET", originalUrl: "/brands/b1/revenue?pricing=net", headers: { "x-org-id": "o", host: "x", "if-none-match": "W/1", ...headers } };
+      captureRequestReplay(req as never, res as never, () => {
+        fn().then(resolve, reject);
+      });
+    });
+  const realFetch = globalThis.fetch;
+  let fetchCalls: Array<{ url: string; headers: Record<string, string> }>;
+  let refresherAnswer: { status: number; body: unknown };
+
+  beforeEach(() => {
+    process.env.VIEW_REFRESHER_PORT = "8091";
+    delete process.env.VIEW_CACHE_ROLE;
+    fetchCalls = [];
+    refresherAnswer = { status: 200, body: { pipeline: 55 } };
+    globalThis.fetch = (async (url: string, init: { headers: Record<string, string> }) => {
+      fetchCalls.push({ url, headers: init.headers });
+      const payload = refresherAnswer.status < 300 ? { __viewRefresherComputed: refresherAnswer.body } : refresherAnswer.body;
+      return new Response(JSON.stringify(payload), { status: refresherAnswer.status });
+    }) as typeof fetch;
+  });
+  const restore = () => {
+    globalThis.fetch = realFetch;
+    delete process.env.VIEW_REFRESHER_PORT;
+    delete process.env.VIEW_CACHE_ROLE;
+  };
+
+  it("a MISS asks the refresher to replay the SAME request for THIS view; nothing computes or persists here", async () => {
+    try {
+      const compute = vi.fn().mockResolvedValue({ pipeline: 1 });
+      const key = buildScopeKey("b1", { orgId: "o", econ: "e1" });
+      const body = await inRequest(() => servedCached({ view: "brand-revenue", scopeKey: key, orgId: "o", compute }));
+      expect(body).toEqual({ pipeline: 55 });
+      expect(compute).not.toHaveBeenCalled();
+      expect(storedRow).toBeUndefined(); // the refresher persisted it, in its own process
+      expect(fetchCalls[0].url).toBe("http://127.0.0.1:8091/brands/b1/revenue?pricing=net");
+      expect(decodeTarget(fetchCalls[0].headers[REFRESH_HEADER])).toEqual({ view: "brand-revenue", familyKey: familyKeyOf(key) });
+      expect(fetchCalls[0].headers["x-org-id"]).toBe("o");
+      expect(fetchCalls[0].headers.host).toBeUndefined();
+      expect(fetchCalls[0].headers["if-none-match"]).toBeUndefined();
+    } finally {
+      restore();
+    }
+  });
+
+  it("a refresher that computed nothing falls back to the local compute, so a typed error still surfaces here", async () => {
+    try {
+      refresherAnswer = { status: 409, body: { error: "x" } };
+      const compute = vi.fn().mockResolvedValue({ pipeline: 1 });
+      const body = await inRequest(() => servedCached({ view: "brand-revenue", scopeKey: "k", orgId: "o", compute }));
+      expect(body).toEqual({ pipeline: 1 });
+      expect(compute).toHaveBeenCalledTimes(1);
+      expect(storedRow?.body).toEqual({ pipeline: 1 });
+    } finally {
+      restore();
+    }
+  });
+
+  it("EVERY view a request computes is delegated with its own target — not only the first", async () => {
+    try {
+      const first = vi.fn().mockResolvedValue({ rates: 1 });
+      const second = vi.fn().mockResolvedValue({ pipeline: 1 });
+      await inRequest(async () => {
+        await servedCached({ view: "brand-effective-conversion-rates", scopeKey: "r", orgId: "o", compute: first });
+        storedRow = undefined;
+        return servedCached({ view: "brand-revenue", scopeKey: "k", orgId: "o", compute: second });
+      });
+      expect(first).not.toHaveBeenCalled();
+      expect(second).not.toHaveBeenCalled();
+      expect(fetchCalls.map((c) => decodeTarget(c.headers[REFRESH_HEADER]).view)).toEqual(["brand-effective-conversion-rates", "brand-revenue"]);
+    } finally {
+      restore();
+    }
+  });
+
+  it("a caller outside any request (boot warm, fleet sweep) computes in-process", async () => {
+    try {
+      const compute = vi.fn().mockResolvedValue({ pipeline: 3 });
+      expect(await servedCached({ view: "x", scopeKey: "k", orgId: "o", compute })).toEqual({ pipeline: 3 });
+      expect(fetchCalls).toHaveLength(0);
+    } finally {
+      restore();
+    }
+  });
+
+  it("REFRESHER role: the TARGET call computes + persists over a fresh cell and answers at once; the handler's own reply is dropped", async () => {
+    try {
+      process.env.VIEW_CACHE_ROLE = "refresher";
+      const key = buildScopeKey("b1", { orgId: "o", econ: "moved" });
+      storedRow = { view: "v", scopeKey: key, orgId: "o", body: { pipeline: 7 }, computedAt: new Date(), refreshingAt: new Date() };
+      const compute = vi.fn().mockResolvedValue({ pipeline: 42 });
+      const res = fakeRes();
+      // The server asked under ANOTHER fingerprint of the same family: the call is still the target.
+      const header = targetHeader("v", familyKeyOf(buildScopeKey("b1", { orgId: "o", econ: "old" })));
+      const body = await inRequest(
+        async () => {
+          const value = await servedCached({ view: "v", scopeKey: key, orgId: "o", compute });
+          res.status(404).json({ shaped: true }); // a handler that shapes the value after reading it
+          return value;
+        },
+        { [REFRESH_HEADER]: header },
+        res,
+      );
+      expect(body).toEqual({ pipeline: 42 });
+      expect(storedRow?.body).toEqual({ pipeline: 42 });
+      expect(storedRow?.refreshingAt).toBeNull();
+      expect(res.statusCode).toBe(200);
+      expect(res.sent).toEqual([{ __viewRefresherComputed: { pipeline: 42 } }]);
+      expect(fetchCalls).toHaveLength(0);
+    } finally {
+      restore();
+    }
+  });
+
+  it("REFRESHER role: a view that is NOT the target is read through the cache as usual", async () => {
+    try {
+      process.env.VIEW_CACHE_ROLE = "refresher";
+      storedRow = { view: "rates", scopeKey: "r", orgId: "o", body: { rates: 7 }, computedAt: new Date(), refreshingAt: null };
+      const compute = vi.fn().mockResolvedValue({ rates: 42 });
+      const body = await inRequest(() => servedCached({ view: "rates", scopeKey: "r", orgId: "o", compute }), {
+        [REFRESH_HEADER]: targetHeader("brand-revenue", "k"),
+      });
+      expect(body).toEqual({ rates: 7 });
+      expect(compute).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+});

@@ -1,5 +1,31 @@
 # Features Service — CLAUDE.md
 
+## NO VIEW IS COMPUTED ON THE SERVING EVENT LOOP — every Gold compute runs in a forked REFRESHER process
+
+A view compute (an engine pass over a brand's whole lead population) is CPU work, and it ran on the same
+event loop that answers the dashboard. Measured in prod 2026-09-26: `/health` stalled up to 0.6-1.1s,
+and the snapshot reads the dashboard polls (p50 50-150ms) spiked to 0.6-3s at p95 — the cell was there,
+the loop was busy refreshing its neighbours. `lib/view-refresher.ts`:
+
+- **The server forks a refresher at boot** (same entrypoint, `VIEW_CACHE_ROLE=refresher`, 127.0.0.1:8091,
+  its own loop and heap; respawned on exit; exits with its parent). `VIEW_REFRESHER_ENABLED=false` is the
+  kill switch (everything computes in-process, as before).
+- **Every compute a request needs — miss, stale refresh, rotation, for ANY view the request reads, not
+  only the response's own cell — is asked of the refresher**: the server replays the SAME GET (headers
+  minus hop/conditional ones) with `x-view-refresh: <base64url {view, familyKey}>`. The refresher runs
+  the ordinary handler; the one `servedCached` call matching that view + key FAMILY computes + persists
+  and its value goes back AT ONCE in `{__viewRefresherComputed: value}` (the handler's own reply is
+  dropped). It is the COMPUTED value, not the HTTP body, because some handlers shape the cached value
+  (audience-stats caches a result union). A refresher that answers anything else → the server computes
+  locally, loudly, so a typed 404/409 still surfaces with its own status.
+- **Do NOT reintroduce an "outermost view only" claim**: the first cached read of a brand-revenue request
+  is the effective-rates cell, so claiming the first call left brand-revenue's own refresh on the server
+  loop (measured: p95 still 2.2s). Outside a request (boot warms, fleet sweeps) computes stay in-process.
+- Measured on the two reported brands after the change (30 rounds, 4s apart, while refreshes ran):
+  every money read p95 70-221ms against 0.3-2.5s in-process; live-vs-served figures: 0 value differences
+  on all ten reads. Memory: server ~95 MB + refresher ~320 MB (was one ~275 MB process).
+- Guards: the refresher suite at the end of `lib/view-cache.test.ts`. (Set 2026-09-26.)
+
 ## A SNAPSHOT MUST PERSIST — a body jsonb refuses is stored as its JSON text, and a FINGERPRINT rotation serves the previous cell
 
 `feature_view_snapshots.body` is `jsonb`, which REFUSES a `\u0000` escape and an unpaired surrogate escape
