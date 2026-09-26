@@ -244,14 +244,16 @@ export interface OfferOutcomeLeg extends OutcomeFigures {
   legSource: LegSource;
   /**
    * `campaign_leads` — an ENTRY leg counts the leads its own campaigns reached the step with.
-   * `offer_leads_at_step` — an INTERNAL leg's campaigns serve no lead of their own (they act on leads
-   * another campaign found, and nothing records which), so it states the offer's leads that reached its
-   * TO step. That count is NOT attributable to this channel, so its cost per outcome and its ROI read
-   * null with `unmeasuredReason: "not_attributable"` — never a ratio crediting the channel with every
-   * outcome of the step. Measured in prod: an AI booking leg with $2.07 of spend would otherwise have
-   * read $0.30 a meeting and a 1288x return on meetings it did not book.
+   * `acted_leads` — an INTERNAL leg's campaigns serve no lead of their own: they act on leads another
+   * campaign found. lead-service records which ones each campaign's worker ANSWERED
+   * (`/internal/brands/:brandId/followup-actions`), so the leg counts those leads that reached its TO
+   * step, and its cost per outcome and ROI divide its spend by them — outcomes it provably worked.
+   * `offer_leads_at_step` — the degrade when that record could not be read: the offer's leads at the
+   * TO step, which the channel did NOT necessarily cause, so cost per outcome and ROI read null with
+   * `unmeasuredReason: "not_attributable"`. Measured in prod: dividing an AI booking leg's $2.07 by
+   * every meeting of the step read $0.30 a meeting and a 1288x return on meetings it did not book.
    */
-  countBasis: "campaign_leads" | "offer_leads_at_step";
+  countBasis: "campaign_leads" | "acted_leads" | "offer_leads_at_step";
 }
 
 export interface OfferOutcomeRow extends OutcomeFigures {
@@ -275,6 +277,7 @@ function reachedByGroup(
   persons: readonly EnginePerson[],
   evidence: StepEvidence,
   cutoffIso: string | null,
+  actedLeadIds: ReadonlySet<string> | null,
 ): ReachedSets {
   const toField = STEP_LEAD_FIELD[group.toStep];
   const empty = { all: new Set<string>(), priced: new Set<string>(), maturePriced: new Set<string>() };
@@ -282,9 +285,14 @@ function reachedByGroup(
   if (!stepMeasured(toField, evidence)) return { measured: false, notCounted: false, ...empty };
   const toSignal = LEAD_FIELD_TO_SIGNAL[toField];
   const ids = new Set(group.campaignIds);
-  // An entry leg's people are its own campaigns' leads; an internal leg acts on the offer's whole
-  // population (its campaigns serve no lead of their own, and nothing records which it acted on).
-  const rows = group.fromStep === null ? persons.filter((p) => p.campaignId && ids.has(p.campaignId)) : [...persons];
+  // An entry leg's people are its own campaigns' leads; an internal leg's are the leads its workers
+  // answered, or — when that record is unreadable — the offer's whole population (not attributable).
+  const rows =
+    group.fromStep === null
+      ? persons.filter((p) => p.campaignId && ids.has(p.campaignId))
+      : actedLeadIds
+        ? persons.filter((p) => actedLeadIds.has(p.leadId))
+        : [...persons];
   const isMature = (p: EnginePerson): boolean => {
     if (!cutoffIso) return true;
     const contacted = p.signalDates?.contacted ?? null;
@@ -335,6 +343,21 @@ function figures(
 
 const stepWire = (key: ChannelStepKey) => ({ key, label: CHANNEL_STEPS[key].label });
 
+/** The leads an internal leg's campaigns answered, or null when the record could not be read. */
+function actedLeadsOf(
+  group: OfferLegGroup,
+  byCampaign: ReadonlyMap<string, ReadonlySet<string>> | null,
+): Set<string> | null {
+  if (!byCampaign) return null;
+  const out = new Set<string>();
+  for (const id of group.campaignIds) {
+    const leads = byCampaign.get(id);
+    if (!leads) return null; // a campaign the read did not answer is not a campaign that answered nobody
+    for (const lead of leads) out.add(lead);
+  }
+  return out;
+}
+
 /**
  * PURE: assemble the outcome rows from the partition, the offer's overlaid persons, each group's spend
  * and the step values. One row per step a leg lands on, in the catalogue's step order.
@@ -346,6 +369,8 @@ export function assembleOfferOutcomes(input: {
   spendByGroup: ReadonlyMap<OfferLegGroup, GroupSpend>;
   values: ReadonlyMap<ChannelStepKey, StepValue>;
   channelName: (featureSlug: string) => string;
+  /** Acting campaign id → lead ids its worker answered; null when lead-service's record was unreadable. */
+  actedLeadIdsByCampaign: ReadonlyMap<string, ReadonlySet<string>> | null;
 }): OfferOutcomeRow[] {
   const byStep = new Map<ChannelStepKey, OfferLegGroup[]>();
   for (const g of input.groups) {
@@ -362,10 +387,14 @@ export function assembleOfferOutcomes(input: {
     const union: ReachedSets = { measured: true, notCounted: false, all: new Set(), priced: new Set(), maturePriced: new Set() };
     const total = { committedCents: 0, matureCommittedCents: 0 };
     const legs: OfferOutcomeLeg[] = [];
+    let allAttributable = true;
     for (const group of groups) {
       const spend = input.spendByGroup.get(group);
       if (!spend) throw new Error(`[features-service] no spend read for leg ${group.legKey} on ${group.featureSlug}`);
-      const reached = reachedByGroup(group, input.persons, input.evidence, spend.cutoffIso);
+      const acted = group.fromStep === null ? null : actedLeadsOf(group, input.actedLeadIdsByCampaign);
+      const attributable = group.fromStep === null || acted !== null;
+      if (!attributable) allAttributable = false;
+      const reached = reachedByGroup(group, input.persons, input.evidence, spend.cutoffIso, acted);
       if (!reached.measured) union.measured = false;
       if (reached.notCounted) union.notCounted = true;
       for (const id of reached.all) union.all.add(id);
@@ -381,15 +410,15 @@ export function assembleOfferOutcomes(input: {
         channelName: input.channelName(group.featureSlug),
         campaignIds: group.campaignIds,
         legSource: group.legSource,
-        countBasis: group.fromStep === null ? "campaign_leads" : "offer_leads_at_step",
-        ...figures(reached, spend, value, group.fromStep === null),
+        countBasis: group.fromStep === null ? "campaign_leads" : acted ? "acted_leads" : "offer_leads_at_step",
+        ...figures(reached, spend, value, attributable),
       });
     }
     rows.push({
       step: { ...CHANNEL_STEPS[step] },
       valueBasisFunnelKey: value?.basisFunnelKey ?? null,
-      // One internal leg is enough to make the row's count something no spend here bought on its own.
-      ...figures(union, total, value, groups.every((g) => g.fromStep === null)),
+      // One unattributable leg is enough to make the row's count something no spend here bought on its own.
+      ...figures(union, total, value, allAttributable),
       legs,
     });
   }
