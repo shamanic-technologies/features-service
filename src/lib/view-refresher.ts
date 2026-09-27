@@ -194,20 +194,35 @@ export function refresherBaseUrl(): string | null {
  * `undefined` (after a loud log) when it could not, so the caller computes locally — which also means
  * an error surfaces here as the typed status its handler maps (a 404/409 stays a 404/409).
  */
-export async function computeViaRefresher(url: string, headers: Record<string, string>): Promise<{ body: unknown } | undefined> {
+export async function computeViaRefresher(url: string, headers: Record<string, string>): Promise<{ json: string } | undefined> {
   try {
     const res = await fetch(url, { headers });
     const text = await res.text();
-    const parsed = res.ok ? (JSON.parse(text) as Record<string, unknown> | null) : null;
-    if (!parsed || typeof parsed !== "object" || !(ENVELOPE in parsed)) {
+    const json = res.ok ? envelopedJson(text) : undefined;
+    if (json === undefined) {
       console.error(`[features-service] view refresher computed nothing for ${new URL(url).pathname} (${res.status}; computing locally): ${text.slice(0, 300)}`);
       return undefined;
     }
-    return { body: parsed[ENVELOPE] };
+    return { json };
   } catch (err) {
     console.error(`[features-service] view refresher unreachable (computing locally): ${(err as Error).message}`);
     return undefined;
   }
+}
+
+/**
+ * The computed value's JSON TEXT, cut out of the refresher's `{"__viewRefresherComputed":<value>}`
+ * answer WITHOUT parsing it: `res.json` writes that envelope as exactly this prefix, the value's own
+ * `JSON.stringify`, and a closing brace. A multi-MB body is then never parsed on the serving loop for a
+ * background refresh that discards it, and a hit that sends text never parses it at all. Anything else
+ * (an error body, a handler that answered without the envelope) is not a computed value.
+ */
+const ENVELOPE_PREFIX = `{"${ENVELOPE}":`;
+
+export function envelopedJson(text: string): string | undefined {
+  if (!text.startsWith(ENVELOPE_PREFIX) || !text.endsWith("}")) return undefined;
+  const json = text.slice(ENVELOPE_PREFIX.length, -1);
+  return json.length > 0 ? json : undefined;
 }
 
 // ── Boot: fork and supervise the refresher ────────────────────────────────────────────────────────

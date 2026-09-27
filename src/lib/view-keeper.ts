@@ -447,7 +447,7 @@ export async function checkDrift(opts: {
         stored = await askRefresher(base, cell.replayUrl!, headers, cell.view, cell.scopeKey, false);
         base0.storedAgeMs = 0;
       } else {
-        stored = decodeSnapshotBody(cell.body);
+        stored = typeof cell.bodyText === "string" ? JSON.parse(cell.bodyText) : decodeSnapshotBody(cell.body);
       }
       const fresh = await askRefresher(base, cell.replayUrl!, headers, cell.view, cell.scopeKey, true);
       // A fresh value that went through JSON (as the stored one did) compares like for like.

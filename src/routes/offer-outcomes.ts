@@ -28,7 +28,7 @@ import { SEED_FEATURES } from "../seed/features.js";
 import { parsePricing, type Pricing } from "../lib/pricing.js";
 import { OUTCOME_CAUSES, causeScopeKeyPart, parseOutcomeCauses, type OutcomeCause } from "../lib/outcome-cause.js";
 import { fetchEffectiveEconomics, economicsFingerprint } from "../lib/sales-economics-client.js";
-import { servedCached, buildScopeKey } from "../lib/view-cache.js";
+import { servedCachedJson, sendSnapshotJson, buildScopeKey } from "../lib/view-cache.js";
 import { fetchLeadsForRevenue } from "../lib/leads-client.js";
 import { fetchObservedStepFacts } from "../lib/observed-steps.js";
 import { fetchQualifications } from "../lib/qualifications-client.js";
@@ -150,7 +150,7 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
       fetchEffectiveEconomics(brandId, headers),
     ]);
 
-    const payload = await servedCached({
+    const payload = await servedCachedJson({
       view: "offer-outcomes",
       scopeKey: buildScopeKey(offerId, {
         orgId: req.orgId,
@@ -209,7 +209,7 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
         };
       },
     });
-    res.json(payload);
+    sendSnapshotJson(res, payload);
   } catch (error) {
     if (error instanceof OfferHasNoChannelsError) {
       return res.status(404).json({ error: error.message, reason: "offer_has_no_channels", offerId: error.offerId });

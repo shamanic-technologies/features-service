@@ -93,6 +93,12 @@ export const featureViewSnapshots = pgTable(
     orgId: uuid("org_id").notNull(),
     /** The exact response body served for this scope. */
     body: jsonb("body").notNull(),
+    /**
+     * The same body as its exact JSON TEXT (`JSON.stringify` of the computed value). A hit serves this
+     * text as the response bytes, with no jsonb decode, no parse and no re-stringify on the serving loop
+     * (`view-cache.servedCachedJson`). Null on a row written before the column existed: `body` answers.
+     */
+    bodyText: text("body_text"),
     /** When `body` was computed — drives the TTL freshness check. */
     computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
     /** Single-flight guard: set while a background revalidate is in flight (claim cross-replica). */
