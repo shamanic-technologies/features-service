@@ -61,7 +61,11 @@ const SHAPE_WINDOW_MS = 14 * 24 * 60 * 60_000;
 /** A held cell older than this is asked again (refreshed behind the answer). */
 const REASK_AFTER_MS = 24 * 60 * 60_000;
 const DEFAULT_KEEPER_INTERVAL_MS = 5 * 60_000;
-const DEFAULT_KEEPER_MAX_PER_ROUND = 60;
+/**
+ * Measured in prod on the first rounds (2026-09-27): 60 asks took 25-130s at concurrency 2, most of them
+ * cheap (a request whose sibling views were already warm). The round BUDGET is the real bound.
+ */
+const DEFAULT_KEEPER_MAX_PER_ROUND = 240;
 const DEFAULT_KEEPER_CONCURRENCY = 2;
 /**
  * A stale re-ask answers at once and refreshes BEHIND the answer inside the refresher, so the

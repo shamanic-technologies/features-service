@@ -184,7 +184,7 @@ campaign, an offer opened for the first time) was a blocking cold compute on the
   the refresher (`x-view-precompute: 1`) for each instance no cell holds, under the org's OWN most recent read
   identity (attribution headers swapped, never added). Same handler, same request ⇒ same body; nothing is
   approximated. A held cell older than 24h is re-asked (served stale, refreshed behind), so a first read is at most
-  a day old and SWR brings it current. Bounds: concurrency 2, ≤60 a round, ≤8 stale re-asks (those refresh BEHIND
+  a day old and SWR brings it current. Bounds: concurrency 2, ≤240 a round, ≤8 stale re-asks (those refresh BEHIND
   the answer, outside the concurrency bound), 4-min budget (`VIEW_KEEPER_*`). A precompute writes no trace event.
   Measured before (2026-09-27, Doc Dinners): a never-read `?groupBy=workflow` cell answered in 5.6s / 2.8s.
   **Why cells, not pre-aggregated rows**: see the NOT BUILT bullet — no summed store can reproduce these figures.
