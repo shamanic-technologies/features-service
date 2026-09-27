@@ -48,7 +48,7 @@ import {
   type SignalSeries,
 } from "../lib/revenue-engine.js";
 import { traceEvent } from "../lib/trace-event.js";
-import { servedCached, buildScopeKey } from "../lib/view-cache.js";
+import { servedCachedJson, sendSnapshotJson, buildScopeKey } from "../lib/view-cache.js";
 import {
   applyLeadDetail,
   attributedOutcomesFor,
@@ -2027,7 +2027,7 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
       const workflowCampaignScope: CampaignFilter =
         workflowOfferCampaignIds ?? (campaignId ? (workflowIdentity?.campaignIds ?? campaignId) : undefined);
 
-      const payload = await servedCached({
+      const payload = await servedCachedJson({
         view: "revenue-by-workflow",
         // The IDENTITY, not the campaign row, keys the cell — so every member of a family lands on
         // ONE cell instead of paying a full fan-out per stopped ancestor, exactly as the sibling
@@ -2079,7 +2079,7 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
         },
       });
 
-      return res.json(payload);
+      return sendSnapshotJson(res, payload);
     }
 
     // ── Grouped: one lean group per OFFER the brand sells (brand Overview offers row) ──
@@ -2098,7 +2098,7 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
     // therefore do not sum to the brand — the property the per-campaign and per-workflow grains
     // already have, for the same reason. See lib/offer-scope.ts.
     if (groupBy === "offerId") {
-      const payload = await servedCached({
+      const payload = await servedCachedJson({
         view: "revenue-by-offer",
         // No `campaignId` and no `funnel`: the grain is the brand's whole spend, priced on the brand's
         // own declared funnels (this service knows which campaigns sell an offer, never which funnels
@@ -2129,13 +2129,13 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
         },
       });
 
-      return res.json(payload);
+      return sendSnapshotJson(res, payload);
     }
 
     // ── Grouped: one lean group per campaign (dashboard campaigns list) ──────────
     // Served through the Gold snapshot cache (O(1) read; the fan-out recomputes off-path ~per TTL).
     if (groupBy === "campaignId") {
-      const payload = await servedCached({
+      const payload = await servedCachedJson({
         view: "revenue-grouped",
         scopeKey: buildScopeKey(featureSlug, { orgId, brandId, groupBy: "campaignId", pricing, econ, decl, cause: causeKey }),
         orgId,
@@ -2189,7 +2189,7 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
         },
       });
 
-      return res.json(payload);
+      return sendSnapshotJson(res, payload);
     }
 
     // ── Overview / lens: single brand-scoped (optionally one-campaign) response ──
@@ -2217,7 +2217,7 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
     const workflowScope = workflowParam ? await resolveWorkflowScope(featureSlug, workflowParam) : undefined;
 
     if (costBasis === "actual") {
-      const actualPayload = await servedCached({
+      const actualPayload = await servedCachedJson({
         view: "revenue-actual-cost",
         scopeKey: buildScopeKey(featureSlug, {
           orgId,
@@ -2250,10 +2250,10 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
           };
         },
       });
-      return res.json(actualPayload);
+      return sendSnapshotJson(res, actualPayload);
     }
 
-    const payload = await servedCached({
+    const payload = await servedCachedJson({
       view: lens ? "revenue-lens" : "revenue",
       scopeKey: buildScopeKey(featureSlug, {
         orgId,
@@ -2310,7 +2310,7 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
       },
     });
 
-    res.json(payload);
+    sendSnapshotJson(res, payload);
   } catch (error) {
     // An offer no campaign of this brand sells has no evidence to answer with — a 404 naming the
     // reason, never the brand's own numbers under the offer's label, and never a fabricated zero.

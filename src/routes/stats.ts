@@ -4,7 +4,7 @@ import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { STATS_REGISTRY, getPublicRegistry, getEntityRegistry, requiredStatsSources, type StatsKeyDef, type RunFilter } from "../lib/stats-registry.js";
-import { servedCached, buildScopeKey } from "../lib/view-cache.js";
+import { servedCachedJson, sendSnapshotJson, buildScopeKey } from "../lib/view-cache.js";
 import { parsePricing, selectCostCents, type Pricing } from "../lib/pricing.js";
 import { traceEvent } from "../lib/trace-event.js";
 import { fetchWithRetry } from "../lib/fetch-retry.js";
@@ -1176,7 +1176,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     // cell off the request path ~per TTL). Scope key spans org + every query param that changes the
     // body — with the campaign REPLACED by its identity, so every member of one family shares one
     // cell instead of each rendered row paying for its own identical fan-out.
-    const payload = await servedCached({
+    const payload = await servedCachedJson({
       view: "stats",
       scopeKey: buildScopeKey(featureSlug, {
         orgId,
@@ -1395,7 +1395,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
       },
     });
 
-    res.json(payload);
+    sendSnapshotJson(res, payload);
   } catch (error) {
     // An offer no campaign of this brand sells has no evidence to answer with — named, never
     // substituted with the brand's own stats and never with a fabricated zero.

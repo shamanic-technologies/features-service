@@ -91,7 +91,7 @@ import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
 import { computeAudienceStats, type ComputeResult } from "../lib/audience-stats-compute.js";
 import { computeBrandPipelineActivity } from "./pipeline-activity.js";
 import { fetchEffectiveEconomics, economicsFingerprint } from "../lib/sales-economics-client.js";
-import { servedCached, buildScopeKey } from "../lib/view-cache.js";
+import { servedCached, servedCachedJson, sendSnapshotJson, buildScopeKey } from "../lib/view-cache.js";
 import { applyLeadDetail, parseLeadDetail, LEAD_DETAIL_VALUES } from "../lib/lead-detail.js";
 import {
   OUTCOME_CAUSES,
@@ -230,7 +230,7 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
     const econ = brandPriced ? economicsFingerprint(brandPriced.economics) : undefined;
     const decl = funnel ? declaredFunnels.map((f) => f.funnelKey).sort().join("+") || "none" : undefined;
 
-    const payload = await servedCached({
+    const payload = await servedCachedJson({
       view: "brand-revenue",
       // Keyed on the brand AND on the CHANNEL SET: a newly funded channel changes every figure while no
       // other key part moves, so without it the brand would keep replaying its pre-funding answer.
@@ -307,7 +307,7 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
       },
     });
 
-    res.json(payload);
+    sendSnapshotJson(res, payload);
   } catch (error) {
     return handleError(res, error, "revenue");
   }
@@ -419,7 +419,7 @@ router.get("/brands/:brandId/offers", apiKeyAuth, async (req, res) => {
     const econ = brandPriced ? economicsFingerprint(brandPriced.economics) : undefined;
     const decl = anyFunnel ? declaredFunnels.map((f) => f.funnelKey).sort().join("+") || "none" : undefined;
 
-    const payload = await servedCached({
+    const payload = await servedCachedJson({
       view: "brand-offers",
       // The whole (offer × channel) partition rides the key, not just the offer list: a newly funded
       // channel on one offer changes that row's every figure while no other key part moves, so without
@@ -468,7 +468,7 @@ router.get("/brands/:brandId/offers", apiKeyAuth, async (req, res) => {
       },
     });
 
-    res.json(payload);
+    sendSnapshotJson(res, payload);
   } catch (error) {
     return handleError(res, error, "offers");
   }
