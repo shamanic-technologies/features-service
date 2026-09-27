@@ -21,8 +21,9 @@
  * the model its last version named instead of vanishing into "no model stated"; within a dynasty the
  * active version wins, and among versions of equal status the highest one does.
  *
- * Fail-LOUD client; the caller wraps it fail-SOFT. A workflow with no readable model reads as
- * UNKNOWABLE and stays ELIGIBLE — see `model-tier-eligibility.ts`.
+ * DISPLAY ONLY: the alias is echoed on a leg-keyed projection row so a surface can name the model; it
+ * decides nothing (which workflows may run on a leg is a stated assignment, `workflow-leg-assignments.ts`).
+ * Fail-LOUD client; the caller wraps it fail-SOFT.
  */
 import { fetchWithRetry } from "./fetch-retry.js";
 import type { Identity } from "./workflow-projection-grains.js";
@@ -96,7 +97,7 @@ export async function fetchWorkflowContentModelsSoft(
     return await fetchWorkflowContentModels(featureSlug, identity);
   } catch (error) {
     console.error(
-      "[features-service] workflow content models unavailable — every workflow stays ELIGIBLE with the reason stated on its row:",
+      "[features-service] workflow content models unavailable — rows state no model alias (display only):",
       error,
     );
     return null;

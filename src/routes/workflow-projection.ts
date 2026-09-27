@@ -46,11 +46,10 @@ import {
 } from "../lib/observed-picks.js";
 import { rankDeclaredFunnels } from "../lib/funnel-ranking.js";
 import {
-  eligibleTiersForStep,
-  modelEligibilityFor,
-  type ModelEligibility,
-} from "../lib/model-tier-eligibility.js";
-import { fetchModelTierCatalogueSoft } from "../lib/model-tier-client.js";
+  fetchLegAssignments,
+  legAssignmentVerdict,
+  type LegAssignmentVerdict,
+} from "../lib/workflow-leg-assignments.js";
 import { fetchWorkflowContentModelsSoft } from "../lib/workflow-content-model-client.js";
 import {
   fetchPublicWorkflows,
@@ -281,21 +280,33 @@ export interface ProjectionRow {
    */
   scopeRank?: number;
   /**
-   * WHETHER THE MODEL THIS WORKFLOW WRITES ITS EMAILS WITH IS RIGHT FOR THIS LEG — present ⟺ the
-   * caller named a `?leg=`, so every funnel- and goal-keyed body is byte-unchanged.
-   *
-   * We measured fleet-wide that the capability TIER of the model writing the content decides the
-   * outcome, and that the direction depends on what the leg sells: the cheap tier badly underperforms
-   * on a leg selling a REPLY, the strong and frontier tiers are wasted on one selling a WEBSITE
-   * VISIT. The rule and its three cases live in `lib/model-tier-eligibility.ts`.
-   *
-   * The row is served whatever the verdict says and its figures are unchanged, but the ORDERS act on
-   * it (features-service, 2026-09-24): an excluded workflow ranks after every eligible one in `rank`
-   * and in `scopeRank`, and is never `recommendedWorkflowDynastySlug`. campaign-service filters on `eligible`; a customer
-   * surface reads `ineligibleReason` so an excluded workflow reads as excluded rather than as
-   * missing — and a workflow that is excluded but has ALREADY RUN keeps its history on screen.
+   * WHETHER THIS WORKFLOW IS ASSIGNED TO THE LEG THE READ NAMED — present ⟺ the caller named a
+   * `?leg=`, so every funnel- and goal-keyed body is byte-unchanged. A STATED assignment
+   * (`lib/workflow-leg-assignments.ts`), never derived from the workflow's model or price:
+   * `active` = selectable here; `deprecated` = retired on this leg only, history kept; `unassigned` =
+   * never put on this leg. The row is served whatever the state and its figures are unchanged, but the
+   * ORDERS act on it: a non-selectable workflow ranks after every selectable one in `rank` and
+   * `scopeRank`, and is never `recommendedWorkflowDynastySlug`.
    */
-  modelEligibility?: ModelEligibility;
+  legAssignment?: LegAssignmentVerdict;
+  /**
+   * TRANSITIONAL — the pre-assignment verdict block, kept byte-compatible for readers that have not
+   * moved to `legAssignment` yet (campaign-service filters on `eligible`). `eligible` ===
+   * `legAssignment.selectable`, `ineligibleReason` === `legAssignment.reason`. The model-tier rule is
+   * gone: `modelTier` and `unknownTierReason` are always null. `modelAlias` is still the model the
+   * workflow's DAG names (display only; it decides nothing). Remove once every reader is on
+   * `legAssignment`.
+   */
+  modelEligibility?: TransitionalModelEligibility;
+}
+
+/** See `ProjectionRow.modelEligibility`. */
+export interface TransitionalModelEligibility {
+  modelAlias: string | null;
+  modelTier: null;
+  eligible: boolean;
+  ineligibleReason: string | null;
+  unknownTierReason: null;
 }
 
 /**
@@ -437,9 +448,9 @@ export interface WorkflowProjectionResponse {
   /** Present ⟺ `measured` is false. */
   unmeasuredReason?: UnmeasuredProjectionReason;
   /**
-   * Present ⟺ a leg-keyed read has workflows but the leg's model rule excludes EVERY one of them, so
+   * Present ⟺ a leg-keyed read has workflows but NONE of them is assigned active on the leg, so
    * `recommendedWorkflowDynastySlug` is null by refusal rather than for want of evidence. Never a fall
-   * back to an excluded workflow.
+   * back to an unassigned or deprecated workflow.
    */
   recommendationWithheldReason?: "no_eligible_workflow";
 }
@@ -1231,7 +1242,7 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     // job is to say what is happening right now cannot be served from a cell half an hour old. Fired in
     // the same round trip as the fan-out (it needs only the campaign ids, not the ladder), so it costs
     // no extra wall-clock, and FAIL-SOFT so a runs blip nulls one block rather than a whole page.
-    const [evidence, effective, triggerRuns, contentModels, tierCatalogue, audienceAvailability] = await Promise.all([
+    const [evidence, effective, triggerRuns, contentModels, legAssignments, audienceAvailability] = await Promise.all([
       servedCached({
         view: "workflow-projection-evidence",
         scopeKey: buildScopeKey(featureSlug, {
@@ -1260,13 +1271,12 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       campaignScopeIds && picksLimit > 0
         ? fetchCampaignTriggerRunsSoft(campaignScopeIds, { orgId, userId, runId, brandId }, picksLimit)
         : Promise.resolve(null),
-      // THE MODEL-TIER VERDICT'S TWO INGREDIENTS — read ONLY beside a `?leg=`, so a funnel- or
-      // goal-keyed request issues ZERO extra calls and its body is byte-unchanged. Both are FAIL-SOFT
-      // and both are LIVE rather than cached: a tier is a decision chat-service records, and a
-      // workflow's model is whatever its DAG names right now — neither belongs in a snapshot that can
-      // be half an hour old. Fired in the same round trip as the fan-out, so they cost no wall-clock.
+      // Read ONLY beside a `?leg=`, so a funnel- or goal-keyed request issues ZERO extra reads and its
+      // body is byte-unchanged. The model each workflow names is DISPLAY ONLY (fail-soft); the leg
+      // assignment is what decides, so it is read LIVE from our own table and FAILS LOUD — a swallowed
+      // read would say "nothing is assigned" and exclude every workflow on a database blip.
       legKey ? fetchWorkflowContentModelsSoft(featureSlug, identity) : Promise.resolve(null),
-      legKey ? fetchModelTierCatalogueSoft() : Promise.resolve(null),
+      legKey ? fetchLegAssignments(featureSlug, legKey) : Promise.resolve(null),
       // HOW MANY PEOPLE EACH AUDIENCE CAN STILL BE SERVED — live, never from the snapshot: an audience
       // served out an hour ago must not be offered for a serve off a cell that predates it
       // (features-service#1035). Shared 30s with the evidence compute's own list read; fail-soft.
@@ -1338,40 +1348,19 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       );
     }
 
-    // ── IS THE MODEL WRITING EACH WORKFLOW'S EMAILS RIGHT FOR THIS LEG ────────────────────────────
+    // ── IS EACH WORKFLOW ASSIGNED TO THIS LEG ─────────────────────────────────────────────────────
     //
-    // The restriction is keyed on the leg's OWN step — the same step every leg-keyed figure is
-    // denominated in — so it is known from `legKey` alone, before the basis funnel is resolved. One
-    // verdict per DYNASTY (a workflow's model is a property of the workflow, not of one of its rows),
-    // attached to every row of that dynasty inside `projectFromEvidence`.
-    //
-    // Every unknowable case stays ELIGIBLE and says why: a workflow whose DAG names no model, an
-    // alias chat-service's catalogue does not carry, and either read having failed. We never exclude
-    // a workflow on a gap in our own reading, and never silently.
-    let modelEligibilityByDynasty: Map<string, ModelEligibility> | null = null;
-    if (legKey) {
+    // One verdict per DYNASTY, read from the stated assignment (never from the workflow's model or
+    // price), attached to every row of that dynasty inside `projectFromEvidence`.
+    let legAssignmentByDynasty: Map<string, LegAssignmentVerdict> | null = null;
+    let modelAliasByDynasty: Map<string, string | null> | null = null;
+    if (legKey && legAssignments) {
       const leg = funnelLeg(legKey)!;
-      const restriction = eligibleTiersForStep(leg.toStep.key);
       const dynastySlugs = new Set(evidence.workflows.map((w) => w.workflowDynastySlug));
-      modelEligibilityByDynasty = new Map(
-        [...dynastySlugs].map((slug) => [
-          slug,
-          modelEligibilityFor({
-            stepLabel: leg.toStep.label,
-            restriction,
-            modelAlias: contentModels ? (contentModels.get(slug) ?? null) : null,
-            modelsUnavailable: contentModels === null,
-            tierByAlias: tierCatalogue,
-          }),
-        ]),
+      legAssignmentByDynasty = new Map(
+        [...dynastySlugs].map((slug) => [slug, legAssignmentVerdict(legAssignments.get(slug), leg.toStep.label)]),
       );
-      const excluded = [...modelEligibilityByDynasty.values()].filter((v) => !v.eligible).length;
-      const unknown = [...modelEligibilityByDynasty.values()].filter((v) => v.modelTier === null).length;
-      if (unknown > 0) {
-        console.warn(
-          `[features-service] workflow-projection leg=${legKey}: ${unknown} of ${modelEligibilityByDynasty.size} workflows have no readable capability tier — left ELIGIBLE, never excluded on ignorance (${excluded} excluded by the rule)`,
-        );
-      }
+      modelAliasByDynasty = contentModels;
     }
 
     const pricedFunnelKey = legBasisFunnelKey;
@@ -1384,7 +1373,8 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       meetingChannel,
       ...(pricedFunnelKey ? { funnelKey: pricedFunnelKey } : {}),
       legTerms,
-      modelEligibilityByDynasty,
+      legAssignmentByDynasty,
+      modelAliasByDynasty,
       evidence,
       economics: mergedEconomics,
       maximize,
@@ -1637,12 +1627,13 @@ export function projectFromEvidence(input: {
    */
   legTerms?: LegOutcomeTerms | null;
   /**
-   * The model-tier verdict per workflow DYNASTY. Read ONLY beside a `?leg=` (the rule is keyed on the
-   * leg's own step), and attached verbatim to every row of that dynasty — a verdict about a workflow
-   * cannot differ between two of its rows. Absent on every funnel- and goal-keyed read, which is what
-   * keeps those bodies byte-unchanged. It STATES; it never filters, reorders or reprices.
+   * The leg-assignment verdict per workflow DYNASTY. Read ONLY beside a `?leg=`, and attached verbatim
+   * to every row of that dynasty. Absent on every funnel- and goal-keyed read, which is what keeps
+   * those bodies byte-unchanged. It never filters or reprices; it is the outermost key of the orders.
    */
-  modelEligibilityByDynasty?: ReadonlyMap<string, ModelEligibility> | null;
+  legAssignmentByDynasty?: ReadonlyMap<string, LegAssignmentVerdict> | null;
+  /** The model alias each dynasty's DAG names — display only, echoed on the transitional block. */
+  modelAliasByDynasty?: ReadonlyMap<string, string | null> | null;
   evidence: WorkflowProjectionEvidence;
   economics: SalesEconomics | null;
   /**
@@ -1985,18 +1976,15 @@ export function projectFromEvidence(input: {
     // no gaps and the same evidence always produces the same list.
     const better = (a: number, b: number): boolean => (maximize === "conversionRate" ? a > b : a < b);
 
-    // ── A WORKFLOW THE LEG'S MODEL RULE EXCLUDES IS NEVER PUT FORWARD ─────────────────────────────
+    // ── A WORKFLOW NOT ASSIGNED ACTIVE ON THE LEG IS NEVER PUT FORWARD ────────────────────────────
     //
-    // The verdict (`modelEligibility`, leg-keyed reads only) is the OUTERMOST key of every order
-    // below: an excluded workflow sorts after EVERY eligible one — measured or not — in `rank` and in
-    // each scope's `scopeRank`, and it can never be the recommendation. Measured in prod 2026-09-24:
-    // a cheap-tier workflow carrying `eligible: false` on a leg selling a positive reply was rank 1
-    // and `recommendedWorkflowDynastySlug`, so onboarding created the campaign on it and its first run
-    // executed it. The excluded rows stay in the body with their flag (a workflow that already ran
-    // keeps its spend visible); they are simply not presented as a pick. An UNKNOWABLE tier is
-    // eligible by the rule's own contract, so nothing is demoted on a gap in our reading.
-    const eligibility = legTerms ? (input.modelEligibilityByDynasty ?? null) : null;
-    const excludedTier = (slug: string): number => (eligibility?.get(slug)?.eligible === false ? 1 : 0);
+    // The leg assignment (leg-keyed reads only) is the OUTERMOST key of every order below: a workflow
+    // that is unassigned or deprecated on the leg sorts after EVERY selectable one — measured or not —
+    // in `rank` and in each scope's `scopeRank`, and it can never be the recommendation. Its rows stay
+    // in the body with their state (a workflow that already ran keeps its spend visible).
+    const assignment = legTerms ? (input.legAssignmentByDynasty ?? null) : null;
+    const excludedTier = (slug: string): number =>
+      assignment && assignment.get(slug)?.selectable !== true ? 1 : 0;
     const metricOf = (row: ProjectionRow): number | null =>
       maximize === "conversionRate" ? row.resolved.conversionRatePct : row.resolved.costPerOutcomeUsd;
     const rankableMetric = (row: ProjectionRow): number | null => {
@@ -2045,17 +2033,23 @@ export function projectFromEvidence(input: {
     if (legTerms) {
       for (const row of rows) row.rank = rankByDynasty.get(row.workflow.workflowDynastySlug);
 
-      // ── AND WHETHER THE MODEL WRITING THIS WORKFLOW'S EMAILS IS RIGHT FOR THIS LEG ─────────────
+      // ── AND WHETHER THIS WORKFLOW IS ASSIGNED TO THE LEG ─────────────────────────────────────
       //
       // Stated per row, and acted on ONLY by the orders (see `excludedTier` above): the figures are
-      // untouched and the row is always served. A dropped row would be undebuggable ("why does this
-      // workflow never run" has no answer if it is nowhere) and would erase the history of a workflow
-      // that is excluded but has ALREADY RUN for this campaign. Absent entirely when the two reads it
-      // rests on were never made.
-      if (eligibility) {
+      // untouched and the row is always served, so a deprecated workflow keeps its history on screen.
+      if (assignment) {
         for (const row of rows) {
-          const verdict = eligibility.get(row.workflow.workflowDynastySlug);
-          if (verdict) row.modelEligibility = verdict;
+          const slug = row.workflow.workflowDynastySlug;
+          const verdict = assignment.get(slug);
+          if (!verdict) continue;
+          row.legAssignment = verdict;
+          row.modelEligibility = {
+            modelAlias: input.modelAliasByDynasty?.get(slug) ?? null,
+            modelTier: null,
+            eligible: verdict.selectable,
+            ineligibleReason: verdict.reason,
+            unknownTierReason: null,
+          };
         }
       }
 
@@ -2098,8 +2092,8 @@ export function projectFromEvidence(input: {
     // The recommendation is the head of that order: the best rankable row of the rank-1 dynasty. The
     // groups above put every rankable dynasty before every unrankable one, so this is non-null exactly
     // when some row is rankable — the byte-same condition the previous argmin answered on.
-    // An excluded head means NO eligible workflow exists (eligibility is the outermost key), and the
-    // answer is then no recommendation, stated with its reason — never a fall back to an excluded one.
+    // An excluded head means NO workflow is assigned active on the leg (the assignment is the outermost
+    // key), and the answer is then no recommendation, stated with its reason — never a fall back.
     const head = orderedDynasties[0];
     const headExcluded = head != null && excludedTier(head[0]) === 1;
     const recommended: ProjectionRow | null =

@@ -1347,93 +1347,46 @@ curve's last point stops agreeing with the rate printed inches above it.
   cost curve's null on the same fixture, and the rest of the body BYTE-EQUAL with the block stripped.
   (Set 2026-09-17, features-service#992.)
 
-## THE TIER OF THE MODEL WRITING THE EMAIL IS A PROPERTY OF THE LEG, NOT OF THE WORKFLOW — `modelEligibility`, stated on every row, and it DECIDES the order and the pick
+## WHICH WORKFLOWS MAY RUN ON A LEG IS A STATED ASSIGNMENT — `workflow_leg_assignments`, never a rule about the model (supersedes the model-tier verdict of #952/#1046)
 
-We measured, fleet-wide, that the CAPABILITY TIER of the model a workflow writes its content with
-decides how that workflow performs, and that the direction of the effect depends on WHAT THE LEG
-SELLS: the cheap tier badly underperforms on a leg that has to earn a REPLY, and the strong and
-frontier tiers are money burnt on a leg that only has to earn a WEBSITE VISIT. Nothing this service
-ranked carried any notion of which model writes a workflow's content, so that finding could not be
-applied anywhere — most visibly during the EXPLORE ALLOWANCE, where the large majority of cells sit:
-an unproven workflow is priced at the channel's outreach floor whatever model it names, so the
-cheapest-cell argmin keeps handing campaign-service tiers the study says cannot work for that leg.
+Owner decision 2026-09-27 (do not re-litigate): a workflow runs on a leg only if the owner PUT it on that
+leg. The model-tier rule (cheap tier excluded from the conversation leg, strong/frontier from the visit
+leg) is DELETED with its chat-service catalogue read: it excluded `sales-cold-email-outreach-maelstrom`
+(glm-flash) from the positive-reply leg although it had already served 130 leads there and read as the
+cheapest per positive reply in the fleet. The owner judges performance himself, workflow by workflow and
+leg by leg. **Do NOT reintroduce any price / tier / model-based filtering.**
 
-- **THE RULE, AND NOTHING BEYOND IT** (`lib/model-tier-eligibility.ts`), keyed on the leg's own
-  `toStep` — the SAME step every leg-keyed figure is denominated in, so the thing being bought decides
-  the restriction exactly as it decides the price: a leg selling a **CONVERSATION** may be served only
-  by the **strong and frontier** tiers; a leg selling a **WEBSITE VISIT** only by the **cheap** tier;
-  **every other leg restricts nothing**. That third line is the one worth stating out loud — the study
-  says nothing about a leg selling a booked meeting, an attended meeting, a signup, a form or a paid
-  client, so nothing is excluded there and nothing is invented. Extending the rule because it "feels"
-  like it should would be a claim about data nobody measured.
-- **THE VERDICT IS STATED ON THE ROW AND THE ROW IS NEVER DROPPED.** Two consumers need the difference
-  and neither can recover it from an absence: campaign-service FILTERS on `eligible`, and the customer
-  dashboard must tell "this workflow is excluded" apart from "this workflow does not exist" — because
-  **a workflow that is excluded but has ALREADY RUN keeps appearing with its history**, exactly as a
-  retired lineage does. A dropped row is also undebuggable: "why does this workflow never run" has no
-  answer if the workflow is nowhere on the body.
-- **IT MOVES NO FIGURE, BUT IT DECIDES THE ORDER AND THE PICK (supersedes the "moves no number"
-  rule of #952).** The figures and the cascade are what they were. But the verdict is the OUTERMOST key
-  of both orders: an excluded workflow ranks after EVERY eligible one — measured or not — in `rank` and
-  in each scope's `scopeRank`, and is never `recommendedWorkflowDynastySlug` (so `recommendedBudgetUsd`
-  is priced off an eligible workflow too). Stating the verdict while ranking against it was a bug, not a
-  staging step: measured in prod 2026-09-24, campaign `c8133eca…` (leg `start_to_conversation`) had
-  `sales-cold-email-outreach-maelstrom` (glm-flash, cheap) at `eligible: false` AND `rank: 1` AND
-  recommended, so onboarding created the campaign on it and its very first run executed it, and the
-  dashboard badged it "Best". **When EVERY workflow is excluded the recommendation is null and
-  `recommendationWithheldReason: "no_eligible_workflow"` says so — never a fall back to an excluded
-  one.** The excluded rows stay on the body with their flag and figures (a workflow that already ran
-  keeps its spend visible). Funnel- and goal-keyed reads carry no verdict and are byte-unchanged.
-  Guards: the `an EXCLUDED workflow is never put forward` suite in
-  `routes/model-tier-eligibility-grain.test.ts`, on a fixture where the excluded workflow is the
-  cheapest and wins the verdict-blind order, so every case asserts the divergence.
-- **AN UNKNOWABLE TIER IS ELIGIBLE, LOUDLY, AND THE FOUR GAPS ARE TOLD APART.** A workflow whose DAG
-  names no model, an alias chat-service's catalogue does not carry, a failed catalogue read, and a
-  failed workflow read each state their own `unknownTierReason` and leave the row ELIGIBLE. Excluding
-  a workflow because we could not read its tier would starve it on evidence we do not have, and a
-  silent degrade would leave a feature that looks live and decides nothing. Both reads are FAIL-SOFT
-  with a loud log; the per-request log names how many workflows were unreadable.
-- **THE TIER IS READ FROM chat-service AND NEVER DERIVED FROM THE ALIAS STRING.** The deployed
-  catalogue (`GET /internal/models`, `x-api-key` only, `{models:[{provider,model,capabilityTier}]}`)
-  holds TWO live counter-examples a substring rule gets wrong: **`flash-pro` is CHEAP** despite
-  containing "pro", and **`deepseek-pro` is CHEAP** because both DeepSeek aliases point at V4.1 Flash
-  (chat-service#446). Both are pinned in the guard suite. An alias two providers disagree about is
-  DROPPED from the map (loud) rather than resolved arbitrarily, and a malformed entry makes the whole
-  read fail rather than half-populating it — a half map would judge half the fleet and silently
-  excuse the rest.
-- **WHICH MODEL A WORKFLOW NAMES COMES FROM workflow-service `GET /workflows?featureSlug=&status=all`,
-  NOT from `/public/workflows`.** That listing is deliberately narrow and carries no `contentModel`;
-  the field lives on the full workflow shape, derived at read from the DAG's content-generation call.
-  Both are one call to the same service and the full listing filters by nothing but the feature, so it
-  returns the channel's whole cross-org catalogue — the exact set the projection ranks. `status=all`
-  rather than `active` so a RETIRED lineage resolves to the model its last version named instead of
-  vanishing into "no model stated"; within a dynasty the active version wins, then the highest.
-- **ONE VERDICT PER DYNASTY, attached to every row of it.** A workflow's model is a property of the
-  workflow, so two rows of one dynasty can never disagree about it (guarded).
-- **PRESENT ⟺ `?leg=` IS, so a funnel- or goal-keyed request issues ZERO extra calls and its body is
-  byte-unchanged** — which is what keeps campaign-service's production workflow selection untouched.
-  Both reads are LIVE rather than cached beside the evidence snapshot: a tier is a decision
-  chat-service records and a workflow's model is whatever its DAG names right now, so neither belongs
-  in a cell that can be half an hour old. Fired in the same round trip as the fan-out.
-- **MEASURED IN PROD 2026-09-14** (brand `75d7e3e8…` / campaign `f7b1b610…` / leg
-  `start_to_conversation`): the channel's catalogue holds **27 active dynasties**, of which **9** write
-  their emails with a cheap-tier model — `pro` ×15 and `glm-pro` are strong, `fable` and `gpt-pro` are
-  frontier, and the excluded nine are `flash` ×3, `deepseek-pro` ×3, `deepseek-flash`, `flash-pro` and
-  `glm-flash`. Note the brief that asked for this said six, counted before `deepseek-pro` was
-  repointed at a Flash model the same day: the catalogue is the source of truth and a count taken from
-  it goes stale the moment an alias moves, which is precisely why nothing here caches or re-derives it.
-- Guards: `src/lib/model-tier-eligibility.test.ts` (each case asserts the DIVERGENCE between what two
-  legs say about the SAME workflow, so a suite checking only "a verdict came back" would pass on an
-  implementation returning `eligible: true` for everything — the inert version this must not be; plus
-  the silent steps, both counter-examples, and the four gaps) and
-  `src/routes/model-tier-eligibility-grain.test.ts` — ONE fixture shaped like the reported campaign
-  (`pro` strong, `flash` cheap, `flash-pro` cheap, one workflow naming no model): the conversation and
-  visit legs excluding OPPOSITE sets of the same workflows, nothing excluded on a silent leg, the
-  excluded row keeping its figures and both ranks, one verdict per dynasty, the body byte-equal with
-  the block stripped, each of the four gaps, the provider disagreement, the malformed catalogue, the
-  request shape (`status=all`, one call each) and the funnel- and goal-keyed reads carrying none of it
-  and spending no read. (Set 2026-09-14, features-service#952.)
-
+- **The store** (`lib/workflow-leg-assignments.ts`, migration 0017): one row per (feature slug =
+  acquisition channel, leg key, workflow DYNASTY), `state` `active` | `deprecated`, `decided_by`,
+  `decided_at`, `note`; every write also appends to `workflow_leg_assignment_changes` in the same
+  transaction. No row = `unassigned`. A NEW dynasty is on no leg until assigned.
+- **Seed** = every dynasty that had already SERVED a lead on a campaign performing the leg (lead-service
+  `leads_campaigns.served_at` × campaign-service `campaigns.leg_key`, versions folded to dynasties via
+  workflow-service), measured 2026-09-27, ALL active, nothing deprecated (owner). Legacy campaigns stating
+  no leg ignored. sales-cold-email-outreach: 45 dynasties on `start_to_conversation`, 33 on
+  `start_to_website_visit`; feedback-request: 9 on `start_to_conversation`. `decided_by =
+  'seed:served-a-lead-on-this-leg'`.
+- **Staff write** (api-key, driven from the box): `PUT /internal/workflow-leg-assignments`
+  `{featureSlug, legKey, workflowDynastySlug, state, decidedBy, note?}` assigns / deprecates on ONE leg /
+  reactivates; 404 on an unknown feature or a dynasty workflow-service does not describe for it.
+  `GET /internal/workflow-leg-assignments[?featureSlug&legKey]`, `GET …/history?featureSlug&legKey&workflowDynastySlug`.
+- **The wire** (leg-keyed `workflow-projection` only; funnel/goal bodies byte-unchanged): every row
+  carries `legAssignment {state: active|deprecated|unassigned, selectable, reason, decidedBy, decidedAt}`.
+  `selectable` ⟺ `active`. The ORDERS act on it exactly as they acted on the tier verdict: a
+  non-selectable workflow ranks after every selectable one in `rank` / `scopeRank`, is never
+  `recommendedWorkflowDynastySlug` (`recommendationWithheldReason: "no_eligible_workflow"` when none is
+  active). Rows and figures are NEVER dropped or changed, so a deprecated workflow keeps its history.
+- **TRANSITIONAL `modelEligibility`** stays byte-compatible for readers not yet moved (campaign-service
+  filters on `eligible`): `eligible` = `selectable`, `ineligibleReason` = `reason`, `modelTier` and
+  `unknownTierReason` always null, `modelAlias` the DAG's model (display only). Remove once every reader
+  reads `legAssignment`.
+- The assignment read is LIVE (never the evidence snapshot) and FAIL-LOUD: a swallowed read would say
+  "nothing is assigned" and exclude every workflow. workflow-service's global dynasty status is untouched
+  and still wins.
+- Guards: `routes/leg-assignment-grain.test.ts` (the three states, a cheap model selectable, deprecation
+  per leg, deprecated kept with figures, never recommended even when cheapest, the withheld case, the
+  goal-keyed read reading nothing). Suites testing leg ORDERS mock every dynasty active
+  (`lib/leg-assignments-fixture.ts`). (Set 2026-09-27.)
 ## A RANK SCORED OVER EVERY CELL CANNOT BE READ BESIDE ONE COLUMN — `scopeRank` orders the rows a reader is actually comparing, and the two ranks are MEANT to disagree
 
 The campaign Workflows page listed 24 workflows numbered 1..24 and, in the column beside the number,
