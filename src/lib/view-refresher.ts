@@ -110,7 +110,9 @@ export function captureRequestReplay(req: Request, res: Response, next: NextFunc
       // views, the response shaping) runs on here but answers nobody: its status and body are dropped.
       const json = res.json.bind(res);
       const status = res.status.bind(res);
+      const send = res.send.bind(res);
       let sent = false;
+      let answering = false;
       replay.answer = (value) => {
         if (sent) return;
         sent = true;
@@ -123,11 +125,19 @@ export function captureRequestReplay(req: Request, res: Response, next: NextFunc
           console.error(`[features-service] view refresher: ${replay.target?.view ?? "target"} computed after the handler already answered ${req.originalUrl} — not answered twice`);
           return;
         }
-        status(200);
-        json({ [ENVELOPE]: value });
+        answering = true;
+        try {
+          status(200);
+          json({ [ENVELOPE]: value });
+        } finally {
+          answering = false;
+        }
       };
       res.status = ((code: number) => (sent ? res : status(code))) as Response["status"];
       res.json = ((payload: unknown) => (sent ? res : json(payload))) as Response["json"];
+      // `sendSnapshotJson` answers with `res.send`: once the target has answered, the handler's own
+      // reply is dropped here too, rather than throwing ERR_HTTP_HEADERS_SENT into its error path.
+      res.send = ((body?: unknown) => (sent && !answering ? res : send(body))) as Response["send"];
     }
   }
   if (req.method === "GET") {

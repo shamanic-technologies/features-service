@@ -450,6 +450,7 @@ describe("servedCached with the view refresher", () => {
       sent: [] as unknown[],
       status(code: number) { res.statusCode = code; return res; },
       json(p: unknown) { res.sent.push(p); return res; },
+      send(p: unknown) { res.sent.push(p); return res; },
     };
     return res;
   };
@@ -552,6 +553,7 @@ describe("servedCached with the view refresher", () => {
         async () => {
           const value = await servedCached({ view: "v", scopeKey: key, orgId: "o", compute });
           res.status(404).json({ shaped: true }); // a handler that shapes the value after reading it
+          res.send('{"snapshot":"text"}'); // …or answers with the stored JSON text
           return value;
         },
         { [REFRESH_HEADER]: header },
@@ -585,6 +587,9 @@ describe("servedCached with the view refresher", () => {
           res.headersSent = true;
           res.sent.push(p);
           return res;
+        },
+        send(p: unknown) {
+          return res.json(p);
         },
       };
       const value = await inRequest(
