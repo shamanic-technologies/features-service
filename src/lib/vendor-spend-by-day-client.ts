@@ -122,11 +122,31 @@ export async function fetchBrandVendorSpendByDay(
  * the spend leg of the staff-only fleet per-workflow curve (`lib/fleet-workflow-return.ts`). Same
  * producer route and same fields as the per-brand read above, with no org / brand filter.
  */
-export async function fetchDynastyVendorSpendByDay(featureSlug: string, workflowDynastySlug: string): Promise<Map<string, VendorSpendDay>> {
+export async function fetchDynastyVendorSpendByDay(
+  featureSlug: string,
+  workflowDynastySlug: string,
+  // LEG scope, as on the billed twin: absent → the whole fleet (byte-identical), empty → nothing spent.
+  campaignIds?: string[],
+): Promise<Map<string, VendorSpendDay>> {
+  if (campaignIds === undefined) return fetchDynastyVendorChunk(featureSlug, workflowDynastySlug, undefined);
+  const byDay = new Map<string, VendorSpendDay>();
+  for (let i = 0; i < campaignIds.length; i += RUNS_CAMPAIGN_IDS_PER_REQUEST) {
+    const part = await fetchDynastyVendorChunk(featureSlug, workflowDynastySlug, campaignIds.slice(i, i + RUNS_CAMPAIGN_IDS_PER_REQUEST));
+    for (const [day, v] of part) byDay.set(day, merge(byDay.get(day), v));
+  }
+  return byDay;
+}
+
+async function fetchDynastyVendorChunk(
+  featureSlug: string,
+  workflowDynastySlug: string,
+  campaignIds: string[] | undefined,
+): Promise<Map<string, VendorSpendDay>> {
   const url = process.env.RUNS_SERVICE_URL;
   const apiKey = process.env.RUNS_SERVICE_API_KEY;
   if (!url || !apiKey) throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
   const params = new URLSearchParams({ interval: "day", featureSlugs: featureSlug, workflowDynastySlug });
+  if (campaignIds) params.set("campaignIds", campaignIds.join(","));
   const response = await fetchWithRetry(`${url}/internal/stats/costs/timeseries/vendor?${params}`, {
     headers: { "x-api-key": apiKey },
   });

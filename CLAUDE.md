@@ -106,8 +106,16 @@ is 0-2 days. `lib/fleet-workflow-return.ts` + handlers in `routes/public.ts`.
 - One value compute per FEATURE serves every dynasty (`LIFETIME_AGGREGATE_WINDOWS`, single-flight),
   warmed at boot after the fleet-return warm. A failed pair is counted in `valueCoverage.pairsFailed`,
   never hidden. No org or brand id reaches the wire. 404 `workflow_not_found` for an unknown dynasty.
-- Guards: `lib/fleet-workflow-return.test.ts`, the workflow-return-history block of `routes/public.test.ts`.
-  (Set 2026-09-27.)
+- **`?leg=<legKey>` = ONE crew's curve** (both routes). BOTH legs count only the campaigns (every org)
+  whose STATED `legKey` is that leg (`lib/fleet-leg-campaigns.ts`, one `GET /campaigns/list` read): spend
+  = runs' dated ledger with `campaignIds=` (≤500/chunk, summed), value = each pair holding such a campaign
+  priced by `computeWorkflowRevenueGroups` with `campaignScope` = exactly those campaigns. A leg-less
+  legacy row is in no leg. Echoes `legKey`; a leg nobody performs is an empty answer (0 spend, null
+  pipeline), never the fleet's. Omitted → byte-identical (same cache keys, no campaign read). Why: prod
+  2026-09-27, maelstrom under the reply crew printed $1,089 value / $41, $1,080 of it a visit-led
+  campaign. Legs a feature's campaigns perform are warmed at boot after the fleet curve.
+- Guards: `lib/fleet-workflow-return.test.ts`, `lib/fleet-leg-campaigns.test.ts`, the workflow-return-history
+  block of `routes/public.test.ts`. (Set 2026-09-27.)
 
 ## WAVE C4 (PRODUCER HALF) — EVERY FUNNEL-KEYED PUBLIC READ HAS A TWIN KEYED ON OUTCOMES AND LEGS; the old bodies are byte-unchanged until the consumers move
 

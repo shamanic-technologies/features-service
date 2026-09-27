@@ -4,6 +4,7 @@
  * Service URLs and keys are read lazily from process.env.
  */
 
+import { RUNS_CAMPAIGN_IDS_PER_REQUEST } from "./brand-spend-by-day-client.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { selectCostCentsString, type Pricing } from "./pricing.js";
 import { refundedCents, type CostBasis } from "./cost-basis.js";
@@ -147,8 +148,30 @@ export async function fetchDynastySpendByDay(
  * untimed `fetchPublicCosts(slug, "workflowSlug", "net", "charged")`, so runs' own
  * sum-equals-untimed-total invariant makes the curve's last point that total.
  */
-export async function fetchDynastyBilledSpendByDay(featureSlug: string, workflowDynastySlug: string): Promise<Map<string, number>> {
+export async function fetchDynastyBilledSpendByDay(
+  featureSlug: string,
+  workflowDynastySlug: string,
+  // A LEG-scoped curve: only these campaigns' rows. Absent → the whole fleet (byte-identical request).
+  // Present and empty → nothing performs the leg, so nothing was spent on it (no request at all).
+  campaignIds?: string[],
+): Promise<Map<string, number>> {
+  if (campaignIds === undefined) return fetchDynastyBilledSpendChunk(featureSlug, workflowDynastySlug, undefined);
+  const byDay = new Map<string, number>();
+  for (let i = 0; i < campaignIds.length; i += RUNS_CAMPAIGN_IDS_PER_REQUEST) {
+    // A cost row belongs to exactly one campaign, so summing the chunks is exact.
+    const part = await fetchDynastyBilledSpendChunk(featureSlug, workflowDynastySlug, campaignIds.slice(i, i + RUNS_CAMPAIGN_IDS_PER_REQUEST));
+    for (const [day, usd] of part) byDay.set(day, (byDay.get(day) ?? 0) + usd);
+  }
+  return byDay;
+}
+
+async function fetchDynastyBilledSpendChunk(
+  featureSlug: string,
+  workflowDynastySlug: string,
+  campaignIds: string[] | undefined,
+): Promise<Map<string, number>> {
   const params = new URLSearchParams({ interval: "day", featureSlug, workflowDynastySlug });
+  if (campaignIds) params.set("campaignIds", campaignIds.join(","));
   const url = `${process.env.RUNS_SERVICE_URL}/v1/stats/public/costs/timeseries?${params}`;
   const response = await fetchWithRetry(url, { headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY! } });
   if (!response.ok) {

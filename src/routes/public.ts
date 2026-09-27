@@ -71,7 +71,8 @@ import { matureBasisOf, type CostEconomics } from "../lib/cost-economics.js";
 import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel } from "./revenue.js";
 import { distinctChannelFunnels } from "./offer-economics.js";
 import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
-import { matchFunnelLegKey } from "../lib/funnel-legs.js";
+import { FUNNEL_LEG_KEYS, matchFunnelLegKey } from "../lib/funnel-legs.js";
+import { fetchFleetLegCampaigns, type FleetLegCampaign } from "../lib/fleet-leg-campaigns.js";
 import { computeWorkflowRevenueGroups } from "../lib/workflow-revenue.js";
 import { buildRoiHistory, type RoiHistory } from "../lib/roi-history.js";
 import { buildActualCostHistory, type ActualCostHistory, type VendorSpendDay } from "../lib/actual-cost-history.js";
@@ -3799,8 +3800,20 @@ const FLEET_WORKFLOW_PAIR_CONCURRENCY = 4;
 
 /** The value leg for EVERY dynasty of a feature, keyed by featureSlug — one O(pairs) fan-out serves all. */
 const fleetWorkflowPipelineCache: PublicCache = new Map();
-/** One dynasty's dated spend, keyed `${basis}:${featureSlug}:${dynasty}` — one runs read each. */
+/** One dynasty's dated spend, keyed `${basis}:${featureSlug}:${dynasty}` (+ `:leg=<legKey>`) — one runs read each. */
 const fleetWorkflowSpendCache: PublicCache = new Map();
+/** The campaigns performing one leg of a feature, fleet-wide, keyed `${featureSlug}:${legKey}`. */
+const fleetLegCampaignsCache: PublicCache = new Map();
+
+function getFleetLegCampaigns(featureSlug: string, legKey: string): Promise<FleetLegCampaign[]> {
+  return servedPublicCached({
+    cache: fleetLegCampaignsCache,
+    key: `${featureSlug}:${legKey}`,
+    windows: LIFETIME_AGGREGATE_WINDOWS,
+    label: "fleet leg campaigns",
+    compute: () => fetchFleetLegCampaigns(featureSlug, legKey),
+  });
+}
 
 interface FleetWorkflowPipelines {
   byDynasty: Map<string, FleetDynastyPipeline>;
@@ -3810,15 +3823,31 @@ interface FleetWorkflowPipelines {
   pairsFailed: number;
 }
 
-async function computeFleetWorkflowPipelines(featureSlug: string): Promise<FleetWorkflowPipelines> {
+async function computeFleetWorkflowPipelines(featureSlug: string, legKey?: string): Promise<FleetWorkflowPipelines> {
   const funnel = getFunnel(featureSlug);
   if (!funnel) return { byDynasty: new Map(), pairsPriced: 0, pairsFailed: 0 };
-  const memberships = await fetchFeatureMemberships(featureSlug);
-  const pairs = [
-    ...new Map(memberships.map((m) => [`${m.orgId}::${m.brandId}`, { orgId: m.orgId, brandId: m.brandId }])).values(),
-  ];
+  // LEG scope: the pairs are those holding a campaign performing the leg, each narrowed to exactly
+  // those campaigns — so a pair's leads and spend on OTHER legs never reach the curve. Without a leg,
+  // every pair lead-service lists, brand-wide (unchanged).
+  let pairs: Array<{ orgId: string; brandId: string; campaignScope?: string[] }>;
+  if (legKey) {
+    const byPair = new Map<string, { orgId: string; brandId: string; campaignScope: string[] }>();
+    for (const c of await getFleetLegCampaigns(featureSlug, legKey)) {
+      if (!c.brandId) continue; // a row naming no brand has no lead population to price
+      const key = `${c.orgId}::${c.brandId}`;
+      const pair = byPair.get(key) ?? { orgId: c.orgId, brandId: c.brandId, campaignScope: [] };
+      pair.campaignScope.push(c.campaignId);
+      byPair.set(key, pair);
+    }
+    pairs = [...byPair.values()];
+  } else {
+    const memberships = await fetchFeatureMemberships(featureSlug);
+    pairs = [
+      ...new Map(memberships.map((m) => [`${m.orgId}::${m.brandId}`, { orgId: m.orgId, brandId: m.brandId }])).values(),
+    ];
+  }
   let pairsFailed = 0;
-  const computed = await mapWithConcurrency(pairs, FLEET_WORKFLOW_PAIR_CONCURRENCY, async ({ orgId, brandId }) => {
+  const computed = await mapWithConcurrency(pairs, FLEET_WORKFLOW_PAIR_CONCURRENCY, async ({ orgId, brandId, campaignScope }) => {
     const headers: DownstreamHeaders = { orgId, featureSlug };
     try {
       // The pair's OWN pricing — its declared funnels over its effective economics — exactly as its own
@@ -3835,6 +3864,7 @@ async function computeFleetWorkflowPipelines(featureSlug: string): Promise<Fleet
         pricing: "net",
         priced: priceOnDeclaredFunnel(declared, effective),
         withPipelineTimeSeries: true,
+        ...(campaignScope ? { campaignScope } : {}),
       });
       return groups.map(
         (g): PairDynastyPipeline => ({
@@ -3847,7 +3877,7 @@ async function computeFleetWorkflowPipelines(featureSlug: string): Promise<Fleet
       if (error instanceof BrandOwnershipError) return null; // stale membership: the brand moved orgs
       pairsFailed += 1;
       console.error(
-        `[features-service] fleet workflow return: pair compute failed (featureSlug=${featureSlug}, orgId=${orgId}, brandId=${brandId}) — the value leg is a partial sum:`,
+        `[features-service] fleet workflow return: pair compute failed (featureSlug=${featureSlug}, leg=${legKey ?? "all"}, orgId=${orgId}, brandId=${brandId}) — the value leg is a partial sum:`,
         error,
       );
       return null;
@@ -3857,22 +3887,34 @@ async function computeFleetWorkflowPipelines(featureSlug: string): Promise<Fleet
   return { byDynasty: foldFleetPipelines(priced), pairsPriced: priced.length, pairsFailed };
 }
 
-function getFleetWorkflowPipelines(featureSlug: string): Promise<FleetWorkflowPipelines> {
+function getFleetWorkflowPipelines(featureSlug: string, legKey?: string): Promise<FleetWorkflowPipelines> {
   return servedPublicCached({
     cache: fleetWorkflowPipelineCache,
-    key: featureSlug,
+    // The unscoped key is unchanged, so a read naming no leg lands on the cell it always did.
+    key: legKey ? `${featureSlug}:leg=${legKey}` : featureSlug,
     windows: LIFETIME_AGGREGATE_WINDOWS,
     label: "fleet workflow pipelines",
-    compute: () => computeFleetWorkflowPipelines(featureSlug),
+    compute: () => computeFleetWorkflowPipelines(featureSlug, legKey),
   });
 }
 
-/** Boot warm (fire-and-forget, after listen): a cold value leg is minutes of engine passes. */
+/**
+ * Boot warm (fire-and-forget, after listen): a cold value leg is minutes of engine passes. The fleet
+ * curve first, then one per leg the feature's campaigns perform (the workflow page reads it per crew).
+ */
 async function warmFleetWorkflowPipelines(featureSlug: string): Promise<void> {
   try {
     await getFleetWorkflowPipelines(featureSlug);
   } catch (err) {
     console.error(`[features-service] fleet workflow pipelines warm failed (${featureSlug}):`, err);
+  }
+  for (const legKey of FUNNEL_LEG_KEYS) {
+    try {
+      if ((await getFleetLegCampaigns(featureSlug, legKey)).length === 0) continue;
+      await getFleetWorkflowPipelines(featureSlug, legKey);
+    } catch (err) {
+      console.error(`[features-service] fleet workflow pipelines warm failed (${featureSlug}, leg=${legKey}):`, err);
+    }
   }
 }
 
@@ -3882,6 +3924,11 @@ interface WorkflowReturnHistoryBase {
   workflowDynastyName: string | null;
   /** Every org and brand that ran the feature — an aggregate; no org is named. */
   scope: "fleet";
+  /**
+   * Present ONLY when the caller named a leg (`?leg=`): the curve then counts, on BOTH legs, only the
+   * campaigns performing that leg. Absent on the fleet-wide read, which is byte-unchanged.
+   */
+  legKey?: string;
   /** Sum of the pairs' headline pipelines for this dynasty. Null when no pair could price it. */
   totalPipelineUsd: number | null;
   valueCoverage: { pairsPriced: number; pairsFailed: number };
@@ -3904,6 +3951,7 @@ export interface WorkflowActualCostHistoryPayload extends WorkflowReturnHistoryB
 export function __resetWorkflowReturnHistoryCache(): void {
   clearPublicCache(fleetWorkflowPipelineCache);
   clearPublicCache(fleetWorkflowSpendCache);
+  clearPublicCache(fleetLegCampaignsCache);
 }
 
 export async function handleWorkflowReturnHistory(
@@ -3911,10 +3959,21 @@ export async function handleWorkflowReturnHistory(
   workflowDynastySlug: string | undefined,
   basis: "billed" | "actual",
   res: import("express").Response,
+  legParam?: string,
 ): Promise<void> {
   if (!featureSlug || !workflowDynastySlug) {
     res.status(400).json({ error: "Query parameters 'featureSlug' and 'workflowDynastySlug' are required" });
     return;
+  }
+  // `?leg=` restricts BOTH legs of the curve to the campaigns performing that leg. Empty = not named.
+  let legKey: string | undefined;
+  if (legParam != null && legParam !== "") {
+    const matched = matchFunnelLegKey(legParam);
+    if (!matched) {
+      res.status(400).json({ error: `leg must be one of: ${FUNNEL_LEG_KEYS.join(", ")}`, reason: "leg_unrecognised" });
+      return;
+    }
+    legKey = matched;
   }
   const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
   if (!feature) {
@@ -3928,18 +3987,21 @@ export async function handleWorkflowReturnHistory(
     return;
   }
 
-  const spendKey = `${basis}:${featureSlug}:${workflowDynastySlug}`;
+  const spendKey = `${basis}:${featureSlug}:${workflowDynastySlug}${legKey ? `:leg=${legKey}` : ""}`;
   const [pipelines, spend] = await Promise.all([
-    getFleetWorkflowPipelines(featureSlug),
+    getFleetWorkflowPipelines(featureSlug, legKey),
     servedPublicCached<Map<string, number> | Map<string, VendorSpendDay>>({
       cache: fleetWorkflowSpendCache,
       key: spendKey,
       windows: LIFETIME_AGGREGATE_WINDOWS,
       label: "fleet workflow spend",
-      compute: () =>
-        basis === "billed"
-          ? fetchDynastyBilledSpendByDay(featureSlug, workflowDynastySlug)
-          : fetchDynastyVendorSpendByDay(featureSlug, workflowDynastySlug),
+      compute: async () => {
+        // The spend leg narrows by the SAME campaigns the value leg does, so the ratio divides one population.
+        const campaignIds = legKey ? (await getFleetLegCampaigns(featureSlug, legKey)).map((c) => c.campaignId) : undefined;
+        return basis === "billed"
+          ? fetchDynastyBilledSpendByDay(featureSlug, workflowDynastySlug, campaignIds)
+          : fetchDynastyVendorSpendByDay(featureSlug, workflowDynastySlug, campaignIds);
+      },
     }),
   ]);
   const value = pipelines.byDynasty.get(workflowDynastySlug) ?? { pipelineTimeSeries: [], totalPipelineUsd: null };
@@ -3948,6 +4010,7 @@ export async function handleWorkflowReturnHistory(
     workflowDynastySlug,
     workflowDynastyName: member.workflowDynastyName ?? null,
     scope: "fleet",
+    ...(legKey ? { legKey } : {}),
     totalPipelineUsd: value.totalPipelineUsd,
     valueCoverage: { pairsPriced: pipelines.pairsPriced, pairsFailed: pipelines.pairsFailed },
   };
@@ -3995,6 +4058,7 @@ router.get("/public/stats/workflow-return-history", async (req, res) => {
       req.query.workflowDynastySlug as string | undefined,
       "billed",
       res,
+      req.query.leg as string | undefined,
     );
   } catch (error) {
     console.error("[features-service] Public workflow-return-history error:", error);
@@ -4011,6 +4075,7 @@ router.get("/internal/stats/workflow-return-history/actual-cost", apiKeyOnly, as
       req.query.workflowDynastySlug as string | undefined,
       "actual",
       res,
+      req.query.leg as string | undefined,
     );
   } catch (error) {
     console.error("[features-service] workflow-return-history actual-cost error:", error);
