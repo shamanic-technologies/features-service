@@ -1,6 +1,6 @@
 import { FUNNEL_RETIRED_BODY, namesRetiredFunnel } from "../lib/retired-funnel-param.js";
 import { contactedPricingSoft } from "./contacted-value.js";
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import { fetchPricingFunnels } from "../lib/reading-funnels.js";
 import { funnelsContainingLeg } from "../lib/funnel-legs.js";
 import { eq } from "drizzle-orm";
@@ -89,6 +89,8 @@ import {
   type ConversionRateHistory,
 } from "../lib/conversion-rate-history.js";
 import { fetchBrandCommittedSpendByDay } from "../lib/brand-spend-by-day-client.js";
+import { buildActualCostHistory, vendorSpendLedger, type DatedSpendReader } from "../lib/actual-cost-history.js";
+import { fetchBrandVendorSpendByDay } from "../lib/vendor-spend-by-day-client.js";
 import { buildCostEconomics, type CostEconomics, type MaturityReason } from "../lib/cost-economics.js";
 import { applySignalOverlays } from "../lib/signal-overlays.js";
 import { computeWorkflowRevenueGroups } from "../lib/workflow-revenue.js";
@@ -941,9 +943,10 @@ function fetchSpendByDaySoft(
   featureScope: FeatureScope,
   headers: DownstreamHeaders,
   pricing: Pricing,
-  workflowDynastySlug?: string,
+  workflowDynastySlug: string | undefined,
+  datedSpend: DatedSpendReader,
 ): Promise<Map<string, number> | null> {
-  return fetchBrandCommittedSpendByDay(brandId, campaignScope, featureScope, headers, pricing, workflowDynastySlug).catch((err) => {
+  return datedSpend(brandId, campaignScope, featureScope, headers, pricing, workflowDynastySlug).catch((err) => {
     console.warn(
       `[features-service] dated-spend enrichment failed (degrading roiHistory to null): ${(err as Error).message}`,
     );
@@ -1362,6 +1365,10 @@ export async function computeFeatureRevenue(
   // narrowed by the SAME workflow-service catalogue, each through the producer that froze it (see
   // lib/workflow-scope.ts). Omitted → the whole scope → byte-identical to today.
   workflowScope?: WorkflowScope,
+  // WHERE THE RETURN CURVE'S SPEND LEG IS READ FROM. Default: the billed committed spend, which is
+  // what every customer read draws. The staff-only actual-cost read (`lib/actual-cost-history.ts`)
+  // hands a VENDOR-cost reader here and keeps only the curve; no customer path ever passes one.
+  datedSpend: DatedSpendReader = fetchBrandCommittedSpendByDay,
 ): Promise<RevenueBody> {
   // The single campaign id the campaign-SCOPED downstream reads still take: the requested campaign
   // for a single scope, `undefined` for a family (no producer accepts a campaign list). The reads
@@ -1432,7 +1439,7 @@ export async function computeFeatureRevenue(
   // Soft, like the dated spend it corrects: a failure nulls the curve, never the page.
   const maturingByDayPromise = planPromise.then((plan) =>
     includeSpend && plan.cutoffIso
-      ? fetchBrandCommittedSpendByDay(
+      ? datedSpend(
           brandId,
           [...plan.delayedCampaignIds].sort(),
           featureScope,
@@ -1499,7 +1506,7 @@ export async function computeFeatureRevenue(
     // (a retired lineage) nulls the return curve instead of 502-ing a page whose every other figure
     // is right. See lib/workflow-scope.ts.
     includeSpend
-      ? fetchSpendByDaySoft(brandId, campaignScope, featureScope, headers, pricing, workflowScope?.workflowDynastySlug)
+      ? fetchSpendByDaySoft(brandId, campaignScope, featureScope, headers, pricing, workflowScope?.workflowDynastySlug, datedSpend)
       : Promise.resolve<Map<string, number> | null>(null),
     planPromise,
     maturePromise,
@@ -1838,7 +1845,15 @@ export async function computeFeatureRevenue(
 // none, which is a real state and stays distinguishable from a stated funnel), its channel, its
 // members and the LIVE one a consumer renders the line on.
 
-router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
+/**
+ * WHICH COST the return curve divides by. `billed` = what the client is charged, the only basis a
+ * customer read ever answers on. `actual` = what running it really cost us (vendor cost, before our
+ * markup) — STAFF ONLY, served on its own `/internal/...` path the gateway mounts behind its staff
+ * gate. See lib/actual-cost-history.ts.
+ */
+type RevenueCostBasis = "billed" | "actual";
+
+async function handleFeatureRevenue(req: Request, res: Response, costBasis: RevenueCostBasis) {
   const { featureSlug } = req.params;
   const { orgId, userId, runId, featureSlug: headerFeatureSlug } = req as AuthenticatedRequest;
   const brandId = req.query.brandId as string | undefined;
@@ -1858,6 +1873,20 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
 
   if (!brandId) {
     return res.status(400).json({ error: "brandId query parameter is required" });
+  }
+
+  // The actual-cost basis answers ONE question — the return curve of a scope on vendor cost — so it
+  // takes the scope parameters (brand, campaign, offer, workflow, cause) and nothing that would ask
+  // for a different body. A grouping or a lens is a table / a lead subset it does not serve, and a
+  // pricing selector is a discount basis vendor cost does not have. Refused, never silently ignored.
+  if (costBasis === "actual") {
+    const refused = ["groupBy", "lens", "pricing"].filter((k) => req.query[k] !== undefined);
+    if (refused.length > 0) {
+      return res.status(400).json({
+        error: `${refused.join(", ")} not supported on the actual-cost basis`,
+        reason: "not_on_actual_cost_basis",
+      });
+    }
   }
 
   // A campaign sells exactly one offer, so naming both is two scopes for one read and there is no
@@ -2187,6 +2216,43 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
     // null return, which is what the consumer's "this workflow has not run here" state renders.
     const workflowScope = workflowParam ? await resolveWorkflowScope(featureSlug, workflowParam) : undefined;
 
+    if (costBasis === "actual") {
+      const actualPayload = await servedCached({
+        view: "revenue-actual-cost",
+        scopeKey: buildScopeKey(featureSlug, {
+          orgId,
+          brandId,
+          campaignId: identity?.key ?? campaignId,
+          offerId,
+          workflow: workflowParam,
+          decl,
+          econ,
+          cause: causeKey,
+        }),
+        orgId,
+        compute: async () => {
+          const ledger = vendorSpendLedger(fetchBrandVendorSpendByDay);
+          const body = await computeFeatureRevenue(featureSlug, brandId, campaignScope, funnel, headers, undefined, pricingForIdentity(campaignId ? identity : null), true, "gross", undefined, undefined, undefined, causes, workflowScope, ledger.reader);
+          return {
+            featureSlug,
+            costBasis: "actual" as const,
+            campaignIdentity: campaignId ? describeIdentity(identity, campaignId) : undefined,
+            workflow: workflowScope
+              ? {
+                  workflowDynastySlug: workflowScope.workflowDynastySlug,
+                  workflowDynastyName: workflowScope.workflowDynastyName,
+                  workflowSlugs: workflowScope.workflowSlugs,
+                }
+              : undefined,
+            // Null when the dated vendor spend (or the value leg) could not be read — never a curve
+            // drawn from one leg, and never the billed curve under this basis.
+            actualCostHistory: body.roiHistory ? buildActualCostHistory(body.roiHistory, ledger.unpricedByDay()) : null,
+          };
+        },
+      });
+      return res.json(actualPayload);
+    }
+
     const payload = await servedCached({
       view: lens ? "revenue-lens" : "revenue",
       scopeKey: buildScopeKey(featureSlug, {
@@ -2257,6 +2323,17 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, async (req, res) => {
     }
     res.status(502).json({ error: "Failed to compute feature revenue" });
   }
-});
+}
+
+// The customer read: ALWAYS the billed basis, whatever it is sent. Its gateway forward is transparent,
+// so the actual basis must not be reachable through any parameter of this path.
+router.get("/features/:featureSlug/revenue", apiKeyAuth, (req, res) => handleFeatureRevenue(req, res, "billed"));
+
+// STAFF ONLY — the same read with the return curve's spend leg at VENDOR cost. The api-service gateway
+// mounts this path behind requireStaff; it is never proxied on a customer route. See
+// lib/actual-cost-history.ts.
+router.get("/internal/features/:featureSlug/revenue/actual-cost", apiKeyAuth, (req, res) =>
+  handleFeatureRevenue(req, res, "actual"),
+);
 
 export default router;
