@@ -238,6 +238,17 @@ refreshes failed forever while serving an ever older body ("unsupported Unicode 
   family is served NOW and the new cell is computed behind the response (single-flight). The fingerprint
   still keys the cell, so an economics write still lands on a new cell — it is served one refresh later
   instead of blocking the read that noticed it. No previous cell ⇒ the ordinary blocking miss.
+- **A HIT SENDS THE STORED TEXT, it never decodes, parses or re-stringifies it** (`body_text`, migration
+  0016; `servedCachedJson` + `sendSnapshotJson`). Every persist writes the body's exact `JSON.stringify`
+  text beside the jsonb, and a hit reads ONLY the text column (the jsonb is fetched just for a pre-0016
+  row). Measured in prod 2026-09-27: brand `75d7e3e8…` revenue is 3.9 MB (6,019 organisations) and its
+  hit cost ~200ms of serving-loop CPU (jsonb→text, driver parse, `res.json` stringify), p50 502ms, and it
+  stalled every request queued behind it. The refresher's answer is likewise kept as TEXT
+  (`envelopedJson` cuts the value out of `{"__viewRefresherComputed":…}` without parsing), so a background
+  refresh never parses a body it discards. Bytes equal `res.json(value)` (content type, ETag, 304); only
+  key order may differ from an old jsonb hit, which reordered keys. A handler that shapes or inspects the
+  cached value keeps `servedCached` (value). The jsonb stays written so a rolled-back build still reads.
+  Guards: `lib/view-cache-json.test.ts`.
 - **A lead-copy cursor lead-service refuses as another scope's (400 "since belongs to a different
   scope") re-snapshots the scope** (`lib/lead-copy.ts`) instead of failing every refresh that reads it.
 - Guards: the jsonb + rotation suites at the end of `lib/view-cache.test.ts`, the refused-cursor case in
