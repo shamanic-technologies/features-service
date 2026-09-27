@@ -34,6 +34,32 @@ reads the byte-same numbers under both:
   (reconciliation to the funnel figure, no key naming a funnel, the old bodies' key sets pinned).
   (Set 2026-09-26.)
 
+## THE RETURN CURVE ON ACTUAL COST — `GET /internal/features/:slug/revenue/actual-cost`, STAFF ONLY, and the customer read can never answer on it
+
+The dashboard v2 Workflows page toggles one workflow's cost / value / return charts between "User cost"
+(what the client is billed: `/revenue?workflow=`'s `roiHistory`, unchanged) and "Actual cost" (what running
+it really cost us: vendor cost BEFORE our markup). `lib/actual-cost-history.ts`.
+
+- **Its own path, never a parameter of `/revenue`.** billed ÷ vendor IS our markup, and api-service forwards
+  `/features/:slug/revenue` transparently, so a query parameter there is one typed URL away from any org
+  user. The customer handler is hard-wired to the billed basis (`handleFeatureRevenue(…, "billed")`);
+  api-service mounts the internal path behind `requireStaff`. Guard: a `/revenue` request carrying
+  `costBasis=actual` is byte-identical to one without and never touches the vendor route.
+- **Same compute, reader swapped.** `computeFeatureRevenue`'s last arg `datedSpend` (default
+  `fetchBrandCommittedSpendByDay`) is handed a vendor reader; mature cohort, workflow and campaign family
+  apply identically. The value leg is byte-for-byte the billed curve's.
+- **The vendor cost is recorded upstream, never divided here.** costs-service states each price version's
+  vendor cost (the markup moved 6× → 5× on 2026-09-15; DeepSeek carries VAT; pass-through has no markup) and
+  runs-service applies it per row: `GET /internal/stats/costs/timeseries/vendor` (service-auth, NOT the
+  public timeseries). Read: `vendorTotal` + `vendorRefunded` (a comped row was still paid to the vendor).
+- **Unpriced is stated, never borrowed.** Billed spend with no known vendor cost (`unpricedTotal` +
+  `unpricedRefunded`) nulls `cumulativeSpendUsd` / `roiMultiple` from its first day on, and is named in
+  `unpricedBilledCostUsd` / `unpricedFromDate`. The maturing read's unpriced share is subtracted exactly as
+  its spend is (`vendorSpendLedger`), so a maturing row is never counted twice.
+- Refuses `groupBy`, `lens`, `pricing` (400 `not_on_actual_cost_basis`). Gold view `revenue-actual-cost`.
+- Guards: `lib/actual-cost-history.test.ts`, `lib/vendor-spend-by-day-client.test.ts`,
+  `routes/actual-cost-history.test.ts`. (Set 2026-09-27.)
+
 ## `outcomes.sending` — WHAT HAPPENED TO THE EMAILS WE SENT, on every grain the volume half rides (brand read AND `?groupBy=campaignId` groups)
 
 The dashboard (v2) prints "N% delivered, M bounced" on the brand and "sent / reply rate" per campaign row.

@@ -123,6 +123,60 @@ registry.registerPath({
   },
 });
 
+// ── GET /internal/features/:featureSlug/revenue/actual-cost — STAFF ONLY ─────────────────
+
+const actualCostPointSchema = z.object({
+  date: z.string().describe("UTC day, YYYY-MM-DD."),
+  cumulativeSpendUsd: z.number().nullable().describe("Cumulative VENDOR cost (before our markup) since inception. NULL from `unpricedFromDate` on — never the billed figure."),
+  cumulativePipelineUsd: z.number().describe("Cumulative dated pipeline — the same value leg `/revenue`'s `roiHistory` carries."),
+  roiMultiple: z.number().nullable().describe("cumulativePipelineUsd / cumulativeSpendUsd. NULL when nothing spent yet or the spend is unknown."),
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/features/{featureSlug}/revenue/actual-cost",
+  summary: "STAFF ONLY: the return-on-spend curve on ACTUAL cost (vendor cost, before markup)",
+  description:
+    "The `/features/{featureSlug}/revenue` return curve (`roiHistory`) for the same scope (brandId + optional campaignId / offerId / workflow / cause), with its spend leg read at VENDOR cost from runs-service instead of at the billed committed price. The value leg is byte-identical to the billed curve. Reveals our margin, so it is served only here: the api-service gateway must mount this path behind requireStaff, and the customer `/revenue` read never answers on this basis whatever it is sent. Refuses `groupBy`, `lens` and `pricing` (400 `not_on_actual_cost_basis`). A day with billed spend of no known vendor cost nulls the spend and return from that day on and is named in `unpricedBilledCostUsd` / `unpricedFromDate`; `actualCostHistory` is null when the dated spend could not be read.",
+  tags: ["Revenue"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ featureSlug: z.string() }),
+    query: z.object({
+      brandId: z.string(),
+      campaignId: z.string().optional(),
+      offerId: z.string().optional(),
+      workflow: z.string().optional().describe("Workflow DYNASTY slug (the key `?groupBy=workflow` emits)."),
+      cause: z.string().optional(),
+    }),
+  },
+  responses: {
+    200: {
+      description: "Actual-cost curve",
+      content: {
+        "application/json": {
+          schema: z.object({
+            featureSlug: z.string(),
+            costBasis: z.literal("actual"),
+            campaignIdentity: z.any().optional(),
+            workflow: z.object({ workflowDynastySlug: z.string(), workflowDynastyName: z.string().nullable(), workflowSlugs: z.array(z.string()) }).optional(),
+            actualCostHistory: z
+              .object({
+                daily: z.array(actualCostPointSchema),
+                datedPipelineUsd: z.number(),
+                undatedPipelineUsd: z.number(),
+                unpricedBilledCostUsd: z.number().describe("Billed USD on the curve with no known vendor cost. 0 when every row was priced."),
+                unpricedFromDate: z.string().nullable(),
+              })
+              .nullable(),
+          }),
+        },
+      },
+    },
+    400: { description: "Missing brandId, or a parameter this basis does not serve" },
+  },
+});
+
 // ── GET /features/:slug ──────────────────────────────────────────────────
 
 registry.registerPath({
