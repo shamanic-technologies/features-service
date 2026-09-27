@@ -1,5 +1,26 @@
 # Features Service — CLAUDE.md
 
+## A BRAND TRANSFER MOVES THE STATED AMOUNTS AND INVALIDATES BOTH ORGS' VIEWS — `POST /internal/transfer-brand`
+
+This service's half of the fleet contract brand-service orchestrates (body `{sourceBrandId, sourceOrgId,
+targetOrgId, targetBrandId?}`, api-key only, idempotent, answers `{updatedTables}`). `lib/transfer-brand.ts`.
+
+- **`stated_monthly_amounts` MOVE** to (targetOrg, targetBrand ?? sourceBrand), in one transaction. A move
+  that would overlap a range the target pair already holds is a **409 `stated_amount_conflict`** (the
+  store's own one-amount-per-day rule). Note the target org then reads as AGENCY in the MRR split (it holds
+  a stated row) — that is the brand's amount following it, as the owner asked.
+- **`feature_view_snapshots` of BOTH orgs are DELETED, never moved**: a cell's key embeds org + brand and
+  many cells span several brands, so a moved cell would be mis-keyed and the source org would keep the
+  brand's figures. Derived, rebuilt on the next read.
+- **In-process caches are dropped** (live lead copies of both orgs — a change-feed cursor has no promise to
+  report rows that left its scope by an org move — plus memo, shared reads, hot bodies), and the request is
+  forwarded to the view refresher, which runs the same idempotent route to drop ITS copies.
+- **No money**: this service stores no balance. Fleet public snapshots (`fleet_return_snapshots`, showcase)
+  are keyed on brand only and rebuild on their own warm.
+- The figures under the target org equal the source org's pre-transfer figures only once EVERY sibling
+  (lead, runs, email-gateway, campaign, brand…) has moved its rows — this service owns no domain data.
+- Guards: `lib/transfer-brand.test.ts`, `routes/transfer-brand.test.ts`. (Set 2026-09-27.)
+
 ## THE OFFER GRAIN LIVES ON THE WORKFLOW-PROJECTION LADDER — a page comparing Brand vs Offer for one workflow reads both off ONE read, on ONE basis
 
 The v2 Workflows page prints per workflow "Global / Brand / Offer", all labelled as the cost of one

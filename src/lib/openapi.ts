@@ -2693,6 +2693,46 @@ const LEG_ASSIGNMENT_DESCRIPTION =
   "all active. Every write records who decided and when, plus an append-only history row. Read live by the leg-keyed workflow projection " +
   "(`legAssignment` on each row). api-key only; a staff tool.";
 
+registry.registerPath({
+  method: "post",
+  path: "/internal/transfer-brand",
+  summary: "Transfer a brand's rows from one org to another (fleet brand-transfer contract, internal, api-key)",
+  description:
+    "Moves every row this service keys on (org, brand) from sourceOrgId to targetOrgId, rewriting the brand " +
+    "id to targetBrandId when given: the stated monthly amounts behind the agency/self-serve MRR split. The " +
+    "Gold view snapshots of BOTH orgs are invalidated (derived, recomputed on the next read), never moved. " +
+    "Idempotent. Moves no money. 409 stated_amount_conflict when a moved stated range would overlap one the " +
+    "target pair already holds.",
+  tags: ["Internal"],
+  request: {
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            sourceBrandId: z.string().uuid(),
+            sourceOrgId: z.string().uuid(),
+            targetOrgId: z.string().uuid(),
+            targetBrandId: z.string().uuid().optional(),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      description: "What moved, per table.",
+      content: {
+        "application/json": {
+          schema: z.object({ updatedTables: z.array(z.object({ tableName: z.string(), count: z.number().int() })) }),
+        },
+      },
+    },
+    400: { description: "Invalid request body." },
+    401: { description: "Invalid or missing API key." },
+    409: { description: "A moved stated monthly amount would overlap one the target org already states for the brand." },
+  },
+});
+
 const legAssignmentRowSchema = z.object({
   featureSlug: z.string(),
   legKey: z.string(),

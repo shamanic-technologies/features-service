@@ -115,6 +115,22 @@ export function __resetLeadCopies(): void {
   fingerprints.clear();
 }
 
+/**
+ * Drop every live copy and delivery fingerprint held for these orgs. A brand transfer moves lead rows
+ * between orgs inside lead-service, and a copy's change-feed cursor has no promise to report rows that
+ * left its scope that way — so the copy is discarded and the next read re-snapshots. Returns how many
+ * copies were dropped.
+ */
+export function dropLeadCopiesForOrgs(orgIds: readonly string[]): number {
+  const prefixes = orgIds.map((o) => `${o}|`);
+  const owned = (key: string) => prefixes.some((p) => key.startsWith(p));
+  let dropped = 0;
+  for (const key of [...copies.keys()]) if (owned(key)) { copies.delete(key); dropped++; }
+  for (const key of [...inFlightSyncs.keys()]) if (owned(key)) inFlightSyncs.delete(key);
+  for (const key of [...fingerprints.keys()]) if (owned(key)) fingerprints.delete(key);
+  return dropped;
+}
+
 /** Test / diagnostics seam — how many rows each copy holds. */
 export function __leadCopySizes(): Record<string, number> {
   return Object.fromEntries([...copies].map(([k, c]) => [k, c.rows.size]));
