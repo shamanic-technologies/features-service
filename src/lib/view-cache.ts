@@ -726,7 +726,10 @@ async function maybePruneStaleSnapshots(): Promise<void> {
       // "Unread for the retention window" is the last CUSTOMER read when there is one: with the facts
       // gate a cell a customer reads every day may go unrecomputed for a while, and a precomputed cell
       // nobody ever opened ages out on its compute time.
-      .where(sql`coalesce(${featureViewSnapshots.lastReadAt}, ${featureViewSnapshots.computedAt}) < ${new Date(now - viewCacheRetentionMs())}`)
+      // Bound as ISO text: postgres.js cannot serialize a Date inside a raw `sql` fragment ("The
+      // \"string\" argument must be of type string… Received an instance of Date"), which made every
+      // sweep fail in prod and the table grow unbounded.
+      .where(sql`coalesce(${featureViewSnapshots.lastReadAt}, ${featureViewSnapshots.computedAt}) < ${new Date(now - viewCacheRetentionMs()).toISOString()}::timestamptz`)
       .returning({ id: featureViewSnapshots.id });
     if (deleted.length > 0) {
       console.log(`[features-service] view-cache pruned ${deleted.length} snapshot(s) unread for over the retention window`);

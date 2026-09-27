@@ -259,6 +259,11 @@ refreshes failed forever while serving an ever older body ("unsupported Unicode 
   key order may differ from an old jsonb hit, which reordered keys. A handler that shapes or inspects the
   cached value keeps `servedCached` (value). The jsonb stays written so a rolled-back build still reads.
   Guards: `lib/view-cache-json.test.ts`.
+- **The brand reads' PRE-CACHE reads (the channel set, the pricing funnels, the economics that build the
+  cell's KEY) run in PARALLEL and share downstream answers** (`withInteractiveReads`, the campaign list
+  reused 30s and re-read behind the answer, read with the org alone so the channel-set and the funnel
+  read share ONE request). Measured 2026-09-27: brand `f4d73dab…`'s campaign-service read alone had p95
+  139ms, paid in sequence before the snapshot could even be looked up.
 - **A lead-copy cursor lead-service refuses as another scope's (400 "since belongs to a different
   scope") re-snapshots the scope** (`lib/lead-copy.ts`) instead of failing every refresh that reads it.
 - Guards: the jsonb + rotation suites at the end of `lib/view-cache.test.ts`, the refused-cursor case in

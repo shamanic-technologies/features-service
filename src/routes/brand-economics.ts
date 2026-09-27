@@ -92,6 +92,7 @@ import { computeAudienceStats, type ComputeResult } from "../lib/audience-stats-
 import { computeBrandPipelineActivity } from "./pipeline-activity.js";
 import { fetchEffectiveEconomics, economicsFingerprint } from "../lib/sales-economics-client.js";
 import { servedCached, servedCachedJson, sendSnapshotJson, buildScopeKey } from "../lib/view-cache.js";
+import { withInteractiveReads } from "../lib/lead-copy.js";
 import { applyLeadDetail, parseLeadDetail, LEAD_DETAIL_VALUES } from "../lib/lead-detail.js";
 import {
   OUTCOME_CAUSES,
@@ -140,7 +141,9 @@ async function resolveRequest(req: AuthenticatedRequest & { params: { brandId: s
   const pricing = parsePricing(req.query.pricing);
   if (pricing === null) return { ok: false as const, status: 400, error: "pricing must be one of: gross, net" };
 
-  const channels = await resolveBrandChannels(brandId, { orgId: req.orgId, userId: req.userId, runId: req.runId });
+  // The campaign list is read with the org alone — the same request the pricing-funnel read makes — so
+  // the two share one answer, reused 30s and re-read behind it (lib/lead-copy.ts withInteractiveReads).
+  const channels = await withInteractiveReads(() => resolveBrandChannels(brandId, { orgId: req.orgId }));
   const featureSlugs = brandFeatureSlugs(channels);
   const headers: DownstreamHeaders = {
     orgId: req.orgId,
@@ -193,6 +196,19 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
     if (namesRetiredFunnel(req.query as Record<string, unknown>)) {
       return res.status(400).json(FUNNEL_RETIRED_BODY);
     }
+    // The two brand-scoped pricing reads do not depend on the channel set, so they are asked in PARALLEL
+    // with it instead of after it: the request waits on the slowest of the three, not their sum. Their
+    // answers are used only when a channel prices on a funnel (the read made before); a rejection is
+    // observed here and rethrown where it is awaited, exactly as before.
+    const speculative = {
+      declared: withInteractiveReads(() => fetchDeclaredFunnelsSoft(req.params.brandId, (req as AuthenticatedRequest).orgId)),
+      economics: fetchEffectiveEconomics(req.params.brandId, {
+        orgId: (req as AuthenticatedRequest).orgId,
+        userId: (req as AuthenticatedRequest).userId,
+        runId: (req as AuthenticatedRequest).runId,
+      }),
+    };
+    speculative.economics.catch(() => {}); // awaited below only when a funnel prices; never unhandled
     const resolved = await resolveRequest(req as never);
     if (!resolved.ok) return res.status(resolved.status).json({ error: resolved.error });
     const { brandId, pricing, headers, channels, featureSlugs } = resolved;
@@ -222,7 +238,7 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
     // channel group: N channels cost one brand-service call, and the fingerprint rides the cache key so
     // an economics write lands on a different cell instead of replaying the pre-write answer.
     const [declaredFunnels, brandEconomics] = funnel
-      ? await Promise.all([fetchDeclaredFunnelsSoft(brandId, headers.orgId), fetchEffectiveEconomics(brandId, headers)])
+      ? await Promise.all([speculative.declared, speculative.economics])
       : [[], null];
     const brandPriced: FunnelPricedEconomics | undefined = brandEconomics
       ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics)

@@ -75,6 +75,16 @@ export function withLiveLeadCopy<T>(fn: () => Promise<T>): Promise<T> {
   return liveCopyScope.run(true, fn);
 }
 
+/**
+ * Run the pre-cache reads of an interactive request (the reads that build a view's cache KEY — the
+ * brand's channel set, the funnels it is priced on) under the same downstream-read sharing a view
+ * compute gets (lib/fetch-retry.ts): a campaign list is reused 30s and re-read behind the answer, so a
+ * dashboard poll no longer waits on campaign-service before it can even look the cell up.
+ */
+export function withInteractiveReads<T>(fn: () => Promise<T>): Promise<T> {
+  return liveCopyScope.run(true, fn);
+}
+
 /** Whether the current async context is an interactive view compute (see withLiveLeadCopy). */
 export function insideInteractiveView(): boolean {
   return liveCopyScope.getStore() === true;
