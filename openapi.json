@@ -16229,6 +16229,226 @@
         }
       }
     },
+    "/internal/features/{featureSlug}/revenue/actual-cost": {
+      "get": {
+        "summary": "STAFF ONLY: the return-on-spend curve on ACTUAL cost (vendor cost, before markup)",
+        "description": "The `/features/{featureSlug}/revenue` return curve (`roiHistory`) for the same scope (brandId + optional campaignId / offerId / workflow / cause), with its spend leg read at VENDOR cost from runs-service instead of at the billed committed price. The value leg is byte-identical to the billed curve. Reveals our margin, so it is served only here: the api-service gateway must mount this path behind requireStaff, and the customer `/revenue` read never answers on this basis whatever it is sent. Refuses `groupBy`, `lens` and `pricing` (400 `not_on_actual_cost_basis`). A day with billed spend of no known vendor cost nulls the spend and return from that day on and is named in `unpricedBilledCostUsd` / `unpricedFromDate`; `actualCostHistory` is null when the dated spend could not be read.",
+        "tags": [
+          "Revenue"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "featureSlug",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "campaignId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "offerId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Workflow DYNASTY slug (the key `?groupBy=workflow` emits)."
+            },
+            "required": false,
+            "description": "Workflow DYNASTY slug (the key `?groupBy=workflow` emits).",
+            "name": "workflow",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "cause",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Actual-cost curve",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "featureSlug": {
+                      "type": "string"
+                    },
+                    "costBasis": {
+                      "type": "string",
+                      "enum": [
+                        "actual"
+                      ]
+                    },
+                    "campaignIdentity": {
+                      "nullable": true
+                    },
+                    "workflow": {
+                      "type": "object",
+                      "properties": {
+                        "workflowDynastySlug": {
+                          "type": "string"
+                        },
+                        "workflowDynastyName": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "workflowSlugs": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "workflowDynastySlug",
+                        "workflowDynastyName",
+                        "workflowSlugs"
+                      ]
+                    },
+                    "actualCostHistory": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "daily": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "date": {
+                                "type": "string",
+                                "description": "UTC day, YYYY-MM-DD."
+                              },
+                              "cumulativeSpendUsd": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Cumulative VENDOR cost (before our markup) since inception. NULL from `unpricedFromDate` on — never the billed figure."
+                              },
+                              "cumulativePipelineUsd": {
+                                "type": "number",
+                                "description": "Cumulative dated pipeline — the same value leg `/revenue`'s `roiHistory` carries."
+                              },
+                              "roiMultiple": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "cumulativePipelineUsd / cumulativeSpendUsd. NULL when nothing spent yet or the spend is unknown."
+                              }
+                            },
+                            "required": [
+                              "date",
+                              "cumulativeSpendUsd",
+                              "cumulativePipelineUsd",
+                              "roiMultiple"
+                            ]
+                          }
+                        },
+                        "datedPipelineUsd": {
+                          "type": "number"
+                        },
+                        "undatedPipelineUsd": {
+                          "type": "number"
+                        },
+                        "unpricedBilledCostUsd": {
+                          "type": "number",
+                          "description": "Billed USD on the curve with no known vendor cost. 0 when every row was priced."
+                        },
+                        "unpricedFromDate": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "daily",
+                        "datedPipelineUsd",
+                        "undatedPipelineUsd",
+                        "unpricedBilledCostUsd",
+                        "unpricedFromDate"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "featureSlug",
+                    "costBasis",
+                    "actualCostHistory"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing brandId, or a parameter this basis does not serve"
+          }
+        }
+      }
+    },
     "/features/{slug}": {
       "get": {
         "summary": "Get a single feature by slug",
