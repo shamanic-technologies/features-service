@@ -130,6 +130,8 @@ const actualCostPointSchema = z.object({
   cumulativeSpendUsd: z.number().nullable().describe("Cumulative VENDOR cost (before our markup) since inception. NULL from `unpricedFromDate` on — never the billed figure."),
   cumulativePipelineUsd: z.number().describe("Cumulative dated pipeline — the same value leg `/revenue`'s `roiHistory` carries."),
   roiMultiple: z.number().nullable().describe("cumulativePipelineUsd / cumulativeSpendUsd. NULL when nothing spent yet or the spend is unknown."),
+  cumulativePricedVendorCostUsd: z.number().describe("Vendor cost of the rows whose vendor cost IS known, up to this day. Equals cumulativeSpendUsd while nothing is unpriced; NOT the actual cost once something is (it leaves those rows out)."),
+  cumulativeUnpricedBilledCostUsd: z.number().describe("BILLED spend up to this day on rows with no known vendor cost (see unpricedCostNames)."),
 });
 
 registry.registerPath({
@@ -167,6 +169,7 @@ registry.registerPath({
                 undatedPipelineUsd: z.number(),
                 unpricedBilledCostUsd: z.number().describe("Billed USD on the curve with no known vendor cost. 0 when every row was priced."),
                 unpricedFromDate: z.string().nullable(),
+                unpricedCostNames: z.array(z.string()).describe("Cost lines costs-service holds no vendor cost for (e.g. retired Instantly per-send prices whose vendor rate is not on record)."),
               })
               .nullable(),
           }),

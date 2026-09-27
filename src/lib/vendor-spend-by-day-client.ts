@@ -75,10 +75,19 @@ async function fetchOne(
     const day = bucket.period.slice(0, 10);
     const vendor = VENDOR_FIELDS.reduce((s, f) => s + cents(bucket, f), 0) / 100;
     const unpriced = UNPRICED_FIELDS.reduce((s, f) => s + cents(bucket, f), 0) / 100;
-    const prev = byDay.get(day) ?? { vendorUsd: 0, unpricedBilledUsd: 0 };
-    byDay.set(day, { vendorUsd: prev.vendorUsd + vendor, unpricedBilledUsd: prev.unpricedBilledUsd + unpriced });
+    const names = Array.isArray(bucket.unpricedCostNames) ? bucket.unpricedCostNames.filter((n): n is string => typeof n === "string") : [];
+    byDay.set(day, merge(byDay.get(day), { vendorUsd: vendor, unpricedBilledUsd: unpriced, unpricedCostNames: names }));
   }
   return byDay;
+}
+
+function merge(prev: VendorSpendDay | undefined, next: VendorSpendDay): VendorSpendDay {
+  if (!prev) return next;
+  return {
+    vendorUsd: prev.vendorUsd + next.vendorUsd,
+    unpricedBilledUsd: prev.unpricedBilledUsd + next.unpricedBilledUsd,
+    unpricedCostNames: [...new Set([...prev.unpricedCostNames, ...next.unpricedCostNames])].sort(),
+  };
 }
 
 /**
@@ -103,10 +112,7 @@ export async function fetchBrandVendorSpendByDay(
   );
   const byDay = new Map<string, VendorSpendDay>();
   for (const part of parts) {
-    for (const [day, v] of part) {
-      const prev = byDay.get(day) ?? { vendorUsd: 0, unpricedBilledUsd: 0 };
-      byDay.set(day, { vendorUsd: prev.vendorUsd + v.vendorUsd, unpricedBilledUsd: prev.unpricedBilledUsd + v.unpricedBilledUsd });
-    }
+    for (const [day, v] of part) byDay.set(day, merge(byDay.get(day), v));
   }
   return byDay;
 }

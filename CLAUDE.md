@@ -55,7 +55,12 @@ it really cost us: vendor cost BEFORE our markup). `lib/actual-cost-history.ts`.
 - **Unpriced is stated, never borrowed.** Billed spend with no known vendor cost (`unpricedTotal` +
   `unpricedRefunded`) nulls `cumulativeSpendUsd` / `roiMultiple` from its first day on, and is named in
   `unpricedBilledCostUsd` / `unpricedFromDate`. The maturing read's unpriced share is subtracted exactly as
-  its spend is (`vendorSpendLedger`), so a maturing row is never counted twice.
+  its spend is (`vendorSpendLedger`), so a maturing row is never counted twice. What IS known stays
+  readable beside it on every point: `cumulativePricedVendorCostUsd` (vendor cost of priced rows) +
+  `cumulativeUnpricedBilledCostUsd`, plus `unpricedCostNames`. Measured in prod 2026-09-27 (brand
+  `75d7e3e8…`, lithium): every priced day reads billed/5 exactly; the unpriced $608 is ALL three retired
+  Instantly per-send lines (`instantly-{account,domain}-email-sent`, `-contact-uploaded`), whose vendor
+  rate costs-service has no record of (that infra is a fixed monthly bill, not a per-unit cost).
 - Refuses `groupBy`, `lens`, `pricing` (400 `not_on_actual_cost_basis`). Gold view `revenue-actual-cost`.
 - Guards: `lib/actual-cost-history.test.ts`, `lib/vendor-spend-by-day-client.test.ts`,
   `routes/actual-cost-history.test.ts`. (Set 2026-09-27.)

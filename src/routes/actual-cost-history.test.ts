@@ -196,6 +196,7 @@ function mockFetch(options: Options = {}): FetchImpl {
           unpricedTotalCostInUsdCents: unpriced ? String(total) : "0",
           vendorRefundedCostInUsdCents: "0",
           unpricedRefundedCostInUsdCents: "0",
+          unpricedCostNames: unpriced ? ["instantly-account-email-sent"] : [],
           runCount: 1,
         }],
       });
@@ -311,8 +312,12 @@ describe("GET /internal/features/:slug/revenue/actual-cost — the return curve 
     const a = res.body.actualCostHistory;
     expect(a.unpricedFromDate).toBe("2026-02-01");
     expect(a.unpricedBilledCostUsd).toBeCloseTo(130, 6);
+    expect(a.daily.length).toBeGreaterThan(0);
     expect(a.daily.every((p: { cumulativeSpendUsd: number | null }) => p.cumulativeSpendUsd === null)).toBe(true);
     expect(a.daily.every((p: { roiMultiple: number | null }) => p.roiMultiple === null)).toBe(true);
+    expect(a.unpricedCostNames).toEqual(["instantly-account-email-sent"]);
+    expect(a.daily.at(-1).cumulativeUnpricedBilledCostUsd).toBeCloseTo(130, 6);
+    expect(a.daily.at(-1).cumulativePricedVendorCostUsd).toBe(0);
   });
 
   it("refuses a grouping, a lens or a pricing selector on this basis", async () => {

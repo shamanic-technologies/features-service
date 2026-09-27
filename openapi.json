@@ -16400,13 +16400,23 @@
                                 "type": "number",
                                 "nullable": true,
                                 "description": "cumulativePipelineUsd / cumulativeSpendUsd. NULL when nothing spent yet or the spend is unknown."
+                              },
+                              "cumulativePricedVendorCostUsd": {
+                                "type": "number",
+                                "description": "Vendor cost of the rows whose vendor cost IS known, up to this day. Equals cumulativeSpendUsd while nothing is unpriced; NOT the actual cost once something is (it leaves those rows out)."
+                              },
+                              "cumulativeUnpricedBilledCostUsd": {
+                                "type": "number",
+                                "description": "BILLED spend up to this day on rows with no known vendor cost (see unpricedCostNames)."
                               }
                             },
                             "required": [
                               "date",
                               "cumulativeSpendUsd",
                               "cumulativePipelineUsd",
-                              "roiMultiple"
+                              "roiMultiple",
+                              "cumulativePricedVendorCostUsd",
+                              "cumulativeUnpricedBilledCostUsd"
                             ]
                           }
                         },
@@ -16423,6 +16433,13 @@
                         "unpricedFromDate": {
                           "type": "string",
                           "nullable": true
+                        },
+                        "unpricedCostNames": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Cost lines costs-service holds no vendor cost for (e.g. retired Instantly per-send prices whose vendor rate is not on record)."
                         }
                       },
                       "required": [
@@ -16430,7 +16447,8 @@
                         "datedPipelineUsd",
                         "undatedPipelineUsd",
                         "unpricedBilledCostUsd",
-                        "unpricedFromDate"
+                        "unpricedFromDate",
+                        "unpricedCostNames"
                       ]
                     }
                   },
