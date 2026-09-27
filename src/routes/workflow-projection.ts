@@ -58,12 +58,14 @@ import {
   type CostGroup,
   type WorkflowMetadata,
 } from "../lib/public-stats-clients.js";
-import { buildWorkflowDynasties, aggregateAcrossDynasties } from "./public.js";
-import { fetchPositiveRepliers } from "../lib/crm-only-repliers.js";
+import { aggregateAcrossDynasties } from "./public.js";
+import { fetchPositiveRepliers, setReplyCountsOnSlugStats } from "../lib/crm-only-repliers.js";
+import { fetchFleetPositiveRepliesBySlug } from "../lib/fleet-positive-repliers.js";
 import {
   fetchBrandWorkflowEvidenceWithRetired,
   fetchCampaignWorkflowEvidenceWithRetired,
   fetchAudienceGrainEvidence,
+  brandGrainDynasties,
   type WorkflowGrainEvidence,
   type AudienceGrainEvidence,
   type Identity,
@@ -1520,9 +1522,12 @@ export async function fetchWorkflowProjectionEvidence(input: {
     campaignIds && campaignIds.length > 0 ? fetchPositiveRepliers(brandId, campaignIds, identity) : Promise.resolve(null),
     readOffer ? fetchPositiveRepliers(brandId, offerCampaignIds!, identity) : Promise.resolve(null),
   ]);
-  const [costGroups, emailStats, brandGrain, audienceEvidence, campaignGrain, offerGrainRead] = await Promise.all([
+  const [costGroups, emailStats, fleetReplies, brandGrain, audienceEvidence, campaignGrain, offerGrainRead] = await Promise.all([
     fetchPublicCosts(featureSlug, "workflowSlug", pricing),
     fetchPublicEmailStats(featureSlug, "workflowSlug"),
+    // The FLEET's positive repliers on the SAME per-person basis as the finer grains (this brand's own
+    // repliers included live), so every finer grain is a subset of crossOrg (lib/fleet-positive-repliers.ts).
+    fetchFleetPositiveRepliesBySlug(featureSlug, { orgId: identity.orgId, brandId, repliers: brandRepliers }),
     fetchBrandWorkflowEvidenceWithRetired(brandId, featureSlug, workflows, identity, pricing, "charged", brandRepliers),
     fetchAudienceGrainEvidence(brandId, featureSlug, identity, slugToDynasty, pricing, undefined, brandRepliers),
     campaignIds && campaignIds.length > 0
@@ -1533,6 +1538,8 @@ export async function fetchWorkflowProjectionEvidence(input: {
       : Promise.resolve(null),
   ]);
   const offerGrain = offerIsCampaign ? campaignGrain : offerGrainRead;
+  // Always a Map in production; only the suite-wide test default (src/vitest.setup.ts) leaves it unset.
+  if (fleetReplies) setReplyCountsOnSlugStats(emailStats, fleetReplies);
 
   return {
     workflows,
@@ -1661,8 +1668,13 @@ export function projectFromEvidence(input: {
     byDynasty: new Map(ev.byDynasty),
   }));
 
-    // crossOrg dynasty rollup (identical to /public/stats/best).
-    const dynasties = buildWorkflowDynasties(workflows);
+    // crossOrg dynasty rollup — the SAME membership rule the brand / offer / campaign grains roll up by
+    // (`brandGrainDynasties`: a version the upgrade chain never reached folds into its active dynasty), so
+    // a finer grain can never count a slug its crossOrg row leaves out.
+    const dynasties = brandGrainDynasties(
+      workflows,
+      costGroups.map((g) => g.dimensions.workflowSlug).filter((s): s is string => Boolean(s)),
+    ).active;
     const { costMap, aggregatedOutcomes } = aggregateAcrossDynasties(dynasties, costGroups, emailStats, "workflowSlug");
     const workflowBySlug = new Map(workflows.map((w) => [w.workflowSlug, w]));
     const dynastyNameBySlug = new Map(workflows.map((w) => [w.workflowDynastySlug, w.workflowDynastyName]));

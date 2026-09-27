@@ -24,6 +24,33 @@ $118.61 vs $53.91, alioth $103.56 vs a dash — same scope, two bases (features-
 - Guards: `routes/workflow-projection-offer-grain.test.ts` (one-offer equality incl. the 0-outcome floor,
   two-offer divergence, campaign grain byte-unchanged, absent without a campaign). (Set 2026-09-27.)
 
+## THE crossOrg GRAIN COUNTS POSITIVE REPLIES ON THE PERSON BASIS TOO — every finer grain is a subset of it
+
+Prod 2026-09-27 (brand `75d7e3e8…`, leg `start_to_conversation`, nimbus): crossOrg read 0 positive replies
+while brand / offer / campaign read 1 — the finer grains count on the person set (#1075/#1078, CRM evidence
+included), crossOrg still read email-gateway's per-slug fleet sums. Two bases under one word.
+
+- **`lib/fleet-positive-repliers.ts`**: the fleet count per slug = Σ over every (org, brand) pair lead-service
+  lists for the feature (`/internal/feature-memberships`) of that pair's `fetchPositiveRepliers` count. The
+  REQUESTING pair is never read from the cell: its live repliers replace it, so a stale cell can only
+  under-state OTHER brands, never read below the brand beside it. Clamping crossOrg to the brand is NOT a fix.
+- One whole-population walk per pair, run OUTSIDE the live lead copy (`outsideInteractiveView`), one at a
+  time, cached per feature (15 min fresh / 6 h stale, single-flight), warmed at boot in the process that
+  computes projections (the refresher). FAIL-LOUD: a pair that cannot be read fails a cold build (502); a
+  failed background refresh keeps the previous cell.
+- Applied to `workflow-projection`'s crossOrg evidence AND `fetchBrandProjectionEvidence` (the
+  `/audience-stats` floor parent), so the two surfaces keep one number. Contacted / clicks / spend unchanged.
+- **The crossOrg dynasty rollup uses `brandGrainDynasties`** (was `buildWorkflowDynasties`) on both
+  surfaces: a version the upgrade chain never reached folds into its active dynasty at crossOrg exactly as
+  at the brand grain, so no finer grain can count a slug its crossOrg row drops.
+- **Untouched, stated:** every `/public/stats/*` fleet cost read (ranked, best, workflow-cost-per-outcome,
+  cost-per-outcome trend / lifetime / distribution, best-model), pipeline-activity's fleet rates and
+  contacted-value's fleet stats still read email-gateway replies. None of them sits beside a brand grain on
+  one screen; moving them means the same fleet walk on their own cadence (a later ship).
+- Tests: the suite-wide default mocks the fleet read to `undefined` (`src/vitest.setup.ts`, suites keep their
+  email-gateway fixtures). Guards: `lib/fleet-positive-repliers.test.ts`, the person-basis block of
+  `routes/workflow-projection.test.ts` (both red on the old code). (Set 2026-09-27.)
+
 ## ONE WORKFLOW'S FLEET HISTORY — `GET /public/stats/workflow-return-history` (billed) + `/internal/stats/workflow-return-history/actual-cost` (staff), one dynasty, every org
 
 The workflow page's three charts (cost, value, return) at FLEET grain: at brand grain a workflow's history

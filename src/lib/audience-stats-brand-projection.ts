@@ -32,7 +32,7 @@
  *     `max(spend, parent)` is a real rankable number, and the Strategy page's `pickBestBrandRow` ranks it
  *     too. (A `grainHasObservedOutcome` gate lived here from v0.106.3 until v0.107.5; it made this module
  *     crown a different workflow than the dashboard for the same brand+goal, which IS the incoherence.)
- *   - Version dynasties collapse first (`buildWorkflowDynasties` + `aggregateAcrossDynasties`, the SAME rollup
+ *   - Version dynasties collapse first (`brandGrainDynasties` + `aggregateAcrossDynasties`, the SAME rollup
  *     crossOrg/brand use in workflow-projection) so a dynasty's versions are one workflow, not several.
  *
  * The module ALSO returns, per audience, that audience's FUNNEL costs at the AUDIENCE grain
@@ -64,7 +64,7 @@
  */
 
 import { fetchPublicCosts, fetchPublicEmailStats, fetchPublicWorkflows } from "./public-stats-clients.js";
-import { buildWorkflowDynasties, aggregateAcrossDynasties } from "../routes/public.js";
+import { aggregateAcrossDynasties } from "../routes/public.js";
 import { fetchEffectiveEconomics } from "./sales-economics-client.js";
 import {
   projectOutcomeCosts,
@@ -77,8 +77,10 @@ import { projectedCostPerOutcome } from "./cost-engine.js";
 import { goalToProjectionInputs, funnelToProjectionInputs, outcomeCostForGoal, paidClientCostForGoal, grainHasObservedOutcome } from "../routes/workflow-projection.js";
 import type { PricingChannel, SalesFunnelKey } from "./sales-funnels.js";
 import { mergeFunnelEconomics } from "./declared-funnels.js";
-import { fetchPositiveRepliers } from "./crm-only-repliers.js";
+import { fetchPositiveRepliers, setReplyCountsOnSlugStats } from "./crm-only-repliers.js";
+import { fetchFleetPositiveRepliesBySlug } from "./fleet-positive-repliers.js";
 import {
+  brandGrainDynasties,
   fetchBrandWorkflowEvidence,
   fetchAudienceGrainEvidence,
   type WorkflowGrainEvidence,
@@ -288,7 +290,7 @@ function grainUnitCosts(ev: WorkflowGrainEvidence, parent: DynastyUnitCosts | nu
  * BRAND-LEVEL rows from the SAME sources (workflow-service `/public/workflows` + runs
  * `/v1/stats/public/costs` + email-gateway `/public/stats` for the crossOrg grain, the brand-scoped twins
  * for the brand grain, plus the brand's effective economics), rolls version funnels into dynasties with the
- * SAME `buildWorkflowDynasties` / `aggregateAcrossDynasties` rollup, and takes the winner of the queried goal.
+ * SAME `brandGrainDynasties` / `aggregateAcrossDynasties` rollup, and takes the winner of the queried goal.
  * It then continues the SAME ladder one grain finer — the winner's per-(audience × dynasty) send-tag
  * evidence — so every audience's derived columns equal what workflow-projection resolves for it.
  * Fails loud on any downstream error (no silent fallback; NET fail-loud via fetchPublicCosts). Cross-org
@@ -331,13 +333,18 @@ export async function fetchBrandProjectionEvidence(
   // Positive repliers one per PERSON: the brand grain counts replies on them (the SAME basis
   // workflow-projection's brand grain uses), the audience grain adds the CRM-only ones by membership.
   const crmRepliers = await fetchPositiveRepliers(brandId, undefined, identity);
-  const [fleetCostGroups, fleetEmail, effective, brandGrain, audienceGrain] = await Promise.all([
+  const [fleetCostGroups, fleetEmail, fleetReplies, effective, brandGrain, audienceGrain] = await Promise.all([
     fetchPublicCosts(featureSlug, "workflowSlug", pricing),
     fetchPublicEmailStats(featureSlug, "workflowSlug"),
+    // Fleet positive repliers on the brand grain's per-person basis — the byte-same crossOrg input
+    // workflow-projection reads, so the two surfaces keep one number per workflow.
+    fetchFleetPositiveRepliesBySlug(featureSlug, { orgId: identity.orgId, brandId, repliers: crmRepliers }),
     fetchEffectiveEconomics(brandId, identity),
     fetchBrandWorkflowEvidence(brandId, featureSlug, workflows, identity, pricing, "charged", crmRepliers),
     fetchAudienceGrainEvidence(brandId, featureSlug, identity, slugToDynasty, pricing, audienceIds, crmRepliers),
   ]);
+  // Always a Map in production; only the suite-wide test default (src/vitest.setup.ts) leaves it unset.
+  if (fleetReplies) setReplyCountsOnSlugStats(fleetEmail, fleetReplies);
   return { workflows, slugToDynasty, fleetCostGroups, fleetEmail, effective, brandGrain, audienceGrain };
 }
 
@@ -379,7 +386,10 @@ export function projectBrandParents(
   // workflow-projection's crossOrg/brand grains use, so "a workflow" means the same thing on both
   // surfaces (treating versioned slugs as independent workflows would corrupt the best pick).
   const { costMap, aggregatedOutcomes } = aggregateAcrossDynasties(
-    buildWorkflowDynasties(workflows),
+    brandGrainDynasties(
+      workflows,
+      fleetCostGroups.map((g) => g.dimensions.workflowSlug).filter((s): s is string => Boolean(s)),
+    ).active,
     fleetCostGroups,
     fleetEmail,
     "workflowSlug",

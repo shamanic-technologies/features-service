@@ -94,8 +94,19 @@ export function setPersonRepliesOnSlugStats(
   statsBySlug: Map<string, Record<string, number>>,
   repliers: readonly PositiveReplier[],
 ): void {
+  setReplyCountsOnSlugStats(statsBySlug, crmRepliesBySlug(repliers));
+}
+
+/**
+ * REPLACE every slug's positive-reply count with `counts` (a slug absent from it reads 0), IN PLACE.
+ * The one write both the per-scope grains and the fleet grain use, so they cannot diverge on how.
+ */
+export function setReplyCountsOnSlugStats(
+  statsBySlug: Map<string, Record<string, number>>,
+  counts: Map<string, number>,
+): void {
   for (const stats of statsBySlug.values()) stats.recipientsRepliesPositive = 0;
-  for (const [slug, count] of crmRepliesBySlug(repliers)) {
+  for (const [slug, count] of counts) {
     const existing = statsBySlug.get(slug) ?? {};
     existing.recipientsRepliesPositive = count;
     statsBySlug.set(slug, existing);
