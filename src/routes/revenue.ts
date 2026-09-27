@@ -2246,7 +2246,7 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
               : undefined,
             // Null when the dated vendor spend (or the value leg) could not be read — never a curve
             // drawn from one leg, and never the billed curve under this basis.
-            actualCostHistory: body.roiHistory ? buildActualCostHistory(body.roiHistory, ledger.unpricedByDay()) : null,
+            actualCostHistory: body.roiHistory ? buildActualCostHistory(body.roiHistory, ledger.unpricedByDay(), ledger.unpricedCostNames()) : null,
           };
         },
       });
