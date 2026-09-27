@@ -259,7 +259,12 @@ refreshes failed forever while serving an ever older body ("unsupported Unicode 
   key order may differ from an old jsonb hit, which reordered keys. A handler that shapes or inspects the
   cached value keeps `servedCached` (value). The jsonb stays written so a rolled-back build still reads.
   Guards: `lib/view-cache-json.test.ts`.
-- **The brand reads' PRE-CACHE reads (the channel set, the pricing funnels, the economics that build the
+- **HOT BODIES: the serving process holds the text + wire bytes + ETag of the cells it serves, keyed on
+  the cell and its `computed_at`.** A hit asks the row only whether it is unchanged (a `case when
+  computed_at = <held>` in the same select); the multi-MB text crosses the wire only when it moved.
+  `computed_at` moves on every persist, so a held body can never outlive its row. `VIEW_HOT_BODY_MAX_BYTES`
+  (48 MB default, LRU; 0 = off), server role only. Guards: the hot-bodies block of `view-cache-json.test.ts`.
+- **The brand and offer reads' PRE-CACHE reads (the channel set, the pricing funnels, the economics that build the
   cell's KEY) run in PARALLEL and share downstream answers** (`withInteractiveReads`, the campaign list
   reused 30s and re-read behind the answer, read with the org alone so the channel-set and the funnel
   read share ONE request). Measured 2026-09-27: brand `f4d73dab…`'s campaign-service read alone had p95
