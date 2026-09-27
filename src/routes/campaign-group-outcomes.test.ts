@@ -306,6 +306,19 @@ describe("a campaign group states how much outcome evidence its money rests on",
         recipientsRepliesPositive: 0,
         unmeasuredReason: null,
       },
+      // Nothing sent: counts are a measured 0, every rate null (no denominator).
+      sending: {
+        recipientsSent: 0,
+        recipientsDelivered: 0,
+        recipientsBounced: 0,
+        recipientsAwaitingDelivery: 0,
+        recipientsReplied: 0,
+        recipientsRepliedPositive: 0,
+        deliveryRatePct: null,
+        bounceRatePct: null,
+        replyRatePct: null,
+        positiveReplyRatePct: null,
+      },
     });
     // Reached someone on no attributed spend — the rates are unmeasurable, not $0 each.
     expect(byId.crm.outcomes.recipientsClicked).toBe(1);

@@ -34,6 +34,24 @@ reads the byte-same numbers under both:
   (reconciliation to the funnel figure, no key naming a funnel, the old bodies' key sets pinned).
   (Set 2026-09-26.)
 
+## `outcomes.sending` — WHAT HAPPENED TO THE EMAILS WE SENT, on every grain the volume half rides (brand read AND `?groupBy=campaignId` groups)
+
+The dashboard (v2) prints "N% delivered, M bounced" on the brand and "sent / reply rate" per campaign row.
+`buildRevenueSending` (`lib/revenue-outcomes.ts`) serves it inside `outcomes`, off the SAME deduped person
+set, so a campaign group answers for its IDENTITY exactly like the rest of its block (no fan-out).
+
+- **ONE denominator: `recipientsSent`** = distinct leads with ≥1 email sent (lead-service `sent` flag).
+  `recipientsDelivered + recipientsBounced + recipientsAwaitingDelivery === recipientsSent`: a lead the
+  provider reported delivered AND later bounced is BOUNCED once (prod 2026-09-27, brand `75d7e3e8…`: 227 such
+  of 17,137 sent). `outcomes.recipientsBounced` (reach-side) also counts a bounce with no recorded send (3
+  there) — the two are different questions, both kept.
+- **`recipientsReplied` = ANY reply** (the new raw `replied` fact on the person, plus every classified
+  class), so an unsubscriber's "stop" still counts as a reply. No funnel path reads `replied`.
+- Rates (`deliveryRatePct`, `bounceRatePct`, `replyRatePct`, `positiveReplyRatePct`) = 100 × n ÷ sent,
+  whole history; **null only when nothing was sent**, a measured 0 otherwise. Consumers divide nothing.
+- Guards: `lib/revenue-sending.test.ts` (the partition, the delivered-then-bounced lead, dedup, null vs 0).
+  (Set 2026-09-27.)
+
 ## A CONTACTED LEAD WHO HAS NOT ENGAGED IS PIPELINE — until 30 days after the LAST email SENT to it
 
 Supersedes "added to NOTHING" (#1125) and the "a delivery prices $0" half of #863 for contacted-only leads.

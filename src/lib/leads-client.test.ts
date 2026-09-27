@@ -155,6 +155,7 @@ describe("fetchLeadsForRevenue — firmographic passthrough", () => {
         clicked: true,
         positiveReply: true,
         negativeReply: true,
+        replied: true,
         neutralReply: false,
       },
       signalDates: { positiveReply: "2026-09-21T13:45:00.000Z" },
