@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { apiKeyOnly } from "../middleware/auth.js";
-import { checkDrift, keeperStatus, precomputeSiblingScopes } from "../lib/view-keeper.js";
+import { checkDrift, keeperStatus, materializeRound } from "../lib/view-keeper.js";
 
 /**
  * Operator routes for the Gold serving layer (`lib/view-keeper.ts`). Service-key only, never proxied by
@@ -16,7 +16,7 @@ router.get("/internal/view-cache/keeper", apiKeyOnly, (_req, res) => {
 /** Run one precompute round now and answer its report. */
 router.post("/internal/view-cache/keeper/run", apiKeyOnly, async (_req, res) => {
   try {
-    res.json(await precomputeSiblingScopes());
+    res.json(await materializeRound());
   } catch (err) {
     res.status(502).json({ error: (err as Error).message });
   }
