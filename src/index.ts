@@ -5,6 +5,8 @@ import express from "express";
 import cors from "cors";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { db } from "./db/index.js";
+import { warmFleetPositiveRepliers } from "./lib/fleet-positive-repliers.js";
+import { coldEmailOutreachSlugs } from "./lib/send-forecast-compute.js";
 import healthRoutes from "./routes/health.js";
 import featuresRoutes from "./routes/features.js";
 import statsRoutes from "./routes/stats.js";
@@ -84,6 +86,22 @@ app.use((err: Error, req: express.Request, res: express.Response, next: express.
   res.status(500).json({ error: "Internal server error" });
 });
 
+/**
+ * Build the fleet positive-repliers cell (lib/fleet-positive-repliers.ts) for every cold-email channel in
+ * the process that computes workflow projections, so the first ladder read after a deploy does not wait
+ * on a whole-fleet lead walk. Sequential across channels; fire-and-forget; failures are logged.
+ */
+function warmFleetPositiveRepliersOnBoot(): void {
+  void (async () => {
+    try {
+      const all = await db.query.features.findMany({ columns: { slug: true } });
+      for (const slug of coldEmailOutreachSlugs(all.map((f) => f.slug))) await warmFleetPositiveRepliers(slug);
+    } catch (err) {
+      console.error("[features-service] fleet positive repliers boot warm failed:", err);
+    }
+  })();
+}
+
 // Only start server if not in test environment
 if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
   // The REFRESHER (forked by the server below): computes Gold views off the serving event loop. The
@@ -91,6 +109,8 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
   app.listen(Number(PORT), "127.0.0.1", () => {
     console.log(`[features-service] view refresher listening on 127.0.0.1:${PORT}`);
     announceViewRefresherReady();
+    // Workflow projections are computed HERE, so this is the process whose fleet cell must be warm.
+    warmFleetPositiveRepliersOnBoot();
   });
 } else if (process.env.NODE_ENV !== "test") {
   migrate(db, { migrationsFolder: "./drizzle" })
@@ -110,6 +130,8 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
         // Same reason, same shape: the homepage gives its showcase read 8 seconds and drops the
         // section rather than block a build, so the cell must never be cold when it asks.
         warmShowcaseFunnelsOnBoot();
+        // With the refresher off, projections compute in this process — warm its fleet cell instead.
+        if (process.env.VIEW_REFRESHER_ENABLED === "false") warmFleetPositiveRepliersOnBoot();
       });
     })
     .catch((err) => {

@@ -9,6 +9,7 @@ export default defineConfig({
     // running every suite twice, doubling console output and tripping the vitest
     // worker-teardown race (EnvironmentTeardownError). src is the source of truth.
     include: ["src/**/*.test.ts"],
+    setupFiles: ["src/vitest.setup.ts"],
     // The live lead copy (src/lib/lead-copy.ts) is module state that would carry one test's leads
     // into the next. Route suites mock the whole-population WALK; the copy has its own suites
     // (lead-copy.test.ts, routes/live-lead-copy.test.ts), which switch it on explicitly.
