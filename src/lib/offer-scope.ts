@@ -153,3 +153,27 @@ export async function resolveOfferCampaignIds(
   if (campaignIds.length === 0) throw new OfferHasNoCampaignsError(offerId, brandId, featureSlug);
   return campaignIds;
 }
+
+/**
+ * The campaigns of ONE channel selling an offer, for the workflow-projection OFFER grain — or null when
+ * they cannot be read. FAIL-SOFT, unlike {@link resolveOfferCampaignIds}: there the offer IS the
+ * answer, here it is one stated grain beside several others, and a campaign-service blip must cost that
+ * grain (absent → the consumer shows nothing) rather than 502 a ranking every other figure of which is
+ * right. Never the brand's campaigns under the offer's name: an empty partition is null too.
+ */
+export async function fetchOfferScopeIdsSoft(
+  offerId: string,
+  brandId: string,
+  featureSlug: string,
+  headers: { orgId: string; userId?: string; runId?: string },
+): Promise<string[] | null> {
+  try {
+    const ids = (await fetchOfferCampaigns(brandId, featureSlug, headers)).campaignIdsOf(offerId);
+    return ids.length > 0 ? ids : null;
+  } catch (error) {
+    console.warn(
+      `[features-service] offer ${offerId} campaigns unreadable (workflow-projection offer grain omitted): ${(error as Error).message}`,
+    );
+    return null;
+  }
+}
