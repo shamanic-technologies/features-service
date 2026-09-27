@@ -74,8 +74,16 @@ vi.mock("../lib/send-forecast-aggregate.js", () => ({
   aggregateFleetNewSequences: (...a: unknown[]) => mockAggregate(...a),
 }));
 
+// The fleet per-workflow return curve: each (org, brand) pair's per-dynasty engine pass is covered by
+// workflow-revenue's own suites; here it is mocked so the tests target the FOLD + the two spend legs.
+const { mockComputeWorkflowRevenueGroups } = vi.hoisted(() => ({ mockComputeWorkflowRevenueGroups: vi.fn() }));
+vi.mock("../lib/workflow-revenue.js", async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  computeWorkflowRevenueGroups: (...args: unknown[]) => mockComputeWorkflowRevenueGroups(...args),
+}));
+
 const app = (await import("../index.js")).default;
-const { __resetPublicRevenueCache, __resetPublicCostProjectionCache, __resetPublicStatsCache, __resetSendForecastCache, __resetCostPerOutcomeTrendCache, __resetWorkflowCostPerOutcomeCache, __resetBestModelCostPerOutcomeTrendCache, __awaitWorkflowRecentWarm, __expireWorkflowPayloadCacheForTest, __withTimeoutForTest, __mapWithConcurrencyForTest, __resetCostPerOutcomeLifetimeCache, __resetCostPerOutcomeDistributionCache, __resetFunnelBucketDatasetCache, __expireFunnelBucketFreshCacheForTest, __awaitFunnelBucketRefresh } = await import("./public.js");
+const { __resetPublicRevenueCache, __resetPublicCostProjectionCache, __resetPublicStatsCache, __resetSendForecastCache, __resetCostPerOutcomeTrendCache, __resetWorkflowCostPerOutcomeCache, __resetBestModelCostPerOutcomeTrendCache, __awaitWorkflowRecentWarm, __expireWorkflowPayloadCacheForTest, __withTimeoutForTest, __mapWithConcurrencyForTest, __resetCostPerOutcomeLifetimeCache, __resetCostPerOutcomeDistributionCache, __resetFunnelBucketDatasetCache, __expireFunnelBucketFreshCacheForTest, __awaitFunnelBucketRefresh, __resetWorkflowReturnHistoryCache } = await import("./public.js");
 const { BrandOwnershipError } = await import("../lib/sales-economics-client.js");
 const { isSendingDay } = await import("../lib/send-forecast-compute.js");
 const { projectOutcomeCosts } = await import("../lib/funnel-registry.js");
@@ -1338,7 +1346,7 @@ describe("GET /public/stats/workflow-cost-per-outcome", () => {
       }
       // Lifetime spend by workflowSlug: $200.
       if (url.startsWith("http://runs:3000/v1/stats/public/costs")) {
-        return mkJson({ groups: [{ dimensions: { workflowSlug: "wf-1" }, totalCostInUsdCents: "20000", runCount: 5, minStartedAt: null, maxStartedAt: null }] });
+        return mkJson({ groups: [{ dimensions: { workflowSlug: "wf-1" }, totalCostInUsdCents: "20000", netTotalCostInUsdCents: "20000", runCount: 5, minStartedAt: null, maxStartedAt: null }] });
       }
       if (url.startsWith("http://email:3000/public/stats")) {
         const groupBy = new URL(url).searchParams.get("groupBy");
@@ -1397,7 +1405,7 @@ describe("GET /public/stats/workflow-cost-per-outcome", () => {
         return mkJson({ buckets: [] });
       }
       if (url.startsWith("http://runs:3000/v1/stats/public/costs")) {
-        return mkJson({ groups: [{ dimensions: { workflowSlug: "wf-1" }, totalCostInUsdCents: "20000", runCount: 5, minStartedAt: null, maxStartedAt: null }] });
+        return mkJson({ groups: [{ dimensions: { workflowSlug: "wf-1" }, totalCostInUsdCents: "20000", netTotalCostInUsdCents: "20000", runCount: 5, minStartedAt: null, maxStartedAt: null }] });
       }
       if (url.startsWith("http://email:3000/public/stats")) {
         const groupBy = new URL(url).searchParams.get("groupBy");
@@ -1454,8 +1462,8 @@ describe("GET /public/stats/workflow-cost-per-outcome", () => {
       // Lifetime spend by workflowSlug: both dynasties $200 each.
       if (url.startsWith("http://runs:3000/v1/stats/public/costs")) {
         return mkJson({ groups: [
-          { dimensions: { workflowSlug: "wf-1" }, totalCostInUsdCents: "20000", runCount: 5, minStartedAt: null, maxStartedAt: null },
-          { dimensions: { workflowSlug: "wf-2" }, totalCostInUsdCents: "20000", runCount: 5, minStartedAt: null, maxStartedAt: null },
+          { dimensions: { workflowSlug: "wf-1" }, totalCostInUsdCents: "20000", netTotalCostInUsdCents: "20000", runCount: 5, minStartedAt: null, maxStartedAt: null },
+          { dimensions: { workflowSlug: "wf-2" }, totalCostInUsdCents: "20000", netTotalCostInUsdCents: "20000", runCount: 5, minStartedAt: null, maxStartedAt: null },
         ] });
       }
       if (url.startsWith("http://email:3000/public/stats")) {
@@ -1510,7 +1518,7 @@ describe("GET /public/stats/workflow-cost-per-outcome", () => {
         return mkJson({ buckets: [{ period: today, totalCostInUsdCents: "1000", actualCostInUsdCents: "1000", provisionedCostInUsdCents: "0", cancelledCostInUsdCents: "0", runCount: 1 }] });
       }
       if (url.startsWith("http://runs:3000/v1/stats/public/costs")) {
-        return mkJson({ groups: [{ dimensions: { workflowSlug: "wf-1" }, totalCostInUsdCents: "20000", runCount: 5, minStartedAt: null, maxStartedAt: null }] });
+        return mkJson({ groups: [{ dimensions: { workflowSlug: "wf-1" }, totalCostInUsdCents: "20000", netTotalCostInUsdCents: "20000", runCount: 5, minStartedAt: null, maxStartedAt: null }] });
       }
       if (url.startsWith("http://email:3000/public/stats")) {
         const groupBy = new URL(url).searchParams.get("groupBy");
@@ -1675,8 +1683,8 @@ function mockCostProjectionFetch(opts: {
     { id: "w2", workflowSlug: "wf-2", workflowName: "WF Two", workflowDynastyName: "WF Two", workflowDynastySlug: "wf-2", version: 1, status: "active", featureSlug: "sales-cold-email-outreach", createdForBrandId: null, upgradedTo: null },
   ];
   const costGroups = [
-    { dimensions: { workflowSlug: "wf-1" }, totalCostInUsdCents: "1000", runCount: 5, minStartedAt: null, maxStartedAt: null }, // $10
-    { dimensions: { workflowSlug: "wf-2" }, totalCostInUsdCents: "5000", runCount: 3, minStartedAt: null, maxStartedAt: null }, // $50
+    { dimensions: { workflowSlug: "wf-1" }, totalCostInUsdCents: "1000", netTotalCostInUsdCents: "1000", runCount: 5, minStartedAt: null, maxStartedAt: null }, // $10
+    { dimensions: { workflowSlug: "wf-2" }, totalCostInUsdCents: "5000", netTotalCostInUsdCents: "5000", runCount: 3, minStartedAt: null, maxStartedAt: null }, // $50
   ];
   const emailGroups = [
     { key: "wf-1", broadcast: { recipientStats: { contacted: 100, sent: 100, delivered: 100, opened: 50, clicked: 10, bounced: 0, repliesPositive: 5, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 } } }, // clickUsd=1, replyUsd=2
@@ -2240,5 +2248,132 @@ describe("GET /internal/stats/send-forecast", () => {
     const res = await request(app).get("/public/stats/send-forecast");
     expect(res.status).toBe(404);
     expect(mockAggregate).not.toHaveBeenCalled();
+  });
+});
+
+// ── GET /public/stats/workflow-return-history (+ staff actual-cost twin) ─────────────────────────
+//
+// ONE fixture: dynasty `dyn-1` spent on two days across the fleet, BILLED net ($6 + $3) differing from
+// gross ($10 + $5), and priced by two (org, brand) pairs; `dyn-2` is a second workflow whose pipeline
+// must never leak into dyn-1's curve. Every case asserts a divergence a wrong implementation would
+// miss: net vs gross, one dynasty vs a blend, the vendor unknown vs a borrowed billed figure.
+describe("GET /public/stats/workflow-return-history", () => {
+  const D1 = "2026-09-01";
+  const D2 = "2026-09-02";
+  const mkJson = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
+    __resetWorkflowReturnHistoryCache();
+    __resetWorkflowCostPerOutcomeCache();
+    __resetFunnelBucketDatasetCache();
+    mockFindFirst.mockResolvedValue(MOCK_FEATURE);
+    mockComputeWorkflowRevenueGroups.mockImplementation(async ({ brandId }: { brandId: string }) => {
+      if (brandId === "brand-1") {
+        return [
+          { workflowDynastySlug: "dyn-1", headline: { totalPipelineUsd: 300 }, pipelineTimeSeries: [{ date: `${D1}T10:00:00Z`, cumulativePipelineUsd: 100 }, { date: `${D2}T09:00:00Z`, cumulativePipelineUsd: 250 }] },
+          { workflowDynastySlug: "dyn-2", headline: { totalPipelineUsd: 999 }, pipelineTimeSeries: [{ date: `${D1}T10:00:00Z`, cumulativePipelineUsd: 999 }] },
+        ];
+      }
+      return [{ workflowDynastySlug: "dyn-1", headline: { totalPipelineUsd: 40 }, pipelineTimeSeries: [{ date: `${D2}T12:00:00Z`, cumulativePipelineUsd: 40 }] }];
+    });
+    vi.spyOn(global, "fetch").mockImplementation(async (input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const q = new URL(url).searchParams;
+      if (url.startsWith("http://lead:3000/internal/feature-memberships")) {
+        return mkJson({ memberships: [
+          { orgId: "org-A", brandId: "brand-1", workflowSlug: "wf-1" },
+          { orgId: "org-B", brandId: "brand-2", workflowSlug: "wf-1" },
+        ] });
+      }
+      if (url.startsWith("http://workflow:3000/public/workflows")) {
+        return mkJson({ workflows: [
+          { id: "w1", workflowSlug: "wf-1", workflowName: "One", workflowDynastyName: "Dynasty One", workflowDynastySlug: "dyn-1", version: 1, status: "active", featureSlug: "sales-cold-email-outreach", createdForBrandId: null, upgradedTo: null },
+          { id: "w2", workflowSlug: "wf-2", workflowName: "Two", workflowDynastyName: "Dynasty Two", workflowDynastySlug: "dyn-2", version: 1, status: "active", featureSlug: "sales-cold-email-outreach", createdForBrandId: null, upgradedTo: null },
+        ] });
+      }
+      if (url.startsWith("http://runs:3000/internal/stats/costs/timeseries/vendor")) {
+        const zero = { vendorRefundedCostInUsdCents: "0", unpricedRefundedCostInUsdCents: "0" };
+        return mkJson({ buckets: [
+          { period: D1, vendorTotalCostInUsdCents: "200", unpricedTotalCostInUsdCents: "0", unpricedCostNames: [], ...zero },
+          { period: D2, vendorTotalCostInUsdCents: "100", unpricedTotalCostInUsdCents: "50", unpricedCostNames: ["retired-line"], ...zero },
+        ] });
+      }
+      if (url.startsWith("http://runs:3000/v1/stats/public/costs/timeseries") && q.get("workflowDynastySlug") === "dyn-1") {
+        return mkJson({ buckets: [
+          { period: D1, totalCostInUsdCents: "1000", netTotalCostInUsdCents: "600" },
+          { period: D2, totalCostInUsdCents: "500", netTotalCostInUsdCents: "300" },
+        ] });
+      }
+      if (url.startsWith("http://runs:3000/v1/stats/public/costs/timeseries")) return mkJson({ buckets: [] });
+      if (url.startsWith("http://runs:3000/v1/stats/public/costs")) {
+        return mkJson({ groups: [
+          { dimensions: { workflowSlug: "wf-1" }, totalCostInUsdCents: "1500", netTotalCostInUsdCents: "900", runCount: 3 },
+          { dimensions: { workflowSlug: "wf-2" }, totalCostInUsdCents: "5000", netTotalCostInUsdCents: "5000", runCount: 2 },
+        ] });
+      }
+      if (url.startsWith("http://email:3000/public/stats")) return mkJson({ groups: [] });
+      if (/\/orgs\/brands\/[^/]+\/sales-economics-effective/.test(url)) return mkJson({ economics: ECON_FULL, source: "user" });
+      const stated = statedBrandRoute(url, () => ECON_FULL as Record<string, number>);
+      if (stated) return stated;
+      return mkJson({ error: "Not found" }, 404);
+    });
+  });
+
+  it("serves ONE dynasty's fleet curve: billed NET spend, the pairs' pipeline summed, never another workflow's", async () => {
+    const res = await request(app).get("/public/stats/workflow-return-history?featureSlug=sales-cold-email-outreach&workflowDynastySlug=dyn-1");
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ costBasis: "billed", pricing: "net", scope: "fleet", workflowDynastyName: "Dynasty One", totalSpendUsd: 9, totalPipelineUsd: 340 });
+    // Net ($6, $9 cumulative) — not gross ($10, $15). Pipeline: brand-1 100 then 250, brand-2 +40 on D2 = 290.
+    expect(res.body.roiHistory.daily).toEqual([
+      { date: D1, cumulativeSpendUsd: 6, cumulativePipelineUsd: 100, roiMultiple: 100 / 6 },
+      { date: D2, cumulativeSpendUsd: 9, cumulativePipelineUsd: 290, roiMultiple: 290 / 9 },
+    ]);
+    expect(res.body.roiHistory.undatedPipelineUsd).toBe(50);
+    expect(res.body.valueCoverage).toEqual({ pairsPriced: 2, pairsFailed: 0 });
+    // No org or brand id reaches the wire.
+    expect(JSON.stringify(res.body)).not.toMatch(/org-A|org-B|brand-1|brand-2/);
+  });
+
+  it("its last cumulative spend IS the workflow's billed cross-org total on workflow-cost-per-outcome", async () => {
+    const curve = await request(app).get("/public/stats/workflow-return-history?featureSlug=sales-cold-email-outreach&workflowDynastySlug=dyn-1");
+    const table = await request(app).get("/public/stats/workflow-cost-per-outcome?featureSlug=sales-cold-email-outreach&objective=websiteVisit");
+    expect(table.status).toBe(200);
+    const row = table.body.workflows.find((w: { workflowDynastySlug: string }) => w.workflowDynastySlug === "dyn-1");
+    expect(row.billedSpentUsd).toBe(9);
+    expect(row.spentUsd).toBe(15); // the benchmark basis (incurred, gross) stays beside it, unchanged
+    expect(curve.body.roiHistory.daily.at(-1).cumulativeSpendUsd).toBe(row.billedSpentUsd);
+  });
+
+  it("a pair whose compute fails is counted, not hidden, and the rest still answer", async () => {
+    mockComputeWorkflowRevenueGroups.mockImplementation(async ({ brandId }: { brandId: string }) => {
+      if (brandId === "brand-2") throw new Error("lead-service down");
+      return [{ workflowDynastySlug: "dyn-1", headline: { totalPipelineUsd: 100 }, pipelineTimeSeries: [{ date: `${D1}T10:00:00Z`, cumulativePipelineUsd: 100 }] }];
+    });
+    const res = await request(app).get("/public/stats/workflow-return-history?featureSlug=sales-cold-email-outreach&workflowDynastySlug=dyn-1");
+    expect(res.status).toBe(200);
+    expect(res.body.valueCoverage).toEqual({ pairsPriced: 1, pairsFailed: 1 });
+    expect(res.body.totalPipelineUsd).toBe(100);
+  });
+
+  it("400 without the dynasty, 404 for a dynasty the feature does not carry", async () => {
+    expect((await request(app).get("/public/stats/workflow-return-history?featureSlug=sales-cold-email-outreach")).status).toBe(400);
+    const res = await request(app).get("/public/stats/workflow-return-history?featureSlug=sales-cold-email-outreach&workflowDynastySlug=nope");
+    expect(res.status).toBe(404);
+    expect(res.body.reason).toBe("workflow_not_found");
+  });
+
+  it("the actual-cost twin needs the service key, and states the unknown instead of borrowing the billed figure", async () => {
+    const path = "/internal/stats/workflow-return-history/actual-cost?featureSlug=sales-cold-email-outreach&workflowDynastySlug=dyn-1";
+    expect((await request(app).get(path)).status).toBe(401);
+    const res = await request(app).get(path).set("x-api-key", "test-key");
+    expect(res.status).toBe(200);
+    expect(res.body.costBasis).toBe("actual");
+    const h = res.body.actualCostHistory;
+    expect(h.daily[0]).toMatchObject({ date: D1, cumulativeSpendUsd: 2, cumulativePipelineUsd: 100, cumulativePricedVendorCostUsd: 2 });
+    expect(h.daily[1]).toMatchObject({ date: D2, cumulativeSpendUsd: null, roiMultiple: null, cumulativePricedVendorCostUsd: 3, cumulativeUnpricedBilledCostUsd: 0.5 });
+    expect(h).toMatchObject({ unpricedFromDate: D2, unpricedBilledCostUsd: 0.5, unpricedCostNames: ["retired-line"] });
   });
 });

@@ -1,5 +1,26 @@
 # Features Service — CLAUDE.md
 
+## ONE WORKFLOW'S FLEET HISTORY — `GET /public/stats/workflow-return-history` (billed) + `/internal/stats/workflow-return-history/actual-cost` (staff), one dynasty, every org
+
+The workflow page's three charts (cost, value, return) at FLEET grain: at brand grain a workflow's history
+is 0-2 days. `lib/fleet-workflow-return.ts` + handlers in `routes/public.ts`.
+
+- **VALUE = the per-brand engine's pipeline, summed.** Each (org, brand) membership pair runs
+  `computeWorkflowRevenueGroups(..., withPipelineTimeSeries: true)` (priced on the pair's own declared
+  funnels), and the per-dynasty cumulative series are folded as daily INCREMENTS (pairs are disjoint).
+  `pipelineTimeSeries` is OFF the `?groupBy=workflow` wire (opt-in flag); that body is unchanged.
+- **SPEND is read straight from runs for the dynasty, fleet-wide**, never summed from the pair passes:
+  billed = public timeseries `netTotalCostInUsdCents` (charged, net, fail-loud if absent); actual = the
+  vendor timeseries (comped rows included), unpriced spend stated as on the per-brand actual curve.
+- **Reconciles**: the last billed `cumulativeSpendUsd` = `billedSpentUsd`, a field ADDED to each
+  `/public/stats/workflow-cost-per-outcome` row (charged net) beside the unchanged `spentUsd` (incurred
+  gross benchmark). Two bases, both named; the chart matches the billed one.
+- One value compute per FEATURE serves every dynasty (`LIFETIME_AGGREGATE_WINDOWS`, single-flight),
+  warmed at boot after the fleet-return warm. A failed pair is counted in `valueCoverage.pairsFailed`,
+  never hidden. No org or brand id reaches the wire. 404 `workflow_not_found` for an unknown dynasty.
+- Guards: `lib/fleet-workflow-return.test.ts`, the workflow-return-history block of `routes/public.test.ts`.
+  (Set 2026-09-27.)
+
 ## WAVE C4 (PRODUCER HALF) — EVERY FUNNEL-KEYED PUBLIC READ HAS A TWIN KEYED ON OUTCOMES AND LEGS; the old bodies are byte-unchanged until the consumers move
 
 The four public surfaces that still speak "funnel" (distribute.you#4413) each got an ADDITIVE twin

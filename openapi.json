@@ -24115,6 +24115,11 @@
                             "type": "number",
                             "description": "Cross-org fleet spend (USD) attributed to this workflow dynasty."
                           },
+                          "billedSpentUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "The same workflow's cross-org spend on the BILLED basis: what clients were CHARGED (comped spend absent), NET of their per-org discount. The basis of /public/stats/workflow-return-history — its last roiHistory.daily[].cumulativeSpendUsd equals this figure (to sub-cent rounding). `spentUsd` beside it is the INCURRED gross benchmark basis the cost per outcome divides."
+                          },
                           "observedClicks": {
                             "type": "number"
                           },
@@ -24136,6 +24141,7 @@
                           "workflowDynastySlug",
                           "workflowDynastyName",
                           "spentUsd",
+                          "billedSpentUsd",
                           "observedClicks",
                           "observedPositiveReplies",
                           "costPerOutcomeUsd",
@@ -24176,6 +24182,429 @@
           },
           "404": {
             "description": "Feature not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/public/stats/workflow-return-history": {
+      "get": {
+        "summary": "One workflow's fleet-wide dated spend, value and return on spend — BILLED basis (public, no auth)",
+        "description": "For ONE workflow dynasty of a feature, across every org: per UTC day, cumulative spend (what clients were CHARGED, NET of their discount — runs-service's dated ledger for the dynasty, fleet-wide), cumulative value (the same pipeline the per-brand /revenue engine prices, summed across (org, brand) pairs as daily increments; pairs are disjoint, leads belong to one org), and their ratio. Never blended across workflows. The last cumulativeSpendUsd equals the row's `billedSpentUsd` on /public/stats/workflow-cost-per-outcome. Served from a 15 min / 6 h stale-while-revalidate cache, warmed at boot. 404 `workflow_not_found` when the feature carries no such dynasty.",
+        "tags": [
+          "Public"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Feature slug (required)."
+            },
+            "required": true,
+            "description": "Feature slug (required).",
+            "name": "featureSlug",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "The workflow DYNASTY (all its versions) — the key /public/stats/workflow-cost-per-outcome rows carry (required)."
+            },
+            "required": true,
+            "description": "The workflow DYNASTY (all its versions) — the key /public/stats/workflow-cost-per-outcome rows carry (required).",
+            "name": "workflowDynastySlug",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fleet per-workflow return curve, billed basis",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "featureSlug": {
+                      "type": "string"
+                    },
+                    "workflowDynastySlug": {
+                      "type": "string"
+                    },
+                    "workflowDynastyName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "scope": {
+                      "type": "string",
+                      "enum": [
+                        "fleet"
+                      ],
+                      "description": "Every org and brand that ran the feature. An aggregate: no org or brand is named."
+                    },
+                    "totalPipelineUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Sum across (org, brand) pairs of this dynasty's headline pipeline — the per-brand revenue engine's value definition. Null when no pair could price it."
+                    },
+                    "valueCoverage": {
+                      "type": "object",
+                      "properties": {
+                        "pairsPriced": {
+                          "type": "integer",
+                          "description": "(org, brand) pairs whose value leg was computed."
+                        },
+                        "pairsFailed": {
+                          "type": "integer",
+                          "description": "Pairs whose compute failed (logged). > 0 means the value leg is a partial sum."
+                        }
+                      },
+                      "required": [
+                        "pairsPriced",
+                        "pairsFailed"
+                      ]
+                    },
+                    "costBasis": {
+                      "type": "string",
+                      "enum": [
+                        "billed"
+                      ]
+                    },
+                    "pricing": {
+                      "type": "string",
+                      "enum": [
+                        "net"
+                      ]
+                    },
+                    "totalSpendUsd": {
+                      "type": "number",
+                      "description": "Cumulative billed spend at the last point."
+                    },
+                    "roiHistory": {
+                      "type": "object",
+                      "properties": {
+                        "daily": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "date": {
+                                "type": "string",
+                                "description": "UTC day, YYYY-MM-DD."
+                              },
+                              "cumulativeSpendUsd": {
+                                "type": "number"
+                              },
+                              "cumulativePipelineUsd": {
+                                "type": "number"
+                              },
+                              "roiMultiple": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "cumulativePipelineUsd / cumulativeSpendUsd. NULL when nothing had been spent yet — never 0."
+                              }
+                            },
+                            "required": [
+                              "date",
+                              "cumulativeSpendUsd",
+                              "cumulativePipelineUsd",
+                              "roiMultiple"
+                            ]
+                          },
+                          "description": "Ascending, one point per day with spend or a dated outcome."
+                        },
+                        "datedPipelineUsd": {
+                          "type": "number"
+                        },
+                        "undatedPipelineUsd": {
+                          "type": "number",
+                          "description": "Pipeline whose outcome carries no date, so it sits on no day. datedPipelineUsd + undatedPipelineUsd = totalPipelineUsd."
+                        }
+                      },
+                      "required": [
+                        "daily",
+                        "datedPipelineUsd",
+                        "undatedPipelineUsd"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "featureSlug",
+                    "workflowDynastySlug",
+                    "workflowDynastyName",
+                    "scope",
+                    "totalPipelineUsd",
+                    "valueCoverage",
+                    "costBasis",
+                    "pricing",
+                    "totalSpendUsd",
+                    "roiHistory"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Feature or workflow dynasty not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/stats/workflow-return-history/actual-cost": {
+      "get": {
+        "summary": "STAFF ONLY: one workflow's fleet-wide return curve on ACTUAL (vendor) cost",
+        "description": "The /public/stats/workflow-return-history curve with its spend leg at VENDOR cost before our markup (runs-service /internal/stats/costs/timeseries/vendor, comped rows included — they were still paid to the vendor). Same value leg. Reveals our margin: service-auth only, and the api-service gateway mounts it behind requireStaff. Billed spend with no known vendor cost nulls cumulativeSpendUsd / roiMultiple from its first day on and is named (unpricedBilledCostUsd, unpricedFromDate, unpricedCostNames) — never substituted with the billed figure.",
+        "tags": [
+          "Public"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Feature slug (required)."
+            },
+            "required": true,
+            "description": "Feature slug (required).",
+            "name": "featureSlug",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "The workflow DYNASTY (all its versions) — the key /public/stats/workflow-cost-per-outcome rows carry (required)."
+            },
+            "required": true,
+            "description": "The workflow DYNASTY (all its versions) — the key /public/stats/workflow-cost-per-outcome rows carry (required).",
+            "name": "workflowDynastySlug",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fleet per-workflow actual-cost curve",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "featureSlug": {
+                      "type": "string"
+                    },
+                    "workflowDynastySlug": {
+                      "type": "string"
+                    },
+                    "workflowDynastyName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "scope": {
+                      "type": "string",
+                      "enum": [
+                        "fleet"
+                      ],
+                      "description": "Every org and brand that ran the feature. An aggregate: no org or brand is named."
+                    },
+                    "totalPipelineUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Sum across (org, brand) pairs of this dynasty's headline pipeline — the per-brand revenue engine's value definition. Null when no pair could price it."
+                    },
+                    "valueCoverage": {
+                      "type": "object",
+                      "properties": {
+                        "pairsPriced": {
+                          "type": "integer",
+                          "description": "(org, brand) pairs whose value leg was computed."
+                        },
+                        "pairsFailed": {
+                          "type": "integer",
+                          "description": "Pairs whose compute failed (logged). > 0 means the value leg is a partial sum."
+                        }
+                      },
+                      "required": [
+                        "pairsPriced",
+                        "pairsFailed"
+                      ]
+                    },
+                    "costBasis": {
+                      "type": "string",
+                      "enum": [
+                        "actual"
+                      ]
+                    },
+                    "actualCostHistory": {
+                      "type": "object",
+                      "properties": {
+                        "daily": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "date": {
+                                "type": "string",
+                                "description": "UTC day, YYYY-MM-DD."
+                              },
+                              "cumulativeSpendUsd": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Cumulative VENDOR cost (before our markup) since inception. NULL from `unpricedFromDate` on — never the billed figure."
+                              },
+                              "cumulativePipelineUsd": {
+                                "type": "number",
+                                "description": "Cumulative dated pipeline — the same value leg `/revenue`'s `roiHistory` carries."
+                              },
+                              "roiMultiple": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "cumulativePipelineUsd / cumulativeSpendUsd. NULL when nothing spent yet or the spend is unknown."
+                              },
+                              "cumulativePricedVendorCostUsd": {
+                                "type": "number",
+                                "description": "Vendor cost of the rows whose vendor cost IS known, up to this day. Equals cumulativeSpendUsd while nothing is unpriced; NOT the actual cost once something is (it leaves those rows out)."
+                              },
+                              "cumulativeUnpricedBilledCostUsd": {
+                                "type": "number",
+                                "description": "BILLED spend up to this day on rows with no known vendor cost (see unpricedCostNames)."
+                              }
+                            },
+                            "required": [
+                              "date",
+                              "cumulativeSpendUsd",
+                              "cumulativePipelineUsd",
+                              "roiMultiple",
+                              "cumulativePricedVendorCostUsd",
+                              "cumulativeUnpricedBilledCostUsd"
+                            ]
+                          }
+                        },
+                        "datedPipelineUsd": {
+                          "type": "number"
+                        },
+                        "undatedPipelineUsd": {
+                          "type": "number"
+                        },
+                        "unpricedBilledCostUsd": {
+                          "type": "number"
+                        },
+                        "unpricedFromDate": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "unpricedCostNames": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "daily",
+                        "datedPipelineUsd",
+                        "undatedPipelineUsd",
+                        "unpricedBilledCostUsd",
+                        "unpricedFromDate",
+                        "unpricedCostNames"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "featureSlug",
+                    "workflowDynastySlug",
+                    "workflowDynastyName",
+                    "scope",
+                    "totalPipelineUsd",
+                    "valueCoverage",
+                    "costBasis",
+                    "actualCostHistory"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid service key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Feature or workflow dynasty not found",
             "content": {
               "application/json": {
                 "schema": {

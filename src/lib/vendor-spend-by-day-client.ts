@@ -116,3 +116,33 @@ export async function fetchBrandVendorSpendByDay(
   }
   return byDay;
 }
+
+/**
+ * The FLEET twin: one workflow dynasty's dated vendor spend across EVERY org and brand of a feature —
+ * the spend leg of the staff-only fleet per-workflow curve (`lib/fleet-workflow-return.ts`). Same
+ * producer route and same fields as the per-brand read above, with no org / brand filter.
+ */
+export async function fetchDynastyVendorSpendByDay(featureSlug: string, workflowDynastySlug: string): Promise<Map<string, VendorSpendDay>> {
+  const url = process.env.RUNS_SERVICE_URL;
+  const apiKey = process.env.RUNS_SERVICE_API_KEY;
+  if (!url || !apiKey) throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
+  const params = new URLSearchParams({ interval: "day", featureSlugs: featureSlug, workflowDynastySlug });
+  const response = await fetchWithRetry(`${url}/internal/stats/costs/timeseries/vendor?${params}`, {
+    headers: { "x-api-key": apiKey },
+  });
+  if (!response.ok) {
+    throw new Error(`runs-service /internal/stats/costs/timeseries/vendor failed (${response.status}): ${await response.text()}`);
+  }
+  const data = (await response.json()) as { buckets?: Array<Record<string, unknown>> };
+  if (!Array.isArray(data.buckets)) throw new Error("runs-service vendor timeseries returned no buckets array");
+  const byDay = new Map<string, VendorSpendDay>();
+  for (const bucket of data.buckets) {
+    if (typeof bucket.period !== "string") throw new Error("runs-service vendor timeseries bucket missing period");
+    const day = bucket.period.slice(0, 10);
+    const vendor = VENDOR_FIELDS.reduce((s, f) => s + cents(bucket, f), 0) / 100;
+    const unpriced = UNPRICED_FIELDS.reduce((s, f) => s + cents(bucket, f), 0) / 100;
+    const names = Array.isArray(bucket.unpricedCostNames) ? bucket.unpricedCostNames.filter((n): n is string => typeof n === "string") : [];
+    byDay.set(day, merge(byDay.get(day), { vendorUsd: vendor, unpricedBilledUsd: unpriced, unpricedCostNames: names }));
+  }
+  return byDay;
+}
