@@ -77,6 +77,7 @@ const dbMock = {
 /** Depth-first hunt for the single Date bound into a drizzle condition (the prune cutoff). */
 function findDate(node: unknown, depth = 0): Date | undefined {
   if (node instanceof Date) return node;
+  if (typeof node === "string" && /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(node)) return new Date(node);
   if (depth > 6 || node === null || typeof node !== "object") return undefined;
   for (const value of Object.values(node as Record<string, unknown>)) {
     const found = findDate(value, depth + 1);
