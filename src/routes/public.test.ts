@@ -2294,6 +2294,25 @@ describe("GET /public/stats/workflow-return-history", () => {
           { id: "w2", workflowSlug: "wf-2", workflowName: "Two", workflowDynastyName: "Dynasty Two", workflowDynastySlug: "dyn-2", version: 1, status: "active", featureSlug: "sales-cold-email-outreach", createdForBrandId: null, upgradedTo: null },
         ] });
       }
+      if (url.startsWith("http://campaign:3000/campaigns/list")) {
+        return mkJson({ campaigns: [
+          { id: "c-conv", orgId: "org-A", brandIds: ["brand-1"], featureSlug: "sales-cold-email-outreach", legKey: "start_to_conversation" },
+          { id: "c-legacy", orgId: "org-A", brandIds: ["brand-1"], featureSlug: "sales-cold-email-outreach", legKey: null },
+          { id: "c-visit", orgId: "org-B", brandIds: ["brand-2"], featureSlug: "sales-cold-email-outreach", legKey: "start_to_website_visit" },
+          { id: "c-pr", orgId: "org-B", brandIds: ["brand-2"], featureSlug: "pr-cold-email-outreach", legKey: "start_to_conversation" },
+        ] });
+      }
+      if (url.startsWith("http://runs:3000/internal/stats/costs/timeseries/vendor") && q.get("campaignIds")) {
+        const zero = { unpricedTotalCostInUsdCents: "0", unpricedCostNames: [], vendorRefundedCostInUsdCents: "0", unpricedRefundedCostInUsdCents: "0" };
+        return mkJson({ buckets: q.get("campaignIds") === "c-conv" ? [{ period: D1, vendorTotalCostInUsdCents: "40", ...zero }] : [] });
+      }
+      if (url.startsWith("http://runs:3000/v1/stats/public/costs/timeseries") && q.get("campaignIds")) {
+        const byCampaign: Record<string, unknown[]> = {
+          "c-conv": [{ period: D1, totalCostInUsdCents: "400", netTotalCostInUsdCents: "200" }],
+          "c-visit": [{ period: D2, totalCostInUsdCents: "900", netTotalCostInUsdCents: "500" }],
+        };
+        return mkJson({ buckets: byCampaign[q.get("campaignIds")!] ?? [] });
+      }
       if (url.startsWith("http://runs:3000/internal/stats/costs/timeseries/vendor")) {
         const zero = { vendorRefundedCostInUsdCents: "0", unpricedRefundedCostInUsdCents: "0" };
         return mkJson({ buckets: [
@@ -2363,6 +2382,66 @@ describe("GET /public/stats/workflow-return-history", () => {
     const res = await request(app).get("/public/stats/workflow-return-history?featureSlug=sales-cold-email-outreach&workflowDynastySlug=nope");
     expect(res.status).toBe(404);
     expect(res.body.reason).toBe("workflow_not_found");
+  });
+
+  // ── ?leg= — ONE crew's curve. brand-1 performs the conversation leg (c-conv), brand-2 the visit leg
+  // (c-visit); the fleet curve blends both, and a leg read must carry exactly one of them on BOTH legs.
+  const LEG_PATH = "/public/stats/workflow-return-history?featureSlug=sales-cold-email-outreach&workflowDynastySlug=dyn-1";
+
+  it("?leg=start_to_conversation counts ONLY the campaigns performing that leg, on spend AND value", async () => {
+    const res = await request(app).get(`${LEG_PATH}&leg=start_to_conversation`);
+    expect(res.status).toBe(200);
+    // brand-1's pipeline alone (300), not the fleet 340; c-conv's $2 net spend, not the fleet $9.
+    expect(res.body).toMatchObject({ legKey: "start_to_conversation", totalPipelineUsd: 300, totalSpendUsd: 2 });
+    expect(res.body.roiHistory.daily.at(-1)).toMatchObject({ cumulativeSpendUsd: 2, cumulativePipelineUsd: 250 });
+    expect(res.body.valueCoverage).toEqual({ pairsPriced: 1, pairsFailed: 0 });
+    // The pair is narrowed to the leg's campaigns (the legacy leg-less row and the other channel never join).
+    expect(mockComputeWorkflowRevenueGroups).toHaveBeenCalledTimes(1);
+    expect(mockComputeWorkflowRevenueGroups.mock.calls[0][0]).toMatchObject({ brandId: "brand-1", campaignScope: ["c-conv"] });
+    expect(JSON.stringify(res.body)).not.toMatch(/org-A|org-B|brand-1|brand-2|c-conv/);
+  });
+
+  it("?leg=start_to_website_visit reads the OTHER crew's figures — the two legs diverge on one dynasty", async () => {
+    const res = await request(app).get(`${LEG_PATH}&leg=start_to_website_visit`);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ legKey: "start_to_website_visit", totalPipelineUsd: 40, totalSpendUsd: 5 });
+    expect(mockComputeWorkflowRevenueGroups.mock.calls[0][0]).toMatchObject({ brandId: "brand-2", campaignScope: ["c-visit"] });
+  });
+
+  it("no leg is byte-identical to before: no legKey, no campaign read, the fleet figures", async () => {
+    const fetchSpy = vi.mocked(global.fetch);
+    const res = await request(app).get(LEG_PATH);
+    expect(res.body).not.toHaveProperty("legKey");
+    expect(res.body).toMatchObject({ totalPipelineUsd: 340, totalSpendUsd: 9 });
+    const urls = fetchSpy.mock.calls.map(([u]) => String(u));
+    expect(urls.some((u) => u.includes("/campaigns/list"))).toBe(false);
+    expect(urls.some((u) => u.includes("campaignIds="))).toBe(false);
+    // An EMPTY leg names nothing.
+    const empty = await request(app).get(`${LEG_PATH}&leg=`);
+    expect(empty.body).toEqual(res.body);
+  });
+
+  it("a leg no campaign performs is a real, empty answer — never the fleet's figures", async () => {
+    const res = await request(app).get(`${LEG_PATH}&leg=conversation_to_meeting_booked`);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ legKey: "conversation_to_meeting_booked", totalSpendUsd: 0, totalPipelineUsd: null });
+    expect(res.body.valueCoverage).toEqual({ pairsPriced: 0, pairsFailed: 0 });
+    expect(mockComputeWorkflowRevenueGroups).not.toHaveBeenCalled();
+  });
+
+  it("an unknown leg is a 400 naming the reason", async () => {
+    const res = await request(app).get(`${LEG_PATH}&leg=nope`);
+    expect(res.status).toBe(400);
+    expect(res.body.reason).toBe("leg_unrecognised");
+  });
+
+  it("the actual-cost twin honours the leg on its vendor spend too", async () => {
+    const path = "/internal/stats/workflow-return-history/actual-cost?featureSlug=sales-cold-email-outreach&workflowDynastySlug=dyn-1&leg=start_to_conversation";
+    const res = await request(app).get(path).set("x-api-key", "test-key");
+    expect(res.status).toBe(200);
+    expect(res.body.legKey).toBe("start_to_conversation");
+    expect(res.body.totalPipelineUsd).toBe(300);
+    expect(res.body.actualCostHistory.daily.at(-1)).toMatchObject({ cumulativeSpendUsd: 0.4, cumulativePipelineUsd: 250 });
   });
 
   it("the actual-cost twin needs the service key, and states the unknown instead of borrowing the billed figure", async () => {

@@ -3204,6 +3204,7 @@ registry.registerPath({
 const workflowReturnHistoryQuery = z.object({
   featureSlug: z.string().describe("Feature slug (required)."),
   workflowDynastySlug: z.string().describe("The workflow DYNASTY (all its versions) — the key /public/stats/workflow-cost-per-outcome rows carry (required)."),
+  leg: z.string().optional().describe("Optional LEG key (the `legKey` of /public/channels `legs[]`, e.g. `start_to_conversation`). When named, BOTH legs of the curve count only the campaigns (every org) whose stated leg is this one: spend is runs' dated ledger for those campaigns, value is each pair's pipeline over those campaigns' leads. A campaign stating no leg is in no leg. Omitted → the fleet-wide curve, byte-unchanged. Unknown → 400 `leg_unrecognised`."),
 });
 
 const workflowReturnHistoryBase = {
@@ -3211,6 +3212,7 @@ const workflowReturnHistoryBase = {
   workflowDynastySlug: z.string(),
   workflowDynastyName: z.string().nullable(),
   scope: z.literal("fleet").describe("Every org and brand that ran the feature. An aggregate: no org or brand is named."),
+  legKey: z.string().optional().describe("Echo of the canonical `?leg=` when one was named: the curve counts only the campaigns performing that leg. Absent on the fleet-wide read."),
   totalPipelineUsd: z.number().nullable().describe("Sum across (org, brand) pairs of this dynasty's headline pipeline — the per-brand revenue engine's value definition. Null when no pair could price it."),
   valueCoverage: z.object({
     pairsPriced: z.number().int().describe("(org, brand) pairs whose value leg was computed."),
@@ -3250,7 +3252,7 @@ registry.registerPath({
         },
       },
     },
-    400: { description: "Missing parameters", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "Missing parameters, or an unrecognised leg (`leg_unrecognised`)", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature or workflow dynasty not found", content: { "application/json": { schema: errorResponse } } },
   },
 });
@@ -3283,7 +3285,7 @@ registry.registerPath({
         },
       },
     },
-    400: { description: "Missing parameters", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "Missing parameters, or an unrecognised leg (`leg_unrecognised`)", content: { "application/json": { schema: errorResponse } } },
     401: { description: "Missing or invalid service key", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature or workflow dynasty not found", content: { "application/json": { schema: errorResponse } } },
   },

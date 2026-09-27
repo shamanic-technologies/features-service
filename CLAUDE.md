@@ -1,5 +1,30 @@
 # Features Service — CLAUDE.md
 
+## A LEG-KEYED `workflow-projection` COUNTS ONLY THE LEG'S CAMPAIGNS, AT EVERY GRAIN — a workflow's figure is its figure on ONE leg × ONE channel
+
+Owner rule (2026-09-27, every stat about a workflow, template or model): never a workflow's figure in the
+absolute. Before, `?leg=` scoped only the OUTCOME STEP; the evidence (spend, sends, outcomes) was the whole
+channel's, so prod priced `cerulean` at ~$167 per website visit on the visit leg although every dollar and
+click behind it came from conversation-leg campaigns (brand `c4b5284d…`).
+
+- **The population is every org's campaigns whose STATED `legKey` is the leg** (`fetchFleetLegCampaigns`,
+  one `GET /campaigns/list`). A leg-less legacy row is in no leg. `lib/leg-fleet-evidence.ts` narrows the
+  crossOrg grain with runs `/v1/stats/public/costs?campaignIds=` (≤500/chunk) + email-gateway
+  `/public/stats?campaignIds=` (≤200/chunk), summed; cached per (feature, leg, pricing), 15 min fresh / 6 h
+  stale, single-flight (the email half is one provider read per campaign server-side).
+- **Brand grain = the brand's own leg campaigns** (org + brand match) through the campaign-grain reader;
+  campaign / offer grains are intersected with the leg set; the audience grain passes the brand's leg ids
+  as `campaignIds` to both its reads (an EMPTY list = no evidence, never an unfiltered read); person-basis
+  replies (brand + fleet cell) keep only repliers served under a leg campaign.
+- **A workflow with no evidence on the leg has no grain**: it reads `measured: false` (the explore
+  allowance, priced off the leg's OWN outreach price), never a price borrowed from another leg, and is
+  never recommended. campaign-service's selection now rests on leg-scoped evidence with no change there.
+- `leg` rides the evidence `scope_key`. **A leg-less read is byte-unchanged** (no campaign-service read).
+- Tests: the suite-wide default mocks `fetchLegFleetEvidence` to `undefined` (`src/vitest.setup.ts`) so
+  leg suites keep their fixtures. Guards: `routes/workflow-projection-leg-scope.test.ts` (unmeasured on the
+  other leg, each leg priced on its own campaigns, the fleet reads narrowed, leg-less unchanged),
+  `lib/leg-fleet-evidence.test.ts`. (Set 2026-09-27.)
+
 ## A (BRAND, OFFER) PAIR WITH NO CAMPAIGN IS PRICED WITH `?offerId=` ON A LEG-KEYED `workflow-projection`
 
 The dashboard's "Add a brand" modal prices each leg (visit / positive reply) for ONE offer before any
@@ -106,8 +131,16 @@ is 0-2 days. `lib/fleet-workflow-return.ts` + handlers in `routes/public.ts`.
 - One value compute per FEATURE serves every dynasty (`LIFETIME_AGGREGATE_WINDOWS`, single-flight),
   warmed at boot after the fleet-return warm. A failed pair is counted in `valueCoverage.pairsFailed`,
   never hidden. No org or brand id reaches the wire. 404 `workflow_not_found` for an unknown dynasty.
-- Guards: `lib/fleet-workflow-return.test.ts`, the workflow-return-history block of `routes/public.test.ts`.
-  (Set 2026-09-27.)
+- **`?leg=<legKey>` = ONE crew's curve** (both routes). BOTH legs count only the campaigns (every org)
+  whose STATED `legKey` is that leg (`lib/fleet-leg-campaigns.ts`, one `GET /campaigns/list` read): spend
+  = runs' dated ledger with `campaignIds=` (≤500/chunk, summed), value = each pair holding such a campaign
+  priced by `computeWorkflowRevenueGroups` with `campaignScope` = exactly those campaigns. A leg-less
+  legacy row is in no leg. Echoes `legKey`; a leg nobody performs is an empty answer (0 spend, null
+  pipeline), never the fleet's. Omitted → byte-identical (same cache keys, no campaign read). Why: prod
+  2026-09-27, maelstrom under the reply crew printed $1,089 value / $41, $1,080 of it a visit-led
+  campaign. Legs a feature's campaigns perform are warmed at boot after the fleet curve.
+- Guards: `lib/fleet-workflow-return.test.ts`, `lib/fleet-leg-campaigns.test.ts`, the workflow-return-history
+  block of `routes/public.test.ts`. (Set 2026-09-27.)
 
 ## WAVE C4 (PRODUCER HALF) — EVERY FUNNEL-KEYED PUBLIC READ HAS A TWIN KEYED ON OUTCOMES AND LEGS; the old bodies are byte-unchanged until the consumers move
 

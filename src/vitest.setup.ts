@@ -11,3 +11,15 @@ vi.mock("./lib/fleet-positive-repliers.js", () => ({
   warmFleetPositiveRepliers: vi.fn(async () => undefined),
   __resetFleetPositiveRepliers: vi.fn(),
 }));
+
+/**
+ * Suite-wide default: the LEG's fleet population (lib/leg-fleet-evidence.ts) reads campaign-service's
+ * whole campaign list, which no route fixture answers. It resolves to `undefined` here, so a leg-keyed
+ * route suite keeps the leg-less evidence its fixture states. Suites asserting the leg scope `vi.unmock` it.
+ */
+vi.mock("./lib/leg-fleet-evidence.js", () => ({
+  fetchLegFleetEvidence: vi.fn(async () => undefined),
+  __resetLegFleetEvidence: vi.fn(),
+  mergeCostGroupsBySlug: vi.fn(),
+  mergeEmailStats: vi.fn(),
+}));

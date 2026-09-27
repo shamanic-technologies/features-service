@@ -4,6 +4,7 @@
  * Service URLs and keys are read lazily from process.env.
  */
 
+import { RUNS_CAMPAIGN_IDS_PER_REQUEST } from "./brand-spend-by-day-client.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { selectCostCentsString, type Pricing } from "./pricing.js";
 import { refundedCents, type CostBasis } from "./cost-basis.js";
@@ -82,8 +83,12 @@ export async function fetchPublicCosts(
   // defaults to INCURRED here and every call site takes it. A fleet with nothing comped reads
   // byte-identically on either basis (`selectCostCentsString` returns the producer string untouched).
   basis: CostBasis = "incurred",
+  // Narrow the fleet to these campaigns (runs-service `campaignIds`, at most 500 per request — the
+  // caller chunks). Used by a LEG-scoped ladder: only the campaigns performing that leg count.
+  campaignIds?: readonly string[],
 ): Promise<CostGroup[]> {
   const params = new URLSearchParams({ featureSlugs, groupBy });
+  if (campaignIds && campaignIds.length > 0) params.set("campaignIds", campaignIds.join(","));
 
   const url = `${process.env.RUNS_SERVICE_URL}/v1/stats/public/costs?${params}`;
   const response = await fetchWithRetry(url, {
@@ -147,8 +152,30 @@ export async function fetchDynastySpendByDay(
  * untimed `fetchPublicCosts(slug, "workflowSlug", "net", "charged")`, so runs' own
  * sum-equals-untimed-total invariant makes the curve's last point that total.
  */
-export async function fetchDynastyBilledSpendByDay(featureSlug: string, workflowDynastySlug: string): Promise<Map<string, number>> {
+export async function fetchDynastyBilledSpendByDay(
+  featureSlug: string,
+  workflowDynastySlug: string,
+  // A LEG-scoped curve: only these campaigns' rows. Absent → the whole fleet (byte-identical request).
+  // Present and empty → nothing performs the leg, so nothing was spent on it (no request at all).
+  campaignIds?: string[],
+): Promise<Map<string, number>> {
+  if (campaignIds === undefined) return fetchDynastyBilledSpendChunk(featureSlug, workflowDynastySlug, undefined);
+  const byDay = new Map<string, number>();
+  for (let i = 0; i < campaignIds.length; i += RUNS_CAMPAIGN_IDS_PER_REQUEST) {
+    // A cost row belongs to exactly one campaign, so summing the chunks is exact.
+    const part = await fetchDynastyBilledSpendChunk(featureSlug, workflowDynastySlug, campaignIds.slice(i, i + RUNS_CAMPAIGN_IDS_PER_REQUEST));
+    for (const [day, usd] of part) byDay.set(day, (byDay.get(day) ?? 0) + usd);
+  }
+  return byDay;
+}
+
+async function fetchDynastyBilledSpendChunk(
+  featureSlug: string,
+  workflowDynastySlug: string,
+  campaignIds: string[] | undefined,
+): Promise<Map<string, number>> {
   const params = new URLSearchParams({ interval: "day", featureSlug, workflowDynastySlug });
+  if (campaignIds) params.set("campaignIds", campaignIds.join(","));
   const url = `${process.env.RUNS_SERVICE_URL}/v1/stats/public/costs/timeseries?${params}`;
   const response = await fetchWithRetry(url, { headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY! } });
   if (!response.ok) {
@@ -205,8 +232,13 @@ export async function fetchPublicEmailStats(
   // Optional workflow-dynasty filter (resolved to all versioned slugs upstream). Combined with
   // groupBy=day it yields ONE dynasty's dated outcomes — the per-workflow RECENT-window join partner.
   workflowDynastySlug?: string,
+  // Narrow to these campaigns (email-gateway `campaignIds`, at most 200 per request — the caller chunks).
+  campaignIds?: readonly string[],
 ): Promise<Map<string, Record<string, number>>> {
   const params = new URLSearchParams({ featureSlugs, groupBy });
+  if (campaignIds && campaignIds.length > 0) {
+    params.set(campaignIds.length === 1 ? "campaignId" : "campaignIds", campaignIds.join(","));
+  }
   // email-gateway accepts a comma-separated brandId filter (per its public /stats contract).
   if (brandIds && brandIds.length > 0) params.set("brandId", brandIds.join(","));
   if (workflowDynastySlug) params.set("workflowDynastySlug", workflowDynastySlug);
