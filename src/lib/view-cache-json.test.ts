@@ -160,3 +160,12 @@ describe("envelopedJson — the refresher's answer, cut out without a parse", ()
     expect(envelopedJson("not json")).toBeUndefined();
   });
 });
+
+describe("withInteractiveReads — a request's pre-cache reads share downstream answers like a view compute", () => {
+  it("marks its async context interactive, and only its own", async () => {
+    const { withInteractiveReads, insideInteractiveView } = await import("./lead-copy.js");
+    expect(insideInteractiveView()).toBe(false);
+    expect(await withInteractiveReads(async () => insideInteractiveView())).toBe(true);
+    expect(insideInteractiveView()).toBe(false);
+  });
+});
