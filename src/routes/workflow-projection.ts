@@ -35,6 +35,7 @@ import {
   type LegOutcomeTerms,
 } from "../lib/leg-outcome.js";
 import { fetchCampaignFamiliesSoft } from "../lib/campaign-identity-client.js";
+import { fetchOfferScopeIdsSoft } from "../lib/offer-scope.js";
 import { describeIdentity, type CampaignIdentity, type CampaignIdentityView } from "../lib/campaign-identity.js";
 import { DEFAULT_MAXIMIZE, MAXIMIZE_ERROR, parseMaximize, type Maximize } from "../lib/maximize.js";
 import {
@@ -89,7 +90,7 @@ export type GoalEcho = "meetingBooked" | "signup" | "websitePurchase" | "sales" 
 
 // ── Response shape (3-grain ladder + resolved pick) ──────────────────────────
 
-export type GrainName = "crossOrg" | "brand" | "campaign" | "audience";
+export type GrainName = "crossOrg" | "brand" | "offer" | "campaign" | "audience";
 
 /** The three per-outcome unit costs of a grain — also the shape passed as the PARENT floor for the
  * next finer grain (crossOrg → brand → audience) via the projected cost-engine. */
@@ -116,6 +117,8 @@ const GRAIN_COST_BASIS: Record<GrainName, CostBasis> = {
   brand: "charged",
   // A campaign's money is the same customer's own billed money, one narrowing finer than the brand's.
   campaign: "charged",
+  // An offer's money is the same customer's billed money over the campaigns selling that offer.
+  offer: "charged",
   audience: "charged",
 };
 
@@ -1162,11 +1165,21 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     let campaignIdentity: CampaignIdentity | null = null;
     let campaignIdentityView: CampaignIdentityView | null = null;
     let campaignScopeIds: string[] | null = null;
+    // THE OFFER GRAIN'S SCOPE — the campaigns (of this channel) selling the offer the named campaign
+    // sells. It exists so a screen comparing "this brand" against "this offer" for one workflow reads
+    // BOTH off this one ladder, on one basis: the same spend, the same counted outcomes, the same
+    // cascade floor. Read from any other surface (the realized `/revenue?groupBy=workflow&offerId=`
+    // ratio divides the MATURE cohort and nulls at 0 outcomes), the two columns disagreed on a brand
+    // selling ONE offer, where they describe the identical set of campaigns (features-service#1172).
+    let offerScopeIds: string[] | null = null;
     if (campaignId) {
       const families = await fetchCampaignFamiliesSoft(brandId, featureSlug, { orgId, userId, runId });
       campaignIdentity = families.identityOf(campaignId);
       campaignIdentityView = describeIdentity(campaignIdentity, campaignId);
       campaignScopeIds = campaignIdentityView.campaignIds;
+      if (legKey && campaignIdentity?.offerId) {
+        offerScopeIds = await fetchOfferScopeIdsSoft(campaignIdentity.offerId, brandId, featureSlug, { orgId, userId, runId });
+      }
     }
 
     // ── WHICH OFFER'S TERMS THIS READ IS PRICED ON ──────────────────────────────────────────
@@ -1239,10 +1252,20 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
           // The IDENTITY, not the campaign: every member of one family asks the same question, so they
           // land on ONE cell instead of paying a full fan-out per stopped ancestor.
           ...(campaignIdentityView ? { campaign: campaignIdentityView.key } : {}),
+          // The offer's campaign SET, not only its id: a campaign minted under the offer changes the
+          // grain's evidence while no other key part moves.
+          ...(offerScopeIds ? { offerCampaigns: offerScopeIds.join("+") } : {}),
         }),
         orgId,
         compute: () =>
-          fetchWorkflowProjectionEvidence({ featureSlug, brandId, identity, pricing, campaignIds: campaignScopeIds }),
+          fetchWorkflowProjectionEvidence({
+            featureSlug,
+            brandId,
+            identity,
+            pricing,
+            campaignIds: campaignScopeIds,
+            offerCampaignIds: offerScopeIds,
+          }),
       }),
       fetchEffectiveEconomics(brandId, identity),
       campaignScopeIds && picksLimit > 0
@@ -1441,6 +1464,14 @@ export interface WorkflowProjectionEvidence {
    */
   campaignGrain?: Array<[string, WorkflowGrainEvidence]>;
   /**
+   * OFFER-grain evidence keyed by the dynasty's ACTIVE workflow slug — present ⟺ a leg-keyed read named
+   * a `?campaignId=` whose campaign states an offer. Totalled over every campaign of this channel
+   * selling that offer, by the byte-same reader the campaign grain uses, so the offer column and the
+   * brand column differ only by which campaigns they cover.
+   */
+  offerGrain?: Array<[string, WorkflowGrainEvidence]>;
+  retiredOfferGrain?: Array<[string, WorkflowGrainEvidence]>;
+  /**
    * RETIRED lineages (a dynasty with no active version left, or a slug the catalogue does not describe)
    * this brand / this campaign identity spent on — keyed by the dynasty slug. They are real spend and
    * real outcomes, so they get a row (never rankable, never recommended — see `retired` on the row),
@@ -1459,9 +1490,18 @@ export async function fetchWorkflowProjectionEvidence(input: {
   /** Every member of ONE campaign identity, when the caller narrowed to a campaign. Absent otherwise,
    *  and the campaign grain is then never read — a brand-wide request asks campaign-service nothing. */
   campaignIds?: string[] | null;
+  /** Every campaign of this channel selling the named campaign's offer. Absent ⟹ no offer grain. */
+  offerCampaignIds?: string[] | null;
 }): Promise<WorkflowProjectionEvidence> {
   const { featureSlug, brandId, identity, pricing } = input;
   const campaignIds = input.campaignIds ?? null;
+  const offerCampaignIds = input.offerCampaignIds && input.offerCampaignIds.length > 0 ? input.offerCampaignIds : null;
+  // An offer sold through ONE campaign identity on this channel IS that identity: reuse its read.
+  const offerIsCampaign =
+    offerCampaignIds !== null &&
+    campaignIds !== null &&
+    offerCampaignIds.length === campaignIds.length &&
+    [...campaignIds].sort().every((id, i) => id === [...offerCampaignIds].sort()[i]);
 
   // The workflow list is needed by the crossOrg AND brand dynasty rollups, so fetch it first; the
   // brand grain then fans out in parallel with the remaining reads.
@@ -1474,11 +1514,13 @@ export async function fetchWorkflowProjectionEvidence(input: {
   // evidence included. The brand and campaign grains count replies on it instead of email-gateway's
   // per-slug sums; the audience grain adds its CRM-only ones by membership. Read once per scope and
   // FAIL-LOUD like every other input here: a grain must never silently fall back to the sender's count.
-  const [brandRepliers, campaignRepliers] = await Promise.all([
+  const readOffer = offerCampaignIds !== null && !offerIsCampaign;
+  const [brandRepliers, campaignRepliers, offerRepliers] = await Promise.all([
     fetchPositiveRepliers(brandId, undefined, identity),
     campaignIds && campaignIds.length > 0 ? fetchPositiveRepliers(brandId, campaignIds, identity) : Promise.resolve(null),
+    readOffer ? fetchPositiveRepliers(brandId, offerCampaignIds!, identity) : Promise.resolve(null),
   ]);
-  const [costGroups, emailStats, brandGrain, audienceEvidence, campaignGrain] = await Promise.all([
+  const [costGroups, emailStats, brandGrain, audienceEvidence, campaignGrain, offerGrainRead] = await Promise.all([
     fetchPublicCosts(featureSlug, "workflowSlug", pricing),
     fetchPublicEmailStats(featureSlug, "workflowSlug"),
     fetchBrandWorkflowEvidenceWithRetired(brandId, featureSlug, workflows, identity, pricing, "charged", brandRepliers),
@@ -1486,7 +1528,11 @@ export async function fetchWorkflowProjectionEvidence(input: {
     campaignIds && campaignIds.length > 0
       ? fetchCampaignWorkflowEvidenceWithRetired(brandId, featureSlug, campaignIds, workflows, identity, pricing, "charged", campaignRepliers ?? undefined)
       : Promise.resolve(null),
+    readOffer
+      ? fetchCampaignWorkflowEvidenceWithRetired(brandId, featureSlug, offerCampaignIds!, workflows, identity, pricing, "charged", offerRepliers ?? undefined)
+      : Promise.resolve(null),
   ]);
+  const offerGrain = offerIsCampaign ? campaignGrain : offerGrainRead;
 
   return {
     workflows,
@@ -1497,6 +1543,9 @@ export async function fetchWorkflowProjectionEvidence(input: {
     audienceEvidence: audienceEvidence.map((ev) => ({ audienceId: ev.audienceId, byDynasty: [...ev.byDynasty.entries()] })),
     ...(campaignGrain
       ? { campaignGrain: [...campaignGrain.active.entries()], retiredCampaignGrain: [...campaignGrain.retired.entries()] }
+      : {}),
+    ...(offerGrain
+      ? { offerGrain: [...offerGrain.active.entries()], retiredOfferGrain: [...offerGrain.retired.entries()] }
       : {}),
   };
 }
@@ -1603,6 +1652,8 @@ export function projectFromEvidence(input: {
   const emailStats = new Map(evidence.crossOrgEmailStats);
   const brandGrain = new Map(evidence.brandGrain);
   const campaignGrain = evidence.campaignGrain ? new Map(evidence.campaignGrain) : null;
+  const offerGrain = evidence.offerGrain ? new Map(evidence.offerGrain) : null;
+  const retiredOfferGrain = new Map(evidence.retiredOfferGrain ?? []);
   const retiredBrandGrain = new Map(evidence.retiredBrandGrain ?? []);
   const retiredCampaignGrain = new Map(evidence.retiredCampaignGrain ?? []);
   const audienceEvidence: AudienceGrainEvidence[] = evidence.audienceEvidence.map((ev) => ({
@@ -1714,6 +1765,17 @@ export function projectFromEvidence(input: {
           estimatesByGrain.brand?.unitCosts ?? estimatesByGrain.crossOrg?.unitCosts ?? null,
         );
       }
+      // … → brand → OFFER: the campaigns selling one offer, floored against the brand exactly as the
+      // brand is floored against the fleet — so on a brand selling one offer the two columns are the
+      // same number. A STATED grain only: it never enters `resolved`, `rank` or the recommendation, and
+      // the campaign grain keeps its brand parent, so nothing campaign-service reads moves.
+      const offerEv = offerGrain?.get(activeSlug);
+      if (offerEv && offerEv.totalCostInUsdCents > 0) {
+        estimatesByGrain.offer = buildBlock(
+          offerEv,
+          estimatesByGrain.brand?.unitCosts ?? estimatesByGrain.crossOrg?.unitCosts ?? null,
+        );
+      }
 
       // crossOrg is (almost) always present, but if a dynasty had 0 crossOrg cost AND 0 brand cost there
       // is no grain to resolve — skip the row (nothing to project).
@@ -1736,7 +1798,11 @@ export function projectFromEvidence(input: {
     // vanished and the rows summed to less than the scope (Doc Dinners 2026-09-25: 23 of 26 positive
     // replies). The row states the brand / campaign evidence and an all-null `resolved`, so no ranking,
     // recommendation or selector can pick a workflow that no longer runs.
-    for (const dynastySlug of new Set([...retiredBrandGrain.keys(), ...retiredCampaignGrain.keys()])) {
+    for (const dynastySlug of new Set([
+      ...retiredBrandGrain.keys(),
+      ...retiredCampaignGrain.keys(),
+      ...retiredOfferGrain.keys(),
+    ])) {
       const estimatesByGrain: Partial<Record<GrainName, GrainBlock>> = {};
       const brandEv = retiredBrandGrain.get(dynastySlug);
       if (brandEv && brandEv.totalCostInUsdCents > 0) estimatesByGrain.brand = buildBlock(brandEv);
@@ -1744,7 +1810,11 @@ export function projectFromEvidence(input: {
       if (campaignEv && campaignEv.totalCostInUsdCents > 0) {
         estimatesByGrain.campaign = buildBlock(campaignEv, estimatesByGrain.brand?.unitCosts ?? null);
       }
-      if (!estimatesByGrain.brand && !estimatesByGrain.campaign) continue;
+      const offerEv = retiredOfferGrain.get(dynastySlug);
+      if (offerEv && offerEv.totalCostInUsdCents > 0) {
+        estimatesByGrain.offer = buildBlock(offerEv, estimatesByGrain.brand?.unitCosts ?? null);
+      }
+      if (!estimatesByGrain.brand && !estimatesByGrain.campaign && !estimatesByGrain.offer) continue;
       rows.push({
         audienceId: null,
         workflow: { workflowDynastySlug: dynastySlug, workflowDynastyName: dynastyNameBySlug.get(dynastySlug) ?? null },

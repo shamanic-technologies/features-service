@@ -1,5 +1,29 @@
 # Features Service — CLAUDE.md
 
+## THE OFFER GRAIN LIVES ON THE WORKFLOW-PROJECTION LADDER — a page comparing Brand vs Offer for one workflow reads both off ONE read, on ONE basis
+
+The v2 Workflows page prints per workflow "Global / Brand / Offer", all labelled as the cost of one
+outcome of the leg. Brand came from `workflow-projection` (whole spend ÷ outcomes, cascade floor at 0
+outcomes); Offer came from `/revenue?groupBy=workflow&offerId=` `outcomes.cpprCents` (MATURE-cohort spend,
+null at 0 outcomes). Prod 2026-09-27, brand `75d7e3e8…` (every campaign sells offer `d5ecba00…`): ballad
+$118.61 vs $53.91, alioth $103.56 vs a dash — same scope, two bases (features-service#1172).
+
+- **`estimatesByGrain.offer`** on a `?leg=&campaignId=` read whose campaign states an offer: every campaign
+  of this channel selling that offer (`fetchOfferScopeIdsSoft`), read by the byte-same
+  `fetchCampaignWorkflowEvidenceWithRetired` + person repliers as the campaign grain, floored against the
+  BRAND grain exactly as the brand is floored against the fleet. So on a one-offer brand `offer` ≡ `brand`
+  (same evidence, same `legOutcome`), and a difference between the columns only ever means scope. An offer
+  whose campaign set equals the campaign identity reuses the campaign read (no extra IO).
+- **A STATED grain only**: never in `resolved`, `rank`, `scopeRank` or the recommendation, and the campaign
+  grain keeps its BRAND parent — nothing campaign-service reads moves. No new query parameter (the offer is
+  the named campaign's). FAIL-SOFT: campaign-service unreadable → the grain is absent, never the brand's
+  numbers under the offer's name. The offer's campaign SET rides the Gold `scope_key`.
+- **The realized `/revenue` per-workflow ratios are unchanged** and still mean the mature-cohort accounting
+  figure; they are simply not the figure to put beside a ladder grain. The dashboard's Offer column reads
+  `estimatesByGrain.offer`.
+- Guards: `routes/workflow-projection-offer-grain.test.ts` (one-offer equality incl. the 0-outcome floor,
+  two-offer divergence, campaign grain byte-unchanged, absent without a campaign). (Set 2026-09-27.)
+
 ## ONE WORKFLOW'S FLEET HISTORY — `GET /public/stats/workflow-return-history` (billed) + `/internal/stats/workflow-return-history/actual-cost` (staff), one dynasty, every org
 
 The workflow page's three charts (cost, value, return) at FLEET grain: at brand grain a workflow's history
