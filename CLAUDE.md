@@ -5260,9 +5260,10 @@ mrrUsd, arrUsd, activeCount, pausedCount, inactiveCount, totalCount }` + `asOf`.
 **AN ACCOUNT IS ACTIVE WHEN ITS MONEY IS RUNNING, NOT MERELY CONFIGURED — and the brand PAUSE FLAG is
 GONE from the rule, not kept as an override (supersedes the pause-first precedence of #427/#502).**
 Single source `accountStatus(configuredDailyBudgetUsd, runningDailyBudgetUsd, actualBalanceUsd,
-autoTopupEnabled, paymentHold)`, precedence **payment_declined > active > paused > inactive**: (0) billing
+autoTopupEnabled, paymentHold)`, precedence **payment_declined | no_payment_method > active > paused > inactive**: (0) billing
 cannot charge the org (`GET /internal/accounts/by-org/:orgId/payment-outlook` → `state: "charge_blocked"`,
-`fetchOrgPaymentHold`) → `"payment_declined"`, billing's `blockedReason` on `paymentDeclinedReason`; (1) `runningDailyBudgetUsd > 0 &&
+`fetchOrgPaymentHold`) → `"no_payment_method"` when `blockedReason` is `no_chargeable_card`, else
+`"payment_declined"`; billing's `blockedReason` on `paymentDeclinedReason` either way; (1) `runningDailyBudgetUsd > 0 &&
 (autoTopupEnabled || orgActualBalanceUsd > runningDailyBudgetUsd)` → `"active"`; (2) else
 `configuredDailyBudgetUsd > 0` → `"paused"` (money POSTED with nothing running against it — the honest
 reading of a customer who set a ceiling and stopped, or never created, the campaign behind it); (3) else
@@ -5277,6 +5278,16 @@ reading of a customer who set a ceiling and stopped, or never created, the campa
   (NOT folded into `inactiveCount`). PAUSED stays the customer's own choice. The outlook read is once per
   org; 404 (no billing account) = no hold; any other failure fails loud — an unread verdict is not a clean
   one. Guards: the payment cases in `accounts-compute.test.ts` + `send-forecast-aggregate.test.ts`.
+- **NO CARD IS NOT A DECLINED CARD — `no_payment_method` is its own status** (set 2026-09-27, #1140). billing
+  answers `charge_blocked` / `no_chargeable_card` for an org whose card was removed or never added
+  (billing-service#505) and campaign-service stops it with stop reason `no_payment_method`
+  (campaign-service#521); the customer dashboard says "Paused: no payment method". Calling it
+  `payment_declined` made the staff audit contradict that screen for 7 orgs. Same exclusion as a declined
+  card (no running/MRR/ARR, not active), sorts right after `payment_declined`, own count
+  `stats.noPaymentMethodCount`. The declined family (`card_declined`, `card_unusable`, `retries_exhausted`,
+  `card_country_unsupported`, and any other reason) stays `payment_declined`. customer-health carries the
+  same split. Consumer: `apps/admin` audit/accounts renders every non-active/non-paused status as
+  "Inactive" (it has no case for either payment status yet).
 - **The pause flag LIED IN BOTH DIRECTIONS and is no longer written by any product surface.** That
   customer control was removed; the campaign-service brand-pause table holds 8 rows, none written since
   early August. Prod 2026-08-27: `a179bbd9` was flagged paused since 21 July while spending **$55.69 in
