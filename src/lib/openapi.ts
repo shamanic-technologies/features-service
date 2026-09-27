@@ -500,6 +500,18 @@ const revenueOutcomesSchema = z.object({
     recipientsRepliesPositive: z.number().int().nullable().describe("Distinct positive repliers cpprCents divides, on that basis."),
     unmeasuredReason: z.enum(["maturing", "maturity_unknown"]).nullable(),
   }).describe("The totals cpcCents / cpprCents divide — the ROI's basis (costEconomics.ratioBasis). The counts and spend above keep the whole history."),
+  sending: z.object({
+    recipientsSent: z.number().int().describe("Distinct leads at least one email was SENT to — the denominator of every rate in this block."),
+    recipientsDelivered: z.number().int().describe("Of recipientsSent, the ones the provider reported DELIVERED and never bounced."),
+    recipientsBounced: z.number().int().describe("Of recipientsSent, the ones whose email BOUNCED (a delivery later followed by a bounce counts here, once). outcomes.recipientsBounced may be slightly larger: it also counts a bounce with no recorded send."),
+    recipientsAwaitingDelivery: z.number().int().describe("Of recipientsSent, the ones with neither a delivery nor a bounce reported yet. recipientsDelivered + recipientsBounced + recipientsAwaitingDelivery = recipientsSent."),
+    recipientsReplied: z.number().int().describe("Of recipientsSent, the ones who REPLIED, whatever the reply said."),
+    recipientsRepliedPositive: z.number().int().describe("Of recipientsSent, the ones whose reply was positive (sender-classified or evidenced by the customer's CRM)."),
+    deliveryRatePct: z.number().nullable().describe("100 × recipientsDelivered ÷ recipientsSent. Null only when nothing was sent (no denominator); 0 is measured."),
+    bounceRatePct: z.number().nullable().describe("100 × recipientsBounced ÷ recipientsSent. Null only when nothing was sent."),
+    replyRatePct: z.number().nullable().describe("100 × recipientsReplied ÷ recipientsSent. Null only when nothing was sent."),
+    positiveReplyRatePct: z.number().nullable().describe("100 × recipientsRepliedPositive ÷ recipientsSent. Null only when nothing was sent."),
+  }).describe("WHAT HAPPENED TO THE EMAILS THIS GRAIN SENT — delivery and reply on ONE denominator (distinct leads sent to), whole history, same deduped person set as the counts above. Every rate is served so no consumer divides."),
 });
 
 // WHICH DOLLARS A FIGURE IS MADE OF. Declared once, here, because it is answered at two grains — per

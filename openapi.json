@@ -2164,6 +2164,68 @@
                   "unmeasuredReason"
                 ],
                 "description": "The totals cpcCents / cpprCents divide — the ROI's basis (costEconomics.ratioBasis). The counts and spend above keep the whole history."
+              },
+              "sending": {
+                "type": "object",
+                "properties": {
+                  "recipientsSent": {
+                    "type": "integer",
+                    "description": "Distinct leads at least one email was SENT to — the denominator of every rate in this block."
+                  },
+                  "recipientsDelivered": {
+                    "type": "integer",
+                    "description": "Of recipientsSent, the ones the provider reported DELIVERED and never bounced."
+                  },
+                  "recipientsBounced": {
+                    "type": "integer",
+                    "description": "Of recipientsSent, the ones whose email BOUNCED (a delivery later followed by a bounce counts here, once). outcomes.recipientsBounced may be slightly larger: it also counts a bounce with no recorded send."
+                  },
+                  "recipientsAwaitingDelivery": {
+                    "type": "integer",
+                    "description": "Of recipientsSent, the ones with neither a delivery nor a bounce reported yet. recipientsDelivered + recipientsBounced + recipientsAwaitingDelivery = recipientsSent."
+                  },
+                  "recipientsReplied": {
+                    "type": "integer",
+                    "description": "Of recipientsSent, the ones who REPLIED, whatever the reply said."
+                  },
+                  "recipientsRepliedPositive": {
+                    "type": "integer",
+                    "description": "Of recipientsSent, the ones whose reply was positive (sender-classified or evidenced by the customer's CRM)."
+                  },
+                  "deliveryRatePct": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "100 × recipientsDelivered ÷ recipientsSent. Null only when nothing was sent (no denominator); 0 is measured."
+                  },
+                  "bounceRatePct": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "100 × recipientsBounced ÷ recipientsSent. Null only when nothing was sent."
+                  },
+                  "replyRatePct": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "100 × recipientsReplied ÷ recipientsSent. Null only when nothing was sent."
+                  },
+                  "positiveReplyRatePct": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "100 × recipientsRepliedPositive ÷ recipientsSent. Null only when nothing was sent."
+                  }
+                },
+                "required": [
+                  "recipientsSent",
+                  "recipientsDelivered",
+                  "recipientsBounced",
+                  "recipientsAwaitingDelivery",
+                  "recipientsReplied",
+                  "recipientsRepliedPositive",
+                  "deliveryRatePct",
+                  "bounceRatePct",
+                  "replyRatePct",
+                  "positiveReplyRatePct"
+                ],
+                "description": "WHAT HAPPENED TO THE EMAILS THIS GRAIN SENT — delivery and reply on ONE denominator (distinct leads sent to), whole history, same deduped person set as the counts above. Every rate is served so no consumer divides."
               }
             },
             "required": [
@@ -2177,7 +2239,8 @@
               "actualSpentCents",
               "cpcCents",
               "cpprCents",
-              "ratioBasis"
+              "ratioBasis",
+              "sending"
             ],
             "description": "The VOLUME half of this scope's answer — how much real outcome evidence the money above rests on: outreach volume, website visits, positive replies, committed spend, and the cost of a visit and of a reply. Built from the SAME deduped leads and the SAME committed cents as the money, so the two are coherent by construction rather than by correction. NULL only when this scope's leads were never read — a feature with no funnel wired, whose money half is honestly null too; null is 'we could not count this', never 'it reached nobody' (that is 0). Null on the lensed (?lens=) response for the same reason `spend` is: a lens is a SUBSET of the brand's leads while its spend leg is the brand's whole spend."
           },
@@ -3212,6 +3275,68 @@
                         "unmeasuredReason"
                       ],
                       "description": "The totals cpcCents / cpprCents divide — the ROI's basis (costEconomics.ratioBasis). The counts and spend above keep the whole history."
+                    },
+                    "sending": {
+                      "type": "object",
+                      "properties": {
+                        "recipientsSent": {
+                          "type": "integer",
+                          "description": "Distinct leads at least one email was SENT to — the denominator of every rate in this block."
+                        },
+                        "recipientsDelivered": {
+                          "type": "integer",
+                          "description": "Of recipientsSent, the ones the provider reported DELIVERED and never bounced."
+                        },
+                        "recipientsBounced": {
+                          "type": "integer",
+                          "description": "Of recipientsSent, the ones whose email BOUNCED (a delivery later followed by a bounce counts here, once). outcomes.recipientsBounced may be slightly larger: it also counts a bounce with no recorded send."
+                        },
+                        "recipientsAwaitingDelivery": {
+                          "type": "integer",
+                          "description": "Of recipientsSent, the ones with neither a delivery nor a bounce reported yet. recipientsDelivered + recipientsBounced + recipientsAwaitingDelivery = recipientsSent."
+                        },
+                        "recipientsReplied": {
+                          "type": "integer",
+                          "description": "Of recipientsSent, the ones who REPLIED, whatever the reply said."
+                        },
+                        "recipientsRepliedPositive": {
+                          "type": "integer",
+                          "description": "Of recipientsSent, the ones whose reply was positive (sender-classified or evidenced by the customer's CRM)."
+                        },
+                        "deliveryRatePct": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "100 × recipientsDelivered ÷ recipientsSent. Null only when nothing was sent (no denominator); 0 is measured."
+                        },
+                        "bounceRatePct": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "100 × recipientsBounced ÷ recipientsSent. Null only when nothing was sent."
+                        },
+                        "replyRatePct": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "100 × recipientsReplied ÷ recipientsSent. Null only when nothing was sent."
+                        },
+                        "positiveReplyRatePct": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "100 × recipientsRepliedPositive ÷ recipientsSent. Null only when nothing was sent."
+                        }
+                      },
+                      "required": [
+                        "recipientsSent",
+                        "recipientsDelivered",
+                        "recipientsBounced",
+                        "recipientsAwaitingDelivery",
+                        "recipientsReplied",
+                        "recipientsRepliedPositive",
+                        "deliveryRatePct",
+                        "bounceRatePct",
+                        "replyRatePct",
+                        "positiveReplyRatePct"
+                      ],
+                      "description": "WHAT HAPPENED TO THE EMAILS THIS GRAIN SENT — delivery and reply on ONE denominator (distinct leads sent to), whole history, same deduped person set as the counts above. Every rate is served so no consumer divides."
                     }
                   },
                   "required": [
@@ -3225,7 +3350,8 @@
                     "actualSpentCents",
                     "cpcCents",
                     "cpprCents",
-                    "ratioBasis"
+                    "ratioBasis",
+                    "sending"
                   ],
                   "description": "The VOLUME half of this campaign's answer — how much real outcome evidence its ROI, %CAC and pipeline rest on. It exists because those three are derived from however many outcomes the campaign has produced so far: with one or two behind them they are decided by whichever one landed and swing by whole multiples on the next reply, so a consumer that cannot see the volume reads noise as a measurement. Totalled over the campaign's IDENTITY exactly as the money is — its stopped ancestors included — and deduped inside it, so a lead served under two member rows is ONE person here as it is one person to the brand, and every member of an identity carries the identical block. Across identities the counts do NOT sum to the brand (a lead worked under two campaigns is one lead to the brand and belongs to both), the same counting-people property the money half carries. NULL only when no funnel is wired for the feature and the leads were never read — never a fabricated 0."
                 }
@@ -3539,6 +3665,68 @@
                         "unmeasuredReason"
                       ],
                       "description": "The totals cpcCents / cpprCents divide — the ROI's basis (costEconomics.ratioBasis). The counts and spend above keep the whole history."
+                    },
+                    "sending": {
+                      "type": "object",
+                      "properties": {
+                        "recipientsSent": {
+                          "type": "integer",
+                          "description": "Distinct leads at least one email was SENT to — the denominator of every rate in this block."
+                        },
+                        "recipientsDelivered": {
+                          "type": "integer",
+                          "description": "Of recipientsSent, the ones the provider reported DELIVERED and never bounced."
+                        },
+                        "recipientsBounced": {
+                          "type": "integer",
+                          "description": "Of recipientsSent, the ones whose email BOUNCED (a delivery later followed by a bounce counts here, once). outcomes.recipientsBounced may be slightly larger: it also counts a bounce with no recorded send."
+                        },
+                        "recipientsAwaitingDelivery": {
+                          "type": "integer",
+                          "description": "Of recipientsSent, the ones with neither a delivery nor a bounce reported yet. recipientsDelivered + recipientsBounced + recipientsAwaitingDelivery = recipientsSent."
+                        },
+                        "recipientsReplied": {
+                          "type": "integer",
+                          "description": "Of recipientsSent, the ones who REPLIED, whatever the reply said."
+                        },
+                        "recipientsRepliedPositive": {
+                          "type": "integer",
+                          "description": "Of recipientsSent, the ones whose reply was positive (sender-classified or evidenced by the customer's CRM)."
+                        },
+                        "deliveryRatePct": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "100 × recipientsDelivered ÷ recipientsSent. Null only when nothing was sent (no denominator); 0 is measured."
+                        },
+                        "bounceRatePct": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "100 × recipientsBounced ÷ recipientsSent. Null only when nothing was sent."
+                        },
+                        "replyRatePct": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "100 × recipientsReplied ÷ recipientsSent. Null only when nothing was sent."
+                        },
+                        "positiveReplyRatePct": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "100 × recipientsRepliedPositive ÷ recipientsSent. Null only when nothing was sent."
+                        }
+                      },
+                      "required": [
+                        "recipientsSent",
+                        "recipientsDelivered",
+                        "recipientsBounced",
+                        "recipientsAwaitingDelivery",
+                        "recipientsReplied",
+                        "recipientsRepliedPositive",
+                        "deliveryRatePct",
+                        "bounceRatePct",
+                        "replyRatePct",
+                        "positiveReplyRatePct"
+                      ],
+                      "description": "WHAT HAPPENED TO THE EMAILS THIS GRAIN SENT — delivery and reply on ONE denominator (distinct leads sent to), whole history, same deduped person set as the counts above. Every rate is served so no consumer divides."
                     }
                   },
                   "required": [
@@ -3552,7 +3740,8 @@
                     "actualSpentCents",
                     "cpcCents",
                     "cpprCents",
-                    "ratioBasis"
+                    "ratioBasis",
+                    "sending"
                   ],
                   "description": "The VOLUME half of this workflow's answer — this brand's own outreach through this dynasty and what it cost, the same figures the un-grouped brand read gives for the whole brand. Every figure rides COMMITTED spend, the single basis costEconomics rides, so cpcCents × recipientsClicked ≈ committedSpentCents by construction. This block once rode billed-only spend to avoid a committed numerator beside a realized ROI; the ROI moved to committed, so that divergence would now BE the incoherence. Counts are distinct leads: a lead served under two workflows is one lead to the brand and belongs to both groups, so the groups do not sum to the brand (the same counting-people property the money half carries); a lead served under no workflow is in no group."
                 }
@@ -6988,6 +7177,68 @@
                   "unmeasuredReason"
                 ],
                 "description": "The totals cpcCents / cpprCents divide — the ROI's basis (costEconomics.ratioBasis). The counts and spend above keep the whole history."
+              },
+              "sending": {
+                "type": "object",
+                "properties": {
+                  "recipientsSent": {
+                    "type": "integer",
+                    "description": "Distinct leads at least one email was SENT to — the denominator of every rate in this block."
+                  },
+                  "recipientsDelivered": {
+                    "type": "integer",
+                    "description": "Of recipientsSent, the ones the provider reported DELIVERED and never bounced."
+                  },
+                  "recipientsBounced": {
+                    "type": "integer",
+                    "description": "Of recipientsSent, the ones whose email BOUNCED (a delivery later followed by a bounce counts here, once). outcomes.recipientsBounced may be slightly larger: it also counts a bounce with no recorded send."
+                  },
+                  "recipientsAwaitingDelivery": {
+                    "type": "integer",
+                    "description": "Of recipientsSent, the ones with neither a delivery nor a bounce reported yet. recipientsDelivered + recipientsBounced + recipientsAwaitingDelivery = recipientsSent."
+                  },
+                  "recipientsReplied": {
+                    "type": "integer",
+                    "description": "Of recipientsSent, the ones who REPLIED, whatever the reply said."
+                  },
+                  "recipientsRepliedPositive": {
+                    "type": "integer",
+                    "description": "Of recipientsSent, the ones whose reply was positive (sender-classified or evidenced by the customer's CRM)."
+                  },
+                  "deliveryRatePct": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "100 × recipientsDelivered ÷ recipientsSent. Null only when nothing was sent (no denominator); 0 is measured."
+                  },
+                  "bounceRatePct": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "100 × recipientsBounced ÷ recipientsSent. Null only when nothing was sent."
+                  },
+                  "replyRatePct": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "100 × recipientsReplied ÷ recipientsSent. Null only when nothing was sent."
+                  },
+                  "positiveReplyRatePct": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "100 × recipientsRepliedPositive ÷ recipientsSent. Null only when nothing was sent."
+                  }
+                },
+                "required": [
+                  "recipientsSent",
+                  "recipientsDelivered",
+                  "recipientsBounced",
+                  "recipientsAwaitingDelivery",
+                  "recipientsReplied",
+                  "recipientsRepliedPositive",
+                  "deliveryRatePct",
+                  "bounceRatePct",
+                  "replyRatePct",
+                  "positiveReplyRatePct"
+                ],
+                "description": "WHAT HAPPENED TO THE EMAILS THIS GRAIN SENT — delivery and reply on ONE denominator (distinct leads sent to), whole history, same deduped person set as the counts above. Every rate is served so no consumer divides."
               }
             },
             "required": [
@@ -7001,7 +7252,8 @@
               "actualSpentCents",
               "cpcCents",
               "cpprCents",
-              "ratioBasis"
+              "ratioBasis",
+              "sending"
             ],
             "description": "The VOLUME half of this scope's answer — how much real outcome evidence the money above rests on: outreach volume, website visits, positive replies, committed spend, and the cost of a visit and of a reply. Built from the SAME deduped leads and the SAME committed cents as the money, so the two are coherent by construction rather than by correction. NULL only when this scope's leads were never read — a feature with no funnel wired, whose money half is honestly null too; null is 'we could not count this', never 'it reached nobody' (that is 0). Null on the lensed (?lens=) response for the same reason `spend` is: a lens is a SUBSET of the brand's leads while its spend leg is the brand's whole spend."
           },
@@ -10320,6 +10572,68 @@
                   "unmeasuredReason"
                 ],
                 "description": "The totals cpcCents / cpprCents divide — the ROI's basis (costEconomics.ratioBasis). The counts and spend above keep the whole history."
+              },
+              "sending": {
+                "type": "object",
+                "properties": {
+                  "recipientsSent": {
+                    "type": "integer",
+                    "description": "Distinct leads at least one email was SENT to — the denominator of every rate in this block."
+                  },
+                  "recipientsDelivered": {
+                    "type": "integer",
+                    "description": "Of recipientsSent, the ones the provider reported DELIVERED and never bounced."
+                  },
+                  "recipientsBounced": {
+                    "type": "integer",
+                    "description": "Of recipientsSent, the ones whose email BOUNCED (a delivery later followed by a bounce counts here, once). outcomes.recipientsBounced may be slightly larger: it also counts a bounce with no recorded send."
+                  },
+                  "recipientsAwaitingDelivery": {
+                    "type": "integer",
+                    "description": "Of recipientsSent, the ones with neither a delivery nor a bounce reported yet. recipientsDelivered + recipientsBounced + recipientsAwaitingDelivery = recipientsSent."
+                  },
+                  "recipientsReplied": {
+                    "type": "integer",
+                    "description": "Of recipientsSent, the ones who REPLIED, whatever the reply said."
+                  },
+                  "recipientsRepliedPositive": {
+                    "type": "integer",
+                    "description": "Of recipientsSent, the ones whose reply was positive (sender-classified or evidenced by the customer's CRM)."
+                  },
+                  "deliveryRatePct": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "100 × recipientsDelivered ÷ recipientsSent. Null only when nothing was sent (no denominator); 0 is measured."
+                  },
+                  "bounceRatePct": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "100 × recipientsBounced ÷ recipientsSent. Null only when nothing was sent."
+                  },
+                  "replyRatePct": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "100 × recipientsReplied ÷ recipientsSent. Null only when nothing was sent."
+                  },
+                  "positiveReplyRatePct": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "100 × recipientsRepliedPositive ÷ recipientsSent. Null only when nothing was sent."
+                  }
+                },
+                "required": [
+                  "recipientsSent",
+                  "recipientsDelivered",
+                  "recipientsBounced",
+                  "recipientsAwaitingDelivery",
+                  "recipientsReplied",
+                  "recipientsRepliedPositive",
+                  "deliveryRatePct",
+                  "bounceRatePct",
+                  "replyRatePct",
+                  "positiveReplyRatePct"
+                ],
+                "description": "WHAT HAPPENED TO THE EMAILS THIS GRAIN SENT — delivery and reply on ONE denominator (distinct leads sent to), whole history, same deduped person set as the counts above. Every rate is served so no consumer divides."
               }
             },
             "required": [
@@ -10333,7 +10647,8 @@
               "actualSpentCents",
               "cpcCents",
               "cpprCents",
-              "ratioBasis"
+              "ratioBasis",
+              "sending"
             ],
             "description": "The VOLUME half of this scope's answer — how much real outcome evidence the money above rests on: outreach volume, website visits, positive replies, committed spend, and the cost of a visit and of a reply. Built from the SAME deduped leads and the SAME committed cents as the money, so the two are coherent by construction rather than by correction. NULL only when this scope's leads were never read — a feature with no funnel wired, whose money half is honestly null too; null is 'we could not count this', never 'it reached nobody' (that is 0). Null on the lensed (?lens=) response for the same reason `spend` is: a lens is a SUBSET of the brand's leads while its spend leg is the brand's whole spend."
           },
