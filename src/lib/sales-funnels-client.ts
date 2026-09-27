@@ -52,6 +52,21 @@ export class SeveralOffersDeclaredError extends SalesFunnelsUnavailableError {
   }
 }
 
+/**
+ * A read NAMED an offer the brand does not sell. Not an outage and not a choice between several answers:
+ * the caller asked about something that is not there. Subclasses the unavailable error so every
+ * existing `instanceof` catch keeps behaving as it did; a route that can say "not found" checks for it first.
+ */
+export class OfferNotOfBrandError extends SalesFunnelsUnavailableError {
+  constructor(
+    message: string,
+    readonly offerId: string,
+  ) {
+    super(message);
+    this.name = "OfferNotOfBrandError";
+  }
+}
+
 /** What a consumer is told when the declaration could not be resolved to ONE offer's terms. */
 export interface DeclaredFunnelsUnresolved {
   /** Machine-readable; the only value today. Never prose a consumer has to match on. */

@@ -53,6 +53,7 @@ import { buildOfferLegPartition } from "./offer-outcomes.js";
 import {
   SalesFunnelsUnavailableError,
   SeveralOffersDeclaredError,
+  OfferNotOfBrandError,
   type DeclaredSalesFunnel,
 } from "./sales-funnels-client.js";
 import { matchSalesFunnelKey, SALES_FUNNELS, salesFunnelIndex, type SalesFunnelKey } from "./sales-funnels.js";
@@ -175,7 +176,7 @@ export function offerLegKeys(
 export function resolvePricedOffer(offers: readonly BrandOfferEconomics[], offerId: string | null | undefined, brandId: string): BrandOfferEconomics {
   if (offerId) {
     const offer = offers.find((o) => o.offerId === offerId);
-    if (!offer) throw new SalesFunnelsUnavailableError(`offer ${offerId} is not an offer of brand ${brandId}`);
+    if (!offer) throw new OfferNotOfBrandError(`offer ${offerId} is not an offer of brand ${brandId}`, offerId);
     return offer;
   }
   if (offers.length === 0) {
