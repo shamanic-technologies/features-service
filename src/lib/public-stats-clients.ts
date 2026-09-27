@@ -83,8 +83,12 @@ export async function fetchPublicCosts(
   // defaults to INCURRED here and every call site takes it. A fleet with nothing comped reads
   // byte-identically on either basis (`selectCostCentsString` returns the producer string untouched).
   basis: CostBasis = "incurred",
+  // Narrow the fleet to these campaigns (runs-service `campaignIds`, at most 500 per request — the
+  // caller chunks). Used by a LEG-scoped ladder: only the campaigns performing that leg count.
+  campaignIds?: readonly string[],
 ): Promise<CostGroup[]> {
   const params = new URLSearchParams({ featureSlugs, groupBy });
+  if (campaignIds && campaignIds.length > 0) params.set("campaignIds", campaignIds.join(","));
 
   const url = `${process.env.RUNS_SERVICE_URL}/v1/stats/public/costs?${params}`;
   const response = await fetchWithRetry(url, {
@@ -228,8 +232,13 @@ export async function fetchPublicEmailStats(
   // Optional workflow-dynasty filter (resolved to all versioned slugs upstream). Combined with
   // groupBy=day it yields ONE dynasty's dated outcomes — the per-workflow RECENT-window join partner.
   workflowDynastySlug?: string,
+  // Narrow to these campaigns (email-gateway `campaignIds`, at most 200 per request — the caller chunks).
+  campaignIds?: readonly string[],
 ): Promise<Map<string, Record<string, number>>> {
   const params = new URLSearchParams({ featureSlugs, groupBy });
+  if (campaignIds && campaignIds.length > 0) {
+    params.set(campaignIds.length === 1 ? "campaignId" : "campaignIds", campaignIds.join(","));
+  }
   // email-gateway accepts a comma-separated brandId filter (per its public /stats contract).
   if (brandIds && brandIds.length > 0) params.set("brandId", brandIds.join(","));
   if (workflowDynastySlug) params.set("workflowDynastySlug", workflowDynastySlug);
