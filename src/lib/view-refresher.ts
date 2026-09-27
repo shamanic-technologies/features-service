@@ -114,6 +114,15 @@ export function captureRequestReplay(req: Request, res: Response, next: NextFunc
       replay.answer = (value) => {
         if (sent) return;
         sent = true;
+        // The handler already answered on its own (a stale snapshot sent with `res.send` before the
+        // target view was reached): the server has fallen back to its own compute. Answering again would
+        // THROW inside the target's compute — and a fail-soft reader around it (contacted-lead pricing)
+        // would swallow that as "unreadable" and persist a DEGRADED body (features-service#1166). Stand
+        // down; the compute runs on and persists the correct value.
+        if (res.headersSent) {
+          console.error(`[features-service] view refresher: ${replay.target?.view ?? "target"} computed after the handler already answered ${req.originalUrl} — not answered twice`);
+          return;
+        }
         status(200);
         json({ [ENVELOPE]: value });
       };

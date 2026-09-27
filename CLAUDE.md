@@ -219,6 +219,11 @@ the loop was busy refreshing its neighbours. `lib/view-refresher.ts`:
   dropped). It is the COMPUTED value, not the HTTP body, because some handlers shape the cached value
   (audience-stats caches a result union). A refresher that answers anything else → the server computes
   locally, loudly, so a typed 404/409 still surfaces with its own status.
+- **The refresher's answer NEVER throws.** A handler can send its own response first (`sendSnapshotJson` uses
+  `res.send`, which the target hijack does not intercept); a target reached afterwards (a background revalidate)
+  then answered into a sent response, threw `ERR_HTTP_HEADERS_SENT` INSIDE the target's compute, and the
+  fail-soft contacted-lead pricing swallowed it and persisted a degraded body (#1166: 11 orgs / $7,759 instead
+  of 6,019 / $8,283). The answer stands down when `res.headersSent`; the server has already fallen back.
 - **Do NOT reintroduce an "outermost view only" claim**: the first cached read of a brand-revenue request
   is the effective-rates cell, so claiming the first call left brand-revenue's own refresh on the server
   loop (measured: p95 still 2.2s). Outside a request (boot warms, fleet sweeps) computes stay in-process.

@@ -568,6 +568,42 @@ describe("servedCached with the view refresher", () => {
     }
   });
 
+  it("REFRESHER role: a target reached AFTER the handler already answered neither throws nor degrades (#1166)", async () => {
+    try {
+      process.env.VIEW_CACHE_ROLE = "refresher";
+      const key = buildScopeKey("b1", { orgId: "o", econ: "e" });
+      storedRow = undefined as typeof storedRow;
+      const compute = vi.fn().mockResolvedValue({ contacted: 6019 });
+      // Express: once a response went out, a second send THROWS ERR_HTTP_HEADERS_SENT.
+      const res = {
+        statusCode: 200,
+        headersSent: false,
+        sent: [] as unknown[],
+        status(code: number) { res.statusCode = code; return res; },
+        json(p: unknown) {
+          if (res.headersSent) throw Object.assign(new Error("Cannot set headers after they are sent to the client"), { code: "ERR_HTTP_HEADERS_SENT" });
+          res.headersSent = true;
+          res.sent.push(p);
+          return res;
+        },
+      };
+      const value = await inRequest(
+        async () => {
+          res.json({ servedSnapshot: true }); // the handler answered with a stale snapshot first
+          // …and a background revalidate of that snapshot reaches the target view afterwards.
+          return servedCached({ view: "brand-contacted-value", scopeKey: key, orgId: "o", compute });
+        },
+        { [REFRESH_HEADER]: targetHeader("brand-contacted-value", familyKeyOf(key)) },
+        res as never,
+      );
+      expect(value).toEqual({ contacted: 6019 }); // the reader gets the real value, not a swallowed throw
+      expect(storedRow?.body).toEqual({ contacted: 6019 });
+      expect(res.sent).toEqual([{ servedSnapshot: true }]);
+    } finally {
+      restore();
+    }
+  });
+
   it("REFRESHER role: a view that is NOT the target is read through the cache as usual", async () => {
     try {
       process.env.VIEW_CACHE_ROLE = "refresher";
