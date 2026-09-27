@@ -15,6 +15,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
 import { offerEconomicsFromDeclared } from "../lib/leg-economics-fixture.js";
 
+vi.mock("../lib/workflow-leg-assignments.js", async (importOriginal) => {
+  const { everyWorkflowActive } = await import("../lib/leg-assignments-fixture.js");
+  return {
+    ...(await importOriginal<typeof import("../lib/workflow-leg-assignments.js")>()),
+    fetchLegAssignments: vi.fn(async () => everyWorkflowActive()),
+  };
+});
 vi.mock("../db/index.js", () => ({
   db: { query: { features: { findFirst: vi.fn(), findMany: vi.fn() } } },
   sql: {},

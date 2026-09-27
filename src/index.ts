@@ -20,6 +20,7 @@ import conversionRatesRoutes from "./routes/conversion-rates.js";
 import audienceStatsRoutes from "./routes/audience-stats.js";
 import publicRoutes, { warmFleetReturnSnapshotsOnBoot, warmShowcaseFunnelsOnBoot } from "./routes/public.js";
 import viewCacheAdminRoutes from "./routes/view-cache-admin.js";
+import workflowLegAssignmentsRoutes from "./routes/workflow-leg-assignments.js";
 import { registerSeedFeatures } from "./seed/register.js";
 import { startViewKeeper } from "./lib/view-keeper.js";
 import {
@@ -67,6 +68,7 @@ app.use(contactedValueRoutes);
 app.use(dealsValueRoutes);
 app.use(conversionRatesRoutes);
 app.use(viewCacheAdminRoutes);
+app.use(workflowLegAssignmentsRoutes);
 
 // 404 handler
 app.use((req, res) => {
