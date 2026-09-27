@@ -1512,6 +1512,11 @@ export interface WorkflowProjectionEvidence {
    */
   retiredBrandGrain?: Array<[string, WorkflowGrainEvidence]>;
   retiredCampaignGrain?: Array<[string, WorkflowGrainEvidence]>;
+  /**
+   * The LEG this evidence is scoped to (every grain counts only that leg's campaigns). Absent on a
+   * leg-less read. It also makes a grain count only when it REACHED somebody on the leg.
+   */
+  legKey?: string;
 }
 
 export async function fetchWorkflowProjectionEvidence(input: {
@@ -1598,6 +1603,7 @@ export async function fetchWorkflowProjectionEvidence(input: {
   if (fleetReplies) setReplyCountsOnSlugStats(emailStats, fleetReplies);
 
   return {
+    ...(legFleet && legKey ? { legKey } : {}),
     workflows,
     crossOrgCostGroups: costGroups,
     crossOrgEmailStats: [...emailStats.entries()],
@@ -1802,6 +1808,15 @@ export function projectFromEvidence(input: {
       if (wf.status === "active") activeSlugByDynasty.set(wf.workflowDynastySlug, activeSlug);
     }
 
+    // A grain COUNTS when it spent — and, on a LEG read, when it also REACHED somebody on that leg. A
+    // workflow that only ran discovery / enrichment on the leg's campaigns (prod 2026-09-27: cerulean,
+    // $0.47 of visit-leg spend, nobody contacted) has not been measured on the leg: counting it would
+    // floor its price to that spend and put a workflow that never sent on the leg at the top of it. It
+    // falls to the explore allowance instead, like any workflow the leg has not tried. Leg-less reads
+    // keep the spend-only rule, byte-unchanged.
+    const grainCounts = (ev: WorkflowGrainEvidence | undefined | null): ev is WorkflowGrainEvidence =>
+      Boolean(ev) && ev!.totalCostInUsdCents > 0 && (!evidence.legKey || ev!.contacted > 0);
+
     // ── Brand-level rows (audienceId: null), one per active workflow dynasty ────────────────────
     // Keyed by the dynasty's active slug. crossOrg grain always present (real fleet spend); brand grain
     // added only when the brand spent on the dynasty (spentUsd > 0).
@@ -1819,15 +1834,15 @@ export function projectFromEvidence(input: {
       // Cascade: crossOrg (no parent) → brand floors against crossOrg. Build coarser-first so the
       // finer grain can floor against the coarser grain's resolved unit costs.
       const estimatesByGrain: Partial<Record<GrainName, GrainBlock>> = {};
-      if (crossOrgEvidence.totalCostInUsdCents > 0) estimatesByGrain.crossOrg = buildBlock(crossOrgEvidence);
+      if (grainCounts(crossOrgEvidence)) estimatesByGrain.crossOrg = buildBlock(crossOrgEvidence);
       const brandEv = brandGrain.get(activeSlug);
-      if (brandEv && brandEv.totalCostInUsdCents > 0) {
+      if (grainCounts(brandEv)) {
         estimatesByGrain.brand = buildBlock(brandEv, estimatesByGrain.crossOrg?.unitCosts ?? null);
       }
       // … → brand → CAMPAIGN: one narrowing finer than the brand, floored against it, so a campaign
       // that has barely spent reads its brand's price rather than looking free.
       const campaignEv = campaignGrain?.get(activeSlug);
-      if (campaignEv && campaignEv.totalCostInUsdCents > 0) {
+      if (grainCounts(campaignEv)) {
         estimatesByGrain.campaign = buildBlock(
           campaignEv,
           estimatesByGrain.brand?.unitCosts ?? estimatesByGrain.crossOrg?.unitCosts ?? null,
@@ -1838,7 +1853,7 @@ export function projectFromEvidence(input: {
       // same number. A STATED grain only: it never enters `resolved`, `rank` or the recommendation, and
       // the campaign grain keeps its brand parent, so nothing campaign-service reads moves.
       const offerEv = offerGrain?.get(activeSlug);
-      if (offerEv && offerEv.totalCostInUsdCents > 0) {
+      if (grainCounts(offerEv)) {
         estimatesByGrain.offer = buildBlock(
           offerEv,
           estimatesByGrain.brand?.unitCosts ?? estimatesByGrain.crossOrg?.unitCosts ?? null,
@@ -1906,22 +1921,23 @@ export function projectFromEvidence(input: {
         // Cascade: crossOrg (no parent) → brand (parent crossOrg) → audience (parent brand ?? crossOrg).
         const estimatesByGrain: Partial<Record<GrainName, GrainBlock>> = {};
         const cost = costMap.get(activeSlug);
-        if (cost && cost.totalCostInUsdCents > 0) {
+        if (cost) {
           const outcomes = aggregatedOutcomes.get(activeSlug) ?? {};
-          estimatesByGrain.crossOrg = buildBlock({
+          const crossOrgEv: WorkflowGrainEvidence = {
             totalCostInUsdCents: cost.totalCostInUsdCents,
             completedRuns: cost.completedRuns,
             contacted: outcomes.recipientsContacted ?? 0,
             clicks: outcomes.recipientsClicked ?? 0,
             replies: outcomes.recipientsRepliesPositive ?? 0,
-          });
+          };
+          if (grainCounts(crossOrgEv)) estimatesByGrain.crossOrg = buildBlock(crossOrgEv);
         }
         const brandEv = brandGrain.get(activeSlug);
-        if (brandEv && brandEv.totalCostInUsdCents > 0) {
+        if (grainCounts(brandEv)) {
           estimatesByGrain.brand = buildBlock(brandEv, estimatesByGrain.crossOrg?.unitCosts ?? null);
         }
         const campaignEv = campaignGrain?.get(activeSlug);
-        if (campaignEv && campaignEv.totalCostInUsdCents > 0) {
+        if (grainCounts(campaignEv)) {
           estimatesByGrain.campaign = buildBlock(
             campaignEv,
             estimatesByGrain.brand?.unitCosts ?? estimatesByGrain.crossOrg?.unitCosts ?? null,
@@ -1930,7 +1946,7 @@ export function projectFromEvidence(input: {
         const audienceParent =
           estimatesByGrain.campaign?.unitCosts ?? estimatesByGrain.brand?.unitCosts ?? estimatesByGrain.crossOrg?.unitCosts ?? null;
         const audEv = ev.byDynasty.get(dynastySlug);
-        if (audEv && audEv.totalCostInUsdCents > 0) estimatesByGrain.audience = buildBlock(audEv, audienceParent);
+        if (grainCounts(audEv)) estimatesByGrain.audience = buildBlock(audEv, audienceParent);
 
         // A couple with no grain at all (no crossOrg/brand/campaign/audience spend) has nothing to project.
         if (!estimatesByGrain.crossOrg && !estimatesByGrain.brand && !estimatesByGrain.campaign && !estimatesByGrain.audience)

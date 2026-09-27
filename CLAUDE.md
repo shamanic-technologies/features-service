@@ -18,7 +18,9 @@ click behind it came from conversation-leg campaigns (brand `c4b5284d…`).
   replies (brand + fleet cell) keep only repliers served under a leg campaign.
 - **A workflow with no evidence on the leg has no grain**: it reads `measured: false` (the explore
   allowance, priced off the leg's OWN outreach price), never a price borrowed from another leg, and is
-  never recommended. campaign-service's selection now rests on leg-scoped evidence with no change there.
+  never recommended. **On a leg, a grain counts only if it CONTACTED somebody** (`grainCounts`, keyed on
+  `evidence.legKey`): prod after v0.179.1, cerulean held $0.47 of visit-leg spend (34 runs of discovery +
+  enrichment on 2026-08-25, nobody emailed), floored to $0.47 and was RECOMMENDED #1 on the visit leg. campaign-service's selection now rests on leg-scoped evidence with no change there.
 - `leg` rides the evidence `scope_key`. **A leg-less read is byte-unchanged** (no campaign-service read).
 - Tests: the suite-wide default mocks `fetchLegFleetEvidence` to `undefined` (`src/vitest.setup.ts`) so
   leg suites keep their fixtures. Guards: `routes/workflow-projection-leg-scope.test.ts` (unmeasured on the

@@ -115,6 +115,9 @@ const LEDGER = [
   { campaignId: "c-conv-other", orgId: "org-2", brandId: OTHER_BRAND, slug: "wf-cer", cents: 20000, contacted: 600, clicks: 1, replies: 1 },
   { campaignId: "c-visit-own", orgId: ORG, brandId: BRAND, slug: "wf-lyo", cents: 3000, contacted: 300, clicks: 15, replies: 0 },
   { campaignId: "c-visit-other", orgId: "org-2", brandId: OTHER_BRAND, slug: "wf-lyo", cents: 4000, contacted: 300, clicks: 20, replies: 0 },
+  // Cerulean TRIED the visit leg once: discovery + enrichment spend, nobody contacted. That is not a
+  // measurement on the leg — without the contact rule it would floor to $0.47 and top the leg.
+  { campaignId: "c-visit-other", orgId: "org-2", brandId: OTHER_BRAND, slug: "wf-cer", cents: 47, contacted: 0, clicks: 0, replies: 0 },
   // A legacy leg-less campaign: counted by a leg-less read, by no leg.
   { campaignId: "c-legacy", orgId: ORG, brandId: BRAND, slug: "wf-lyo", cents: 50000, contacted: 100, clicks: 0, replies: 0 },
 ];
@@ -196,7 +199,7 @@ describe("a leg-keyed ladder counts only the campaigns performing that leg", () 
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it("on the VISIT leg, a workflow that only ran conversation campaigns is NOT MEASURED — no borrowed price", async () => {
+  it("on the VISIT leg, a workflow that never REACHED anybody on it is NOT MEASURED — no borrowed price, no husk floor", async () => {
     const res = await get(`leg=${VISIT}`);
     expect(res.status).toBe(200);
     const cer = brandRow(res.body, "dyn-cer");
@@ -243,7 +246,8 @@ describe("a leg-keyed ladder counts only the campaigns performing that leg", () 
     expect(res.status).toBe(200);
     const cer = brandRow(res.body, "dyn-cer");
     const lyo = brandRow(res.body, "dyn-lyo");
-    expect(cer.estimatesByGrain.crossOrg.evidence.spentUsd).toBeCloseTo(300, 6);
+    // Every leg's spend, the visit-leg husk's $0.47 included — the contact rule is a LEG rule only.
+    expect(cer.estimatesByGrain.crossOrg.evidence.spentUsd).toBeCloseTo(300.47, 6);
     expect(cer.estimatesByGrain.crossOrg.evidence.observedClicks).toBe(2);
     expect(lyo.estimatesByGrain.crossOrg.evidence.spentUsd).toBeCloseTo(570, 6);
     expect(requested.some((u) => u.includes("/campaigns/list"))).toBe(false);
