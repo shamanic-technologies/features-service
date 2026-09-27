@@ -85,6 +85,14 @@ export function withInteractiveReads<T>(fn: () => Promise<T>): Promise<T> {
   return liveCopyScope.run(true, fn);
 }
 
+/**
+ * Run `fn` OUTSIDE any interactive view scope: a fleet sweep started from inside a view compute (a
+ * single-flight build shared by later callers) must walk each brand, never open a live copy per brand.
+ */
+export function outsideInteractiveView<T>(fn: () => Promise<T>): Promise<T> {
+  return liveCopyScope.exit(fn);
+}
+
 /** Whether the current async context is an interactive view compute (see withLiveLeadCopy). */
 export function insideInteractiveView(): boolean {
   return liveCopyScope.getStore() === true;

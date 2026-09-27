@@ -151,6 +151,77 @@ function json(body: unknown): Response {
 }
 
 const URL_BASE = "/features/sales-cold-email-outreach/workflow-projection";
+
+// ── crossOrg positive replies on the PERSON basis (features-service: fleet ⊇ brand) ───────────────
+// Prod 2026-09-27 (brand 75d7e3e8… / nimbus): email-gateway's fleet sum read 0 positive replies while
+// the brand grain, counted on the person set (a CRM-evidenced reply), read 1. The crossOrg grain now
+// counts replies on the SAME person basis, summed over the fleet (lib/fleet-positive-repliers.ts).
+describe("crossOrg positive replies are counted on the finer grains' person basis", () => {
+  beforeEach(() => {
+    vi.mocked(db.query.features.findFirst).mockResolvedValue(SALES_FEATURE as any);
+  });
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    const { fetchPositiveRepliers } = await import("../lib/crm-only-repliers.js");
+    const { fetchFleetPositiveRepliesBySlug } = await import("../lib/fleet-positive-repliers.js");
+    vi.mocked(fetchPositiveRepliers).mockImplementation(async () => undefined as any);
+    vi.mocked(fetchFleetPositiveRepliesBySlug).mockImplementation(async () => undefined as any);
+  });
+
+  it("a CRM-evidenced brand reply the sender never saw is in the fleet count, so crossOrg >= brand", async () => {
+    const { fetchPositiveRepliers } = await import("../lib/crm-only-repliers.js");
+    const { fetchFleetPositiveRepliesBySlug } = await import("../lib/fleet-positive-repliers.js");
+    const brandReplier = { leadId: "l1", email: "a@x.com", campaignId: null, workflowSlug: "wf-a", crmOnly: true };
+    vi.mocked(fetchPositiveRepliers).mockResolvedValue([brandReplier] as any);
+    // The fleet: this brand's 1 plus another brand's 2 on wf-a; nobody on wf-b.
+    vi.mocked(fetchFleetPositiveRepliesBySlug).mockResolvedValue(new Map([["wf-a", 3]]) as any);
+    // The sender saw NO positive reply anywhere in the fleet.
+    mockFetch({ crossOrgEmail: [emailGroup("wf-a", 100, 0), emailGroup("wf-b", 50, 0)], brandEmail: [emailGroup("wf-a", 25, 0, 100)] });
+
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=meetingBooked`).set(AUTH);
+    expect(res.status).toBe(200);
+    const a = rowFor(res.body, "dyn-a");
+    expect(a.estimatesByGrain.brand.evidence.observedPositiveReplies).toBe(1);
+    expect(a.estimatesByGrain.crossOrg.evidence.observedPositiveReplies).toBe(3);
+    // The fleet read is handed THIS pair's live repliers, so it can never read below them.
+    expect(vi.mocked(fetchFleetPositiveRepliesBySlug)).toHaveBeenCalledWith(
+      "sales-cold-email-outreach",
+      { orgId: "org-1", brandId: "b1", repliers: [brandReplier] },
+    );
+    // A slug the fleet person set holds nobody on reads 0 — never the sender's count on the side.
+    expect(rowFor(res.body, "dyn-b").estimatesByGrain.crossOrg.evidence.observedPositiveReplies).toBe(0);
+    for (const row of res.body.rows.filter((r: any) => r.audienceId === null)) {
+      const g = row.estimatesByGrain;
+      if (!g.crossOrg) continue;
+      for (const finer of ["brand", "offer", "campaign"]) {
+        if (g[finer]) expect(g.crossOrg.evidence.observedPositiveReplies).toBeGreaterThanOrEqual(g[finer].evidence.observedPositiveReplies);
+      }
+    }
+  });
+
+  it("a version outside the upgrade chain rolls into its dynasty at crossOrg exactly as at the brand grain", async () => {
+    // wf-a-old belongs to dyn-a but no version upgrades into wf-a from it: the brand grain has always
+    // folded it in (brandGrainDynasties); crossOrg used to drop it and read BELOW the brand.
+    const workflows = [
+      ...WORKFLOWS,
+      wf({ id: "ida-old", workflowSlug: "wf-a-old", workflowDynastySlug: "dyn-a", workflowDynastyName: "Dynasty A", status: "deprecated" }),
+    ];
+    mockFetch({
+      workflows,
+      crossOrgCost: [costGroup("wf-a", 100000), costGroup("wf-a-old", 20000), costGroup("wf-b", 100000)],
+      crossOrgEmail: [emailGroup("wf-a", 100, 50), emailGroup("wf-a-old", 10, 4), emailGroup("wf-b", 50, 10)],
+      brandCost: [costGroup("wf-a", 50000), costGroup("wf-a-old", 20000)],
+      brandEmail: [emailGroup("wf-a", 25, 5, 100), emailGroup("wf-a-old", 10, 4, 50)],
+    });
+    const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=meetingBooked`).set(AUTH);
+    expect(res.status).toBe(200);
+    const g = rowFor(res.body, "dyn-a").estimatesByGrain;
+    expect(g.brand.evidence.observedPositiveReplies).toBe(9);
+    expect(g.crossOrg.evidence.observedPositiveReplies).toBe(54);
+    expect(g.crossOrg.evidence.spentUsd).toBeCloseTo(1200, 6);
+    expect(g.crossOrg.evidence.spentUsd).toBeGreaterThanOrEqual(g.brand.evidence.spentUsd);
+  });
+});
 const rowFor = (body: any, dynasty: string, audienceId: string | null = null) =>
   body.rows.find((r: any) => r.workflow.workflowDynastySlug === dynasty && r.audienceId === audienceId);
 
