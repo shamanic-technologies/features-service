@@ -231,22 +231,41 @@ export async function servedCached<T>(args: CachedViewArgs<T>): Promise<T> {
  * is byte-for-byte what `res.json` would have produced from the computed value.
  */
 export async function servedCachedJson<T>(args: CachedViewArgs<T>): Promise<SnapshotJson> {
-  return new SnapshotJson((await servedCachedBody(args)).text());
+  const body = await servedCachedBody(args);
+  return new SnapshotJson(body.text(), body.wire);
+}
+
+/** The bytes a body goes out as, and their ETag — computed once per stored body, not per read. */
+export interface WireForm {
+  buffer?: Buffer;
+  etag?: string;
 }
 
 /** A served body as the JSON text a response carries. */
 export class SnapshotJson {
-  constructor(readonly json: string) {}
+  constructor(
+    readonly json: string,
+    readonly wire: WireForm = {},
+  ) {}
 }
 
 /**
- * Send a {@link SnapshotJson} exactly as `res.json(value)` would have sent that value: same
- * Content-Type, same bytes (`res.json` is `JSON.stringify` with no replacer or spacing here), and
- * Express still sets the ETag and answers a conditional request with 304.
+ * Send a {@link SnapshotJson} exactly as `res.json(value)` would have sent that value: the same
+ * Content-Type (`application/json; charset=utf-8`), the same bytes (`res.json` is `JSON.stringify` with
+ * no replacer or spacing here), the same ETag (Express's own ETag function over the same bytes), and a
+ * conditional request still answered 304. The UTF-8 buffer and its ETag are kept on the body, so a hot
+ * body re-sent on every poll is neither re-encoded nor re-hashed.
  */
 export function sendSnapshotJson(res: import("express").Response, body: SnapshotJson): import("express").Response {
-  if (!res.get("Content-Type")) res.type("json");
-  return res.send(body.json);
+  const wire = body.wire;
+  wire.buffer ??= Buffer.from(body.json, "utf8");
+  if (!res.get("Content-Type")) res.set("Content-Type", "application/json; charset=utf-8");
+  const etagFn = res.app?.get("etag fn") as ((chunk: Buffer) => string | undefined) | undefined;
+  if (etagFn && !res.get("ETag")) {
+    wire.etag ??= etagFn(wire.buffer);
+    if (wire.etag) res.set("ETag", wire.etag);
+  }
+  return res.send(wire.buffer);
 }
 
 async function servedCachedBody<T>({ view, scopeKey, orgId, ttlMs, maxStaleMs, compute: rawCompute }: CachedViewArgs<T>): Promise<CachedBody> {
@@ -282,13 +301,16 @@ async function servedCachedBody<T>({ view, scopeKey, orgId, ttlMs, maxStaleMs, c
 export interface CachedBody {
   text(): string;
   value(): unknown;
+  /** The wire form a send memoizes (see {@link sendSnapshotJson}); shared with the hot-body memory. */
+  wire?: WireForm;
 }
 
-export function bodyFromText(json: string): CachedBody {
+export function bodyFromText(json: string, wire: WireForm = {}): CachedBody {
   let parsed: { v: unknown } | undefined;
   return {
     text: () => json,
     value: () => (parsed ??= { v: JSON.parse(json) }).v,
+    wire,
   };
 }
 
@@ -298,6 +320,7 @@ export function bodyFromValue(value: unknown): CachedBody {
     // `res.json(undefined)` sends an empty body; `JSON.stringify(undefined)` is undefined.
     text: () => (json ??= JSON.stringify(value) ?? ""),
     value: () => value,
+    wire: {},
   };
 }
 
@@ -311,6 +334,72 @@ const storedBodyColumns = {
   bodyText: featureViewSnapshots.bodyText,
   body: sql<unknown>`case when ${featureViewSnapshots.bodyText} is null then ${featureViewSnapshots.body} end`,
 };
+
+/**
+ * HOT BODIES — the serving process remembers the text (and its wire bytes + ETag) of the cells it
+ * serves, keyed on the cell AND its `computed_at`. A hit then asks Postgres whether the row is still the
+ * one it holds, and the multi-MB text only crosses the wire when it is not: a 3.9 MB brand revenue body
+ * cost 20-40ms to fetch and decode on every poll (prod 2026-09-27) for bytes that change once a refresh.
+ * `computed_at` moves on every persist, so the memory can never serve a body the table no longer holds;
+ * a body is replaced, never merged. Bounded by `VIEW_HOT_BODY_MAX_BYTES` (48 MB by default, least
+ * recently served evicted first); 0 switches it off. Server role only: the refresher serves nobody.
+ */
+interface HotBody {
+  computedAtMs: number;
+  text: string;
+  wire: WireForm;
+  bytes: number;
+}
+
+const hotBodies = new Map<string, HotBody>();
+let hotBytes = 0;
+
+function hotMaxBytes(): number {
+  const raw = process.env.VIEW_HOT_BODY_MAX_BYTES;
+  if (raw === undefined || raw === "") return 48 * 1024 * 1024;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : 48 * 1024 * 1024;
+}
+
+function hotEnabled(): boolean {
+  return hotMaxBytes() > 0 && viewCacheRole() === "server";
+}
+
+function hotGet(key: string): HotBody | undefined {
+  const entry = hotBodies.get(key);
+  if (entry) {
+    hotBodies.delete(key);
+    hotBodies.set(key, entry); // most recently served last
+  }
+  return entry;
+}
+
+function hotRemember(key: string, computedAtMs: number, text: string): WireForm {
+  const existing = hotBodies.get(key);
+  if (existing) {
+    hotBytes -= existing.bytes;
+    hotBodies.delete(key);
+  }
+  const wire: WireForm = {};
+  // A JS string may hold two bytes per character, and the wire buffer adds one more per UTF-8 byte.
+  const bytes = text.length * 3;
+  const max = hotMaxBytes();
+  if (bytes > max) return wire;
+  hotBodies.set(key, { computedAtMs, text, wire, bytes });
+  hotBytes += bytes;
+  for (const [k, v] of hotBodies) {
+    if (hotBytes <= max) break;
+    hotBodies.delete(k);
+    hotBytes -= v.bytes;
+  }
+  return wire;
+}
+
+/** Test seam. */
+export function __resetHotBodies(): void {
+  hotBodies.clear();
+  hotBytes = 0;
+}
 
 /**
  * What a cell remembers about the request that reads it: its replay (so the keeper can precompute a
@@ -362,10 +451,23 @@ async function serveCell(
   const ttl = ttlMs ?? defaultTtlFor(view, scopeKey);
   const maxStale = maxStaleMs ?? defaultMaxStaleMs();
 
-  let row: { computedAt: Date; factsFingerprint: string | null; bodyText: string | null; body: unknown } | undefined;
+  const hotKey = `${view}\0${scopeKey}`;
+  const hot = hotEnabled() ? hotGet(hotKey) : undefined;
+  // When this process already holds the body of the row as of `hot.computedAtMs`, the row is asked for
+  // its bookkeeping only — its text is fetched only if it has moved since.
+  const unchanged = hot
+    ? sql<boolean>`${featureViewSnapshots.computedAt} = ${new Date(hot.computedAtMs).toISOString()}::timestamptz`
+    : sql<boolean>`false`;
+  let row: { computedAt: Date; factsFingerprint: string | null; bodyText: string | null; body: unknown; unchanged: boolean } | undefined;
   try {
     [row] = await db
-      .select({ computedAt: featureViewSnapshots.computedAt, factsFingerprint: featureViewSnapshots.factsFingerprint, ...storedBodyColumns })
+      .select({
+        computedAt: featureViewSnapshots.computedAt,
+        factsFingerprint: featureViewSnapshots.factsFingerprint,
+        unchanged,
+        bodyText: sql<string | null>`case when ${unchanged} then null else ${featureViewSnapshots.bodyText} end`,
+        body: sql<unknown>`case when ${unchanged} or ${featureViewSnapshots.bodyText} is not null then null else ${featureViewSnapshots.body} end`,
+      })
       .from(featureViewSnapshots)
       .where(and(eq(featureViewSnapshots.view, view), eq(featureViewSnapshots.scopeKey, scopeKey)))
       .limit(1);
@@ -376,9 +478,18 @@ async function serveCell(
   }
 
   if (row) {
-    const ageMs = Date.now() - new Date(row.computedAt).getTime();
+    const computedAtMs = new Date(row.computedAt).getTime();
+    const ageMs = Date.now() - computedAtMs;
+    const stored = row;
+    const servedBody = (): CachedBody => {
+      if (stored.unchanged === true && hot) return bodyFromText(hot.text, hot.wire);
+      if (hotEnabled() && typeof stored.bodyText === "string") {
+        return bodyFromText(stored.bodyText, hotRemember(hotKey, computedAtMs, stored.bodyText));
+      }
+      return bodyOfRow(stored);
+    };
     if (ageMs < ttl) {
-      return bodyOfRow(row); // fresh hit
+      return servedBody(); // fresh hit
     }
     if (ageMs >= maxStale) {
       return computeAndPersistSingleFlight(view, scopeKey, orgId, compute, meta);
@@ -387,7 +498,7 @@ async function serveCell(
     // background refresh first asks whether the brand's FACTS moved (lib/view-facts.ts) and skips the
     // whole-population compute when they did not.
     void revalidate(view, scopeKey, orgId, compute, meta, { storedFingerprint: row.factsFingerprint ?? null, ageMs });
-    return bodyOfRow(row);
+    return servedBody();
   }
 
   // Miss on the EXACT key. When the only thing that moved is a FINGERPRINT part (the economics or the

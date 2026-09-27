@@ -82,6 +82,7 @@ import {
 import { computeAudienceStats, type ComputeResult } from "../lib/audience-stats-compute.js";
 import { computeOfferPipelineActivity } from "./pipeline-activity.js";
 import { fetchEffectiveEconomics, economicsFingerprint } from "../lib/sales-economics-client.js";
+import { withInteractiveReads } from "../lib/lead-copy.js";
 import { servedCached, servedCachedJson, sendSnapshotJson, buildScopeKey } from "../lib/view-cache.js";
 import { applyLeadDetail, parseLeadDetail, LEAD_DETAIL_VALUES } from "../lib/lead-detail.js";
 import {
@@ -165,7 +166,9 @@ async function resolveRequest(req: AuthenticatedRequest & { params: { offerId: s
     // attributing it to one of them would name a channel the caller did not ask about.
     featureSlug: undefined,
   };
-  const channels = await resolveOfferChannels(offerId, brandId, { orgId: req.orgId, userId: req.userId, runId: req.runId });
+  // Org alone, shared 30s and re-read behind the answer — the same campaign list the pricing-funnel
+  // read asks for (lib/lead-copy.ts withInteractiveReads).
+  const channels = await withInteractiveReads(() => resolveOfferChannels(offerId, brandId, { orgId: req.orgId }));
   return {
     ok: true as const,
     offerId,
@@ -200,6 +203,18 @@ router.get("/offers/:offerId/revenue", apiKeyAuth, async (req, res) => {
     if (namesRetiredFunnel(req.query as Record<string, unknown>)) {
       return res.status(400).json(FUNNEL_RETIRED_BODY);
     }
+    // The two brand-scoped pricing reads do not depend on the offer's channels, so they run in PARALLEL
+    // with that read, not after it. Used only when a channel prices on a funnel (as before); a rejection
+    // is rethrown where it is awaited.
+    const auth = req as AuthenticatedRequest;
+    const speculativeBrandId = (req.query.brandId as string | undefined) ?? "";
+    const speculative = speculativeBrandId
+      ? {
+          declared: withInteractiveReads(() => fetchDeclaredFunnelsSoft(speculativeBrandId, auth.orgId, req.params.offerId)),
+          economics: fetchEffectiveEconomics(speculativeBrandId, { orgId: auth.orgId, userId: auth.userId, runId: auth.runId }),
+        }
+      : null;
+    speculative?.economics.catch(() => {}); // awaited below only when a funnel prices; never unhandled
     const resolved = await resolveRequest(req as never);
     if (!resolved.ok) return res.status(resolved.status).json({ error: resolved.error });
     const { offerId, brandId, pricing, headers, channels, campaignIds, featureSlugs } = resolved;
@@ -234,8 +249,8 @@ router.get("/offers/:offerId/revenue", apiKeyAuth, async (req, res) => {
           // THIS offer's declared funnels — its own lifetime revenue and its own rates. The offer grain
           // is the one read that genuinely knows which proposition it is pricing, so it is the one that
           // names it; every brand-scoped read keeps resolving the sole offer as before.
-          fetchDeclaredFunnelsSoft(brandId, headers.orgId, offerId),
-          fetchEffectiveEconomics(brandId, headers),
+          speculative!.declared,
+          speculative!.economics,
         ])
       : [[], null];
     const brandPriced: FunnelPricedEconomics | undefined = brandEconomics
