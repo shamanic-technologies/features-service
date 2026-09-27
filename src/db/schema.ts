@@ -303,3 +303,56 @@ export const statedMonthlyAmounts = pgTable(
 );
 
 export type StatedMonthlyAmount = typeof statedMonthlyAmounts.$inferSelect;
+
+/**
+ * WHICH WORKFLOWS MAY RUN ON A LEG — a STATED assignment per (acquisition channel, leg, workflow
+ * dynasty), never derived from anything about the workflow (supersedes the model-tier rule).
+ *
+ * A dynasty runs on a leg only if the owner put it there: `active` = campaign-service may pick it on
+ * this leg; `deprecated` = no new run picks it here, but every stats read keeps serving it with its
+ * history. A dynasty with no row for the leg is NOT ASSIGNED and is never selectable on it — a new
+ * workflow dynasty is on no leg until someone assigns it. workflow-service's own global dynasty status
+ * is untouched and still wins (a globally deprecated dynasty is not enumerated at all).
+ *
+ * `feature_slug` IS the acquisition channel (this fleet has no other name for one). Seeded
+ * (migration 0017) with every dynasty that had already served at least one lead on a campaign
+ * performing that leg, all `active` — the owner's explicit decision.
+ */
+export const workflowLegAssignments = pgTable(
+  "workflow_leg_assignments",
+  {
+    featureSlug: text("feature_slug").notNull(),
+    legKey: text("leg_key").notNull(),
+    workflowDynastySlug: text("workflow_dynasty_slug").notNull(),
+    /** `active` | `deprecated`. Absence of a row is the third state: never assigned. */
+    state: text("state").notNull(),
+    /** Who decided the CURRENT state (a person, an assistant acting for them, or `seed:…`). */
+    decidedBy: text("decided_by").notNull(),
+    decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
+    /** Why — free text, never read by any computation. */
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("uniq_workflow_leg_assignments").on(t.featureSlug, t.legKey, t.workflowDynastySlug),
+  ],
+);
+
+export type WorkflowLegAssignment = typeof workflowLegAssignments.$inferSelect;
+
+/**
+ * The append-only history of every assignment write — one row per decision, so "who deprecated this,
+ * when, and what was it before" always has an answer. Written in the same transaction as the state.
+ */
+export const workflowLegAssignmentChanges = pgTable("workflow_leg_assignment_changes", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  featureSlug: text("feature_slug").notNull(),
+  legKey: text("leg_key").notNull(),
+  workflowDynastySlug: text("workflow_dynasty_slug").notNull(),
+  /** NULL = the dynasty was not assigned to this leg before this decision. */
+  fromState: text("from_state"),
+  toState: text("to_state").notNull(),
+  decidedBy: text("decided_by").notNull(),
+  decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
+  note: text("note"),
+});

@@ -4993,11 +4993,52 @@
                 },
                 "rank": {
                   "type": "number",
-                  "description": "THIS WORKFLOW'S POSITION IN THE ORDER THIS SERVICE SELECTS ON — 1-based, present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). It exists so NO consumer re-derives one: a page ranking the subset it displays produces a second order that disagrees with the pick. The rank is a property of the WORKFLOW, so every row of one dynasty carries the same number and `recommendedWorkflowDynastySlug` is rank 1 BY CONSTRUCTION. A TOTAL order — no ties, no gaps — broken deterministically on the dynasty slug, with never-run workflows (the explore allowance) always after every workflow with measured evidence. A workflow whose `modelEligibility.eligible` is FALSE ranks after EVERY eligible workflow, whatever its evidence, and is never the recommendation."
+                  "description": "THIS WORKFLOW'S POSITION IN THE ORDER THIS SERVICE SELECTS ON — 1-based, present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). It exists so NO consumer re-derives one: a page ranking the subset it displays produces a second order that disagrees with the pick. The rank is a property of the WORKFLOW, so every row of one dynasty carries the same number and `recommendedWorkflowDynastySlug` is rank 1 BY CONSTRUCTION. A TOTAL order — no ties, no gaps — broken deterministically on the dynasty slug, with never-run workflows (the explore allowance) always after every workflow with measured evidence. A workflow not assigned active on the leg (`legAssignment.selectable` false) ranks after EVERY selectable workflow, whatever its evidence, and is never the recommendation."
                 },
                 "scopeRank": {
                   "type": "number",
-                  "description": "THIS ROW'S POSITION AMONG THE ROWS IT IS COMPARABLE WITH — 1-based, present ⟺ `rank` is (the request named a `?leg=`). `rank` is scored over EVERY row a dynasty has, so the cell that won it is usually not the cell on screen: measured in prod 2026-09-13 the rank-1 workflow read $175 on its campaign row and $20.35 on the audience cell that crowned it, which makes a column ordered on `rank` look arbitrary. `scopeRank` orders the rows sharing this row's `audienceId` (null = the brand / campaign column) on their OWN resolved metric, under the same `?maximize=` objective, the same three groups and the same slug tie-break — a TOTAL order per scope, with ineligible workflows (`modelEligibility.eligible: false`) after every eligible one and never-run workflows last within each. The two ranks legitimately DISAGREE: `rank` says what we would put the customer on next, `scopeRank` says what the column they are reading says. Serve both; derive neither."
+                  "description": "THIS ROW'S POSITION AMONG THE ROWS IT IS COMPARABLE WITH — 1-based, present ⟺ `rank` is (the request named a `?leg=`). `rank` is scored over EVERY row a dynasty has, so the cell that won it is usually not the cell on screen: measured in prod 2026-09-13 the rank-1 workflow read $175 on its campaign row and $20.35 on the audience cell that crowned it, which makes a column ordered on `rank` look arbitrary. `scopeRank` orders the rows sharing this row's `audienceId` (null = the brand / campaign column) on their OWN resolved metric, under the same `?maximize=` objective, the same three groups and the same slug tie-break — a TOTAL order per scope, with non-selectable workflows (`legAssignment.selectable: false`) after every selectable one and never-run workflows last within each. The two ranks legitimately DISAGREE: `rank` says what we would put the customer on next, `scopeRank` says what the column they are reading says. Serve both; derive neither."
+                },
+                "legAssignment": {
+                  "type": "object",
+                  "properties": {
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "active",
+                        "deprecated",
+                        "unassigned"
+                      ],
+                      "description": "`active` = the owner assigned this workflow to the leg; a new run may pick it here. `deprecated` = retired ON THIS LEG ONLY: no new run picks it here, its history stays on every stats read. `unassigned` = never put on this leg, so never selectable on it (a new workflow dynasty is on no leg until assigned)."
+                    },
+                    "selectable": {
+                      "type": "boolean",
+                      "description": "TRUE ⟺ state is `active`. The one condition under which the selector may pick this workflow on this leg."
+                    },
+                    "reason": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Why it is not selectable, in a sentence a human reads. Null ⟺ selectable."
+                    },
+                    "decidedBy": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Who decided the current state (`seed:served-a-lead-on-this-leg` for the initial seed). Null ⟺ unassigned."
+                    },
+                    "decidedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "When (ISO). Null ⟺ unassigned."
+                    }
+                  },
+                  "required": [
+                    "state",
+                    "selectable",
+                    "reason",
+                    "decidedBy",
+                    "decidedAt"
+                  ],
+                  "description": "WHETHER THIS WORKFLOW IS ASSIGNED TO THE LEG THE READ NAMED — present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). A STATED assignment per (channel, leg, workflow dynasty), written through PUT /internal/workflow-leg-assignments, never derived from the workflow's model or price. The row is served whatever the state, with its figures and history unchanged, but the ORDERS act on it: a non-selectable workflow ranks after every selectable one in `rank` and `scopeRank`, and is never `recommendedWorkflowDynastySlug`. workflow-service's global dynasty status still wins (a globally deprecated dynasty is not enumerated at all)."
                 },
                 "modelEligibility": {
                   "type": "object",
@@ -5005,31 +5046,24 @@
                     "modelAlias": {
                       "type": "string",
                       "nullable": true,
-                      "description": "The chat-service model alias this workflow writes its content with, read from its DAG's content-generation call by workflow-service. NULL when its DAG names none (no content call, no stated model, a run-time value, or several content calls disagreeing) — never a guess."
+                      "description": "The chat-service model alias this workflow's DAG names (display only; it decides nothing). NULL when its DAG names none."
                     },
                     "modelTier": {
-                      "type": "string",
                       "nullable": true,
-                      "enum": [
-                        "cheap",
-                        "strong",
-                        "frontier"
-                      ],
-                      "description": "The capability tier chat-service RECORDS for that alias, read from its catalogue and NEVER derived from the alias string: `flash-pro` resolves to a Flash model and is CHEAP despite containing 'pro'. NULL = the tier is UNKNOWABLE on this request (the workflow names no model, the alias is absent from the catalogue, or a producer read failed) — see unknownTierReason."
+                      "description": "Always null: the model-tier rule is retired."
                     },
                     "eligible": {
                       "type": "boolean",
-                      "description": "FALSE ⟺ the tier is KNOWN and this leg's rule excludes it. An unknowable tier is always TRUE: we never exclude a workflow on a gap in our own reading, and never silently."
+                      "description": "=== legAssignment.selectable."
                     },
                     "ineligibleReason": {
                       "type": "string",
                       "nullable": true,
-                      "description": "Why this workflow is excluded, in a form a human reads — present ⟺ eligible is false, null otherwise. Served rather than left to a consumer so two surfaces cannot word it differently."
+                      "description": "=== legAssignment.reason."
                     },
                     "unknownTierReason": {
-                      "type": "string",
                       "nullable": true,
-                      "description": "Why the tier could not be read, same human form — present ⟺ modelTier is null. It tells 'this workflow records no model' apart from 'chat-service was unreachable' and from 'workflow-service was unreachable', which are different problems with different owners. A row carrying this is ELIGIBLE."
+                      "description": "Always null: the model-tier rule is retired."
                     }
                   },
                   "required": [
@@ -5039,7 +5073,7 @@
                     "ineligibleReason",
                     "unknownTierReason"
                   ],
-                  "description": "WHETHER THE MODEL WRITING THIS WORKFLOW'S EMAILS IS RIGHT FOR THIS LEG — present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). Measured fleet-wide: the capability TIER of the model writing the content decides the outcome, and the direction depends on what the leg sells — the cheap tier badly underperforms on a leg selling a CONVERSATION, the strong and frontier tiers are wasted on one selling a WEBSITE VISIT. Every other leg restricts nothing; the study said nothing about them and nothing is invented. The row is served whatever the verdict says, with its figures and its history unchanged, but the ORDERS act on it: an excluded workflow ranks after every eligible one in `rank` and in `scopeRank`, and is never `recommendedWorkflowDynastySlug` — so campaign-service can filter on `eligible` while a customer surface can tell 'this workflow is excluded' apart from 'this workflow does not exist', including for a workflow that is excluded but has ALREADY RUN."
+                  "description": "TRANSITIONAL, DEPRECATED — the pre-assignment verdict block kept byte-compatible for readers not yet on `legAssignment` (campaign-service filters on `eligible`). `eligible` is now the leg assignment (active ⟺ true). Removed once every reader has moved."
                 },
                 "measured": {
                   "type": "boolean",
@@ -5070,7 +5104,7 @@
           "recommendedWorkflowDynastySlug": {
             "type": "string",
             "nullable": true,
-            "description": "Dynasty of the MEASURED row that best answers what the caller is maximising: under `maximize=return` (the default) the LOWEST resolved.costPerOutcomeUsd, under `maximize=conversionRate` the HIGHEST resolved.conversionRatePct. The same catalogue legitimately ranks differently under the two, so the two answers may differ for one (brand, channel, leg). An unmeasured row (explore allowance) is reachable but never recommended under either. On a `?leg=` read a workflow the leg's model-tier rule excludes (`modelEligibility.eligible: false`) is never recommended either. Null when none has usable data, or when every workflow is excluded (then `recommendationWithheldReason` says so)."
+            "description": "Dynasty of the MEASURED row that best answers what the caller is maximising: under `maximize=return` (the default) the LOWEST resolved.costPerOutcomeUsd, under `maximize=conversionRate` the HIGHEST resolved.conversionRatePct. The same catalogue legitimately ranks differently under the two, so the two answers may differ for one (brand, channel, leg). An unmeasured row (explore allowance) is reachable but never recommended under either. On a `?leg=` read a workflow not assigned active on the leg (`legAssignment.selectable: false`) is never recommended either. Null when none has usable data, or when no workflow is assigned active (then `recommendationWithheldReason` says so)."
           },
           "recommendedBudgetUsd": {
             "type": "number",
@@ -5086,7 +5120,7 @@
             "enum": [
               "no_eligible_workflow"
             ],
-            "description": "Present ⟺ a `?leg=` read has workflows but the leg's model-tier rule (`modelEligibility`) excludes EVERY one of them. `recommendedWorkflowDynastySlug` is then null by refusal, never a fall back to an excluded workflow."
+            "description": "Present ⟺ a `?leg=` read has workflows but NONE is assigned active on the leg (`legAssignment`). `recommendedWorkflowDynastySlug` is then null by refusal, never a fall back to an unassigned or deprecated workflow."
           },
           "unmeasuredReason": {
             "type": "string",
@@ -19026,11 +19060,52 @@
                           },
                           "rank": {
                             "type": "number",
-                            "description": "THIS WORKFLOW'S POSITION IN THE ORDER THIS SERVICE SELECTS ON — 1-based, present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). It exists so NO consumer re-derives one: a page ranking the subset it displays produces a second order that disagrees with the pick. The rank is a property of the WORKFLOW, so every row of one dynasty carries the same number and `recommendedWorkflowDynastySlug` is rank 1 BY CONSTRUCTION. A TOTAL order — no ties, no gaps — broken deterministically on the dynasty slug, with never-run workflows (the explore allowance) always after every workflow with measured evidence. A workflow whose `modelEligibility.eligible` is FALSE ranks after EVERY eligible workflow, whatever its evidence, and is never the recommendation."
+                            "description": "THIS WORKFLOW'S POSITION IN THE ORDER THIS SERVICE SELECTS ON — 1-based, present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). It exists so NO consumer re-derives one: a page ranking the subset it displays produces a second order that disagrees with the pick. The rank is a property of the WORKFLOW, so every row of one dynasty carries the same number and `recommendedWorkflowDynastySlug` is rank 1 BY CONSTRUCTION. A TOTAL order — no ties, no gaps — broken deterministically on the dynasty slug, with never-run workflows (the explore allowance) always after every workflow with measured evidence. A workflow not assigned active on the leg (`legAssignment.selectable` false) ranks after EVERY selectable workflow, whatever its evidence, and is never the recommendation."
                           },
                           "scopeRank": {
                             "type": "number",
-                            "description": "THIS ROW'S POSITION AMONG THE ROWS IT IS COMPARABLE WITH — 1-based, present ⟺ `rank` is (the request named a `?leg=`). `rank` is scored over EVERY row a dynasty has, so the cell that won it is usually not the cell on screen: measured in prod 2026-09-13 the rank-1 workflow read $175 on its campaign row and $20.35 on the audience cell that crowned it, which makes a column ordered on `rank` look arbitrary. `scopeRank` orders the rows sharing this row's `audienceId` (null = the brand / campaign column) on their OWN resolved metric, under the same `?maximize=` objective, the same three groups and the same slug tie-break — a TOTAL order per scope, with ineligible workflows (`modelEligibility.eligible: false`) after every eligible one and never-run workflows last within each. The two ranks legitimately DISAGREE: `rank` says what we would put the customer on next, `scopeRank` says what the column they are reading says. Serve both; derive neither."
+                            "description": "THIS ROW'S POSITION AMONG THE ROWS IT IS COMPARABLE WITH — 1-based, present ⟺ `rank` is (the request named a `?leg=`). `rank` is scored over EVERY row a dynasty has, so the cell that won it is usually not the cell on screen: measured in prod 2026-09-13 the rank-1 workflow read $175 on its campaign row and $20.35 on the audience cell that crowned it, which makes a column ordered on `rank` look arbitrary. `scopeRank` orders the rows sharing this row's `audienceId` (null = the brand / campaign column) on their OWN resolved metric, under the same `?maximize=` objective, the same three groups and the same slug tie-break — a TOTAL order per scope, with non-selectable workflows (`legAssignment.selectable: false`) after every selectable one and never-run workflows last within each. The two ranks legitimately DISAGREE: `rank` says what we would put the customer on next, `scopeRank` says what the column they are reading says. Serve both; derive neither."
+                          },
+                          "legAssignment": {
+                            "type": "object",
+                            "properties": {
+                              "state": {
+                                "type": "string",
+                                "enum": [
+                                  "active",
+                                  "deprecated",
+                                  "unassigned"
+                                ],
+                                "description": "`active` = the owner assigned this workflow to the leg; a new run may pick it here. `deprecated` = retired ON THIS LEG ONLY: no new run picks it here, its history stays on every stats read. `unassigned` = never put on this leg, so never selectable on it (a new workflow dynasty is on no leg until assigned)."
+                              },
+                              "selectable": {
+                                "type": "boolean",
+                                "description": "TRUE ⟺ state is `active`. The one condition under which the selector may pick this workflow on this leg."
+                              },
+                              "reason": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "Why it is not selectable, in a sentence a human reads. Null ⟺ selectable."
+                              },
+                              "decidedBy": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "Who decided the current state (`seed:served-a-lead-on-this-leg` for the initial seed). Null ⟺ unassigned."
+                              },
+                              "decidedAt": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "When (ISO). Null ⟺ unassigned."
+                              }
+                            },
+                            "required": [
+                              "state",
+                              "selectable",
+                              "reason",
+                              "decidedBy",
+                              "decidedAt"
+                            ],
+                            "description": "WHETHER THIS WORKFLOW IS ASSIGNED TO THE LEG THE READ NAMED — present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). A STATED assignment per (channel, leg, workflow dynasty), written through PUT /internal/workflow-leg-assignments, never derived from the workflow's model or price. The row is served whatever the state, with its figures and history unchanged, but the ORDERS act on it: a non-selectable workflow ranks after every selectable one in `rank` and `scopeRank`, and is never `recommendedWorkflowDynastySlug`. workflow-service's global dynasty status still wins (a globally deprecated dynasty is not enumerated at all)."
                           },
                           "modelEligibility": {
                             "type": "object",
@@ -19038,31 +19113,24 @@
                               "modelAlias": {
                                 "type": "string",
                                 "nullable": true,
-                                "description": "The chat-service model alias this workflow writes its content with, read from its DAG's content-generation call by workflow-service. NULL when its DAG names none (no content call, no stated model, a run-time value, or several content calls disagreeing) — never a guess."
+                                "description": "The chat-service model alias this workflow's DAG names (display only; it decides nothing). NULL when its DAG names none."
                               },
                               "modelTier": {
-                                "type": "string",
                                 "nullable": true,
-                                "enum": [
-                                  "cheap",
-                                  "strong",
-                                  "frontier"
-                                ],
-                                "description": "The capability tier chat-service RECORDS for that alias, read from its catalogue and NEVER derived from the alias string: `flash-pro` resolves to a Flash model and is CHEAP despite containing 'pro'. NULL = the tier is UNKNOWABLE on this request (the workflow names no model, the alias is absent from the catalogue, or a producer read failed) — see unknownTierReason."
+                                "description": "Always null: the model-tier rule is retired."
                               },
                               "eligible": {
                                 "type": "boolean",
-                                "description": "FALSE ⟺ the tier is KNOWN and this leg's rule excludes it. An unknowable tier is always TRUE: we never exclude a workflow on a gap in our own reading, and never silently."
+                                "description": "=== legAssignment.selectable."
                               },
                               "ineligibleReason": {
                                 "type": "string",
                                 "nullable": true,
-                                "description": "Why this workflow is excluded, in a form a human reads — present ⟺ eligible is false, null otherwise. Served rather than left to a consumer so two surfaces cannot word it differently."
+                                "description": "=== legAssignment.reason."
                               },
                               "unknownTierReason": {
-                                "type": "string",
                                 "nullable": true,
-                                "description": "Why the tier could not be read, same human form — present ⟺ modelTier is null. It tells 'this workflow records no model' apart from 'chat-service was unreachable' and from 'workflow-service was unreachable', which are different problems with different owners. A row carrying this is ELIGIBLE."
+                                "description": "Always null: the model-tier rule is retired."
                               }
                             },
                             "required": [
@@ -19072,7 +19140,7 @@
                               "ineligibleReason",
                               "unknownTierReason"
                             ],
-                            "description": "WHETHER THE MODEL WRITING THIS WORKFLOW'S EMAILS IS RIGHT FOR THIS LEG — present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). Measured fleet-wide: the capability TIER of the model writing the content decides the outcome, and the direction depends on what the leg sells — the cheap tier badly underperforms on a leg selling a CONVERSATION, the strong and frontier tiers are wasted on one selling a WEBSITE VISIT. Every other leg restricts nothing; the study said nothing about them and nothing is invented. The row is served whatever the verdict says, with its figures and its history unchanged, but the ORDERS act on it: an excluded workflow ranks after every eligible one in `rank` and in `scopeRank`, and is never `recommendedWorkflowDynastySlug` — so campaign-service can filter on `eligible` while a customer surface can tell 'this workflow is excluded' apart from 'this workflow does not exist', including for a workflow that is excluded but has ALREADY RUN."
+                            "description": "TRANSITIONAL, DEPRECATED — the pre-assignment verdict block kept byte-compatible for readers not yet on `legAssignment` (campaign-service filters on `eligible`). `eligible` is now the leg assignment (active ⟺ true). Removed once every reader has moved."
                           },
                           "measured": {
                             "type": "boolean",
@@ -19103,7 +19171,7 @@
                     "recommendedWorkflowDynastySlug": {
                       "type": "string",
                       "nullable": true,
-                      "description": "Dynasty of the MEASURED row that best answers what the caller is maximising: under `maximize=return` (the default) the LOWEST resolved.costPerOutcomeUsd, under `maximize=conversionRate` the HIGHEST resolved.conversionRatePct. The same catalogue legitimately ranks differently under the two, so the two answers may differ for one (brand, channel, leg). An unmeasured row (explore allowance) is reachable but never recommended under either. On a `?leg=` read a workflow the leg's model-tier rule excludes (`modelEligibility.eligible: false`) is never recommended either. Null when none has usable data, or when every workflow is excluded (then `recommendationWithheldReason` says so)."
+                      "description": "Dynasty of the MEASURED row that best answers what the caller is maximising: under `maximize=return` (the default) the LOWEST resolved.costPerOutcomeUsd, under `maximize=conversionRate` the HIGHEST resolved.conversionRatePct. The same catalogue legitimately ranks differently under the two, so the two answers may differ for one (brand, channel, leg). An unmeasured row (explore allowance) is reachable but never recommended under either. On a `?leg=` read a workflow not assigned active on the leg (`legAssignment.selectable: false`) is never recommended either. Null when none has usable data, or when no workflow is assigned active (then `recommendationWithheldReason` says so)."
                     },
                     "recommendedBudgetUsd": {
                       "type": "number",
@@ -19119,7 +19187,7 @@
                       "enum": [
                         "no_eligible_workflow"
                       ],
-                      "description": "Present ⟺ a `?leg=` read has workflows but the leg's model-tier rule (`modelEligibility`) excludes EVERY one of them. `recommendedWorkflowDynastySlug` is then null by refusal, never a fall back to an excluded workflow."
+                      "description": "Present ⟺ a `?leg=` read has workflows but NONE is assigned active on the leg (`legAssignment`). `recommendedWorkflowDynastySlug` is then null by refusal, never a fall back to an unassigned or deprecated workflow."
                     },
                     "unmeasuredReason": {
                       "type": "string",
@@ -23420,6 +23488,318 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/internal/workflow-leg-assignments": {
+      "get": {
+        "summary": "List workflow-to-leg assignments (internal, api-key)",
+        "description": "WHICH WORKFLOWS MAY RUN ON A LEG — a STATED assignment per (acquisition channel = featureSlug, leg, workflow dynasty), never derived from the workflow's model or price. `active` = a new run may pick it on this leg; `deprecated` = retired on this leg only (no new run picks it there; every stats read keeps serving it with its history); no row = `unassigned`, never selectable on the leg — a new workflow dynasty is on no leg until assigned. Seeded 2026-09-27 with every dynasty that had already served a lead on a campaign performing the leg, all active. Every write records who decided and when, plus an append-only history row. Read live by the leg-keyed workflow projection (`legAssignment` on each row). api-key only; a staff tool.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Narrow to one acquisition channel."
+            },
+            "required": false,
+            "description": "Narrow to one acquisition channel.",
+            "name": "featureSlug",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Narrow to one leg."
+            },
+            "required": false,
+            "description": "Narrow to one leg.",
+            "name": "legKey",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The assignments.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "assignments": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "featureSlug": {
+                            "type": "string"
+                          },
+                          "legKey": {
+                            "type": "string"
+                          },
+                          "workflowDynastySlug": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "active",
+                              "deprecated"
+                            ]
+                          },
+                          "decidedBy": {
+                            "type": "string"
+                          },
+                          "decidedAt": {
+                            "type": "string"
+                          },
+                          "note": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "featureSlug",
+                          "legKey",
+                          "workflowDynastySlug",
+                          "state",
+                          "decidedBy",
+                          "decidedAt",
+                          "note"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "assignments"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Assign a workflow to a leg, deprecate it there, or reactivate it (internal, api-key)",
+        "description": "WHICH WORKFLOWS MAY RUN ON A LEG — a STATED assignment per (acquisition channel = featureSlug, leg, workflow dynasty), never derived from the workflow's model or price. `active` = a new run may pick it on this leg; `deprecated` = retired on this leg only (no new run picks it there; every stats read keeps serving it with its history); no row = `unassigned`, never selectable on the leg — a new workflow dynasty is on no leg until assigned. Seeded 2026-09-27 with every dynasty that had already served a lead on a campaign performing the leg, all active. Every write records who decided and when, plus an append-only history row. Read live by the leg-keyed workflow projection (`legAssignment` on each row). api-key only; a staff tool.",
+        "tags": [
+          "Internal"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "featureSlug": {
+                    "type": "string",
+                    "description": "The acquisition channel (feature slug)."
+                  },
+                  "legKey": {
+                    "type": "string",
+                    "description": "A leg of the funnel catalogue, e.g. `start_to_conversation`."
+                  },
+                  "workflowDynastySlug": {
+                    "type": "string",
+                    "description": "A dynasty workflow-service describes for this channel (any status)."
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "deprecated"
+                    ],
+                    "description": "`active` assigns or reactivates; `deprecated` retires it on this leg only."
+                  },
+                  "decidedBy": {
+                    "type": "string",
+                    "description": "Who decided (a person, or an assistant acting for them)."
+                  },
+                  "note": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Why. Never read by any computation."
+                  }
+                },
+                "required": [
+                  "featureSlug",
+                  "legKey",
+                  "workflowDynastySlug",
+                  "state",
+                  "decidedBy"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The stored assignment and the state it replaced (null = was not assigned).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "assignment": {
+                      "type": "object",
+                      "properties": {
+                        "featureSlug": {
+                          "type": "string"
+                        },
+                        "legKey": {
+                          "type": "string"
+                        },
+                        "workflowDynastySlug": {
+                          "type": "string"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "deprecated"
+                          ]
+                        },
+                        "decidedBy": {
+                          "type": "string"
+                        },
+                        "decidedAt": {
+                          "type": "string"
+                        },
+                        "note": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "featureSlug",
+                        "legKey",
+                        "workflowDynastySlug",
+                        "state",
+                        "decidedBy",
+                        "decidedAt",
+                        "note"
+                      ]
+                    },
+                    "previousState": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "active",
+                        "deprecated"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "assignment",
+                    "previousState"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A field is missing or invalid (`reason` names it)."
+          },
+          "404": {
+            "description": "feature_not_found or workflow_dynasty_not_found."
+          }
+        }
+      }
+    },
+    "/internal/workflow-leg-assignments/history": {
+      "get": {
+        "summary": "History of one workflow's assignment on one leg (internal, api-key)",
+        "description": "WHICH WORKFLOWS MAY RUN ON A LEG — a STATED assignment per (acquisition channel = featureSlug, leg, workflow dynasty), never derived from the workflow's model or price. `active` = a new run may pick it on this leg; `deprecated` = retired on this leg only (no new run picks it there; every stats read keeps serving it with its history); no row = `unassigned`, never selectable on the leg — a new workflow dynasty is on no leg until assigned. Seeded 2026-09-27 with every dynasty that had already served a lead on a campaign performing the leg, all active. Every write records who decided and when, plus an append-only history row. Read live by the leg-keyed workflow projection (`legAssignment` on each row). api-key only; a staff tool.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "featureSlug",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "legKey",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "workflowDynastySlug",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Every decision, oldest first. fromState null = it was not assigned before.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "changes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "fromState": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "active",
+                              "deprecated"
+                            ]
+                          },
+                          "toState": {
+                            "type": "string",
+                            "enum": [
+                              "active",
+                              "deprecated"
+                            ]
+                          },
+                          "decidedBy": {
+                            "type": "string"
+                          },
+                          "decidedAt": {
+                            "type": "string"
+                          },
+                          "note": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "fromState",
+                          "toState",
+                          "decidedBy",
+                          "decidedAt",
+                          "note"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "changes"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "featureSlug, legKey and workflowDynastySlug are required."
           }
         }
       }
