@@ -56,6 +56,8 @@ export interface VendorSpendDay {
   vendorUsd: number;
   /** BILLED spend of the rows whose vendor cost is NOT known, in USD. 0 when every row is priced. */
   unpricedBilledUsd: number;
+  /** The cost names behind `unpricedBilledUsd`, as runs-service states them. */
+  unpricedCostNames: string[];
 }
 
 /** What a vendor-basis read collected across every dated-spend read of one compute. */
@@ -64,6 +66,8 @@ export interface VendorSpendLedger {
   reader: DatedSpendReader;
   /** Billed USD with no known vendor cost, per UTC day, summed over every read the compute made. */
   unpricedByDay(): Map<string, number>;
+  /** Every cost name the scope's whole read reported as having no known vendor cost, sorted. */
+  unpricedCostNames(): string[];
 }
 
 /**
@@ -81,14 +85,16 @@ export function vendorSpendLedger(
   // does not even contain.
   const whole = new Map<string, number>();
   const subtracted = new Map<string, number>();
+  const names = new Set<string>();
   return {
     reader: async (...args) => {
       const startedAfter = args[6];
       const days = await fetchVendor(...args);
       const out = new Map<string, number>();
       const into = startedAfter ? subtracted : whole;
-      for (const [day, { vendorUsd, unpricedBilledUsd }] of days) {
+      for (const [day, { vendorUsd, unpricedBilledUsd, unpricedCostNames }] of days) {
         out.set(day, vendorUsd);
+        if (!startedAfter) for (const n of unpricedCostNames) names.add(n);
         if (unpricedBilledUsd > 0) into.set(day, (into.get(day) ?? 0) + unpricedBilledUsd);
       }
       return out;
@@ -101,6 +107,7 @@ export function vendorSpendLedger(
       }
       return out;
     },
+    unpricedCostNames: () => [...names].sort(),
   };
 }
 
@@ -116,6 +123,14 @@ export interface ActualCostHistoryPoint {
   cumulativePipelineUsd: number;
   /** cumulativePipelineUsd / cumulativeSpendUsd. NULL when nothing was spent yet or the spend is unknown. */
   roiMultiple: number | null;
+  /**
+   * THE PART WE DO KNOW, always a number: the vendor cost of every row whose vendor cost is known, up to
+   * this day. Equals `cumulativeSpendUsd` while nothing is unpriced. It is NOT the actual cost once
+   * something is unpriced (it leaves those rows out) — it is served beside the next field, never as it.
+   */
+  cumulativePricedVendorCostUsd: number;
+  /** BILLED spend up to this day on rows with no known vendor cost (`unpricedCostNames`). */
+  cumulativeUnpricedBilledCostUsd: number;
 }
 
 export interface ActualCostHistory {
@@ -126,6 +141,8 @@ export interface ActualCostHistory {
   unpricedBilledCostUsd: number;
   /** First UTC day with unpriced spend — every point from it on reads a null spend. Null when none. */
   unpricedFromDate: string | null;
+  /** The cost lines costs-service holds no vendor cost for, which that unpriced amount is billed on. */
+  unpricedCostNames: string[];
 }
 
 /**
@@ -136,19 +153,36 @@ export interface ActualCostHistory {
 export function buildActualCostHistory(
   vendorCurve: RoiHistory,
   unpricedByDay: Map<string, number>,
+  unpricedCostNames: string[] = [],
 ): ActualCostHistory {
   const unpricedDays = [...unpricedByDay.entries()].filter(([, usd]) => usd > 0).map(([d]) => d).sort();
   const unpricedFromDate = unpricedDays[0] ?? null;
   let unpricedBilledCostUsd = 0;
   for (const day of unpricedDays) unpricedBilledCostUsd += unpricedByDay.get(day) ?? 0;
 
-  const daily = vendorCurve.daily.map((p) => {
-    const unknown = unpricedFromDate != null && p.date >= unpricedFromDate;
+  // Every day carrying unpriced spend is a point too, even one with no priced spend and no outcome
+  // (the curve built from vendor spend alone would skip it): that is exactly the day a reader must see
+  // the unknown begin. Such a point carries the previous cumulative figures forward.
+  const curveByDay = new Map(vendorCurve.daily.map((p) => [p.date, p]));
+  const days = [...new Set([...curveByDay.keys(), ...unpricedDays])].sort();
+  let cumulativeUnpriced = 0;
+  let lastPriced = 0;
+  let lastPipeline = 0;
+  const daily: ActualCostHistoryPoint[] = days.map((date) => {
+    const p = curveByDay.get(date);
+    if (p) {
+      lastPriced = p.cumulativeSpendUsd;
+      lastPipeline = p.cumulativePipelineUsd;
+    }
+    cumulativeUnpriced += unpricedByDay.get(date) ?? 0;
+    const unknown = unpricedFromDate != null && date >= unpricedFromDate;
     return {
-      date: p.date,
-      cumulativeSpendUsd: unknown ? null : p.cumulativeSpendUsd,
-      cumulativePipelineUsd: p.cumulativePipelineUsd,
-      roiMultiple: unknown ? null : p.roiMultiple,
+      date,
+      cumulativeSpendUsd: unknown ? null : lastPriced,
+      cumulativePipelineUsd: lastPipeline,
+      roiMultiple: unknown ? null : p ? p.roiMultiple : lastPriced === 0 ? null : lastPipeline / lastPriced,
+      cumulativePricedVendorCostUsd: lastPriced,
+      cumulativeUnpricedBilledCostUsd: cumulativeUnpriced,
     };
   });
 
@@ -158,5 +192,6 @@ export function buildActualCostHistory(
     undatedPipelineUsd: vendorCurve.undatedPipelineUsd,
     unpricedBilledCostUsd,
     unpricedFromDate,
+    unpricedCostNames: unpricedFromDate == null ? [] : unpricedCostNames,
   };
 }

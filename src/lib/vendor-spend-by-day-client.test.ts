@@ -6,7 +6,7 @@ process.env.RUNS_SERVICE_API_KEY = "runs-key";
 
 const bucket = (period: string, v: string, u: string, vr = "0", ur = "0") => ({
   period, totalCostInUsdCents: "999", vendorTotalCostInUsdCents: v, unpricedTotalCostInUsdCents: u,
-  vendorRefundedCostInUsdCents: vr, unpricedRefundedCostInUsdCents: ur, runCount: 1,
+  vendorRefundedCostInUsdCents: vr, unpricedRefundedCostInUsdCents: ur, unpricedCostNames: u === "0" ? [] : ["instantly-account-email-sent"], runCount: 1,
 });
 
 afterEach(() => vi.restoreAllMocks());
@@ -23,8 +23,8 @@ describe("fetchBrandVendorSpendByDay", () => {
     expect(seen[0]).toContain("campaignId=c1");
     expect(seen[0]).toContain("workflowDynastySlug=dawn");
     expect([...out]).toEqual([
-      ["2026-02-01", { vendorUsd: 1.5, unpricedBilledUsd: 0 }],
-      ["2026-02-02", { vendorUsd: 0.2, unpricedBilledUsd: 3.07 }],
+      ["2026-02-01", { vendorUsd: 1.5, unpricedBilledUsd: 0, unpricedCostNames: [] }],
+      ["2026-02-02", { vendorUsd: 0.2, unpricedBilledUsd: 3.07, unpricedCostNames: ["instantly-account-email-sent"] }],
     ]);
   });
 
@@ -43,6 +43,6 @@ describe("fetchBrandVendorSpendByDay", () => {
     const out = await fetchBrandVendorSpendByDay("b1", ["a", "b"], "s", { orgId: "o1" }, "gross");
     expect(seen).toHaveLength(1);
     expect(seen[0]).toContain("campaignIds=a%2Cb");
-    expect(out.get("2026-02-01")).toEqual({ vendorUsd: 1, unpricedBilledUsd: 0 });
+    expect(out.get("2026-02-01")).toEqual({ vendorUsd: 1, unpricedBilledUsd: 0, unpricedCostNames: [] });
   });
 });
