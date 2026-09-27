@@ -177,10 +177,20 @@ campaign, an offer opened for the first time) was a blocking cold compute on the
 - **Every CUSTOMER read records its request on the cell** (`replay_url`, `replay_headers` minus the api key,
   `brand_id`, `last_read_at`; at most once a minute per cell). Retention prunes on
   `coalesce(last_read_at, computed_at)`.
-- **The KEEPER (every 5 min, ≤12 computes a round, `VIEW_KEEPER_*`)** takes each campaign- or offer-scoped
-  request read in the last 3 days and asks the SAME request of the brand's other campaigns (one per identity,
-  the representative) and offers, through the refresher (`x-view-precompute: 1`). One id swapped, same
-  handler — no figure is derived a second way. A precompute is not a read: no `last_read_at`.
+- **The KEEPER MATERIALIZES THE FLEET (every 5 min, `lib/view-keeper.ts` + `lib/view-materializer.ts`, supersedes
+  the sibling-only keeper of #1106).** It harvests every request SHAPE customers read anywhere in the fleet over 14
+  days (`replay_url` with its ids stripped) and instantiates each for EVERY (org, brand) lead-service lists a
+  membership for, over every channel, campaign identity (representative), offer and leg the brand runs, then asks
+  the refresher (`x-view-precompute: 1`) for each instance no cell holds, under the org's OWN most recent read
+  identity (attribution headers swapped, never added). Same handler, same request ⇒ same body; nothing is
+  approximated. A held cell older than 24h is re-asked (served stale, refreshed behind), so a first read is at most
+  a day old and SWR brings it current. Bounds: concurrency 2, ≤60 a round, ≤8 stale re-asks (those refresh BEHIND
+  the answer, outside the concurrency bound), 4-min budget (`VIEW_KEEPER_*`). A precompute writes no trace event.
+  Measured before (2026-09-27, Doc Dinners): a never-read `?groupBy=workflow` cell answered in 5.6s / 2.8s.
+  **Why cells, not pre-aggregated rows**: see the NOT BUILT bullet — no summed store can reproduce these figures.
+  **Not covered**: an org that has never read a dashboard (no user to replay as, `noIdentity`), one-off requests
+  (`workflow=`, `leadIds`, `limit`, `timezone`, `/public`, `/internal`), and a campaign read under a channel slug
+  other than its own.
 - **The DRIFT CHECK** (`GET /internal/view-cache/drift?mode=moment|stored`) replays a cell against the
   refresher in VERIFY mode (compute, never persist) and diffs it path by path against what is stored;
   `moment` refreshes first then verifies (stored vs fresh at the same moment). Logs `VIEW DRIFT` loudly.
@@ -188,8 +198,8 @@ campaign, an offer opened for the first time) was a blocking cold compute on the
   is a sum over DISTINCT orgs of a max per-person EV, people dedupe across channels, ratios divide a mature
   cohort whose cutoff moves daily, and every EV re-prices when a measured rate moves — a per-(campaign, day)
   sum cannot reproduce them. That needs a change signal from every source (only lead-service has a feed;
-  runs-service has none) and a per-person store the engine re-runs over. A never-read scope of a brand
-  nobody has read in 3 days (or a brand-new org) is still a cold compute.
+  runs-service has none) and a per-person store the engine re-runs over. A scope whose SHAPE no
+  customer of any brand read in 14 days, or of an org that never read a dashboard, is still a cold compute.
 
 ## NO VIEW IS COMPUTED ON THE SERVING EVENT LOOP — every Gold compute runs in a forked REFRESHER process
 

@@ -27842,21 +27842,41 @@
                         "at": {
                           "type": "string"
                         },
-                        "templates": {
+                        "shapes": {
                           "type": "number",
-                          "description": "Customer requests read in the last 3 days, each a template"
+                          "description": "Request shapes customers read anywhere in the fleet over the last 14 days"
                         },
                         "brands": {
-                          "type": "number"
-                        },
-                        "candidates": {
                           "type": "number",
-                          "description": "Sibling scopes (other campaigns / offers of the brand) those templates imply"
+                          "description": "(org, brand) pairs the shapes are instantiated for"
+                        },
+                        "noIdentity": {
+                          "type": "number",
+                          "description": "Pairs skipped: the org has never read a dashboard, so there is no identity to replay as"
+                        },
+                        "instances": {
+                          "type": "number",
+                          "description": "Cells the shapes imply across every brand, channel, campaign identity, offer and leg"
+                        },
+                        "held": {
+                          "type": "number",
+                          "description": "Instances already held, computed within the last day"
+                        },
+                        "missing": {
+                          "type": "number",
+                          "description": "Instances no cell holds yet (a first read would block on them)"
+                        },
+                        "stale": {
+                          "type": "number",
+                          "description": "Instances held but older than a day"
                         },
                         "asked": {
                           "type": "number"
                         },
                         "computed": {
+                          "type": "number"
+                        },
+                        "refreshedStale": {
                           "type": "number"
                         },
                         "refused": {
@@ -27877,10 +27897,10 @@
                             ]
                           }
                         },
-                        "skippedKnown": {
+                        "deferred": {
                           "type": "number"
                         },
-                        "deferred": {
+                        "durationMs": {
                           "type": "number"
                         },
                         "errors": {
@@ -27892,14 +27912,19 @@
                       },
                       "required": [
                         "at",
-                        "templates",
+                        "shapes",
                         "brands",
-                        "candidates",
+                        "noIdentity",
+                        "instances",
+                        "held",
+                        "missing",
+                        "stale",
                         "asked",
                         "computed",
+                        "refreshedStale",
                         "refused",
-                        "skippedKnown",
                         "deferred",
+                        "durationMs",
                         "errors"
                       ]
                     },
@@ -27959,7 +27984,7 @@
     "/internal/view-cache/keeper/run": {
       "post": {
         "summary": "Run one precompute round now (internal, service key)",
-        "description": "Asks the refresher to compute, for every campaign- or offer-scoped request a customer read in the last 3 days, the same request for the brand's OTHER campaigns and offers, so their first read is a stored cell. Same handler, one id swapped — no figure is derived twice.",
+        "description": "Materializes, for every (org, brand) that runs a channel, every request shape customers read in the fleet over the last 14 days, over every channel, campaign identity, offer and leg the brand runs, so a first read is a stored cell; re-asks cells older than a day. Same handler under the org's own identity, ids swapped — no figure is derived twice.",
         "tags": [
           "Internal"
         ],
@@ -27974,21 +27999,41 @@
                     "at": {
                       "type": "string"
                     },
-                    "templates": {
+                    "shapes": {
                       "type": "number",
-                      "description": "Customer requests read in the last 3 days, each a template"
+                      "description": "Request shapes customers read anywhere in the fleet over the last 14 days"
                     },
                     "brands": {
-                      "type": "number"
-                    },
-                    "candidates": {
                       "type": "number",
-                      "description": "Sibling scopes (other campaigns / offers of the brand) those templates imply"
+                      "description": "(org, brand) pairs the shapes are instantiated for"
+                    },
+                    "noIdentity": {
+                      "type": "number",
+                      "description": "Pairs skipped: the org has never read a dashboard, so there is no identity to replay as"
+                    },
+                    "instances": {
+                      "type": "number",
+                      "description": "Cells the shapes imply across every brand, channel, campaign identity, offer and leg"
+                    },
+                    "held": {
+                      "type": "number",
+                      "description": "Instances already held, computed within the last day"
+                    },
+                    "missing": {
+                      "type": "number",
+                      "description": "Instances no cell holds yet (a first read would block on them)"
+                    },
+                    "stale": {
+                      "type": "number",
+                      "description": "Instances held but older than a day"
                     },
                     "asked": {
                       "type": "number"
                     },
                     "computed": {
+                      "type": "number"
+                    },
+                    "refreshedStale": {
                       "type": "number"
                     },
                     "refused": {
@@ -28009,10 +28054,10 @@
                         ]
                       }
                     },
-                    "skippedKnown": {
+                    "deferred": {
                       "type": "number"
                     },
-                    "deferred": {
+                    "durationMs": {
                       "type": "number"
                     },
                     "errors": {
@@ -28024,14 +28069,19 @@
                   },
                   "required": [
                     "at",
-                    "templates",
+                    "shapes",
                     "brands",
-                    "candidates",
+                    "noIdentity",
+                    "instances",
+                    "held",
+                    "missing",
+                    "stale",
                     "asked",
                     "computed",
+                    "refreshedStale",
                     "refused",
-                    "skippedKnown",
                     "deferred",
+                    "durationMs",
                     "errors"
                   ]
                 }
