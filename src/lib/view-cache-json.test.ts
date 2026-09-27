@@ -40,7 +40,7 @@ const dbMock = {
 
 vi.mock("../db/index.js", () => ({ db: dbMock, sql: {} }));
 
-const { servedCached, servedCachedJson, sendSnapshotJson, encodeSnapshotBody, bodyFromText, bodyFromValue } = await import(
+const { servedCached, servedCachedJson, sendSnapshotJson, encodeSnapshotBody, bodyFromText, bodyFromValue, __resetHotBodies, SnapshotJson } = await import(
   "./view-cache.js"
 );
 const { envelopedJson } = await import("./view-refresher.js");
@@ -63,13 +63,15 @@ async function viaResJson(value: unknown) {
 async function viaSnapshot(json: string) {
   const app = express();
   app.get("/x", (_req, res) => {
-    sendSnapshotJson(res, { json } as never);
+    sendSnapshotJson(res, new SnapshotJson(json));
   });
   return request(app).get("/x");
 }
 
 beforeEach(() => {
   storedRow = undefined;
+  __resetHotBodies();
+  delete process.env.VIEW_HOT_BODY_MAX_BYTES;
   process.env.FEATURE_VIEW_CACHE_ENABLED = "true";
   process.env.FEATURE_VIEW_SNAPSHOT_TTL_MS = "60000";
 });
@@ -119,7 +121,7 @@ describe("sendSnapshotJson", () => {
     const json = JSON.stringify(ORDINARY);
     const app = express();
     app.get("/x", (_req, res) => {
-      sendSnapshotJson(res, { json } as never);
+      sendSnapshotJson(res, new SnapshotJson(json));
     });
     const first = await request(app).get("/x");
     const second = await request(app).get("/x").set("If-None-Match", first.headers["etag"]);
@@ -167,5 +169,50 @@ describe("withInteractiveReads — a request's pre-cache reads share downstream 
     expect(insideInteractiveView()).toBe(false);
     expect(await withInteractiveReads(async () => insideInteractiveView())).toBe(true);
     expect(insideInteractiveView()).toBe(false);
+  });
+});
+
+describe("hot bodies — a hit on an unchanged row re-sends what this process already holds", () => {
+  const T0 = new Date("2026-09-27T08:00:00.000Z");
+  const textRow = (value: unknown, at: Date) => ({ body: encodeSnapshotBody(value), bodyText: JSON.stringify(value), computedAt: at, factsFingerprint: null });
+
+  it.each([
+    ["an ordinary body", ORDINARY],
+    ["a NUL-carrying body", WITH_NUL],
+  ])("%s: the row answers 'unchanged' with no text, and the held text + wire bytes are served", async (_l, value) => {
+    storedRow = { ...textRow(value, new Date()) };
+    const first = await servedCachedJson(args(async () => ({ never: true })));
+    const at = storedRow.computedAt;
+    // What Postgres answers once the process holds the body as of `computed_at`: bookkeeping, no text.
+    storedRow = { computedAt: at, factsFingerprint: null, unchanged: true, bodyText: null, body: null };
+    const second = await servedCachedJson(args(async () => ({ never: true })));
+    expect(second.json).toBe(JSON.stringify(value));
+    expect(second.wire).toBe(first.wire); // the same buffer + ETag, never re-encoded
+    const [expected, actual] = await Promise.all([viaResJson(value), (async () => {
+      const app = express();
+      app.get("/x", (_req, res) => { sendSnapshotJson(res, second); });
+      return request(app).get("/x");
+    })()]);
+    expect(actual.text).toBe(expected.text);
+    expect(actual.headers["etag"]).toBe(expected.headers["etag"]);
+    expect(actual.headers["content-type"]).toBe(expected.headers["content-type"]);
+  });
+
+  it("a row that MOVED (new computed_at, new text) is served as the new text, never the held one", async () => {
+    storedRow = textRow(ORDINARY, new Date());
+    await servedCachedJson(args(async () => ({ never: true })));
+    const next = { ...ORDINARY, total: 4 };
+    storedRow = { ...textRow(next, new Date(Date.now() + 1)), unchanged: false };
+    const out = await servedCachedJson(args(async () => ({ never: true })));
+    expect(out.json).toBe(JSON.stringify(next));
+  });
+
+  it("VIEW_HOT_BODY_MAX_BYTES=0 holds nothing: every hit reads the stored text", async () => {
+    process.env.VIEW_HOT_BODY_MAX_BYTES = "0";
+    storedRow = textRow(ORDINARY, T0);
+    const a = await servedCachedJson(args(async () => ({ never: true })));
+    const b = await servedCachedJson(args(async () => ({ never: true })));
+    expect(b.json).toBe(a.json);
+    expect(b.wire).not.toBe(a.wire);
   });
 });
