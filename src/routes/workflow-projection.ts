@@ -18,6 +18,7 @@ import {
   describeSeveralOffers,
   SalesFunnelsUnavailableError,
   SeveralOffersDeclaredError,
+  OfferNotOfBrandError,
 } from "../lib/sales-funnels-client.js";
 import { declaredEconomicsForFunnel, declaredFunnelsToRank, mergeFunnelEconomics } from "../lib/declared-funnels.js";
 import {
@@ -1083,6 +1084,26 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     });
   }
 
+  // A caller may name the OFFER a leg is priced for WITHOUT a campaign — the case of a brand being set
+  // up, where the customer picks one offer and asks what each leg would cost before any campaign
+  // exists (so there is no campaign to name the offer through). Leg reads only, like `campaignId`: a
+  // funnel- or goal-keyed body must not move. Beside a campaign it is a 400: the campaign already
+  // names its offer, and two answers to one question would contradict each other.
+  const offerIdParam = ((req.query.offerId as string | undefined) ?? "").trim();
+  const namedOfferId = offerIdParam !== "" ? offerIdParam : null;
+  if (namedOfferId && !legKey) {
+    return res.status(400).json({
+      error: "offerId is answered beside a leg: name the leg this offer's budget would buy",
+      reason: "offer_requires_leg",
+    });
+  }
+  if (namedOfferId && campaignId) {
+    return res.status(400).json({
+      error: "offerId and campaignId are mutually exclusive: a campaign already sells exactly one offer",
+      reason: "offer_and_campaign",
+    });
+  }
+
   const resolved = legKey ? null : resolveGoalInputs(goalParam);
   if (resolved && !resolved.ok) {
     return res.status(400).json({
@@ -1193,7 +1214,8 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     // transitively — no extra call, and no new query parameter for a consumer to learn. Absent → today's
     // brand-scoped read, which brand-service answers for every brand selling one thing, so a
     // single-offer brand is byte-unchanged.
-    const scopeOfferId = campaignIdentity?.offerId ?? null;
+    // `?offerId=` names it directly for a (brand, offer) pair that has no campaign yet.
+    const scopeOfferId = campaignIdentity?.offerId ?? namedOfferId ?? null;
 
     let declaredFunnels: Awaited<ReturnType<typeof fetchPricingFunnels>> | null = null;
     if (legKey) {
@@ -1208,6 +1230,9 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
         // it may not sell. So the refusal is passed on as what it is: a question with several answers,
         // naming them, and naming the one thing that resolves it. A 409 rather than a 502 — the caller
         // is not looking at an outage, it is looking at a choice it can make.
+        if (error instanceof OfferNotOfBrandError) {
+          return res.status(404).json({ error: error.message, reason: "offer_not_found", offerId: error.offerId });
+        }
         if (error instanceof SeveralOffersDeclaredError) {
           const unresolved = describeSeveralOffers(error)!;
           return res.status(409).json({
