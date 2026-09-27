@@ -82,7 +82,7 @@ import {
 import { computeAudienceStats, type ComputeResult } from "../lib/audience-stats-compute.js";
 import { computeOfferPipelineActivity } from "./pipeline-activity.js";
 import { fetchEffectiveEconomics, economicsFingerprint } from "../lib/sales-economics-client.js";
-import { servedCached, buildScopeKey } from "../lib/view-cache.js";
+import { servedCached, servedCachedJson, sendSnapshotJson, buildScopeKey } from "../lib/view-cache.js";
 import { applyLeadDetail, parseLeadDetail, LEAD_DETAIL_VALUES } from "../lib/lead-detail.js";
 import {
   OUTCOME_CAUSES,
@@ -244,7 +244,7 @@ router.get("/offers/:offerId/revenue", apiKeyAuth, async (req, res) => {
     const econ = brandPriced ? economicsFingerprint(brandPriced.economics) : undefined;
     const decl = funnel ? declaredFunnels.map((f) => f.funnelKey).sort().join("+") || "none" : undefined;
 
-    const payload = await servedCached({
+    const payload = await servedCachedJson({
       view: "offer-revenue",
       // Keyed on the offer, never on a feature — and on the CHANNEL SET too, because a newly funded
       // channel changes every figure while none of the other key parts moves.
@@ -310,7 +310,7 @@ router.get("/offers/:offerId/revenue", apiKeyAuth, async (req, res) => {
       },
     });
 
-    res.json(payload);
+    sendSnapshotJson(res, payload);
   } catch (error) {
     if (error instanceof OfferHasNoChannelsError) {
       return res.status(404).json({ error: error.message, reason: "offer_has_no_channels", offerId: error.offerId });

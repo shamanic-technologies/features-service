@@ -159,7 +159,7 @@ const DEFAULT_RETENTION_MS = 7 * 24 * 60 * 60_000;
  */
 const PRUNE_INTERVAL_MS = 60 * 60_000;
 
-const inFlightComputes = new Map<string, Promise<unknown>>();
+const inFlightComputes = new Map<string, Promise<CachedBody>>();
 
 /** Epoch ms of the last prune attempt in THIS process. 0 = never; the first persist after boot sweeps. */
 let lastPruneAt = 0;
@@ -211,11 +211,48 @@ interface CachedViewArgs<T> {
 
 /**
  * Serve `compute`'s result through the Gold snapshot cache. See module doc for the freshness model.
+ *
+ * Returns the parsed VALUE, for a handler that shapes or inspects it. A handler that only sends it
+ * should use {@link servedCachedJson}, which serves the stored text as-is.
  */
-export async function servedCached<T>({ view, scopeKey, orgId, ttlMs, maxStaleMs, compute: rawCompute }: CachedViewArgs<T>): Promise<T> {
+export async function servedCached<T>(args: CachedViewArgs<T>): Promise<T> {
+  return (await servedCachedBody(args)).value() as T;
+}
+
+/**
+ * The same cell as {@link servedCached}, as the exact JSON TEXT of its body, ready to be sent with
+ * {@link sendSnapshotJson}. On a snapshot hit nothing is decoded, parsed or re-stringified on the
+ * serving event loop: the stored text IS the response.
+ *
+ * Why it exists: a brand's revenue body is up to ~4 MB (every organisation its outreach reached). Read
+ * as jsonb, that hit cost the serving loop a Postgres jsonb→text conversion, the driver's `JSON.parse`
+ * and Express's `JSON.stringify` — ~150-250ms of CPU per read, which also stalled every other request
+ * queued behind it (measured in prod 2026-09-27, brand `75d7e3e8…`: p50 502ms, 3.9 MB). The text
+ * is byte-for-byte what `res.json` would have produced from the computed value.
+ */
+export async function servedCachedJson<T>(args: CachedViewArgs<T>): Promise<SnapshotJson> {
+  return new SnapshotJson((await servedCachedBody(args)).text());
+}
+
+/** A served body as the JSON text a response carries. */
+export class SnapshotJson {
+  constructor(readonly json: string) {}
+}
+
+/**
+ * Send a {@link SnapshotJson} exactly as `res.json(value)` would have sent that value: same
+ * Content-Type, same bytes (`res.json` is `JSON.stringify` with no replacer or spacing here), and
+ * Express still sets the ETag and answers a conditional request with 304.
+ */
+export function sendSnapshotJson(res: import("express").Response, body: SnapshotJson): import("express").Response {
+  if (!res.get("Content-Type")) res.type("json");
+  return res.send(body.json);
+}
+
+async function servedCachedBody<T>({ view, scopeKey, orgId, ttlMs, maxStaleMs, compute: rawCompute }: CachedViewArgs<T>): Promise<CachedBody> {
   // Every view compute reads leads through the live copy (lib/lead-copy.ts): these are the views a
   // customer polls, which is exactly the population the change feed exists for.
-  const localCompute = () => withLiveLeadCopy(rawCompute);
+  const localCompute = async () => bodyFromValue(await withLiveLeadCopy(rawCompute));
   if (!cacheEnabled()) return localCompute();
   const family = familyKeyOf(scopeKey);
   const meta = cellMetaOfRequest(orgId);
@@ -226,17 +263,54 @@ export async function servedCached<T>({ view, scopeKey, orgId, ttlMs, maxStaleMs
       // The drift check: a FRESH computation of this cell, compared by the caller against what is
       // stored — so it must never overwrite what it is being compared with.
       const body = await localCompute();
-      answer(body);
+      answer(body.value());
       return body;
     }
     const body = await computeAndPersistSingleFlight(view, scopeKey, orgId, async () => ({ body: await localCompute(), persisted: false }), meta);
-    answer(body);
+    answer(body.value());
     return body;
   }
-  const served = await serveCell<T>(view, scopeKey, orgId, family, meta, ttlMs, maxStaleMs, localCompute);
+  const served = await serveCell(view, scopeKey, orgId, family, meta, ttlMs, maxStaleMs, localCompute);
   if (meta?.read) touchRead(view, scopeKey, meta);
   return served;
 }
+
+/**
+ * A body as the cache holds it — its JSON text, its parsed value, or both — converting only when, and
+ * only once, somebody asks for the other form. A snapshot hit starts as text; a compute starts as a value.
+ */
+export interface CachedBody {
+  text(): string;
+  value(): unknown;
+}
+
+export function bodyFromText(json: string): CachedBody {
+  let parsed: { v: unknown } | undefined;
+  return {
+    text: () => json,
+    value: () => (parsed ??= { v: JSON.parse(json) }).v,
+  };
+}
+
+export function bodyFromValue(value: unknown): CachedBody {
+  let json: string | undefined;
+  return {
+    // `res.json(undefined)` sends an empty body; `JSON.stringify(undefined)` is undefined.
+    text: () => (json ??= JSON.stringify(value) ?? ""),
+    value: () => value,
+  };
+}
+
+/** A stored row's body: the exact text when the row carries it, else the jsonb value (older rows). */
+function bodyOfRow(row: { bodyText?: string | null; body?: unknown }): CachedBody {
+  return typeof row.bodyText === "string" ? bodyFromText(row.bodyText) : bodyFromValue(decodeSnapshotBody(row.body));
+}
+
+/** Read the text column, and the jsonb one ONLY for a row that has no text (never both on a hit). */
+const storedBodyColumns = {
+  bodyText: featureViewSnapshots.bodyText,
+  body: sql<unknown>`case when ${featureViewSnapshots.bodyText} is null then ${featureViewSnapshots.body} end`,
+};
 
 /**
  * What a cell remembers about the request that reads it: its replay (so the keeper can precompute a
@@ -263,7 +337,7 @@ function cellMetaOfRequest(orgId: string): CellMeta | null {
   };
 }
 
-async function serveCell<T>(
+async function serveCell(
   view: string,
   scopeKey: string,
   orgId: string,
@@ -271,26 +345,27 @@ async function serveCell<T>(
   meta: CellMeta | null,
   ttlMs: number | undefined,
   maxStaleMs: number | undefined,
-  localCompute: () => Promise<T>,
-): Promise<T> {
+  localCompute: () => Promise<CachedBody>,
+): Promise<CachedBody> {
   // Server role, inside a request: every compute runs in the refresher process, never on the serving
   // event loop (lib/view-refresher.ts). Outside a request (boot warms, fleet sweeps) it runs here.
   const delegation = refresherDelegation(view, family);
-  const compute: () => Promise<Computed<T>> =
+  const compute: () => Promise<Computed> =
     delegation
       ? async () => {
           const remote = await computeViaRefresher(delegation.url, delegation.headers);
-          // The refresher ran the same handler, which persisted the cell itself.
-          return remote ? { body: remote.body as T, persisted: true } : { body: await localCompute(), persisted: false };
+          // The refresher ran the same handler, which persisted the cell itself. Its answer stays TEXT
+          // until somebody needs the value — a background refresh never does.
+          return remote ? { body: bodyFromText(remote.json), persisted: true } : { body: await localCompute(), persisted: false };
         }
       : async () => ({ body: await localCompute(), persisted: false });
   const ttl = ttlMs ?? defaultTtlFor(view, scopeKey);
   const maxStale = maxStaleMs ?? defaultMaxStaleMs();
 
-  let row: typeof featureViewSnapshots.$inferSelect | undefined;
+  let row: { computedAt: Date; factsFingerprint: string | null; bodyText: string | null; body: unknown } | undefined;
   try {
     [row] = await db
-      .select()
+      .select({ computedAt: featureViewSnapshots.computedAt, factsFingerprint: featureViewSnapshots.factsFingerprint, ...storedBodyColumns })
       .from(featureViewSnapshots)
       .where(and(eq(featureViewSnapshots.view, view), eq(featureViewSnapshots.scopeKey, scopeKey)))
       .limit(1);
@@ -303,7 +378,7 @@ async function serveCell<T>(
   if (row) {
     const ageMs = Date.now() - new Date(row.computedAt).getTime();
     if (ageMs < ttl) {
-      return decodeSnapshotBody(row.body) as T; // fresh hit
+      return bodyOfRow(row); // fresh hit
     }
     if (ageMs >= maxStale) {
       return computeAndPersistSingleFlight(view, scopeKey, orgId, compute, meta);
@@ -312,7 +387,7 @@ async function serveCell<T>(
     // background refresh first asks whether the brand's FACTS moved (lib/view-facts.ts) and skips the
     // whole-population compute when they did not.
     void revalidate(view, scopeKey, orgId, compute, meta, { storedFingerprint: row.factsFingerprint ?? null, ageMs });
-    return decodeSnapshotBody(row.body) as T;
+    return bodyOfRow(row);
   }
 
   // Miss on the EXACT key. When the only thing that moved is a FINGERPRINT part (the economics or the
@@ -320,10 +395,10 @@ async function serveCell<T>(
   // is served NOW and the new cell is computed behind the response. See `familyKeyOf`.
   const familyKey = family;
   if (familyKey !== scopeKey) {
-    let prior: { body: unknown } | undefined;
+    let prior: { bodyText: string | null; body: unknown } | undefined;
     try {
       [prior] = await db
-        .select({ body: featureViewSnapshots.body })
+        .select(storedBodyColumns)
         .from(featureViewSnapshots)
         .where(
           and(
@@ -341,7 +416,7 @@ async function serveCell<T>(
       void computeAndPersistSingleFlight(view, scopeKey, orgId, compute, meta).catch((err) => {
         console.error(`[features-service] view-cache rotation refresh failed (serving previous cell) view=${view}: ${(err as Error).message}`);
       });
-      return decodeSnapshotBody(prior.body) as T;
+      return bodyOfRow(prior);
     }
   }
 
@@ -405,21 +480,21 @@ export function decodeSnapshotBody(stored: unknown): unknown {
 }
 
 /** A computed body, and whether the process that computed it already persisted it. */
-interface Computed<T> {
-  body: T;
+interface Computed {
+  body: CachedBody;
   persisted: boolean;
 }
 
-async function computeAndPersistSingleFlight<T>(
+async function computeAndPersistSingleFlight(
   view: string,
   scopeKey: string,
   orgId: string,
-  compute: () => Promise<Computed<T>>,
+  compute: () => Promise<Computed>,
   meta: CellMeta | null = null,
   factsFp: string | null = null,
-): Promise<T> {
+): Promise<CachedBody> {
   const key = `${view}\0${scopeKey}`;
-  const existing = inFlightComputes.get(key) as Promise<T> | undefined;
+  const existing = inFlightComputes.get(key) as Promise<CachedBody> | undefined;
   if (existing) return existing;
 
   const promise = (async () => {
@@ -468,11 +543,11 @@ function factsGateEnabled(): boolean {
 export const factsGateStats = { skipped: 0, recomputed: 0, noFingerprint: 0 };
 
 /** Background refresh of one stale cell. Single-flight via a conditional claim; never throws. */
-async function revalidate<T>(
+async function revalidate(
   view: string,
   scopeKey: string,
   orgId: string,
-  compute: () => Promise<Computed<T>>,
+  compute: () => Promise<Computed>,
   meta: CellMeta | null = null,
   gate: { storedFingerprint: string | null; ageMs: number } | null = null,
 ): Promise<void> {
@@ -570,11 +645,14 @@ async function upsertSnapshot(
   view: string,
   scopeKey: string,
   orgId: string,
-  rawBody: unknown,
+  stored: CachedBody,
   meta: CellMeta | null = null,
   factsFp: string | null = null,
 ): Promise<void> {
-  const body = encodeSnapshotBody(rawBody);
+  // Both forms: the text is what a hit serves, the jsonb stays readable by anything that queries it
+  // (and by a build predating the text column, should a deploy roll back).
+  const bodyText = stored.text();
+  const body = encodeSnapshotBody(stored.value());
   const familyKey = familyKeyOf(scopeKey);
   const computedAt = new Date();
   // A compute always states the fingerprint it ran under (null = unknown, which gates nothing); the
@@ -584,10 +662,10 @@ async function upsertSnapshot(
     : {};
   await db
     .insert(featureViewSnapshots)
-    .values({ view, scopeKey, familyKey, orgId, body, computedAt, refreshingAt: null, factsFingerprint: factsFp, ...replay })
+    .values({ view, scopeKey, familyKey, orgId, body, bodyText, computedAt, refreshingAt: null, factsFingerprint: factsFp, ...replay })
     .onConflictDoUpdate({
       target: [featureViewSnapshots.view, featureViewSnapshots.scopeKey],
-      set: { body, familyKey, orgId, computedAt, refreshingAt: null, factsFingerprint: factsFp, ...replay },
+      set: { body, bodyText, familyKey, orgId, computedAt, refreshingAt: null, factsFingerprint: factsFp, ...replay },
     });
   void maybePruneStaleSnapshots();
 }
