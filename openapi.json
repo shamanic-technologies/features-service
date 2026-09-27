@@ -18049,6 +18049,16 @@
           {
             "schema": {
               "type": "string",
+              "description": "The OFFER a `?leg=` read is priced for, for a (brand, offer) pair with NO campaign yet (a brand being set up: the customer picks one offer and asks what each leg would cost before any campaign exists). The leg is priced through that offer's terms, so a brand selling several offers answers instead of a 409 `several_offers`; the grains are the ones a campaign-less read resolves (brand, falling back to the fleet), and the recommended workflow is served as usual. Only answerable beside a `?leg=` (400 `offer_requires_leg`), and mutually exclusive with `?campaignId=`, which already names its offer (400 `offer_and_campaign`). An id naming no offer of the brand is a 404 `offer_not_found`. Omitted → byte-identical to before."
+            },
+            "required": false,
+            "description": "The OFFER a `?leg=` read is priced for, for a (brand, offer) pair with NO campaign yet (a brand being set up: the customer picks one offer and asks what each leg would cost before any campaign exists). The leg is priced through that offer's terms, so a brand selling several offers answers instead of a 409 `several_offers`; the grains are the ones a campaign-less read resolves (brand, falling back to the fleet), and the recommended workflow is served as usual. Only answerable beside a `?leg=` (400 `offer_requires_leg`), and mutually exclusive with `?campaignId=`, which already names its offer (400 `offer_and_campaign`). An id naming no offer of the brand is a 404 `offer_not_found`. Omitted → byte-identical to before.",
+            "name": "offerId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "description": "How many OBSERVED PICKS `observedPicks.recent` states — what actually ran, newest first, read live from the runs ledger. Whole number, 0..200; omitted → 50. Only ever read beside a `?campaignId=` (the block is a fact about ONE campaign's own triggers), and `0` is a real answer that spends no read at all. Bounded so a debug panel cannot ask for a campaign's whole history — that history is thousands of triggers. An unreadable or out-of-range value is a 400 (reason='picks_unrecognised'), never clamped into a window the caller did not ask for."
             },
             "required": false,
@@ -19489,7 +19499,7 @@
             }
           },
           "400": {
-            "description": "Missing brandId, an unrecognised goal / pricing value, an unrecognised leg (reason='leg_unrecognised'), an unrecognised maximize value (reason='maximize_unrecognised'), a campaignId sent without a leg (reason='campaign_requires_leg'), or an unrecognised picks window (reason='picks_unrecognised') The retired `funnel` parameter is refused with reason='funnel_retired' (name a leg or nothing).",
+            "description": "Missing brandId, an unrecognised goal / pricing value, an unrecognised leg (reason='leg_unrecognised'), an unrecognised maximize value (reason='maximize_unrecognised'), a campaignId sent without a leg (reason='campaign_requires_leg'), an offerId sent without a leg (reason='offer_requires_leg') or beside a campaignId (reason='offer_and_campaign'), or an unrecognised picks window (reason='picks_unrecognised') The retired `funnel` parameter is refused with reason='funnel_retired' (name a leg or nothing).",
             "content": {
               "application/json": {
                 "schema": {
@@ -19507,7 +19517,7 @@
             }
           },
           "404": {
-            "description": "Feature not found; or (reason='leg_not_declared') no funnel this brand declared contains the requested `?leg=` — both bodies carry `declaredFunnelKeys`",
+            "description": "Feature not found; or (reason='offer_not_found') the named `?offerId=` is not an offer of this brand; or (reason='leg_not_declared') no funnel this brand declared contains the requested `?leg=` — both bodies carry `declaredFunnelKeys`",
             "content": {
               "application/json": {
                 "schema": {

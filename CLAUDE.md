@@ -1,5 +1,21 @@
 # Features Service — CLAUDE.md
 
+## A (BRAND, OFFER) PAIR WITH NO CAMPAIGN IS PRICED WITH `?offerId=` ON A LEG-KEYED `workflow-projection`
+
+The dashboard's "Add a brand" modal prices each leg (visit / positive reply) for ONE offer before any
+campaign exists. Without a campaign there was no way to name the offer: a several-offer brand answered
+409 `several_offers` ("name the campaign"), so a brand being set up could never be priced (prod
+2026-09-27, brand `c4b5284d…`, 7 offers, 0 campaigns).
+
+- `?offerId=` is the offer `fetchPricingFunnels` resolves (`scopeOfferId = campaign's offer ?? offerId`).
+  Everything else is the campaign-less read: same grains (crossOrg → brand), same fleet fallback, same
+  recommended workflow. Offer LTR null → costs still served, return fields null.
+- Leg reads only (400 `offer_requires_leg`), exclusive with `?campaignId=` (400 `offer_and_campaign`), an
+  offer the brand does not sell is 404 `offer_not_found` (`OfferNotOfBrandError`, subclass of the
+  unavailable error so every other catch is unchanged). Omitted → byte-identical. No offer GRAIN is added
+  (an offer with no campaign has no evidence of its own); the evidence cell's key is unchanged.
+- Guards: the `?offerId=` block of `routes/offer-scoped-funnels.test.ts`. (Set 2026-09-27.)
+
 ## A BRAND TRANSFER MOVES THE STATED AMOUNTS AND INVALIDATES BOTH ORGS' VIEWS — `POST /internal/transfer-brand`
 
 This service's half of the fleet contract brand-service orchestrates (body `{sourceBrandId, sourceOrgId,
@@ -792,10 +808,8 @@ minute `audience-stats` and both `workflow-projection` reads 502'd on every poll
   ONE offer, so a request naming a `?campaignId=` names the offer transitively —
   `CampaignIdentity.offerId`, read off the members the identity already resolved, so it costs **no extra
   call**. It is deliberately NOT on `CampaignIdentityView`: it shapes which question we ask
-  brand-service, not what we tell a consumer, so no response body moves. **Do NOT "fix" this by adding
-  an `?offerId=` query parameter to `workflow-projection`** — it would need a dashboard change, and
-  `audience-stats` already proves a consumer cannot send one beside a campaign (`offerId` + `campaignId`
-  is a 400 by design: a campaign already sells exactly one offer).
+  brand-service, not what we tell a consumer, so no response body moves. A (brand, offer) pair with NO
+  campaign names its offer with `?offerId=` (see the section at the top); beside a campaign that is a 400.
 - **THE REFUSAL IS A QUESTION WITH SEVERAL ANSWERS, NOT A FAULT, AND THE TYPE SAYS SO.**
   `SeveralOffersDeclaredError` (`lib/sales-funnels-client.ts`) is parsed from the deployed 409 body
   (`{error, code:"SEVERAL_OFFERS", offers:[{offerId,name}]}` — brand-service's `rejectOfferProblem`).

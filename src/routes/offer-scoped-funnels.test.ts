@@ -280,6 +280,70 @@ describe("a brand-scoped read of a several-offer brand degrades, it never 502s",
 
 });
 
+describe("?offerId= prices a (brand, offer) pair that has NO campaign yet", () => {
+  // A brand being set up: the customer picks ONE offer and asks what each leg would cost before any
+  // campaign exists, so there is no campaign to name the offer through.
+  const brandRow = (body: { rows: Array<{ audienceId: string | null; workflow: { workflowDynastySlug: string } }> }) =>
+    body.rows.find((r) => r.audienceId === null && r.workflow.workflowDynastySlug === "wf-a") as
+      | { resolved: { costPerOutcomeUsd: number | null; roiMultiple: number | null } }
+      | undefined;
+
+  for (const leg of ["start_to_website_visit", "start_to_conversation"]) {
+    it(`answers the ${leg} leg of a SEVERAL-offer brand with a recommended workflow and a price`, async () => {
+      const res = await get(
+        `/features/${FEATURE.slug}/workflow-projection?brandId=${MULTI_BRAND}&leg=${leg}&offerId=${OFFER_SALES_LED}`,
+      );
+      expect(res.status).toBe(200);
+      expect(res.body.recommendedWorkflowDynastySlug).toBe("wf-a");
+      expect(brandRow(res.body)?.resolved.costPerOutcomeUsd).toEqual(expect.any(Number));
+    });
+  }
+
+  it("prices on THE NAMED offer's lifetime revenue — two offers, two returns on identical spend", async () => {
+    const path = (offerId: string) =>
+      `/features/${FEATURE.slug}/workflow-projection?brandId=${MULTI_BRAND}&leg=start_to_website_visit&offerId=${offerId}`;
+    const sales = await get(path(OFFER_SALES_LED));
+    const product = await get(path(OFFER_PRODUCT_LED));
+    expect(sales.status).toBe(200);
+    expect(product.status).toBe(200);
+    // Same evidence, same cost per outcome: the offer moves what an outcome is WORTH, not what it costs.
+    expect(brandRow(sales.body)?.resolved.costPerOutcomeUsd).toBe(brandRow(product.body)?.resolved.costPerOutcomeUsd);
+    const salesRoi = brandRow(sales.body)?.resolved.roiMultiple;
+    const productRoi = brandRow(product.body)?.resolved.roiMultiple;
+    expect(salesRoi).toEqual(expect.any(Number));
+    expect(salesRoi).toBeCloseTo((productRoi as number) * (OFFER_LTR[OFFER_SALES_LED] / OFFER_LTR[OFFER_PRODUCT_LED]), 6);
+  });
+
+  it("is a 404 for an offer the brand does not sell — never the brand's other offer", async () => {
+    const res = await get(
+      `/features/${FEATURE.slug}/workflow-projection?brandId=${MULTI_BRAND}&leg=start_to_website_visit&offerId=not-an-offer`,
+    );
+    expect(res.status).toBe(404);
+    expect(res.body.reason).toBe("offer_not_found");
+  });
+
+  it("refuses an offerId without a leg, and beside a campaign", async () => {
+    const noLeg = await get(`/features/${FEATURE.slug}/workflow-projection?brandId=${MULTI_BRAND}&objective=self-serve&offerId=${OFFER_SALES_LED}`);
+    expect(noLeg.status).toBe(400);
+    expect(noLeg.body.reason).toBe("offer_requires_leg");
+    const both = await get(
+      `/features/${FEATURE.slug}/workflow-projection?brandId=${MULTI_BRAND}&leg=start_to_website_visit&offerId=${OFFER_SALES_LED}&campaignId=${CAMPAIGN}`,
+    );
+    expect(both.status).toBe(400);
+    expect(both.body.reason).toBe("offer_and_campaign");
+  });
+
+  it("names on the offer the same answer the campaign that sells it gets", async () => {
+    const byOffer = await get(
+      `/features/${FEATURE.slug}/workflow-projection?brandId=${MULTI_BRAND}&leg=start_to_website_visit&offerId=${OFFER_SALES_LED}`,
+    );
+    const byCampaign = await get(
+      `/features/${FEATURE.slug}/workflow-projection?brandId=${MULTI_BRAND}&leg=start_to_website_visit&campaignId=${CAMPAIGN}`,
+    );
+    expect(brandRow(byOffer.body)?.resolved.roiMultiple).toBe(brandRow(byCampaign.body)?.resolved.roiMultiple);
+  });
+});
+
 describe("a brand selling ONE offer is byte-unchanged", () => {
   it("reads audience-stats without naming an offer, and states no unresolved block", async () => {
     const res = await get(`/features/${FEATURE.slug}/audience-stats?brandId=${SOLO_BRAND}`);
