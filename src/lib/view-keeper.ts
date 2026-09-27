@@ -1,26 +1,53 @@
 import { and, gt, isNotNull, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { featureViewSnapshots } from "../db/schema.js";
+import { SEED_FEATURES } from "../seed/features.js";
 import { fetchBrandCampaignRows } from "./campaign-identity-client.js";
-import { buildCampaignFamilies, type CampaignIdentityRow } from "./campaign-identity.js";
+import { mapWithConcurrency } from "./concurrency.js";
+import { fetchFeatureMemberships } from "./feature-memberships-client.js";
 import { decodeSnapshotBody, factsGateStats, familyKeyOf } from "./view-cache.js";
 import { brandIdOfRequest, factsFingerprint } from "./view-facts.js";
+import {
+  brandScopesOf,
+  canonicalRequest,
+  headersFor,
+  instancesOf,
+  orderShapes,
+  shapeKey,
+  shapeOf,
+  type BrandScopes,
+  type RequestShape,
+} from "./view-materializer.js";
 import { PRECOMPUTE_HEADER, REFRESH_HEADER, VERIFY_HEADER, refresherBaseUrl } from "./view-refresher.js";
 
+export { canonicalRequest } from "./view-materializer.js";
+
 /**
- * THE VIEW KEEPER — keeps the Gold cells of every brand a customer reads READY before they are asked
- * for, and proves they say what a fresh computation says.
+ * THE VIEW KEEPER — keeps the Gold cell of every money read a customer dashboard can make READY before
+ * it is asked for, keeps it no older than a day, and proves it says what a fresh computation says.
  *
- * PRECOMPUTE. A cell nobody has read yet (a campaign just created, an offer opened for the first time)
- * was a blocking cold compute on the customer's first read: 7.6-9s measured in prod 2026-09-26 on the
- * two largest brands, almost all of it waiting on ~13 sibling reads. The keeper takes every request a
- * customer made in the last {@link TEMPLATE_WINDOW_MS} (recorded on its cell as `replay_url`), and for
- * each campaign- or offer-scoped one asks the same question of the brand's OTHER campaigns / offers —
- * the representative campaign of every identity campaign-service states, every offer a campaign sells —
- * through the refresher, so the answer is persisted before anybody opens it. The request is the
- * customer's own with one id swapped: the SAME handler computes it, so the body is exactly what that
- * customer's first read would have computed (no second derivation of any figure). A precompute is not a
- * read: its cell carries no `last_read_at` and ages out after the retention window if nobody opens it.
+ * MATERIALIZE. A cell nobody had read (a brand's first visit, a campaign just created, a query shape
+ * that brand never opened) was a blocking cold compute on the customer's first read: 7-35s, almost all
+ * of it waiting on ~13 sibling reads. Each round (`materializeRound`) takes the request SHAPES customers
+ * read anywhere in the fleet over the last {@link SHAPE_WINDOW_MS} and instantiates them for every
+ * (org, brand) that runs a channel, over every channel, campaign identity, offer and leg the brand runs
+ * (`lib/view-materializer.ts`), and asks the refresher for each instance no cell holds yet, through the
+ * ordinary read path (`x-view-precompute: 1`). The request is a real request of the org's own identity
+ * (its most recent customer read's headers, ids swapped), so the SAME handler computes it and the cell
+ * is byte-for-byte what that customer's first read would have computed — no figure is derived a second
+ * way, nothing is approximated. A precompute is not a read: no `last_read_at`.
+ *
+ * KEEP FRESH. A held instance whose cell is older than {@link REASK_AFTER_MS} is asked again: the
+ * refresher then serves it stale and refreshes it behind (facts-gated), so a cell a customer opens for
+ * the first time in a week is at most a day old, and SWR brings it current on that same read.
+ *
+ * BOUNDED. At most {@link DEFAULT_KEEPER_CONCURRENCY} requests in flight, at most
+ * {@link DEFAULT_KEEPER_MAX_PER_ROUND} per round and never past {@link DEFAULT_KEEPER_ROUND_BUDGET_MS}:
+ * the refresher also answers customers, and every compute reads ~13 siblings.
+ *
+ * NOT COVERED, and why: an org that has never read a dashboard has no identity to replay under (every
+ * route needs a real user of the org), so its brands are counted in `noIdentity` and computed on its
+ * first read. A one-off request (a workflow drill-down, a lead list, a viewer's timezone) is not a shape.
  *
  * DRIFT CHECK. `checkDrift` replays a stored cell's request against the refresher in VERIFY mode (compute,
  * never persist) and compares the fresh body with what is stored, path by path. With `mode: "moment"` it
@@ -29,15 +56,25 @@ import { PRECOMPUTE_HEADER, REFRESH_HEADER, VERIFY_HEADER, refresherBaseUrl } fr
  * gate lets a cell get. Every difference is reported loudly with its paths.
  */
 
-/** A read this old or newer makes its request a template. */
-const TEMPLATE_WINDOW_MS = 3 * 24 * 60 * 60_000;
-/** How often a precompute round runs, and the most computes one round may ask for. */
+/** A customer read this recent makes its request a shape, fleet-wide. */
+const SHAPE_WINDOW_MS = 14 * 24 * 60 * 60_000;
+/** A held cell older than this is asked again (refreshed behind the answer). */
+const REASK_AFTER_MS = 24 * 60 * 60_000;
 const DEFAULT_KEEPER_INTERVAL_MS = 5 * 60_000;
-const DEFAULT_KEEPER_MAX_PER_ROUND = 12;
+const DEFAULT_KEEPER_MAX_PER_ROUND = 60;
+const DEFAULT_KEEPER_CONCURRENCY = 2;
+/**
+ * A stale re-ask answers at once and refreshes BEHIND the answer inside the refresher, so the
+ * concurrency bound does not hold it: they get their own, smaller, per-round cap.
+ */
+const DEFAULT_KEEPER_MAX_STALE_PER_ROUND = 8;
+const DEFAULT_KEEPER_ROUND_BUDGET_MS = 4 * 60_000;
 /** A precompute the handler refused (e.g. a 404 for a campaign with no funnel) is not retried for this long. */
 const REFUSED_RETRY_MS = 6 * 60 * 60_000;
 /** A precompute that finished is not re-asked for this long, even if its cell was never written. */
 const DONE_RETRY_MS = 60 * 60_000;
+/** A brand's campaign rows are re-read at most this often. */
+const SCOPES_TTL_MS = 15 * 60_000;
 
 function positiveNumberEnv(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -46,109 +83,92 @@ function positiveNumberEnv(name: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
-/** The entities a template can be replayed for — read from campaign-service, never guessed. */
-export interface BrandEntities {
-  /** One campaign per identity (the live one, else the latest), with the channel it runs on. */
-  campaigns: { id: string; featureSlug: string | null }[];
-  /** Every offer a campaign of the brand sells. */
-  offerIds: string[];
-}
-
-export function brandEntitiesOf(rows: CampaignIdentityRow[]): BrandEntities {
-  const families = buildCampaignFamilies(rows);
-  const bySlug = new Map(rows.map((r) => [r.id, r.featureSlug ?? null] as const));
-  const representatives = new Set<string>();
-  for (const row of rows) {
-    const identity = families.identityOf(row.id);
-    representatives.add(identity ? identity.representativeId : row.id);
-  }
-  const offerIds = new Set<string>();
-  for (const row of rows) if (row.offerId) offerIds.add(row.offerId);
-  return {
-    campaigns: [...representatives].sort().map((id) => ({ id, featureSlug: bySlug.get(id) ?? null })),
-    offerIds: [...offerIds].sort(),
-  };
-}
-
-/** Path + query with the query sorted, so two spellings of one request compare equal. */
-export function canonicalRequest(url: string): string {
-  const parsed = new URL(url, "http://local");
-  const params = [...parsed.searchParams.entries()].sort(([a, av], [b, bv]) => (a === b ? (av < bv ? -1 : 1) : a < b ? -1 : 1));
-  const query = new URLSearchParams(params).toString();
-  return query ? `${parsed.pathname}?${query}` : parsed.pathname;
-}
-
-/**
- * The same request asked of the brand's OTHER campaigns (a campaign-scoped template) or OTHER offers (an
- * offer-scoped one). A campaign's channel rides the `/features/:slug/` path, so it moves with the id; a
- * template scoped to neither yields nothing (a brand-grain cell is already the brand's).
- */
-export function siblingRequests(templateUrl: string, entities: BrandEntities): string[] {
-  const parsed = new URL(templateUrl, "http://local");
-  const out = new Set<string>();
-  const campaignId = parsed.searchParams.get("campaignId");
-  if (campaignId) {
-    for (const campaign of entities.campaigns) {
-      if (campaign.id === campaignId) continue;
-      const next = new URL(parsed.toString());
-      next.searchParams.set("campaignId", campaign.id);
-      const featurePath = /^\/features\/([^/]+)(\/.*)$/.exec(next.pathname);
-      if (featurePath) {
-        if (!campaign.featureSlug) continue; // cannot name the channel this campaign runs on
-        next.pathname = `/features/${campaign.featureSlug}${featurePath[2]}`;
-      }
-      out.add(canonicalRequest(next.pathname + next.search));
-    }
-    return [...out];
-  }
-  const offerPath = /^\/offers\/([^/]+)(\/.*)$/.exec(parsed.pathname);
-  if (offerPath) {
-    for (const offerId of entities.offerIds) {
-      if (offerId === offerPath[1]) continue;
-      out.add(canonicalRequest(`/offers/${offerId}${offerPath[2]}${parsed.search}`));
-    }
-  }
-  return [...out];
-}
-
-interface Template {
-  url: string;
-  headers: Record<string, string>;
-  orgId: string;
-  brandId: string;
-}
-
 export interface PrecomputeReport {
   at: string;
-  templates: number;
+  shapes: number;
   brands: number;
-  candidates: number;
+  noIdentity: number;
+  instances: number;
+  held: number;
+  missing: number;
+  stale: number;
   asked: number;
   computed: number;
+  refreshedStale: number;
   refused: { url: string; status: number }[];
-  skippedKnown: number;
   deferred: number;
   errors: string[];
+  durationMs: number;
+}
+
+interface Target {
+  orgId: string;
+  brandId: string;
+  headers: Record<string, string>;
+  lastReadMs: number;
+}
+
+interface WorkItem {
+  url: string;
+  headers: Record<string, string>;
+  key: string;
+  stale: boolean;
 }
 
 const refusedUntil = new Map<string, number>();
 const doneUntil = new Map<string, number>();
+const scopesCache = new Map<string, { at: number; scopes: BrandScopes }>();
 let lastReport: PrecomputeReport | null = null;
 let running = false;
 
-/** One precompute round (see the module doc). Sequential, bounded, never throws. */
-export async function precomputeSiblingScopes(): Promise<PrecomputeReport> {
+const heldKey = (orgId: string, url: string) => `${orgId} ${url}`;
+
+/** Test seam: forget what earlier rounds asked. */
+export function __resetKeeperStateForTest(): void {
+  refusedUntil.clear();
+  doneUntil.clear();
+  scopesCache.clear();
+}
+
+/** All seed feature slugs, as lead-service's membership read takes them. */
+function allFeatureSlugsCsv(): string {
+  return SEED_FEATURES.map((f) => f.slug).join(",");
+}
+
+async function scopesOf(target: Target): Promise<BrandScopes> {
+  const key = `${target.orgId} ${target.brandId}`;
+  const cached = scopesCache.get(key);
+  if (cached && Date.now() - cached.at < SCOPES_TTL_MS) return cached.scopes;
+  const rows = await fetchBrandCampaignRows(target.brandId, undefined, {
+    orgId: target.orgId,
+    userId: target.headers["x-user-id"],
+    runId: target.headers["x-run-id"],
+  });
+  // The campaign read is org-scoped server-side; keep only this org's rows defensively.
+  const scopes = brandScopesOf(target.brandId, rows.filter((r) => !r.orgId || r.orgId === target.orgId));
+  scopesCache.set(key, { at: Date.now(), scopes });
+  return scopes;
+}
+
+/** One materialize round (see the module doc). Bounded, never throws. */
+export async function materializeRound(): Promise<PrecomputeReport> {
+  const began = Date.now();
   const report: PrecomputeReport = {
-    at: new Date().toISOString(),
-    templates: 0,
+    at: new Date(began).toISOString(),
+    shapes: 0,
     brands: 0,
-    candidates: 0,
+    noIdentity: 0,
+    instances: 0,
+    held: 0,
+    missing: 0,
+    stale: 0,
     asked: 0,
     computed: 0,
+    refreshedStale: 0,
     refused: [],
-    skippedKnown: 0,
     deferred: 0,
     errors: [],
+    durationMs: 0,
   };
   const base = refresherBaseUrl();
   const apiKey = process.env.FEATURES_SERVICE_API_KEY;
@@ -157,6 +177,9 @@ export async function precomputeSiblingScopes(): Promise<PrecomputeReport> {
     return report;
   }
   const cap = positiveNumberEnv("VIEW_KEEPER_MAX_PER_ROUND", DEFAULT_KEEPER_MAX_PER_ROUND);
+  const concurrency = positiveNumberEnv("VIEW_KEEPER_CONCURRENCY", DEFAULT_KEEPER_CONCURRENCY);
+  const budgetMs = positiveNumberEnv("VIEW_KEEPER_ROUND_BUDGET_MS", DEFAULT_KEEPER_ROUND_BUDGET_MS);
+  const staleCap = positiveNumberEnv("VIEW_KEEPER_MAX_STALE_PER_ROUND", DEFAULT_KEEPER_MAX_STALE_PER_ROUND);
 
   const cells = await db
     .select({
@@ -165,95 +188,126 @@ export async function precomputeSiblingScopes(): Promise<PrecomputeReport> {
       orgId: featureViewSnapshots.orgId,
       brandId: featureViewSnapshots.brandId,
       lastReadAt: featureViewSnapshots.lastReadAt,
+      computedAt: featureViewSnapshots.computedAt,
     })
     .from(featureViewSnapshots)
     .where(isNotNull(featureViewSnapshots.replayUrl));
 
-  const known = new Set<string>();
-  const templates = new Map<string, Template>();
-  const cutoff = Date.now() - TEMPLATE_WINDOW_MS;
+  // What is held (newest cell per org + request), the fleet's shapes, and each org's identity.
+  const held = new Map<string, number>();
+  const shapes = new Map<string, RequestShape>();
+  const identity = new Map<string, { headers: Record<string, string>; at: number }>();
+  const brandLastRead = new Map<string, number>();
+  const shapeCutoff = began - SHAPE_WINDOW_MS;
   for (const cell of cells) {
     if (!cell.replayUrl) continue;
-    known.add(canonicalRequest(cell.replayUrl));
-    if (!cell.brandId || !cell.lastReadAt || new Date(cell.lastReadAt).getTime() < cutoff) continue;
+    const computedMs = new Date(cell.computedAt).getTime();
+    const key = heldKey(cell.orgId, canonicalRequest(cell.replayUrl));
+    held.set(key, Math.max(held.get(key) ?? 0, computedMs));
+    if (!cell.lastReadAt) continue;
+    const readMs = new Date(cell.lastReadAt).getTime();
     const headers = (cell.replayHeaders ?? {}) as Record<string, string>;
-    templates.set(canonicalRequest(cell.replayUrl), { url: cell.replayUrl, headers, orgId: cell.orgId, brandId: cell.brandId });
+    if (headers["x-user-id"] && headers["x-run-id"] && readMs > (identity.get(cell.orgId)?.at ?? 0)) {
+      identity.set(cell.orgId, { headers, at: readMs });
+    }
+    if (cell.brandId) {
+      const k = `${cell.orgId} ${cell.brandId}`;
+      brandLastRead.set(k, Math.max(brandLastRead.get(k) ?? 0, readMs));
+    }
+    if (readMs < shapeCutoff) continue;
+    const shape = shapeOf(cell.replayUrl);
+    if (shape) shapes.set(shapeKey(shape), shape);
   }
-  report.templates = templates.size;
+  const ordered = orderShapes([...shapes.values()]);
+  report.shapes = ordered.length;
 
-  const byBrand = new Map<string, Template[]>();
-  for (const t of templates.values()) {
-    const list = byBrand.get(t.brandId);
-    if (list) list.push(t);
-    else byBrand.set(t.brandId, [t]);
+  // Every (org, brand) that runs a channel, plus every brand a customer has read.
+  const pairs = new Set<string>();
+  try {
+    for (const m of await fetchFeatureMemberships(allFeatureSlugsCsv())) pairs.add(`${m.orgId} ${m.brandId}`);
+  } catch (err) {
+    report.errors.push(`feature memberships: ${(err as Error).message.slice(0, 200)}`);
   }
-  report.brands = byBrand.size;
+  for (const k of brandLastRead.keys()) pairs.add(k);
+  const targets: Target[] = [];
+  for (const pair of pairs) {
+    const [orgId, brandId] = pair.split(" ");
+    const id = identity.get(orgId);
+    if (!id) {
+      report.noIdentity += 1;
+      continue;
+    }
+    targets.push({ orgId, brandId, headers: id.headers, lastReadMs: brandLastRead.get(pair) ?? id.at - 1 });
+  }
+  // The brands customers read most recently first.
+  targets.sort((a, b) => b.lastReadMs - a.lastReadMs || (a.brandId < b.brandId ? -1 : 1));
+  report.brands = targets.length;
 
   const now = Date.now();
   for (const [k, until] of refusedUntil) if (until < now) refusedUntil.delete(k);
   for (const [k, until] of doneUntil) if (until < now) doneUntil.delete(k);
 
-  const queue: { url: string; template: Template }[] = [];
-  for (const [brandId, list] of byBrand) {
-    const first = list[0];
-    let entities: BrandEntities;
+  const missing: WorkItem[] = [];
+  const stale: WorkItem[] = [];
+  const seen = new Set<string>();
+  for (const target of targets) {
+    let scopes: BrandScopes;
     try {
-      entities = brandEntitiesOf(
-        await fetchBrandCampaignRows(brandId, undefined, {
-          orgId: first.orgId,
-          userId: first.headers["x-user-id"],
-          runId: first.headers["x-run-id"],
-        }),
-      );
+      scopes = await scopesOf(target);
     } catch (err) {
-      report.errors.push(`campaigns of brand ${brandId}: ${(err as Error).message.slice(0, 200)}`);
+      report.errors.push(`campaigns of brand ${target.brandId}: ${(err as Error).message.slice(0, 200)}`);
       continue;
     }
-    for (const template of list) {
-      for (const url of siblingRequests(template.url, entities)) {
-        report.candidates += 1;
-        if (known.has(url) || refusedUntil.has(url) || doneUntil.has(url)) {
-          report.skippedKnown += 1;
-          continue;
-        }
-        known.add(url);
-        queue.push({ url, template });
+    for (const shape of ordered) {
+      for (const instance of instancesOf(shape, scopes)) {
+        const key = heldKey(target.orgId, instance.url);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        report.instances += 1;
+        if (refusedUntil.has(key) || doneUntil.has(key)) continue;
+        const computedMs = held.get(key);
+        const item = { url: instance.url, headers: headersFor(target.headers, target.brandId, instance), key, stale: computedMs !== undefined };
+        if (computedMs === undefined) missing.push(item);
+        else if (now - computedMs > REASK_AFTER_MS) stale.push(item);
+        else report.held += 1;
       }
     }
   }
+  report.missing = missing.length;
+  report.stale = stale.length;
 
-  for (const [i, item] of queue.entries()) {
-    if (i >= cap) {
-      report.deferred = queue.length - cap;
-      break;
+  // Missing cells first (a first read would block on them); a stale one is still served instantly.
+  const queue = [...missing, ...stale.slice(0, staleCap)];
+  const work = queue.slice(0, cap);
+  report.deferred = queue.length - work.length + Math.max(0, stale.length - staleCap);
+  await mapWithConcurrency(work, concurrency, async (item) => {
+    if (Date.now() - began > budgetMs) {
+      report.deferred += 1;
+      return;
     }
     report.asked += 1;
-    const headers: Record<string, string> = { ...item.template.headers, "x-api-key": apiKey, [PRECOMPUTE_HEADER]: "1" };
-    // The swapped request names another campaign: its campaign header must follow, or a downstream
-    // attribution header would name the template's campaign.
-    const swapped = new URL(item.url, "http://local");
-    const campaignId = swapped.searchParams.get("campaignId");
-    if (campaignId && headers["x-campaign-id"]) headers["x-campaign-id"] = campaignId;
-    const featurePath = /^\/features\/([^/]+)\//.exec(swapped.pathname);
-    if (featurePath && headers["x-feature-slug"]) headers["x-feature-slug"] = featurePath[1];
+    const headers: Record<string, string> = { ...item.headers, "x-api-key": apiKey, [PRECOMPUTE_HEADER]: "1" };
     try {
       const res = await fetch(`${base}${item.url}`, { headers, signal: AbortSignal.timeout(120_000) });
       await res.arrayBuffer();
       if (res.ok) {
-        report.computed += 1;
-        doneUntil.set(item.url, Date.now() + DONE_RETRY_MS);
+        if (item.stale) report.refreshedStale += 1;
+        else report.computed += 1;
+        doneUntil.set(item.key, Date.now() + DONE_RETRY_MS);
       } else {
-        refusedUntil.set(item.url, Date.now() + REFUSED_RETRY_MS);
+        refusedUntil.set(item.key, Date.now() + REFUSED_RETRY_MS);
         report.refused.push({ url: item.url, status: res.status });
       }
     } catch (err) {
       report.errors.push(`${item.url}: ${(err as Error).message.slice(0, 200)}`);
     }
-  }
+  });
+  report.durationMs = Date.now() - began;
   console.log(
-    `[features-service] view keeper: ${report.templates} templates / ${report.brands} brands -> ${report.candidates} sibling scopes, ` +
-      `${report.skippedKnown} already held, ${report.computed} precomputed, ${report.refused.length} refused, ${report.deferred} deferred, ` +
-      `${report.errors.length} errors`,
+    `[features-service] view keeper: ${report.shapes} shapes x ${report.brands} brands (${report.noIdentity} with no identity) -> ` +
+      `${report.instances} cells, ${report.held} held fresh, ${report.missing} missing, ${report.stale} older than a day; ` +
+      `${report.computed} precomputed, ${report.refreshedStale} refreshed, ${report.refused.length} refused, ${report.deferred} deferred, ` +
+      `${report.errors.length} errors in ${report.durationMs}ms`,
   );
   return report;
 }
@@ -266,7 +320,7 @@ export function startViewKeeper(): void {
     if (running) return;
     running = true;
     try {
-      lastReport = await precomputeSiblingScopes();
+      lastReport = await materializeRound();
     } catch (err) {
       console.error(`[features-service] view keeper round failed: ${(err as Error).message}`);
     } finally {

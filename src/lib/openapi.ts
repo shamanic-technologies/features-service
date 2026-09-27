@@ -3706,14 +3706,19 @@ registry.registerPath({
 const keeperRoundSchema = z
   .object({
     at: z.string(),
-    templates: z.number().describe("Customer requests read in the last 3 days, each a template"),
-    brands: z.number(),
-    candidates: z.number().describe("Sibling scopes (other campaigns / offers of the brand) those templates imply"),
+    shapes: z.number().describe("Request shapes customers read anywhere in the fleet over the last 14 days"),
+    brands: z.number().describe("(org, brand) pairs the shapes are instantiated for"),
+    noIdentity: z.number().describe("Pairs skipped: the org has never read a dashboard, so there is no identity to replay as"),
+    instances: z.number().describe("Cells the shapes imply across every brand, channel, campaign identity, offer and leg"),
+    held: z.number().describe("Instances already held, computed within the last day"),
+    missing: z.number().describe("Instances no cell holds yet (a first read would block on them)"),
+    stale: z.number().describe("Instances held but older than a day"),
     asked: z.number(),
     computed: z.number(),
+    refreshedStale: z.number(),
     refused: z.array(z.object({ url: z.string(), status: z.number() })),
-    skippedKnown: z.number(),
     deferred: z.number(),
+    durationMs: z.number(),
     errors: z.array(z.string()),
   })
   .passthrough();
@@ -3747,8 +3752,9 @@ registry.registerPath({
   path: "/internal/view-cache/keeper/run",
   summary: "Run one precompute round now (internal, service key)",
   description:
-    "Asks the refresher to compute, for every campaign- or offer-scoped request a customer read in the last 3 days, the same request for " +
-    "the brand's OTHER campaigns and offers, so their first read is a stored cell. Same handler, one id swapped — no figure is derived twice.",
+    "Materializes, for every (org, brand) that runs a channel, every request shape customers read in the fleet over the last 14 days, over " +
+    "every channel, campaign identity, offer and leg the brand runs, so a first read is a stored cell; re-asks cells older than a day. " +
+    "Same handler under the org's own identity, ids swapped — no figure is derived twice.",
   tags: ["Internal"],
   responses: {
     200: { description: "The round's report", content: { "application/json": { schema: keeperRoundSchema } } },

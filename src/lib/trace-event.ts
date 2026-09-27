@@ -11,6 +11,9 @@ export async function traceEvent(
   },
   headers: Record<string, string | string[] | undefined>
 ): Promise<void> {
+  // A keeper precompute (lib/view-keeper.ts) replays a read under the identity of the org's last read,
+  // whose run may be a workflow's: it must not write events onto a run it is not part of.
+  if (headers["x-view-precompute"] === "1") return;
   const url = process.env.RUNS_SERVICE_URL;
   const apiKey = process.env.RUNS_SERVICE_API_KEY;
   if (!url || !apiKey) {
