@@ -187,6 +187,8 @@ describe("crossOrg positive replies are counted on the finer grains' person basi
     expect(vi.mocked(fetchFleetPositiveRepliesBySlug)).toHaveBeenCalledWith(
       "sales-cold-email-outreach",
       { orgId: "org-1", brandId: "b1", repliers: [brandReplier] },
+      // A leg-less read narrows the fleet to no leg's campaigns.
+      undefined,
     );
     // A slug the fleet person set holds nobody on reads 0 — never the sender's count on the side.
     expect(rowFor(res.body, "dyn-b").estimatesByGrain.crossOrg.evidence.observedPositiveReplies).toBe(0);

@@ -83,10 +83,14 @@ async function fetchBrandCostGroups(
   featureSlug: string,
   groupBy: string,
   identity: Identity,
+  // LEG scope: only these campaigns' cost rows (runs-service `campaignIds`, ≤500 — a brand's campaigns on
+  // one leg of one channel are far fewer). Omitted → every campaign of the brand, unchanged.
+  campaignIds?: readonly string[],
 ): Promise<CostGroup[]> {
   const baseUrl = process.env.RUNS_SERVICE_URL;
   if (!baseUrl) throw new Error("RUNS_SERVICE_URL not configured");
   const params = new URLSearchParams({ groupBy, brandId, featureSlugs: featureSlug });
+  if (campaignIds && campaignIds.length > 0) params.set("campaignIds", campaignIds.join(","));
   const response = await fetchWithRetry(`${baseUrl}/v1/stats/costs?${params}`, { headers: runsHeaders(brandId, identity) });
   if (!response.ok) {
     const text = await response.text();
@@ -323,8 +327,9 @@ async function fetchAudienceDynastyCosts(
   identity: Identity,
   pricing: Pricing,
   slugToDynasty: Map<string, string>,
+  campaignIds?: readonly string[],
 ): Promise<Map<string, Map<string, DynastyCost>>> {
-  const groups = await fetchBrandCostGroups(brandId, featureSlug, "audienceId,workflowSlug", identity);
+  const groups = await fetchBrandCostGroups(brandId, featureSlug, "audienceId,workflowSlug", identity, campaignIds);
   const result = new Map<string, Map<string, DynastyCost>>();
   for (const g of groups) {
     const audienceId = audienceIdFromDimensions(g.dimensions);
@@ -361,40 +366,47 @@ async function fetchAudienceDynastyOutcomes(
   audienceIds: string[],
   identity: Identity,
   slugToDynasty: Map<string, string>,
+  // LEG scope: only sends of these campaigns (one `campaignIds` request per chunk, summed — a send
+  // carries ONE campaign, so the sum counts nobody twice). Omitted → every campaign, unchanged.
+  campaignIds?: readonly string[],
 ): Promise<Map<string, Map<string, DynastyOutcome>>> {
   const baseUrl = process.env.EMAIL_GATEWAY_SERVICE_URL;
   if (!baseUrl) throw new Error("EMAIL_GATEWAY_SERVICE_URL not configured");
   const result = new Map<string, Map<string, DynastyOutcome>>();
   if (audienceIds.length === 0) return result;
+  const scopes: Array<Record<string, string>> = campaignIds ? campaignFamilyStatsParams(campaignIds) : [{}];
 
   const perAudience = await mapWithConcurrency(audienceIds, 6, async (audienceId) => {
-    const params = new URLSearchParams({
-      type: "broadcast",
-      groupBy: "workflowSlug",
-      audienceId,
-      brandId,
-      featureSlugs: featureSlug,
-    });
-    const response = await fetchWithRetry(`${baseUrl}/orgs/stats?${params}`, { headers: emailHeaders(brandId, identity) }, EVIDENCE_REUSE);
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`email-gateway /orgs/stats (audienceId, groupBy=workflowSlug) failed (${response.status}): ${text}`);
-    }
-    const data = (await response.json()) as { groups?: Array<Record<string, unknown>> };
-    const byDynasty = new Map<string, DynastyOutcome>();
-    if (Array.isArray(data.groups)) {
-      for (const group of data.groups) {
-        const workflowSlug = String(group.key ?? "__total__");
-        if (workflowSlug === "__total__") continue;
-        const dynasty = slugToDynasty.get(workflowSlug) ?? workflowSlug;
-        const stats = extractBroadcastRecipientStats(group);
-        const prev = byDynasty.get(dynasty) ?? { contacted: 0, clicks: 0, replies: 0 };
-        byDynasty.set(dynasty, {
-          contacted: prev.contacted + (stats.recipientsContacted ?? 0),
-          clicks: prev.clicks + (stats.recipientsClicked ?? 0),
-          replies: prev.replies + (stats.recipientsRepliesPositive ?? 0),
-        });
+    const groups: Array<Record<string, unknown>> = [];
+    for (const scope of scopes) {
+      const params = new URLSearchParams({
+        type: "broadcast",
+        groupBy: "workflowSlug",
+        audienceId,
+        brandId,
+        featureSlugs: featureSlug,
+        ...scope,
+      });
+      const response = await fetchWithRetry(`${baseUrl}/orgs/stats?${params}`, { headers: emailHeaders(brandId, identity) }, EVIDENCE_REUSE);
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`email-gateway /orgs/stats (audienceId, groupBy=workflowSlug) failed (${response.status}): ${text}`);
       }
+      const data = (await response.json()) as { groups?: Array<Record<string, unknown>> };
+      if (Array.isArray(data.groups)) groups.push(...data.groups);
+    }
+    const byDynasty = new Map<string, DynastyOutcome>();
+    for (const group of groups) {
+      const workflowSlug = String(group.key ?? "__total__");
+      if (workflowSlug === "__total__") continue;
+      const dynasty = slugToDynasty.get(workflowSlug) ?? workflowSlug;
+      const stats = extractBroadcastRecipientStats(group);
+      const prev = byDynasty.get(dynasty) ?? { contacted: 0, clicks: 0, replies: 0 };
+      byDynasty.set(dynasty, {
+        contacted: prev.contacted + (stats.recipientsContacted ?? 0),
+        clicks: prev.clicks + (stats.recipientsClicked ?? 0),
+        replies: prev.replies + (stats.recipientsRepliesPositive ?? 0),
+      });
     }
     return { audienceId, byDynasty };
   });
@@ -459,16 +471,26 @@ export async function fetchAudienceGrainEvidence(
   // the same join `/audience-stats` adds them through — and to the dynasty of the workflow the lead was
   // served under. Member lists are read only when there is somebody to place.
   crmRepliers?: readonly (CrmOnlyReplier & { crmOnly?: boolean })[],
+  // LEG scope (`?leg=`): only the brand's campaigns performing that leg of the channel. An EMPTY list is
+  // a real answer — the brand never ran this leg — so every audience enumerates with no evidence and no
+  // cost / outcome read is made (an unfiltered read would put the other leg's evidence under this one).
+  // Omitted → every campaign, unchanged.
+  legCampaignIds?: readonly string[] | null,
 ): Promise<AudienceGrainEvidence[]> {
   const audienceIds = audienceIdsOverride ?? (await fetchActiveAudiences(brandId, identity)).map((a) => a.id);
   if (audienceIds.length === 0) return [];
   const activeIds = new Set(audienceIds);
+  const legSet = legCampaignIds ? new Set(legCampaignIds) : null;
+  if (legSet && legSet.size === 0) return audienceIds.map((audienceId) => ({ audienceId, byDynasty: new Map() }));
   // Only the CRM-ONLY ones: email-gateway's per-audience count already holds every classified reply.
-  const placeable = (crmRepliers ?? []).filter((r) => r.crmOnly !== false && r.email && r.workflowSlug);
+  const placeable = (crmRepliers ?? []).filter(
+    (r) => r.crmOnly !== false && r.email && r.workflowSlug && (!legSet || (r.campaignId !== null && legSet.has(r.campaignId))),
+  );
+  const scoped = legCampaignIds ?? undefined;
 
   const [costByAudience, outcomeByAudience, crmByAudience] = await Promise.all([
-    fetchAudienceDynastyCosts(brandId, featureSlug, activeIds, identity, pricing, slugToDynasty),
-    fetchAudienceDynastyOutcomes(brandId, featureSlug, audienceIds, identity, slugToDynasty),
+    fetchAudienceDynastyCosts(brandId, featureSlug, activeIds, identity, pricing, slugToDynasty, scoped),
+    fetchAudienceDynastyOutcomes(brandId, featureSlug, audienceIds, identity, slugToDynasty, scoped),
     placeable.length > 0
       ? fetchAudienceCrmReplies(audienceIds, placeable, identity, slugToDynasty)
       : Promise.resolve(new Map<string, Map<string, number>>()),

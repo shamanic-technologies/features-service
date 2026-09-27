@@ -20,7 +20,7 @@
  */
 
 import { mapWithConcurrency } from "./concurrency.js";
-import { crmRepliesBySlug, fetchPositiveRepliers, type PositiveReplier } from "./crm-only-repliers.js";
+import { crmRepliesBySlug, fetchPositiveRepliers, type CrmOnlyReplier, type PositiveReplier } from "./crm-only-repliers.js";
 import { fetchFeatureMemberships } from "./feature-memberships-client.js";
 import { outsideInteractiveView } from "./lead-copy.js";
 
@@ -30,8 +30,12 @@ const STALE_MS = 6 * 60 * 60_000;
 const PAIR_CONCURRENCY = 1;
 
 interface FleetCell {
-  /** `${orgId}:${brandId}` → distinct positive repliers per workflow slug. */
-  byPair: Map<string, Map<string, number>>;
+  /**
+   * `${orgId}:${brandId}` → that pair's positive repliers, one per person, reduced to what a count needs
+   * (lead, campaign, workflow slug). Kept per PERSON rather than pre-counted so a LEG-scoped read can
+   * keep only the repliers served under that leg's campaigns.
+   */
+  byPair: Map<string, CrmOnlyReplier[]>;
   computedAt: number;
 }
 
@@ -49,7 +53,13 @@ async function buildCell(featureSlug: string): Promise<FleetCell> {
     }
     const entries = await mapWithConcurrency([...pairs.entries()], PAIR_CONCURRENCY, async ([key, p]) => {
       const repliers = await fetchPositiveRepliers(p.brandId, undefined, { orgId: p.orgId });
-      return [key, crmRepliesBySlug(repliers)] as const;
+      const compact: CrmOnlyReplier[] = repliers.map((r) => ({
+        leadId: r.leadId,
+        email: null,
+        campaignId: r.campaignId,
+        workflowSlug: r.workflowSlug,
+      }));
+      return [key, compact] as const;
     });
     return { byPair: new Map(entries), computedAt: Date.now() };
   });
@@ -88,15 +98,19 @@ async function getCell(featureSlug: string): Promise<FleetCell> {
 export async function fetchFleetPositiveRepliesBySlug(
   featureSlug: string,
   own: { orgId: string; brandId: string; repliers: readonly PositiveReplier[] },
+  // LEG scope: keep only the repliers served under these campaigns (every org's campaigns performing
+  // the leg). Omitted → every replier, the leg-less read, unchanged.
+  campaignIds?: ReadonlySet<string>,
 ): Promise<Map<string, number>> {
   const cell = await getCell(featureSlug);
   const ownKey = pairKey(own.orgId, own.brandId);
   const total = new Map<string, number>();
-  const add = (bySlug: Map<string, number>) => {
-    for (const [slug, n] of bySlug) total.set(slug, (total.get(slug) ?? 0) + n);
+  const add = (repliers: readonly CrmOnlyReplier[]) => {
+    const scoped = campaignIds ? repliers.filter((r) => r.campaignId !== null && campaignIds.has(r.campaignId)) : repliers;
+    for (const [slug, n] of crmRepliesBySlug(scoped)) total.set(slug, (total.get(slug) ?? 0) + n);
   };
-  for (const [key, bySlug] of cell.byPair) if (key !== ownKey) add(bySlug);
-  add(crmRepliesBySlug(own.repliers));
+  for (const [key, repliers] of cell.byPair) if (key !== ownKey) add(repliers);
+  add(own.repliers);
   return total;
 }
 

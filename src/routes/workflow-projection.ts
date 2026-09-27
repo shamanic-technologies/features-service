@@ -62,6 +62,7 @@ import {
 import { aggregateAcrossDynasties } from "./public.js";
 import { fetchPositiveRepliers, setReplyCountsOnSlugStats } from "../lib/crm-only-repliers.js";
 import { fetchFleetPositiveRepliesBySlug } from "../lib/fleet-positive-repliers.js";
+import { fetchLegFleetEvidence } from "../lib/leg-fleet-evidence.js";
 import {
   fetchBrandWorkflowEvidenceWithRetired,
   fetchCampaignWorkflowEvidenceWithRetired,
@@ -1282,6 +1283,9 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
           // The offer's campaign SET, not only its id: a campaign minted under the offer changes the
           // grain's evidence while no other key part moves.
           ...(offerScopeIds ? { offerCampaigns: offerScopeIds.join("+") } : {}),
+          // A leg-keyed read's evidence is scoped to the leg's campaigns, so it never shares a cell with
+          // a leg-less read (or the other leg).
+          ...(legKey ? { leg: legKey } : {}),
         }),
         orgId,
         compute: () =>
@@ -1292,6 +1296,7 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
             pricing,
             campaignIds: campaignScopeIds,
             offerCampaignIds: offerScopeIds,
+            legKey,
           }),
       }),
       fetchEffectiveEconomics(brandId, identity),
@@ -1519,10 +1524,27 @@ export async function fetchWorkflowProjectionEvidence(input: {
   campaignIds?: string[] | null;
   /** Every campaign of this channel selling the named campaign's offer. Absent ⟹ no offer grain. */
   offerCampaignIds?: string[] | null;
+  /**
+   * The LEG a leg-keyed read names. Present ⟹ EVERY grain counts only the spend, sends and outcomes of
+   * campaigns performing THAT leg of the channel (owner rule 2026-09-27: a workflow's figure is always
+   * its figure on one leg × one channel). A workflow with no evidence on the leg has no grain at all —
+   * it reads unmeasured on this leg, never priced off another leg's campaigns. Absent ⟹ unchanged.
+   */
+  legKey?: string | null;
 }): Promise<WorkflowProjectionEvidence> {
   const { featureSlug, brandId, identity, pricing } = input;
-  const campaignIds = input.campaignIds ?? null;
-  const offerCampaignIds = input.offerCampaignIds && input.offerCampaignIds.length > 0 ? input.offerCampaignIds : null;
+  const legKey = input.legKey ?? null;
+  // Every org's campaigns on the leg, and the fleet's evidence narrowed to them (cached, fleet-wide).
+  const legFleet = legKey ? await fetchLegFleetEvidence(featureSlug, legKey, pricing) : null;
+  const legSet = legFleet ? new Set(legFleet.campaigns.map((c) => c.campaignId)) : null;
+  const onLeg = (ids: string[] | null | undefined): string[] | null =>
+    ids && legSet ? ids.filter((id) => legSet.has(id)) : (ids ?? null);
+  const brandLegIds = legFleet
+    ? legFleet.campaigns.filter((c) => c.brandId === brandId && c.orgId === identity.orgId).map((c) => c.campaignId)
+    : null;
+  const campaignIds = onLeg(input.campaignIds);
+  const offerScoped = onLeg(input.offerCampaignIds);
+  const offerCampaignIds = offerScoped && offerScoped.length > 0 ? offerScoped : null;
   // An offer sold through ONE campaign identity on this channel IS that identity: reuse its read.
   const offerIsCampaign =
     offerCampaignIds !== null &&
@@ -1542,19 +1564,28 @@ export async function fetchWorkflowProjectionEvidence(input: {
   // per-slug sums; the audience grain adds its CRM-only ones by membership. Read once per scope and
   // FAIL-LOUD like every other input here: a grain must never silently fall back to the sender's count.
   const readOffer = offerCampaignIds !== null && !offerIsCampaign;
-  const [brandRepliers, campaignRepliers, offerRepliers] = await Promise.all([
+  const [allBrandRepliers, campaignRepliers, offerRepliers] = await Promise.all([
     fetchPositiveRepliers(brandId, undefined, identity),
     campaignIds && campaignIds.length > 0 ? fetchPositiveRepliers(brandId, campaignIds, identity) : Promise.resolve(null),
     readOffer ? fetchPositiveRepliers(brandId, offerCampaignIds!, identity) : Promise.resolve(null),
   ]);
+  // On a leg, the brand's repliers are those served under its campaigns ON THE LEG (the brand grain's
+  // own population); the lead walk is the same, only the persons kept differ.
+  const brandRepliers = legSet
+    ? allBrandRepliers.filter((r) => r.campaignId !== null && legSet.has(r.campaignId))
+    : allBrandRepliers;
   const [costGroups, emailStats, fleetReplies, brandGrain, audienceEvidence, campaignGrain, offerGrainRead] = await Promise.all([
-    fetchPublicCosts(featureSlug, "workflowSlug", pricing),
-    fetchPublicEmailStats(featureSlug, "workflowSlug"),
+    legFleet ? Promise.resolve(legFleet.costGroups) : fetchPublicCosts(featureSlug, "workflowSlug", pricing),
+    legFleet ? Promise.resolve(legFleet.emailStats) : fetchPublicEmailStats(featureSlug, "workflowSlug"),
     // The FLEET's positive repliers on the SAME per-person basis as the finer grains (this brand's own
     // repliers included live), so every finer grain is a subset of crossOrg (lib/fleet-positive-repliers.ts).
-    fetchFleetPositiveRepliesBySlug(featureSlug, { orgId: identity.orgId, brandId, repliers: brandRepliers }),
-    fetchBrandWorkflowEvidenceWithRetired(brandId, featureSlug, workflows, identity, pricing, "charged", brandRepliers),
-    fetchAudienceGrainEvidence(brandId, featureSlug, identity, slugToDynasty, pricing, undefined, brandRepliers),
+    fetchFleetPositiveRepliesBySlug(featureSlug, { orgId: identity.orgId, brandId, repliers: brandRepliers }, legSet ?? undefined),
+    brandLegIds
+      ? brandLegIds.length > 0
+        ? fetchCampaignWorkflowEvidenceWithRetired(brandId, featureSlug, brandLegIds, workflows, identity, pricing, "charged", brandRepliers)
+        : Promise.resolve({ active: new Map<string, WorkflowGrainEvidence>(), retired: new Map<string, WorkflowGrainEvidence>() })
+      : fetchBrandWorkflowEvidenceWithRetired(brandId, featureSlug, workflows, identity, pricing, "charged", brandRepliers),
+    fetchAudienceGrainEvidence(brandId, featureSlug, identity, slugToDynasty, pricing, undefined, brandRepliers, brandLegIds),
     campaignIds && campaignIds.length > 0
       ? fetchCampaignWorkflowEvidenceWithRetired(brandId, featureSlug, campaignIds, workflows, identity, pricing, "charged", campaignRepliers ?? undefined)
       : Promise.resolve(null),
