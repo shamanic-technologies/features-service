@@ -572,7 +572,7 @@ describe("servedCached with the view refresher", () => {
     try {
       process.env.VIEW_CACHE_ROLE = "refresher";
       const key = buildScopeKey("b1", { orgId: "o", econ: "e" });
-      storedRow = undefined;
+      storedRow = undefined as typeof storedRow;
       const compute = vi.fn().mockResolvedValue({ contacted: 6019 });
       // Express: once a response went out, a second send THROWS ERR_HTTP_HEADERS_SENT.
       const res = {
