@@ -71,7 +71,7 @@
  * `/workflow-projection`.
  */
 import { contactedPricingSoft } from "../routes/contacted-value.js";
-import type { ContactedPricing } from "./revenue-engine.js";
+import type { ContactedPricing, TimeSeriesPoint } from "./revenue-engine.js";
 import { restrictPathsToDeclaredLegs, type EconomicsSource, type getFunnel } from "./funnel-registry.js";
 import type { EffectiveEconomics } from "./sales-economics-client.js";
 import type { SalesFunnelKey } from "./sales-funnels.js";
@@ -122,6 +122,13 @@ export interface WorkflowRevenueGroup {
   costEconomics: CostEconomics;
   /** ADDITIVE, purely — the volume half. See {@link WorkflowRevenueOutcomes}. */
   outcomes: WorkflowRevenueOutcomes;
+  /**
+   * OFF THE WIRE, present only when the caller asked (`withPipelineTimeSeries`): the engine's own dated,
+   * cumulative pipeline for this dynasty — the byte-same series `/revenue`'s `roiHistory` draws. The
+   * fleet per-workflow return curve (`lib/fleet-workflow-return.ts`) sums it across orgs. The
+   * `?groupBy=workflow` read never asks for it, so its body is unchanged.
+   */
+  pipelineTimeSeries?: TimeSeriesPoint[];
 }
 
 type Headers = { orgId: string; userId?: string; runId?: string; featureSlug?: string };
@@ -188,8 +195,10 @@ export function buildWorkflowRevenueGroups(input: {
   maturity?: { plan: MaturityPlan; matureCostBySlug: Map<string, RunsCostCents> } | "unknown";
   /** How a contacted lead that has not engaged is priced — the brand read's own (`ContactedPricing`). */
   contacted?: ContactedPricing | null;
+  /** Attach each group's dated pipeline (`pipelineTimeSeries`). Off by default: the wire read omits it. */
+  withPipelineTimeSeries?: boolean;
 }): WorkflowRevenueGroup[] {
-  const { persons, costCentsBySlug, workflows, funnel, priced, maturity } = input;
+  const { persons, costCentsBySlug, workflows, funnel, priced, maturity, withPipelineTimeSeries } = input;
   const contacted = input.contacted ?? null;
   const dynastyOf = dynastyOfSlug(workflows);
   const names = dynastyNames(workflows);
@@ -240,10 +249,9 @@ export function buildWorkflowRevenueGroups(input: {
       const mine = personsByDynasty.get(dynasty) ?? [];
       // No funnel wired / cold start → a null pipeline, exactly as the brand read reports it. Null is
       // "we could not price this", never "it returned nothing".
-      const totalPipelineUsd =
-        paths && economics && funnel
-          ? computeRevenue(paths, mine, economics.lifetimeRevenueUsd, funnel.milestones, contacted).headline.totalPipelineUsd
-          : null;
+      const revenue =
+        paths && economics && funnel ? computeRevenue(paths, mine, economics.lifetimeRevenueUsd, funnel.milestones, contacted) : null;
+      const totalPipelineUsd = revenue ? revenue.headline.totalPipelineUsd : null;
       // The same dynasty's MATURE cohort: its versions' mature spend, and its leads first contacted
       // before the cutoff — the byte-same rule the brand read applies, so a single-workflow brand still
       // reads its brand's own ratios at both grains.
@@ -294,6 +302,7 @@ export function buildWorkflowRevenueGroups(input: {
         // measured fact, so it is answered even for a brand with no funnel wired and no economics —
         // exactly the brand whose money half is honestly null.
         outcomes: buildWorkflowOutcomes(mine, cost, ratioBasis),
+        ...(withPipelineTimeSeries ? { pipelineTimeSeries: revenue?.timeSeries ?? [] } : {}),
       };
     });
 }
@@ -330,6 +339,8 @@ export async function computeWorkflowRevenueGroups(input: {
    * overstatement one click away. Defaults to every state: byte-identical to today.
    */
   causes?: readonly OutcomeCause[];
+  /** See `buildWorkflowRevenueGroups`. Only the fleet per-workflow curve asks for it. */
+  withPipelineTimeSeries?: boolean;
 }): Promise<WorkflowRevenueGroup[]> {
   const { featureSlug, brandId, funnel, headers, pricing, priced, campaignScope } = input;
   const causes = input.causes ?? DEFAULT_PRICED_CAUSES;
@@ -389,5 +400,14 @@ export async function computeWorkflowRevenueGroups(input: {
   ]);
   applySignalOverlays(persons, timestamps, observed?.byEmail ?? null, quals, priced?.pricedFunnelKeys ?? [], causes);
 
-  return buildWorkflowRevenueGroups({ persons, costCentsBySlug, workflows, funnel, priced, maturity, contacted });
+  return buildWorkflowRevenueGroups({
+    persons,
+    costCentsBySlug,
+    workflows,
+    funnel,
+    priced,
+    maturity,
+    contacted,
+    withPipelineTimeSeries: input.withPipelineTimeSeries,
+  });
 }

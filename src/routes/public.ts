@@ -8,6 +8,7 @@ import {
   fetchPublicCosts,
   fetchPublicEmailStats,
   fetchDynastySpendByDay,
+  fetchDynastyBilledSpendByDay,
   fetchPublicWorkflowEngagementLatency,
   fetchPublicJournalistsStats,
   fetchBrandInfoBatch,
@@ -71,6 +72,11 @@ import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel } from "./revenue.js";
 import { distinctChannelFunnels } from "./offer-economics.js";
 import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
 import { matchFunnelLegKey } from "../lib/funnel-legs.js";
+import { computeWorkflowRevenueGroups } from "../lib/workflow-revenue.js";
+import { buildRoiHistory, type RoiHistory } from "../lib/roi-history.js";
+import { buildActualCostHistory, type ActualCostHistory, type VendorSpendDay } from "../lib/actual-cost-history.js";
+import { fetchDynastyVendorSpendByDay } from "../lib/vendor-spend-by-day-client.js";
+import { foldFleetPipelines, type FleetDynastyPipeline, type PairDynastyPipeline } from "../lib/fleet-workflow-return.js";
 import {
   buildOutcomeReturnOnSpend,
   channelOutcomeEconomicsOf,
@@ -295,6 +301,8 @@ function allPublicCaches(): PublicCache[] {
     costProjectionCache,
     costPerOutcomeTrendCache,
     workflowCostPerOutcomeCache,
+    fleetWorkflowPipelineCache,
+    fleetWorkflowSpendCache,
     bestModelCostPerOutcomeTrendCache,
     costPerOutcomeLifetimeCache,
     costPerOutcomeDistributionCache,
@@ -1374,6 +1382,9 @@ export function warmFleetReturnSnapshotsOnBoot(): void {
       // evidence without refreshing the picks would leave the page naming the previous deploy's
       // clients for a whole stale window — a smaller version of the frozen list the picks replace.
       warmShowcaseFunnelsOnBoot();
+      // The fleet per-workflow return curves (`lib/fleet-workflow-return.ts`) are the same O(pairs)
+      // engine passes; warmed AFTER the return snapshots so the two fan-outs never overlap.
+      for (const slug of slugs) await warmFleetWorkflowPipelines(slug);
     } catch (err) {
       console.error("[features-service] fleet-return boot warm failed:", err);
     }
@@ -2064,15 +2075,20 @@ export async function handleWorkflowCostPerOutcome(
     windows: LIFETIME_AGGREGATE_WINDOWS,
     label: "workflow cost-per-outcome",
     compute: async () => {
-    const [workflows, costGroups, emailStats, perBrandEconomics] = await Promise.all([
+    const [workflows, costGroups, billedCostGroups, emailStats, perBrandEconomics] = await Promise.all([
       fetchPublicWorkflows(featureSlug, "all"),
       fetchPublicCosts(featureSlug, "workflowSlug"),
+      // The BILLED twin (charged, net) of the same groups — the basis of the workflow page's return
+      // chart (`/public/stats/workflow-return-history`), stated beside the benchmark spend so the chart's
+      // last point and this row reconcile. Nothing divides by it here.
+      fetchPublicCosts(featureSlug, "workflowSlug", "net", "charged"),
       fetchPublicEmailStats(featureSlug, "workflowSlug"),
       getFunnelBucketDatasetCached(featureSlug).then((dataset) => dataset.map((b) => b.stated.overall)),
     ]);
 
     const dynasties = buildWorkflowDynasties(workflows);
     const { costMap, aggregatedOutcomes } = aggregateAcrossDynasties(dynasties, costGroups, emailStats, "workflowSlug");
+    const { costMap: billedCostMap } = aggregateAcrossDynasties(dynasties, billedCostGroups, emailStats, "workflowSlug");
     const workflowBySlug = new Map(workflows.map((w) => [w.workflowSlug, w]));
 
     // Roll each active-workflow funnel up to its dynasty (two active heads sharing a dynasty merge).
@@ -2082,11 +2098,13 @@ export async function handleWorkflowCostPerOutcome(
       if (!wf) continue;
       const outcomes = aggregatedOutcomes.get(slug) ?? {};
       const spentUsd = cost.totalCostInUsdCents / 100;
+      const billedSpentUsd = (billedCostMap.get(slug)?.totalCostInUsdCents ?? 0) / 100;
       const clicks = outcomes.recipientsClicked ?? 0;
       const replies = outcomes.recipientsRepliesPositive ?? 0;
       const existing = byDynasty.get(wf.workflowDynastySlug);
       if (existing) {
         existing.spentUsd += spentUsd;
+        existing.billedSpentUsd = (existing.billedSpentUsd ?? 0) + billedSpentUsd;
         existing.clicks += clicks;
         existing.replies += replies;
       } else {
@@ -2094,6 +2112,7 @@ export async function handleWorkflowCostPerOutcome(
           workflowDynastySlug: wf.workflowDynastySlug,
           workflowDynastyName: wf.workflowDynastyName,
           spentUsd,
+          billedSpentUsd,
           clicks,
           replies,
         });
@@ -3763,6 +3782,239 @@ router.delete("/internal/stated-monthly-amounts/:id", apiKeyOnly, async (req, re
     res.status(204).send();
   } catch (error) {
     statedAmountFailure(error, res);
+  }
+});
+
+// ── GET /public/stats/workflow-return-history (+ staff actual-cost twin) ─────
+//
+// ONE workflow dynasty across EVERY org of a feature, day by day: cumulative spend, cumulative value
+// (the per-brand revenue engine's pipeline, summed across (org, brand) pairs), and their ratio.
+// `lib/fleet-workflow-return.ts` states the design. Two bases, like the per-brand pair:
+//   - BILLED (this public read): what clients were charged, net of their discount.
+//   - ACTUAL (`/internal/stats/workflow-return-history/actual-cost`, service-auth, staff-gated at the
+//     gateway): vendor cost before our markup — our margin, so never on a public path.
+
+/** Bounded like the cross-org revenue read: each pair reads a brand's whole lead population. */
+const FLEET_WORKFLOW_PAIR_CONCURRENCY = 4;
+
+/** The value leg for EVERY dynasty of a feature, keyed by featureSlug — one O(pairs) fan-out serves all. */
+const fleetWorkflowPipelineCache: PublicCache = new Map();
+/** One dynasty's dated spend, keyed `${basis}:${featureSlug}:${dynasty}` — one runs read each. */
+const fleetWorkflowSpendCache: PublicCache = new Map();
+
+interface FleetWorkflowPipelines {
+  byDynasty: Map<string, FleetDynastyPipeline>;
+  /** (org, brand) pairs whose value leg was computed. */
+  pairsPriced: number;
+  /** Pairs whose compute FAILED (logged loud) — the value leg is a partial sum when this is > 0. */
+  pairsFailed: number;
+}
+
+async function computeFleetWorkflowPipelines(featureSlug: string): Promise<FleetWorkflowPipelines> {
+  const funnel = getFunnel(featureSlug);
+  if (!funnel) return { byDynasty: new Map(), pairsPriced: 0, pairsFailed: 0 };
+  const memberships = await fetchFeatureMemberships(featureSlug);
+  const pairs = [
+    ...new Map(memberships.map((m) => [`${m.orgId}::${m.brandId}`, { orgId: m.orgId, brandId: m.brandId }])).values(),
+  ];
+  let pairsFailed = 0;
+  const computed = await mapWithConcurrency(pairs, FLEET_WORKFLOW_PAIR_CONCURRENCY, async ({ orgId, brandId }) => {
+    const headers: DownstreamHeaders = { orgId, featureSlug };
+    try {
+      // The pair's OWN pricing — its declared funnels over its effective economics — exactly as its own
+      // `/revenue?groupBy=workflow` read resolves it, so a pair contributes the byte-same pipeline.
+      const [declared, effective] = await Promise.all([
+        fetchDeclaredFunnelsSoft(brandId, orgId),
+        fetchEffectiveEconomics(brandId, headers),
+      ]);
+      const groups = await computeWorkflowRevenueGroups({
+        featureSlug,
+        brandId,
+        funnel,
+        headers,
+        pricing: "net",
+        priced: priceOnDeclaredFunnel(declared, effective),
+        withPipelineTimeSeries: true,
+      });
+      return groups.map(
+        (g): PairDynastyPipeline => ({
+          workflowDynastySlug: g.workflowDynastySlug,
+          pipelineTimeSeries: g.pipelineTimeSeries ?? [],
+          totalPipelineUsd: g.headline.totalPipelineUsd,
+        }),
+      );
+    } catch (error) {
+      if (error instanceof BrandOwnershipError) return null; // stale membership: the brand moved orgs
+      pairsFailed += 1;
+      console.error(
+        `[features-service] fleet workflow return: pair compute failed (featureSlug=${featureSlug}, orgId=${orgId}, brandId=${brandId}) — the value leg is a partial sum:`,
+        error,
+      );
+      return null;
+    }
+  });
+  const priced = computed.filter((c): c is PairDynastyPipeline[] => c !== null);
+  return { byDynasty: foldFleetPipelines(priced), pairsPriced: priced.length, pairsFailed };
+}
+
+function getFleetWorkflowPipelines(featureSlug: string): Promise<FleetWorkflowPipelines> {
+  return servedPublicCached({
+    cache: fleetWorkflowPipelineCache,
+    key: featureSlug,
+    windows: LIFETIME_AGGREGATE_WINDOWS,
+    label: "fleet workflow pipelines",
+    compute: () => computeFleetWorkflowPipelines(featureSlug),
+  });
+}
+
+/** Boot warm (fire-and-forget, after listen): a cold value leg is minutes of engine passes. */
+async function warmFleetWorkflowPipelines(featureSlug: string): Promise<void> {
+  try {
+    await getFleetWorkflowPipelines(featureSlug);
+  } catch (err) {
+    console.error(`[features-service] fleet workflow pipelines warm failed (${featureSlug}):`, err);
+  }
+}
+
+interface WorkflowReturnHistoryBase {
+  featureSlug: string;
+  workflowDynastySlug: string;
+  workflowDynastyName: string | null;
+  /** Every org and brand that ran the feature — an aggregate; no org is named. */
+  scope: "fleet";
+  /** Sum of the pairs' headline pipelines for this dynasty. Null when no pair could price it. */
+  totalPipelineUsd: number | null;
+  valueCoverage: { pairsPriced: number; pairsFailed: number };
+}
+
+export interface WorkflowReturnHistoryPayload extends WorkflowReturnHistoryBase {
+  costBasis: "billed";
+  pricing: "net";
+  /** Cumulative billed spend at the last point — the row's `billedSpentUsd` on workflow-cost-per-outcome. */
+  totalSpendUsd: number;
+  roiHistory: RoiHistory;
+}
+
+export interface WorkflowActualCostHistoryPayload extends WorkflowReturnHistoryBase {
+  costBasis: "actual";
+  actualCostHistory: ActualCostHistory;
+}
+
+/** Test seam: drop both fleet workflow-return caches. */
+export function __resetWorkflowReturnHistoryCache(): void {
+  clearPublicCache(fleetWorkflowPipelineCache);
+  clearPublicCache(fleetWorkflowSpendCache);
+}
+
+export async function handleWorkflowReturnHistory(
+  featureSlug: string | undefined,
+  workflowDynastySlug: string | undefined,
+  basis: "billed" | "actual",
+  res: import("express").Response,
+): Promise<void> {
+  if (!featureSlug || !workflowDynastySlug) {
+    res.status(400).json({ error: "Query parameters 'featureSlug' and 'workflowDynastySlug' are required" });
+    return;
+  }
+  const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
+  if (!feature) {
+    res.status(404).json({ error: "Feature not found" });
+    return;
+  }
+  const workflows = await fetchPublicWorkflows(featureSlug, "all");
+  const member = workflows.find((w) => w.workflowDynastySlug === workflowDynastySlug);
+  if (!member) {
+    res.status(404).json({ error: "No workflow of this feature carries that dynasty", reason: "workflow_not_found" });
+    return;
+  }
+
+  const spendKey = `${basis}:${featureSlug}:${workflowDynastySlug}`;
+  const [pipelines, spend] = await Promise.all([
+    getFleetWorkflowPipelines(featureSlug),
+    servedPublicCached<Map<string, number> | Map<string, VendorSpendDay>>({
+      cache: fleetWorkflowSpendCache,
+      key: spendKey,
+      windows: LIFETIME_AGGREGATE_WINDOWS,
+      label: "fleet workflow spend",
+      compute: () =>
+        basis === "billed"
+          ? fetchDynastyBilledSpendByDay(featureSlug, workflowDynastySlug)
+          : fetchDynastyVendorSpendByDay(featureSlug, workflowDynastySlug),
+    }),
+  ]);
+  const value = pipelines.byDynasty.get(workflowDynastySlug) ?? { pipelineTimeSeries: [], totalPipelineUsd: null };
+  const base: WorkflowReturnHistoryBase = {
+    featureSlug,
+    workflowDynastySlug,
+    workflowDynastyName: member.workflowDynastyName ?? null,
+    scope: "fleet",
+    totalPipelineUsd: value.totalPipelineUsd,
+    valueCoverage: { pairsPriced: pipelines.pairsPriced, pairsFailed: pipelines.pairsFailed },
+  };
+
+  if (basis === "billed") {
+    const byDay = spend as Map<string, number>;
+    let totalSpendUsd = 0;
+    for (const usd of byDay.values()) totalSpendUsd += usd;
+    const payload: WorkflowReturnHistoryPayload = {
+      ...base,
+      costBasis: "billed",
+      pricing: "net",
+      totalSpendUsd,
+      roiHistory: buildRoiHistory(byDay, value.pipelineTimeSeries, value.totalPipelineUsd),
+    };
+    res.json(payload);
+    return;
+  }
+
+  const vendorByDay = spend as Map<string, VendorSpendDay>;
+  const vendorUsd = new Map<string, number>();
+  const unpriced = new Map<string, number>();
+  const names = new Set<string>();
+  for (const [day, v] of vendorByDay) {
+    vendorUsd.set(day, v.vendorUsd);
+    if (v.unpricedBilledUsd > 0) unpriced.set(day, v.unpricedBilledUsd);
+    for (const n of v.unpricedCostNames) names.add(n);
+  }
+  const payload: WorkflowActualCostHistoryPayload = {
+    ...base,
+    costBasis: "actual",
+    actualCostHistory: buildActualCostHistory(
+      buildRoiHistory(vendorUsd, value.pipelineTimeSeries, value.totalPipelineUsd),
+      unpriced,
+      [...names].sort(),
+    ),
+  };
+  res.json(payload);
+}
+
+router.get("/public/stats/workflow-return-history", async (req, res) => {
+  try {
+    await handleWorkflowReturnHistory(
+      req.query.featureSlug as string | undefined,
+      req.query.workflowDynastySlug as string | undefined,
+      "billed",
+      res,
+    );
+  } catch (error) {
+    console.error("[features-service] Public workflow-return-history error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// STAFF ONLY: vendor cost is our margin. Service-auth here; the api-service gateway mounts it behind
+// requireStaff and never on a customer route.
+router.get("/internal/stats/workflow-return-history/actual-cost", apiKeyOnly, async (req, res) => {
+  try {
+    await handleWorkflowReturnHistory(
+      req.query.featureSlug as string | undefined,
+      req.query.workflowDynastySlug as string | undefined,
+      "actual",
+      res,
+    );
+  } catch (error) {
+    console.error("[features-service] workflow-return-history actual-cost error:", error);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 

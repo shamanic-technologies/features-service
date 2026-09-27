@@ -2885,6 +2885,7 @@ const workflowCostPerOutcomeResponseSchema = z.object({
     workflowDynastySlug: z.string(),
     workflowDynastyName: z.string(),
     spentUsd: z.number().describe("Cross-org fleet spend (USD) attributed to this workflow dynasty."),
+    billedSpentUsd: z.number().nullable().describe("The same workflow's cross-org spend on the BILLED basis: what clients were CHARGED (comped spend absent), NET of their per-org discount. The basis of /public/stats/workflow-return-history — its last roiHistory.daily[].cumulativeSpendUsd equals this figure (to sub-cent rounding). `spentUsd` beside it is the INCURRED gross benchmark basis the cost per outcome divides."),
     observedClicks: z.number(),
     observedPositiveReplies: z.number(),
     costPerOutcomeUsd: z.number().nullable().describe("LIFETIME (all-history) pooled cost-per-outcome — what the workflow has cost per outcome over ALL history. Populated cost (projected cascade floor: max(spent, fleet unit cost) when the outcome denominator is 0), so non-null whenever the workflow has spend and fleet economics exist."),
@@ -3045,6 +3046,96 @@ registry.registerPath({
     200: { description: "Per-workflow cross-org cost-per-outcome", content: { "application/json": { schema: workflowCostPerOutcomeResponseSchema } } },
     400: { description: "Missing or invalid parameters", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+// ── GET /public/stats/workflow-return-history (+ staff actual-cost twin) ─────
+
+const workflowReturnHistoryQuery = z.object({
+  featureSlug: z.string().describe("Feature slug (required)."),
+  workflowDynastySlug: z.string().describe("The workflow DYNASTY (all its versions) — the key /public/stats/workflow-cost-per-outcome rows carry (required)."),
+});
+
+const workflowReturnHistoryBase = {
+  featureSlug: z.string(),
+  workflowDynastySlug: z.string(),
+  workflowDynastyName: z.string().nullable(),
+  scope: z.literal("fleet").describe("Every org and brand that ran the feature. An aggregate: no org or brand is named."),
+  totalPipelineUsd: z.number().nullable().describe("Sum across (org, brand) pairs of this dynasty's headline pipeline — the per-brand revenue engine's value definition. Null when no pair could price it."),
+  valueCoverage: z.object({
+    pairsPriced: z.number().int().describe("(org, brand) pairs whose value leg was computed."),
+    pairsFailed: z.number().int().describe("Pairs whose compute failed (logged). > 0 means the value leg is a partial sum."),
+  }),
+};
+
+registry.registerPath({
+  method: "get",
+  path: "/public/stats/workflow-return-history",
+  summary: "One workflow's fleet-wide dated spend, value and return on spend — BILLED basis (public, no auth)",
+  description:
+    "For ONE workflow dynasty of a feature, across every org: per UTC day, cumulative spend (what clients were CHARGED, NET of their discount — runs-service's dated ledger for the dynasty, fleet-wide), cumulative value (the same pipeline the per-brand /revenue engine prices, summed across (org, brand) pairs as daily increments; pairs are disjoint, leads belong to one org), and their ratio. Never blended across workflows. The last cumulativeSpendUsd equals the row's `billedSpentUsd` on /public/stats/workflow-cost-per-outcome. Served from a 15 min / 6 h stale-while-revalidate cache, warmed at boot. 404 `workflow_not_found` when the feature carries no such dynasty.",
+  tags: ["Public"],
+  request: { query: workflowReturnHistoryQuery },
+  responses: {
+    200: {
+      description: "Fleet per-workflow return curve, billed basis",
+      content: {
+        "application/json": {
+          schema: z.object({
+            ...workflowReturnHistoryBase,
+            costBasis: z.literal("billed"),
+            pricing: z.literal("net"),
+            totalSpendUsd: z.number().describe("Cumulative billed spend at the last point."),
+            roiHistory: z.object({
+              daily: z.array(z.object({
+                date: z.string().describe("UTC day, YYYY-MM-DD."),
+                cumulativeSpendUsd: z.number(),
+                cumulativePipelineUsd: z.number(),
+                roiMultiple: z.number().nullable().describe("cumulativePipelineUsd / cumulativeSpendUsd. NULL when nothing had been spent yet — never 0."),
+              })).describe("Ascending, one point per day with spend or a dated outcome."),
+              datedPipelineUsd: z.number(),
+              undatedPipelineUsd: z.number().describe("Pipeline whose outcome carries no date, so it sits on no day. datedPipelineUsd + undatedPipelineUsd = totalPipelineUsd."),
+            }),
+          }),
+        },
+      },
+    },
+    400: { description: "Missing parameters", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Feature or workflow dynasty not found", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/stats/workflow-return-history/actual-cost",
+  summary: "STAFF ONLY: one workflow's fleet-wide return curve on ACTUAL (vendor) cost",
+  description:
+    "The /public/stats/workflow-return-history curve with its spend leg at VENDOR cost before our markup (runs-service /internal/stats/costs/timeseries/vendor, comped rows included — they were still paid to the vendor). Same value leg. Reveals our margin: service-auth only, and the api-service gateway mounts it behind requireStaff. Billed spend with no known vendor cost nulls cumulativeSpendUsd / roiMultiple from its first day on and is named (unpricedBilledCostUsd, unpricedFromDate, unpricedCostNames) — never substituted with the billed figure.",
+  tags: ["Public"],
+  request: { query: workflowReturnHistoryQuery },
+  responses: {
+    200: {
+      description: "Fleet per-workflow actual-cost curve",
+      content: {
+        "application/json": {
+          schema: z.object({
+            ...workflowReturnHistoryBase,
+            costBasis: z.literal("actual"),
+            actualCostHistory: z.object({
+              daily: z.array(actualCostPointSchema),
+              datedPipelineUsd: z.number(),
+              undatedPipelineUsd: z.number(),
+              unpricedBilledCostUsd: z.number(),
+              unpricedFromDate: z.string().nullable(),
+              unpricedCostNames: z.array(z.string()),
+            }),
+          }),
+        },
+      },
+    },
+    400: { description: "Missing parameters", content: { "application/json": { schema: errorResponse } } },
+    401: { description: "Missing or invalid service key", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Feature or workflow dynasty not found", content: { "application/json": { schema: errorResponse } } },
   },
 });
 

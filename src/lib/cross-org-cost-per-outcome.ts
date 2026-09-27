@@ -335,6 +335,8 @@ export interface WorkflowGrainInput {
   workflowDynastySlug: string;
   workflowDynastyName: string;
   spentUsd: number;
+  /** The same workflow's cross-org spend on the BILLED basis (charged, net). See `WorkflowCostRow`. */
+  billedSpentUsd?: number;
   clicks: number;
   replies: number;
 }
@@ -343,6 +345,14 @@ export interface WorkflowCostRow {
   workflowDynastySlug: string;
   workflowDynastyName: string;
   spentUsd: number;
+  /**
+   * The same workflow's cross-org spend on the BILLED basis — what clients were CHARGED (comped spend
+   * absent), NET of their discount — beside `spentUsd` (INCURRED, the benchmark basis every cost per
+   * outcome here divides). It is the basis of `/public/stats/workflow-return-history`, whose last
+   * `cumulativeSpendUsd` equals it, so the workflow page's return chart and this row reconcile. Null
+   * only when the caller did not read the billed total.
+   */
+  billedSpentUsd: number | null;
   observedClicks: number;
   observedPositiveReplies: number;
   /** Populated cost-per-outcome for the objective — real ratio when the outcome was observed, else the
@@ -401,6 +411,7 @@ export function buildWorkflowCostPerOutcome(params: {
         workflowDynastySlug: r.workflowDynastySlug,
         workflowDynastyName: r.workflowDynastyName,
         spentUsd: r.spentUsd,
+        billedSpentUsd: r.billedSpentUsd ?? null,
         observedClicks: r.clicks,
         observedPositiveReplies: r.replies,
         costPerOutcomeUsd,
