@@ -64,6 +64,69 @@ export interface OutcomesRatioBasis {
   unmeasuredReason: MaturityReason | null;
 }
 
+/**
+ * WHAT HAPPENED TO THE EMAILS WE SENT — delivery and reply, on ONE denominator.
+ *
+ * Every figure is DISTINCT LEADS off the same deduped person set as the rest of the block, and every
+ * one is a subset of `recipientsSent`, so the parts add up: `recipientsDelivered + recipientsBounced +
+ * recipientsAwaitingDelivery === recipientsSent`. A lead whose provider reported BOTH a delivery and a
+ * later bounce counts as BOUNCED (the bounce is the later, final word), never twice. The rates are
+ * served so no consumer divides: `null` only when nothing was sent (no denominator), a measured 0
+ * otherwise.
+ */
+export interface RevenueSending {
+  /** Distinct leads at least one email was SENT to. The denominator of every rate below. */
+  recipientsSent: number;
+  /** Of those, the ones the provider reported DELIVERED and never bounced. */
+  recipientsDelivered: number;
+  /** Of those, the ones whose email BOUNCED. (`outcomes.recipientsBounced` also counts a bounce with no recorded send.) */
+  recipientsBounced: number;
+  /** Of those, the ones with neither a delivery nor a bounce reported yet. */
+  recipientsAwaitingDelivery: number;
+  /** Of those, the ones who REPLIED, whatever the reply said (positive, negative, neutral, unclassified). */
+  recipientsReplied: number;
+  /** Of those, the ones whose reply was positive (either witness, the same rule as `recipientsRepliesPositive`). */
+  recipientsRepliedPositive: number;
+  /** 100 × recipientsDelivered ÷ recipientsSent. Null when nothing was sent. */
+  deliveryRatePct: number | null;
+  /** 100 × recipientsBounced ÷ recipientsSent. Null when nothing was sent. */
+  bounceRatePct: number | null;
+  /** 100 × recipientsReplied ÷ recipientsSent. Null when nothing was sent. */
+  replyRatePct: number | null;
+  /** 100 × recipientsRepliedPositive ÷ recipientsSent. Null when nothing was sent. */
+  positiveReplyRatePct: number | null;
+}
+
+/** PURE: the sending block over already-deduped persons. */
+export function buildRevenueSending(deduped: EnginePerson[]): RevenueSending {
+  let sent = 0;
+  let delivered = 0;
+  let bounced = 0;
+  let replied = 0;
+  let repliedPositive = 0;
+  for (const p of deduped) {
+    if (!p.signals.sent) continue;
+    sent += 1;
+    if (p.signals.bounced) bounced += 1;
+    else if (p.signals.delivered) delivered += 1;
+    if (p.signals.replied || p.signals.positiveReply || p.signals.negativeReply || p.signals.neutralReply) replied += 1;
+    if (p.signals.positiveReply) repliedPositive += 1;
+  }
+  const pct = (n: number): number | null => (sent > 0 ? (100 * n) / sent : null);
+  return {
+    recipientsSent: sent,
+    recipientsDelivered: delivered,
+    recipientsBounced: bounced,
+    recipientsAwaitingDelivery: sent - delivered - bounced,
+    recipientsReplied: replied,
+    recipientsRepliedPositive: repliedPositive,
+    deliveryRatePct: pct(delivered),
+    bounceRatePct: pct(bounced),
+    replyRatePct: pct(replied),
+    positiveReplyRatePct: pct(repliedPositive),
+  };
+}
+
 /** The volume half of one grain's answer. See the module header for every rule behind it. */
 export interface RevenueOutcomes {
   /**
@@ -103,6 +166,8 @@ export interface RevenueOutcomes {
   cpprCents: number | null;
   /** The totals the two rates above divide. See {@link OutcomesRatioBasis}. */
   ratioBasis: OutcomesRatioBasis;
+  /** Delivery and reply of the emails this grain sent. See {@link RevenueSending}. */
+  sending: RevenueSending;
 }
 
 /**
@@ -149,6 +214,7 @@ export function buildRevenueOutcomes(
     committedSpentCents: cost.committedCents,
     actualSpentCents: cost.actualCents,
     ...ratesOnBasis(persons, cost, basis),
+    sending: buildRevenueSending(deduped),
   };
 }
 

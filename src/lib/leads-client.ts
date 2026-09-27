@@ -350,6 +350,9 @@ export async function fetchLeadsForRevenue(
       delivered: Boolean(row.delivered),
       bounced: Boolean(row.bounced),
       unsubscribed: Boolean(row.unsubscribed),
+      // A reply of ANY class (or none yet classified) is a fact about the conversation, like the send:
+      // it feeds the sending block's reply rate and no funnel path reads it.
+      replied: Boolean(row.replied),
       // THE CONVERSION LEGS ARE WHERE "CANNOT CONVERT" IS SAID, and they are the only thing the
       // dead flag touches — so the expected-value math is byte-unchanged by the ladder above.
       clicked: dead ? false : Boolean(row.clicked),

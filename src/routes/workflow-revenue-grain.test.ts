@@ -302,6 +302,18 @@ describe("GET /revenue?groupBy=workflow — which workflows made money", () => {
         recipientsRepliesPositive: 1,
         unmeasuredReason: null,
       },
+      sending: {
+        recipientsSent: 4,
+        recipientsDelivered: 4,
+        recipientsBounced: 0,
+        recipientsAwaitingDelivery: 0,
+        recipientsReplied: 1,
+        recipientsRepliedPositive: 1,
+        deliveryRatePct: 100,
+        bounceRatePct: 0,
+        replyRatePct: 25,
+        positiveReplyRatePct: 25,
+      },
     });
     // Realized spend is the money block's own, in cents — one basis, so the rates and the ROI agree.
     expect(groups.dawn.outcomes.actualSpentCents).toBe(groups.dawn.costEconomics.actualCostUsd * 100);
