@@ -130,25 +130,62 @@
           "updatedAt"
         ]
       },
+      "LegMaturityRule": {
+        "type": "object",
+        "properties": {
+          "durationDays": {
+            "type": "integer",
+            "description": "How many days before today (UTC midnight) a run must have STARTED for its spend, and the leads it served, to count as MATURE. 21 on the two cold-email entry legs (a run's positive replies and visits keep arriving for weeks; 21 days captures 92-95% of them, measured in prod 2026-09-28); 0 on every other leg, whose mature figure is therefore its flash figure."
+          },
+          "outcomesRequired": {
+            "type": "integer",
+            "description": "How many MATURE outcomes of the leg's step a scope must hold to be judged mature: 1 positive reply on start_to_conversation, 10 website visits on start_to_website_visit, 10 on every other leg."
+          },
+          "outcomeSignal": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "clicked",
+              "positiveReply"
+            ],
+            "description": "The counted signal the leg's outcome IS on an entry leg (a website visit is a click, a conversation is a positive reply). Null on every other leg, whose outcome is walked from a driver signal."
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "measured",
+              "default"
+            ],
+            "description": "`measured` = the owner set this rule from production evidence; `default` = no leg-specific rule was measured, so the leg is mature the day it is bought and judged on the pre-existing bar of 10."
+          }
+        },
+        "required": [
+          "durationDays",
+          "outcomesRequired",
+          "outcomeSignal",
+          "source"
+        ],
+        "description": "ONE LEG'S MATURITY RULE. Every figure exists in two versions: FLASH (everything to date) and MATURE (the spend of runs started more than durationDays ago, over the outcomes — whenever they land — of the leads those runs served). One clock for both: the run start, i.e. the serve."
+      },
       "OutcomeFigures": {
         "type": "object",
         "properties": {
           "spentUsd": {
             "type": "number",
-            "description": "COMMITTED spend on the request's pricing, summed EXACTLY from the producer's decimal text and never rounded here — so a scope's rows (audiences, workflows) add up to the scope within float epsilon. Round only for display."
+            "description": "Committed spend on the request's pricing basis, summed exactly (never rounded per group), so a scope's rows add up to the scope. Null ONLY on the staff actual-cost twin, where this grain's spend on this version holds rows with no known vendor cost."
           },
           "contacted": {
             "type": "number",
-            "description": "Distinct leads reached (bounces and unsubscribes included)."
+            "description": "Leads reached."
           },
           "outcomes": {
             "type": "number",
-            "description": "Distinct leads that reached the leg's OWN outcome signal (a positive reply on the conversation leg, a website visit on the visit leg)."
+            "description": "The leg's own outcomes (on an entry leg, distinct leads at its outcome signal)."
           },
           "costPerOutcomeUsd": {
             "type": "number",
             "nullable": true,
-            "description": "spentUsd / outcomes — OBSERVED, never a floor. Null at 0 outcomes or 0 spend."
+            "description": "spentUsd / outcomes — OBSERVED, never floored. Null at 0 outcomes or 0 spend (and on the actual-cost twin where the vendor cost is unknown)."
           },
           "conversionRatePct": {
             "type": "number",
@@ -163,80 +200,58 @@
           "costPerOutcomeUsd",
           "conversionRatePct"
         ],
-        "description": "The figures of ONE scope on ONE basis — observed accounting."
+        "description": "The observed figures of one scope on one version (flash or mature)."
       },
       "LegMaturityFigures": {
-        "type": "object",
-        "properties": {
-          "legKey": {
-            "type": "string",
-            "nullable": true,
-            "description": "The leg these figures and this rule are for."
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/LegMaturityRule"
           },
-          "durationDays": {
-            "type": "integer",
-            "description": "How many days before today (UTC midnight) a run must have STARTED for its spend, and the leads it SERVED, to count as mature. 21 on the two cold-email entry legs, 0 on every other."
-          },
-          "outcomesRequired": {
-            "type": "integer",
-            "description": "MATURE outcomes of the leg's step a scope must hold to be mature: 1 positive reply (conversation leg), 10 website visits (visit leg), 10 elsewhere."
-          },
-          "outcomeSignal": {
-            "type": "string",
-            "nullable": true,
-            "enum": [
-              "clicked",
-              "positiveReply"
-            ],
-            "description": "The counted signal the leg's outcome IS."
-          },
-          "source": {
-            "type": "string",
-            "enum": [
-              "measured",
-              "default"
-            ],
-            "description": "`measured` = the owner set the rule from production evidence; `default` = no leg-specific rule."
-          },
-          "flash": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/OutcomeFigures"
-              },
-              {
+          {
+            "type": "object",
+            "properties": {
+              "legKey": {
+                "type": "string",
                 "nullable": true,
-                "description": "Everything to date."
-              }
-            ]
-          },
-          "mature": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/OutcomeFigures"
+                "description": "The leg these figures and this rule are for."
               },
-              {
+              "flash": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/OutcomeFigures"
+                  },
+                  {
+                    "nullable": true,
+                    "description": "Everything to date."
+                  }
+                ]
+              },
+              "mature": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/OutcomeFigures"
+                  },
+                  {
+                    "nullable": true,
+                    "description": "The runs started before the cutoff and the leads THOSE runs served (their outcomes whenever they landed). A cohort that was read and holds nothing is all zeros; null ONLY when the cut could not be made (legs unknown, serve dates not stated)."
+                  }
+                ]
+              },
+              "isMature": {
+                "type": "boolean",
                 "nullable": true,
-                "description": "The runs started before the cutoff and the leads THOSE runs served (their outcomes whenever they landed). A cohort that was read and holds nothing is all zeros; null ONLY when the cut could not be made (legs unknown, serve dates not stated)."
+                "description": "mature.outcomes >= outcomesRequired. Null = could not judge; never a Learning verdict."
               }
+            },
+            "required": [
+              "legKey",
+              "flash",
+              "mature",
+              "isMature"
             ]
-          },
-          "isMature": {
-            "type": "boolean",
-            "nullable": true,
-            "description": "mature.outcomes >= outcomesRequired. Null = could not judge; never a Learning verdict."
           }
-        },
-        "required": [
-          "legKey",
-          "durationDays",
-          "outcomesRequired",
-          "outcomeSignal",
-          "source",
-          "flash",
-          "mature",
-          "isMature"
         ],
-        "description": "ONE LEG of a scope on both bases, with the leg's own rule beside its figures."
+        "description": "ONE LEG of a scope on both bases, with the leg's own rule (LegMaturityRule) beside its figures."
       },
       "ScopeMaturity": {
         "type": "object",
@@ -285,7 +300,7 @@
               "costOfAcquisitionPct",
               "costPerAcquisitionUsd"
             ],
-            "description": "Everything to date."
+            "description": "Everything to date. Null when there is no flash figure at all."
           },
           "mature": {
             "type": "object",
@@ -309,12 +324,12 @@
               "costOfAcquisitionPct",
               "costPerAcquisitionUsd"
             ],
-            "description": "The runs started before the leg's cutoff and the leads those runs served. Null only when the cut could not be made."
+            "description": "The mature cohort's figure. NULL when the mature cut could not be made. A cut that was made and holds nothing states that instead: zeros on observed figures, null fields on a resolved price."
           },
           "isMature": {
             "type": "boolean",
             "nullable": true,
-            "description": "The scope's verdict — the same value on every pair of one scope. Render Learning where it is false."
+            "description": "The verdict: at least the leg's outcomesRequired MATURE outcomes. Null = the mature outcomes could not be counted, never a verdict."
           }
         },
         "required": [
@@ -364,7 +379,7 @@
               "cpfsCents",
               "cpSaleCents"
             ],
-            "description": "Everything to date."
+            "description": "Everything to date. Null when there is no flash figure at all."
           },
           "mature": {
             "type": "object",
@@ -403,12 +418,12 @@
               "cpfsCents",
               "cpSaleCents"
             ],
-            "description": "The runs started before the leg's cutoff and the leads those runs served. Null only when the cut could not be made."
+            "description": "The mature cohort's figure. NULL when the mature cut could not be made. A cut that was made and holds nothing states that instead: zeros on observed figures, null fields on a resolved price."
           },
           "isMature": {
             "type": "boolean",
             "nullable": true,
-            "description": "The scope's verdict — the same value on every pair of one scope. Render Learning where it is false."
+            "description": "The verdict: at least the leg's outcomesRequired MATURE outcomes. Null = the mature outcomes could not be counted, never a verdict."
           }
         },
         "required": [
@@ -438,7 +453,7 @@
               "cpcCents",
               "cpprCents"
             ],
-            "description": "Everything to date."
+            "description": "Everything to date. Null when there is no flash figure at all."
           },
           "mature": {
             "type": "object",
@@ -457,12 +472,12 @@
               "cpcCents",
               "cpprCents"
             ],
-            "description": "The runs started before the leg's cutoff and the leads those runs served. Null only when the cut could not be made."
+            "description": "The mature cohort's figure. NULL when the mature cut could not be made. A cut that was made and holds nothing states that instead: zeros on observed figures, null fields on a resolved price."
           },
           "isMature": {
             "type": "boolean",
             "nullable": true,
-            "description": "The scope's verdict — the same value on every pair of one scope. Render Learning where it is false."
+            "description": "The verdict: at least the leg's outcomesRequired MATURE outcomes. Null = the mature outcomes could not be counted, never a verdict."
           }
         },
         "required": [
@@ -495,7 +510,7 @@
               "outcomes",
               "conversionRatePct"
             ],
-            "description": "Everything to date."
+            "description": "Everything to date. Null when there is no flash figure at all."
           },
           "mature": {
             "type": "object",
@@ -517,12 +532,12 @@
               "outcomes",
               "conversionRatePct"
             ],
-            "description": "The runs started before the leg's cutoff and the leads those runs served. Null only when the cut could not be made."
+            "description": "The mature cohort's figure. NULL when the mature cut could not be made. A cut that was made and holds nothing states that instead: zeros on observed figures, null fields on a resolved price."
           },
           "isMature": {
             "type": "boolean",
             "nullable": true,
-            "description": "The scope's verdict — the same value on every pair of one scope. Render Learning where it is false."
+            "description": "The verdict: at least the leg's outcomesRequired MATURE outcomes. Null = the mature outcomes could not be counted, never a verdict."
           }
         },
         "required": [
@@ -567,7 +582,7 @@
               "cpsCents",
               "cpsaleCents"
             ],
-            "description": "Everything to date."
+            "description": "Everything to date. Null when there is no flash figure at all."
           },
           "mature": {
             "type": "object",
@@ -601,12 +616,12 @@
               "cpsCents",
               "cpsaleCents"
             ],
-            "description": "The runs started before the leg's cutoff and the leads those runs served. Null only when the cut could not be made."
+            "description": "The mature cohort's figure. NULL when the mature cut could not be made. A cut that was made and holds nothing states that instead: zeros on observed figures, null fields on a resolved price."
           },
           "isMature": {
             "type": "boolean",
             "nullable": true,
-            "description": "The scope's verdict — the same value on every pair of one scope. Render Learning where it is false."
+            "description": "The verdict: at least the leg's outcomesRequired MATURE outcomes. Null = the mature outcomes could not be counted, never a verdict."
           }
         },
         "required": [
@@ -641,7 +656,7 @@
               "returnPerDollar",
               "costOfAcquisitionPct"
             ],
-            "description": "Everything to date."
+            "description": "Everything to date. Null when there is no flash figure at all."
           },
           "mature": {
             "type": "object",
@@ -665,12 +680,12 @@
               "returnPerDollar",
               "costOfAcquisitionPct"
             ],
-            "description": "The runs started before the leg's cutoff and the leads those runs served. Null only when the cut could not be made."
+            "description": "The mature cohort's figure. NULL when the mature cut could not be made. A cut that was made and holds nothing states that instead: zeros on observed figures, null fields on a resolved price."
           },
           "isMature": {
             "type": "boolean",
             "nullable": true,
-            "description": "The scope's verdict — the same value on every pair of one scope. Render Learning where it is false."
+            "description": "The verdict: at least the leg's outcomesRequired MATURE outcomes. Null = the mature outcomes could not be counted, never a verdict."
           }
         },
         "required": [
@@ -700,7 +715,7 @@
               "roiMultiple",
               "costPerOutcomeUsd"
             ],
-            "description": "Everything to date."
+            "description": "Everything to date. Null when there is no flash figure at all."
           },
           "mature": {
             "type": "object",
@@ -719,12 +734,12 @@
               "roiMultiple",
               "costPerOutcomeUsd"
             ],
-            "description": "The runs started before the leg's cutoff and the leads those runs served. Null only when the cut could not be made."
+            "description": "The mature cohort's figure. NULL when the mature cut could not be made. A cut that was made and holds nothing states that instead: zeros on observed figures, null fields on a resolved price."
           },
           "isMature": {
             "type": "boolean",
             "nullable": true,
-            "description": "The scope's verdict — the same value on every pair of one scope. Render Learning where it is false."
+            "description": "The verdict: at least the leg's outcomesRequired MATURE outcomes. Null = the mature outcomes could not be counted, never a verdict."
           }
         },
         "required": [
@@ -2235,6 +2250,11 @@
             "type": "object",
             "nullable": true,
             "properties": {
+              "isMature": {
+                "type": "boolean",
+                "nullable": true,
+                "description": "The SCOPE's maturity verdict beside the curve (features-service#1196) — the byte-same one `maturity.isMature` states. The curve is the mature cohort's, so its last point is the mature return; false is the Learning tag. Null when the scope's maturity could not be read."
+              },
               "daily": {
                 "type": "array",
                 "items": {
@@ -3138,6 +3158,11 @@
             "type": "object",
             "nullable": true,
             "properties": {
+              "isMature": {
+                "type": "boolean",
+                "nullable": true,
+                "description": "The SCOPE's maturity verdict beside the curve (features-service#1196) — the byte-same one `maturity.isMature` states. Null when unreadable."
+              },
               "outcomeStep": {
                 "type": "object",
                 "properties": {
@@ -3413,10 +3438,28 @@
                 ],
                 "description": "The leg's own toStep. A campaign converting a reply into a meeting is measured on MEETINGS, never on the replies it does not produce."
               },
+              "isMature": {
+                "type": "boolean",
+                "nullable": true,
+                "description": "THE SCOPE'S VERDICT this status rides (lib/scope-maturity.ts, features-service#1196) — the byte-same isMature every maturity pair on this body states: 'priced' ⟺ true, and it is never 'priced' while false (the Learning tag). Null = the scope's mature cut could not be made, and the per-campaign flash rule answered instead."
+              },
+              "outcomesBasis": {
+                "type": "string",
+                "enum": [
+                  "mature",
+                  "flash"
+                ],
+                "description": "Which count outcomesObserved (here and on every campaign) is: 'mature' = the outcomes of leads served by runs started before the leg's cutoff — the count the verdict rests on; 'flash' = everything to date, only when the mature cut could not be made."
+              },
               "outcomesObserved": {
                 "type": "number",
                 "nullable": true,
-                "description": "The leading campaign's own count of that step. 0 is measured; null is 'we could not count this'."
+                "description": "The leading campaign's own count of that step, on outcomesBasis. 0 is measured; null is 'we could not count this'."
+              },
+              "flashOutcomesObserved": {
+                "type": "number",
+                "nullable": true,
+                "description": "The same campaign's count on everything to date — equal to outcomesObserved on the flash basis."
               },
               "outcomesRequired": {
                 "type": "integer",
@@ -3541,10 +3584,15 @@
                       ],
                       "description": "The step `outcomesObserved` is denominated in — the leg's OWN toStep, never the first step of the funnel the leg belongs to."
                     },
+                    "flashOutcomesObserved": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "This campaign's count on everything to date — equal to outcomesObserved on the flash basis."
+                    },
                     "outcomesObserved": {
                       "type": "number",
                       "nullable": true,
-                      "description": "How many of that step this campaign accounts for. `0` is a MEASUREMENT (it reached people and none of them converted); NULL is 'we could not count this' — no leg stated, a rate the brand never declared, or a degraded producer. Fractional when the leg is not an entry leg: the count is then the observed driver signal walked forward through the funnel's declared rates."
+                      "description": "How many of that step this campaign accounts for — on the phase's outcomesBasis (its MATURE outcomes whenever the scope's cut could be made). `0` is a MEASUREMENT (it reached people and none of them converted); NULL is 'we could not count this' — no leg stated, a rate the brand never declared, or a degraded producer. Fractional when the leg is not an entry leg: the count is then the observed driver signal walked forward through the funnel's declared rates."
                     },
                     "outcomeObserved": {
                       "type": "boolean",
@@ -3561,6 +3609,7 @@
                     "campaignIdentityKey",
                     "legKey",
                     "outcomeStep",
+                    "flashOutcomesObserved",
                     "outcomesObserved",
                     "outcomeObserved",
                     "live"
@@ -3576,7 +3625,10 @@
               "campaignIdentityKey",
               "legKey",
               "outcomeStep",
+              "isMature",
+              "outcomesBasis",
               "outcomesObserved",
+              "flashOutcomesObserved",
               "outcomesRequired",
               "progressPct",
               "outcomeObserved",
@@ -4630,78 +4682,6 @@
           "groupBy",
           "groups"
         ]
-      },
-      "LegMaturityRule": {
-        "type": "object",
-        "properties": {
-          "durationDays": {
-            "type": "integer",
-            "description": "How many days before today (UTC midnight) a run must have STARTED for its spend, and the leads it served, to count as MATURE. 21 on the two cold-email entry legs (a run's positive replies and visits keep arriving for weeks; 21 days captures 92-95% of them, measured in prod 2026-09-28); 0 on every other leg, whose mature figure is therefore its flash figure."
-          },
-          "outcomesRequired": {
-            "type": "integer",
-            "description": "How many MATURE outcomes of the leg's step a scope must hold to be judged mature: 1 positive reply on start_to_conversation, 10 website visits on start_to_website_visit, 10 on every other leg."
-          },
-          "outcomeSignal": {
-            "type": "string",
-            "nullable": true,
-            "enum": [
-              "clicked",
-              "positiveReply"
-            ],
-            "description": "The counted signal the leg's outcome IS on an entry leg (a website visit is a click, a conversation is a positive reply). Null on every other leg, whose outcome is walked from a driver signal."
-          },
-          "source": {
-            "type": "string",
-            "enum": [
-              "measured",
-              "default"
-            ],
-            "description": "`measured` = the owner set this rule from production evidence; `default` = no leg-specific rule was measured, so the leg is mature the day it is bought and judged on the pre-existing bar of 10."
-          }
-        },
-        "required": [
-          "durationDays",
-          "outcomesRequired",
-          "outcomeSignal",
-          "source"
-        ],
-        "description": "ONE LEG'S MATURITY RULE. Every figure exists in two versions: FLASH (everything to date) and MATURE (the spend of runs started more than durationDays ago, over the outcomes — whenever they land — of the leads those runs served). One clock for both: the run start, i.e. the serve."
-      },
-      "OutcomeFigures": {
-        "type": "object",
-        "properties": {
-          "spentUsd": {
-            "type": "number",
-            "description": "Committed spend on the request's pricing basis, summed exactly (never rounded per group), so a scope's rows add up to the scope. Null ONLY on the staff actual-cost twin, where this grain's spend on this version holds rows with no known vendor cost."
-          },
-          "contacted": {
-            "type": "number",
-            "description": "Leads reached."
-          },
-          "outcomes": {
-            "type": "number",
-            "description": "The leg's own outcomes (on an entry leg, distinct leads at its outcome signal)."
-          },
-          "costPerOutcomeUsd": {
-            "type": "number",
-            "nullable": true,
-            "description": "spentUsd / outcomes — OBSERVED, never floored. Null at 0 outcomes or 0 spend (and on the actual-cost twin where the vendor cost is unknown)."
-          },
-          "conversionRatePct": {
-            "type": "number",
-            "nullable": true,
-            "description": "100 × outcomes / contacted. Null only at 0 contacted; a measured 0 stays 0."
-          }
-        },
-        "required": [
-          "spentUsd",
-          "contacted",
-          "outcomes",
-          "costPerOutcomeUsd",
-          "conversionRatePct"
-        ],
-        "description": "The observed figures of one scope on one version (flash or mature)."
       },
       "WorkflowProjectionResponse": {
         "type": "object",
@@ -7941,6 +7921,11 @@
             "type": "object",
             "nullable": true,
             "properties": {
+              "isMature": {
+                "type": "boolean",
+                "nullable": true,
+                "description": "The SCOPE's maturity verdict beside the curve (features-service#1196) — the byte-same one `maturity.isMature` states. The curve is the mature cohort's, so its last point is the mature return; false is the Learning tag. Null when the scope's maturity could not be read."
+              },
               "daily": {
                 "type": "array",
                 "items": {
@@ -8844,6 +8829,11 @@
             "type": "object",
             "nullable": true,
             "properties": {
+              "isMature": {
+                "type": "boolean",
+                "nullable": true,
+                "description": "The SCOPE's maturity verdict beside the curve (features-service#1196) — the byte-same one `maturity.isMature` states. Null when unreadable."
+              },
               "outcomeStep": {
                 "type": "object",
                 "properties": {
@@ -9119,10 +9109,28 @@
                 ],
                 "description": "The leg's own toStep. A campaign converting a reply into a meeting is measured on MEETINGS, never on the replies it does not produce."
               },
+              "isMature": {
+                "type": "boolean",
+                "nullable": true,
+                "description": "THE SCOPE'S VERDICT this status rides (lib/scope-maturity.ts, features-service#1196) — the byte-same isMature every maturity pair on this body states: 'priced' ⟺ true, and it is never 'priced' while false (the Learning tag). Null = the scope's mature cut could not be made, and the per-campaign flash rule answered instead."
+              },
+              "outcomesBasis": {
+                "type": "string",
+                "enum": [
+                  "mature",
+                  "flash"
+                ],
+                "description": "Which count outcomesObserved (here and on every campaign) is: 'mature' = the outcomes of leads served by runs started before the leg's cutoff — the count the verdict rests on; 'flash' = everything to date, only when the mature cut could not be made."
+              },
               "outcomesObserved": {
                 "type": "number",
                 "nullable": true,
-                "description": "The leading campaign's own count of that step. 0 is measured; null is 'we could not count this'."
+                "description": "The leading campaign's own count of that step, on outcomesBasis. 0 is measured; null is 'we could not count this'."
+              },
+              "flashOutcomesObserved": {
+                "type": "number",
+                "nullable": true,
+                "description": "The same campaign's count on everything to date — equal to outcomesObserved on the flash basis."
               },
               "outcomesRequired": {
                 "type": "integer",
@@ -9247,10 +9255,15 @@
                       ],
                       "description": "The step `outcomesObserved` is denominated in — the leg's OWN toStep, never the first step of the funnel the leg belongs to."
                     },
+                    "flashOutcomesObserved": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "This campaign's count on everything to date — equal to outcomesObserved on the flash basis."
+                    },
                     "outcomesObserved": {
                       "type": "number",
                       "nullable": true,
-                      "description": "How many of that step this campaign accounts for. `0` is a MEASUREMENT (it reached people and none of them converted); NULL is 'we could not count this' — no leg stated, a rate the brand never declared, or a degraded producer. Fractional when the leg is not an entry leg: the count is then the observed driver signal walked forward through the funnel's declared rates."
+                      "description": "How many of that step this campaign accounts for — on the phase's outcomesBasis (its MATURE outcomes whenever the scope's cut could be made). `0` is a MEASUREMENT (it reached people and none of them converted); NULL is 'we could not count this' — no leg stated, a rate the brand never declared, or a degraded producer. Fractional when the leg is not an entry leg: the count is then the observed driver signal walked forward through the funnel's declared rates."
                     },
                     "outcomeObserved": {
                       "type": "boolean",
@@ -9267,6 +9280,7 @@
                     "campaignIdentityKey",
                     "legKey",
                     "outcomeStep",
+                    "flashOutcomesObserved",
                     "outcomesObserved",
                     "outcomeObserved",
                     "live"
@@ -9282,7 +9296,10 @@
               "campaignIdentityKey",
               "legKey",
               "outcomeStep",
+              "isMature",
+              "outcomesBasis",
               "outcomesObserved",
+              "flashOutcomesObserved",
               "outcomesRequired",
               "progressPct",
               "outcomeObserved",
@@ -11428,6 +11445,11 @@
             "type": "object",
             "nullable": true,
             "properties": {
+              "isMature": {
+                "type": "boolean",
+                "nullable": true,
+                "description": "The SCOPE's maturity verdict beside the curve (features-service#1196) — the byte-same one `maturity.isMature` states. The curve is the mature cohort's, so its last point is the mature return; false is the Learning tag. Null when the scope's maturity could not be read."
+              },
               "daily": {
                 "type": "array",
                 "items": {
@@ -12331,6 +12353,11 @@
             "type": "object",
             "nullable": true,
             "properties": {
+              "isMature": {
+                "type": "boolean",
+                "nullable": true,
+                "description": "The SCOPE's maturity verdict beside the curve (features-service#1196) — the byte-same one `maturity.isMature` states. Null when unreadable."
+              },
               "outcomeStep": {
                 "type": "object",
                 "properties": {
@@ -12606,10 +12633,28 @@
                 ],
                 "description": "The leg's own toStep. A campaign converting a reply into a meeting is measured on MEETINGS, never on the replies it does not produce."
               },
+              "isMature": {
+                "type": "boolean",
+                "nullable": true,
+                "description": "THE SCOPE'S VERDICT this status rides (lib/scope-maturity.ts, features-service#1196) — the byte-same isMature every maturity pair on this body states: 'priced' ⟺ true, and it is never 'priced' while false (the Learning tag). Null = the scope's mature cut could not be made, and the per-campaign flash rule answered instead."
+              },
+              "outcomesBasis": {
+                "type": "string",
+                "enum": [
+                  "mature",
+                  "flash"
+                ],
+                "description": "Which count outcomesObserved (here and on every campaign) is: 'mature' = the outcomes of leads served by runs started before the leg's cutoff — the count the verdict rests on; 'flash' = everything to date, only when the mature cut could not be made."
+              },
               "outcomesObserved": {
                 "type": "number",
                 "nullable": true,
-                "description": "The leading campaign's own count of that step. 0 is measured; null is 'we could not count this'."
+                "description": "The leading campaign's own count of that step, on outcomesBasis. 0 is measured; null is 'we could not count this'."
+              },
+              "flashOutcomesObserved": {
+                "type": "number",
+                "nullable": true,
+                "description": "The same campaign's count on everything to date — equal to outcomesObserved on the flash basis."
               },
               "outcomesRequired": {
                 "type": "integer",
@@ -12734,10 +12779,15 @@
                       ],
                       "description": "The step `outcomesObserved` is denominated in — the leg's OWN toStep, never the first step of the funnel the leg belongs to."
                     },
+                    "flashOutcomesObserved": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "This campaign's count on everything to date — equal to outcomesObserved on the flash basis."
+                    },
                     "outcomesObserved": {
                       "type": "number",
                       "nullable": true,
-                      "description": "How many of that step this campaign accounts for. `0` is a MEASUREMENT (it reached people and none of them converted); NULL is 'we could not count this' — no leg stated, a rate the brand never declared, or a degraded producer. Fractional when the leg is not an entry leg: the count is then the observed driver signal walked forward through the funnel's declared rates."
+                      "description": "How many of that step this campaign accounts for — on the phase's outcomesBasis (its MATURE outcomes whenever the scope's cut could be made). `0` is a MEASUREMENT (it reached people and none of them converted); NULL is 'we could not count this' — no leg stated, a rate the brand never declared, or a degraded producer. Fractional when the leg is not an entry leg: the count is then the observed driver signal walked forward through the funnel's declared rates."
                     },
                     "outcomeObserved": {
                       "type": "boolean",
@@ -12754,6 +12804,7 @@
                     "campaignIdentityKey",
                     "legKey",
                     "outcomeStep",
+                    "flashOutcomesObserved",
                     "outcomesObserved",
                     "outcomeObserved",
                     "live"
@@ -12769,7 +12820,10 @@
               "campaignIdentityKey",
               "legKey",
               "outcomeStep",
+              "isMature",
+              "outcomesBasis",
               "outcomesObserved",
+              "flashOutcomesObserved",
               "outcomesRequired",
               "progressPct",
               "outcomeObserved",

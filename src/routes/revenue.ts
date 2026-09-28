@@ -1407,6 +1407,9 @@ function attachMaturity(
 ): RevenueBody {
   body.maturity = scoped ? scoped.maturity : null;
   if (!scoped) return body;
+  // The curves are the mature cohort's: their verdict rides beside them, the byte-same one.
+  if (body.roiHistory) body.roiHistory.isMature = scoped.maturity.isMature;
+  if (body.costPerOutcomeHistory) body.costPerOutcomeHistory.isMature = scoped.maturity.isMature;
   body.costEconomics.maturity = costRatiosPair(scoped.bases, pipelines, lifetimeRevenueUsd);
   if (body.outcomes) body.outcomes.maturity = outcomeRatiosPair(scoped.bases);
   if (body.spend && spendPair) body.spend.maturity = spendPair;

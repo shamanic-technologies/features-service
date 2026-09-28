@@ -92,6 +92,8 @@ export interface CostPerOutcomeHistoryPoint {
 
 /** WHAT ONE OUTCOME HAS COST, ACROSS THE SCOPE'S LIFE — named, dated, and divided by nobody. */
 export interface CostPerOutcomeHistory {
+  /** The SCOPE's verdict beside the curve (`lib/scope-maturity.ts`); null when unreadable. Set by the route. */
+  isMature?: boolean | null;
   /** The step every count here is denominated in — this service's answer, not the caller's. */
   outcomeStep: ChannelStepDef;
   /** The leg that step closes, canonical. */

@@ -11,29 +11,45 @@ registry.register("Feature", featureResponseSchema);
 
 // ── THE MATURITY OF A FIGURE (features-service#1196) — flash, mature, and the verdict, on every surface ──
 
+const legMaturityRuleSchema = registry.register(
+  "LegMaturityRule",
+  z.object({
+    durationDays: z.number().int().describe("How many days before today (UTC midnight) a run must have STARTED for its spend, and the leads it served, to count as MATURE. 21 on the two cold-email entry legs (a run's positive replies and visits keep arriving for weeks; 21 days captures 92-95% of them, measured in prod 2026-09-28); 0 on every other leg, whose mature figure is therefore its flash figure."),
+    outcomesRequired: z.number().int().describe("How many MATURE outcomes of the leg's step a scope must hold to be judged mature: 1 positive reply on start_to_conversation, 10 website visits on start_to_website_visit, 10 on every other leg."),
+    outcomeSignal: z.enum(["clicked", "positiveReply"]).nullable().describe("The counted signal the leg's outcome IS on an entry leg (a website visit is a click, a conversation is a positive reply). Null on every other leg, whose outcome is walked from a driver signal."),
+    source: z.enum(["measured", "default"]).describe("`measured` = the owner set this rule from production evidence; `default` = no leg-specific rule was measured, so the leg is mature the day it is bought and judged on the pre-existing bar of 10."),
+  }).describe("ONE LEG'S MATURITY RULE. Every figure exists in two versions: FLASH (everything to date) and MATURE (the spend of runs started more than durationDays ago, over the outcomes — whenever they land — of the leads those runs served). One clock for both: the run start, i.e. the serve."),
+);
+
 const outcomeFiguresSchema = registry.register(
   "OutcomeFigures",
   z.object({
-    spentUsd: z.number().describe("COMMITTED spend on the request's pricing, summed EXACTLY from the producer's decimal text and never rounded here — so a scope's rows (audiences, workflows) add up to the scope within float epsilon. Round only for display."),
-    contacted: z.number().describe("Distinct leads reached (bounces and unsubscribes included)."),
-    outcomes: z.number().describe("Distinct leads that reached the leg's OWN outcome signal (a positive reply on the conversation leg, a website visit on the visit leg)."),
-    costPerOutcomeUsd: z.number().nullable().describe("spentUsd / outcomes — OBSERVED, never a floor. Null at 0 outcomes or 0 spend."),
+    spentUsd: z.number().describe("Committed spend on the request's pricing basis, summed exactly (never rounded per group), so a scope's rows add up to the scope. Null ONLY on the staff actual-cost twin, where this grain's spend on this version holds rows with no known vendor cost."),
+    contacted: z.number().describe("Leads reached."),
+    outcomes: z.number().describe("The leg's own outcomes (on an entry leg, distinct leads at its outcome signal)."),
+    costPerOutcomeUsd: z.number().nullable().describe("spentUsd / outcomes — OBSERVED, never floored. Null at 0 outcomes or 0 spend (and on the actual-cost twin where the vendor cost is unknown)."),
     conversionRatePct: z.number().nullable().describe("100 × outcomes / contacted. Null only at 0 contacted; a measured 0 stays 0."),
-  }).describe("The figures of ONE scope on ONE basis — observed accounting."),
+  }).describe("The observed figures of one scope on one version (flash or mature)."),
 );
+
+/** Both versions of one figure and the verdict, side by side (lib/maturity.ts `MaturityPair`). */
+const maturityPairSchema = <T extends z.ZodTypeAny>(inner: T) =>
+  z.object({
+    flash: inner.nullable().describe("Everything to date. Null when there is no flash figure at all."),
+    mature: inner.nullable().describe("The mature cohort's figure. NULL when the mature cut could not be made. A cut that was made and holds nothing states that instead: zeros on observed figures, null fields on a resolved price."),
+    isMature: z.boolean().nullable().describe("The verdict: at least the leg's outcomesRequired MATURE outcomes. Null = the mature outcomes could not be counted, never a verdict."),
+  });
 
 const legMaturityFiguresSchema = registry.register(
   "LegMaturityFigures",
-  z.object({
-    legKey: z.string().nullable().describe("The leg these figures and this rule are for."),
-    durationDays: z.number().int().describe("How many days before today (UTC midnight) a run must have STARTED for its spend, and the leads it SERVED, to count as mature. 21 on the two cold-email entry legs, 0 on every other."),
-    outcomesRequired: z.number().int().describe("MATURE outcomes of the leg's step a scope must hold to be mature: 1 positive reply (conversation leg), 10 website visits (visit leg), 10 elsewhere."),
-    outcomeSignal: z.enum(["clicked", "positiveReply"]).nullable().describe("The counted signal the leg's outcome IS."),
-    source: z.enum(["measured", "default"]).describe("`measured` = the owner set the rule from production evidence; `default` = no leg-specific rule."),
-    flash: outcomeFiguresSchema.nullable().describe("Everything to date."),
-    mature: outcomeFiguresSchema.nullable().describe("The runs started before the cutoff and the leads THOSE runs served (their outcomes whenever they landed). A cohort that was read and holds nothing is all zeros; null ONLY when the cut could not be made (legs unknown, serve dates not stated)."),
-    isMature: z.boolean().nullable().describe("mature.outcomes >= outcomesRequired. Null = could not judge; never a Learning verdict."),
-  }).describe("ONE LEG of a scope on both bases, with the leg's own rule beside its figures."),
+  legMaturityRuleSchema
+    .extend({
+      legKey: z.string().nullable().describe("The leg these figures and this rule are for."),
+      flash: outcomeFiguresSchema.nullable().describe("Everything to date."),
+      mature: outcomeFiguresSchema.nullable().describe("The runs started before the cutoff and the leads THOSE runs served (their outcomes whenever they landed). A cohort that was read and holds nothing is all zeros; null ONLY when the cut could not be made (legs unknown, serve dates not stated)."),
+      isMature: z.boolean().nullable().describe("mature.outcomes >= outcomesRequired. Null = could not judge; never a Learning verdict."),
+    })
+    .describe("ONE LEG of a scope on both bases, with the leg's own rule (LegMaturityRule) beside its figures."),
 );
 
 const scopeMaturitySchema = registry.register(
@@ -44,14 +60,6 @@ const scopeMaturitySchema = registry.register(
   }).describe("THE SCOPE'S MATURITY — the byte-same object every surface describing this scope serves (/revenue, audience rows, offer outcomes, /stats), so a consumer can reconcile them. features-service#1196."),
 );
 
-/** The shared pair shape: flash, mature, and the scope's verdict, around one figure type. */
-function maturityPairSchema<T extends z.ZodTypeAny>(inner: T) {
-  return z.object({
-    flash: inner.nullable().describe("Everything to date."),
-    mature: inner.nullable().describe("The runs started before the leg's cutoff and the leads those runs served. Null only when the cut could not be made."),
-    isMature: z.boolean().nullable().describe("The scope's verdict — the same value on every pair of one scope. Render Learning where it is false."),
-  });
-}
 
 /** One block's own ratios on both bases, beside the scope's verdict — registered ONCE per block kind. */
 function blockPair<T extends z.ZodRawShape>(name: string, shape: T, what: string) {
@@ -566,6 +574,7 @@ const roiHistoryPointSchema = z.object({
 });
 
 const roiHistorySchema = z.object({
+  isMature: z.boolean().nullable().optional().describe("The SCOPE's maturity verdict beside the curve (features-service#1196) — the byte-same one `maturity.isMature` states. The curve is the mature cohort's, so its last point is the mature return; false is the Learning tag. Null when the scope's maturity could not be read."),
   daily: z.array(roiHistoryPointSchema).describe("One point per UTC day that has spend or a dated outcome, ascending, spanning the brand's whole life. Days with neither are absent (never fabricated). Empty when the brand has neither spend nor a dated outcome."),
   datedPipelineUsd: z.number().describe("The curve's final cumulative pipeline — the part of the MATURE cohort's pipeline (the one costEconomics.roiMultiple divides; headline.totalPipelineUsd when costEconomics.maturityDays is 0) this curve can describe."),
   undatedPipelineUsd: z.number().describe("Mature-cohort pipeline whose outcome carries NO timestamp, so it sits on no day. Reported rather than dropped or parked on a fabricated day: datedPipelineUsd + undatedPipelineUsd === the mature cohort's pipeline, which is headline.totalPipelineUsd when costEconomics.maturityDays is 0."),
@@ -767,7 +776,8 @@ const learningCampaignSchema = z.object({
   campaignIdentityKey: z.string().nullable().describe("campaign-service's identity key, or null for a row it could not place (one predating its migration 0044, which is its own family of one)."),
   legKey: z.string().nullable().describe("The FUNNEL LEG this campaign is bought for, as campaign-service states it. Null = it states none, and there is then no step to count its outcomes in."),
   outcomeStep: channelStepSchema.nullable().describe("The step `outcomesObserved` is denominated in — the leg's OWN toStep, never the first step of the funnel the leg belongs to."),
-  outcomesObserved: z.number().nullable().describe("How many of that step this campaign accounts for. `0` is a MEASUREMENT (it reached people and none of them converted); NULL is 'we could not count this' — no leg stated, a rate the brand never declared, or a degraded producer. Fractional when the leg is not an entry leg: the count is then the observed driver signal walked forward through the funnel's declared rates."),
+  flashOutcomesObserved: z.number().nullable().describe("This campaign's count on everything to date — equal to outcomesObserved on the flash basis."),
+  outcomesObserved: z.number().nullable().describe("How many of that step this campaign accounts for — on the phase's outcomesBasis (its MATURE outcomes whenever the scope's cut could be made). `0` is a MEASUREMENT (it reached people and none of them converted); NULL is 'we could not count this' — no leg stated, a rate the brand never declared, or a degraded producer. Fractional when the leg is not an entry leg: the count is then the observed driver signal walked forward through the funnel's declared rates."),
   outcomeObserved: z.boolean().describe("TRUE ⟺ the count above is a raw OBSERVATION (an ENTRY leg, whose driver signal IS its outcome). FALSE ⟺ it is that observation walked forward — a consumer that wants to say which it is reading has to be told."),
   live: z.boolean().describe("TRUE ⟺ at least one member is `ongoing`. A stopped campaign gathers nothing, so it is never the subject of a countdown — though what it already gathered still counts towards the scope."),
 });
@@ -780,6 +790,7 @@ const costPerOutcomeHistoryPointSchema = z.object({
 });
 
 const costPerOutcomeHistorySchema = z.object({
+  isMature: z.boolean().nullable().optional().describe("The SCOPE's maturity verdict beside the curve (features-service#1196) — the byte-same one `maturity.isMature` states. Null when unreadable."),
   outcomeStep: channelStepSchema.describe("The step EVERY count here is denominated in — the scope's own leg's toStep, named by this service rather than chosen by the caller, and the byte-same step learningPhase.outcomeStep reports (one leader resolution serves both, so the curve and the verdict beside it can never be denominated in two different things). A consumer labels the chart with it."),
   legKey: z.string().describe("The leg that step closes, canonical."),
   outcomeObserved: z.boolean().describe("TRUE ⟺ the counts are raw OBSERVATIONS (an ENTRY leg, whose driver signal IS its outcome). FALSE ⟺ each day's count is the observed driver walked forward through the funnel's declared rates, so it is fractional."),
@@ -815,7 +826,10 @@ const learningPhaseSchema = z.object({
   campaignIdentityKey: z.string().nullable(),
   legKey: z.string().nullable().describe("The leading campaign's own leg — what it is bought for, and therefore what its outcomes are counted in."),
   outcomeStep: channelStepSchema.nullable().describe("The leg's own toStep. A campaign converting a reply into a meeting is measured on MEETINGS, never on the replies it does not produce."),
-  outcomesObserved: z.number().nullable().describe("The leading campaign's own count of that step. 0 is measured; null is 'we could not count this'."),
+  isMature: z.boolean().nullable().describe("THE SCOPE'S VERDICT this status rides (lib/scope-maturity.ts, features-service#1196) — the byte-same isMature every maturity pair on this body states: 'priced' ⟺ true, and it is never 'priced' while false (the Learning tag). Null = the scope's mature cut could not be made, and the per-campaign flash rule answered instead."),
+  outcomesBasis: z.enum(["mature", "flash"]).describe("Which count outcomesObserved (here and on every campaign) is: 'mature' = the outcomes of leads served by runs started before the leg's cutoff — the count the verdict rests on; 'flash' = everything to date, only when the mature cut could not be made."),
+  outcomesObserved: z.number().nullable().describe("The leading campaign's own count of that step, on outcomesBasis. 0 is measured; null is 'we could not count this'."),
+  flashOutcomesObserved: z.number().nullable().describe("The same campaign's count on everything to date — equal to outcomesObserved on the flash basis."),
   outcomesRequired: z.number().int().describe("How many outcomes of its own leg a campaign needs before its figures stop being noise. ALWAYS stated, whatever the verdict — the consumer renders the bar and divides nothing."),
   progressPct: z.number().nullable().describe("100 × outcomesObserved / outcomesRequired, clamped to 100. Null when the count is."),
   outcomeObserved: z.boolean().describe("TRUE ⟺ the leading campaign's count is a raw OBSERVATION rather than walked from its driver signal."),
@@ -1004,37 +1018,6 @@ registry.registerPath({
 
 // 3-grain projection ladder (crossOrg → brand → audience) + a resolved pick, keyed per
 // (audienceId?, workflowDynasty). Replaces the flat per-workflow row + the deleted /candidates endpoint.
-
-// ── THE TWO VERSIONS OF EVERY FIGURE (lib/maturity.ts, features-service#1196) ─────────────────
-
-const legMaturityRuleSchema = registry.register(
-  "LegMaturityRule",
-  z.object({
-    durationDays: z.number().int().describe("How many days before today (UTC midnight) a run must have STARTED for its spend, and the leads it served, to count as MATURE. 21 on the two cold-email entry legs (a run's positive replies and visits keep arriving for weeks; 21 days captures 92-95% of them, measured in prod 2026-09-28); 0 on every other leg, whose mature figure is therefore its flash figure."),
-    outcomesRequired: z.number().int().describe("How many MATURE outcomes of the leg's step a scope must hold to be judged mature: 1 positive reply on start_to_conversation, 10 website visits on start_to_website_visit, 10 on every other leg."),
-    outcomeSignal: z.enum(["clicked", "positiveReply"]).nullable().describe("The counted signal the leg's outcome IS on an entry leg (a website visit is a click, a conversation is a positive reply). Null on every other leg, whose outcome is walked from a driver signal."),
-    source: z.enum(["measured", "default"]).describe("`measured` = the owner set this rule from production evidence; `default` = no leg-specific rule was measured, so the leg is mature the day it is bought and judged on the pre-existing bar of 10."),
-  }).describe("ONE LEG'S MATURITY RULE. Every figure exists in two versions: FLASH (everything to date) and MATURE (the spend of runs started more than durationDays ago, over the outcomes — whenever they land — of the leads those runs served). One clock for both: the run start, i.e. the serve."),
-);
-
-const outcomeFiguresSchema = registry.register(
-  "OutcomeFigures",
-  z.object({
-    spentUsd: z.number().describe("Committed spend on the request's pricing basis, summed exactly (never rounded per group), so a scope's rows add up to the scope. Null ONLY on the staff actual-cost twin, where this grain's spend on this version holds rows with no known vendor cost."),
-    contacted: z.number().describe("Leads reached."),
-    outcomes: z.number().describe("The leg's own outcomes (on an entry leg, distinct leads at its outcome signal)."),
-    costPerOutcomeUsd: z.number().nullable().describe("spentUsd / outcomes — OBSERVED, never floored. Null at 0 outcomes or 0 spend (and on the actual-cost twin where the vendor cost is unknown)."),
-    conversionRatePct: z.number().nullable().describe("100 × outcomes / contacted. Null only at 0 contacted; a measured 0 stays 0."),
-  }).describe("The observed figures of one scope on one version (flash or mature)."),
-);
-
-/** Both versions of one figure and the verdict, side by side (lib/maturity.ts `MaturityPair`). */
-const maturityPairSchema = <T extends z.ZodTypeAny>(inner: T) =>
-  z.object({
-    flash: inner.nullable().describe("Everything to date. Null when there is no flash figure at all."),
-    mature: inner.nullable().describe("The mature cohort's figure. NULL when the mature cut could not be made. A cut that was made and holds nothing states that instead: zeros on observed figures, null fields on a resolved price."),
-    isMature: z.boolean().nullable().describe("The verdict: at least the leg's outcomesRequired MATURE outcomes. Null = the mature outcomes could not be counted, never a verdict."),
-  });
 
 const grainBlockSchema = z.object({
   costBasis: z.enum(["charged", "incurred"]).optional().describe("Which accounting question THIS grain answers. crossOrg = \"incurred\": the fleet PERFORMANCE benchmark, where spend the platform comped counts at full value (one org being comped must not make a workflow look cheaper to everybody else). brand / audience = \"charged\": this customer's own billed money, where comped spend is absent. Stated per grain because this payload is the one place both questions sit side by side under the same words. Absent on an UNMEASURED row (estimatesByGrain is empty there)."),

@@ -57,6 +57,12 @@ export interface RoiHistory {
    * rather than dropped or dated: `datedPipelineUsd + undatedPipelineUsd === headline.totalPipelineUsd`.
    */
   undatedPipelineUsd: number;
+  /**
+   * The SCOPE's verdict (`lib/scope-maturity.ts`, features-service#1196) beside the curve: the curve is the
+   * mature cohort's, so its last point is the mature return; `false` is the Learning tag. Null when the
+   * scope's maturity could not be read. Set by the route, never by this fold.
+   */
+  isMature?: boolean | null;
 }
 
 /**

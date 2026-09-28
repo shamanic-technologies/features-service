@@ -3869,6 +3869,9 @@ async function computeFleetWorkflowPipelines(featureSlug: string, legKey?: strin
         pricing: "net",
         priced: priceOnDeclaredFunnel(declared, effective),
         withPipelineTimeSeries: true,
+        // The curve reads the pipeline series and nothing else: the maturity pairs would cost one
+        // spend-split read per (org, brand) pair of the fleet for figures this fold never states.
+        withMaturity: false,
         ...(campaignScope ? { campaignScope } : {}),
       });
       return groups.map(
