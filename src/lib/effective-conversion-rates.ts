@@ -72,6 +72,8 @@ import { applySignalOverlays } from "./signal-overlays.js";
 import { dedupPersonsByLead } from "./revenue-engine.js";
 import {
   LEAD_FIELD_TO_SIGNAL,
+  leadFieldOfStep,
+  normaliseStep,
   stepMeasured,
   type LeadStepField,
   type StepEvidence,
@@ -184,37 +186,11 @@ export interface BrandEffectiveRates {
 }
 
 // ── Steps and the lead flags that count them ──────────────────────────────────────────────────
-
-const normaliseStep = (label: string): string => {
-  const flat = label.trim().toLowerCase().replace(/[\s_-]+/g, " ");
-  return flat === "form filled" || flat === "lead form submitted" ? "form submitted" : flat;
-};
-
-/**
- * The `leads[]` flag that says a lead REACHED a step, or null for a step nothing in the fleet counts.
- * Keyed on the step's own wording, so an arrow is measured the same way in every funnel it appears in.
- */
-const STEP_LEAD_FIELD: Record<string, LeadStepField | null> = {
-  "positive reply": "repliedPositive",
-  "website visit": "clicked",
-  "meeting booked": "meetingBooked",
-  "meeting attended": "meetingAttended",
-  signup: "signup",
-  "form submitted": "formSubmission",
-  "paid client": "purchased",
-  // A checkout on the brand's own site: nothing counts it (see FUNNEL_LEG_SIGNALS).
-  "direct purchase": null,
-  purchase: null,
-};
-
-/**
- * The lead flag counting a step. A leg is measured the same way whichever funnel reads it: a rate is a
- * property of the (brand, leg) pair, never of a funnel, so a booked meeting becoming an attended one is
- * one measurement for the brand.
- */
-function leadFieldOfStep(step: string): LeadStepField | null {
-  return STEP_LEAD_FIELD[normaliseStep(step)] ?? null;
-}
+//
+// The step-wording → lead-flag map lives in `lib/funnel-steps.ts` (`leadFieldOfStep`), ONE copy: the
+// funnel walk places its rungs by it, and an arrow here is measured by it. A leg is measured the same
+// way whichever funnel reads it: a rate is a property of the (brand, leg) pair, never of a funnel, so a
+// booked meeting becoming an attended one is one measurement for the brand.
 
 /** The arrows of a funnel: every consecutive pair of its steps, in order. */
 export function funnelArrows(funnelKey: SalesFunnelKey): Array<{ fromStep: string; toStep: string; fromIndex: number }> {

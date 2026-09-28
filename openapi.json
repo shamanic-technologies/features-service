@@ -3046,6 +3046,7 @@
                     },
                     "leadField": {
                       "type": "string",
+                      "nullable": true,
                       "enum": [
                         "clicked",
                         "repliedPositive",
@@ -3055,7 +3056,7 @@
                         "formSubmission",
                         "purchased"
                       ],
-                      "description": "The leads[] boolean this rung counts, so a consumer can reconcile the count against the rows on the same response."
+                      "description": "The leads[] boolean this rung counts, so a consumer can reconcile the count against the rows on the same response. NULL on a step nothing in the fleet counts (the checkout on the brand's own site, 'Direct purchase'; the form an ad platform hosts, the first step of lead_forms_from_ads): the rung is still stated, in the funnel's own order, with recipientsReached, both costs and both rates that touch it null ('we have no figure', never 0) (features-service#1203)."
                     },
                     "recipientsReached": {
                       "type": "integer",
@@ -8717,6 +8718,7 @@
                     },
                     "leadField": {
                       "type": "string",
+                      "nullable": true,
                       "enum": [
                         "clicked",
                         "repliedPositive",
@@ -8726,7 +8728,7 @@
                         "formSubmission",
                         "purchased"
                       ],
-                      "description": "The leads[] boolean this rung counts, so a consumer can reconcile the count against the rows on the same response."
+                      "description": "The leads[] boolean this rung counts, so a consumer can reconcile the count against the rows on the same response. NULL on a step nothing in the fleet counts (the checkout on the brand's own site, 'Direct purchase'; the form an ad platform hosts, the first step of lead_forms_from_ads): the rung is still stated, in the funnel's own order, with recipientsReached, both costs and both rates that touch it null ('we have no figure', never 0) (features-service#1203)."
                     },
                     "recipientsReached": {
                       "type": "integer",
@@ -12241,6 +12243,7 @@
                     },
                     "leadField": {
                       "type": "string",
+                      "nullable": true,
                       "enum": [
                         "clicked",
                         "repliedPositive",
@@ -12250,7 +12253,7 @@
                         "formSubmission",
                         "purchased"
                       ],
-                      "description": "The leads[] boolean this rung counts, so a consumer can reconcile the count against the rows on the same response."
+                      "description": "The leads[] boolean this rung counts, so a consumer can reconcile the count against the rows on the same response. NULL on a step nothing in the fleet counts (the checkout on the brand's own site, 'Direct purchase'; the form an ad platform hosts, the first step of lead_forms_from_ads): the rung is still stated, in the funnel's own order, with recipientsReached, both costs and both rates that touch it null ('we have no figure', never 0) (features-service#1203)."
                     },
                     "recipientsReached": {
                       "type": "integer",
