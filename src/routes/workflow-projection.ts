@@ -61,18 +61,33 @@ import {
   type WorkflowMetadata,
 } from "../lib/public-stats-clients.js";
 import { aggregateAcrossDynasties } from "./public.js";
-import { fetchPositiveRepliers, setReplyCountsOnSlugStats } from "../lib/crm-only-repliers.js";
+import { fetchPositiveRepliers, fetchScopePersons, setReplyCountsOnSlugStats } from "../lib/crm-only-repliers.js";
 import { fetchFleetPositiveRepliesBySlug } from "../lib/fleet-positive-repliers.js";
-import { fetchLegFleetEvidence } from "../lib/leg-fleet-evidence.js";
+import { fetchLegFleetEvidence, fetchLegFleetMatureEvidence } from "../lib/leg-fleet-evidence.js";
 import {
   fetchBrandWorkflowEvidenceWithRetired,
   fetchCampaignWorkflowEvidenceWithRetired,
+  fetchCampaignWorkflowMatureEvidence,
   fetchAudienceGrainEvidence,
+  fetchAudienceMatureEvidence,
   brandGrainDynasties,
+  type GrainEvidenceWithRetired,
   type WorkflowGrainEvidence,
   type AudienceGrainEvidence,
   type Identity,
 } from "../lib/workflow-projection-grains.js";
+import {
+  isMatureCount,
+  legMaturity,
+  maturityCutoffIso,
+  maturityPair,
+  outcomeFigures,
+  type LegMaturity,
+  type MaturityPair,
+  type OutcomeFigures,
+} from "../lib/maturity.js";
+import { serveDatesStated } from "../lib/mature-evidence.js";
+import type { EnginePerson } from "../lib/revenue-engine.js";
 
 const router = Router();
 
@@ -170,6 +185,55 @@ interface GrainBlock {
     roiMultiple: number | null;
     cacPct: number | null;
   };
+  /**
+   * WHICH VERSION OF THE EVIDENCE this block's own fields (`evidence`, `unitCosts`, `legOutcome`,
+   * `resolvedOutcomeCount`, `projected`) are on — present ⟺ the caller named a `?leg=` (`lib/maturity.ts`).
+   * `mature` for a workflow that is mature on the fleet of its leg (its young spend counts nowhere),
+   * `flash` otherwise (its exploration phase, priced exactly as before). The ROW decides, never the grain,
+   * so every block of one row is on one basis.
+   */
+  basis?: MaturityBasis;
+  /** This grain's figures on BOTH bases, observed (never floored) — see `OutcomeFigures`. */
+  flash?: OutcomeFigures | null;
+  /** NULL only when the mature cut could not be made; a cut that holds nothing here reads zeros. */
+  mature?: OutcomeFigures | null;
+  /** This grain's MATURE outcomes against the leg's bar. NULL when the mature cut could not be made. */
+  isMature?: boolean | null;
+}
+
+/** The two versions every figure exists in (`lib/maturity.ts`). */
+export type MaturityBasis = "flash" | "mature";
+
+/** The price a row resolves to on one basis — what `resolved` says, reduced to what a reader compares. */
+export interface ResolvedFigures {
+  grain: GrainName | null;
+  costPerOutcomeUsd: number | null;
+  conversionRatePct: number | null;
+}
+
+/**
+ * THE ROW'S MATURITY — present ⟺ the caller named a `?leg=`. `isMature` is the WORKFLOW's verdict on the
+ * fleet of its leg (every org's campaigns performing the leg): at least the leg's required MATURE outcomes.
+ * It decides `basis`, the version `estimatesByGrain` and `resolved` are priced on — and therefore what
+ * campaign-service ranks, and the audience evidence it draws on. `resolved` states BOTH prices.
+ */
+export interface RowMaturity {
+  basis: MaturityBasis;
+  isMature: boolean | null;
+  /** The workflow's mature outcomes of the leg's step on the fleet. NULL when the cut could not be made. */
+  matureOutcomes: number | null;
+  resolved: MaturityPair<ResolvedFigures>;
+}
+
+/**
+ * THE LEG'S MATURITY RULE, echoed on a leg-keyed answer, and whether this answer could apply it.
+ * `measured: false` names why (`unmeasuredReason`): every row is then priced on flash, as before.
+ */
+export interface ProjectionMaturity extends LegMaturity {
+  /** Runs started, and leads served, before this instant are mature. NULL on a 0-day leg (mature ≡ flash). */
+  cutoffIso: string | null;
+  measured: boolean;
+  unmeasuredReason: MatureUnavailableReason | "leg_scope_unavailable" | null;
 }
 
 interface ResolvedBlock {
@@ -303,6 +367,8 @@ export interface ProjectionRow {
    * `legAssignment`.
    */
   modelEligibility?: TransitionalModelEligibility;
+  /** Present ⟺ the caller named a `?leg=`. See {@link RowMaturity}. */
+  maturity?: RowMaturity;
 }
 
 /** See `ProjectionRow.modelEligibility`. */
@@ -458,6 +524,8 @@ export interface WorkflowProjectionResponse {
    * back to an unassigned or deprecated workflow.
    */
   recommendationWithheldReason?: "no_eligible_workflow";
+  /** Present ⟺ the caller named a `?leg=`: the leg's maturity rule and whether it was applied. */
+  maturity?: ProjectionMaturity;
 }
 
 /**
@@ -1354,6 +1422,9 @@ async function handleWorkflowProjection(req: Request, res: Response, costBasis: 
         // basis funnel on return while ranking the workflows on conversion rate would make one body
         // answer two questions at once, which is the contradiction this parameter exists to remove.
         maximize,
+        // Each candidate is projected on the LEG's own terms, so the maturity rule prices it exactly as the
+        // rows below are priced: a funnel is never picked on a flash return while its rows read mature.
+        legKey,
       });
       // Nothing containing the leg has a measurable return yet — the leg is still answerable, so the
       // catalogue's canonical order breaks the tie deterministically and `basis` says so out loud.
@@ -1383,23 +1454,7 @@ async function handleWorkflowProjection(req: Request, res: Response, costBasis: 
     let legTerms: LegOutcomeTerms | null = null;
     const mergedEconomics = mergeFunnelEconomics(effective.economics, funnelEconomics);
     if (legKey && legBasisFunnelKey && mergedEconomics) {
-      const leg = funnelLeg(legKey)!;
-      const e = mergedEconomics;
-      legTerms = legOutcomeTerms(
-        legBasisFunnelKey,
-        leg.toStep.key,
-        {
-          r2m: e.replyToMeetingPct / 100,
-          v2m: e.visitToMeetingPct / 100,
-          m2c: e.meetingToClosePct / 100,
-          v2c: e.visitToClosePct / 100,
-          v2s: e.visitToSignupPct / 100,
-          s2pc: e.signupToPaidClientPct / 100,
-          ...(e.visitToFormSubmissionPct != null ? { v2fs: e.visitToFormSubmissionPct / 100 } : {}),
-          ...(e.formSubmissionToPaidClientPct != null ? { fs2pc: e.formSubmissionToPaidClientPct / 100 } : {}),
-        },
-        bookedToAttendedRate(e),
-      );
+      legTerms = legTermsForFunnel(legKey, legBasisFunnelKey, mergedEconomics);
     }
 
     // ── IS EACH WORKFLOW ASSIGNED TO THIS LEG ─────────────────────────────────────────────────────
@@ -1427,6 +1482,7 @@ async function handleWorkflowProjection(req: Request, res: Response, costBasis: 
       meetingChannel,
       ...(pricedFunnelKey ? { funnelKey: pricedFunnelKey } : {}),
       legTerms,
+      ...(legTerms ? { legKey } : {}),
       legAssignmentByDynasty,
       modelAliasByDynasty,
       evidence: ev,
@@ -1486,6 +1542,7 @@ async function handleWorkflowProjection(req: Request, res: Response, costBasis: 
           evidence: vendorEvidence,
           economics: effective.economics,
           maximize,
+          legKey,
         });
         legBlock = {
           ...legBlock,
@@ -1580,6 +1637,32 @@ export interface WorkflowProjectionEvidence {
    * leg-less read. It also makes a grain count only when it REACHED somebody on the leg.
    */
   legKey?: string;
+  /**
+   * THE MATURE TWIN of every grain above (`lib/maturity.ts`), present ⟺ a leg-keyed read on a leg whose
+   * maturity duration is > 0: the spend of runs STARTED before `cutoffIso` over the outcomes — whenever
+   * they landed — of the leads those runs SERVED. NULL when the cut could not be made
+   * (`matureUnavailableReason`); ABSENT on a leg-less read or a 0-day leg (mature ≡ flash there).
+   */
+  mature?: MatureEvidence | null;
+  matureUnavailableReason?: MatureUnavailableReason;
+}
+
+/** Why a leg-keyed read could not cut its mature cohort. */
+export type MatureUnavailableReason = "serve_dates_unavailable" | "mature_evidence_unavailable";
+
+/** The mature twin of the grain evidence — same shapes, cut at `cutoffIso` (see `WorkflowProjectionEvidence.mature`). */
+export interface MatureEvidence {
+  cutoffIso: string;
+  durationDays: number;
+  crossOrgCostGroups: CostGroup[];
+  crossOrgEmailStats: Array<[string, Record<string, number>]>;
+  brandGrain: Array<[string, WorkflowGrainEvidence]>;
+  retiredBrandGrain: Array<[string, WorkflowGrainEvidence]>;
+  campaignGrain?: Array<[string, WorkflowGrainEvidence]>;
+  retiredCampaignGrain?: Array<[string, WorkflowGrainEvidence]>;
+  offerGrain?: Array<[string, WorkflowGrainEvidence]>;
+  retiredOfferGrain?: Array<[string, WorkflowGrainEvidence]>;
+  audienceEvidence: Array<{ audienceId: string; byDynasty: Array<[string, WorkflowGrainEvidence]> }>;
 }
 
 export async function fetchWorkflowProjectionEvidence(input: {
@@ -1632,6 +1715,30 @@ export async function fetchWorkflowProjectionEvidence(input: {
   // per-slug sums; the audience grain adds its CRM-only ones by membership. Read once per scope and
   // FAIL-LOUD like every other input here: a grain must never silently fall back to the sender's count.
   const readOffer = offerCampaignIds !== null && !offerIsCampaign;
+  // THE MATURE CUT (`lib/maturity.ts`) — a leg-keyed read on a leg whose outcomes lag its spend. It needs
+  // each scope's PERSONS (their serve dates); every other read makes no person read at all.
+  const rule = legFleet && legKey ? legMaturity(legKey) : null;
+  const cutoffIso = rule && rule.durationDays > 0 ? maturityCutoffIso(rule.durationDays) : null;
+  let allBrandPersons: EnginePerson[] | null = null;
+  let campaignPersons: EnginePerson[] | null = null;
+  let offerPersons: EnginePerson[] | null = null;
+  // A mature read that fails DEGRADES the answer to flash (named on the wire), never 502s it: the flash
+  // figures are what every row was priced on before, and they are read below whatever happens here.
+  let matureReadFailed = false;
+  if (cutoffIso) {
+    try {
+      [allBrandPersons, campaignPersons, offerPersons] = await Promise.all([
+        fetchScopePersons(brandId, undefined, identity),
+        campaignIds && campaignIds.length > 0 ? fetchScopePersons(brandId, campaignIds, identity) : Promise.resolve(null),
+        readOffer ? fetchScopePersons(brandId, offerCampaignIds!, identity) : Promise.resolve(null),
+      ]);
+    } catch (err) {
+      matureReadFailed = true;
+      console.error(`[features-service] workflow-projection: mature person read failed (brand ${brandId}, leg ${legKey}); pricing on flash:`, err);
+    }
+  }
+  // The flash grains' repliers are read exactly as before (the same lead walk as the persons above,
+  // shared in-process), so the flash figures cannot move whatever the mature cut does.
   const [allBrandRepliers, campaignRepliers, offerRepliers] = await Promise.all([
     fetchPositiveRepliers(brandId, undefined, identity),
     campaignIds && campaignIds.length > 0 ? fetchPositiveRepliers(brandId, campaignIds, identity) : Promise.resolve(null),
@@ -1665,8 +1772,79 @@ export async function fetchWorkflowProjectionEvidence(input: {
   // Always a Map in production; only the suite-wide test default (src/vitest.setup.ts) leaves it unset.
   if (fleetReplies) setReplyCountsOnSlugStats(emailStats, fleetReplies);
 
+  // ── THE MATURE TWIN of every grain above, on the SAME populations (leg campaigns, identity, offer).
+  let mature: MatureEvidence | null | undefined;
+  let matureUnavailableReason: MatureUnavailableReason | undefined;
+  if (cutoffIso && matureReadFailed) {
+    mature = null;
+    matureUnavailableReason = "mature_evidence_unavailable";
+  } else if (cutoffIso && rule && legKey && legSet && brandLegIds && allBrandPersons) {
+    try {
+      const stated =
+        serveDatesStated(allBrandPersons) &&
+        (!campaignPersons || serveDatesStated(campaignPersons)) &&
+        (!offerPersons || serveDatesStated(offerPersons));
+      // The FLEET decides every row's version, so it is read first: a fleet that cannot be cut makes the
+      // whole answer flash, and the finer mature reads are not worth making.
+      const fleetMature = stated
+        ? await fetchLegFleetMatureEvidence(featureSlug, legKey, pricing, cutoffIso, { orgId: identity.orgId, brandId, persons: allBrandPersons }, legSet)
+        : null;
+      const emptyGrain = (): GrainEvidenceWithRetired => ({ active: new Map(), retired: new Map() });
+      const [brandMature, campaignMature, offerMatureRead, audienceMature] = fleetMature
+        ? await Promise.all([
+            fetchCampaignWorkflowMatureEvidence(brandId, featureSlug, brandLegIds, workflows, identity, pricing, "charged", allBrandPersons, cutoffIso),
+            campaignIds && campaignIds.length > 0 && campaignPersons
+              ? fetchCampaignWorkflowMatureEvidence(brandId, featureSlug, campaignIds, workflows, identity, pricing, "charged", campaignPersons, cutoffIso)
+              : Promise.resolve(null),
+            readOffer && offerPersons
+              ? fetchCampaignWorkflowMatureEvidence(brandId, featureSlug, offerCampaignIds!, workflows, identity, pricing, "charged", offerPersons, cutoffIso)
+              : Promise.resolve(null),
+            fetchAudienceMatureEvidence(
+              brandId,
+              featureSlug,
+              identity,
+              slugToDynasty,
+              pricing,
+              audienceEvidence.map((a) => a.audienceId),
+              allBrandPersons,
+              brandLegIds,
+              cutoffIso,
+            ),
+          ])
+        : [emptyGrain(), null, null, []];
+      if (!stated || !fleetMature) {
+        mature = null;
+        matureUnavailableReason = "serve_dates_unavailable";
+      } else {
+        const offerMature = offerIsCampaign ? campaignMature : offerMatureRead;
+        mature = {
+          cutoffIso,
+          durationDays: rule.durationDays,
+          crossOrgCostGroups: fleetMature.costGroups,
+          crossOrgEmailStats: [...fleetMature.emailStats.entries()],
+          brandGrain: [...brandMature.active.entries()],
+          retiredBrandGrain: [...brandMature.retired.entries()],
+          ...(campaignMature
+            ? { campaignGrain: [...campaignMature.active.entries()], retiredCampaignGrain: [...campaignMature.retired.entries()] }
+            : {}),
+          ...(offerMature
+            ? { offerGrain: [...offerMature.active.entries()], retiredOfferGrain: [...offerMature.retired.entries()] }
+            : {}),
+          audienceEvidence: audienceMature.map((ev) => ({ audienceId: ev.audienceId, byDynasty: [...ev.byDynasty.entries()] })),
+        };
+      }
+    } catch (err) {
+      // A mature cost or person read failed: every row is priced on flash, as before, and the answer says so.
+      console.error(`[features-service] workflow-projection: mature evidence read failed (brand ${brandId}, leg ${legKey}); pricing on flash:`, err);
+      mature = null;
+      matureUnavailableReason = "mature_evidence_unavailable";
+    }
+  }
+
   return {
     ...(legFleet && legKey ? { legKey } : {}),
+    ...(mature !== undefined ? { mature } : {}),
+    ...(matureUnavailableReason ? { matureUnavailableReason } : {}),
     workflows,
     crossOrgCostGroups: costGroups,
     crossOrgEmailStats: [...emailStats.entries()],
@@ -1743,6 +1921,33 @@ export function withAudienceAvailability(
   );
 }
 
+/**
+ * ONE LEG'S OUTCOME TERMS THROUGH ONE FUNNEL — the counted signal that drives it and the rate that walks
+ * that signal to the leg's own step, on the given economics. NULL when the leg's step is not a step of the
+ * funnel, or no counted signal enters it. Shared by the leg-keyed read and the basis-funnel ranking
+ * (`lib/funnel-ranking.ts`), so a funnel is ranked on the SAME leg terms — and the same maturity rule —
+ * its rows are priced on.
+ */
+export function legTermsForFunnel(legKey: string, funnelKey: SalesFunnelKey, e: SalesEconomics): LegOutcomeTerms | null {
+  const leg = funnelLeg(legKey);
+  if (!leg) return null;
+  return legOutcomeTerms(
+    funnelKey,
+    leg.toStep.key,
+    {
+      r2m: e.replyToMeetingPct / 100,
+      v2m: e.visitToMeetingPct / 100,
+      m2c: e.meetingToClosePct / 100,
+      v2c: e.visitToClosePct / 100,
+      v2s: e.visitToSignupPct / 100,
+      s2pc: e.signupToPaidClientPct / 100,
+      ...(e.visitToFormSubmissionPct != null ? { v2fs: e.visitToFormSubmissionPct / 100 } : {}),
+      ...(e.formSubmissionToPaidClientPct != null ? { fs2pc: e.formSubmissionToPaidClientPct / 100 } : {}),
+    },
+    bookedToAttendedRate(e),
+  );
+}
+
 export function projectFromEvidence(input: {
   featureSlug: string;
   objective: Objective;
@@ -1758,6 +1963,11 @@ export function projectFromEvidence(input: {
    * conversion rate in the LEG's own step, and it is what turns on the per-workflow `rank`.
    */
   legTerms?: LegOutcomeTerms | null;
+  /**
+   * The LEG the read names (canonical key) — present ⟺ `legTerms` is. It selects the leg's maturity rule
+   * (`lib/maturity.ts`): its duration, its required outcomes, and so which version each row is priced on.
+   */
+  legKey?: string | null;
   /**
    * The leg-assignment verdict per workflow DYNASTY. Read ONLY beside a `?leg=`, and attached verbatim
    * to every row of that dynasty. Absent on every funnel- and goal-keyed read, which is what keeps
@@ -1880,62 +2090,232 @@ export function projectFromEvidence(input: {
     const grainCounts = (ev: WorkflowGrainEvidence | undefined | null): ev is WorkflowGrainEvidence =>
       Boolean(ev) && ev!.totalCostInUsdCents > 0 && (!evidence.legKey || ev!.contacted > 0);
 
-    // ── Brand-level rows (audienceId: null), one per active workflow dynasty ────────────────────
-    // Keyed by the dynasty's active slug. crossOrg grain always present (real fleet spend); brand grain
-    // added only when the brand spent on the dynasty (spentUsd > 0).
-    for (const [activeSlug, cost] of costMap) {
-      const wf = workflowBySlug.get(activeSlug);
-      const outcomes = aggregatedOutcomes.get(activeSlug) ?? {};
-      const crossOrgEvidence: WorkflowGrainEvidence = {
+    // ── THE TWO VERSIONS OF THE EVIDENCE (`lib/maturity.ts`) ──────────────────────────────────
+    //
+    // A leg-keyed read builds every ladder TWICE: on FLASH evidence (everything to date — what every
+    // figure was before) and on MATURE evidence (runs started before the leg's cutoff, over the outcomes
+    // — whenever they landed — of the leads those runs served). The workflow's verdict on the FLEET of its
+    // leg decides which one the row is PRICED on:
+    //   • MATURE on the fleet (≥ the leg's required mature outcomes) → every grain of every row of that
+    //     workflow is the mature one, cascade included. Its young spend counts nowhere, so today's sends
+    //     can no longer inflate its price while their outcomes are still on their way.
+    //   • not mature → priced exactly as before, on flash evidence with the cascade floor: that is its
+    //     exploration phase, and the floor is what lets it be tried at all.
+    // Both versions ride every block (`flash` / `mature` / `isMature`) and the row states both prices
+    // (`maturity.resolved`), so a consumer reads either without re-deriving anything. A leg-less read
+    // builds one ladder, byte-unchanged; a 0-day leg is its own mature version (mature ≡ flash).
+    const legKey = legTerms ? (input.legKey ?? null) : null;
+    const rule = legKey ? legMaturity(legKey) : null;
+
+    interface LadderSources {
+      costMap: Map<string, { totalCostInUsdCents: number; completedRuns: number }>;
+      aggregatedOutcomes: Map<string, Record<string, number>>;
+      brandGrain: Map<string, WorkflowGrainEvidence>;
+      campaignGrain: Map<string, WorkflowGrainEvidence> | null;
+      offerGrain: Map<string, WorkflowGrainEvidence> | null;
+      retiredBrandGrain: Map<string, WorkflowGrainEvidence>;
+      retiredCampaignGrain: Map<string, WorkflowGrainEvidence>;
+      retiredOfferGrain: Map<string, WorkflowGrainEvidence>;
+      audienceByAudience: Map<string, Map<string, WorkflowGrainEvidence>>;
+    }
+    const flashSources: LadderSources = {
+      costMap,
+      aggregatedOutcomes,
+      brandGrain,
+      campaignGrain,
+      offerGrain,
+      retiredBrandGrain,
+      retiredCampaignGrain,
+      retiredOfferGrain,
+      audienceByAudience: new Map(audienceEvidence.map((ev) => [ev.audienceId, ev.byDynasty])),
+    };
+    const matureSourcesOf = (m: MatureEvidence): LadderSources => {
+      // The SAME dynasty membership rule as the flash rollup, over every slug either version names.
+      const matureDynasties = brandGrainDynasties(workflows, [
+        ...costGroups.map((g) => g.dimensions.workflowSlug),
+        ...m.crossOrgCostGroups.map((g) => g.dimensions.workflowSlug),
+      ].filter((slug): slug is string => Boolean(slug))).active;
+      const rollup = aggregateAcrossDynasties(
+        matureDynasties,
+        m.crossOrgCostGroups,
+        new Map(m.crossOrgEmailStats),
+        "workflowSlug",
+        { exactCents: true },
+      );
+      return {
+        costMap: rollup.costMap,
+        aggregatedOutcomes: rollup.aggregatedOutcomes,
+        brandGrain: new Map(m.brandGrain),
+        campaignGrain: m.campaignGrain ? new Map(m.campaignGrain) : null,
+        offerGrain: m.offerGrain ? new Map(m.offerGrain) : null,
+        retiredBrandGrain: new Map(m.retiredBrandGrain),
+        retiredCampaignGrain: new Map(m.retiredCampaignGrain ?? []),
+        retiredOfferGrain: new Map(m.retiredOfferGrain ?? []),
+        audienceByAudience: new Map(m.audienceEvidence.map((ev) => [ev.audienceId, new Map(ev.byDynasty)])),
+      };
+    };
+    // Mature evidence exists only on a leg-scoped read (the fleet of the leg is the verdict's population).
+    const matureSources: LadderSources | null =
+      !rule || !evidence.legKey
+        ? null
+        : rule.durationDays === 0
+          ? flashSources
+          : evidence.mature
+            ? matureSourcesOf(evidence.mature)
+            : null;
+
+    type GrainEvidenceMap = Partial<Record<GrainName, WorkflowGrainEvidence>>;
+    interface Ladder {
+      grains: Partial<Record<GrainName, GrainBlock>>;
+      evidence: GrainEvidenceMap;
+    }
+    const crossOrgEvidenceOf = (src: LadderSources, activeSlug: string): WorkflowGrainEvidence | undefined => {
+      const cost = src.costMap.get(activeSlug);
+      if (!cost) return undefined;
+      const outcomes = src.aggregatedOutcomes.get(activeSlug) ?? {};
+      return {
         totalCostInUsdCents: cost.totalCostInUsdCents,
         completedRuns: cost.completedRuns,
         contacted: outcomes.recipientsContacted ?? 0,
         clicks: outcomes.recipientsClicked ?? 0,
         replies: outcomes.recipientsRepliesPositive ?? 0,
       };
-
-      // Cascade: crossOrg (no parent) → brand floors against crossOrg. Build coarser-first so the
-      // finer grain can floor against the coarser grain's resolved unit costs.
-      const estimatesByGrain: Partial<Record<GrainName, GrainBlock>> = {};
-      if (grainCounts(crossOrgEvidence)) estimatesByGrain.crossOrg = buildBlock(crossOrgEvidence);
-      const brandEv = brandGrain.get(activeSlug);
-      if (grainCounts(brandEv)) {
-        estimatesByGrain.brand = buildBlock(brandEv, estimatesByGrain.crossOrg?.unitCosts ?? null);
-      }
+    };
+    // One ACTIVE workflow's ladder. The cascade — crossOrg (no parent) → brand → campaign → offer on the
+    // brand-level row, crossOrg → brand → campaign → audience on an audience row — is built coarser-first
+    // so a finer grain floors against the coarser grain's unit costs ON THE SAME VERSION of the evidence.
+    const activeLadder = (src: LadderSources, activeSlug: string, audience: { audienceId: string; dynastySlug: string } | null): Ladder => {
+      const grains: Partial<Record<GrainName, GrainBlock>> = {};
+      const ev: GrainEvidenceMap = {};
+      ev.crossOrg = crossOrgEvidenceOf(src, activeSlug);
+      if (grainCounts(ev.crossOrg)) grains.crossOrg = buildBlock(ev.crossOrg);
+      ev.brand = src.brandGrain.get(activeSlug);
+      if (grainCounts(ev.brand)) grains.brand = buildBlock(ev.brand, grains.crossOrg?.unitCosts ?? null);
       // … → brand → CAMPAIGN: one narrowing finer than the brand, floored against it, so a campaign
       // that has barely spent reads its brand's price rather than looking free.
-      const campaignEv = campaignGrain?.get(activeSlug);
-      if (grainCounts(campaignEv)) {
-        estimatesByGrain.campaign = buildBlock(
-          campaignEv,
-          estimatesByGrain.brand?.unitCosts ?? estimatesByGrain.crossOrg?.unitCosts ?? null,
-        );
+      ev.campaign = src.campaignGrain?.get(activeSlug);
+      if (grainCounts(ev.campaign)) {
+        grains.campaign = buildBlock(ev.campaign, grains.brand?.unitCosts ?? grains.crossOrg?.unitCosts ?? null);
       }
-      // … → brand → OFFER: the campaigns selling one offer, floored against the brand exactly as the
-      // brand is floored against the fleet — so on a brand selling one offer the two columns are the
-      // same number. A STATED grain only: it never enters `resolved`, `rank` or the recommendation, and
-      // the campaign grain keeps its brand parent, so nothing campaign-service reads moves.
-      const offerEv = offerGrain?.get(activeSlug);
-      if (grainCounts(offerEv)) {
-        estimatesByGrain.offer = buildBlock(
-          offerEv,
-          estimatesByGrain.brand?.unitCosts ?? estimatesByGrain.crossOrg?.unitCosts ?? null,
-        );
+      if (!audience) {
+        // … → brand → OFFER: the campaigns selling one offer, floored against the brand exactly as the
+        // brand is floored against the fleet — so on a brand selling one offer the two columns are the
+        // same number. A STATED grain only: it never enters `resolved`, `rank` or the recommendation, and
+        // the campaign grain keeps its BRAND parent, so nothing campaign-service reads moves.
+        ev.offer = src.offerGrain?.get(activeSlug);
+        if (grainCounts(ev.offer)) {
+          grains.offer = buildBlock(ev.offer, grains.brand?.unitCosts ?? grains.crossOrg?.unitCosts ?? null);
+        }
+      } else {
+        const audienceParent =
+          grains.campaign?.unitCosts ?? grains.brand?.unitCosts ?? grains.crossOrg?.unitCosts ?? null;
+        ev.audience = src.audienceByAudience.get(audience.audienceId)?.get(audience.dynastySlug);
+        if (grainCounts(ev.audience)) grains.audience = buildBlock(ev.audience, audienceParent);
       }
+      return { grains, evidence: ev };
+    };
+    // A RETIRED lineage's ladder: brand (no parent) → campaign / offer (parent brand), on spend alone.
+    const retiredLadder = (src: LadderSources, dynastySlug: string): Ladder => {
+      const grains: Partial<Record<GrainName, GrainBlock>> = {};
+      const ev: GrainEvidenceMap = {};
+      ev.brand = src.retiredBrandGrain.get(dynastySlug);
+      if (ev.brand && ev.brand.totalCostInUsdCents > 0) grains.brand = buildBlock(ev.brand);
+      ev.campaign = src.retiredCampaignGrain.get(dynastySlug);
+      if (ev.campaign && ev.campaign.totalCostInUsdCents > 0) {
+        grains.campaign = buildBlock(ev.campaign, grains.brand?.unitCosts ?? null);
+      }
+      ev.offer = src.retiredOfferGrain.get(dynastySlug);
+      if (ev.offer && ev.offer.totalCostInUsdCents > 0) grains.offer = buildBlock(ev.offer, grains.brand?.unitCosts ?? null);
+      return { grains, evidence: ev };
+    };
 
+    // The leg's own outcomes in a body of evidence — its driver signal walked to the leg's step (raw on an
+    // entry leg). A grain the version holds no evidence for has 0; an unpriceable walk has no count at all.
+    const outcomesOf = (ev: WorkflowGrainEvidence | undefined): number | null => {
+      if (!legTerms || legTerms.rateFromDriver == null) return null;
+      if (!ev) return 0;
+      return (legTerms.driver === "click" ? ev.clicks : ev.replies) * legTerms.rateFromDriver;
+    };
+    const figuresOf = (ev: WorkflowGrainEvidence | undefined): OutcomeFigures | null => {
+      const outcomes = outcomesOf(ev);
+      if (outcomes == null) return null;
+      return outcomeFigures(ev ? ev.totalCostInUsdCents / 100 : 0, ev?.contacted ?? 0, outcomes);
+    };
+    // THE VERDICT that picks the version: the workflow's MATURE outcomes on the FLEET of its leg.
+    const verdictOf = (activeSlug: string): { isMature: boolean | null; matureOutcomes: number | null } => {
+      if (!matureSources || !legKey) return { isMature: null, matureOutcomes: null };
+      const matureOutcomes = outcomesOf(crossOrgEvidenceOf(matureSources, activeSlug));
+      return { isMature: isMatureCount(matureOutcomes, legKey), matureOutcomes };
+    };
+    const resolvedFiguresOf = (r: ResolvedBlock): ResolvedFigures => ({
+      grain: r.grain,
+      costPerOutcomeUsd: r.costPerOutcomeUsd,
+      conversionRatePct: r.conversionRatePct,
+    });
+    const NOTHING_RESOLVED: ResolvedFigures = { grain: null, costPerOutcomeUsd: null, conversionRatePct: null };
+    // Stamp every block of the PRICED ladder with its version, both versions' figures, and its verdict.
+    const stampVersions = (priced: Ladder["grains"], basis: MaturityBasis, flash: Ladder, mature: Ladder | null): void => {
+      for (const g of Object.keys(priced) as GrainName[]) {
+        const block = priced[g]!;
+        const matureFigures = mature ? figuresOf(mature.evidence[g]) : null;
+        block.basis = basis;
+        block.flash = figuresOf(flash.evidence[g]);
+        block.mature = matureFigures;
+        block.isMature = mature && matureFigures ? isMatureCount(matureFigures.outcomes, legKey) : null;
+      }
+    };
+    // The row PRICED by the rule: its ladder, its resolved pick, and (leg reads) its maturity block.
+    const priceRow = (
+      flash: Ladder,
+      mature: Ladder | null,
+      verdict: { isMature: boolean | null; matureOutcomes: number | null },
+    ): Pick<ProjectionRow, "estimatesByGrain" | "resolved" | "maturity"> => {
+      if (!legTerms) return { estimatesByGrain: stampGrainBases(flash.grains), resolved: resolve(flash.grains) };
+      // The OFFER grain is a stated grain only (never resolved), so a ladder holding nothing else has no price.
+      const matureHasGrain =
+        mature !== null && (["crossOrg", "brand", "campaign", "audience"] as const).some((g) => mature.grains[g]);
+      const basis: MaturityBasis = verdict.isMature === true && matureHasGrain ? "mature" : "flash";
+      const flashResolved = resolve(flash.grains);
+      const matureResolved = matureHasGrain ? resolve(mature!.grains) : null;
+      const priced = basis === "mature" ? mature!.grains : flash.grains;
+      stampVersions(priced, basis, flash, mature);
+      return {
+        estimatesByGrain: stampGrainBases(priced),
+        resolved: basis === "mature" ? matureResolved! : flashResolved,
+        maturity: {
+          basis,
+          isMature: verdict.isMature,
+          matureOutcomes: verdict.matureOutcomes,
+          resolved: maturityPair(
+            resolvedFiguresOf(flashResolved),
+            mature ? (matureResolved ? resolvedFiguresOf(matureResolved) : NOTHING_RESOLVED) : null,
+            verdict.isMature,
+          ),
+        },
+      };
+    };
+
+    // ── Brand-level rows (audienceId: null), one per active workflow dynasty ────────────────────
+    // Keyed by the dynasty's active slug. crossOrg grain always present (real fleet spend); brand grain
+    // added only when the brand spent on the dynasty (spentUsd > 0).
+    for (const [activeSlug] of costMap) {
+      const wf = workflowBySlug.get(activeSlug);
+      const flash = activeLadder(flashSources, activeSlug, null);
       // crossOrg is (almost) always present, but if a dynasty had 0 crossOrg cost AND 0 brand cost there
       // is no grain to resolve — skip the row (nothing to project).
-      if (!estimatesByGrain.crossOrg && !estimatesByGrain.brand && !estimatesByGrain.campaign) continue;
-
+      if (!flash.grains.crossOrg && !flash.grains.brand && !flash.grains.campaign) continue;
+      const mature = matureSources ? activeLadder(matureSources, activeSlug, null) : null;
+      const priced = priceRow(flash, mature, verdictOf(activeSlug));
       rows.push({
         audienceId: null,
         workflow: {
           workflowDynastySlug: wf?.workflowDynastySlug ?? activeSlug,
           workflowDynastyName: wf?.workflowDynastyName ?? null,
         },
-        estimatesByGrain: stampGrainBases(estimatesByGrain),
-        resolved: resolve(estimatesByGrain),
+        estimatesByGrain: priced.estimatesByGrain,
+        resolved: priced.resolved,
         measured: true,
+        ...(priced.maturity ? { maturity: priced.maturity } : {}),
       });
     }
 
@@ -1943,31 +2323,27 @@ export function projectFromEvidence(input: {
     // A dynasty nobody runs any more still holds this brand's spend and replies; without a row they
     // vanished and the rows summed to less than the scope (Doc Dinners 2026-09-25: 23 of 26 positive
     // replies). The row states the brand / campaign evidence and an all-null `resolved`, so no ranking,
-    // recommendation or selector can pick a workflow that no longer runs.
+    // recommendation or selector can pick a workflow that no longer runs. It is never priced, so it is
+    // stated on flash with both versions' figures beside each block.
     for (const dynastySlug of new Set([
       ...retiredBrandGrain.keys(),
       ...retiredCampaignGrain.keys(),
       ...retiredOfferGrain.keys(),
     ])) {
-      const estimatesByGrain: Partial<Record<GrainName, GrainBlock>> = {};
-      const brandEv = retiredBrandGrain.get(dynastySlug);
-      if (brandEv && brandEv.totalCostInUsdCents > 0) estimatesByGrain.brand = buildBlock(brandEv);
-      const campaignEv = retiredCampaignGrain.get(dynastySlug);
-      if (campaignEv && campaignEv.totalCostInUsdCents > 0) {
-        estimatesByGrain.campaign = buildBlock(campaignEv, estimatesByGrain.brand?.unitCosts ?? null);
-      }
-      const offerEv = retiredOfferGrain.get(dynastySlug);
-      if (offerEv && offerEv.totalCostInUsdCents > 0) {
-        estimatesByGrain.offer = buildBlock(offerEv, estimatesByGrain.brand?.unitCosts ?? null);
-      }
-      if (!estimatesByGrain.brand && !estimatesByGrain.campaign && !estimatesByGrain.offer) continue;
+      const flash = retiredLadder(flashSources, dynastySlug);
+      if (!flash.grains.brand && !flash.grains.campaign && !flash.grains.offer) continue;
+      const mature = matureSources ? retiredLadder(matureSources, dynastySlug) : null;
+      if (legTerms) stampVersions(flash.grains, "flash", flash, mature);
       rows.push({
         audienceId: null,
         workflow: { workflowDynastySlug: dynastySlug, workflowDynastyName: dynastyNameBySlug.get(dynastySlug) ?? null },
-        estimatesByGrain: stampGrainBases(estimatesByGrain),
+        estimatesByGrain: stampGrainBases(flash.grains),
         resolved: { ...UNMEASURED_RESOLVED },
         measured: true,
         retired: true,
+        ...(legTerms
+          ? { maturity: { basis: "flash" as const, isMature: null, matureOutcomes: null, resolved: maturityPair<ResolvedFigures>(null, null, null) } }
+          : {}),
       });
     }
 
@@ -1979,51 +2355,27 @@ export function projectFromEvidence(input: {
     // audience data has no audience grain → it resolves via the cascade to brand→crossOrg (a projected
     // estimate, never absent, never a false $0). Precedence audience > brand > crossOrg → a couple with
     // real audience spend resolves at the audience grain against THIS dynasty's brand/crossOrg parent.
+    // On a MATURE workflow the audience grain is the MATURE one (spend of runs started before the cutoff,
+    // the leads they served, attributed to the audience their serve drew them from) — which is exactly the
+    // evidence campaign-service's audience draw reads, so young spend does not enter the draw either.
     for (const ev of audienceEvidence) {
       for (const [dynastySlug, activeSlug] of activeSlugByDynasty) {
-        // Cascade: crossOrg (no parent) → brand (parent crossOrg) → audience (parent brand ?? crossOrg).
-        const estimatesByGrain: Partial<Record<GrainName, GrainBlock>> = {};
-        const cost = costMap.get(activeSlug);
-        if (cost) {
-          const outcomes = aggregatedOutcomes.get(activeSlug) ?? {};
-          const crossOrgEv: WorkflowGrainEvidence = {
-            totalCostInUsdCents: cost.totalCostInUsdCents,
-            completedRuns: cost.completedRuns,
-            contacted: outcomes.recipientsContacted ?? 0,
-            clicks: outcomes.recipientsClicked ?? 0,
-            replies: outcomes.recipientsRepliesPositive ?? 0,
-          };
-          if (grainCounts(crossOrgEv)) estimatesByGrain.crossOrg = buildBlock(crossOrgEv);
-        }
-        const brandEv = brandGrain.get(activeSlug);
-        if (grainCounts(brandEv)) {
-          estimatesByGrain.brand = buildBlock(brandEv, estimatesByGrain.crossOrg?.unitCosts ?? null);
-        }
-        const campaignEv = campaignGrain?.get(activeSlug);
-        if (grainCounts(campaignEv)) {
-          estimatesByGrain.campaign = buildBlock(
-            campaignEv,
-            estimatesByGrain.brand?.unitCosts ?? estimatesByGrain.crossOrg?.unitCosts ?? null,
-          );
-        }
-        const audienceParent =
-          estimatesByGrain.campaign?.unitCosts ?? estimatesByGrain.brand?.unitCosts ?? estimatesByGrain.crossOrg?.unitCosts ?? null;
-        const audEv = ev.byDynasty.get(dynastySlug);
-        if (grainCounts(audEv)) estimatesByGrain.audience = buildBlock(audEv, audienceParent);
-
+        const target = { audienceId: ev.audienceId, dynastySlug };
+        const flash = activeLadder(flashSources, activeSlug, target);
         // A couple with no grain at all (no crossOrg/brand/campaign/audience spend) has nothing to project.
-        if (!estimatesByGrain.crossOrg && !estimatesByGrain.brand && !estimatesByGrain.campaign && !estimatesByGrain.audience)
-          continue;
-
+        if (!flash.grains.crossOrg && !flash.grains.brand && !flash.grains.campaign && !flash.grains.audience) continue;
+        const mature = matureSources ? activeLadder(matureSources, activeSlug, target) : null;
+        const priced = priceRow(flash, mature, verdictOf(activeSlug));
         rows.push({
           audienceId: ev.audienceId,
           workflow: {
             workflowDynastySlug: dynastySlug,
             workflowDynastyName: dynastyNameBySlug.get(dynastySlug) ?? null,
           },
-          estimatesByGrain: stampGrainBases(estimatesByGrain),
-          resolved: resolve(estimatesByGrain),
+          estimatesByGrain: priced.estimatesByGrain,
+          resolved: priced.resolved,
           measured: true,
+          ...(priced.maturity ? { maturity: priced.maturity } : {}),
         });
       }
     }
@@ -2074,15 +2426,29 @@ export function projectFromEvidence(input: {
         ? exploreResolved(outreachUsd, econ, objective, singleStepGoal, formSubmissionGoal, meetingChannel, legTerms)
         : UNMEASURED_RESOLVED;
 
+    // An unproven workflow is priced on the allowance (flash, its exploration phase) whatever its verdict.
+    const unprovenMaturity = (dynastySlug: string): Pick<ProjectionRow, "maturity"> => {
+      if (!legTerms) return {};
+      const activeSlug = activeSlugByDynasty.get(dynastySlug);
+      const verdict = activeSlug ? verdictOf(activeSlug) : { isMature: null, matureOutcomes: null };
+      return {
+        maturity: {
+          basis: "flash",
+          isMature: verdict.isMature,
+          matureOutcomes: verdict.matureOutcomes,
+          resolved: maturityPair(resolvedFiguresOf(unprovenResolved), matureSources ? NOTHING_RESOLVED : null, verdict.isMature),
+        },
+      };
+    };
     if (audienceEvidence.length > 0) {
       for (const dynastySlug of unprovenDynasties) {
         const workflow = {
           workflowDynastySlug: dynastySlug,
           workflowDynastyName: dynastyNameBySlug.get(dynastySlug) ?? null,
         };
-        rows.push({ audienceId: null, workflow, estimatesByGrain: {}, resolved: { ...unprovenResolved }, measured: false });
+        rows.push({ audienceId: null, workflow, estimatesByGrain: {}, resolved: { ...unprovenResolved }, measured: false, ...unprovenMaturity(dynastySlug) });
         for (const ev of audienceEvidence) {
-          rows.push({ audienceId: ev.audienceId, workflow, estimatesByGrain: {}, resolved: { ...unprovenResolved }, measured: false });
+          rows.push({ audienceId: ev.audienceId, workflow, estimatesByGrain: {}, resolved: { ...unprovenResolved }, measured: false, ...unprovenMaturity(dynastySlug) });
         }
       }
     }
@@ -2263,6 +2629,20 @@ export function projectFromEvidence(input: {
       measured: unmeasuredReason === null,
       ...(unmeasuredReason ? { unmeasuredReason } : {}),
       ...(headExcluded ? { recommendationWithheldReason: "no_eligible_workflow" as const } : {}),
+      ...(legKey && rule
+        ? {
+            maturity: {
+              ...rule,
+              cutoffIso: rule.durationDays > 0 ? (evidence.mature?.cutoffIso ?? maturityCutoffIso(rule.durationDays)) : null,
+              measured: matureSources !== null,
+              unmeasuredReason: matureSources
+                ? null
+                : evidence.legKey
+                  ? (evidence.matureUnavailableReason ?? "serve_dates_unavailable")
+                  : ("leg_scope_unavailable" as const),
+            },
+          }
+        : {}),
     };
 }
 

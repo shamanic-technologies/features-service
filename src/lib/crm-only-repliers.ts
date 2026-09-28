@@ -17,7 +17,7 @@
 
 import type { CampaignFilter } from "./campaign-scope.js";
 import { fetchLeadsForRevenue } from "./leads-client.js";
-import { dedupPersonsByLead } from "./revenue-engine.js";
+import { dedupPersonsByLead, type EnginePerson } from "./revenue-engine.js";
 
 export interface CrmOnlyReplier {
   leadId: string;
@@ -69,7 +69,24 @@ export async function fetchPositiveRepliers(
   campaignScope: CampaignFilter,
   identity: { orgId: string; userId?: string; runId?: string; featureSlug?: string },
 ): Promise<PositiveReplier[]> {
-  const persons = dedupPersonsByLead(await fetchLeadsForRevenue(brandId, campaignScope, identity));
+  return positiveRepliersOf(await fetchScopePersons(brandId, campaignScope, identity));
+}
+
+/**
+ * A brand's (or one campaign scope's) lead population, one entry per PERSON (deduped by lead) — the
+ * person set every per-person count of this module is taken on. Each person keeps the campaign, the
+ * workflow, the serve date and the serve audience of the row it survived dedup on. Fails loud.
+ */
+export async function fetchScopePersons(
+  brandId: string,
+  campaignScope: CampaignFilter,
+  identity: { orgId: string; userId?: string; runId?: string; featureSlug?: string },
+): Promise<EnginePerson[]> {
+  return dedupPersonsByLead(await fetchLeadsForRevenue(brandId, campaignScope, identity));
+}
+
+/** PURE. The positive repliers among deduped persons — by EITHER witness, one per person. */
+export function positiveRepliersOf(persons: readonly EnginePerson[]): PositiveReplier[] {
   const out: PositiveReplier[] = [];
   for (const p of persons) {
     if (!p.signals.positiveReply) continue;

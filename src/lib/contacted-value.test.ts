@@ -20,15 +20,20 @@ const PATHS: ResolvedPath[] = [
   { tag: "closeWin", signal: "closeWin", expectedRevenueUsd: 1000, terminal: true },
 ];
 const NOW = new Date("2026-09-26T12:00:00Z");
-const OLD = "2026-08-01T10:00:00Z"; // before the 14-day cutoff (2026-09-12)
+const OLD = "2026-08-01T10:00:00Z"; // before the 21-day cutoff (2026-09-05, lib/maturity.ts)
 const YOUNG = "2026-09-24T10:00:00Z";
 
 let seq = 0;
 const RECENT_SEND = "2026-09-25T09:00:00Z"; // within 30 days of NOW
 const STALE_SEND = "2026-08-26T11:59:59Z"; // just past 30 days before NOW (cutoff 2026-08-27T12:00:00Z)
 
-function person(opts: { signals?: Record<string, boolean>; contactedAt?: string | null; lastSent?: string | null; orgId?: string | null; dead?: string[] } = {}): EnginePerson {
+/**
+ * `contactedAt` is also the SERVE date unless `servedAt` says otherwise — the brand's mature cohort is cut
+ * on the serve (run-start) clock (lib/maturity.ts), and every fixture below was served when contacted.
+ */
+function person(opts: { signals?: Record<string, boolean>; contactedAt?: string | null; servedAt?: string | null; lastSent?: string | null; orgId?: string | null; dead?: string[] } = {}): EnginePerson {
   seq += 1;
+  const contacted = opts.contactedAt === undefined ? YOUNG : opts.contactedAt;
   return {
     leadId: `lead-${String(seq).padStart(4, "0")}`,
     firstName: null,
@@ -46,9 +51,10 @@ function person(opts: { signals?: Record<string, boolean>; contactedAt?: string 
     orgCountry: null,
     signals: { contacted: true, sent: true, delivered: true, ...(opts.signals ?? {}) },
     signalDates: {
-      contacted: opts.contactedAt === undefined ? YOUNG : opts.contactedAt,
+      contacted,
       lastSent: opts.lastSent === undefined ? RECENT_SEND : opts.lastSent,
     },
+    servedAt: opts.servedAt === undefined ? contacted : opts.servedAt,
     ...(opts.dead ? { deadSignals: opts.dead } : {}),
   };
 }
@@ -125,8 +131,8 @@ describe("priceContactedLeads — who is priced", () => {
 });
 
 describe("priceContactedLeads — where P(entry | contacted) is measured", () => {
-  it("the brand's own MATURE cohort wins once it holds 10 outcomes; young sends stay out of the rate", () => {
-    // 500 mature contacted, 20 clicked (4%); 2 replied (below the bar → fleet). 1,000 young, none engaged.
+  it("the brand's own MATURE cohort wins once it holds the ROUTE's leg bar; young serves stay out of the rate", () => {
+    // 500 mature contacted, 20 clicked (4%); 2 replied (0.4%). 1,000 young, none engaged.
     const persons: EnginePerson[] = [];
     for (let i = 0; i < 20; i++) persons.push(person({ contactedAt: OLD, signals: { clicked: true } }));
     for (let i = 0; i < 2; i++) persons.push(person({ contactedAt: OLD, signals: { positiveReply: true } }));
@@ -135,9 +141,31 @@ describe("priceContactedLeads — where P(entry | contacted) is measured", () =>
     const result = priceContactedLeads({ paths: PATHS, persons, lifetimeRevenueUsd: LTR, fleet: FLEET, now: NOW });
     const click = result.routes.find((r) => r.signal === "clicked")!;
     const reply = result.routes.find((r) => r.signal === "positiveReply")!;
-    expect(click).toMatchObject({ entryRateSource: "brand_measured", entryRatePct: 4, brand: { contacted: 500, reached: 20 } });
-    expect(reply).toMatchObject({ entryRateSource: "fleet_measured", entryRatePct: 0.5, brand: { contacted: 500, reached: 2 } });
-    expect(result.perLeadExpectedValueUsd).toBeCloseTo(LTR * (1 - (1 - 0.04 * 0.1) * (1 - 0.005 * 0.4)), 6);
+    // Each route on its own leg rule: 10 visits on the visit leg, ONE positive reply on the conversation leg.
+    expect(click).toMatchObject({
+      entryRateSource: "brand_measured", entryRatePct: 4, brand: { contacted: 500, reached: 20 },
+      maturityDays: 21, minBrandOutcomes: 10, matureBefore: "2026-09-05T00:00:00.000Z",
+    });
+    expect(reply).toMatchObject({
+      entryRateSource: "brand_measured", entryRatePct: 0.4, brand: { contacted: 500, reached: 2 },
+      maturityDays: 21, minBrandOutcomes: 1,
+    });
+    expect(result.perLeadExpectedValueUsd).toBeCloseTo(LTR * (1 - (1 - 0.04 * 0.1) * (1 - 0.004 * 0.4)), 6);
+    // Below the bar the fleet's rate stands: the same 2 replies are 0 on a brand that got none.
+    const none = priceContactedLeads({
+      paths: PATHS,
+      persons: persons.filter((p) => !p.signals.positiveReply),
+      lifetimeRevenueUsd: LTR,
+      fleet: FLEET,
+      now: NOW,
+    });
+    expect(none.routes.find((r) => r.signal === "positiveReply")).toMatchObject({ entryRateSource: "fleet_measured", entryRatePct: 0.5 });
+  });
+
+  it("the cohort is cut on the SERVE clock: a lead contacted long ago but served young is out", () => {
+    const persons = [person({ contactedAt: OLD, servedAt: YOUNG, signals: { clicked: true } }), person({ contactedAt: OLD })];
+    const result = priceContactedLeads({ paths: PATHS, persons, lifetimeRevenueUsd: LTR, fleet: FLEET, now: NOW });
+    expect(result.routes[0].brand).toEqual({ contacted: 1, reached: 0 });
   });
 
   it("undated leads are left out of the brand cohort", () => {

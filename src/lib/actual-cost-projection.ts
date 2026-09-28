@@ -26,9 +26,17 @@
  *
  * Counts, rates and outcome counts are identical on the three reads (same rows, same outcomes), so the
  * vendor projection's are served as they are.
+ *
+ * BOTH VERSIONS OF A LEG-KEYED ROW (`lib/maturity.ts`). A leg-keyed row states each grain's FLASH and
+ * MATURE figures beside its priced ones, and both prices of the row. Each is known on ITS OWN version:
+ * a grain whose young spend is unpriced can still state a real mature vendor cost, and the reverse. The
+ * observed pairs (`flash` / `mature` on a block) never floor, so they need only their OWN grain priced;
+ * the row's two prices (`maturity.resolved`) floor through the whole ladder, which every finer grain's
+ * spend is contained in, so they are known when the fleet grain holds nothing unpriced on that version.
+ * The verdict (`isMature`) and every count are the billed read's, untouched.
  */
 
-import type { GrainName, ProjectionRow, WorkflowProjectionResponse } from "../routes/workflow-projection.js";
+import type { GrainName, MaturityBasis, ProjectionRow, WorkflowProjectionResponse } from "../routes/workflow-projection.js";
 
 /** The grains a grain floors against, coarsest first (see `resolvePick` / the cascade). */
 const PARENTS: Record<GrainName, GrainName[]> = {
@@ -72,6 +80,18 @@ function nullMoney(block: Record<string, unknown>): Record<string, unknown> {
   };
 }
 
+/** An observed pair (`flash` / `mature`) with its money nulled: counts and rate kept. */
+function nullPairMoney(pair: unknown): unknown {
+  if (!pair || typeof pair !== "object") return pair ?? null;
+  return { ...(pair as Record<string, unknown>), spentUsd: null, costPerOutcomeUsd: null };
+}
+
+/** A row's priced figure (`maturity.resolved.flash|mature`) with its money nulled: grain and rate kept. */
+function nullResolvedFigureMoney(figure: unknown): unknown {
+  if (!figure || typeof figure !== "object") return figure ?? null;
+  return { ...(figure as Record<string, unknown>), costPerOutcomeUsd: null };
+}
+
 const RESOLVED_MONEY = [
   "costPerClickUsd",
   "costPerOutcomeUsd",
@@ -107,31 +127,67 @@ export function overlayVendorProjection(
     const key = rowKey(b);
     const v = vendorRows.get(key);
     const u = unpricedRows.get(key);
-    const unpricedOf = (g: GrainName) => u?.estimatesByGrain[g]?.evidence.spentUsd ?? 0;
+    // The version this row's own fields are priced on (leg-keyed reads); null on a leg-less read.
+    const rowBasis: MaturityBasis | null = b.maturity?.basis ?? null;
+    /**
+     * The BILLED spend of grain `g` with no known vendor cost, on `version` (the row's basis when null).
+     * The unpriced read states a grain only where it holds unpriced spend on ITS OWN basis, so a grain it
+     * does not state holds none — except the FLASH side of a row the unpriced read priced on its MATURE
+     * version: young unpriced spend is then not stated anywhere, and the answer is "unknown" (Infinity).
+     */
+    const unpricedOn = (g: GrainName, version: MaturityBasis | null): number => {
+      const block = u?.estimatesByGrain[g];
+      if (!block) return version === "flash" && u?.maturity?.basis === "mature" ? Infinity : 0;
+      if (version === null) return block.evidence.spentUsd ?? 0;
+      const figures = block[version];
+      if (figures) return figures.spentUsd;
+      return version === (block.basis ?? null) ? (block.evidence.spentUsd ?? 0) : Infinity;
+    };
     const grains = Object.keys(b.estimatesByGrain) as GrainName[];
-    const ownPriced = (g: GrainName) => unpricedOf(g) === 0 && !!v?.estimatesByGrain[g];
-    const known = (g: GrainName) => ownPriced(g) && PARENTS[g].every((p) => !b.estimatesByGrain[p] || ownPriced(p));
+    const ownPriced = (g: GrainName, version: MaturityBasis | null) =>
+      unpricedOn(g, version) === 0 && !!v?.estimatesByGrain[g];
+    const known = (g: GrainName, version: MaturityBasis | null = rowBasis) =>
+      ownPriced(g, version) && PARENTS[g].every((p) => !b.estimatesByGrain[p] || ownPriced(p, version));
+    // The vendor read picks each row's version on ITS OWN ladder, which holds no grain where every
+    // mature dollar is unpriced — its row can then sit on flash while the billed row sits on mature.
+    // Its priced fields are then the other version's, so they are never served under this row's.
+    const vendorOnRowBasis = rowBasis === null || v?.maturity?.basis === rowBasis;
+    const mainKnown = (g: GrainName) => vendorOnRowBasis && known(g);
 
     const estimatesByGrain: ActualCostProjectionRow["estimatesByGrain"] = {};
     for (const g of grains) {
       const vendorBlock = v?.estimatesByGrain[g];
+      const unpriced = unpricedOn(g, rowBasis);
       const statement: GrainVendorStatement = {
         pricedVendorCostUsd: vendorBlock?.evidence.spentUsd ?? 0,
-        unpricedBilledCostUsd: unpricedOf(g),
-        vendorCostKnown: known(g),
+        unpricedBilledCostUsd: Number.isFinite(unpriced) ? unpriced : 0,
+        vendorCostKnown: mainKnown(g),
       };
       // Counts come from the billed block (same rows, and present even where no vendor cost is).
-      const base = (known(g) ? vendorBlock : b.estimatesByGrain[g]) as unknown as Record<string, unknown>;
+      const base = (mainKnown(g) ? vendorBlock : b.estimatesByGrain[g]) as unknown as Record<string, unknown>;
       const { costBasis: _basis, ...rest } = base;
       void _basis;
-      estimatesByGrain[g] = { ...(known(g) ? rest : nullMoney(rest)), vendorCost: statement };
+      const block: Record<string, unknown> = mainKnown(g) ? rest : nullMoney(rest);
+      // BOTH VERSIONS (leg-keyed reads): each observed pair is known on its OWN grain and version.
+      if (rowBasis) {
+        const billedBlock = b.estimatesByGrain[g]!;
+        for (const version of ["flash", "mature"] as const) {
+          if (!(version in billedBlock)) continue;
+          block[version] = ownPriced(g, version)
+            ? (vendorBlock?.[version] ?? null)
+            : nullPairMoney(billedBlock[version]);
+        }
+        block.isMature = billedBlock.isMature ?? null;
+        block.basis = rowBasis;
+      }
+      estimatesByGrain[g] = { ...block, vendorCost: statement };
     }
 
     // The resolved numbers come from the finest grain with spend; they are known only when that grain
     // is (which already requires every grain it floors against). A row resting on no grain at all is
     // the explore allowance (or all-null), priced off every grain's spend.
     const numberGrain = NUMBER_GRAINS.find((g) => b.estimatesByGrain[g]);
-    const resolvedKnown = numberGrain ? known(numberGrain) : !anyUnpriced;
+    const resolvedKnown = numberGrain ? mainKnown(numberGrain) : vendorOnRowBasis && !anyUnpriced;
     const source = resolvedKnown && v ? v.resolved : b.resolved;
     const { costBasis: _rb, ...resolvedRest } = source;
     void _rb;
@@ -141,7 +197,25 @@ export function overlayVendorProjection(
       vendorCostKnown: resolvedKnown,
     } as ActualCostProjectionRow["resolved"];
 
-    return { ...b, estimatesByGrain, resolved };
+    // The row's two prices floor through the ladder, whose every grain's spend the FLEET grain contains:
+    // a version is known when the fleet grain holds nothing unpriced on it (the explore allowance and
+    // the retired rows, which rest on no fleet grain, fall back to the whole evidence).
+    const maturity = b.maturity
+      ? (() => {
+          const versionKnown = (version: MaturityBasis) =>
+            b.estimatesByGrain.crossOrg ? known("crossOrg", version) : !anyUnpriced;
+          const pair = (version: MaturityBasis) =>
+            versionKnown(version) && v?.maturity
+              ? v.maturity.resolved[version]
+              : nullResolvedFigureMoney(b.maturity!.resolved[version]);
+          return {
+            ...b.maturity,
+            resolved: { ...b.maturity.resolved, flash: pair("flash"), mature: pair("mature") },
+          };
+        })()
+      : undefined;
+
+    return { ...b, estimatesByGrain, resolved, ...(maturity ? { maturity: maturity as ProjectionRow["maturity"] } : {}) };
   });
 
   return {

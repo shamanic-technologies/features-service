@@ -10,7 +10,7 @@
  * ── THREE SOURCES, IN THIS ORDER, AND NOTHING ELSE ──────────────────────────────────────────────
  *
  *   1. MEASURED — the rate observed on this brand's OWN leads, once at least
- *      `MIN_MEASURED_FROM_REACHED` (10, the fleet's learning bar) of them reached the arrow's FROM step.
+ *      `MIN_MEASURED_FROM_REACHED` (10, a sample-size bar on the rate's denominator) of them reached the arrow's FROM step.
  *      The bar is on the DENOMINATOR on purpose: an arrow that is genuinely at 0% must still become
  *      measured, and a bar on the outcome count would keep it on a stated guess forever. Our lead data
  *      already merges the customer's own statements, our tracker and their CRM (the same overlays
@@ -76,7 +76,6 @@ import {
   type LeadStepField,
   type StepEvidence,
 } from "./funnel-steps.js";
-import { LEARNING_OUTCOMES_REQUIRED } from "./learning-phase.js";
 import { SALES_FUNNELS, SALES_FUNNEL_KEYS, salesFunnelIndex, type SalesFunnelKey } from "./sales-funnels.js";
 import { fetchBrandLegEconomics, type BrandLegEconomics, type BrandLegRate } from "./brand-leg-economics-client.js";
 import { FUNNEL_STEP_LABEL_TO_KEY } from "./acquisition-channels.js";
@@ -91,8 +90,12 @@ import {
   type CrmReachUnavailableReason,
 } from "./crm-funnel-reach-client.js";
 
-/** The fleet's learning bar: a measured rate needs at least this many leads on its FROM step. */
-export const MIN_MEASURED_FROM_REACHED = LEARNING_OUTCOMES_REQUIRED;
+/**
+ * A measured rate needs at least this many leads on its FROM step — a SAMPLE-SIZE bar on a between-step
+ * rate's DENOMINATOR. It is deliberately NOT a leg's maturity count (`lib/maturity.ts`, which bars the
+ * OUTCOMES of the leg's own step, 1 positive reply on the conversation leg): it stays 10 on every arrow.
+ */
+export const MIN_MEASURED_FROM_REACHED = 10;
 
 export type EffectiveRateSource = "measured" | "manual" | "median";
 
