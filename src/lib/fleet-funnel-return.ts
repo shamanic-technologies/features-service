@@ -71,6 +71,17 @@ export interface BrandFunnelReturnRow {
    * null when the brand states no lifetime revenue. Null again is "we could not price this".
    */
   expectedPaidClients: number | null;
+  /**
+   * THE BRAND'S MATURITY on this channel (`lib/scope-maturity.ts`, features-service#1196) — the verdict its
+   * own dashboard states, combined across the orgs claiming it (a young part is a young whole). The public
+   * medians' `maturity` block is taken over the brands where it is `true`. ABSENT on a row written before
+   * it existed (the read then says `maturity_not_recorded_yet`); null = the cut could not be made.
+   */
+  isMature?: boolean | null;
+  /** Whole-history committed spend (USD) — the flash twin of `committedSpendUsd` (the mature one). */
+  flashCommittedSpendUsd?: number;
+  /** Whole-history pipeline (USD), null when unpriced — the flash twin of `expectedPipelineUsd`. */
+  flashExpectedPipelineUsd?: number | null;
 }
 
 /** Why a pair's median could not be stated. Both are real answers; neither is an error. */

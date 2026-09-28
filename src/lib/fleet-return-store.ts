@@ -57,6 +57,24 @@ function parseRow(raw: unknown): BrandReturnRow | null {
   if (clients !== undefined && clients !== null && (typeof clients !== "number" || !Number.isFinite(clients))) {
     return null;
   }
+  const isMature = r.isMature;
+  if (isMature !== undefined && isMature !== null && typeof isMature !== "boolean") return null;
+  const flashSpend = r.flashCommittedSpendUsd;
+  if (flashSpend !== undefined && (typeof flashSpend !== "number" || !Number.isFinite(flashSpend))) return null;
+  const flashPipeline = r.flashExpectedPipelineUsd;
+  if (flashPipeline !== undefined && flashPipeline !== null && (typeof flashPipeline !== "number" || !Number.isFinite(flashPipeline))) {
+    return null;
+  }
+  const legMaturity = r.legMaturity;
+  if (
+    legMaturity !== undefined &&
+    legMaturity !== null &&
+    (typeof legMaturity !== "object" ||
+      Array.isArray(legMaturity) ||
+      !Object.values(legMaturity as Record<string, unknown>).every((v) => v === null || typeof v === "boolean"))
+  ) {
+    return null;
+  }
   return {
     brandId: r.brandId,
     committedSpendUsd: r.committedSpendUsd,
@@ -67,6 +85,12 @@ function parseRow(raw: unknown): BrandReturnRow | null {
     // what lets the outcome read say "legs not recorded yet" instead of "not enough brands".
     ...(legKeys !== undefined ? { legKeys: legKeys as string[] | null } : {}),
     ...(clients !== undefined ? { expectedPaidClients: clients as number | null } : {}),
+    // ABSENT stays absent on every maturity field (a snapshot written before them), so the read can say
+    // "not recorded yet" rather than "not mature".
+    ...(isMature !== undefined ? { isMature: isMature as boolean | null } : {}),
+    ...(flashSpend !== undefined ? { flashCommittedSpendUsd: flashSpend as number } : {}),
+    ...(flashPipeline !== undefined ? { flashExpectedPipelineUsd: flashPipeline as number | null } : {}),
+    ...(legMaturity !== undefined ? { legMaturity: legMaturity as Record<string, boolean | null> | null } : {}),
   };
 }
 

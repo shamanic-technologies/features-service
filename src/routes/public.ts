@@ -14,7 +14,19 @@ import {
   fetchBrandInfoBatch,
   type WorkflowMetadata,
   type EngagementLatencyMetric,
+  type CostGroup,
 } from "../lib/public-stats-clients.js";
+import { fetchLegFleetEvidence, fetchLegFleetMatureEvidence } from "../lib/leg-fleet-evidence.js";
+import { fetchFleetPositiveRepliesBySlug } from "../lib/fleet-positive-repliers.js";
+import { setReplyCountsOnSlugStats } from "../lib/crm-only-repliers.js";
+import { legCutoffIso, type LegMaturityFigures } from "../lib/maturity.js";
+import {
+  buildFleetLegMaturity,
+  buildFleetMatureBenchmark,
+  type DynastyLegEvidence,
+  type FleetMatureBenchmark,
+} from "../lib/fleet-leg-maturity.js";
+import { refresherBaseUrl } from "../lib/view-refresher.js";
 import { getFunnel, type SalesEconomics } from "../lib/funnel-registry.js";
 import { projectedCostPerOutcome } from "../lib/cost-engine.js";
 import {
@@ -119,12 +131,15 @@ import {
   buildFleetReturnOnSpend,
   parseMinSpendUsd,
   DEFAULT_MIN_SPEND_USD,
+  MIN_RETURN_BRANDS,
   type BrandReturnRow,
   type FleetReturnOnSpend,
 } from "../lib/fleet-return-on-spend.js";
+import { buildMatureScopesReturn, combineVerdicts, type MatureScopesReturn } from "../lib/fleet-return-maturity.js";
 import { readFleetReturnSnapshotSoft, writeFleetReturnSnapshotSoft } from "../lib/fleet-return-store.js";
 import {
   buildFunnelReturnOnSpend,
+  MIN_FUNNEL_RETURN_BRANDS,
   type BrandFunnelReturnRow,
   type FunnelReturnOnSpend,
 } from "../lib/fleet-funnel-return.js";
@@ -927,6 +942,15 @@ async function computePairRevenue(
       // NULL is "no rung could be counted" — including a read priced on several funnels at once, whose
       // per-funnel passes answer instead — kept apart from a measured 0.
       outcomeCount: furthestRungReached(body.funnelSteps),
+      // THE SCOPE'S VERDICT (`lib/scope-maturity.ts`, features-service#1196) — the one this brand's own
+      // dashboard states — and per leg: the fleet medians' `maturity` blocks keep only mature brands.
+      // `pipeline` / `committedCostUsd` above are the whole-history (flash) twins of the mature ingredients.
+      isMature: body.maturity?.isMature ?? null,
+      legMaturity: body.maturity
+        ? Object.fromEntries(
+            body.maturity.legs.filter((l) => l.legKey !== null).map((l) => [l.legKey as string, l.isMature] as const),
+          )
+        : null,
       timeSeries: body.timeSeries,
     };
   } catch (error) {
@@ -1260,6 +1284,11 @@ export async function warmFleetReturnSnapshot(featureSlug: string): Promise<void
         hasLegs: boolean;
         clients: number;
         hasClients: boolean;
+        flashSpend: number;
+        flashPipeline: number;
+        hasFlashPipeline: boolean;
+        verdicts: Array<boolean | null>;
+        legVerdicts: Map<string, Array<boolean | null>> | null;
       }
     >();
     // The same aggregation one grain finer, keyed (brand, funnel). PAYING CLIENTS rather than a cost
@@ -1267,13 +1296,41 @@ export async function warmFleetReturnSnapshot(featureSlug: string): Promise<void
     // spend ÷ Σ clients is the brand's cost per client, whereas averaging two orgs' ratios is not.
     const byBrandFunnel = new Map<
       string,
-      { brandId: string; funnelKey: SalesFunnelKey; spend: number; pipeline: number; hasPipeline: boolean; clients: number; hasClients: boolean }
+      {
+        brandId: string;
+        funnelKey: SalesFunnelKey;
+        spend: number;
+        pipeline: number;
+        hasPipeline: boolean;
+        clients: number;
+        hasClients: boolean;
+        flashSpend: number;
+        flashPipeline: number;
+        hasFlashPipeline: boolean;
+        verdicts: Array<boolean | null>;
+      }
     >();
     for (const c of computed) {
       if (c === null || c.channel === null) continue;
       const agg =
         byBrand.get(c.channel.brandId) ??
-        { spend: 0, pipeline: 0, hasPipeline: false, startedOn: null, outcomes: 0, hasOutcomes: false, legKeys: new Set<string>(), hasLegs: false, clients: 0, hasClients: false };
+        {
+          spend: 0,
+          pipeline: 0,
+          hasPipeline: false,
+          startedOn: null,
+          outcomes: 0,
+          hasOutcomes: false,
+          legKeys: new Set<string>(),
+          hasLegs: false,
+          clients: 0,
+          hasClients: false,
+          flashSpend: 0,
+          flashPipeline: 0,
+          hasFlashPipeline: false,
+          verdicts: [],
+          legVerdicts: null,
+        };
       // The legs are the UNION over the orgs claiming the brand; one org's unreadable campaign list
       // does not erase what another org's read stated.
       if (c.legKeys !== null) {
@@ -1292,6 +1349,20 @@ export async function warmFleetReturnSnapshot(featureSlug: string): Promise<void
       if (c.channel.maturePipeline !== null) {
         agg.pipeline += c.channel.maturePipeline;
         agg.hasPipeline = true;
+      }
+      // The FLASH twins and the verdicts (features-service#1196): one brand claimed by several orgs is
+      // mature only when every org's scope is — a young part is a young whole (`combineVerdicts`).
+      agg.flashSpend += c.channel.committedCostUsd;
+      if (c.channel.pipeline !== null) {
+        agg.flashPipeline += c.channel.pipeline;
+        agg.hasFlashPipeline = true;
+      }
+      agg.verdicts.push(c.channel.isMature);
+      if (c.channel.legMaturity !== null) {
+        agg.legVerdicts ??= new Map();
+        for (const [legKey, verdict] of Object.entries(c.channel.legMaturity)) {
+          agg.legVerdicts.set(legKey, [...(agg.legVerdicts.get(legKey) ?? []), verdict]);
+        }
       }
       // A brand claimed by several orgs has ONE beginning: the EARLIEST of theirs. `YYYY-MM-DD` sorts
       // lexically, so this is a string comparison with no parsing and no timezone to get wrong.
@@ -1316,8 +1387,26 @@ export async function warmFleetReturnSnapshot(featureSlug: string): Promise<void
         const key = `${result.brandId}::${funnelKey}`;
         const f =
           byBrandFunnel.get(key) ??
-          { brandId: result.brandId, funnelKey, spend: 0, pipeline: 0, hasPipeline: false, clients: 0, hasClients: false };
+          {
+            brandId: result.brandId,
+            funnelKey,
+            spend: 0,
+            pipeline: 0,
+            hasPipeline: false,
+            clients: 0,
+            hasClients: false,
+            flashSpend: 0,
+            flashPipeline: 0,
+            hasFlashPipeline: false,
+            verdicts: [],
+          };
         f.spend += result.matureCommittedCostUsd;
+        f.flashSpend += result.committedCostUsd;
+        if (result.pipeline !== null) {
+          f.flashPipeline += result.pipeline;
+          f.hasFlashPipeline = true;
+        }
+        f.verdicts.push(result.isMature);
         if (result.maturePipeline !== null) {
           f.pipeline += result.maturePipeline;
           f.hasPipeline = true;
@@ -1344,6 +1433,12 @@ export async function warmFleetReturnSnapshot(featureSlug: string): Promise<void
       outcomeCount: agg.hasOutcomes ? agg.outcomes : null,
       legKeys: agg.hasLegs ? [...agg.legKeys].sort() : null,
       expectedPaidClients: agg.hasClients ? agg.clients : null,
+      isMature: combineVerdicts(agg.verdicts) ?? null,
+      flashCommittedSpendUsd: agg.flashSpend,
+      flashExpectedPipelineUsd: agg.hasFlashPipeline ? agg.flashPipeline : null,
+      legMaturity: agg.legVerdicts
+        ? Object.fromEntries([...agg.legVerdicts].map(([legKey, vs]) => [legKey, combineVerdicts(vs) ?? null] as const))
+        : null,
     }));
     const funnelRows: BrandFunnelReturnRow[] = [...byBrandFunnel.values()].map((f) => ({
       brandId: f.brandId,
@@ -1351,6 +1446,9 @@ export async function warmFleetReturnSnapshot(featureSlug: string): Promise<void
       committedSpendUsd: f.spend,
       expectedPipelineUsd: f.hasPipeline ? f.pipeline : null,
       expectedPaidClients: f.hasClients ? f.clients : null,
+      isMature: combineVerdicts(f.verdicts) ?? null,
+      flashCommittedSpendUsd: f.flashSpend,
+      flashExpectedPipelineUsd: f.hasFlashPipeline ? f.flashPipeline : null,
     }));
 
     const now = new Date();
@@ -1412,6 +1510,8 @@ interface FleetReturnPayload extends FleetReturnOnSpend {
   unit: "brand";
   /** When the snapshot the figures were taken from was computed. Null when there is no snapshot yet. */
   computedAt: string | null;
+  /** The same median over MATURE brands only, on both versions (`lib/fleet-return-maturity.ts`). */
+  maturity: MatureScopesReturn;
 }
 
 export async function handleFleetReturnOnSpend(
@@ -1449,6 +1549,7 @@ export async function handleFleetReturnOnSpend(
     unit: "brand",
     computedAt: snapshot?.computedAt.toISOString() ?? null,
     ...buildFleetReturnOnSpend(snapshot?.brands ?? null, minSpendUsd),
+    maturity: buildMatureScopesReturn(snapshot?.brands ?? null, minSpendUsd, MIN_RETURN_BRANDS),
   };
   res.json(payload);
 }
@@ -1482,6 +1583,8 @@ interface ChannelFunnelReturnRow extends FunnelReturnOnSpend {
   funnelSteps: readonly string[];
   /** When the snapshot these figures were taken from was computed. Null when there is none yet. */
   computedAt: string | null;
+  /** The same median over MATURE brands only, on both versions (`lib/fleet-return-maturity.ts`). */
+  maturity: MatureScopesReturn;
 }
 
 interface FleetFunnelReturnPayload {
@@ -1555,6 +1658,11 @@ export async function handleFleetFunnelReturn(
           snap ? snap.rows.filter((r) => r.funnelKey === funnel.key) : null,
           minSpendUsd,
         ),
+        maturity: buildMatureScopesReturn(
+          snap ? snap.rows.filter((r) => r.funnelKey === funnel.key) : null,
+          minSpendUsd,
+          MIN_FUNNEL_RETURN_BRANDS,
+        ),
       });
     }
   }
@@ -1581,12 +1689,31 @@ interface ChannelLegReturnRow extends OutcomeReturnFigures {
   legKey: string;
   fromStep: { key: string; label: string; description: string } | null;
   toStep: { key: string; label: string; description: string };
+  /** The same median over the brands MATURE ON THIS LEG, on both versions. */
+  maturity: MatureScopesReturn;
 }
 
 interface ChannelOutcomeReturnRow extends OutcomeReturnFigures {
   step: { key: string; label: string; description: string };
   /** The legs of this channel landing on the step, whose brands make up the population. */
   legKeys: string[];
+  /** The same median over the brands mature on every one of these legs they perform, on both versions. */
+  maturity: MatureScopesReturn;
+}
+
+/**
+ * The MATURE-scopes median on a set of legs: the brands performing one of them, each judged on the legs of
+ * the set it performs (the multi-leg rule — `combineVerdicts`). A row predating the per-leg verdicts is
+ * `undefined` (not recorded), one whose scope could not be cut is null.
+ */
+function legMatureScopesReturn(rows: readonly BrandReturnRow[] | null, legKeys: ReadonlySet<string>, minSpendUsd: number): MatureScopesReturn {
+  const population = rows === null ? null : rows.filter((r) => (r.legKeys ?? []).some((k) => legKeys.has(k)));
+  return buildMatureScopesReturn(population, minSpendUsd, MIN_FUNNEL_RETURN_BRANDS, (r) => {
+    if (r.legMaturity === undefined) return undefined;
+    if (r.legMaturity === null) return null;
+    const performed = [...legKeys].filter((k) => (r.legKeys ?? []).includes(k));
+    return combineVerdicts(performed.map((k) => r.legMaturity![k] ?? null)) ?? null;
+  });
 }
 
 interface ChannelOutcomeReturnEntry {
@@ -1635,6 +1762,7 @@ export async function handleFleetOutcomeReturn(
       fromStep: t.from,
       toStep: t.to,
       ...buildOutcomeReturnOnSpend(rows, new Set([t.legKey]), minSpendUsd),
+      maturity: legMatureScopesReturn(rows, new Set([t.legKey]), minSpendUsd),
     }));
     const byStep = new Map<string, { step: ChannelOutcomeReturnRow["step"]; legKeys: string[] }>();
     for (const t of channel.stepTransitions) {
@@ -1646,6 +1774,7 @@ export async function handleFleetOutcomeReturn(
       step: e.step,
       legKeys: e.legKeys,
       ...buildOutcomeReturnOnSpend(rows, new Set(e.legKeys), minSpendUsd),
+      maturity: legMatureScopesReturn(rows, new Set(e.legKeys), minSpendUsd),
     }));
     return {
       channelSlug: channel.slug,
@@ -1970,7 +2099,12 @@ interface WorkflowCostPerOutcomePayload {
   /** The trailing-window size (base outcomes) the per-row `recentCostPerOutcomeUsd` moving average targets
    * — the SAME window semantics as /public/stats/cost-per-outcome-trend. */
   windowOutcomes: number;
-  workflows: WorkflowCostRow[];
+  workflows: Array<WorkflowCostRow & { maturity: LegMaturityFigures | null }>;
+  /**
+   * THE BENCHMARK ON THE OBJECTIVE'S LEG, over MATURE workflows only (features-service#1196). Null for an
+   * objective with no single leg (a projected one), and until the leg's first background warm has landed.
+   */
+  fleet: (FleetMatureBenchmark & { measured: boolean; cutoffIso: string | null }) | null;
 }
 
 const workflowCostPerOutcomeCache: PublicCache = new Map();
@@ -2021,11 +2155,152 @@ function setStoredRecentRates(cacheKey: string, map: Map<string, number | null>,
   workflowRecentRateStore.set(cacheKey, { map, expiresAt: Date.now() + ttlMs });
 }
 
+// ── ONE LEG'S FLEET MATURITY PER WORKFLOW (`lib/fleet-leg-maturity.ts`, features-service#1196) ────────
+//
+// `workflows[].maturity` + `fleet` on this read: each workflow's figures on the leg its objective's outcome
+// IS (a positive reply → the conversation leg, a website visit → the visit leg), flash and mature, and the
+// benchmark taken over MATURE workflows only. The evidence is the leg's fleet cells (`lib/leg-fleet-evidence.ts`
+// + the fleet person cell) — the byte-same evidence a leg-keyed workflow-projection's crossOrg grain reads —
+// so it is asked of the REFRESHER, where those cells are already warm, and computed here only when the
+// refresher is off or unreachable (a second fleet walk in this process is load on lead-service nobody asked
+// for). It is warmed OFF the request path: the landing gives this read eight seconds and a cold fleet cell
+// takes minutes, so a read before the first warm serves `maturity: null` / `fleet: null` — "not stated yet",
+// never a borrowed figure — and the warm overwrites the cached payload when it lands.
+
+/** The leg an OBSERVED objective's outcome is on. A projected objective walks several legs: none. */
+export function objectiveLegKey(objective: string): string | null {
+  if (objective === "positiveReply") return "start_to_conversation";
+  if (objective === "websiteVisit") return "start_to_website_visit";
+  return null;
+}
+
+/** One leg's fleet maturity per workflow dynasty — JSON-safe, since the refresher answers it over HTTP. */
+export interface FleetLegWorkflowMaturity {
+  legKey: string;
+  cutoffIso: string | null;
+  /** FALSE ⟺ the mature cut could not be made (a pair states no serve date): every mature half is null. */
+  measured: boolean;
+  byDynasty: Array<[string, LegMaturityFigures]>;
+}
+
+/** Roll a leg's per-slug evidence up to workflow dynasties, spend summed EXACTLY. */
+function legEvidenceByDynasty(
+  workflows: WorkflowMetadata[],
+  costGroups: CostGroup[],
+  emailStats: Map<string, Record<string, number>>,
+): Map<string, DynastyLegEvidence> {
+  const { costMap, aggregatedOutcomes } = aggregateAcrossDynasties(
+    buildWorkflowDynasties(workflows),
+    costGroups,
+    emailStats,
+    "workflowSlug",
+    { exactCents: true },
+  );
+  const workflowBySlug = new Map(workflows.map((w) => [w.workflowSlug, w]));
+  const out = new Map<string, DynastyLegEvidence>();
+  for (const [slug, cost] of costMap) {
+    const dynasty = workflowBySlug.get(slug)?.workflowDynastySlug;
+    if (!dynasty) continue;
+    const o = aggregatedOutcomes.get(slug) ?? {};
+    const prev = out.get(dynasty) ?? { spentCents: 0, contacted: 0, clicks: 0, replies: 0 };
+    out.set(dynasty, {
+      spentCents: prev.spentCents + cost.totalCostInUsdCents,
+      contacted: prev.contacted + (o.recipientsContacted ?? 0),
+      clicks: prev.clicks + (o.recipientsClicked ?? 0),
+      replies: prev.replies + (o.recipientsRepliesPositive ?? 0),
+    });
+  }
+  return out;
+}
+
+/** One leg's fleet maturity, computed IN THIS PROCESS (the refresher, or the server when it is off). */
+export async function computeFleetLegWorkflowMaturity(featureSlug: string, legKey: string): Promise<FleetLegWorkflowMaturity> {
+  const [workflows, flash] = await Promise.all([
+    fetchPublicWorkflows(featureSlug, "all"),
+    fetchLegFleetEvidence(featureSlug, legKey, "gross"),
+  ]);
+  const legSet = new Set(flash.campaigns.map((c) => c.campaignId));
+  // Positive replies counted on PEOPLE, the leg's campaigns only — the crossOrg grain's own basis. A fleet
+  // read has no requesting pair, so none is swapped in.
+  setReplyCountsOnSlugStats(
+    flash.emailStats,
+    await fetchFleetPositiveRepliesBySlug(featureSlug, { orgId: "", brandId: "", repliers: [] }, legSet),
+  );
+  const cutoffIso = legCutoffIso(legKey);
+  const mature = cutoffIso
+    ? await fetchLegFleetMatureEvidence(featureSlug, legKey, "gross", cutoffIso, null, legSet)
+    : { costGroups: flash.costGroups, emailStats: flash.emailStats };
+  const matureBy = mature ? legEvidenceByDynasty(workflows, mature.costGroups, mature.emailStats) : null;
+  const dynastySlugs = [...new Set(workflows.map((w) => w.workflowDynastySlug))];
+  return {
+    legKey,
+    cutoffIso,
+    measured: matureBy !== null,
+    byDynasty: [...buildFleetLegMaturity(legKey, dynastySlugs, legEvidenceByDynasty(workflows, flash.costGroups, flash.emailStats), matureBy)],
+  };
+}
+
+/** Ask the refresher (whose fleet cells are warm) for one leg's maturity; compute here when it cannot. */
+async function fetchFleetLegWorkflowMaturity(featureSlug: string, legKey: string): Promise<FleetLegWorkflowMaturity> {
+  const base = refresherBaseUrl();
+  if (base) {
+    try {
+      const res = await fetch(`${base}/internal/fleet-leg-maturity?${new URLSearchParams({ featureSlug, legKey })}`, {
+        headers: { "x-api-key": process.env.FEATURES_SERVICE_API_KEY ?? "" },
+      });
+      if (res.ok) return (await res.json()) as FleetLegWorkflowMaturity;
+      console.error(`[features-service] refresher answered ${res.status} for fleet leg maturity ${featureSlug}|${legKey}; computing locally`);
+    } catch (error) {
+      console.error(`[features-service] refresher unreachable for fleet leg maturity ${featureSlug}|${legKey}; computing locally:`, error);
+    }
+  }
+  return computeFleetLegWorkflowMaturity(featureSlug, legKey);
+}
+
+// Fresh 15 min (the fleet cells' own window); a stored value is served however old until a warm replaces it.
+const LEG_MATURITY_FRESH_MS = 15 * 60_000;
+// A warm that has not landed in this long is abandoned (loud log) so its single-flight flag clears and the
+// next read retries — the stuck-flag failure the recent-rate warm above documents.
+const LEG_MATURITY_WARM_TIMEOUT_MS = 10 * 60_000;
+const legMaturityStore = new Map<string, { value: FleetLegWorkflowMaturity; computedAt: number }>();
+const legMaturityWarmInFlight = new Map<string, Promise<void>>();
+
+function storedLegMaturity(featureSlug: string, legKey: string): FleetLegWorkflowMaturity | null {
+  return legMaturityStore.get(`${featureSlug}|${legKey}`)?.value ?? null;
+}
+
+/** Warm one leg's maturity in the background when absent or past its fresh window; `landed` re-serves. */
+function warmLegMaturity(featureSlug: string, legKey: string, landed: () => void): void {
+  const key = `${featureSlug}|${legKey}`;
+  const entry = legMaturityStore.get(key);
+  if (entry && Date.now() - entry.computedAt < LEG_MATURITY_FRESH_MS) return;
+  if (legMaturityWarmInFlight.has(key)) return;
+  const warm = withTimeout(fetchFleetLegWorkflowMaturity(featureSlug, legKey), LEG_MATURITY_WARM_TIMEOUT_MS, `fleet leg maturity ${key}`)
+    .then((value) => {
+      legMaturityStore.set(key, { value, computedAt: Date.now() });
+      landed();
+    })
+    .catch((error) => {
+      console.error(`[features-service] fleet leg maturity warm failed (${key}), keeping the previous value:`, error);
+    })
+    .finally(() => {
+      legMaturityWarmInFlight.delete(key);
+    });
+  legMaturityWarmInFlight.set(key, warm);
+}
+
+/** Test seam — await any in-flight leg-maturity warm(s). */
+export async function __awaitLegMaturityWarm(): Promise<void> {
+  await Promise.all([...legMaturityWarmInFlight.values()]);
+}
+
 /** Test seam — reset the in-memory workflow-cost-per-outcome cache. */
 export function __resetWorkflowCostPerOutcomeCache(): void {
   clearPublicCache(workflowCostPerOutcomeCache);
   workflowRecentWarmInFlight.clear();
   workflowRecentRateStore.clear();
+  legMaturityStore.clear();
+  legMaturityWarmInFlight.clear();
 }
 
 /** Test seam — expire ONLY the payload cache (simulating a lapsed fresh+stale window) while keeping the
@@ -2135,22 +2410,44 @@ export async function handleWorkflowCostPerOutcome(
     // Build the response for a given per-dynasty recent-rate map. The lifetime cost / spend / clicks /
     // replies come from the (already-fetched, fast) main fan-out; `recentByDynasty` carries the trailing-
     // window moving average (a dynasty absent from the map → null recent, never a false $0).
-    const buildPayload = (recentByDynasty: Map<string, number | null>): WorkflowCostPerOutcomePayload => ({
-      // CROSS-ORG PERFORMANCE BENCHMARK — comped spend counts at FULL value here (`lib/cost-basis.ts`).
-      // Stated on the wire because this figure shares the words "cost per outcome" with a customer's own
-      // dashboard, which answers the CHARGED question and drops comped spend.
-      costBasis: "incurred" as const,
-      featureSlug,
-      objective,
-      windowOutcomes,
-      workflows: buildWorkflowCostPerOutcome({
+    // The objective's LEG (null for a projected objective) and its fleet maturity, read from the store at
+    // BUILD time so every rebuild (the recent-rate warm, the maturity warm) states the latest one.
+    const legKey = objectiveLegKey(objective);
+    const buildPayload = (recentByDynasty: Map<string, number | null>): WorkflowCostPerOutcomePayload => {
+      const rows = buildWorkflowCostPerOutcome({
         objective,
         rows: dynastyInputs,
         fleetEcon,
         projectedFloor: projectedCostPerOutcome,
         recentByDynasty,
-      }),
-    });
+      });
+      const legMaturity = legKey ? storedLegMaturity(featureSlug, legKey) : null;
+      const byDynasty = legMaturity ? new Map(legMaturity.byDynasty) : null;
+      const withMaturity = rows.map((row) => ({ ...row, maturity: byDynasty?.get(row.workflowDynastySlug) ?? null }));
+      return {
+        // CROSS-ORG PERFORMANCE BENCHMARK — comped spend counts at FULL value here (`lib/cost-basis.ts`).
+        // Stated on the wire because this figure shares the words "cost per outcome" with a customer's own
+        // dashboard, which answers the CHARGED question and drops comped spend.
+        costBasis: "incurred" as const,
+        featureSlug,
+        objective,
+        windowOutcomes,
+        workflows: withMaturity,
+        // The benchmark over the workflows THIS read lists (a best a reader cannot find in the list would
+        // name nothing), mature ones only.
+        fleet:
+          legKey && legMaturity
+            ? {
+                ...buildFleetMatureBenchmark(
+                  legKey,
+                  new Map(withMaturity.filter((r) => r.maturity).map((r) => [r.workflowDynastySlug, r.maturity!])),
+                ),
+                measured: legMaturity.measured,
+                cutoffIso: legMaturity.cutoffIso,
+              }
+            : null,
+      };
+    };
 
     // The per-dynasty RECENT going rate needs, PER dynasty, a dated-spend timeseries (runs) + dated outcomes
     // (email-gateway) — and neither producer exposes a single-call (day × dynasty) split (runs' timeseries
@@ -2164,6 +2461,17 @@ export async function handleWorkflowCostPerOutcome(
     // or genuinely-unbacked dynasty stays null ("—"), never a false $0.
     const seededRecent = getStoredRecentRates(cacheKey);
     const built = buildPayload(seededRecent ?? new Map());
+    // The leg's maturity, OFF the request path; when it lands the cached payload is rebuilt around it.
+    if (legKey) {
+      warmLegMaturity(featureSlug, legKey, () =>
+        setPublicCache(
+          workflowCostPerOutcomeCache,
+          cacheKey,
+          buildPayload(getStoredRecentRates(cacheKey) ?? seededRecent ?? new Map()),
+          LIFETIME_AGGREGATE_WINDOWS,
+        ),
+      );
+    }
 
     // Warm when the persisted recent rates are stale/absent (single-flight per cache key). Stale-while-
     // revalidate: the served payload is already seeded from the store above (a miss never re-nulls the column
@@ -4131,6 +4439,24 @@ router.get("/public/stats/workflow-cost-per-outcome", async (req, res) => {
     );
   } catch (error) {
     console.error("[features-service] Public stats workflow-cost-per-outcome error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// The REFRESHER's half of the per-workflow fleet leg maturity (`fetchFleetLegWorkflowMaturity`): the server
+// asks this process, whose fleet cells are warm, instead of walking the fleet a second time. Service-auth;
+// the gateway does not proxy it. Computes in whichever process answers.
+router.get("/internal/fleet-leg-maturity", apiKeyOnly, async (req, res) => {
+  const featureSlug = req.query.featureSlug as string | undefined;
+  const legKey = matchFunnelLegKey(String(req.query.legKey ?? ""));
+  if (!featureSlug || !legKey) {
+    res.status(400).json({ error: "featureSlug and a known legKey are required" });
+    return;
+  }
+  try {
+    res.json(await computeFleetLegWorkflowMaturity(featureSlug, legKey));
+  } catch (error) {
+    console.error("[features-service] Internal fleet leg maturity error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
