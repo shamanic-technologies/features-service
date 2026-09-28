@@ -1471,8 +1471,10 @@ describe("GET /features/:featureSlug/revenue", () => {
     // must land on a different cell instead of replaying a pre-write snapshot). That costs one serial
     // brand-service read on the MISS path only — the trade for never blocking a revisit on the full
     // fan-out. It is still fetched exactly once per request, and Wave A must still be concurrent.
+    // + the scope's maturity spend split (#1196), a /stats/costs read chained on the campaign-service
+    // read inside Wave A — it too must run beside the others, never after them.
     const WAVE_A = ["/stats/costs", "/orgs/leads"];
-    const EXPECTED_CONCURRENT = 3;
+    const EXPECTED_CONCURRENT = 4;
     let inFlight = 0;
     let releaseAll!: () => void;
     const allInFlight = new Promise<void>((r) => { releaseAll = r; });
@@ -1594,7 +1596,7 @@ describe("GET /features/:featureSlug/revenue?groupBy=campaignId", () => {
     // Each group is lean — campaignId + the identity it was totalled over + headline + costEconomics
     // + the volume half, no timeSeries/orgs/leads/events.
     for (const g of res.body.groups) {
-      expect(Object.keys(g).sort()).toEqual(["campaignId", "campaignIdentity", "costEconomics", "headline", "outcomes"]);
+      expect(Object.keys(g).sort()).toEqual(["campaignId", "campaignIdentity", "costEconomics", "headline", "maturity", "outcomes"]);
     }
     const byId = Object.fromEntries(res.body.groups.map((g: any) => [g.campaignId, g]));
     // grouped costEconomics carries NEITHER lens-only field

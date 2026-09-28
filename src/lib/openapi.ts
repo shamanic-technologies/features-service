@@ -9,6 +9,118 @@ const errorResponse = z.object({ error: z.string() });
 
 registry.register("Feature", featureResponseSchema);
 
+// ── THE MATURITY OF A FIGURE (features-service#1196) — flash, mature, and the verdict, on every surface ──
+
+const legMaturityRuleSchema = registry.register(
+  "LegMaturityRule",
+  z.object({
+    durationDays: z.number().int().describe("How many days before today (UTC midnight) a run must have STARTED for its spend, and the leads it served, to count as MATURE. 21 on the two cold-email entry legs (a run's positive replies and visits keep arriving for weeks; 21 days captures 92-95% of them, measured in prod 2026-09-28); 0 on every other leg, whose mature figure is therefore its flash figure."),
+    outcomesRequired: z.number().int().describe("How many MATURE outcomes of the leg's step a scope must hold to be judged mature: 1 positive reply on start_to_conversation, 10 website visits on start_to_website_visit, 10 on every other leg."),
+    outcomeSignal: z.enum(["clicked", "positiveReply"]).nullable().describe("The counted signal the leg's outcome IS on an entry leg (a website visit is a click, a conversation is a positive reply). Null on every other leg, whose outcome is walked from a driver signal."),
+    source: z.enum(["measured", "default"]).describe("`measured` = the owner set this rule from production evidence; `default` = no leg-specific rule was measured, so the leg is mature the day it is bought and judged on the pre-existing bar of 10."),
+  }).describe("ONE LEG'S MATURITY RULE. Every figure exists in two versions: FLASH (everything to date) and MATURE (the spend of runs started more than durationDays ago, over the outcomes — whenever they land — of the leads those runs served). One clock for both: the run start, i.e. the serve."),
+);
+
+const outcomeFiguresSchema = registry.register(
+  "OutcomeFigures",
+  z.object({
+    spentUsd: z.number().describe("Committed spend on the request's pricing basis, summed exactly (never rounded per group), so a scope's rows add up to the scope. Null ONLY on the staff actual-cost twin, where this grain's spend on this version holds rows with no known vendor cost."),
+    contacted: z.number().describe("Leads reached."),
+    outcomes: z.number().describe("The leg's own outcomes (on an entry leg, distinct leads at its outcome signal)."),
+    costPerOutcomeUsd: z.number().nullable().describe("spentUsd / outcomes — OBSERVED, never floored. Null at 0 outcomes or 0 spend (and on the actual-cost twin where the vendor cost is unknown)."),
+    conversionRatePct: z.number().nullable().describe("100 × outcomes / contacted. Null only at 0 contacted; a measured 0 stays 0."),
+  }).describe("The observed figures of one scope on one version (flash or mature)."),
+);
+
+/** Both versions of one figure and the verdict, side by side (lib/maturity.ts `MaturityPair`). */
+const maturityPairSchema = <T extends z.ZodTypeAny>(inner: T) =>
+  z.object({
+    flash: inner.nullable().describe("Everything to date. Null when there is no flash figure at all."),
+    mature: inner.nullable().describe("The mature cohort's figure. NULL when the mature cut could not be made. A cut that was made and holds nothing states that instead: zeros on observed figures, null fields on a resolved price."),
+    isMature: z.boolean().nullable().describe("The verdict: at least the leg's outcomesRequired MATURE outcomes. Null = the mature outcomes could not be counted, never a verdict."),
+  });
+
+const legMaturityFiguresSchema = registry.register(
+  "LegMaturityFigures",
+  legMaturityRuleSchema
+    .extend({
+      legKey: z.string().nullable().describe("The leg these figures and this rule are for."),
+      flash: outcomeFiguresSchema.nullable().describe("Everything to date."),
+      mature: outcomeFiguresSchema.nullable().describe("The runs started before the cutoff and the leads THOSE runs served (their outcomes whenever they landed). A cohort that was read and holds nothing is all zeros; null ONLY when the cut could not be made (legs unknown, serve dates not stated)."),
+      isMature: z.boolean().nullable().describe("mature.outcomes >= outcomesRequired. Null = could not judge; never a Learning verdict."),
+    })
+    .describe("ONE LEG of a scope on both bases, with the leg's own rule (LegMaturityRule) beside its figures."),
+);
+
+const scopeMaturitySchema = registry.register(
+  "ScopeMaturity",
+  z.object({
+    isMature: z.boolean().nullable().describe("The scope's verdict: mature when EVERY leg present in its mature figures (mature spend or mature leads) is mature. A scope with activity and no leg present yet is young: false. Null = could not judge (serve dates not stated, legs unreadable, or nothing to judge) — a consumer shows the mature value if any, else a dash, and no Learning tag."),
+    legs: z.array(legMaturityFiguresSchema).describe("One entry per leg the scope's campaigns are bought for whose outcome is a counted signal (a campaign stating no leg, and the AI meeting-booking leg, carry none)."),
+  }).describe("THE SCOPE'S MATURITY — the byte-same object every surface describing this scope serves (/revenue, audience rows, offer outcomes, /stats), so a consumer can reconcile them. features-service#1196."),
+);
+
+
+/** One block's own ratios on both bases, beside the scope's verdict — registered ONCE per block kind. */
+function blockPair<T extends z.ZodRawShape>(name: string, shape: T, what: string) {
+  return registry.register(
+    name,
+    maturityPairSchema(z.object(shape)).describe(
+      `${what} on BOTH bases, beside the scope's verdict (features-service#1196). OBSERVED — never a floor: null at 0 outcomes. Display \`mature\`; \`flash\` is available for staff.`,
+    ),
+  );
+}
+
+const costRatiosMaturitySchema = blockPair(
+  "CostRatiosMaturity",
+  { roiMultiple: z.number().nullable(), costOfAcquisitionPct: z.number().nullable(), costPerAcquisitionUsd: z.number().nullable() },
+  "The three ratios",
+);
+const spendRatiosMaturitySchema = blockPair(
+  "SpendRatiosMaturity",
+  {
+    totalCpcCents: z.number().nullable(),
+    cpprCents: z.number().nullable(),
+    cpsCents: z.number().nullable(),
+    cpsmCents: z.number().nullable(),
+    cpfsCents: z.number().nullable(),
+    cpSaleCents: z.number().nullable(),
+  },
+  "Every cost per outcome of the spend block",
+);
+const outcomeRatiosMaturitySchema = blockPair(
+  "OutcomeRatiosMaturity",
+  { cpcCents: z.number().nullable(), cpprCents: z.number().nullable() },
+  "The two per-lead costs",
+);
+const conversionRateMaturitySchema = blockPair(
+  "ConversionRateMaturity",
+  { contacted: z.number(), outcomes: z.number(), conversionRatePct: z.number().nullable() },
+  "The scope's conversion",
+);
+const audienceMetricsMaturitySchema = blockPair(
+  "AudienceMetricsMaturity",
+  {
+    cpcCents: z.number().nullable(),
+    cpprCents: z.number().nullable(),
+    cpfsCents: z.number().nullable(),
+    cpsCents: z.number().nullable(),
+    cpsaleCents: z.number().nullable(),
+  },
+  "This audience's own cost columns — spend attributed by the run's audience tag, people by the audience lead-service froze on the serve",
+);
+const audienceProjectionMaturitySchema = blockPair(
+  "AudienceProjectionMaturity",
+  { costPerPaidClientUsd: z.number().nullable(), returnPerDollar: z.number().nullable(), costOfAcquisitionPct: z.number().nullable() },
+  "The projection priced from this audience's OBSERVED unit costs through the same funnel",
+);
+const offerOutcomeMaturitySchema = blockPair(
+  "OfferOutcomeMaturity",
+  { roiMultiple: z.number().nullable(), costPerOutcomeUsd: z.number().nullable() },
+  "The return and cost per outcome (a row's verdict: the multi-leg rule over its legs)",
+);
+
+
 // ── Stats response schemas ───────────────────────────────────────────────
 
 const systemStatsSchema = z.object({
@@ -57,6 +169,7 @@ const featureStatsResponseSchema = z.object({
   systemStats: systemStatsSchema,
   groups: z.array(statsGroupSchema).optional(),
   stats: z.record(z.string(), z.number().nullable()).optional(),
+  maturity: scopeMaturitySchema.nullable().optional().describe("Non-grouped reads with a brand: the scope's per-leg figures on both bases and its verdict — the byte-same object /revenue serves for this campaign, offer or brand. The costPer* stats keep their meaning (everything to date); display maturity.legs[].mature. Null on a workflow-narrowed read or when it could not be read."),
 });
 
 const globalStatsResponseSchema = z.object({
@@ -450,6 +563,7 @@ const revenueCostEconomicsSchema = z.object({
     closedWonRevenueUsd: z.number().describe("What those deals are worth: each at the amount stated on it, else the lifetime revenue a paying client is priced at."),
     roiMultiple: z.number().nullable().describe("closedWonRevenueUsd / ratioBasis.committedCostUsd — the MEASURED return, beside the pipeline ROI and never instead of it. Null when that spend is 0 (maturing)."),
   }).nullable().describe("THE MEASURED RETURN — revenue from deals actually closed won over the same matured spend the ROI divides. NULL when it cannot be measured on this read: no source of closed deals could be read, the legs are unknown, or the grain never computes it (lens, per-workflow, cross-org reads). Never a fabricated 0."),
+  maturity: costRatiosMaturitySchema.optional(),
 });
 
 const roiHistoryPointSchema = z.object({
@@ -460,6 +574,7 @@ const roiHistoryPointSchema = z.object({
 });
 
 const roiHistorySchema = z.object({
+  isMature: z.boolean().nullable().optional().describe("The SCOPE's maturity verdict beside the curve (features-service#1196) — the byte-same one `maturity.isMature` states. The curve is the mature cohort's, so its last point is the mature return; false is the Learning tag. Null when the scope's maturity could not be read."),
   daily: z.array(roiHistoryPointSchema).describe("One point per UTC day that has spend or a dated outcome, ascending, spanning the brand's whole life. Days with neither are absent (never fabricated). Empty when the brand has neither spend nor a dated outcome."),
   datedPipelineUsd: z.number().describe("The curve's final cumulative pipeline — the part of the MATURE cohort's pipeline (the one costEconomics.roiMultiple divides; headline.totalPipelineUsd when costEconomics.maturityDays is 0) this curve can describe."),
   undatedPipelineUsd: z.number().describe("Mature-cohort pipeline whose outcome carries NO timestamp, so it sits on no day. Reported rather than dropped or parked on a fabricated day: datedPipelineUsd + undatedPipelineUsd === the mature cohort's pipeline, which is headline.totalPipelineUsd when costEconomics.maturityDays is 0."),
@@ -537,6 +652,7 @@ const spendSchema = z.object({
     salesCount: z.number().int().nullable().optional().describe("Sales cpSaleCents divides, same rules."),
     unmeasuredReason: z.enum(["maturing", "maturity_unknown"]).nullable().describe("Why every ratio above is null: maturing = nothing spent is mature yet; maturity_unknown = campaign legs unreadable. Spend and counts here are null too."),
   }).describe("WHAT EVERY COST PER OUTCOME IN THIS BLOCK DIVIDES — the ROI's own basis, so the ratios and costEconomics.roiMultiple are one basis on one screen. Each ratio = the matching spend here ÷ the matching count here (outside the zero-outcome benchmark floor). The block's top-level totals and counts keep the WHOLE history."),
+  maturity: spendRatiosMaturitySchema.optional(),
 });
 
 // THE VOLUME HALF of a money answer — how much real outcome evidence the figures beside it rest on.
@@ -572,6 +688,7 @@ const revenueOutcomesSchema = z.object({
     replyRatePct: z.number().nullable().describe("100 × recipientsReplied ÷ recipientsSent. Null only when nothing was sent."),
     positiveReplyRatePct: z.number().nullable().describe("100 × recipientsRepliedPositive ÷ recipientsSent. Null only when nothing was sent."),
   }).describe("WHAT HAPPENED TO THE EMAILS THIS GRAIN SENT — delivery and reply on ONE denominator (distinct leads sent to), whole history, same deduped person set as the counts above. Every rate is served so no consumer divides."),
+  maturity: outcomeRatiosMaturitySchema.optional(),
 });
 
 // WHICH DOLLARS A FIGURE IS MADE OF. Declared once, here, because it is answered at two grains — per
@@ -659,7 +776,8 @@ const learningCampaignSchema = z.object({
   campaignIdentityKey: z.string().nullable().describe("campaign-service's identity key, or null for a row it could not place (one predating its migration 0044, which is its own family of one)."),
   legKey: z.string().nullable().describe("The FUNNEL LEG this campaign is bought for, as campaign-service states it. Null = it states none, and there is then no step to count its outcomes in."),
   outcomeStep: channelStepSchema.nullable().describe("The step `outcomesObserved` is denominated in — the leg's OWN toStep, never the first step of the funnel the leg belongs to."),
-  outcomesObserved: z.number().nullable().describe("How many of that step this campaign accounts for. `0` is a MEASUREMENT (it reached people and none of them converted); NULL is 'we could not count this' — no leg stated, a rate the brand never declared, or a degraded producer. Fractional when the leg is not an entry leg: the count is then the observed driver signal walked forward through the funnel's declared rates."),
+  flashOutcomesObserved: z.number().nullable().describe("This campaign's count on everything to date — equal to outcomesObserved on the flash basis."),
+  outcomesObserved: z.number().nullable().describe("How many of that step this campaign accounts for — on the phase's outcomesBasis (its MATURE outcomes whenever the scope's cut could be made). `0` is a MEASUREMENT (it reached people and none of them converted); NULL is 'we could not count this' — no leg stated, a rate the brand never declared, or a degraded producer. Fractional when the leg is not an entry leg: the count is then the observed driver signal walked forward through the funnel's declared rates."),
   outcomeObserved: z.boolean().describe("TRUE ⟺ the count above is a raw OBSERVATION (an ENTRY leg, whose driver signal IS its outcome). FALSE ⟺ it is that observation walked forward — a consumer that wants to say which it is reading has to be told."),
   live: z.boolean().describe("TRUE ⟺ at least one member is `ongoing`. A stopped campaign gathers nothing, so it is never the subject of a countdown — though what it already gathered still counts towards the scope."),
 });
@@ -672,6 +790,7 @@ const costPerOutcomeHistoryPointSchema = z.object({
 });
 
 const costPerOutcomeHistorySchema = z.object({
+  isMature: z.boolean().nullable().optional().describe("The SCOPE's maturity verdict beside the curve (features-service#1196) — the byte-same one `maturity.isMature` states. Null when unreadable."),
   outcomeStep: channelStepSchema.describe("The step EVERY count here is denominated in — the scope's own leg's toStep, named by this service rather than chosen by the caller, and the byte-same step learningPhase.outcomeStep reports (one leader resolution serves both, so the curve and the verdict beside it can never be denominated in two different things). A consumer labels the chart with it."),
   legKey: z.string().describe("The leg that step closes, canonical."),
   outcomeObserved: z.boolean().describe("TRUE ⟺ the counts are raw OBSERVATIONS (an ENTRY leg, whose driver signal IS its outcome). FALSE ⟺ each day's count is the observed driver walked forward through the funnel's declared rates, so it is fractional."),
@@ -697,6 +816,7 @@ const conversionRateHistorySchema = z.object({
   datedOutcomes: z.number().describe("The curve's final cumulative outcome count."),
   undatedOutcomes: z.number().describe("Outcomes whose driver signal carries NO timestamp, so they sit on no day. datedOutcomes + undatedOutcomes is the scope's whole count."),
   scopeConversionRatePct: z.number().nullable().describe("THE WHOLE SCOPE'S RATE — every outcome over everybody reached, dated or not — SERVED so no consumer ever divides two of our figures. It reconciles with the outcomes block above it by construction: it IS 100 x (the leg's rate) x outcomes.recipientsClicked / outcomes.recipientsContacted (or recipientsRepliesPositive on a reply-driven funnel), one deduped person set counted once, and on an ENTRY leg it is also the funnelSteps rung for that same leg, which converts from Contacted. The curve's LAST point covers the DATED population alone, so it equals this figure exactly when nothing is undated and legitimately differs otherwise — undatedContacted and undatedOutcomes state that difference rather than hiding it, and neither leg is ever floored onto the other. NULL only when the scope has reached nobody."),
+  maturity: conversionRateMaturitySchema.optional(),
 });
 
 const learningPhaseSchema = z.object({
@@ -706,7 +826,10 @@ const learningPhaseSchema = z.object({
   campaignIdentityKey: z.string().nullable(),
   legKey: z.string().nullable().describe("The leading campaign's own leg — what it is bought for, and therefore what its outcomes are counted in."),
   outcomeStep: channelStepSchema.nullable().describe("The leg's own toStep. A campaign converting a reply into a meeting is measured on MEETINGS, never on the replies it does not produce."),
-  outcomesObserved: z.number().nullable().describe("The leading campaign's own count of that step. 0 is measured; null is 'we could not count this'."),
+  isMature: z.boolean().nullable().describe("THE SCOPE'S VERDICT this status rides (lib/scope-maturity.ts, features-service#1196) — the byte-same isMature every maturity pair on this body states: 'priced' ⟺ true, and it is never 'priced' while false (the Learning tag). Null = the scope's mature cut could not be made, and the per-campaign flash rule answered instead."),
+  outcomesBasis: z.enum(["mature", "flash"]).describe("Which count outcomesObserved (here and on every campaign) is: 'mature' = the outcomes of leads served by runs started before the leg's cutoff — the count the verdict rests on; 'flash' = everything to date, only when the mature cut could not be made."),
+  outcomesObserved: z.number().nullable().describe("The leading campaign's own count of that step, on outcomesBasis. 0 is measured; null is 'we could not count this'."),
+  flashOutcomesObserved: z.number().nullable().describe("The same campaign's count on everything to date — equal to outcomesObserved on the flash basis."),
   outcomesRequired: z.number().int().describe("How many outcomes of its own leg a campaign needs before its figures stop being noise. ALWAYS stated, whatever the verdict — the consumer renders the bar and divides nothing."),
   progressPct: z.number().nullable().describe("100 × outcomesObserved / outcomesRequired, clamped to 100. Null when the count is."),
   outcomeObserved: z.boolean().describe("TRUE ⟺ the leading campaign's count is a raw OBSERVATION rather than walked from its driver signal."),
@@ -759,7 +882,8 @@ const featureRevenueResponseSchema = z.object({
   funnelSteps: funnelStepBreakdownSchema.nullable().describe("THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read: how many distinct leads reached it, what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped leads and the SAME committed cents as `outcomes` and the money above, so a rung's count agrees with leads[] row for row and the rate between two rungs of one funnel is a rate rather than two scopes divided into each other. NULL when there is no ONE funnel to walk: no funnel is wired for the channel (the leads were never read), the lensed (?lens=) response (a SUBSET of the brand's leads beside the brand's whole spend — the same gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no single one to state. A read priced on ONE funnel always carries it, priced or not — 'we could not price this' and 'this reached nobody' are different statements. Each rung also carries `customerCost`: what the CUSTOMER states the leg they worked themselves cost them, and the average per person who crossed it — reported BESIDE the charged cost, never folded into it, and scoped by the same campaigns the committed cents are."),
   costPerOutcomeHistory: costPerOutcomeHistorySchema.nullable().describe("WHAT ONE OUTCOME HAS COST THIS SCOPE, DAY BY DAY — the dated twin of the cost-per-outcome the `outcomes` block states as a scalar, so a customer can see whether it is getting cheaper and how fast. BOTH legs are CUMULATIVE since the scope's first day, for the reason roiHistory gives: spend on a day buys outcomes that land weeks later, so a period-grain ratio oscillates between 0 and absurd and describes nothing actionable. The outcome is the scope's OWN leg's step, resolved ONCE by the same leader resolution learningPhase uses. MEASURED on both legs and divided by nobody downstream — the spend is runs' dated COMMITTED buckets (the basis outcomes.committedSpentCents rides) and the outcomes are the same deduped leads outcomes.recipientsClicked / recipientsRepliesPositive count, so the FINAL point IS that block's cpcCents/cpprCents divided by the leg's own rate, to the sub-cent rounding roiHistory's terminal ROI also carries (runs returns fractional cents per group and each grouping rounds once: measured in prod 2026-09-17, $7.9740 against a served $7.9735, both rendering $7.97). NOT learningPhase.expectedCostPerOutcomeUsd, which answers a different question — that one is pooled over the cells that OBSERVED an outcome because its job is to found a spend target and exploration spend must not price into it; this is the OBSERVED accounting figure, every dollar spent over every outcome produced. OVERVIEW ONLY, the same gate roiHistory and spend ride: null on the lensed (?lens=) read, absent on the lean (?groupBy=) groups. NULL also when the scope names no priceable outcome step (no campaign, no leg stated, a rate the brand never declared) or the dated-spend read degraded — learningPhase.unmeasuredReason beside it names which, so no reason vocabulary is duplicated. Null means 'we could not measure this', never 'it cost nothing'. (features-service#980)"),
   conversionRateHistory: conversionRateHistorySchema.nullable().describe("WHAT SHARE OF THE PEOPLE THIS SCOPE REACHED HAVE CONVERTED, DAY BY DAY — the dated twin of the conversion rate the outcomes block states as a scalar, and the third curve of the campaign Overview beside roiHistory and costPerOutcomeHistory. BOTH legs are CUMULATIVE since the scope's first day, for the reason roiHistory gives: outreach on a day earns conversions weeks later, so a period-grain rate oscillates between 0 and absurd and describes nothing actionable. The outcome is the scope's OWN leg's step, resolved ONCE by the same leader resolution learningPhase and costPerOutcomeHistory use, so the three curves can never be denominated in different things; the denominator is REACH, the identical base funnelSteps.contactedRecipients states. BOTH legs come off the SAME leads[] rows of the SAME campaign-scoped snapshot — no producer is re-asked and nothing is narrowed — so a campaign-scoped read divides that campaign's own population by CONSTRUCTION and can never borrow its brand's. scopeConversionRatePct is the whole scope's rate including the undated and reconciles with the outcomes block; the curve's last point covers the dated population alone, and undatedContacted / undatedOutcomes state the difference. A point's rate is null ONLY when nobody has been reached yet; a measured 0 means people were reached and nobody converted. OVERVIEW ONLY, the same gate roiHistory and spend ride: null on the lensed (?lens=) read, absent on the lean (?groupBy=) groups. NULL also when the scope names no priceable outcome step (no campaign, no leg stated, a rate the brand never declared) — learningPhase.unmeasuredReason beside it names which, so no reason vocabulary is duplicated. (features-service#992)"),
-  learningPhase: learningPhaseSchema.nullable()
+  learningPhase: learningPhaseSchema.nullable(),
+  maturity: scopeMaturitySchema.nullable().optional().describe("The scope's per-leg figures on both bases and its verdict. Null where the lead population was never read (no funnel wired)."),
 });
 
 const featureRevenueResponseRef = registry.register("FeatureRevenueResponse", featureRevenueResponseSchema);
@@ -781,6 +905,7 @@ const revenueGroupSchema = z.object({
   }),
   costEconomics: revenueCostEconomicsSchema,
   outcomes: revenueOutcomesSchema.nullable().describe("The VOLUME half of this campaign's answer — how much real outcome evidence its ROI, %CAC and pipeline rest on. It exists because those three are derived from however many outcomes the campaign has produced so far: with one or two behind them they are decided by whichever one landed and swing by whole multiples on the next reply, so a consumer that cannot see the volume reads noise as a measurement. Totalled over the campaign's IDENTITY exactly as the money is — its stopped ancestors included — and deduped inside it, so a lead served under two member rows is ONE person here as it is one person to the brand, and every member of an identity carries the identical block. Across identities the counts do NOT sum to the brand (a lead worked under two campaigns is one lead to the brand and belongs to both), the same counting-people property the money half carries. NULL only when no funnel is wired for the feature and the leads were never read — never a fabricated 0."),
+  maturity: scopeMaturitySchema.nullable().optional().describe("The identity's per-leg figures and verdict — the object its own ?campaignId= read serves."),
 });
 
 const featureRevenueGroupedResponseSchema = z.object({
@@ -809,6 +934,7 @@ const revenueWorkflowGroupSchema = z.object({
   }),
   costEconomics: revenueCostEconomicsSchema,
   outcomes: revenueOutcomesSchema.describe("The VOLUME half of this workflow's answer — this brand's own outreach through this dynasty and what it cost, the same figures the un-grouped brand read gives for the whole brand. Every figure rides COMMITTED spend, the single basis costEconomics rides, so cpcCents × recipientsClicked ≈ committedSpentCents by construction. This block once rode billed-only spend to avoid a committed numerator beside a realized ROI; the ROI moved to committed, so that divergence would now BE the incoherence. Counts are distinct leads: a lead served under two workflows is one lead to the brand and belongs to both groups, so the groups do not sum to the brand (the same counting-people property the money half carries); a lead served under no workflow is in no group."),
+  maturity: scopeMaturitySchema.nullable().optional().describe("This workflow's per-leg figures and verdict in this scope."),
 });
 
 const featureRevenueByWorkflowResponseSchema = z.object({
@@ -834,6 +960,7 @@ const revenueOfferGroupSchema = z.object({
     economicsSource: z.enum(["sales-economics", "cross-brand-average"]).nullable().describe("Provenance of the economics used, as on the brand read. Null when the pipeline is null."),
   }),
   costEconomics: revenueCostEconomicsSchema,
+  maturity: scopeMaturitySchema.nullable().optional().describe("The offer's per-leg figures and verdict."),
 });
 
 const featureRevenueByOfferResponseSchema = z.object({
@@ -891,37 +1018,6 @@ registry.registerPath({
 
 // 3-grain projection ladder (crossOrg → brand → audience) + a resolved pick, keyed per
 // (audienceId?, workflowDynasty). Replaces the flat per-workflow row + the deleted /candidates endpoint.
-
-// ── THE TWO VERSIONS OF EVERY FIGURE (lib/maturity.ts, features-service#1196) ─────────────────
-
-const legMaturityRuleSchema = registry.register(
-  "LegMaturityRule",
-  z.object({
-    durationDays: z.number().int().describe("How many days before today (UTC midnight) a run must have STARTED for its spend, and the leads it served, to count as MATURE. 21 on the two cold-email entry legs (a run's positive replies and visits keep arriving for weeks; 21 days captures 92-95% of them, measured in prod 2026-09-28); 0 on every other leg, whose mature figure is therefore its flash figure."),
-    outcomesRequired: z.number().int().describe("How many MATURE outcomes of the leg's step a scope must hold to be judged mature: 1 positive reply on start_to_conversation, 10 website visits on start_to_website_visit, 10 on every other leg."),
-    outcomeSignal: z.enum(["clicked", "positiveReply"]).nullable().describe("The counted signal the leg's outcome IS on an entry leg (a website visit is a click, a conversation is a positive reply). Null on every other leg, whose outcome is walked from a driver signal."),
-    source: z.enum(["measured", "default"]).describe("`measured` = the owner set this rule from production evidence; `default` = no leg-specific rule was measured, so the leg is mature the day it is bought and judged on the pre-existing bar of 10."),
-  }).describe("ONE LEG'S MATURITY RULE. Every figure exists in two versions: FLASH (everything to date) and MATURE (the spend of runs started more than durationDays ago, over the outcomes — whenever they land — of the leads those runs served). One clock for both: the run start, i.e. the serve."),
-);
-
-const outcomeFiguresSchema = registry.register(
-  "OutcomeFigures",
-  z.object({
-    spentUsd: z.number().describe("Committed spend on the request's pricing basis, summed exactly (never rounded per group), so a scope's rows add up to the scope. Null ONLY on the staff actual-cost twin, where this grain's spend on this version holds rows with no known vendor cost."),
-    contacted: z.number().describe("Leads reached."),
-    outcomes: z.number().describe("The leg's own outcomes (on an entry leg, distinct leads at its outcome signal)."),
-    costPerOutcomeUsd: z.number().nullable().describe("spentUsd / outcomes — OBSERVED, never floored. Null at 0 outcomes or 0 spend (and on the actual-cost twin where the vendor cost is unknown)."),
-    conversionRatePct: z.number().nullable().describe("100 × outcomes / contacted. Null only at 0 contacted; a measured 0 stays 0."),
-  }).describe("The observed figures of one scope on one version (flash or mature)."),
-);
-
-/** Both versions of one figure and the verdict, side by side (lib/maturity.ts `MaturityPair`). */
-const maturityPairSchema = <T extends z.ZodTypeAny>(inner: T) =>
-  z.object({
-    flash: inner.nullable().describe("Everything to date. Null when there is no flash figure at all."),
-    mature: inner.nullable().describe("The mature cohort's figure. NULL when the mature cut could not be made. A cut that was made and holds nothing states that instead: zeros on observed figures, null fields on a resolved price."),
-    isMature: z.boolean().nullable().describe("The verdict: at least the leg's outcomesRequired MATURE outcomes. Null = the mature outcomes could not be counted, never a verdict."),
-  });
 
 const grainBlockSchema = z.object({
   costBasis: z.enum(["charged", "incurred"]).optional().describe("Which accounting question THIS grain answers. crossOrg = \"incurred\": the fleet PERFORMANCE benchmark, where spend the platform comped counts at full value (one org being comped must not make a workflow look cheaper to everybody else). brand / audience = \"charged\": this customer's own billed money, where comped spend is absent. Stated per grain because this payload is the one place both questions sit side by side under the same words. Absent on an UNMEASURED row (estimatesByGrain is empty there)."),
@@ -1319,14 +1415,17 @@ const audienceStatsRowSchema = z.object({
     cpfsCents: z.number().nullable().describe("REAL cost per form submission (OBSERVED) = totalCostInUsdCents / formSubmissions. Null when formSubmissions is 0/absent (not the form_submissions goal, or emails not served) OR no spend is attributed — never a false $0.00. Not used in ranking (form_submissions sorts on cpc)."),
     cpsCents: z.number().nullable().describe("REAL cost per signup (OBSERVED) = totalCostInUsdCents / signups. Null when signups is 0/absent (not the signup goal, or emails not served) OR no spend is attributed — never a false $0.00. Not used in ranking (signup sorts on cpc)."),
     cpsaleCents: z.number().nullable().describe("REAL cost per sale (OBSERVED) = totalCostInUsdCents / sales. Null when sales is 0/absent (not the website-purchase / combined-sales goal, or emails not served) OR no spend is attributed — never a false $0.00. Not used in ranking (both goals sort on cppr)."),
-  }),
+  maturity: audienceMetricsMaturitySchema.optional(),
+}),
   projection: z.object({
     basisFunnelKey: z.string().nullable().optional().describe("BRAND-LEVEL read only (no `goal` sent): WHICH of the brand's declared sales funnels this row's return was priced through — this audience's own best-returning funnel, so an audience that pays best through a different funnel than the brand's headline says so instead of being silently priced on the brand's. Absent on a single-funnel read (the caller named the funnel); null when nothing could be priced."),
     lifetimeRevenueUsd: z.number().nullable().optional().describe("The lifetime revenue this row's return was divided by — the NUMERATOR of returnPerDollar. Carried per row because on the brand-level read two audiences ca legitimately be priced through two funnels the brand values differently (a $200 self-serve plan and a $20k contract), so a consumer can never pair a return with an LTR this projection did not use. Equals brandProjection.lifetimeRevenueUsd on a single-funnel read."),
     costPerPaidClientUsd: z.number().nullable().describe("PROJECTED cost to win ONE paying client from this audience — its own observed unit costs (send-tag spend against send-tag clicks/replies, on the workflow the Strategy page renders it under) pushed through the queried goal's funnel on the brand's own declared economics. The denominator of returnPerDollar. Null (never 0) when the funnel has no path to a paying client or at cold start."),
     returnPerDollar: z.number().nullable().describe("PROJECTED — dollars of lifetime revenue per dollar spent on this audience = brandProjection.lifetimeRevenueUsd / costPerPaidClientUsd. Rank a brand's audiences on THIS, not on cost per outcome: cost per outcome ranks by cheapness, so an audience that converts to nothing outranks an expensive one that pays. An audience's return and the brand's return are one statistic at two grains. Not the REALIZED /revenue costEconomics.roiMultiple (that divides measured pipeline by measured spend) — this is what the evidence PROJECTS. An audience with no measured grain of its own inherits brandProjection verbatim (the same brand-level fallback the derived cost columns take). Null (never 0) when unmeasurable."),
     costOfAcquisitionPct: z.number().nullable().describe("PROJECTED — what winning a customer from this audience costs as a SHARE of what that customer is worth over their lifetime, percent = 100 x costPerPaidClientUsd / brandProjection.lifetimeRevenueUsd, which is exactly 100 / returnPerDollar. Below 100 means the audience pays for itself. Served rather than left to the consumer BECAUSE it is the reciprocal of a field already on this row: a consumer dividing one of our fields into another is how two surfaces come to print two numbers for one statistic. Same statement as returnPerDollar and costPerPaidClientUsd in a third unit, so the three can never disagree, and the identical definition one grain coarser at brandProjection.costOfAcquisitionPct. PROJECTED, NOT REALIZED: do not pair it with the realized /revenue costEconomics.costOfAcquisitionPct (measured spend / measured pipeline) as if they were the same figure — this one prices what the audience's own observed unit costs imply under the brand's declared economics. An audience with no measured grain of its own inherits brandProjection verbatim (the same brand-level fallback the derived cost columns and returnPerDollar take). NULL (never 0) whenever it could not be measured — no lifetime revenue, no path to a paying client, cold start; a 0 would say winning a customer costs nothing."),
-  }).describe("PROJECTED return for this audience, on the brand's own economics — three units of ONE statement (cost per paying client, return per dollar, and that cost as a share of lifetime revenue). See returnPerDollar."),
+  maturity: audienceProjectionMaturitySchema.optional(),
+}).describe("PROJECTED return for this audience, on the brand's own economics — three units of ONE statement (cost per paying client, return per dollar, and that cost as a share of lifetime revenue). See returnPerDollar."),
+  maturity: scopeMaturitySchema.nullable().optional().describe("This audience's per-leg figures on both bases and its verdict. The rows' spend and outcomes plus the envelope's unattributedMaturity add up to the envelope's maturity."),
 });
 
 const audienceStatsResponseSchema = z.object({
@@ -1353,6 +1452,7 @@ const audienceStatsResponseSchema = z.object({
     costPerPaidClientUsd: z.number().nullable().describe("PROJECTED cost per paying client for the BRAND on the goal's winning workflow — the value an audience with no measured grain of its own inherits. Null (never 0) at cold start or when the funnel has no path to a paying client."),
     returnPerDollar: z.number().nullable().describe("PROJECTED brand-level return per dollar = lifetimeRevenueUsd / costPerPaidClientUsd — the same definition as each row's, one grain coarser. Read a row's return against this ('this audience beats the brand'). Null (never 0) when unmeasurable."),
     costOfAcquisitionPct: z.number().nullable().describe("PROJECTED brand-level cost of acquisition as a share of lifetime revenue, percent = 100 / returnPerDollar — the same definition as each row's, one grain coarser, and the value a row with no measured grain inherits. Read a row's share against this ('this audience wins customers at a smaller slice of their worth than the brand does'). PROJECTED, not the realized /revenue costEconomics.costOfAcquisitionPct. Null (never 0) when unmeasurable."),
+    maturity: audienceProjectionMaturitySchema.optional().describe("The SCOPE's own projection on both bases, beside its verdict (features-service#1196): priced from the scope's OBSERVED unit costs (every audience plus the untagged remainder) through the byte-same funnel rule the rows' projection.maturity uses, so the rows' pairs are a partition of this one. The fields above are the best workflow's cascade projection (the flash explore floor a row with no measured grain inherits); this pair is what the scope itself produced. Absent when the maturity inputs could not be read."),
   }).describe("The BRAND-level twin of every row's projection, on the same economics and the same formula."),
   declaredFunnelsUnresolved: z.object({
     reason: z.literal("several_offers").describe("Machine-readable, so no consumer matches on prose. The only value today."),
@@ -1360,6 +1460,8 @@ const audienceStatsResponseSchema = z.object({
     offers: z.array(z.object({ offerId: z.string(), name: z.string().nullable() })).describe("The offers brand-service refused to choose between — what a consumer needs to let someone pick one."),
   }).optional().describe("Present ONLY when this brand sells SEVERAL OFFERS and the read could name none. A declared sales funnel hangs off an OFFER — each carries its own conversion rates, its own lifetime revenue and its own value proposition — so brand-service REFUSES (409 SEVERAL_OFFERS) a brand-scoped declared-funnel read for a brand selling more than one, rather than serve one proposition's economics under another's name. That refusal is NOT an outage and NOT a producer gap; it is a question with several answers, so this read DEGRADES and says so instead of failing. The VOLUME half of the body is unaffected (measured facts about spend, not about a proposition); the PROJECTED half reads null. A campaign sells exactly one offer, so naming a `campaignId` names the offer transitively and returns the fully-priced answer. Absent for every brand selling one offer, whose body is byte-unchanged."),
   campaignIdentity: campaignIdentitySchema.optional().describe("Present ONLY on a ?campaignId= read: the campaign IDENTITY these per-audience figures were totalled over. A campaign as a customer knows it is (org, brand, sales funnel, acquisition channel) and is stored as MANY rows - campaign-service mints a new one every time the workflow switches and keeps the ancestors - so asking about any member returns the same, complete campaign, and every member lands on one cache cell. Byte-same block as /features/{slug}/revenue?campaignId= carries, so the two reads name one campaign one way."),
+  maturity: scopeMaturitySchema.nullable().optional().describe("The scope's own maturity (campaign, offer or brand) — the byte-same object /revenue serves for it."),
+  unattributedMaturity: scopeMaturitySchema.nullable().optional().describe("Spend and leads of this scope whose serve carried NO audience tag."),
 });
 
 registry.register("AudienceStatsResponse", audienceStatsResponseSchema);
@@ -1437,6 +1539,7 @@ const offerChannelSchema = z.object({
 const offerRevenueChannelGroupSchema = offerChannelSchema.extend({
   headline: featureRevenueResponseSchema.shape.headline,
   costEconomics: featureRevenueResponseSchema.shape.costEconomics,
+  maturity: featureRevenueResponseSchema.shape.maturity,
 });
 
 const offerRevenueResponseSchema = featureRevenueResponseSchema
@@ -1502,6 +1605,7 @@ const offerOutcomeLegSchema = z.object({
   legSource: z.enum(["stated"]).describe("Always `stated`: a campaign stating no leg is in `unattributedCampaignIds`."),
   countBasis: z.enum(["campaign_leads", "acted_leads", "offer_leads_at_step"]).describe("`campaign_leads`: an entry leg counts its own campaigns' leads. `acted_leads`: an internal leg's campaigns serve no lead of their own, so it counts the leads lead-service records its workers ANSWERED that reached its TO step, and its cost per outcome and ROI divide its spend by them. `offer_leads_at_step`: the degrade when that record is unreadable — the offer's leads at the TO step, not attributable to the channel, so cost per outcome and ROI read null with reason `not_attributable`."),
   ...outcomeFiguresShape,
+  maturity: offerOutcomeMaturitySchema.optional(),
 });
 const offerOutcomesResponseSchema = z.object({
   offerId: z.string(),
@@ -1515,7 +1619,8 @@ const offerOutcomesResponseSchema = z.object({
       valueBasisFunnelKey: z.string().nullable(),
       ...outcomeFiguresShape,
       legs: z.array(offerOutcomeLegSchema).describe("Every leg x channel serving this outcome, in parallel. Their counts can overlap (one lead reached by two channels); the outcome row's count is the distinct union."),
-    }),
+  maturity: offerOutcomeMaturitySchema.optional(),
+}),
   ).describe("One row per step a leg of OUR channels lands on, in step order. NOT additive across rows."),
   unattributedCampaignIds: z.array(z.string()).describe("Campaigns of the offer whose leg could not be known. Their spend is in no row."),
   hiddenCampaignIds: z.array(z.string()).describe("Campaigns on a channel the customer operates — hidden from the rows."),
@@ -1648,6 +1753,7 @@ const brandChannelSchema = z.object({
 const brandRevenueChannelGroupSchema = brandChannelSchema.extend({
   headline: featureRevenueResponseSchema.shape.headline,
   costEconomics: featureRevenueResponseSchema.shape.costEconomics,
+  maturity: featureRevenueResponseSchema.shape.maturity,
 });
 
 const brandRevenueResponseSchema = featureRevenueResponseSchema
@@ -1705,6 +1811,7 @@ const brandOfferRowSchema = z.object({
   channels: z.array(brandChannelSchema).describe("The acquisition channels THIS OFFER is sold through, ascending by slug, with the campaigns carrying each — the exact scope this row's figures were computed over, so a reader can see what a row is made of without a second call."),
   headline: featureRevenueResponseSchema.shape.headline,
   costEconomics: featureRevenueResponseSchema.shape.costEconomics,
+  maturity: scopeMaturitySchema.nullable().optional().describe("The offer's per-leg figures and verdict — the object its own /offers/:offerId/revenue read serves."),
 });
 
 const brandOffersResponseSchema = z.object({

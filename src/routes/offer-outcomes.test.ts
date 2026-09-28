@@ -21,6 +21,7 @@ vi.mock("../lib/conversion-emails-client.js", async (orig) => ({ ...(await orig<
 vi.mock("../lib/email-status-client.js", async (orig) => ({ ...(await orig<typeof import("../lib/email-status-client.js")>()), fetchEventTimestamps: vi.fn() }));
 vi.mock("../lib/followup-actions-client.js", () => ({ fetchFollowupActedLeads: vi.fn() }));
 vi.mock("../lib/runs-cost-client.js", async (orig) => ({ ...(await orig<typeof import("../lib/runs-cost-client.js")>()), fetchRunsCostCents: vi.fn(), fetchMatureSpendCents: vi.fn() }));
+vi.mock("../lib/scope-maturity.js", async (orig) => ({ ...(await orig<typeof import("../lib/scope-maturity.js")>()), fetchSpendSplit: vi.fn() }));
 
 process.env.FEATURES_SERVICE_API_KEY = "test-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
@@ -37,6 +38,7 @@ const { fetchConversionEmails } = await import("../lib/conversion-emails-client.
 const { fetchEventTimestamps } = await import("../lib/email-status-client.js");
 const { fetchRunsCostCents, fetchMatureSpendCents } = await import("../lib/runs-cost-client.js");
 const { fetchFollowupActedLeads } = await import("../lib/followup-actions-client.js");
+const { fetchSpendSplit } = await import("../lib/scope-maturity.js");
 const app = (await import("../index.js")).default;
 const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
 
@@ -44,6 +46,8 @@ const lead = (leadId: string, campaignId: string, signals: Record<string, boolea
   leadId,
   campaignId,
   email: `${leadId}@x.com`,
+  // Served long before any cutoff: every lead is in the mature cohort (#1196).
+  servedAt: "2026-01-05T09:00:00.000Z",
   signals: { contacted: true, ...signals },
 });
 
@@ -77,6 +81,15 @@ describe("GET /offers/:offerId/outcomes", () => {
     vi.mocked(fetchMatureSpendCents).mockImplementation(async (_b, scope) =>
       ({ total: { committedCents: scope === "c1" ? 6000 : 3000, actualCents: 0 }, bySlug: new Map() }) as never,
     );
+    // ONE exact spend split for every group (#1196): each campaign on both bases. Every run here is old
+    // enough to be mature, so flash and mature agree.
+    vi.mocked(fetchSpendSplit).mockResolvedValue(
+      new Map([
+        ["c1", { flash: "6000", mature: "6000" }],
+        ["f1", { flash: "3000", mature: "3000" }],
+        ["a1", { flash: "1000", mature: "1000" }],
+      ]),
+    );
   });
 
   it("serves one row per outcome, distinct leads across channels, spend of the legs landing on it", async () => {
@@ -99,8 +112,19 @@ describe("GET /offers/:offerId/outcomes", () => {
     expect(meeting.costPerOutcomeUsd).toBe(10);
     expect(meeting.roiMultiple).toBeCloseTo(20); // 20% x $1,000 over $10
     expect(fetchFollowupActedLeads).toHaveBeenCalledWith("brand-1", ["a1"]);
-    // The two delayed legs' spend is read on the mature cohort; the AI leg is zero-delay.
-    expect(fetchMatureSpendCents).toHaveBeenCalledTimes(2);
+    // ONE spend read for the whole offer, every campaign cut at its OWN leg's cutoff: the two delayed
+    // legs wait, the AI leg is zero-delay.
+    expect(fetchSpendSplit).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(fetchSpendSplit).mock.calls[0]![0].campaigns).toEqual([
+      { id: "f1", legKey: "start_to_conversation" },
+      { id: "c1", legKey: "start_to_conversation" },
+      { id: "a1", legKey: "conversation_to_meeting_booked" },
+    ]);
+    // The pair beside the legacy figures: observed, on both bases (every lead was served long ago, so
+    // both halves agree), and the verdict on the reply leg's count of 1.
+    expect(reply.maturity.flash).toEqual({ costPerOutcomeUsd: 45, roiMultiple: expect.any(Number) });
+    expect(reply.maturity.mature).toEqual(reply.maturity.flash);
+    expect(reply.maturity.isMature).toBe(true);
   });
 
   it("an unreadable follow-up record degrades the internal leg to unattributed, never a 502", async () => {

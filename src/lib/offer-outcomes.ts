@@ -58,9 +58,11 @@ import { funnelLeg, matchFunnelLegKey } from "./funnel-legs.js";
 import { getFunnel, type SalesEconomics } from "./funnel-registry.js";
 import { LEAD_FIELD_TO_SIGNAL, stepMeasured, type LeadStepField, type StepEvidence } from "./funnel-steps.js";
 import { dedupPersonsByLead, type EnginePerson } from "./revenue-engine.js";
+import { isMatureCount, legCutoffIso, maturityPair, scopeIsMature, servedInMatureCohort, type MaturityPair } from "./maturity.js";
+import { sumDecimalStrings } from "./decimal.js";
+import type { SpendSplit } from "./scope-maturity.js";
 import type { DeclaredSalesFunnel } from "./sales-funnels-client.js";
 import { matchSalesFunnelKey, type SalesFunnelKey } from "./sales-funnels.js";
-import { servedInMatureCohort } from "./maturity.js";
 
 /** The `leads[]` field each step is counted by. `purchase` has no signal anywhere in the fleet. */
 export const STEP_LEAD_FIELD: Record<ChannelStepKey, LeadStepField | null> = {
@@ -208,6 +210,20 @@ export interface OutcomeFigures {
   valueUsd: number | null;
   roiMultiple: number | null;
   unmeasuredReason: OutcomeUnmeasuredReason | null;
+  /**
+   * THE TWO RATIOS ON BOTH BASES, beside the verdict (`lib/maturity.ts`, features-service#1196):
+   * `flash` divides everything to date, `mature` the runs started before the leg's cutoff and the leads
+   * those runs served (their outcomes whenever they landed). A leg's verdict is its mature outcomes
+   * against its leg's count; a row's is the multi-leg rule over its legs (`lib/scope-maturity.ts`).
+   * Both halves divide the offer's spend summed EXACTLY, so they agree with `/revenue`'s pair.
+   */
+  maturity: MaturityPair<OutcomeRatioFigures>;
+}
+
+/** The ratios an outcome row states, as one figure `MaturityPair` carries. */
+export interface OutcomeRatioFigures {
+  roiMultiple: number | null;
+  costPerOutcomeUsd: number | null;
 }
 
 /** The per-group inputs the route read. Cents are COMMITTED, on the request's pricing basis. */
@@ -217,6 +233,20 @@ export interface GroupSpend {
   matureCommittedCents: number;
   /** UTC-midnight cutoff for a delayed leg, null for a zero-delay one. */
   cutoffIso: string | null;
+}
+
+/**
+ * One (leg × channel) group's committed spend on both bases, off the offer's ONE exact spend split
+ * (`lib/scope-maturity.ts`): the group's campaigns summed EXACTLY, never rounded per group — so a row's
+ * spend and its pair are the byte-same money `/revenue` divides for the same campaigns.
+ */
+export function offerGroupSpend(group: OfferLegGroup, split: ReadonlyMap<string, SpendSplit>): GroupSpend {
+  const parts = group.campaignIds.map((id) => split.get(id)).filter((p): p is SpendSplit => p != null);
+  return {
+    committedCents: Number(sumDecimalStrings(parts.map((p) => p.flash))),
+    matureCommittedCents: Number(sumDecimalStrings(parts.map((p) => p.mature))),
+    cutoffIso: legCutoffIso(group.legKey),
+  };
 }
 
 export interface OfferOutcomeLeg extends OutcomeFigures {
@@ -255,6 +285,10 @@ interface ReachedSets {
   all: Set<string>;
   priced: Set<string>;
   maturePriced: Set<string>;
+  /** Every lead of the mature cohort that reached the step (priced or not) — the mature count. */
+  matureAll: Set<string>;
+  /** Distinct leads of the mature cohort at all — whether the leg is present in the mature figures. */
+  matureLeads: number;
 }
 
 function reachedByGroup(
@@ -265,7 +299,13 @@ function reachedByGroup(
   actedLeadIds: ReadonlySet<string> | null,
 ): ReachedSets {
   const toField = STEP_LEAD_FIELD[group.toStep];
-  const empty = { all: new Set<string>(), priced: new Set<string>(), maturePriced: new Set<string>() };
+  const empty = {
+    all: new Set<string>(),
+    priced: new Set<string>(),
+    maturePriced: new Set<string>(),
+    matureAll: new Set<string>(),
+    matureLeads: 0,
+  };
   if (!toField) return { measured: false, notCounted: true, ...empty };
   if (!stepMeasured(toField, evidence)) return { measured: false, notCounted: false, ...empty };
   const toSignal = LEAD_FIELD_TO_SIGNAL[toField];
@@ -283,9 +323,11 @@ function reachedByGroup(
   const isMature = (p: EnginePerson): boolean => servedInMatureCohort(p.servedAt, cutoffIso);
   const out = { measured: true, notCounted: false, ...empty };
   const matureIds = new Set(dedupPersonsByLead(rows.filter(isMature)).map((p) => p.leadId));
+  out.matureLeads = matureIds.size;
   for (const p of dedupPersonsByLead(rows)) {
     if (!p.signals[toSignal]) continue;
     out.all.add(p.leadId);
+    if (matureIds.has(p.leadId)) out.matureAll.add(p.leadId);
     const priced = !(p.unpricedSignals ?? []).includes(toSignal);
     if (priced) {
       out.priced.add(p.leadId);
@@ -295,11 +337,39 @@ function reachedByGroup(
   return out;
 }
 
+/**
+ * PURE. The ratio pair of one leg or row. OBSERVED on both bases: a cost per outcome is spend over the
+ * leads that reached the step (null at 0), a return is the priced leads' value over the same spend. A leg
+ * or row that cannot be attributed, or whose step cannot be counted, has no pair figure at all.
+ */
+function ratioPair(
+  reached: ReachedSets,
+  spend: { committedCents: number; matureCommittedCents: number },
+  value: StepValue | undefined,
+  attributable: boolean,
+  cuttable: boolean,
+  isMature: boolean | null,
+): MaturityPair<OutcomeRatioFigures> {
+  const unit = value?.valuePerOutcomeUsd ?? null;
+  const on = (cents: number, all: Set<string>, priced: Set<string>): OutcomeRatioFigures => ({
+    costPerOutcomeUsd: all.size > 0 && cents > 0 ? cents / 100 / all.size : null,
+    roiMultiple: unit !== null && cents > 0 ? (priced.size * unit * 100) / cents : null,
+  });
+  if (!reached.measured || !attributable) return maturityPair<OutcomeRatioFigures>(null, null, isMature);
+  return maturityPair(
+    on(spend.committedCents, reached.all, reached.priced),
+    cuttable ? on(spend.matureCommittedCents, reached.matureAll, reached.maturePriced) : null,
+    isMature,
+  );
+}
+
 function figures(
   reached: ReachedSets,
   spend: { committedCents: number; matureCommittedCents: number },
   value: StepValue | undefined,
   attributable: boolean,
+  cuttable: boolean,
+  isMature: boolean | null,
 ): OutcomeFigures {
   const count = reached.measured ? reached.all.size : null;
   const unit = value?.valuePerOutcomeUsd ?? null;
@@ -321,6 +391,7 @@ function figures(
     valueUsd: reached.measured && unit !== null ? reached.priced.size * unit : null,
     roiMultiple: roi,
     unmeasuredReason: reason,
+    maturity: ratioPair(reached, spend, value, attributable, cuttable, isMature),
   };
 }
 
@@ -354,7 +425,13 @@ export function assembleOfferOutcomes(input: {
   channelName: (featureSlug: string) => string;
   /** Acting campaign id → lead ids its worker answered; null when lead-service's record was unreadable. */
   actedLeadIdsByCampaign: ReadonlyMap<string, ReadonlySet<string>> | null;
+  /**
+   * The mature cut can be made — every person states its serve date (`serveDatesStated`). False nulls
+   * every mature half and every verdict: never the flash figure under the mature name.
+   */
+  serveDatesStated?: boolean;
 }): OfferOutcomeRow[] {
+  const cuttable = input.serveDatesStated ?? true;
   const byStep = new Map<ChannelStepKey, OfferLegGroup[]>();
   for (const g of input.groups) {
     const list = byStep.get(g.toStep);
@@ -367,10 +444,23 @@ export function assembleOfferOutcomes(input: {
     const groups = byStep.get(step);
     if (!groups) continue;
     const value = input.values.get(step);
-    const union: ReachedSets = { measured: true, notCounted: false, all: new Set(), priced: new Set(), maturePriced: new Set() };
+    const union: ReachedSets = {
+      measured: true,
+      notCounted: false,
+      all: new Set(),
+      priced: new Set(),
+      maturePriced: new Set(),
+      matureAll: new Set(),
+      matureLeads: 0,
+    };
     const total = { committedCents: 0, matureCommittedCents: 0 };
     const legs: OfferOutcomeLeg[] = [];
     let allAttributable = true;
+    // The row's verdict: the multi-leg rule over the legs PRESENT in its mature figures
+    // (`lib/scope-maturity.ts`) — a leg with mature spend or mature leads. None present while the row has
+    // spent or reached somebody is a young row: false.
+    const present: Array<{ legKey: string; matureOutcomes: number | null }> = [];
+    let flashActivity = false;
     for (const group of groups) {
       const spend = input.spendByGroup.get(group);
       if (!spend) throw new Error(`[features-service] no spend read for leg ${group.legKey} on ${group.featureSlug}`);
@@ -378,11 +468,21 @@ export function assembleOfferOutcomes(input: {
       const attributable = group.fromStep === null || acted !== null;
       if (!attributable) allAttributable = false;
       const reached = reachedByGroup(group, input.persons, input.evidence, spend.cutoffIso, acted);
+      const legMature: boolean | null =
+        !cuttable || !reached.measured || !attributable ? null : isMatureCount(reached.matureAll.size, group.legKey);
+      if (spend.committedCents > 0 || reached.all.size > 0) flashActivity = true;
+      if (!cuttable || !reached.measured || !attributable) {
+        if (spend.committedCents > 0 || reached.all.size > 0) present.push({ legKey: group.legKey, matureOutcomes: null });
+      } else if (spend.matureCommittedCents > 0 || reached.matureLeads > 0) {
+        present.push({ legKey: group.legKey, matureOutcomes: reached.matureAll.size });
+      }
       if (!reached.measured) union.measured = false;
       if (reached.notCounted) union.notCounted = true;
       for (const id of reached.all) union.all.add(id);
       for (const id of reached.priced) union.priced.add(id);
       for (const id of reached.maturePriced) union.maturePriced.add(id);
+      for (const id of reached.matureAll) union.matureAll.add(id);
+      union.matureLeads += reached.matureLeads;
       total.committedCents += spend.committedCents;
       total.matureCommittedCents += spend.matureCommittedCents;
       legs.push({
@@ -394,14 +494,15 @@ export function assembleOfferOutcomes(input: {
         campaignIds: group.campaignIds,
         legSource: group.legSource,
         countBasis: group.fromStep === null ? "campaign_leads" : acted ? "acted_leads" : "offer_leads_at_step",
-        ...figures(reached, spend, value, attributable),
+        ...figures(reached, spend, value, attributable, cuttable, legMature),
       });
     }
+    const rowMature: boolean | null = present.length === 0 ? (flashActivity ? false : null) : scopeIsMature(present);
     rows.push({
       step: { ...CHANNEL_STEPS[step] },
       valueBasisFunnelKey: value?.basisFunnelKey ?? null,
       // One unattributable leg is enough to make the row's count something no spend here bought on its own.
-      ...figures(union, total, value, allAttributable),
+      ...figures(union, total, value, allAttributable, cuttable, rowMature),
       legs,
     });
   }

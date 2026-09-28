@@ -319,6 +319,7 @@ router.get("/offers/:offerId/revenue", apiKeyAuth, async (req, res) => {
             campaignIds: channel.campaignIds,
             headline: channelBody.headline,
             costEconomics: channelBody.costEconomics,
+            maturity: channelBody.maturity ?? null,
           };
         });
         return { offerId, brandId, costBasis: "charged" as const, channels: groups, ...applyLeadDetail(body, leadDetail) };

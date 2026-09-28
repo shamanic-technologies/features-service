@@ -18,9 +18,8 @@ import { buildOfferChannelMap, OfferHasNoChannelsError } from "../lib/offer-chan
 import {
   assembleOfferOutcomes,
   buildOfferLegPartition,
+  offerGroupSpend,
   stepValues,
-  type GroupSpend,
-  type OfferLegGroup,
 } from "../lib/offer-outcomes.js";
 import { parseAcquisitionChannel } from "../lib/channel-catalogue.js";
 import type { AcquisitionChannel } from "../lib/acquisition-channels.js";
@@ -35,8 +34,9 @@ import { fetchQualifications } from "../lib/qualifications-client.js";
 import { fetchConversionEmails } from "../lib/conversion-emails-client.js";
 import { fetchEventTimestamps } from "../lib/email-status-client.js";
 import { applySignalOverlays } from "../lib/signal-overlays.js";
-import { fetchMatureSpendCents, fetchRunsCostCents } from "../lib/runs-cost-client.js";
-import { maturityCutoffIso, maturityDaysForLeg } from "../lib/roi-maturity.js";
+import { maturityDaysForLeg } from "../lib/roi-maturity.js";
+import { serveDatesStated } from "../lib/mature-evidence.js";
+import { fetchSpendSplit, type ScopeCampaign, type SpendSplit } from "../lib/scope-maturity.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
 import { fetchFollowupActedLeads } from "../lib/followup-actions-client.js";
 import type { StepEvidence } from "../lib/funnel-steps.js";
@@ -101,31 +101,6 @@ async function readOfferPersons(input: {
   };
 }
 
-async function readGroupSpend(
-  group: OfferLegGroup,
-  brandId: string,
-  headers: DownstreamHeaders,
-  pricing: Pricing,
-): Promise<GroupSpend> {
-  const scope = group.campaignIds.length === 1 ? group.campaignIds[0] : group.campaignIds;
-  const days = maturityDaysForLeg(group.legKey);
-  const cutoffIso = days > 0 ? maturityCutoffIso(days) : null;
-  const [whole, mature] = await Promise.all([
-    fetchRunsCostCents(brandId, scope, group.featureSlug, headers, pricing),
-    cutoffIso
-      ? fetchMatureSpendCents(brandId, scope, group.featureSlug, headers, pricing, {
-          cutoffIso,
-          delayedCampaignIds: new Set(group.campaignIds),
-        }).then((r) => r.total)
-      : Promise.resolve(null),
-  ]);
-  return {
-    committedCents: whole.committedCents,
-    matureCommittedCents: mature ? mature.committedCents : whole.committedCents,
-    cutoffIso,
-  };
-}
-
 router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
   try {
     const req = rawReq as AuthenticatedRequest;
@@ -182,13 +157,24 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
                 persons: [] as EnginePerson[],
                 evidence: { observedSteps: true, legacyQualifications: true, signupAttribution: true, formSubmissionAttribution: true },
               }),
-          mapWithConcurrency(partition.groups, 4, (g) => readGroupSpend(g, brandId, headers, pricing)),
+          // ONE spend read for every group: each campaign's spend on both bases, summed exactly, cut at its
+          // own leg's cutoff. A campaign carries exactly one leg, so the groups partition it.
+          groupCampaignIds.length > 0
+            ? fetchSpendSplit({
+                brandId,
+                featureScope: [...new Set(partition.groups.map((g) => g.featureSlug))],
+                campaignIds: groupCampaignIds,
+                campaigns: partition.groups.flatMap((g) => g.campaignIds.map((id): ScopeCampaign => ({ id, legKey: g.legKey }))),
+                headers,
+                pricing,
+              })
+            : Promise.resolve(new Map<string, SpendSplit>()),
           // Unreadable → the internal legs degrade to the offer's leads at their step, unattributed.
           internalCampaignIds.length > 0
             ? soft("follow-up actions", fetchFollowupActedLeads(brandId, internalCampaignIds))
             : Promise.resolve(new Map<string, Set<string>>()),
         ]);
-        const spendByGroup = new Map(partition.groups.map((g, i) => [g, spends[i]] as const));
+        const spendByGroup = new Map(partition.groups.map((g) => [g, offerGroupSpend(g, spends)] as const));
         const outcomes = assembleOfferOutcomes({
           groups: partition.groups,
           persons: people.persons,
@@ -197,6 +183,7 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
           values: stepValues(declared, brandEconomics.economics),
           channelName: (slug) => catalogueEntry(slug)?.name ?? slug,
           actedLeadIdsByCampaign: acted,
+          serveDatesStated: serveDatesStated(people.persons),
         });
         const maturityDays = Math.max(0, ...partition.groups.map((g) => maturityDaysForLeg(g.legKey)));
         return {

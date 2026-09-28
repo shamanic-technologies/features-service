@@ -110,6 +110,21 @@ import { fetchOfferCampaigns, resolveOfferCampaignIds, OfferHasNoCampaignsError 
 import { featureSlugList, type FeatureScope } from "../lib/feature-scope.js";
 import { pickBestChannelParents } from "../lib/offer-parents.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
+import { serveDatesStated } from "../lib/mature-evidence.js";
+import type { MaturityPair } from "../lib/maturity.js";
+import { conversionRateFigures } from "../lib/conversion-rate-history.js";
+import {
+  buildScopeMaturity,
+  costRatiosPair,
+  fetchSpendSplit,
+  outcomeRatiosPair,
+  scopeSpendUsd,
+  UNKNOWN_SCOPE_MATURITY,
+  type ScopeBases,
+  type ScopeCampaign,
+  type ScopeMaturity,
+  type SpendSplit,
+} from "../lib/scope-maturity.js";
 
 const router = Router();
 
@@ -212,7 +227,23 @@ export interface Spend {
    * every ratio is then null too, never 0 and never the whole-history ratio.
    */
   ratioBasis: SpendRatioBasis;
+  /**
+   * EVERY COST PER OUTCOME ABOVE, ON BOTH BASES, beside the scope's verdict (`lib/maturity.ts`,
+   * features-service#1196). OBSERVED, never floored: `null` at 0 outcomes is "this scope bought none of
+   * these", where the columns above floor to a benchmark. `mature` divides the runs started before the
+   * leg's cutoff and the leads those runs served; `flash` everything to date. Spend summed exactly
+   * (`lib/scope-maturity.ts`), so the pair agrees with every other surface's pair for the same scope.
+   */
+  maturity?: MaturityPair<SpendRatios>;
 }
+
+/** The spend block's cost-per-outcome columns, as one figure `MaturityPair` carries. */
+export type SpendRatios = Pick<Spend, "totalCpcCents" | "cpprCents"> & {
+  cpsCents: number | null;
+  cpsmCents: number | null;
+  cpfsCents: number | null;
+  cpSaleCents: number | null;
+};
 
 export interface SpendRatioBasis {
   maturityDays: number;
@@ -607,6 +638,15 @@ interface OutcomeCauses {
 interface RevenueResponse {
   featureSlug: string;
   /**
+   * THE SCOPE'S MATURITY (`lib/scope-maturity.ts`, features-service#1196): one entry per leg the scope's
+   * campaigns are bought for — its rule (duration, bar, outcome signal) and its figures on both bases
+   * (`flash` everything to date, `mature` the runs started before the leg's cutoff and the leads those
+   * runs served) — and the scope's verdict. The SAME object every surface describing this scope serves
+   * (audience rows, offer outcomes, /stats), so a consumer can reconcile them. Null where the lead
+   * population was never read (no funnel wired). `isMature: null` = could not judge.
+   */
+  maturity?: ScopeMaturity | null;
+  /**
    * totalPipelineUsd is null when no funnel is wired, or the brand has no saved economics AND no
    * cross-brand average exists yet (cold start). economicsSource tags the provenance of the economics
    * used: "sales-economics" = the brand's own saved set; "cross-brand-average" = the brand-service
@@ -900,6 +940,9 @@ function emptyBody(
     // Not computed on either path that reaches here (no funnel wired, or cold start): the verdict
     // needs the brand's rate ladder to walk a leg's outcome, and neither path has one.
     learningPhase: null,
+    // The no-funnel path never reads the lead population, so it has no scope maturity to state; the
+    // cold-start path, which DID read it, replaces this through `attachMaturity`.
+    maturity: null,
   };
 }
 
@@ -1260,19 +1303,117 @@ async function resolveMaturityPlan(
   featureScope: FeatureScope,
   campaignScope: CampaignFilter,
   headers: DownstreamHeaders,
-): Promise<MaturityPlan> {
+): Promise<{ plan: MaturityPlan; campaigns: ScopeCampaign[] | null }> {
   try {
     const rows = await fetchBrandCampaignRows(brandId, undefined, headers);
-    return buildMaturityPlan(
-      rows,
-      scopePredicate({ featureSlugs: featureSlugList(featureScope), campaignIds: campaignScopeIds(campaignScope) }),
-    );
+    const inScope = scopePredicate({ featureSlugs: featureSlugList(featureScope), campaignIds: campaignScopeIds(campaignScope) });
+    return {
+      plan: buildMaturityPlan(rows, inScope),
+      // The SAME rows, kept: the scope's per-leg maturity (`lib/scope-maturity.ts`) is cut on each
+      // campaign's own leg, off this one read.
+      campaigns: rows.filter(inScope).map((row) => ({ id: row.id, legKey: row.legKey ?? null })),
+    };
   } catch (err) {
     console.error(
       `[features-service] campaign legs unreadable for brand ${brandId} — ROI / CAC read null (maturity_unknown): ${(err as Error).message}`,
     );
-    return UNKNOWN_MATURITY;
+    return { plan: UNKNOWN_MATURITY, campaigns: null };
   }
+}
+
+/**
+ * THE SCOPE'S MATURITY AND THE BASES EVERY BLOCK PAIR DIVIDES (`lib/scope-maturity.ts`). The mature half
+ * exists only when the scope's legs were read AND the persons state their serve date: otherwise the mature
+ * cut cannot be made, and every mature figure is null rather than the flash figure under the mature name.
+ */
+function scopeMaturityOf(input: {
+  campaigns: ScopeCampaign[] | null;
+  plan: MaturityPlan;
+  split: Map<string, SpendSplit> | null;
+  persons: EnginePerson[];
+  maturePersons: EnginePerson[];
+}): { maturity: ScopeMaturity; bases: ScopeBases } | null {
+  if (!input.split) return null;
+  const spend = scopeSpendUsd(input.split);
+  const cuttable = !input.plan.unknown && input.campaigns !== null && serveDatesStated(input.persons);
+  const maturity = input.campaigns
+    ? buildScopeMaturity({
+        campaigns: input.campaigns,
+        persons: input.persons,
+        spend: input.split,
+        serveDatesStated: cuttable,
+      })
+    : UNKNOWN_SCOPE_MATURITY;
+  return {
+    maturity,
+    bases: {
+      flashSpendUsd: spend.flash,
+      matureSpendUsd: cuttable ? spend.mature : null,
+      persons: input.persons,
+      maturePersons: cuttable ? input.maturePersons : null,
+      isMature: maturity.isMature,
+    },
+  };
+}
+
+/**
+ * Every cost per outcome of the spend block on both bases — OBSERVED (no floor), each divided by the
+ * scope's spend summed exactly. `mature` rides the SAME cohort basis the block's own ratios divide; a
+ * scope with no mature spend yet reads every mature column null (`buildSpend`'s own `maturing` rule).
+ */
+function spendRatiosPair(
+  breakdown: SpendBreakdown,
+  leads: LeadRow[],
+  counts: ConversionCounts | null,
+  bases: ScopeBases,
+  matureBasis: SpendBasis,
+): MaturityPair<SpendRatios> {
+  const pick = (spend: Spend): SpendRatios => ({
+    totalCpcCents: spend.totalCpcCents,
+    cpprCents: spend.cpprCents,
+    cpsCents: spend.cpsCents ?? null,
+    cpsmCents: spend.cpsmCents ?? null,
+    cpfsCents: spend.cpfsCents ?? null,
+    cpSaleCents: spend.cpSaleCents ?? null,
+  });
+  const flashCents = bases.flashSpendUsd * 100;
+  const flash = pick(buildSpend({ ...breakdown, totalSpentCents: flashCents }, leads, counts, null, { kind: "whole" }));
+  let mature: SpendRatios | null = null;
+  if (bases.matureSpendUsd != null) {
+    const cents = bases.matureSpendUsd * 100;
+    mature = pick(
+      matureBasis.kind === "mature"
+        ? buildSpend({ ...breakdown, totalSpentCents: flashCents }, leads, counts, null, {
+            ...matureBasis,
+            cost: { committedCents: cents, actualCents: cents },
+          })
+        : buildSpend({ ...breakdown, totalSpentCents: cents }, leads, counts, null, { kind: "whole" }),
+    );
+  }
+  return { flash, mature, isMature: bases.isMature };
+}
+
+/**
+ * Hang the scope's maturity on a body: `maturity` itself, and the pair beside each block's own ratios.
+ * MUTATES the blocks in place — `costEconomics` is keyed in `lib/cost-economics.ts`' mature-basis map by
+ * object identity, so a copy would lose the entry the fleet warm reads.
+ */
+function attachMaturity(
+  body: RevenueBody,
+  scoped: { maturity: ScopeMaturity; bases: ScopeBases } | null,
+  pipelines: { flash: number | null; mature: number | null },
+  lifetimeRevenueUsd: number | null | undefined,
+  spendPair: MaturityPair<SpendRatios> | null,
+): RevenueBody {
+  body.maturity = scoped ? scoped.maturity : null;
+  if (!scoped) return body;
+  // The curves are the mature cohort's: their verdict rides beside them, the byte-same one.
+  if (body.roiHistory) body.roiHistory.isMature = scoped.maturity.isMature;
+  if (body.costPerOutcomeHistory) body.costPerOutcomeHistory.isMature = scoped.maturity.isMature;
+  body.costEconomics.maturity = costRatiosPair(scoped.bases, pipelines, lifetimeRevenueUsd);
+  if (body.outcomes) body.outcomes.maturity = outcomeRatiosPair(scoped.bases);
+  if (body.spend && spendPair) body.spend.maturity = spendPair;
+  return body;
 }
 
 /**
@@ -1428,7 +1569,29 @@ export async function computeFeatureRevenue(
   // economics===null cold-start path below over-fetches leads — accepted for the common-path win.
   // WHICH campaigns of this scope are still maturing, then the MATURE cohort's spend — the denominator
   // every ratio divides (`lib/roi-maturity.ts`). Chained inside Wave A so neither adds a round trip.
-  const planPromise = resolveMaturityPlan(brandId, featureScope, campaignScope, headers);
+  const scopePromise = resolveMaturityPlan(brandId, featureScope, campaignScope, headers);
+  const planPromise = scopePromise.then((scope) => scope.plan);
+  // THE SCOPE'S SPEND PER CAMPAIGN ON BOTH BASES, summed exactly — what every maturity pair on this body
+  // divides (`lib/scope-maturity.ts`). SOFT, with a loud log: it is a read this body did not make before
+  // the pairs existed, so its failure nulls `maturity` (and every pair) rather than 502-ing a read whose
+  // every other figure is right. With the scope's legs unknown it still reads the flash half (no cutoff
+  // to cut at); every mature half is then null.
+  const splitPromise: Promise<Map<string, SpendSplit> | null> = scopePromise
+    .then((scope) =>
+      fetchSpendSplit({
+        brandId,
+        featureScope,
+        campaignIds: campaignScopeIds(campaignScope),
+        campaigns: scope.campaigns ?? [],
+        workflowSlugs: workflowScope?.producerSlugs,
+        headers,
+        pricing,
+      }),
+    )
+    .catch((err: Error) => {
+      console.error(`[features-service] maturity spend split unreadable for brand ${brandId} (maturity null): ${err.message}`);
+      return null;
+    });
   const maturePromise = planPromise.then((plan) =>
     plan.cutoffIso
       ? fetchMatureSpendCents(brandId, campaignScope, featureScope, headers, pricing, plan, workflowScope?.producerSlugs).then(
@@ -1464,7 +1627,7 @@ export async function computeFeatureRevenue(
   // alongside the lead read so the brand-wide page it walks is shared in flight. Soft: null → those
   // leads carry nothing.
   const contactedPricingPromise = lens ? Promise.resolve(null) : contactedPricingSoft(brandId, headers);
-  const [costResult, priced, persons, sequences, counts, conversionEmails, parents, spendByDay, plan, matureCost, maturingByDay] = await Promise.all([
+  const [costResult, priced, persons, sequences, counts, conversionEmails, parents, spendByDay, plan, matureCost, maturingByDay, split, maturityScope] = await Promise.all([
     includeSpend
       ? fetchSpendBreakdown(brandId, campaignScope, featureScope, headers, new Date(), pricing, workflowScope?.producerSlugs)
       : fetchRunsCostCents(brandId, campaignScope, featureScope, headers, pricing, workflowScope?.producerSlugs),
@@ -1512,6 +1675,8 @@ export async function computeFeatureRevenue(
     planPromise,
     maturePromise,
     maturingByDayPromise,
+    splitPromise,
+    scopePromise,
   ]);
   const { economics, source } = priced.economics;
   const breakdown: SpendBreakdown | null = "totalSpentCents" in costResult ? costResult : null;
@@ -1527,7 +1692,16 @@ export async function computeFeatureRevenue(
     // is a real, measured answer and is given. "We could not price this" and "this reached nobody"
     // are different statements.
     const coldFunnel = funnelForSteps(requestedFunnel, priced.pricedFunnelKeys);
-    return emptyBody(
+    // The leads WERE read, so the scope's maturity is a real answer here too: counts and spend need no
+    // economics. Its cost ratios are null on both bases — there is no pipeline to divide.
+    const coldScoped = scopeMaturityOf({
+      campaigns: maturityScope.campaigns,
+      plan,
+      split,
+      persons,
+      maturePersons: plan.cutoffIso && matureCost ? matureCohortPersons(persons, plan) : persons,
+    });
+    return attachMaturity(emptyBody(
       null,
       cost,
       breakdown ? buildSpend(breakdown, [], counts, parents) : null,
@@ -1558,7 +1732,7 @@ export async function computeFeatureRevenue(
       // attributed — "we could not price this" and "we could not measure this" are different answers.
       DELIVERY_ATTRIBUTED_OUTCOMES,
       causes,
-    );
+    ), coldScoped, { flash: null, mature: null }, null, null);
   }
   const economicsSource: EconomicsSource = source === "user" ? "sales-economics" : "cross-brand-average";
 
@@ -1580,7 +1754,23 @@ export async function computeFeatureRevenue(
       });
       lensMaturity = { days: plan.days, cost: matureCost, persons: matureCohortPersons(dated, plan) };
     }
-    return buildLensBody(lens, persons, economics, economicsSource, cost, causes, lensMaturity);
+    const lensBody = buildLensBody(lens, persons, economics, economicsSource, cost, causes, lensMaturity);
+    // The lens prices its OWN pipeline (a lead subset through declared rates), so its pair divides the
+    // lens's flash and mature pipelines by the scope's exact spend on each basis.
+    const lensScoped = scopeMaturityOf({
+      campaigns: maturityScope.campaigns,
+      plan,
+      split,
+      persons,
+      maturePersons: lensMaturity && lensMaturity !== "unknown" ? lensMaturity.persons : persons,
+    });
+    return attachMaturity(
+      lensBody,
+      lensScoped,
+      { flash: lensBody.headline.totalPipelineUsd, mature: lensBody.costEconomics.ratioBasis.totalPipelineUsd },
+      economics.lifetimeRevenueUsd,
+      null,
+    );
   }
 
   // ONLY THE LEGS OF THE FUNNELS BEING PRICED. A signal that is not a step of one of the brand's
@@ -1647,6 +1837,32 @@ export async function computeFeatureRevenue(
           // A failed lead read already fails this whole compute; here it only must not go unhandled.
           // null (never an empty map) on a failed read: the compute then fails into its named degrade.
           engagedLeadsByCampaign: leadsRead.then(engagedLeadsByCampaign).catch(() => null),
+          // THE VERDICT THE LEARNING GATE RIDES — `scopeMaturityOf` on the learning phase's OWN scope
+          // (every campaign of it: a workflow drill-down's split is re-read un-narrowed, since the gate
+          // is the campaign's, not the workflow's). On every other read these are the byte-same campaigns,
+          // spend and people the body's own `maturity` is built from, so the two are one verdict.
+          scopeIsMature: Promise.all([
+            scopePromise,
+            workflowScope
+              ? scopePromise.then((scope) =>
+                  fetchSpendSplit({
+                    brandId,
+                    featureScope,
+                    campaignIds: campaignScopeIds(campaignScope),
+                    campaigns: scope.campaigns ?? [],
+                    headers,
+                    pricing,
+                  }),
+                )
+              : splitPromise,
+            leadsRead,
+          ])
+            .then(
+              ([scope, learningSplit, rows]) =>
+                scopeMaturityOf({ campaigns: scope.campaigns, plan: scope.plan, split: learningSplit, persons: rows, maturePersons: [] })
+                  ?.maturity.isMature ?? null,
+            )
+            .catch(() => null),
         })
       : Promise.resolve<LearningPhaseResult | null>(null),
   ]);
@@ -1734,8 +1950,12 @@ export async function computeFeatureRevenue(
   // conversion curve divides by the SAME object, so the denominator a consumer charts and the one we
   // divided by are the same people by construction.
   const contactedSeries = buildContactedSeries(result.leads);
+  // THE SCOPE'S MATURITY (`lib/scope-maturity.ts`) — built on the SAME persons (overlays applied) and the
+  // SAME mature cohort the ratios above divide, so every pair on this body agrees with the legacy mature
+  // figures to the spend's rounding, and with every other surface's pair for this scope exactly.
+  const scoped = scopeMaturityOf({ campaigns: maturityScope.campaigns, plan, split, persons, maturePersons });
 
-  return {
+  const body: RevenueBody = {
     headline: { ...result.headline, economicsSource },
     costEconomics: buildCostEconomics({
       committedCostInUsdCents: cost.committedCents,
@@ -1777,7 +1997,31 @@ export async function computeFeatureRevenue(
     // producer read — both legs are the leads already in hand — so it is null only when the scope
     // names no priceable outcome step, and `learningPhase.unmeasuredReason` says which.
     conversionRateHistory:
-      outcomeTerms && driverSeries ? buildConversionRateHistory(contactedSeries, driverSeries, outcomeTerms) : null,
+      outcomeTerms && driverSeries
+        ? {
+            ...buildConversionRateHistory(contactedSeries, driverSeries, outcomeTerms),
+            // Both bases off the SAME engine passes the money rides: the whole population, and the mature
+            // cohort (the leads served before the cutoff) — null when that cut could not be made.
+            ...(scoped
+              ? {
+                  maturity: {
+                    flash: conversionRateFigures(contactedSeries, driverSeries, outcomeTerms.rateFromDriver),
+                    mature:
+                      scoped.bases.maturePersons === null
+                        ? null
+                        : conversionRateFigures(
+                            buildContactedSeries(matureResult.leads),
+                            outcomeTerms.driver === "click"
+                              ? buildOutcomeSeries(matureResult.leads).recipientsClicked
+                              : buildOutcomeSeries(matureResult.leads).recipientsRepliesPositive,
+                            outcomeTerms.rateFromDriver,
+                          ),
+                    isMature: scoped.bases.isMature,
+                  },
+                }
+              : {}),
+          }
+        : null,
     organizations: result.organizations,
     leads: result.leads,
     // The SAME evidence the funnel walk reports its rungs on — one implementation, so an unmeasured
@@ -1812,6 +2056,13 @@ export async function computeFeatureRevenue(
     outcomeCauses: { priced: [...causes], counts: observed?.causeCounts ?? null },
     learningPhase: learning?.phase ?? null,
   };
+  return attachMaturity(
+    body,
+    scoped,
+    { flash: result.headline.totalPipelineUsd, mature: matureResult.headline.totalPipelineUsd },
+    economics.lifetimeRevenueUsd,
+    breakdown && scoped ? spendRatiosPair(breakdown, result.leads, counts, scoped.bases, spendBasis) : null,
+  );
 }
 
 // ── GET /features/:featureSlug/revenue ───────────────────────────────────────
@@ -2139,7 +2390,9 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
               // to this service, and its campaigns may state several, so pricing on one member's funnel
               // would answer for the offer with one campaign's vocabulary.
               const body = await computeFeatureRevenue(featureSlug, brandId, campaignIds, funnel, headers, undefined, pricingForIdentity(null), false, pricing, undefined, undefined, undefined, causes);
-              return { offerId: id, campaignIds, headline: body.headline, costEconomics: body.costEconomics };
+              // `maturity`: the offer's own per-leg figures and verdict — the object every surface about
+              // this offer serves, so the row agrees with the offer's own reads.
+              return { offerId: id, campaignIds, headline: body.headline, costEconomics: body.costEconomics, maturity: body.maturity ?? null };
             }),
           );
 
@@ -2207,6 +2460,9 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
                   // two member rows is ONE person here as it is one person to the brand. Every member
                   // of an identity therefore carries the identical block, like the money.
                   outcomes: body.outcomes,
+                  // The identity's per-leg figures and verdict (`lib/scope-maturity.ts`) — the same
+                  // object its own `?campaignId=` read serves, so a row and its page cannot disagree.
+                  maturity: body.maturity ?? null,
                 }));
               }),
             )

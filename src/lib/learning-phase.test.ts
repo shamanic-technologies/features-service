@@ -323,3 +323,50 @@ describe("a scope finishes when its FIRST campaign does", () => {
     expect(build({ campaigns: [b, a] }).campaignId).toBe("c-a");
   });
 });
+
+/**
+ * THE VERDICT RIDES THE SCOPE'S `isMature` (`lib/scope-maturity.ts`, features-service#1196) — the byte-same
+ * verdict every maturity pair on the body states, so the Learning tag and the money beside it cannot
+ * disagree. Each case asserts what the per-campaign FLASH rule would have answered instead.
+ */
+describe("buildLearningPhase — the scope's mature verdict", () => {
+  it("a young campaign whose replies are all younger than 21 days is NOT priced, whatever its flash count says", () => {
+    const young = campaign({
+      legKey: CONVERSATION_LEG,
+      observed: { clicks: 0, replies: 3 },
+      matureObserved: { clicks: 0, replies: 0 },
+    });
+    // On flash alone 3 replies clear the conversation leg's bar of 1 → priced.
+    expect(build({ campaigns: [{ ...young, matureObserved: undefined }] }).status).toBe("priced");
+    const phase = build({ campaigns: [young], scopeIsMature: false });
+    expect(phase.status).not.toBe("priced");
+    expect(phase.isMature).toBe(false);
+    expect(phase.outcomesBasis).toBe("mature");
+    expect(phase.outcomesObserved).toBe(0);
+    expect(phase.flashOutcomesObserved).toBe(3);
+    expect(phase.progressPct).toBe(0);
+    expect(phase.campaigns[0]).toMatchObject({ outcomesObserved: 0, flashOutcomesObserved: 3 });
+  });
+
+  it("a scope mature across its campaigns is priced before any single campaign crosses alone", () => {
+    const a = campaign({ campaignId: "c-a", campaignIds: ["c-a"], observed: { clicks: 6, replies: 0 }, matureObserved: { clicks: 5, replies: 0 } });
+    const b = campaign({ campaignId: "c-b", campaignIds: ["c-b"], observed: { clicks: 7, replies: 0 }, matureObserved: { clicks: 5, replies: 0 } });
+    // Neither holds the visit leg's 10 alone, so the flash per-campaign rule reads not priced.
+    expect(build({ campaigns: [{ ...a, matureObserved: undefined }, { ...b, matureObserved: undefined }] }).status).not.toBe("priced");
+    const phase = build({ campaigns: [a, b], scopeIsMature: true });
+    expect(phase.status).toBe("priced");
+    expect(phase.isMature).toBe(true);
+    expect(phase.progressPct).toBe(100);
+    expect(phase.outcomesObserved).toBe(5);
+    expect(phase.flashOutcomesObserved).toBe(6);
+  });
+
+  it("a scope whose cut could not be made keeps the per-campaign flash rule, and says so", () => {
+    const phase = build({ campaigns: [campaign({ legKey: CONVERSATION_LEG, observed: { clicks: 0, replies: 2 } })], scopeIsMature: null });
+    expect(phase.status).toBe("priced");
+    expect(phase.isMature).toBeNull();
+    expect(phase.outcomesBasis).toBe("flash");
+    expect(phase.outcomesObserved).toBe(2);
+    expect(phase.flashOutcomesObserved).toBe(2);
+  });
+});

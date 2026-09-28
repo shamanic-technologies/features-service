@@ -69,6 +69,27 @@
 import type { ChannelStepDef } from "./acquisition-channels.js";
 import type { ScopeOutcomeTerms } from "./cost-per-outcome-history.js";
 import type { SignalSeries } from "./revenue-engine.js";
+import type { MaturityPair } from "./maturity.js";
+
+/** The scope's conversion on one basis: who it reached, how many reached the step, and the rate. */
+export interface ConversionRateFigures {
+  /** Distinct leads reached (bounces and unsubscribes included). */
+  contacted: number;
+  /** Outcomes of this leg's step — the driver count walked through the leg's rate. */
+  outcomes: number;
+  /** `100 × outcomes / contacted`; NULL only at 0 contacted — a measured 0 stays 0. */
+  conversionRatePct: number | null;
+}
+
+/** PURE. One basis's conversion from a reach series and a driver series (`rate` = the leg's rate). */
+export function conversionRateFigures(contacted: SignalSeries, driver: SignalSeries, rate: number): ConversionRateFigures {
+  const outcomes = driver.total * rate;
+  return {
+    contacted: contacted.total,
+    outcomes,
+    conversionRatePct: contacted.total === 0 ? null : (outcomes / contacted.total) * 100,
+  };
+}
 
 /** One UTC calendar day of the curve. BOTH legs are CUMULATIVE since the scope's first day. */
 export interface ConversionRateHistoryPoint {
@@ -110,6 +131,14 @@ export interface ConversionRateHistory {
    * number.
    */
   scopeConversionRatePct: number | null;
+  /**
+   * THE SCOPE'S CONVERSION ON BOTH BASES, beside its verdict (`lib/maturity.ts`, features-service#1196).
+   * `flash` is `scopeConversionRatePct`'s population; `mature` counts only the leads served before the
+   * leg's cutoff (run-start clock), whose outcomes have had the leg's full duration to land — so a young
+   * scope's rate is not read down by leads that have not had time to answer. Absent where the scope's
+   * maturity could not be read.
+   */
+  maturity?: MaturityPair<ConversionRateFigures>;
 }
 
 /**
