@@ -41,12 +41,16 @@ vi.mock("../lib/channel-catalogue.js", () => ({
   salesFunnelCatalogue: () => [],
 }));
 
-const brand = (brandId: string, legKeys: string[] | undefined, multiple: number) => ({
+/** A brand MATURE on every leg it performs (the leg medians are over mature scopes only). */
+const brand = (brandId: string, legKeys: string[] | undefined, multiple: number, mature: boolean | null = true) => ({
   brandId,
   committedSpendUsd: 1000,
   expectedPipelineUsd: 1000 * multiple,
   expectedPaidClients: 2,
-  ...(legKeys === undefined ? {} : { legKeys }),
+  isMature: mature,
+  flashCommittedSpendUsd: 1000,
+  flashExpectedPipelineUsd: 1000 * multiple,
+  ...(legKeys === undefined ? {} : { legKeys, legMaturity: Object.fromEntries(legKeys.map((k) => [k, mature])) }),
 });
 const ROWS = [
   brand("b1", ["start_to_conversation"], 1.8),
@@ -115,6 +119,17 @@ describe("GET /public/stats/outcome-return-on-spend", () => {
     const keys: string[] = [];
     JSON.stringify(res.body, (k, v) => (keys.push(k), v));
     expect(keys.filter((k) => /funnel/i.test(k))).toEqual([]);
+  });
+
+  it("a brand YOUNG on the leg is in no leg median, and the figure equals the leg's maturity.mature", async () => {
+    mockReadChannel.mockResolvedValue({ brands: [...ROWS, brand("y1", ["start_to_conversation"], 50, false)], computedAt: new Date() });
+    const res = await request(app).get("/public/stats/outcome-return-on-spend?minSpendUsd=0");
+    const leg = (res.body.channels[0].legs as Array<Figures & { legKey: string; maturity: { mature: { median: number } } }>).find(
+      (l) => l.legKey === "start_to_conversation",
+    )!;
+    expect([leg.measured, leg.brandCount]).toEqual([true, 4]);
+    expect(leg.medianReturnPerDollar).toBeCloseTo(1.9, 10); // 2.0 with the young brand in
+    expect(leg.medianReturnPerDollar).toBe(leg.maturity.mature.median);
   });
 
   it("a snapshot written before legs were recorded says so, not 'not enough brands'", async () => {

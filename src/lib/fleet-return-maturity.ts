@@ -6,10 +6,11 @@
  * `outcome-return-on-spend`) take each brand's REALIZED return on its mature cohort. Owner decision: a
  * fleet median is taken over MATURE scopes only — a brand still inside its first three weeks, or whose
  * mature cohort has not produced its leg's count of outcomes yet, has a ratio that says how young it is
- * rather than how it performs. So beside every legacy median (all brands past the spend floor,
- * byte-unchanged) rides a `maturity` block: the SAME brands' returns restricted to the ones whose scope
- * `isMature` (the verdict `lib/scope-maturity.ts` states on the brand's own dashboard), on BOTH versions —
- * `flash` (everything to date) and `mature` (the figure each client's dashboard displays).
+ * rather than how it performs. Every median is taken over the brands whose scope `isMature` (the verdict
+ * `lib/scope-maturity.ts` states on the brand's own dashboard): the `maturity` block on BOTH versions —
+ * `flash` (everything to date) and `mature` (the figure each client's dashboard displays) — and, since the
+ * owner's go of 2026-09-28, the legacy median fields too (`overMatureScopes`): they were every brand past the
+ * floor, and the homepage printed them. They now equal `maturity.mature`.
  *
  * Unmeasurable is its own answer, never a wider population: `maturity_not_recorded_yet` (the snapshot was
  * written before brands carried a verdict — the next warm fills it), `not_enough_brands` (too few mature
@@ -117,6 +118,26 @@ export function buildMatureScopesReturn<R extends MaturityReturnRow>(
     flash: quantilesOf(flash),
     mature: quantilesOf(mature),
   };
+}
+
+/** The reason every median states when its snapshot predates the verdicts (the next warm fills them in). */
+export const MATURITY_NOT_RECORDED = "maturity_not_recorded_yet" as const;
+
+/**
+ * PURE. A legacy fleet median over MATURE scopes only: the same builder, fed only the brands whose verdict
+ * is `true` — so a young brand, or one whose cut could not be made (`null`), is in no fleet median. A
+ * snapshot whose rows carry no verdict at all is unmeasurable (`maturity_not_recorded_yet`), never read as
+ * the unfiltered rows: widening the population to make a number appear is the one answer this refuses.
+ */
+export function overMatureScopes<R, F extends { reason: string | null }>(
+  rows: readonly R[] | null,
+  isMatureOf: (row: R) => boolean | null | undefined,
+  build: (population: readonly R[] | null) => F,
+): F {
+  if (rows !== null && rows.length > 0 && rows.every((r) => isMatureOf(r) === undefined)) {
+    return { ...build([]), reason: MATURITY_NOT_RECORDED } as F;
+  }
+  return build(rows === null ? null : rows.filter((r) => isMatureOf(r) === true));
 }
 
 /**

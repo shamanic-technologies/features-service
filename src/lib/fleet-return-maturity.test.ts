@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildMatureScopesReturn, combineVerdicts, type MaturityReturnRow } from "./fleet-return-maturity.js";
+import { buildMatureScopesReturn, combineVerdicts, overMatureScopes, type MaturityReturnRow } from "./fleet-return-maturity.js";
 
 /**
  * ONE population where the medians over EVERY brand and over MATURE brands only disagree: the two young
@@ -61,5 +61,18 @@ describe("combineVerdicts — a young part is a young whole", () => {
     expect(combineVerdicts([true, true])).toBe(true);
     expect(combineVerdicts([undefined, undefined])).toBeUndefined();
     expect(combineVerdicts([])).toBeUndefined();
+  });
+});
+
+describe("overMatureScopes — a legacy median is fed MATURE brands only", () => {
+  const rows = [{ v: true, x: 1 }, { v: false, x: 2 }, { v: null, x: 3 }, { v: true, x: 4 }];
+  const build = (pop: readonly { x: number }[] | null) => ({ reason: pop === null ? "no_snapshot_yet" : null, xs: pop?.map((r) => r.x) ?? null });
+  it("keeps only the verdict-true rows; young and uncut rows are out", () => {
+    expect(overMatureScopes(rows, (r) => r.v, build)).toEqual({ reason: null, xs: [1, 4] });
+  });
+  it("no verdict on any row is maturity_not_recorded_yet, never the unfiltered rows; null stays null", () => {
+    const unrecorded = rows.map((r) => ({ ...r, v: undefined }));
+    expect(overMatureScopes(unrecorded, (r) => r.v, build)).toEqual({ reason: "maturity_not_recorded_yet", xs: [] });
+    expect(overMatureScopes(null as typeof rows | null, (r) => r.v, build)).toEqual({ reason: "no_snapshot_yet", xs: null });
   });
 });

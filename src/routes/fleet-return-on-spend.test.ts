@@ -53,11 +53,17 @@ const FEATURE_SLUG = "sales-cold-email-outreach";
 const PATH = `/public/stats/return-on-spend?featureSlug=${FEATURE_SLUG}`;
 const MOCK_FEATURE = { id: "feat-1", slug: FEATURE_SLUG, name: "Sales", description: "t", status: "active" };
 
-/** A brand that spent `spend` and is expected to return `spend * multiple`. */
-const at = (brandId: string, spend: number, multiple: number | null) => ({
+/**
+ * A MATURE brand that spent `spend` and is expected to return `spend * multiple` (the fleet medians are over
+ * mature scopes only, features-service#1196). Its flash twin is the same ratio here.
+ */
+const at = (brandId: string, spend: number, multiple: number | null, isMature: boolean | null = true) => ({
   brandId,
   committedSpendUsd: spend,
   expectedPipelineUsd: multiple === null ? null : spend * multiple,
+  isMature,
+  flashCommittedSpendUsd: spend,
+  flashExpectedPipelineUsd: multiple === null ? null : spend * multiple,
 });
 
 /** Five real brands at 1x / 2x / 3x / 40x / 57x, plus one that never got past a few dollars. */
@@ -157,6 +163,31 @@ describe("GET /public/stats/return-on-spend", () => {
     expect(res.body.medianReturnPerDollar).toBeNull();
     expect(res.body.p25ReturnPerDollar).toBeNull();
     expect(res.body.maxReturnPerDollar).toBeNull();
+  });
+
+  it("takes the median over MATURE brands only — the median it prints IS maturity.mature", async () => {
+    // A young brand and one whose cut could not be made, both far above the rest: taken over every brand
+    // past the floor the median would read 40x (1 / 2 / 3 / 40 / 57 / 800 / 900).
+    const brands = [...BRANDS, at("young", 5000, 900, false), at("uncut", 5000, 800, null)];
+    mockReadSnapshot.mockResolvedValue({ brands, computedAt: new Date() });
+    const res = await request(app).get(PATH);
+    expect(res.body).toMatchObject({ measured: true, reason: null, brandCount: 5 });
+    expect(res.body.medianReturnPerDollar).toBeCloseTo(3, 10);
+    expect(res.body.medianReturnPerDollar).not.toBeCloseTo(40, 1);
+    expect(res.body.maxReturnPerDollar).toBeCloseTo(57, 10);
+    expect(res.body.medianReturnPerDollar).toBe(res.body.maturity.mature.median);
+    expect(res.body.p25ReturnPerDollar).toBe(res.body.maturity.mature.p25);
+    expect(res.body.brandCount).toBe(res.body.maturity.brandCount);
+  });
+
+  it("a snapshot written before verdicts is UNMEASURED, never the median of every brand", async () => {
+    mockReadSnapshot.mockResolvedValue({
+      brands: BRANDS.map(({ isMature: _m, flashCommittedSpendUsd: _s, flashExpectedPipelineUsd: _p, ...r }) => r),
+      computedAt: new Date(),
+    });
+    const res = await request(app).get(PATH);
+    expect(res.body).toMatchObject({ measured: false, reason: "maturity_not_recorded_yet", brandCount: 0 });
+    expect(res.body.medianReturnPerDollar).toBeNull();
   });
 
   it("400s a floor it cannot read, rather than quietly using the default", async () => {
