@@ -2783,11 +2783,18 @@ dividing two served counts in the browser, so the rate had to be served or it co
   from different bases — the brand-scoped `spend.salesMeetingsCount` above a funnel-scoped attended
   count — can state a rate above 100% between two rungs of one funnel, which is not a rate at all.
   That is why the count is NOT taken from the conversion-counts read the tiles use.
-- **THE RUNGS ARE THE FUNNEL'S OWN LEGS, ZIPPED TO ITS OWN LABELS.** `FUNNEL_LEG_SIGNALS[key]` (now
-  exported) beside `SALES_FUNNELS[key].steps`, position for position — 4 rungs for either meeting
-  funnel, 3 for `website_purchases` and `form_magnet`. A length mismatch is a `FunnelStepShapeError`
-  and a leg with no lead field is an `UnknownFunnelLegSignalError`: both FAIL LOUD, because the
-  alternative is a rung silently mislabelled or dropped out of the middle of somebody's funnel.
+- **THE RUNGS ARE THE FUNNEL'S OWN STEPS, PLACED BY THEIR WORDING (supersedes the position-for-position
+  zip, features-service#1203).** One rung per `SALES_FUNNELS[key].steps` entry, in order; each step takes
+  the next `FUNNEL_LEG_SIGNALS[key]` signal only when that signal counts what the step's label names
+  (`leadFieldOfStep`, the ONE step-wording → lead-flag map, shared with the effective rates). A step no
+  counted signal lands on ("Direct purchase" on `sales_from_website`, the ad-hosted form opening
+  `lead_forms_from_ads`) is an UNMEASURED rung: `leadField: null`, count, both costs and both rates that
+  touch it null — never dropped, never counted on a lookalike (an own-site form is NOT the ad's form).
+  A signal that names no step is still a `FunnelStepShapeError`, and a signal with no lead field an
+  `UnknownFunnelLegSignalError`: both FAIL LOUD. The zip threw on both funnels, and in the fleet-return
+  warm that throw dropped the WHOLE brand: prod 2026-09-28, Labcritics (43x), Lenxo and SortesAngel were
+  missing from every public median and showcase pick. Guard: `lib/funnel-steps.test.ts` walks every
+  catalogue funnel. Consumer note: the dashboard parses `leadField` as a string; it must accept null.
 - **EACH RUNG ALSO STATES WHAT THE CUSTOMER'S OWN WORK ON IT COST — `customerCost`, per rung.** The
   platform automates the first link and CHARGES for it; the customer runs the meeting and closes the
   deal, and every time somebody moves a lead across a leg on the dashboard they are asked what that
@@ -3553,6 +3560,8 @@ with nothing in between. A funnel named after a purchase had no purchase in it.
   states `rate_not_declared` on that step. **Do NOT "fix" any of those with `visitToClosePct`**: that
   rate is the price of the WHOLE funnel, so printing it under the middle rung says a checkout costs
   what a paying client costs. Null is "we have no rate for this arrow", never 0 and never borrowed.
+  Nothing COUNTS the rung either: `funnelSteps` states it unmeasured (`leadField: null`), and the
+  sale's rate from it is null (features-service#1203; the walk threw on it until 2026-09-28).
 - **THE SALE'S PRICE DID NOT MOVE, BY CONSTRUCTION.** `visitToClosePct` is the DIRECT self-serve close
   and SPANS the purchase rung — the identical multi-hop shape `meetingToClosePct` already has over the
   show-up rung — so the terminal is still `clickUsd / visitToPaidClientPct` and is asserted to the cent
