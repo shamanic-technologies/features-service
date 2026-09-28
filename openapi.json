@@ -17789,7 +17789,7 @@
           "flash",
           "mature"
         ],
-        "description": "THE SAME MEDIAN OVER MATURE SCOPES ONLY, on both versions (features-service#1196). The legacy fields beside it are unchanged (every brand past the floor)."
+        "description": "THE SAME MEDIAN OVER MATURE SCOPES ONLY, on both versions (features-service#1196). The legacy median fields beside it are taken over the SAME mature population and equal `mature` (since 2026-09-28)."
       }
     },
     "parameters": {}
@@ -28913,7 +28913,7 @@
     "/public/stats/return-on-spend": {
       "get": {
         "summary": "Fleet MEDIAN return on spend across client brands, over a spend floor (public, no auth)",
-        "description": "Cross-org (fleet-wide) MEDIAN return on spend our clients get on an acquisition channel: per brand, its expected pipeline divided by its committed spend on the NET pricing basis (what the brand actually paid after its per-org usage discount) — the exact ratio that brand reads as ROI on its own dashboard, which reads net too — with the median taken across brands. The unit is the BRAND and the statistic is the MEDIAN, never a mean (a handful of brands sit tens of multiples above the rest, so an average describes nobody). POPULATION: only brands past `minSpendUsd` of spend, because a brand three days into its first campaign produces a ratio with no information in it. `brandCount` states how many brands the median was actually taken over. This is a REALIZED figure and is NOT the projected `returnPerDollar` on /public/channel-funnel-economics (lifetime revenue over a modelled cost per paying client) — the two answer different questions and differ by an order of magnitude in production. Served from a PERSISTED snapshot refreshed off the request path, so it answers in milliseconds; the underlying per-brand compute is a full engine pass per brand and takes minutes. A read arriving before the first refresh answers `measured: false, reason: \"no_snapshot_yet\"` rather than blocking. Never a 0 and never a wider population when the figure cannot be stated honestly.",
+        "description": "Cross-org (fleet-wide) MEDIAN return on spend our clients get on an acquisition channel: per brand, its expected pipeline divided by its committed spend on the NET pricing basis (what the brand actually paid after its per-org usage discount) — the exact ratio that brand reads as ROI on its own dashboard, which reads net too — with the median taken across brands. The unit is the BRAND and the statistic is the MEDIAN, never a mean (a handful of brands sit tens of multiples above the rest, so an average describes nobody). POPULATION: only brands whose own scope is MATURE (the isMature their dashboard states: runs started 21+ days ago have produced the leg's outcome count; features-service#1196) and past `minSpendUsd` of spend, because a young brand's ratio says how young it is, not how it performs. `brandCount` states how many brands the median was actually taken over. This is a REALIZED figure and is NOT the projected `returnPerDollar` on /public/channel-funnel-economics (lifetime revenue over a modelled cost per paying client) — the two answer different questions and differ by an order of magnitude in production. Served from a PERSISTED snapshot refreshed off the request path, so it answers in milliseconds; the underlying per-brand compute is a full engine pass per brand and takes minutes. A read arriving before the first refresh answers `measured: false, reason: \"no_snapshot_yet\"` rather than blocking. Never a 0 and never a wider population when the figure cannot be stated honestly.",
         "tags": [
           "Public"
         ],
@@ -28973,9 +28973,10 @@
                       "nullable": true,
                       "enum": [
                         "no_snapshot_yet",
-                        "not_enough_brands"
+                        "not_enough_brands",
+                        "maturity_not_recorded_yet"
                       ],
-                      "description": "Present exactly when `measured` is false. `no_snapshot_yet` = the background compute has not written a snapshot for this channel yet; `not_enough_brands` = a snapshot exists but too few brands are past the spend floor to state a median honestly. Neither is an error, and neither is ever answered with a 0 or with the median over a wider population."
+                      "description": "Present exactly when `measured` is false. `no_snapshot_yet` = the background compute has not written a snapshot for this channel yet; `maturity_not_recorded_yet` = the snapshot predates the brands' maturity verdicts (the median is over mature scopes only; the next refresh fills them); `not_enough_brands` = a snapshot exists but too few MATURE brands are past the spend floor to state a median honestly. Neither is an error, and neither is ever answered with a 0 or with the median over a wider population."
                     },
                     "minSpendUsd": {
                       "type": "number",
@@ -28983,12 +28984,12 @@
                     },
                     "brandCount": {
                       "type": "integer",
-                      "description": "How many brands the median was taken over. ALWAYS present, including when it is too few to state one."
+                      "description": "How many MATURE brands the median was taken over. ALWAYS present, including when it is too few to state one."
                     },
                     "medianReturnPerDollar": {
                       "type": "number",
                       "nullable": true,
-                      "description": "The MIDDLE brand's realized return on spend — its expected pipeline divided by its committed spend. A median, never a mean: a handful of brands sit tens of multiples above the rest, so an average describes nobody in the population."
+                      "description": "The MIDDLE mature brand's realized return on spend — its expected pipeline divided by its committed spend, on its mature cohort. Equals `maturity.mature.median`. A median, never a mean: a handful of brands sit tens of multiples above the rest, so an average describes nobody in the population."
                     },
                     "p25ReturnPerDollar": {
                       "type": "number",
@@ -29081,7 +29082,7 @@
     "/public/stats/funnel-return-on-spend": {
       "get": {
         "summary": "Fleet MEDIAN return on spend per (acquisition channel x sales funnel) pair (public, no auth)",
-        "description": "Cross-org (fleet-wide) MEDIAN return on spend our clients get through ONE SALES FUNNEL on one acquisition channel, plus the median cost per paying client on the same population. Per brand the figure is its expected pipeline scoped to that funnel divided by its committed spend on the channel - the byte-same ratio that brand reads as ROI on its own dashboard (GET /features/{slug}/revenue?pricing=net), on the NET pricing basis - what the brand actually paid after its per-org usage discount - with the median taken across brands. The unit is the BRAND and the statistic is the MEDIAN, never a mean. POPULATION: brands that declared the funnel and are past `minSpendUsd` of spend on the channel. A pair below the minimum brand count answers `measured: false, reason: \"not_enough_brands\"` with `brandCount` stated, and no figure is ever computed over a wider population to make a number appear. This is a REALIZED figure and is NOT the projected `returnPerDollar` on /public/channel-funnel-economics (a pooled unit price through MEAN declared rates and a MEAN lifetime revenue) - the two answer different questions and differ by an order of magnitude in production. Both reads exist; neither may be relabelled as the other. Served from a PERSISTED snapshot refreshed off the request path, so it answers in milliseconds; the underlying per-brand compute is a full engine pass per (brand, funnel) and takes minutes. A read arriving before the first refresh answers `no_snapshot_yet` rather than blocking. No identity of any kind: no org, no user, no run, no key.",
+        "description": "Cross-org (fleet-wide) MEDIAN return on spend our clients get through ONE SALES FUNNEL on one acquisition channel, plus the median cost per paying client on the same population. Per brand the figure is its expected pipeline scoped to that funnel divided by its committed spend on the channel - the byte-same ratio that brand reads as ROI on its own dashboard (GET /features/{slug}/revenue?pricing=net), on the NET pricing basis - what the brand actually paid after its per-org usage discount - with the median taken across brands. The unit is the BRAND and the statistic is the MEDIAN, never a mean. POPULATION: MATURE brands (their own scope isMature) that read the funnel and are past `minSpendUsd` of spend on the channel. A pair below the minimum brand count answers `measured: false, reason: \"not_enough_brands\"` with `brandCount` stated, and no figure is ever computed over a wider population to make a number appear. This is a REALIZED figure and is NOT the projected `returnPerDollar` on /public/channel-funnel-economics (a pooled unit price through MEAN declared rates and a MEAN lifetime revenue) - the two answer different questions and differ by an order of magnitude in production. Both reads exist; neither may be relabelled as the other. Served from a PERSISTED snapshot refreshed off the request path, so it answers in milliseconds; the underlying per-brand compute is a full engine pass per (brand, funnel) and takes minutes. A read arriving before the first refresh answers `no_snapshot_yet` rather than blocking. No identity of any kind: no org, no user, no run, no key.",
         "tags": [
           "Public"
         ],
@@ -29183,9 +29184,10 @@
                             "nullable": true,
                             "enum": [
                               "no_snapshot_yet",
-                              "not_enough_brands"
+                              "not_enough_brands",
+                              "maturity_not_recorded_yet"
                             ],
-                            "description": "Present exactly when `measured` is false. `no_snapshot_yet` = no background compute has written a snapshot for this CHANNEL yet; `not_enough_brands` = a snapshot exists but too few brands sell this funnel through this channel past the spend floor. Neither is an error, and neither is ever answered with a 0 or with a median quietly taken over a wider population (a neighbouring funnel, the whole channel)."
+                            "description": "Present exactly when `measured` is false. `no_snapshot_yet` = no background compute has written a snapshot for this CHANNEL yet; `maturity_not_recorded_yet` = the snapshot predates the brands' maturity verdicts; `not_enough_brands` = a snapshot exists but too few MATURE brands sell this funnel through this channel past the spend floor. Neither is an error, and neither is ever answered with a 0 or with a median quietly taken over a wider population (a neighbouring funnel, the whole channel)."
                           },
                           "minSpendUsd": {
                             "type": "number",
@@ -29870,9 +29872,10 @@
                                   "enum": [
                                     "no_snapshot_yet",
                                     "legs_not_recorded_yet",
+                                    "maturity_not_recorded_yet",
                                     "not_enough_brands"
                                   ],
-                                  "description": "`legs_not_recorded_yet` = the channel snapshot predates the brand-leg field; the next warm fills it. Never a 0, never a wider population."
+                                  "description": "`legs_not_recorded_yet` = the channel snapshot predates the brand-leg field; `maturity_not_recorded_yet` = it predates the per-leg maturity verdicts; the next warm fills either. The population is the brands MATURE on these legs. Never a 0, never a wider population."
                                 },
                                 "minSpendUsd": {
                                   "type": "number"
@@ -29883,7 +29886,7 @@
                                 "medianReturnPerDollar": {
                                   "type": "number",
                                   "nullable": true,
-                                  "description": "REALIZED — the middle brand's channel-wide return (mature pipeline / mature committed spend, net) over brands whose campaigns are bought for this leg / land on this outcome. Replaces the pair's `medianReturnPerDollar`."
+                                  "description": "REALIZED — the middle brand's channel-wide return (mature pipeline / mature committed spend, net) over the MATURE brands whose campaigns are bought for this leg / land on this outcome. Replaces the pair's `medianReturnPerDollar`."
                                 },
                                 "p25ReturnPerDollar": {
                                   "type": "number",
@@ -29978,9 +29981,10 @@
                                   "enum": [
                                     "no_snapshot_yet",
                                     "legs_not_recorded_yet",
+                                    "maturity_not_recorded_yet",
                                     "not_enough_brands"
                                   ],
-                                  "description": "`legs_not_recorded_yet` = the channel snapshot predates the brand-leg field; the next warm fills it. Never a 0, never a wider population."
+                                  "description": "`legs_not_recorded_yet` = the channel snapshot predates the brand-leg field; `maturity_not_recorded_yet` = it predates the per-leg maturity verdicts; the next warm fills either. The population is the brands MATURE on these legs. Never a 0, never a wider population."
                                 },
                                 "minSpendUsd": {
                                   "type": "number"
@@ -29991,7 +29995,7 @@
                                 "medianReturnPerDollar": {
                                   "type": "number",
                                   "nullable": true,
-                                  "description": "REALIZED — the middle brand's channel-wide return (mature pipeline / mature committed spend, net) over brands whose campaigns are bought for this leg / land on this outcome. Replaces the pair's `medianReturnPerDollar`."
+                                  "description": "REALIZED — the middle brand's channel-wide return (mature pipeline / mature committed spend, net) over the MATURE brands whose campaigns are bought for this leg / land on this outcome. Replaces the pair's `medianReturnPerDollar`."
                                 },
                                 "p25ReturnPerDollar": {
                                   "type": "number",

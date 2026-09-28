@@ -3812,7 +3812,7 @@ const matureScopesReturnSchema = registry.register(
     brandCount: z.number().int().describe("How many mature brands past the spend floor the medians were taken over. Always present."),
     flash: returnQuantilesSchema.nullable().describe("Their return on everything to date: whole pipeline / whole committed spend (net)."),
     mature: returnQuantilesSchema.nullable().describe("Their return on the mature cohort — the figure each client's own dashboard displays."),
-  }).describe("THE SAME MEDIAN OVER MATURE SCOPES ONLY, on both versions (features-service#1196). The legacy fields beside it are unchanged (every brand past the floor)."),
+  }).describe("THE SAME MEDIAN OVER MATURE SCOPES ONLY, on both versions (features-service#1196). The legacy median fields beside it are taken over the SAME mature population and equal `mature` (since 2026-09-28)."),
 );
 
 const fleetReturnOnSpendResponseSchema = z.object({
@@ -3820,10 +3820,10 @@ const fleetReturnOnSpendResponseSchema = z.object({
   featureSlug: z.string(),
   unit: z.literal("brand").describe("Each data point is ONE brand's realized return on its own spend."),
   measured: z.boolean().describe("True only when a median is stated. False ⇒ every figure is null and `reason` says why."),
-  reason: z.enum(["no_snapshot_yet", "not_enough_brands"]).nullable().describe("Present exactly when `measured` is false. `no_snapshot_yet` = the background compute has not written a snapshot for this channel yet; `not_enough_brands` = a snapshot exists but too few brands are past the spend floor to state a median honestly. Neither is an error, and neither is ever answered with a 0 or with the median over a wider population."),
+  reason: z.enum(["no_snapshot_yet", "not_enough_brands", "maturity_not_recorded_yet"]).nullable().describe("Present exactly when `measured` is false. `no_snapshot_yet` = the background compute has not written a snapshot for this channel yet; `maturity_not_recorded_yet` = the snapshot predates the brands' maturity verdicts (the median is over mature scopes only; the next refresh fills them); `not_enough_brands` = a snapshot exists but too few MATURE brands are past the spend floor to state a median honestly. Neither is an error, and neither is ever answered with a 0 or with the median over a wider population."),
   minSpendUsd: z.number().describe("The spend floor the population was restricted to (USD), echoed back so a consumer can state it."),
-  brandCount: z.number().int().describe("How many brands the median was taken over. ALWAYS present, including when it is too few to state one."),
-  medianReturnPerDollar: z.number().nullable().describe("The MIDDLE brand's realized return on spend — its expected pipeline divided by its committed spend. A median, never a mean: a handful of brands sit tens of multiples above the rest, so an average describes nobody in the population."),
+  brandCount: z.number().int().describe("How many MATURE brands the median was taken over. ALWAYS present, including when it is too few to state one."),
+  medianReturnPerDollar: z.number().nullable().describe("The MIDDLE mature brand's realized return on spend — its expected pipeline divided by its committed spend, on its mature cohort. Equals `maturity.mature.median`. A median, never a mean: a handful of brands sit tens of multiples above the rest, so an average describes nobody in the population."),
   p25ReturnPerDollar: z.number().nullable().describe("25th percentile — the lower edge of the bulk."),
   p75ReturnPerDollar: z.number().nullable().describe("75th percentile — the upper edge of the bulk."),
   minReturnPerDollar: z.number().nullable().describe("The weakest qualifying brand's return."),
@@ -3839,7 +3839,7 @@ registry.registerPath({
   description:
     "Cross-org (fleet-wide) MEDIAN return on spend our clients get on an acquisition channel: per brand, its expected pipeline divided by its committed spend on the NET pricing basis (what the brand actually paid after its per-org usage discount) — the exact ratio that brand reads as ROI on its own dashboard, which reads net too — with the median taken across brands. " +
     "The unit is the BRAND and the statistic is the MEDIAN, never a mean (a handful of brands sit tens of multiples above the rest, so an average describes nobody). " +
-    "POPULATION: only brands past `minSpendUsd` of spend, because a brand three days into its first campaign produces a ratio with no information in it. `brandCount` states how many brands the median was actually taken over. " +
+    "POPULATION: only brands whose own scope is MATURE (the isMature their dashboard states: runs started 21+ days ago have produced the leg's outcome count; features-service#1196) and past `minSpendUsd` of spend, because a young brand's ratio says how young it is, not how it performs. `brandCount` states how many brands the median was actually taken over. " +
     "This is a REALIZED figure and is NOT the projected `returnPerDollar` on /public/channel-funnel-economics (lifetime revenue over a modelled cost per paying client) — the two answer different questions and differ by an order of magnitude in production. " +
     "Served from a PERSISTED snapshot refreshed off the request path, so it answers in milliseconds; the underlying per-brand compute is a full engine pass per brand and takes minutes. A read arriving before the first refresh answers `measured: false, reason: \"no_snapshot_yet\"` rather than blocking. " +
     "Never a 0 and never a wider population when the figure cannot be stated honestly.",
@@ -3866,7 +3866,7 @@ const funnelReturnPairSchema = z.object({
   funnelName: z.string(),
   funnelSteps: z.array(z.string()).describe("The funnel's steps in order, so a row renders without the consumer knowing the catalogue."),
   measured: z.boolean().describe("True only when a median RETURN is stated for this pair. False ⇒ every figure is null and `reason` says why."),
-  reason: z.enum(["no_snapshot_yet", "not_enough_brands"]).nullable().describe("Present exactly when `measured` is false. `no_snapshot_yet` = no background compute has written a snapshot for this CHANNEL yet; `not_enough_brands` = a snapshot exists but too few brands sell this funnel through this channel past the spend floor. Neither is an error, and neither is ever answered with a 0 or with a median quietly taken over a wider population (a neighbouring funnel, the whole channel)."),
+  reason: z.enum(["no_snapshot_yet", "not_enough_brands", "maturity_not_recorded_yet"]).nullable().describe("Present exactly when `measured` is false. `no_snapshot_yet` = no background compute has written a snapshot for this CHANNEL yet; `maturity_not_recorded_yet` = the snapshot predates the brands' maturity verdicts; `not_enough_brands` = a snapshot exists but too few MATURE brands sell this funnel through this channel past the spend floor. Neither is an error, and neither is ever answered with a 0 or with a median quietly taken over a wider population (a neighbouring funnel, the whole channel)."),
   minSpendUsd: z.number().describe("The spend floor this pair's population was restricted to (USD)."),
   brandCount: z.number().int().describe("How many brands the RETURN median was taken over. ALWAYS present, including when it is too few to state one."),
   medianReturnPerDollar: z.number().nullable().describe("The MIDDLE brand's realized return on spend through THIS funnel — its expected pipeline (scoped to the funnel) divided by its committed spend on the channel. Byte-same statistic as `costEconomics.roiMultiple` for one brand reading that funnel. A median, never a mean."),
@@ -3896,7 +3896,7 @@ registry.registerPath({
     "Cross-org (fleet-wide) MEDIAN return on spend our clients get through ONE SALES FUNNEL on one acquisition channel, plus the median cost per paying client on the same population. " +
     "Per brand the figure is its expected pipeline scoped to that funnel divided by its committed spend on the channel - the byte-same ratio that brand reads as ROI on its own dashboard (GET /features/{slug}/revenue?pricing=net), on the NET pricing basis - what the brand actually paid after its per-org usage discount - with the median taken across brands. " +
     "The unit is the BRAND and the statistic is the MEDIAN, never a mean. " +
-    "POPULATION: brands that declared the funnel and are past `minSpendUsd` of spend on the channel. A pair below the minimum brand count answers `measured: false, reason: \"not_enough_brands\"` with `brandCount` stated, and no figure is ever computed over a wider population to make a number appear. " +
+    "POPULATION: MATURE brands (their own scope isMature) that read the funnel and are past `minSpendUsd` of spend on the channel. A pair below the minimum brand count answers `measured: false, reason: \"not_enough_brands\"` with `brandCount` stated, and no figure is ever computed over a wider population to make a number appear. " +
     "This is a REALIZED figure and is NOT the projected `returnPerDollar` on /public/channel-funnel-economics (a pooled unit price through MEAN declared rates and a MEAN lifetime revenue) - the two answer different questions and differ by an order of magnitude in production. Both reads exist; neither may be relabelled as the other. " +
     "Served from a PERSISTED snapshot refreshed off the request path, so it answers in milliseconds; the underlying per-brand compute is a full engine pass per (brand, funnel) and takes minutes. A read arriving before the first refresh answers `no_snapshot_yet` rather than blocking. " +
     "No identity of any kind: no org, no user, no run, no key.",
@@ -3993,10 +3993,10 @@ registry.registerPath({
 
 const c4RealizedFigures = {
   measured: z.boolean(),
-  reason: z.enum(["no_snapshot_yet", "legs_not_recorded_yet", "not_enough_brands"]).nullable().describe("`legs_not_recorded_yet` = the channel snapshot predates the brand-leg field; the next warm fills it. Never a 0, never a wider population."),
+  reason: z.enum(["no_snapshot_yet", "legs_not_recorded_yet", "maturity_not_recorded_yet", "not_enough_brands"]).nullable().describe("`legs_not_recorded_yet` = the channel snapshot predates the brand-leg field; `maturity_not_recorded_yet` = it predates the per-leg maturity verdicts; the next warm fills either. The population is the brands MATURE on these legs. Never a 0, never a wider population."),
   minSpendUsd: z.number(),
   brandCount: z.number().int(),
-  medianReturnPerDollar: z.number().nullable().describe("REALIZED — the middle brand's channel-wide return (mature pipeline / mature committed spend, net) over brands whose campaigns are bought for this leg / land on this outcome. Replaces the pair's `medianReturnPerDollar`."),
+  medianReturnPerDollar: z.number().nullable().describe("REALIZED — the middle brand's channel-wide return (mature pipeline / mature committed spend, net) over the MATURE brands whose campaigns are bought for this leg / land on this outcome. Replaces the pair's `medianReturnPerDollar`."),
   p25ReturnPerDollar: z.number().nullable(),
   p75ReturnPerDollar: z.number().nullable(),
   minReturnPerDollar: z.number().nullable(),

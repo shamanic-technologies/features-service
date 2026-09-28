@@ -88,8 +88,10 @@ export interface BrandFunnelReturnRow {
 export type FunnelReturnUnmeasuredReason =
   /** No warm has written a snapshot for this CHANNEL yet, so there is nothing to take a median over. */
   | "no_snapshot_yet"
-  /** A snapshot exists; too few brands sell this funnel through this channel past the spend floor. */
-  | "not_enough_brands";
+  /** A snapshot exists; too few MATURE brands sell this funnel through this channel past the spend floor. */
+  | "not_enough_brands"
+  /** The snapshot predates the brands' maturity verdicts (a median is over mature scopes only). */
+  | "maturity_not_recorded_yet";
 
 export interface FunnelReturnOnSpend {
   /** True only when a median RETURN is stated. False ⇒ every return figure is null and `reason` says why. */

@@ -135,7 +135,7 @@ import {
   type BrandReturnRow,
   type FleetReturnOnSpend,
 } from "../lib/fleet-return-on-spend.js";
-import { buildMatureScopesReturn, combineVerdicts, type MatureScopesReturn } from "../lib/fleet-return-maturity.js";
+import { buildMatureScopesReturn, combineVerdicts, overMatureScopes, type MatureScopesReturn } from "../lib/fleet-return-maturity.js";
 import { readFleetReturnSnapshotSoft, writeFleetReturnSnapshotSoft } from "../lib/fleet-return-store.js";
 import {
   buildFunnelReturnOnSpend,
@@ -1548,7 +1548,9 @@ export async function handleFleetReturnOnSpend(
     featureSlug,
     unit: "brand",
     computedAt: snapshot?.computedAt.toISOString() ?? null,
-    ...buildFleetReturnOnSpend(snapshot?.brands ?? null, minSpendUsd),
+    // Over MATURE scopes only (owner, features-service#1196): the median the landing prints equals
+    // `maturity.mature`, and a young brand is in neither.
+    ...overMatureScopes(snapshot?.brands ?? null, (r) => r.isMature, (pop) => buildFleetReturnOnSpend(pop, minSpendUsd)),
     maturity: buildMatureScopesReturn(snapshot?.brands ?? null, minSpendUsd, MIN_RETURN_BRANDS),
   };
   res.json(payload);
@@ -1654,9 +1656,10 @@ export async function handleFleetFunnelReturn(
         funnelName: funnel.name,
         funnelSteps: funnel.steps,
         computedAt: snap?.computedAt.toISOString() ?? null,
-        ...buildFunnelReturnOnSpend(
+        ...overMatureScopes(
           snap ? snap.rows.filter((r) => r.funnelKey === funnel.key) : null,
-          minSpendUsd,
+          (r) => r.isMature,
+          (pop) => buildFunnelReturnOnSpend(pop, minSpendUsd),
         ),
         maturity: buildMatureScopesReturn(
           snap ? snap.rows.filter((r) => r.funnelKey === funnel.key) : null,
@@ -1708,12 +1711,24 @@ interface ChannelOutcomeReturnRow extends OutcomeReturnFigures {
  */
 function legMatureScopesReturn(rows: readonly BrandReturnRow[] | null, legKeys: ReadonlySet<string>, minSpendUsd: number): MatureScopesReturn {
   const population = rows === null ? null : rows.filter((r) => (r.legKeys ?? []).some((k) => legKeys.has(k)));
-  return buildMatureScopesReturn(population, minSpendUsd, MIN_FUNNEL_RETURN_BRANDS, (r) => {
-    if (r.legMaturity === undefined) return undefined;
-    if (r.legMaturity === null) return null;
-    const performed = [...legKeys].filter((k) => (r.legKeys ?? []).includes(k));
-    return combineVerdicts(performed.map((k) => r.legMaturity![k] ?? null)) ?? null;
-  });
+  return buildMatureScopesReturn(population, minSpendUsd, MIN_FUNNEL_RETURN_BRANDS, (r) => legVerdict(r, legKeys));
+}
+
+/** A brand's verdict on the legs of `legKeys` it performs (the multi-leg rule); undefined = not recorded. */
+function legVerdict(r: BrandReturnRow, legKeys: ReadonlySet<string>): boolean | null | undefined {
+  if (r.legMaturity === undefined) return undefined;
+  if (r.legMaturity === null) return null;
+  const performed = [...legKeys].filter((k) => (r.legKeys ?? []).includes(k));
+  return combineVerdicts(performed.map((k) => r.legMaturity![k] ?? null)) ?? null;
+}
+
+/** The legacy leg / outcome median over the brands MATURE on those legs (the same population as `maturity`). */
+function legReturnOverMatureScopes(rows: readonly BrandReturnRow[] | null, legKeys: ReadonlySet<string>, minSpendUsd: number) {
+  if (rows !== null && rows.length > 0 && rows.every((r) => r.legKeys === undefined)) {
+    return buildOutcomeReturnOnSpend(rows, legKeys, minSpendUsd); // legs_not_recorded_yet: say THAT first
+  }
+  const population = rows === null ? null : rows.filter((r) => (r.legKeys ?? []).some((k) => legKeys.has(k)));
+  return overMatureScopes(population, (r) => legVerdict(r, legKeys), (pop) => buildOutcomeReturnOnSpend(pop, legKeys, minSpendUsd));
 }
 
 interface ChannelOutcomeReturnEntry {
@@ -1761,7 +1776,7 @@ export async function handleFleetOutcomeReturn(
       legKey: t.legKey,
       fromStep: t.from,
       toStep: t.to,
-      ...buildOutcomeReturnOnSpend(rows, new Set([t.legKey]), minSpendUsd),
+      ...legReturnOverMatureScopes(rows, new Set([t.legKey]), minSpendUsd),
       maturity: legMatureScopesReturn(rows, new Set([t.legKey]), minSpendUsd),
     }));
     const byStep = new Map<string, { step: ChannelOutcomeReturnRow["step"]; legKeys: string[] }>();
@@ -1773,7 +1788,7 @@ export async function handleFleetOutcomeReturn(
     const outcomes = [...byStep.values()].map((e) => ({
       step: e.step,
       legKeys: e.legKeys,
-      ...buildOutcomeReturnOnSpend(rows, new Set(e.legKeys), minSpendUsd),
+      ...legReturnOverMatureScopes(rows, new Set(e.legKeys), minSpendUsd),
       maturity: legMatureScopesReturn(rows, new Set(e.legKeys), minSpendUsd),
     }));
     return {

@@ -85,13 +85,16 @@ const { __awaitFleetReturnWarm } = await import("./public.js");
 
 const PATH = "/public/stats/funnel-return-on-spend";
 
-/** One brand's stored row for a funnel: spent `spend`, returns `spend × multiple`, off `clients`. */
-const row = (brandId: string, funnelKey: string, spend: number, multiple: number | null, clients: number | null = 1) => ({
+/** One MATURE brand's stored row for a funnel: spent `spend`, returns `spend × multiple`, off `clients`. */
+const row = (brandId: string, funnelKey: string, spend: number, multiple: number | null, clients: number | null = 1, isMature: boolean | null = true) => ({
   brandId,
   funnelKey,
   committedSpendUsd: spend,
   expectedPipelineUsd: multiple === null ? null : spend * multiple,
   expectedPaidClients: clients,
+  isMature,
+  flashCommittedSpendUsd: spend,
+  flashExpectedPipelineUsd: multiple === null ? null : spend * multiple,
 });
 
 /** Today's production shape: conversation n=4 near 2x, website-meeting n=1. */
@@ -279,5 +282,16 @@ describe("GET /public/stats/funnel-return-on-spend", () => {
     expect(pair.costPerPaidClientBrandCount).toBe(3);
     expect(pair.brandCount).toBe(4);
     await __awaitFleetReturnWarm();
+  });
+  it("takes each pair's medians over MATURE brands only — a young brand prices no pair", async () => {
+    // Two young brands at 50x: over every brand the conversation median would read (2 + 2.2) / 2 = 2.1.
+    mockReadSnapshots.mockResolvedValue(
+      snapshotOf([...PROD_SHAPE, row("y1", CONVERSATION, 1000, 50, 1, false), row("y2", CONVERSATION, 1000, 50, 1, null)]),
+    );
+    const res = await request(app).get(PATH);
+    const pair = pairOf(res.body, "sales-cold-email-outreach", CONVERSATION);
+    expect(pair).toMatchObject({ measured: true, brandCount: 4, costPerPaidClientBrandCount: 4 });
+    expect(pair.medianReturnPerDollar).toBeCloseTo(1.9, 10);
+    expect(pair.medianReturnPerDollar).toBe((pair.maturity as { mature: { median: number } }).mature.median);
   });
 });

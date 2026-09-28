@@ -127,9 +127,16 @@ audiences, $107.77 on `/stats`.
   `outcome-return-on-spend` legs and outcomes) gain `maturity: MatureScopesReturn` — the SAME median over
   the brands whose own scope `isMature` (a leg-keyed row: the brand's verdict on the legs of the set it
   performs, the multi-leg rule), on BOTH versions: `flash` = whole pipeline ÷ whole committed spend,
-  `mature` = the legacy mature ingredients. The legacy median fields are byte-unchanged (every brand past
-  the floor). Reasons: `no_snapshot_yet`, `maturity_not_recorded_yet` (a snapshot written before the
-  verdict; the next warm fills it), `not_enough_brands`.
+  `mature` = the legacy mature ingredients. Reasons: `no_snapshot_yet`, `maturity_not_recorded_yet` (a
+  snapshot written before the verdict; the next warm fills it), `not_enough_brands`.
+- **THE LEGACY MEDIAN FIELDS ARE OVER MATURE SCOPES TOO (owner go 2026-09-28; supersedes "byte-unchanged,
+  every brand past the floor").** `overMatureScopes` (`lib/fleet-return-maturity.ts`) feeds each legacy
+  builder only the brands whose verdict is `true` (a leg row: its leg verdict), so the median the landing
+  and onboarding print EQUALS `maturity.mature`; no verdict recorded → `maturity_not_recorded_yet`, never
+  the unfiltered median. A LOCKED rule about which population a figure uses applies to the field consumers
+  already read, in place: "additive" constrains renames / removals, not a value the owner re-based. Prod at
+  the switch: return-on-spend 1.79x over 9 brands → 3.31x over 6 (left out: 8.3x and 0.06x young, 0.16x
+  cut not made).
 - **The snapshot rows carry the verdict**: `fleet_return_snapshots` / `fleet_funnel_return_snapshots` rows
   gain `isMature`, `flashCommittedSpendUsd`, `flashExpectedPipelineUsd` (+ `legMaturity` per leg on the
   channel rows), read off `computePairRevenue`'s body `maturity`. A brand claimed by several orgs is mature
@@ -2261,7 +2268,7 @@ seconds** in prod (2026-09-08), and the two other candidates carry no return at 
 - **THE UNIT IS THE BRAND AND THE STATISTIC IS THE MEDIAN, never a mean.** A handful of brands sit tens
   of multiples above the rest, so an average describes nobody in the population. The quartiles, the min
   and the max ride beside it so a consumer can show the bulk instead of one scalar.
-- **THE SPEND FLOOR IS THE POPULATION — `?minSpendUsd=`, default 100.** A brand three days into its
+- **THE SPEND FLOOR IS THE POPULATION — `?minSpendUsd=`, default 100** (over MATURE brands only since 2026-09-28, see the #1196 public-reads section). A brand three days into its
   first campaign has spent a few dollars and its ratio is whatever its first reply happened to do: real
   arithmetic, no information. The floor is applied at READ time over the stored INGREDIENTS (each
   brand's committed spend and its expected pipeline), never frozen at write time, so **one snapshot
@@ -2341,7 +2348,7 @@ conversation-to-meeting funnel while the per-brand medians sit near **2x**, drag
   APPEAR.** A pair below the bar answers `not_enough_brands` while the measured pair beside it on the
   SAME channel still answers — guarded, because borrowing the neighbouring funnel's brands is the one
   failure that would look right on a screen.
-- **`MIN_FUNNEL_RETURN_BRANDS = 3`, deliberately lower than the channel read's 5.** A pair is a strictly
+- **(Pairs are over MATURE brands only since 2026-09-28, like the channel median.) `MIN_FUNNEL_RETURN_BRANDS = 3`, deliberately lower than the channel read's 5.** A pair is a strictly
   narrower population than the channel it sits in (a brand sells one or two of its channel's funnels), so
   holding it to the channel's bar would answer "unmeasured" for every pair we have. Prod 2026-09-08, cold
   email at the $100 floor: conversation-to-meeting **n=4**, form magnet n=3, website purchases n=2,

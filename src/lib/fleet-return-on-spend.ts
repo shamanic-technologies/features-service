@@ -117,8 +117,10 @@ export interface BrandReturnRow {
 export type FleetReturnUnmeasuredReason =
   /** No warm has written a snapshot for this channel yet, so there is nothing to take a median over. */
   | "no_snapshot_yet"
-  /** A snapshot exists, but too few brands are past the spend floor to state a median honestly. */
-  | "not_enough_brands";
+  /** A snapshot exists, but too few MATURE brands are past the spend floor to state a median honestly. */
+  | "not_enough_brands"
+  /** The snapshot predates the brands' maturity verdicts (a median is over mature scopes only); the next warm fills them. */
+  | "maturity_not_recorded_yet";
 
 export interface FleetReturnOnSpend {
   /** True only when a median is stated. False ⇒ every figure below is null and `reason` says why. */
