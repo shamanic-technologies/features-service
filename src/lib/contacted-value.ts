@@ -20,12 +20,13 @@
  *
  * ── P(entry step | contacted): WHERE IT IS MEASURED ────────────────────────────────────────────────
  *
- *   1. BRAND — on the brand's own MATURE cohort: leads first contacted before UTC midnight of
- *      `today − OUTCOME_LAG_DAYS` (a cold email's clicks and replies keep landing ~two weeks after it
- *      is sent, so counting last week's sends would read the rate low). Undated leads are left out of
- *      the rate (their age is unknown). The bar is on the OUTCOMES (`LEARNING_OUTCOMES_REQUIRED`, 10),
- *      not on the denominator like the between-step arrows: an entry arrow converts a few percent at
- *      most, so ten contacted with zero clicks is chance, not a 0% rate.
+ *   1. BRAND — on the brand's own MATURE cohort, by the ROUTE's own leg rule (`lib/maturity.ts`: the
+ *      click route is the `start_to_website_visit` leg, the reply route `start_to_conversation`): leads
+ *      SERVED (run-start clock) before UTC midnight of `today − duration` (21 days: a cold email's
+ *      clicks and replies keep landing for weeks after it is sent, so counting last week's serves would
+ *      read the rate low). Leads with no serve date are left out of the rate (their age is unknown). The
+ *      bar is the leg's own MATURE-outcome count (`outcomesRequired`: 10 visits, 1 positive reply), not a
+ *      bar on the denominator like the between-step arrows.
  *   2. FLEET — the cross-org rate on the same channels (email-gateway public recipient stats, every
  *      brand's lifetime, pooled). A measurement of the same arrow on everybody's outreach.
  *   3. Neither → that route reads null, and a lead with no route priced reads null with a named reason.
@@ -59,8 +60,7 @@ import {
   type EnginePerson,
   type ResolvedPath,
 } from "./revenue-engine.js";
-import { LEARNING_OUTCOMES_REQUIRED, OUTCOME_LAG_DAYS } from "./learning-phase.js";
-import { maturityCutoffIso } from "./roi-maturity.js";
+import { legMaturity, maturityCutoffIso, servedInMatureCohort } from "./maturity.js";
 
 export { ENGAGED_SIGNALS };
 
@@ -68,6 +68,12 @@ export { ENGAGED_SIGNALS };
 const ROUTE_STEP: Record<string, string> = {
   clicked: "Website visit",
   positiveReply: "Positive reply",
+};
+
+/** The LEG each entry route IS — whose maturity rule (`lib/maturity.ts`) its brand rate is measured on. */
+const ROUTE_LEG: Record<string, string> = {
+  clicked: "start_to_website_visit",
+  positiveReply: "start_to_conversation",
 };
 
 export type EntryRateSource = "brand_measured" | "fleet_measured";
@@ -95,8 +101,14 @@ export interface ContactedEntryRoute {
   /** P(this step | contacted), 0..100, from `entryRateSource`. Null when no source measures it. */
   entryRatePct: number | null;
   entryRateSource: EntryRateSource | null;
-  /** The brand's mature cohort: dated leads first contacted before `matureBefore`, and how many reached the step. */
+  /** The brand's mature cohort: leads served before this route's own cutoff, and how many reached the step. */
   brand: EntryCounts;
+  /** The route's leg maturity duration (`lib/maturity.ts`). */
+  maturityDays: number;
+  /** The route's own cutoff: leads served before this instant count toward the brand rate. */
+  matureBefore: string;
+  /** Mature outcomes the brand needs on this route before its own rate is used (the leg's bar). */
+  minBrandOutcomes: number;
   /** The fleet's pooled counts on the same channels. Null when that read failed. */
   fleet: EntryCounts | null;
   /** P(paid client | this step), 0..100 — the engine's own ladder for the step. */
@@ -130,13 +142,15 @@ export interface ContactedValueResult {
   totalExpectedValueUsd: number | null;
   unmeasuredReason: ContactedValueUnmeasuredReason | null;
   routes: ContactedEntryRoute[];
-  /** The brand cohort's cutoff: leads first contacted before this instant count toward the brand rate. */
+  /** The EARLIEST route cutoff (each route states its own on `routes[]`). */
   matureBefore: string;
+  /** The LONGEST route duration (each route states its own on `routes[]`). */
   maturityDays: number;
   /** A contacted lead whose last send is older than this many days is worth nothing. */
   expiryDays: number;
   /** Leads whose last send is strictly before this instant have expired. */
   lastSentOnOrAfter: string;
+  /** The LARGEST route bar (each route states its own on `routes[]`). */
   minBrandOutcomes: number;
   population: {
     contactedOnly: number;
@@ -150,6 +164,17 @@ export interface ContactedValueResult {
   };
   /** One row per contacted-only lead, ordered by lead id. */
   leads: ContactedLeadValue[];
+}
+
+/** The extremes of the two entry routes' leg rules — what the response's single-valued fields state. */
+function entryRuleExtremes(now: Date): { matureBefore: string; maturityDays: number; minBrandOutcomes: number } {
+  const rules = Object.values(ROUTE_LEG).map((legKey) => legMaturity(legKey));
+  const maturityDays = Math.max(...rules.map((r) => r.durationDays));
+  return {
+    maturityDays,
+    matureBefore: maturityCutoffIso(maturityDays, now),
+    minBrandOutcomes: Math.max(...rules.map((r) => r.outcomesRequired)),
+  };
 }
 
 /** Pooled fleet counts per entry signal (null = the fleet read failed). */
@@ -168,7 +193,7 @@ export function priceContactedLeads(input: {
   fleet: FleetEntryCounts;
   now?: Date;
 }): ContactedValueResult {
-  const matureBefore = maturityCutoffIso(OUTCOME_LAG_DAYS, input.now ?? new Date());
+  const nowForCutoff = input.now ?? new Date();
   const ltr = input.lifetimeRevenueUsd;
 
   // ── Population
@@ -189,20 +214,23 @@ export function priceContactedLeads(input: {
   }
   contactedOnly.sort((a, b) => (a.leadId < b.leadId ? -1 : a.leadId > b.leadId ? 1 : 0));
 
-  // ── Entry routes: the engine's engagement routes, each with its entry rate.
-  const mature = input.persons.filter((p) => {
-    const at = p.signalDates?.contacted ?? null;
-    return Boolean(p.signals.contacted) && at !== null && at < matureBefore;
-  });
+  // ── Entry routes: the engine's engagement routes, each with its entry rate, measured on the route's
+  // OWN leg rule — its duration cuts the cohort (on the serve clock), its bar gates the brand's own rate.
+  // A lead with no serve date is left out of a RATE: its age is unknown.
   type WorkingRoute = ContactedEntryRoute & { _pathValue: number; _p: number | null };
   const routes: WorkingRoute[] = input.paths
     .filter((path) => path.engagementRoute && ROUTE_STEP[path.signal] !== undefined)
     .map((path) => {
+      const rule = legMaturity(ROUTE_LEG[path.signal]);
+      const routeCutoff = maturityCutoffIso(rule.durationDays, nowForCutoff);
+      const mature = input.persons.filter(
+        (p) => Boolean(p.signals.contacted) && p.servedAt != null && servedInMatureCohort(p.servedAt, routeCutoff),
+      );
       const brand = { contacted: mature.length, reached: mature.filter((p) => p.signals[path.signal]).length };
       const fleet = input.fleet ? (input.fleet[path.signal] ?? { contacted: 0, reached: 0 }) : null;
       let entryRatePct: number | null = null;
       let entryRateSource: EntryRateSource | null = null;
-      if (brand.contacted > 0 && brand.reached >= LEARNING_OUTCOMES_REQUIRED) {
+      if (brand.contacted > 0 && brand.reached >= rule.outcomesRequired) {
         entryRatePct = (brand.reached / brand.contacted) * 100;
         entryRateSource = "brand_measured";
       } else if (fleet && fleet.contacted > 0 && fleet.reached <= fleet.contacted) {
@@ -216,6 +244,9 @@ export function priceContactedLeads(input: {
         entryRateSource,
         brand,
         fleet,
+        maturityDays: rule.durationDays,
+        matureBefore: routeCutoff,
+        minBrandOutcomes: rule.outcomesRequired,
         paidClientGivenStepPct: ltr && ltr > 0 ? round((path.expectedRevenueUsd / ltr) * 100) : 0,
         valueAtStepUsd: round(path.expectedRevenueUsd),
         _pathValue: path.expectedRevenueUsd,
@@ -276,11 +307,12 @@ export function priceContactedLeads(input: {
     totalExpectedValueUsd,
     unmeasuredReason,
     routes: routes.map(({ _pathValue, _p, ...r }) => r),
-    matureBefore,
-    maturityDays: OUTCOME_LAG_DAYS,
+    // Both entry legs carry one rule today; a route list states each route's own, these the extremes.
+    matureBefore: entryRuleExtremes(nowForCutoff).matureBefore,
+    maturityDays: entryRuleExtremes(nowForCutoff).maturityDays,
     expiryDays: CONTACTED_VALUE_EXPIRY_DAYS,
     lastSentOnOrAfter: pricing.lastSentOnOrAfter,
-    minBrandOutcomes: LEARNING_OUTCOMES_REQUIRED,
+    minBrandOutcomes: entryRuleExtremes(nowForCutoff).minBrandOutcomes,
     population: {
       contactedOnly: contactedOnly.length,
       organizations: new Set(contactedOnly.map((p) => (p.orgId ? `org:${p.orgId}` : `lead:${p.leadId}`))).size,

@@ -1521,7 +1521,7 @@
               },
               "maturityDays": {
                 "type": "integer",
-                "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 14 days for its replies and visits; every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads FIRST CONTACTED before it (their outcomes count whenever they happened; a lead with no contact date is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
+                "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 21 days for its replies and visits (lib/maturity.ts); every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads those runs SERVED (a lead served before it, on the run-start clock; their outcomes count whenever they happened; a lead with no serve date stated is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
               },
               "unmeasuredReason": {
                 "type": "string",
@@ -1543,7 +1543,7 @@
                   "totalPipelineUsd": {
                     "type": "number",
                     "nullable": true,
-                    "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads first contacted before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
+                    "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads served before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
                   }
                 },
                 "required": [
@@ -1629,7 +1629,7 @@
                     },
                     "cumulativePipelineUsd": {
                       "type": "number",
-                      "description": "REALIZED, MATURE COHORT — every dollar of expected pipeline earned by a DATED outcome of a lead in the mature cohort (first contacted before the maturity cutoff, or undated) up to and including this day, from the same per-lead event timestamps the leads[] table and the daily signal series use. A day with spend but no new outcome carries the previous day's value forward, so the curve correctly dips."
+                      "description": "REALIZED, MATURE COHORT — every dollar of expected pipeline earned by a DATED outcome of a lead in the mature cohort (served before the maturity cutoff, or undated) up to and including this day, from the same per-lead event timestamps the leads[] table and the daily signal series use. A day with spend but no new outcome carries the previous day's value forward, so the curve correctly dips."
                     },
                     "roiMultiple": {
                       "type": "number",
@@ -3122,7 +3122,7 @@
                     },
                     "maturityDays": {
                       "type": "integer",
-                      "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 14 days for its replies and visits; every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads FIRST CONTACTED before it (their outcomes count whenever they happened; a lead with no contact date is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
+                      "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 21 days for its replies and visits (lib/maturity.ts); every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads those runs SERVED (a lead served before it, on the run-start clock; their outcomes count whenever they happened; a lead with no serve date stated is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
                     },
                     "unmeasuredReason": {
                       "type": "string",
@@ -3144,7 +3144,7 @@
                         "totalPipelineUsd": {
                           "type": "number",
                           "nullable": true,
-                          "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads first contacted before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
+                          "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads served before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
                         }
                       },
                       "required": [
@@ -3513,7 +3513,7 @@
                     },
                     "maturityDays": {
                       "type": "integer",
-                      "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 14 days for its replies and visits; every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads FIRST CONTACTED before it (their outcomes count whenever they happened; a lead with no contact date is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
+                      "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 21 days for its replies and visits (lib/maturity.ts); every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads those runs SERVED (a lead served before it, on the run-start clock; their outcomes count whenever they happened; a lead with no serve date stated is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
                     },
                     "unmeasuredReason": {
                       "type": "string",
@@ -3535,7 +3535,7 @@
                         "totalPipelineUsd": {
                           "type": "number",
                           "nullable": true,
-                          "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads first contacted before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
+                          "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads served before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
                         }
                       },
                       "required": [
@@ -3859,7 +3859,7 @@
                     },
                     "maturityDays": {
                       "type": "integer",
-                      "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 14 days for its replies and visits; every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads FIRST CONTACTED before it (their outcomes count whenever they happened; a lead with no contact date is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
+                      "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 21 days for its replies and visits (lib/maturity.ts); every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads those runs SERVED (a lead served before it, on the run-start clock; their outcomes count whenever they happened; a lead with no serve date stated is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
                     },
                     "unmeasuredReason": {
                       "type": "string",
@@ -3881,7 +3881,7 @@
                         "totalPipelineUsd": {
                           "type": "number",
                           "nullable": true,
-                          "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads first contacted before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
+                          "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads served before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
                         }
                       },
                       "required": [
@@ -3944,6 +3944,78 @@
           "groupBy",
           "groups"
         ]
+      },
+      "LegMaturityRule": {
+        "type": "object",
+        "properties": {
+          "durationDays": {
+            "type": "integer",
+            "description": "How many days before today (UTC midnight) a run must have STARTED for its spend, and the leads it served, to count as MATURE. 21 on the two cold-email entry legs (a run's positive replies and visits keep arriving for weeks; 21 days captures 92-95% of them, measured in prod 2026-09-28); 0 on every other leg, whose mature figure is therefore its flash figure."
+          },
+          "outcomesRequired": {
+            "type": "integer",
+            "description": "How many MATURE outcomes of the leg's step a scope must hold to be judged mature: 1 positive reply on start_to_conversation, 10 website visits on start_to_website_visit, 10 on every other leg."
+          },
+          "outcomeSignal": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "clicked",
+              "positiveReply"
+            ],
+            "description": "The counted signal the leg's outcome IS on an entry leg (a website visit is a click, a conversation is a positive reply). Null on every other leg, whose outcome is walked from a driver signal."
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "measured",
+              "default"
+            ],
+            "description": "`measured` = the owner set this rule from production evidence; `default` = no leg-specific rule was measured, so the leg is mature the day it is bought and judged on the pre-existing bar of 10."
+          }
+        },
+        "required": [
+          "durationDays",
+          "outcomesRequired",
+          "outcomeSignal",
+          "source"
+        ],
+        "description": "ONE LEG'S MATURITY RULE. Every figure exists in two versions: FLASH (everything to date) and MATURE (the spend of runs started more than durationDays ago, over the outcomes — whenever they land — of the leads those runs served). One clock for both: the run start, i.e. the serve."
+      },
+      "OutcomeFigures": {
+        "type": "object",
+        "properties": {
+          "spentUsd": {
+            "type": "number",
+            "description": "Committed spend on the request's pricing basis, summed exactly (never rounded per group), so a scope's rows add up to the scope. Null ONLY on the staff actual-cost twin, where this grain's spend on this version holds rows with no known vendor cost."
+          },
+          "contacted": {
+            "type": "number",
+            "description": "Leads reached."
+          },
+          "outcomes": {
+            "type": "number",
+            "description": "The leg's own outcomes (on an entry leg, distinct leads at its outcome signal)."
+          },
+          "costPerOutcomeUsd": {
+            "type": "number",
+            "nullable": true,
+            "description": "spentUsd / outcomes — OBSERVED, never floored. Null at 0 outcomes or 0 spend (and on the actual-cost twin where the vendor cost is unknown)."
+          },
+          "conversionRatePct": {
+            "type": "number",
+            "nullable": true,
+            "description": "100 × outcomes / contacted. Null only at 0 contacted; a measured 0 stays 0."
+          }
+        },
+        "required": [
+          "spentUsd",
+          "contacted",
+          "outcomes",
+          "costPerOutcomeUsd",
+          "conversionRatePct"
+        ],
+        "description": "The observed figures of one scope on one version (flash or mature)."
       },
       "WorkflowProjectionResponse": {
         "type": "object",
@@ -4500,6 +4572,41 @@
                             "spentUsd"
                           ],
                           "description": "Present ⟺ the request named a `?leg=`. WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP: a leg-keyed read is priced on the step the leg MOVES A LEAD TO, never on the step its basis funnel is named after (an entry leg's outcome is several rungs above that). Absent on every funnel- or goal-keyed request, whose bodies are byte-unchanged."
+                        },
+                        "basis": {
+                          "type": "string",
+                          "enum": [
+                            "flash",
+                            "mature"
+                          ],
+                          "description": "WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis), never the grain, so every block of one row is on one version: `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before)."
+                        },
+                        "flash": {
+                          "allOf": [
+                            {
+                              "$ref": "#/components/schemas/OutcomeFigures"
+                            },
+                            {
+                              "nullable": true,
+                              "description": "This grain's FLASH figures (everything to date), observed. Present ⟺ `?leg=`. Null when the leg's outcome cannot be counted."
+                            }
+                          ]
+                        },
+                        "mature": {
+                          "allOf": [
+                            {
+                              "$ref": "#/components/schemas/OutcomeFigures"
+                            },
+                            {
+                              "nullable": true,
+                              "description": "This grain's MATURE figures (runs started before the leg's cutoff, over the outcomes of the leads they served), observed. Present ⟺ `?leg=`. Null when the mature cut could not be made; a cut that holds nothing reads zeros."
+                            }
+                          ]
+                        },
+                        "isMature": {
+                          "type": "boolean",
+                          "nullable": true,
+                          "description": "This grain's MATURE outcomes against the leg's outcomesRequired — what a surface tags `Learning` on per audience / campaign. Present ⟺ `?leg=`. Null when the mature cut could not be made."
                         }
                       },
                       "required": [
@@ -4637,6 +4744,41 @@
                             "spentUsd"
                           ],
                           "description": "Present ⟺ the request named a `?leg=`. WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP: a leg-keyed read is priced on the step the leg MOVES A LEAD TO, never on the step its basis funnel is named after (an entry leg's outcome is several rungs above that). Absent on every funnel- or goal-keyed request, whose bodies are byte-unchanged."
+                        },
+                        "basis": {
+                          "type": "string",
+                          "enum": [
+                            "flash",
+                            "mature"
+                          ],
+                          "description": "WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis), never the grain, so every block of one row is on one version: `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before)."
+                        },
+                        "flash": {
+                          "allOf": [
+                            {
+                              "$ref": "#/components/schemas/OutcomeFigures"
+                            },
+                            {
+                              "nullable": true,
+                              "description": "This grain's FLASH figures (everything to date), observed. Present ⟺ `?leg=`. Null when the leg's outcome cannot be counted."
+                            }
+                          ]
+                        },
+                        "mature": {
+                          "allOf": [
+                            {
+                              "$ref": "#/components/schemas/OutcomeFigures"
+                            },
+                            {
+                              "nullable": true,
+                              "description": "This grain's MATURE figures (runs started before the leg's cutoff, over the outcomes of the leads they served), observed. Present ⟺ `?leg=`. Null when the mature cut could not be made; a cut that holds nothing reads zeros."
+                            }
+                          ]
+                        },
+                        "isMature": {
+                          "type": "boolean",
+                          "nullable": true,
+                          "description": "This grain's MATURE outcomes against the leg's outcomesRequired — what a surface tags `Learning` on per audience / campaign. Present ⟺ `?leg=`. Null when the mature cut could not be made."
                         }
                       },
                       "required": [
@@ -4774,6 +4916,41 @@
                             "spentUsd"
                           ],
                           "description": "Present ⟺ the request named a `?leg=`. WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP: a leg-keyed read is priced on the step the leg MOVES A LEAD TO, never on the step its basis funnel is named after (an entry leg's outcome is several rungs above that). Absent on every funnel- or goal-keyed request, whose bodies are byte-unchanged."
+                        },
+                        "basis": {
+                          "type": "string",
+                          "enum": [
+                            "flash",
+                            "mature"
+                          ],
+                          "description": "WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis), never the grain, so every block of one row is on one version: `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before)."
+                        },
+                        "flash": {
+                          "allOf": [
+                            {
+                              "$ref": "#/components/schemas/OutcomeFigures"
+                            },
+                            {
+                              "nullable": true,
+                              "description": "This grain's FLASH figures (everything to date), observed. Present ⟺ `?leg=`. Null when the leg's outcome cannot be counted."
+                            }
+                          ]
+                        },
+                        "mature": {
+                          "allOf": [
+                            {
+                              "$ref": "#/components/schemas/OutcomeFigures"
+                            },
+                            {
+                              "nullable": true,
+                              "description": "This grain's MATURE figures (runs started before the leg's cutoff, over the outcomes of the leads they served), observed. Present ⟺ `?leg=`. Null when the mature cut could not be made; a cut that holds nothing reads zeros."
+                            }
+                          ]
+                        },
+                        "isMature": {
+                          "type": "boolean",
+                          "nullable": true,
+                          "description": "This grain's MATURE outcomes against the leg's outcomesRequired — what a surface tags `Learning` on per audience / campaign. Present ⟺ `?leg=`. Null when the mature cut could not be made."
                         }
                       },
                       "required": [
@@ -4911,6 +5088,41 @@
                             "spentUsd"
                           ],
                           "description": "Present ⟺ the request named a `?leg=`. WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP: a leg-keyed read is priced on the step the leg MOVES A LEAD TO, never on the step its basis funnel is named after (an entry leg's outcome is several rungs above that). Absent on every funnel- or goal-keyed request, whose bodies are byte-unchanged."
+                        },
+                        "basis": {
+                          "type": "string",
+                          "enum": [
+                            "flash",
+                            "mature"
+                          ],
+                          "description": "WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis), never the grain, so every block of one row is on one version: `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before)."
+                        },
+                        "flash": {
+                          "allOf": [
+                            {
+                              "$ref": "#/components/schemas/OutcomeFigures"
+                            },
+                            {
+                              "nullable": true,
+                              "description": "This grain's FLASH figures (everything to date), observed. Present ⟺ `?leg=`. Null when the leg's outcome cannot be counted."
+                            }
+                          ]
+                        },
+                        "mature": {
+                          "allOf": [
+                            {
+                              "$ref": "#/components/schemas/OutcomeFigures"
+                            },
+                            {
+                              "nullable": true,
+                              "description": "This grain's MATURE figures (runs started before the leg's cutoff, over the outcomes of the leads they served), observed. Present ⟺ `?leg=`. Null when the mature cut could not be made; a cut that holds nothing reads zeros."
+                            }
+                          ]
+                        },
+                        "isMature": {
+                          "type": "boolean",
+                          "nullable": true,
+                          "description": "This grain's MATURE outcomes against the leg's outcomesRequired — what a surface tags `Learning` on per audience / campaign. Present ⟺ `?leg=`. Null when the mature cut could not be made."
                         }
                       },
                       "required": [
@@ -5048,6 +5260,41 @@
                             "spentUsd"
                           ],
                           "description": "Present ⟺ the request named a `?leg=`. WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP: a leg-keyed read is priced on the step the leg MOVES A LEAD TO, never on the step its basis funnel is named after (an entry leg's outcome is several rungs above that). Absent on every funnel- or goal-keyed request, whose bodies are byte-unchanged."
+                        },
+                        "basis": {
+                          "type": "string",
+                          "enum": [
+                            "flash",
+                            "mature"
+                          ],
+                          "description": "WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis), never the grain, so every block of one row is on one version: `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before)."
+                        },
+                        "flash": {
+                          "allOf": [
+                            {
+                              "$ref": "#/components/schemas/OutcomeFigures"
+                            },
+                            {
+                              "nullable": true,
+                              "description": "This grain's FLASH figures (everything to date), observed. Present ⟺ `?leg=`. Null when the leg's outcome cannot be counted."
+                            }
+                          ]
+                        },
+                        "mature": {
+                          "allOf": [
+                            {
+                              "$ref": "#/components/schemas/OutcomeFigures"
+                            },
+                            {
+                              "nullable": true,
+                              "description": "This grain's MATURE figures (runs started before the leg's cutoff, over the outcomes of the leads they served), observed. Present ⟺ `?leg=`. Null when the mature cut could not be made; a cut that holds nothing reads zeros."
+                            }
+                          ]
+                        },
+                        "isMature": {
+                          "type": "boolean",
+                          "nullable": true,
+                          "description": "This grain's MATURE outcomes against the leg's outcomesRequired — what a surface tags `Learning` on per audience / campaign. Present ⟺ `?leg=`. Null when the mature cut could not be made."
                         }
                       },
                       "required": [
@@ -5221,6 +5468,118 @@
                   "nullable": true,
                   "description": "HOW MANY PEOPLE THIS ROW'S AUDIENCE CAN STILL BE SERVED — human-service's own `availableToContactCount` (pool members not suppressed inside the brand's 3-month re-contact window), read LIVE on every request, never from the cached evidence. Present on every audience row, absent on the brand / campaign column (audienceId null). `0` = the producer says the audience is served out, so a consumer picking an audience for a serve can skip it while another audience still has people (features-service#1035). `null` = we could not read it (human-service unreachable, or it stated no count) — treat as unknown, never as 0. Moves no figure and no order on this body."
                 },
+                "maturity": {
+                  "type": "object",
+                  "properties": {
+                    "basis": {
+                      "type": "string",
+                      "enum": [
+                        "flash",
+                        "mature"
+                      ],
+                      "description": "The version this row's estimatesByGrain and resolved are priced on — and therefore what campaign-service ranks. `mature` ⟺ the workflow is MATURE on the fleet of its leg (isMature) and a mature ladder exists; `flash` otherwise."
+                    },
+                    "isMature": {
+                      "type": "boolean",
+                      "nullable": true,
+                      "description": "The WORKFLOW's verdict on the fleet of its leg (every org's campaigns performing it): at least the leg's outcomesRequired MATURE outcomes. Null when the cut could not be made."
+                    },
+                    "matureOutcomes": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "The workflow's mature outcomes of the leg's step on the fleet. Null when the cut could not be made."
+                    },
+                    "resolved": {
+                      "type": "object",
+                      "properties": {
+                        "flash": {
+                          "type": "object",
+                          "nullable": true,
+                          "properties": {
+                            "grain": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "audience",
+                                "campaign",
+                                "brand",
+                                "crossOrg",
+                                "offer"
+                              ],
+                              "description": "The provenance label of that version's resolved pick (as resolved.grain)."
+                            },
+                            "costPerOutcomeUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "That version's resolved (cascade-floored) cost per outcome — what resolved.costPerOutcomeUsd would read if the row were priced on it."
+                            },
+                            "conversionRatePct": {
+                              "type": "number",
+                              "nullable": true
+                            }
+                          },
+                          "required": [
+                            "grain",
+                            "costPerOutcomeUsd",
+                            "conversionRatePct"
+                          ],
+                          "description": "Everything to date. Null when there is no flash figure at all."
+                        },
+                        "mature": {
+                          "type": "object",
+                          "nullable": true,
+                          "properties": {
+                            "grain": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "audience",
+                                "campaign",
+                                "brand",
+                                "crossOrg",
+                                "offer"
+                              ],
+                              "description": "The provenance label of that version's resolved pick (as resolved.grain)."
+                            },
+                            "costPerOutcomeUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "That version's resolved (cascade-floored) cost per outcome — what resolved.costPerOutcomeUsd would read if the row were priced on it."
+                            },
+                            "conversionRatePct": {
+                              "type": "number",
+                              "nullable": true
+                            }
+                          },
+                          "required": [
+                            "grain",
+                            "costPerOutcomeUsd",
+                            "conversionRatePct"
+                          ],
+                          "description": "The mature cohort's figure. NULL when the mature cut could not be made. A cut that was made and holds nothing states that instead: zeros on observed figures, null fields on a resolved price."
+                        },
+                        "isMature": {
+                          "type": "boolean",
+                          "nullable": true,
+                          "description": "The verdict: at least the leg's outcomesRequired MATURE outcomes. Null = the mature outcomes could not be counted, never a verdict."
+                        }
+                      },
+                      "required": [
+                        "flash",
+                        "mature",
+                        "isMature"
+                      ],
+                      "description": "The row's price on BOTH versions, so a consumer compares them without re-deriving anything. resolved (the block above) equals the one named by `basis`."
+                    }
+                  },
+                  "required": [
+                    "basis",
+                    "isMature",
+                    "matureOutcomes",
+                    "resolved"
+                  ],
+                  "description": "THE ROW'S MATURITY (features-service#1196) — present ⟺ the request named a `?leg=`. A mature workflow's young spend no longer inflates its price while its outcomes are still on their way; a workflow that is not yet mature is priced exactly as before (flash, with the cascade floor that lets it be tried)."
+                },
                 "retired": {
                   "type": "boolean",
                   "enum": [
@@ -5258,6 +5617,49 @@
               "no_eligible_workflow"
             ],
             "description": "Present ⟺ a `?leg=` read has workflows but NONE is assigned active on the leg (`legAssignment`). `recommendedWorkflowDynastySlug` is then null by refusal, never a fall back to an unassigned or deprecated workflow."
+          },
+          "maturity": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LegMaturityRule"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "legKey": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "The leg the rule is for."
+                  },
+                  "cutoffIso": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Runs started, and leads served, before this instant (UTC midnight of today − durationDays) are mature. Null on a 0-day leg, where mature ≡ flash."
+                  },
+                  "measured": {
+                    "type": "boolean",
+                    "description": "TRUE ⟺ the mature cut could be made. FALSE ⟹ every row is priced on flash, as before."
+                  },
+                  "unmeasuredReason": {
+                    "type": "string",
+                    "nullable": true,
+                    "enum": [
+                      "serve_dates_unavailable",
+                      "mature_evidence_unavailable",
+                      "leg_scope_unavailable"
+                    ],
+                    "description": "Why the cut could not be made: serve_dates_unavailable = a lead population states no serve date (lead-service's lastServedAt), so young leads could not be told from mature ones; mature_evidence_unavailable = a mature cost or person read failed on this refresh (the answer degrades to flash rather than failing); leg_scope_unavailable = the leg's campaigns could not be read."
+                  }
+                },
+                "required": [
+                  "legKey",
+                  "cutoffIso",
+                  "measured",
+                  "unmeasuredReason"
+                ]
+              }
+            ],
+            "description": "THE LEG'S MATURITY RULE, echoed on a leg-keyed answer (present ⟺ `?leg=`), and whether this answer could apply it."
           },
           "unmeasuredReason": {
             "type": "string",
@@ -6705,7 +7107,7 @@
               },
               "maturityDays": {
                 "type": "integer",
-                "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 14 days for its replies and visits; every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads FIRST CONTACTED before it (their outcomes count whenever they happened; a lead with no contact date is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
+                "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 21 days for its replies and visits (lib/maturity.ts); every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads those runs SERVED (a lead served before it, on the run-start clock; their outcomes count whenever they happened; a lead with no serve date stated is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
               },
               "unmeasuredReason": {
                 "type": "string",
@@ -6727,7 +7129,7 @@
                   "totalPipelineUsd": {
                     "type": "number",
                     "nullable": true,
-                    "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads first contacted before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
+                    "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads served before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
                   }
                 },
                 "required": [
@@ -6813,7 +7215,7 @@
                     },
                     "cumulativePipelineUsd": {
                       "type": "number",
-                      "description": "REALIZED, MATURE COHORT — every dollar of expected pipeline earned by a DATED outcome of a lead in the mature cohort (first contacted before the maturity cutoff, or undated) up to and including this day, from the same per-lead event timestamps the leads[] table and the daily signal series use. A day with spend but no new outcome carries the previous day's value forward, so the curve correctly dips."
+                      "description": "REALIZED, MATURE COHORT — every dollar of expected pipeline earned by a DATED outcome of a lead in the mature cohort (served before the maturity cutoff, or undated) up to and including this day, from the same per-lead event timestamps the leads[] table and the daily signal series use. A day with spend but no new outcome carries the previous day's value forward, so the curve correctly dips."
                     },
                     "roiMultiple": {
                       "type": "number",
@@ -8231,7 +8633,7 @@
                     },
                     "maturityDays": {
                       "type": "integer",
-                      "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 14 days for its replies and visits; every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads FIRST CONTACTED before it (their outcomes count whenever they happened; a lead with no contact date is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
+                      "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 21 days for its replies and visits (lib/maturity.ts); every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads those runs SERVED (a lead served before it, on the run-start clock; their outcomes count whenever they happened; a lead with no serve date stated is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
                     },
                     "unmeasuredReason": {
                       "type": "string",
@@ -8253,7 +8655,7 @@
                         "totalPipelineUsd": {
                           "type": "number",
                           "nullable": true,
-                          "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads first contacted before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
+                          "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads served before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
                         }
                       },
                       "required": [
@@ -10100,7 +10502,7 @@
               },
               "maturityDays": {
                 "type": "integer",
-                "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 14 days for its replies and visits; every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads FIRST CONTACTED before it (their outcomes count whenever they happened; a lead with no contact date is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
+                "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 21 days for its replies and visits (lib/maturity.ts); every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads those runs SERVED (a lead served before it, on the run-start clock; their outcomes count whenever they happened; a lead with no serve date stated is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
               },
               "unmeasuredReason": {
                 "type": "string",
@@ -10122,7 +10524,7 @@
                   "totalPipelineUsd": {
                     "type": "number",
                     "nullable": true,
-                    "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads first contacted before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
+                    "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads served before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
                   }
                 },
                 "required": [
@@ -10208,7 +10610,7 @@
                     },
                     "cumulativePipelineUsd": {
                       "type": "number",
-                      "description": "REALIZED, MATURE COHORT — every dollar of expected pipeline earned by a DATED outcome of a lead in the mature cohort (first contacted before the maturity cutoff, or undated) up to and including this day, from the same per-lead event timestamps the leads[] table and the daily signal series use. A day with spend but no new outcome carries the previous day's value forward, so the curve correctly dips."
+                      "description": "REALIZED, MATURE COHORT — every dollar of expected pipeline earned by a DATED outcome of a lead in the mature cohort (served before the maturity cutoff, or undated) up to and including this day, from the same per-lead event timestamps the leads[] table and the daily signal series use. A day with spend but no new outcome carries the previous day's value forward, so the curve correctly dips."
                     },
                     "roiMultiple": {
                       "type": "number",
@@ -11623,7 +12025,7 @@
                     },
                     "maturityDays": {
                       "type": "integer",
-                      "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 14 days for its replies and visits; every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads FIRST CONTACTED before it (their outcomes count whenever they happened; a lead with no contact date is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
+                      "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 21 days for its replies and visits (lib/maturity.ts); every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads those runs SERVED (a lead served before it, on the run-start clock; their outcomes count whenever they happened; a lead with no serve date stated is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
                     },
                     "unmeasuredReason": {
                       "type": "string",
@@ -11645,7 +12047,7 @@
                         "totalPipelineUsd": {
                           "type": "number",
                           "nullable": true,
-                          "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads first contacted before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
+                          "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads served before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
                         }
                       },
                       "required": [
@@ -11860,7 +12262,7 @@
                     },
                     "maturityDays": {
                       "type": "integer",
-                      "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 14 days for its replies and visits; every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads FIRST CONTACTED before it (their outcomes count whenever they happened; a lead with no contact date is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
+                      "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 21 days for its replies and visits (lib/maturity.ts); every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads those runs SERVED (a lead served before it, on the run-start clock; their outcomes count whenever they happened; a lead with no serve date stated is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
                     },
                     "unmeasuredReason": {
                       "type": "string",
@@ -11882,7 +12284,7 @@
                         "totalPipelineUsd": {
                           "type": "number",
                           "nullable": true,
-                          "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads first contacted before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
+                          "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads served before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
                         }
                       },
                       "required": [
@@ -12223,7 +12625,7 @@
                     "brand_measured",
                     "fleet_measured"
                   ],
-                  "description": "brand_measured = the brand's own mature cohort (first contacted before `matureBefore`) once it holds `minBrandOutcomes` outcomes; else fleet_measured = every brand's pooled outreach on the same channels."
+                  "description": "brand_measured = the brand's own mature cohort (served before `matureBefore`) once it holds `minBrandOutcomes` outcomes; else fleet_measured = every brand's pooled outreach on the same channels."
                 },
                 "brand": {
                   "type": "object",
@@ -12263,6 +12665,18 @@
                 "valueAtStepUsd": {
                   "type": "number",
                   "description": "What a lead standing on this step is worth in the pipeline."
+                },
+                "maturityDays": {
+                  "type": "number",
+                  "description": "This route's leg's maturity duration (lib/maturity.ts): 21 on both cold-email entry legs."
+                },
+                "matureBefore": {
+                  "type": "string",
+                  "description": "This route's cutoff: the brand's own cohort counts leads SERVED before it."
+                },
+                "minBrandOutcomes": {
+                  "type": "number",
+                  "description": "This route's leg's outcomesRequired — the brand's own rate is used once its mature cohort holds this many outcomes of the route's step (1 positive reply; 10 website visits)."
                 }
               },
               "required": [
@@ -12273,15 +12687,20 @@
                 "brand",
                 "fleet",
                 "paidClientGivenStepPct",
-                "valueAtStepUsd"
+                "valueAtStepUsd",
+                "maturityDays",
+                "matureBefore",
+                "minBrandOutcomes"
               ]
             }
           },
           "matureBefore": {
-            "type": "string"
+            "type": "string",
+            "description": "The EARLIEST cutoff across the entry routes (each route states its own)."
           },
           "maturityDays": {
-            "type": "number"
+            "type": "number",
+            "description": "The LONGEST duration across the entry routes (each route states its own)."
           },
           "expiryDays": {
             "type": "number",
@@ -12292,7 +12711,8 @@
             "description": "Leads whose last send is strictly before this instant have expired."
           },
           "minBrandOutcomes": {
-            "type": "number"
+            "type": "number",
+            "description": "The LARGEST outcomesRequired across the entry routes (each route states its own)."
           },
           "population": {
             "type": "object",
@@ -13385,7 +13805,7 @@
                     },
                     "maturityDays": {
                       "type": "integer",
-                      "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 14 days for its replies and visits; every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads FIRST CONTACTED before it (their outcomes count whenever they happened; a lead with no contact date is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
+                      "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 21 days for its replies and visits (lib/maturity.ts); every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads those runs SERVED (a lead served before it, on the run-start clock; their outcomes count whenever they happened; a lead with no serve date stated is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
                     },
                     "unmeasuredReason": {
                       "type": "string",
@@ -13407,7 +13827,7 @@
                         "totalPipelineUsd": {
                           "type": "number",
                           "nullable": true,
-                          "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads first contacted before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
+                          "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads served before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
                         }
                       },
                       "required": [
@@ -15618,13 +16038,24 @@
               ]
             },
             "description": "EVERY declared sales funnel this leg is a leg of, in catalogue order. Usually several — an ENTRY leg feeds every funnel that contains it AT ONCE, since nobody can buy traffic that travels down only one of them. Their figures therefore overlap and must never be summed."
+          },
+          "maturity": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LegMaturityRule"
+              },
+              {
+                "description": "THE LEG'S MATURITY RULE (features-service#1196). The workflow picker prices a workflow on its MATURE figures once it holds outcomesRequired mature outcomes on the fleet of this leg, and on its flash figures before that. Read from the same module every figure is cut on, so a published rule and a served figure never disagree."
+              }
+            ]
           }
         },
         "required": [
           "legKey",
           "fromStep",
           "toStep",
-          "funnelKeys"
+          "funnelKeys",
+          "maturity"
         ]
       },
       "PublicAcquisitionChannel": {
@@ -18728,6 +19159,41 @@
                                       "spentUsd"
                                     ],
                                     "description": "Present ⟺ the request named a `?leg=`. WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP: a leg-keyed read is priced on the step the leg MOVES A LEAD TO, never on the step its basis funnel is named after (an entry leg's outcome is several rungs above that). Absent on every funnel- or goal-keyed request, whose bodies are byte-unchanged."
+                                  },
+                                  "basis": {
+                                    "type": "string",
+                                    "enum": [
+                                      "flash",
+                                      "mature"
+                                    ],
+                                    "description": "WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis), never the grain, so every block of one row is on one version: `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before)."
+                                  },
+                                  "flash": {
+                                    "allOf": [
+                                      {
+                                        "$ref": "#/components/schemas/OutcomeFigures"
+                                      },
+                                      {
+                                        "nullable": true,
+                                        "description": "This grain's FLASH figures (everything to date), observed. Present ⟺ `?leg=`. Null when the leg's outcome cannot be counted."
+                                      }
+                                    ]
+                                  },
+                                  "mature": {
+                                    "allOf": [
+                                      {
+                                        "$ref": "#/components/schemas/OutcomeFigures"
+                                      },
+                                      {
+                                        "nullable": true,
+                                        "description": "This grain's MATURE figures (runs started before the leg's cutoff, over the outcomes of the leads they served), observed. Present ⟺ `?leg=`. Null when the mature cut could not be made; a cut that holds nothing reads zeros."
+                                      }
+                                    ]
+                                  },
+                                  "isMature": {
+                                    "type": "boolean",
+                                    "nullable": true,
+                                    "description": "This grain's MATURE outcomes against the leg's outcomesRequired — what a surface tags `Learning` on per audience / campaign. Present ⟺ `?leg=`. Null when the mature cut could not be made."
                                   }
                                 },
                                 "required": [
@@ -18865,6 +19331,41 @@
                                       "spentUsd"
                                     ],
                                     "description": "Present ⟺ the request named a `?leg=`. WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP: a leg-keyed read is priced on the step the leg MOVES A LEAD TO, never on the step its basis funnel is named after (an entry leg's outcome is several rungs above that). Absent on every funnel- or goal-keyed request, whose bodies are byte-unchanged."
+                                  },
+                                  "basis": {
+                                    "type": "string",
+                                    "enum": [
+                                      "flash",
+                                      "mature"
+                                    ],
+                                    "description": "WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis), never the grain, so every block of one row is on one version: `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before)."
+                                  },
+                                  "flash": {
+                                    "allOf": [
+                                      {
+                                        "$ref": "#/components/schemas/OutcomeFigures"
+                                      },
+                                      {
+                                        "nullable": true,
+                                        "description": "This grain's FLASH figures (everything to date), observed. Present ⟺ `?leg=`. Null when the leg's outcome cannot be counted."
+                                      }
+                                    ]
+                                  },
+                                  "mature": {
+                                    "allOf": [
+                                      {
+                                        "$ref": "#/components/schemas/OutcomeFigures"
+                                      },
+                                      {
+                                        "nullable": true,
+                                        "description": "This grain's MATURE figures (runs started before the leg's cutoff, over the outcomes of the leads they served), observed. Present ⟺ `?leg=`. Null when the mature cut could not be made; a cut that holds nothing reads zeros."
+                                      }
+                                    ]
+                                  },
+                                  "isMature": {
+                                    "type": "boolean",
+                                    "nullable": true,
+                                    "description": "This grain's MATURE outcomes against the leg's outcomesRequired — what a surface tags `Learning` on per audience / campaign. Present ⟺ `?leg=`. Null when the mature cut could not be made."
                                   }
                                 },
                                 "required": [
@@ -19002,6 +19503,41 @@
                                       "spentUsd"
                                     ],
                                     "description": "Present ⟺ the request named a `?leg=`. WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP: a leg-keyed read is priced on the step the leg MOVES A LEAD TO, never on the step its basis funnel is named after (an entry leg's outcome is several rungs above that). Absent on every funnel- or goal-keyed request, whose bodies are byte-unchanged."
+                                  },
+                                  "basis": {
+                                    "type": "string",
+                                    "enum": [
+                                      "flash",
+                                      "mature"
+                                    ],
+                                    "description": "WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis), never the grain, so every block of one row is on one version: `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before)."
+                                  },
+                                  "flash": {
+                                    "allOf": [
+                                      {
+                                        "$ref": "#/components/schemas/OutcomeFigures"
+                                      },
+                                      {
+                                        "nullable": true,
+                                        "description": "This grain's FLASH figures (everything to date), observed. Present ⟺ `?leg=`. Null when the leg's outcome cannot be counted."
+                                      }
+                                    ]
+                                  },
+                                  "mature": {
+                                    "allOf": [
+                                      {
+                                        "$ref": "#/components/schemas/OutcomeFigures"
+                                      },
+                                      {
+                                        "nullable": true,
+                                        "description": "This grain's MATURE figures (runs started before the leg's cutoff, over the outcomes of the leads they served), observed. Present ⟺ `?leg=`. Null when the mature cut could not be made; a cut that holds nothing reads zeros."
+                                      }
+                                    ]
+                                  },
+                                  "isMature": {
+                                    "type": "boolean",
+                                    "nullable": true,
+                                    "description": "This grain's MATURE outcomes against the leg's outcomesRequired — what a surface tags `Learning` on per audience / campaign. Present ⟺ `?leg=`. Null when the mature cut could not be made."
                                   }
                                 },
                                 "required": [
@@ -19139,6 +19675,41 @@
                                       "spentUsd"
                                     ],
                                     "description": "Present ⟺ the request named a `?leg=`. WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP: a leg-keyed read is priced on the step the leg MOVES A LEAD TO, never on the step its basis funnel is named after (an entry leg's outcome is several rungs above that). Absent on every funnel- or goal-keyed request, whose bodies are byte-unchanged."
+                                  },
+                                  "basis": {
+                                    "type": "string",
+                                    "enum": [
+                                      "flash",
+                                      "mature"
+                                    ],
+                                    "description": "WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis), never the grain, so every block of one row is on one version: `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before)."
+                                  },
+                                  "flash": {
+                                    "allOf": [
+                                      {
+                                        "$ref": "#/components/schemas/OutcomeFigures"
+                                      },
+                                      {
+                                        "nullable": true,
+                                        "description": "This grain's FLASH figures (everything to date), observed. Present ⟺ `?leg=`. Null when the leg's outcome cannot be counted."
+                                      }
+                                    ]
+                                  },
+                                  "mature": {
+                                    "allOf": [
+                                      {
+                                        "$ref": "#/components/schemas/OutcomeFigures"
+                                      },
+                                      {
+                                        "nullable": true,
+                                        "description": "This grain's MATURE figures (runs started before the leg's cutoff, over the outcomes of the leads they served), observed. Present ⟺ `?leg=`. Null when the mature cut could not be made; a cut that holds nothing reads zeros."
+                                      }
+                                    ]
+                                  },
+                                  "isMature": {
+                                    "type": "boolean",
+                                    "nullable": true,
+                                    "description": "This grain's MATURE outcomes against the leg's outcomesRequired — what a surface tags `Learning` on per audience / campaign. Present ⟺ `?leg=`. Null when the mature cut could not be made."
                                   }
                                 },
                                 "required": [
@@ -19276,6 +19847,41 @@
                                       "spentUsd"
                                     ],
                                     "description": "Present ⟺ the request named a `?leg=`. WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP: a leg-keyed read is priced on the step the leg MOVES A LEAD TO, never on the step its basis funnel is named after (an entry leg's outcome is several rungs above that). Absent on every funnel- or goal-keyed request, whose bodies are byte-unchanged."
+                                  },
+                                  "basis": {
+                                    "type": "string",
+                                    "enum": [
+                                      "flash",
+                                      "mature"
+                                    ],
+                                    "description": "WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis), never the grain, so every block of one row is on one version: `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before)."
+                                  },
+                                  "flash": {
+                                    "allOf": [
+                                      {
+                                        "$ref": "#/components/schemas/OutcomeFigures"
+                                      },
+                                      {
+                                        "nullable": true,
+                                        "description": "This grain's FLASH figures (everything to date), observed. Present ⟺ `?leg=`. Null when the leg's outcome cannot be counted."
+                                      }
+                                    ]
+                                  },
+                                  "mature": {
+                                    "allOf": [
+                                      {
+                                        "$ref": "#/components/schemas/OutcomeFigures"
+                                      },
+                                      {
+                                        "nullable": true,
+                                        "description": "This grain's MATURE figures (runs started before the leg's cutoff, over the outcomes of the leads they served), observed. Present ⟺ `?leg=`. Null when the mature cut could not be made; a cut that holds nothing reads zeros."
+                                      }
+                                    ]
+                                  },
+                                  "isMature": {
+                                    "type": "boolean",
+                                    "nullable": true,
+                                    "description": "This grain's MATURE outcomes against the leg's outcomesRequired — what a surface tags `Learning` on per audience / campaign. Present ⟺ `?leg=`. Null when the mature cut could not be made."
                                   }
                                 },
                                 "required": [
@@ -19449,6 +20055,118 @@
                             "nullable": true,
                             "description": "HOW MANY PEOPLE THIS ROW'S AUDIENCE CAN STILL BE SERVED — human-service's own `availableToContactCount` (pool members not suppressed inside the brand's 3-month re-contact window), read LIVE on every request, never from the cached evidence. Present on every audience row, absent on the brand / campaign column (audienceId null). `0` = the producer says the audience is served out, so a consumer picking an audience for a serve can skip it while another audience still has people (features-service#1035). `null` = we could not read it (human-service unreachable, or it stated no count) — treat as unknown, never as 0. Moves no figure and no order on this body."
                           },
+                          "maturity": {
+                            "type": "object",
+                            "properties": {
+                              "basis": {
+                                "type": "string",
+                                "enum": [
+                                  "flash",
+                                  "mature"
+                                ],
+                                "description": "The version this row's estimatesByGrain and resolved are priced on — and therefore what campaign-service ranks. `mature` ⟺ the workflow is MATURE on the fleet of its leg (isMature) and a mature ladder exists; `flash` otherwise."
+                              },
+                              "isMature": {
+                                "type": "boolean",
+                                "nullable": true,
+                                "description": "The WORKFLOW's verdict on the fleet of its leg (every org's campaigns performing it): at least the leg's outcomesRequired MATURE outcomes. Null when the cut could not be made."
+                              },
+                              "matureOutcomes": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "The workflow's mature outcomes of the leg's step on the fleet. Null when the cut could not be made."
+                              },
+                              "resolved": {
+                                "type": "object",
+                                "properties": {
+                                  "flash": {
+                                    "type": "object",
+                                    "nullable": true,
+                                    "properties": {
+                                      "grain": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "audience",
+                                          "campaign",
+                                          "brand",
+                                          "crossOrg",
+                                          "offer"
+                                        ],
+                                        "description": "The provenance label of that version's resolved pick (as resolved.grain)."
+                                      },
+                                      "costPerOutcomeUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "That version's resolved (cascade-floored) cost per outcome — what resolved.costPerOutcomeUsd would read if the row were priced on it."
+                                      },
+                                      "conversionRatePct": {
+                                        "type": "number",
+                                        "nullable": true
+                                      }
+                                    },
+                                    "required": [
+                                      "grain",
+                                      "costPerOutcomeUsd",
+                                      "conversionRatePct"
+                                    ],
+                                    "description": "Everything to date. Null when there is no flash figure at all."
+                                  },
+                                  "mature": {
+                                    "type": "object",
+                                    "nullable": true,
+                                    "properties": {
+                                      "grain": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "audience",
+                                          "campaign",
+                                          "brand",
+                                          "crossOrg",
+                                          "offer"
+                                        ],
+                                        "description": "The provenance label of that version's resolved pick (as resolved.grain)."
+                                      },
+                                      "costPerOutcomeUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "That version's resolved (cascade-floored) cost per outcome — what resolved.costPerOutcomeUsd would read if the row were priced on it."
+                                      },
+                                      "conversionRatePct": {
+                                        "type": "number",
+                                        "nullable": true
+                                      }
+                                    },
+                                    "required": [
+                                      "grain",
+                                      "costPerOutcomeUsd",
+                                      "conversionRatePct"
+                                    ],
+                                    "description": "The mature cohort's figure. NULL when the mature cut could not be made. A cut that was made and holds nothing states that instead: zeros on observed figures, null fields on a resolved price."
+                                  },
+                                  "isMature": {
+                                    "type": "boolean",
+                                    "nullable": true,
+                                    "description": "The verdict: at least the leg's outcomesRequired MATURE outcomes. Null = the mature outcomes could not be counted, never a verdict."
+                                  }
+                                },
+                                "required": [
+                                  "flash",
+                                  "mature",
+                                  "isMature"
+                                ],
+                                "description": "The row's price on BOTH versions, so a consumer compares them without re-deriving anything. resolved (the block above) equals the one named by `basis`."
+                              }
+                            },
+                            "required": [
+                              "basis",
+                              "isMature",
+                              "matureOutcomes",
+                              "resolved"
+                            ],
+                            "description": "THE ROW'S MATURITY (features-service#1196) — present ⟺ the request named a `?leg=`. A mature workflow's young spend no longer inflates its price while its outcomes are still on their way; a workflow that is not yet mature is priced exactly as before (flash, with the cascade floor that lets it be tried)."
+                          },
                           "retired": {
                             "type": "boolean",
                             "enum": [
@@ -19486,6 +20204,49 @@
                         "no_eligible_workflow"
                       ],
                       "description": "Present ⟺ a `?leg=` read has workflows but NONE is assigned active on the leg (`legAssignment`). `recommendedWorkflowDynastySlug` is then null by refusal, never a fall back to an unassigned or deprecated workflow."
+                    },
+                    "maturity": {
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/LegMaturityRule"
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "legKey": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "The leg the rule is for."
+                            },
+                            "cutoffIso": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "Runs started, and leads served, before this instant (UTC midnight of today − durationDays) are mature. Null on a 0-day leg, where mature ≡ flash."
+                            },
+                            "measured": {
+                              "type": "boolean",
+                              "description": "TRUE ⟺ the mature cut could be made. FALSE ⟹ every row is priced on flash, as before."
+                            },
+                            "unmeasuredReason": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "serve_dates_unavailable",
+                                "mature_evidence_unavailable",
+                                "leg_scope_unavailable"
+                              ],
+                              "description": "Why the cut could not be made: serve_dates_unavailable = a lead population states no serve date (lead-service's lastServedAt), so young leads could not be told from mature ones; mature_evidence_unavailable = a mature cost or person read failed on this refresh (the answer degrades to flash rather than failing); leg_scope_unavailable = the leg's campaigns could not be read."
+                            }
+                          },
+                          "required": [
+                            "legKey",
+                            "cutoffIso",
+                            "measured",
+                            "unmeasuredReason"
+                          ]
+                        }
+                      ],
+                      "description": "THE LEG'S MATURITY RULE, echoed on a leg-keyed answer (present ⟺ `?leg=`), and whether this answer could apply it."
                     },
                     "unmeasuredReason": {
                       "type": "string",

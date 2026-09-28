@@ -26,7 +26,13 @@ import { RUNS_CAMPAIGN_IDS_PER_REQUEST } from "./brand-spend-by-day-client.js";
 import { EMAIL_GATEWAY_CAMPAIGN_IDS_PER_REQUEST } from "./email-gateway-family.js";
 import { fetchFleetLegCampaigns, type FleetLegCampaign } from "./fleet-leg-campaigns.js";
 import { fetchPublicCosts, fetchPublicEmailStats, type CostGroup } from "./public-stats-clients.js";
-import type { Pricing } from "./pricing.js";
+import { runsCostsUrl, selectCostCentsString, type Pricing } from "./pricing.js";
+import { fetchWithRetry } from "./fetch-retry.js";
+import { mapWithConcurrency } from "./concurrency.js";
+import { sumDecimalStrings } from "./decimal.js";
+import { startedBeforeParam } from "./maturity.js";
+import { fetchFleetMatureSlugStats } from "./fleet-positive-repliers.js";
+import type { EnginePerson } from "./revenue-engine.js";
 
 const FRESH_MS = 15 * 60_000;
 const STALE_MS = 6 * 60 * 60_000;
@@ -144,8 +150,165 @@ export async function fetchLegFleetEvidence(featureSlug: string, legKey: string,
   };
 }
 
+// ── THE FLEET'S MATURE EVIDENCE ON ONE LEG (`lib/maturity.ts`) ─────────────────────────────────────
+//
+// The crossOrg grain's MATURE twin: the spend of runs STARTED before the cutoff on the leg's campaigns
+// (every org), and the outcomes — whenever they landed — of the leads those runs SERVED. Both halves are
+// narrowed to the SAME campaign population the flash grain above reads, so the mature figure is a subset
+// of the flash one by construction.
+//
+// SPEND: runs-service's public aggregation takes no `startedBefore`, so the leg's campaigns are read per
+// ORG through the org-scoped aggregation, which does (x-org-id of that org, api-key only — a fleet read
+// forwards no user). One read per org (≤500 campaign ids a request), summed EXACTLY per slug. The basis
+// is INCURRED, like every crossOrg figure: a workflow's cost to produce an outcome does not depend on
+// whether we billed one org for it.
+// OUTCOMES: the fleet person cell (lib/fleet-positive-repliers.ts), bucketed by serve day.
+//
+// Held per (feature, leg, pricing, cutoff) with the same freshness as the flash cell (15 min fresh / 6 h
+// stale, single-flight). FAIL-LOUD on a cold cell; a failed background refresh keeps the previous cell.
+
+interface MatureCostCell {
+  value: CostGroup[];
+  computedAt: number;
+}
+
+const matureCostCells = new Map<string, MatureCostCell>();
+const matureCostInFlight = new Map<string, Promise<MatureCostCell>>();
+const MATURE_ORG_CONCURRENCY = 4;
+
+async function readOrgMatureCostGroups(
+  featureSlug: string,
+  orgId: string,
+  campaignIds: readonly string[],
+  pricing: Pricing,
+  startedBefore: string,
+): Promise<CostGroup[]> {
+  const baseUrl = process.env.RUNS_SERVICE_URL;
+  const apiKey = process.env.RUNS_SERVICE_API_KEY;
+  if (!baseUrl || !apiKey) throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
+  const params = new URLSearchParams({
+    groupBy: "workflowSlug",
+    featureSlugs: featureSlug,
+    campaignIds: campaignIds.join(","),
+    startedBefore,
+  });
+  const response = await fetchWithRetry(runsCostsUrl(baseUrl, "org", pricing, params), {
+    headers: { "x-api-key": apiKey, "x-org-id": orgId },
+  });
+  if (!response.ok) {
+    throw new Error(`runs-service /v1/stats/costs (fleet mature, org ${orgId}) failed (${response.status}): ${await response.text()}`);
+  }
+  const data = (await response.json()) as { groups?: CostGroup[] };
+  if (!Array.isArray(data.groups)) throw new Error("runs-service /v1/stats/costs (fleet mature) returned no groups array");
+  return data.groups;
+}
+
+/** PURE. Per-org mature groups → one exact group per workflow slug, on the crossOrg (incurred) basis. */
+export function mergeMatureCostGroups(groups: readonly CostGroup[], pricing: Pricing): CostGroup[] {
+  const bySlug = new Map<string, { cents: string[]; runs: number }>();
+  for (const g of groups) {
+    const slug = g.dimensions.workflowSlug;
+    if (!slug || slug === "__total__") continue;
+    const entry = bySlug.get(slug) ?? { cents: [], runs: 0 };
+    entry.cents.push(selectCostCentsString(g, "totalCostInUsdCents", pricing, "incurred"));
+    entry.runs += Number(g.runCount ?? 1);
+    bySlug.set(slug, entry);
+  }
+  return [...bySlug].map(([slug, v]) => ({
+    dimensions: { workflowSlug: slug },
+    totalCostInUsdCents: sumDecimalStrings(v.cents, "runs-service cost group totalCostInUsdCents"),
+    runCount: v.runs,
+    minStartedAt: null,
+    maxStartedAt: null,
+  }));
+}
+
+async function buildMatureCosts(featureSlug: string, legKey: string, pricing: Pricing, cutoffIso: string): Promise<MatureCostCell> {
+  const campaigns = await fetchFleetLegCampaigns(featureSlug, legKey);
+  const byOrg = new Map<string, string[]>();
+  for (const c of campaigns) byOrg.set(c.orgId, [...(byOrg.get(c.orgId) ?? []), c.campaignId]);
+  const startedBefore = startedBeforeParam(cutoffIso);
+  const reads = [...byOrg].flatMap(([orgId, ids]) =>
+    chunk([...new Set(ids)].sort(), RUNS_CAMPAIGN_IDS_PER_REQUEST).map((c) => ({ orgId, ids: c })),
+  );
+  const perRead = await mapWithConcurrency(reads, MATURE_ORG_CONCURRENCY, (r) =>
+    readOrgMatureCostGroups(featureSlug, r.orgId, r.ids, pricing, startedBefore),
+  );
+  return { value: mergeMatureCostGroups(perRead.flat(), pricing), computedAt: Date.now() };
+}
+
+async function fetchLegFleetMatureCostGroups(
+  featureSlug: string,
+  legKey: string,
+  pricing: Pricing,
+  cutoffIso: string,
+): Promise<CostGroup[]> {
+  const key = `${featureSlug}|${legKey}|${pricing}|${cutoffIso}`;
+  const refreshCell = (): Promise<MatureCostCell> => {
+    const existing = matureCostInFlight.get(key);
+    if (existing) return existing;
+    const p = buildMatureCosts(featureSlug, legKey, pricing, cutoffIso)
+      .then((cell) => {
+        matureCostCells.set(key, cell);
+        // A cutoff moves once a day: an EARLIER cutoff's cell is never read again. Only earlier ones are
+        // pruned — a slow build for yesterday finishing after today's cell exists must not delete it.
+        const prefix = `${featureSlug}|${legKey}|${pricing}|`;
+        for (const k of matureCostCells.keys()) {
+          if (k.startsWith(prefix) && k.slice(prefix.length) < cutoffIso) matureCostCells.delete(k);
+        }
+        return cell;
+      })
+      .finally(() => matureCostInFlight.delete(key));
+    matureCostInFlight.set(key, p);
+    return p;
+  };
+  const cell = matureCostCells.get(key);
+  const age = cell ? Date.now() - cell.computedAt : Infinity;
+  if (cell && age < FRESH_MS) return cell.value;
+  if (cell && age < STALE_MS) {
+    refreshCell().catch((err) =>
+      console.error(`[features-service] leg fleet mature costs refresh failed (${key}), keeping previous cell:`, err),
+    );
+    return cell.value;
+  }
+  return (await refreshCell()).value;
+}
+
+/** The fleet's mature evidence on one leg, per workflow slug — the crossOrg grain's mature twin. */
+export interface LegFleetMatureEvidence {
+  /** The cutoff both halves are cut at. */
+  cutoffIso: string;
+  /** Spend of runs started before the cutoff, per slug, every org's leg campaigns (incurred basis). */
+  costGroups: CostGroup[];
+  /** The leads those runs served (serve clock), per slug: contacted / clicked / replied positively. */
+  emailStats: Map<string, Record<string, number>>;
+}
+
+/**
+ * The fleet's MATURE evidence on `legKey` of `featureSlug`. `own` is the requesting pair: its live persons
+ * replace its cached entry, as for every fleet person count. NULL when the cohort cannot be cut (a pair's
+ * rows state no serve date) — never the flash figure under the mature name.
+ */
+export async function fetchLegFleetMatureEvidence(
+  featureSlug: string,
+  legKey: string,
+  pricing: Pricing,
+  cutoffIso: string,
+  /** The requesting pair, read LIVE; NULL on a fleet read with no requesting brand. */
+  own: { orgId: string; brandId: string; persons: readonly EnginePerson[] } | null,
+  legCampaignIds: ReadonlySet<string>,
+): Promise<LegFleetMatureEvidence | null> {
+  // The person half first: a fleet whose population cannot be cut answers null with no spend read made.
+  const emailStats = await fetchFleetMatureSlugStats(featureSlug, own, cutoffIso, legCampaignIds);
+  if (!emailStats) return null;
+  const costGroups = await fetchLegFleetMatureCostGroups(featureSlug, legKey, pricing, cutoffIso);
+  return { cutoffIso, costGroups, emailStats };
+}
+
 /** Test seam. */
 export function __resetLegFleetEvidence(): void {
   cells.clear();
   inFlight.clear();
+  matureCostCells.clear();
+  matureCostInFlight.clear();
 }

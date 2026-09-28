@@ -6,32 +6,35 @@ import {
   maturityDaysForLeg,
   scopePredicate,
 } from "./roi-maturity.js";
-import { OUTCOME_LAG_DAYS } from "./learning-phase.js";
 import { buildCostEconomics, matureBasisOf } from "./cost-economics.js";
 import type { EnginePerson } from "./revenue-engine.js";
 
 const NOW = new Date("2026-10-01T12:34:56.000Z");
 
-function person(leadId: string, campaignId: string | null, contacted: string | null): EnginePerson {
+/**
+ * A lead SERVED at `servedAt` (the run-start clock the mature cohort is cut on). Its CONTACT date is set
+ * far on the other side of every cutoff below, so a cohort still cut on the contact date fails.
+ */
+function person(leadId: string, campaignId: string | null, servedAt: string | null | undefined): EnginePerson {
   return {
     leadId, firstName: null, lastName: null, photoUrl: null, orgId: null, orgName: null, orgLogoUrl: null,
     orgDomain: null, title: null, seniority: null, orgIndustry: null, orgEmployeeCount: null, orgCity: null,
-    orgCountry: null, campaignId, signals: {}, signalDates: { contacted },
+    orgCountry: null, campaignId, signals: {}, signalDates: { contacted: "2026-01-01T00:00:00.000Z" },
+    ...(servedAt !== undefined ? { servedAt } : {}),
   };
 }
 
-describe("the maturity delay is a property of the LEG", () => {
-  it("waits OUTCOME_LAG_DAYS on the two cold-email entry legs and 0 on every other leg", () => {
-    expect(maturityDaysForLeg("start_to_website_visit")).toBe(OUTCOME_LAG_DAYS);
-    expect(maturityDaysForLeg("start_to_conversation")).toBe(OUTCOME_LAG_DAYS);
-    expect(OUTCOME_LAG_DAYS).toBe(14);
+describe("the maturity delay is a property of the LEG (lib/maturity.ts)", () => {
+  it("waits 21 days on the two cold-email entry legs and 0 on every other leg", () => {
+    expect(maturityDaysForLeg("start_to_website_visit")).toBe(21);
+    expect(maturityDaysForLeg("start_to_conversation")).toBe(21);
     expect(maturityDaysForLeg("conversation_to_meeting_booked")).toBe(0);
     expect(maturityDaysForLeg(null)).toBe(0);
   });
 
   it("cuts at UTC midnight, so the cutoff moves once a day", () => {
-    expect(maturityCutoffIso(14, NOW)).toBe("2026-09-17T00:00:00.000Z");
-    expect(maturityCutoffIso(14, new Date("2026-10-01T00:00:00.000Z"))).toBe("2026-09-17T00:00:00.000Z");
+    expect(maturityCutoffIso(21, NOW)).toBe("2026-09-10T00:00:00.000Z");
+    expect(maturityCutoffIso(21, new Date("2026-10-01T00:00:00.000Z"))).toBe("2026-09-10T00:00:00.000Z");
   });
 });
 
@@ -44,7 +47,7 @@ describe("the plan covers the read's own scope", () => {
 
   it("delays only the campaigns on a delayed leg, and states the longest delay", () => {
     const plan = buildMaturityPlan(rows, scopePredicate({ featureSlugs: ["sales-cold-email-outreach", "ai-meeting-booking"], campaignIds: [] }), NOW);
-    expect(plan.days).toBe(14);
+    expect(plan.days).toBe(21);
     expect([...plan.delayedCampaignIds]).toEqual(["cold"]);
   });
 
@@ -67,11 +70,11 @@ describe("the mature cohort of leads", () => {
     NOW,
   );
 
-  it("drops a maturing campaign's lead first contacted on or after the cutoff, keeps the rest", () => {
+  it("drops a maturing campaign's lead SERVED on or after the cutoff, keeps the rest", () => {
     const kept = matureCohortPersons(
       [
-        person("old", "cold", "2026-09-16T23:59:59.999Z"),
-        person("edge", "cold", "2026-09-17T00:00:00.000Z"),
+        person("old", "cold", "2026-09-09T23:59:59.999Z"),
+        person("edge", "cold", "2026-09-10T00:00:00.000Z"),
         person("young", "cold", "2026-09-25T00:00:00.000Z"),
         person("undated", "cold", null),
         person("other", "zero-delay", "2026-09-30T00:00:00.000Z"),
@@ -80,6 +83,11 @@ describe("the mature cohort of leads", () => {
       plan,
     ).map((p) => p.leadId);
     expect(kept).toEqual(["old", "undated", "other", "orphan"]);
+  });
+
+  it("reads the SERVE clock, never the contact date: a lead contacted long ago but served young is out", () => {
+    // Every fixture person was CONTACTED on 2026-01-01; the serve is what decides.
+    expect(matureCohortPersons([person("young", "cold", "2026-09-28T00:00:00.000Z")], plan)).toEqual([]);
   });
 });
 

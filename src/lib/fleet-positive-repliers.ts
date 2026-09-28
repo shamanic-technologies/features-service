@@ -9,6 +9,10 @@
  * email-gateway cannot see). Here the fleet count is the SUM over every (org, brand) pair of that pair's
  * person count, so every finer grain is a subset by construction.
  *
+ * The same cell answers the FLEET'S MATURE COHORT (`fetchFleetMatureSlugStats`): each pair's population is
+ * held bucketed by (campaign, workflow slug, serve day), so the cohort a day-granular cutoff keeps is a sum
+ * of whole buckets and no second walk is made.
+ *
  * COST: one whole-population lead walk per (org, brand) running the feature — a fleet sweep, so it runs
  * off any interactive view's live lead copy (lib/lead-copy.ts) and is cached per feature with
  * stale-while-revalidate (15 min fresh / 6 h stale, single-flight). The REQUESTING pair is never read
@@ -20,23 +24,58 @@
  */
 
 import { mapWithConcurrency } from "./concurrency.js";
-import { crmRepliesBySlug, fetchPositiveRepliers, type CrmOnlyReplier, type PositiveReplier } from "./crm-only-repliers.js";
+import { crmRepliesBySlug, fetchScopePersons, type PositiveReplier } from "./crm-only-repliers.js";
 import { fetchFeatureMemberships } from "./feature-memberships-client.js";
 import { outsideInteractiveView } from "./lead-copy.js";
+import { matureSlugStats, serveDatesStated } from "./mature-evidence.js";
+import type { EnginePerson } from "./revenue-engine.js";
 
 const FRESH_MS = 15 * 60_000;
 const STALE_MS = 6 * 60 * 60_000;
 /** Whole-population walks held at once: ONE, because a big brand's parse is ~100 MB of a 384 MB heap. */
 const PAIR_CONCURRENCY = 1;
 
+/**
+ * One pair's population, reduced to what a count needs: per (campaign, workflow slug, SERVE DAY), how many
+ * of its deduped persons were contacted, clicked, replied positively. Kept per CAMPAIGN so a LEG-scoped
+ * read keeps only that leg's campaigns, and per SERVE DAY so the mature cohort (`lib/maturity.ts`, a
+ * day-granular cutoff on the serve clock) is a sum of whole buckets. A person never served sits on day
+ * `""`, which every cutoff keeps (never lose information).
+ */
+interface PairPopulation {
+  /** FALSE when this pair's rows state no serve date at all (a producer predating the field). */
+  serveDatesStated: boolean;
+  /** `${campaignId}\t${workflowSlug}\t${servedDay}` → [contacted, clicks, positive replies]. */
+  buckets: Map<string, [number, number, number]>;
+}
+
 interface FleetCell {
-  /**
-   * `${orgId}:${brandId}` → that pair's positive repliers, one per person, reduced to what a count needs
-   * (lead, campaign, workflow slug). Kept per PERSON rather than pre-counted so a LEG-scoped read can
-   * keep only the repliers served under that leg's campaigns.
-   */
-  byPair: Map<string, CrmOnlyReplier[]>;
+  /** `${orgId}:${brandId}` → that pair's population, bucketed (see {@link PairPopulation}). */
+  byPair: Map<string, PairPopulation>;
   computedAt: number;
+}
+
+const BUCKET_SEP = "\t";
+
+/** PURE. Bucket one pair's deduped persons (see {@link PairPopulation}). */
+export function bucketPopulation(persons: readonly EnginePerson[]): PairPopulation {
+  const buckets = new Map<string, [number, number, number]>();
+  for (const p of persons) {
+    if (!p.signals.contacted && !p.signals.clicked && !p.signals.positiveReply) continue;
+    const day = p.servedAt ? p.servedAt.slice(0, 10) : "";
+    const key = [p.campaignId ?? "", p.workflowSlug ?? "", day].join(BUCKET_SEP);
+    const b = buckets.get(key) ?? [0, 0, 0];
+    if (p.signals.contacted) b[0] += 1;
+    if (p.signals.clicked) b[1] += 1;
+    if (p.signals.positiveReply) b[2] += 1;
+    buckets.set(key, b);
+  }
+  return { serveDatesStated: serveDatesStated(persons), buckets };
+}
+
+function splitBucketKey(key: string): { campaignId: string; slug: string; day: string } {
+  const [campaignId = "", slug = "", day = ""] = key.split(BUCKET_SEP);
+  return { campaignId, slug, day };
 }
 
 const cells = new Map<string, FleetCell>();
@@ -52,14 +91,8 @@ async function buildCell(featureSlug: string): Promise<FleetCell> {
       if (m.orgId && m.brandId) pairs.set(pairKey(m.orgId, m.brandId), { orgId: m.orgId, brandId: m.brandId });
     }
     const entries = await mapWithConcurrency([...pairs.entries()], PAIR_CONCURRENCY, async ([key, p]) => {
-      const repliers = await fetchPositiveRepliers(p.brandId, undefined, { orgId: p.orgId });
-      const compact: CrmOnlyReplier[] = repliers.map((r) => ({
-        leadId: r.leadId,
-        email: null,
-        campaignId: r.campaignId,
-        workflowSlug: r.workflowSlug,
-      }));
-      return [key, compact] as const;
+      const persons = await fetchScopePersons(p.brandId, undefined, { orgId: p.orgId });
+      return [key, bucketPopulation(persons)] as const;
     });
     return { byPair: new Map(entries), computedAt: Date.now() };
   });
@@ -105,12 +138,73 @@ export async function fetchFleetPositiveRepliesBySlug(
   const cell = await getCell(featureSlug);
   const ownKey = pairKey(own.orgId, own.brandId);
   const total = new Map<string, number>();
-  const add = (repliers: readonly CrmOnlyReplier[]) => {
-    const scoped = campaignIds ? repliers.filter((r) => r.campaignId !== null && campaignIds.has(r.campaignId)) : repliers;
-    for (const [slug, n] of crmRepliesBySlug(scoped)) total.set(slug, (total.get(slug) ?? 0) + n);
-  };
-  for (const [key, repliers] of cell.byPair) if (key !== ownKey) add(repliers);
-  add(own.repliers);
+  for (const [key, pair] of cell.byPair) {
+    if (key === ownKey) continue;
+    for (const [bucketKey, [, , replies]] of pair.buckets) {
+      if (replies === 0) continue;
+      const { campaignId, slug } = splitBucketKey(bucketKey);
+      if (!slug) continue;
+      if (campaignIds && (!campaignId || !campaignIds.has(campaignId))) continue;
+      total.set(slug, (total.get(slug) ?? 0) + replies);
+    }
+  }
+  const scoped = campaignIds
+    ? own.repliers.filter((r) => r.campaignId !== null && campaignIds.has(r.campaignId))
+    : own.repliers;
+  for (const [slug, n] of crmRepliesBySlug(scoped)) total.set(slug, (total.get(slug) ?? 0) + n);
+  return total;
+}
+
+/**
+ * THE FLEET'S MATURE COHORT per workflow slug (`lib/maturity.ts`): every (org, brand) pair's deduped
+ * persons SERVED before `cutoffIso` (run-start clock) — how many were contacted, clicked, replied
+ * positively — in email-gateway's stats shape. Restricted to `campaignIds` on a leg. The requesting pair
+ * is never read from the cell: its own live persons replace it, exactly as for the positive repliers.
+ *
+ * NULL when any pair's rows state no serve date (a producer predating the field): the cohort cannot be cut,
+ * and a count that silently kept every lead would be the flash figure under the mature name.
+ */
+export async function fetchFleetMatureSlugStats(
+  featureSlug: string,
+  /** The requesting pair, read LIVE. NULL on a fleet read with no requesting brand: every pair comes
+   *  from the cell. */
+  own: { orgId: string; brandId: string; persons: readonly EnginePerson[] } | null,
+  cutoffIso: string,
+  campaignIds?: ReadonlySet<string>,
+): Promise<Map<string, Record<string, number>> | null> {
+  if (own && !serveDatesStated(own.persons)) return null;
+  const cell = await getCell(featureSlug);
+  const ownKey = own ? pairKey(own.orgId, own.brandId) : null;
+  const cutoffDay = cutoffIso.slice(0, 10);
+  const counts = new Map<string, [number, number, number]>();
+  for (const [key, pair] of cell.byPair) {
+    if (key === ownKey) continue;
+    if (!pair.serveDatesStated) return null;
+    for (const [bucketKey, [c, k, r]] of pair.buckets) {
+      const { campaignId, slug, day } = splitBucketKey(bucketKey);
+      if (!slug || day >= cutoffDay) continue;
+      if (campaignIds && (!campaignId || !campaignIds.has(campaignId))) continue;
+      const t = counts.get(slug) ?? [0, 0, 0];
+      t[0] += c;
+      t[1] += k;
+      t[2] += r;
+      counts.set(slug, t);
+    }
+  }
+  const total = new Map<string, Record<string, number>>(
+    [...counts].map(([slug, [c, k, r]]) => [
+      slug,
+      { recipientsContacted: c, recipientsClicked: k, recipientsRepliesPositive: r },
+    ]),
+  );
+  for (const [slug, stats] of own ? matureSlugStats(own.persons, cutoffIso, campaignIds ?? null) : []) {
+    const prev = total.get(slug);
+    if (!prev) {
+      total.set(slug, { ...stats });
+      continue;
+    }
+    for (const [k, v] of Object.entries(stats)) prev[k] = (prev[k] ?? 0) + v;
+  }
   return total;
 }
 

@@ -73,8 +73,10 @@ async function readOfferPersons(input: {
   const persons = await fetchLeadsForRevenue(brandId, scope, headers);
   const emails = [...new Set(persons.map((p) => p.email).filter((e): e is string => Boolean(e)))];
   const [timestamps, observed, quals, signupEmails, formEmails] = await Promise.all([
-    // Only the maturity cutoff reads a contact date. A failure leaves every lead undated — IN the
-    // mature cohort, the same degrade the revenue read's lens takes (never lose information).
+    // The delivery dates feed the legacy-qualification cause rule on the legs that wait (the gate
+    // predates the serve clock and is kept so no priced figure moves). The mature cohort itself is
+    // cut on each lead's SERVE date, read off the lead row (`lib/maturity.ts`). A failure leaves every
+    // lead undated, the same degrade the revenue read's lens takes.
     input.needDates ? soft("event timestamps", fetchEventTimestamps(brandId, undefined, emails, headers)) : Promise.resolve(null),
     soft("observed step statements", fetchObservedStepFacts(brandId, input.causes)),
     soft("legacy qualifications", fetchQualifications(brandId, undefined, emails, headers)),

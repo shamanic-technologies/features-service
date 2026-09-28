@@ -53,6 +53,7 @@
 
 import {
   funnelToProjectionInputs,
+  legTermsForFunnel,
   projectFromEvidence,
   TARGET_OUTCOMES_PER_MONTH,
   type GoalEcho,
@@ -221,6 +222,9 @@ function scoreFunnel(input: {
   evidence: WorkflowProjectionEvidence;
   economics: SalesEconomics | null;
   maximize: Maximize;
+  /** The leg a leg-keyed read names: each candidate is then projected on the leg's OWN terms (and its
+   *  maturity rule), exactly as the rows of the answer are. Absent ⟹ the funnel's goal, as before. */
+  legKey?: string | null;
 }): ScoredFunnel {
   const { featureSlug, funnel, evidence, maximize } = input;
   // Priced on the FUNNEL, not on a goal. `meetingChannel` is what makes the two meeting funnels
@@ -229,6 +233,7 @@ function scoreFunnel(input: {
   const { objective, goalEcho, singleStepGoal, formSubmissionGoal, meetingChannel } =
     funnelToProjectionInputs(funnel.funnelKey);
   const economics = mergeEconomics(input.economics, funnel.economics);
+  const legTerms = input.legKey && economics ? legTermsForFunnel(input.legKey, funnel.funnelKey, economics) : null;
   const projection = projectFromEvidence({
     featureSlug,
     objective,
@@ -239,6 +244,7 @@ function scoreFunnel(input: {
     funnelKey: funnel.funnelKey,
     evidence,
     economics,
+    ...(legTerms ? { legTerms, legKey: input.legKey } : {}),
   });
 
   const base: Omit<RankedFunnel, "rankable" | "unrankableReason"> = {
@@ -354,11 +360,15 @@ export function rankDeclaredFunnels(input: {
   economics: SalesEconomics | null;
   /** What the caller is maximising. Absent ⟺ `return` — the ordering this has always produced. */
   maximize?: Maximize;
+  /** A leg-keyed read's leg: every candidate is projected on the leg's own terms and maturity rule. */
+  legKey?: string | null;
 }): GoalArbitrationResponse {
   const { featureSlug, funnels, evidence, economics } = input;
   const maximize = input.maximize ?? DEFAULT_MAXIMIZE;
 
-  const scored = funnels.map((funnel) => scoreFunnel({ featureSlug, funnel, evidence, economics, maximize }));
+  const scored = funnels.map((funnel) =>
+    scoreFunnel({ featureSlug, funnel, evidence, economics, maximize, legKey: input.legKey ?? null }),
+  );
 
   // Rankable funnels first, best-on-the-asked-for-figure down: return per dollar, or conversion rate.
   // Ties break on the canonical goal order and then on funnelKey, so the same evidence and the same

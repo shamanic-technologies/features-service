@@ -34,8 +34,9 @@
  *
  * ── A SCOPE FINISHES WHEN ITS FIRST CAMPAIGN DOES ────────────────────────────────────────────────
  *
- * A campaign has finished gathering once it has {@link LEARNING_OUTCOMES_REQUIRED} outcomes of the
- * thing it is buying. A funnel, an offer or a brand has finished once at least ONE of its campaigns
+ * A campaign has finished gathering once it has its LEG's own number of outcomes of the thing it is
+ * buying (`legMaturity(legKey).outcomesRequired`, `lib/maturity.ts`: 1 positive reply on the
+ * conversation leg, 10 website visits on the visit leg, 10 on every leg the owner has not measured). A funnel, an offer or a brand has finished once at least ONE of its campaigns
  * has — so the scope's verdict is `priced` the moment any campaign crosses, whatever its siblings are
  * doing, and its COUNTDOWN is its LEADING campaign's: the live campaign with the most outcomes, which
  * is the one that will cross first. A scope with no campaigns at all has nothing to say — that is
@@ -47,7 +48,8 @@
  *
  * ── AND FINISHING THE SPEND IS NOT FINISHING THE GATHERING ───────────────────────────────────────
  *
- * Cold email's outcomes keep arriving for about {@link OUTCOME_LAG_DAYS} after the spend is in, so a
+ * Cold email's outcomes keep arriving for the leg's maturity duration (21 days on the two cold-email entry
+ * legs, `lib/maturity.ts`) after the spend is in, so a
  * scope that has reached its spend target with the outcomes still missing is its OWN state —
  * `learning_limited`, the same word the ad platforms use for an entity that is unlikely to leave
  * learning on the budget it has. It is NOT `priced` (the evidence did not arrive) and NOT `learning`
@@ -58,16 +60,17 @@ import { funnelLeg, funnelsContainingLeg, matchFunnelLegKey } from "./funnel-leg
 import { bookedToAttendedRate, legOutcomeTerms, FUNNEL_DRIVER, type LegDriver } from "./leg-outcome.js";
 import type { SalesFunnelKey } from "./sales-funnels.js";
 import type { SalesEconomics } from "./funnel-registry.js";
-
-/** How many outcomes of its OWN leg a campaign must have before its figures stop being noise. */
-export const LEARNING_OUTCOMES_REQUIRED = 10;
+import { legMaturity } from "./maturity.js";
 
 /**
- * How long a scope's outcomes keep landing after its spend is in. Stated on the wire rather than
- * folded into the countdown: it is why a `learning_limited` verdict is not a terminal one, and a
- * consumer has to be able to say that instead of rendering a finished bar.
+ * How many outcomes of its OWN leg a campaign must have before its figures stop being noise, and how long
+ * its outcomes keep landing after its spend is in — both the leg's MATURITY rule, read from
+ * `lib/maturity.ts` and restated nowhere. The lag is stated on the wire rather than folded into the
+ * countdown: it is why a `learning_limited` verdict is not a terminal one, and a consumer has to be able
+ * to say that instead of rendering a finished bar.
  */
-export const OUTCOME_LAG_DAYS = 14;
+const outcomesRequiredFor = (legKey: string | null | undefined): number => legMaturity(legKey).outcomesRequired;
+const outcomeLagDaysFor = (legKey: string | null | undefined): number => legMaturity(legKey).durationDays;
 
 /** What raising the daily ceiling buys, stated at these multiples of what it is today. */
 export const CEILING_MULTIPLES = [2, 3, 5] as const;
@@ -75,8 +78,8 @@ export const CEILING_MULTIPLES = [2, 3, 5] as const;
 /**
  * WHAT THIS SCOPE'S FIGURES ARE WORTH, AND WHY.
  *
- *  - `priced`            — a campaign of this scope has its {@link LEARNING_OUTCOMES_REQUIRED}
- *                          outcomes. Nothing to say; the money above is the answer.
+ *  - `priced`            — a campaign of this scope has its leg's required outcomes
+ *                          (`lib/maturity.ts`). Nothing to say; the money above is the answer.
  *  - `learning`          — still gathering, and there is spend left to do it with. Carries the countdown.
  *  - `learning_limited`  — the spend needed has been reached and the outcomes have not arrived.
  *  - `paused`            — no campaign of this scope is running, so nothing is being gathered.
@@ -173,7 +176,7 @@ export interface LearningPhase {
   /** What raising the ceiling would buy. `[]` whenever `daysRemaining` is null. */
   ceilingScenarios: LearningCeilingScenario[];
 
-  /** Why reaching the spend target is not reaching the outcomes. See {@link OUTCOME_LAG_DAYS}. */
+  /** Why reaching the spend target is not reaching the outcomes: the leg's maturity duration. */
   outcomeLagDays: number;
 
   /** Every campaign of the scope with its own count, so a consumer can SEE why the verdict reads so. */
@@ -398,10 +401,12 @@ function describe(input: LearningCampaignInput, leg: ResolvedLeg | null): Learni
 
 /** PURE. Every figure the scope's verdict rests on, and the verdict. No IO, no defaults, no averages. */
 export function buildLearningPhase(input: LearningPhaseInput): LearningPhase {
+  // No campaign named yet: the rule of "no leg" (`lib/maturity.ts`), replaced by the named campaign's
+  // own leg below as soon as there is one.
   const base = {
     ...EMPTY_VERDICT,
-    outcomesRequired: LEARNING_OUTCOMES_REQUIRED,
-    outcomeLagDays: OUTCOME_LAG_DAYS,
+    outcomesRequired: outcomesRequiredFor(null),
+    outcomeLagDays: outcomeLagDaysFor(null),
     campaigns: [] as LearningCampaign[],
   };
 
@@ -410,7 +415,15 @@ export function buildLearningPhase(input: LearningPhaseInput): LearningPhase {
   }
   const rows = input.campaigns.map((c) => ({ input: c, leg: resolveLeg(c, input.economics) }));
   const campaigns = rows.map(({ input: c, leg }) => describe(c, leg));
-  const withCampaigns = { ...base, campaigns };
+  // Until a leader is named, the scope's rule is its first campaign's leg (every campaign of one scope
+  // is on one leg in practice; a mixed scope is re-stated below on the campaign the verdict names).
+  const firstLeg = campaigns[0]?.legKey ?? null;
+  const withCampaigns = {
+    ...base,
+    outcomesRequired: outcomesRequiredFor(firstLeg),
+    outcomeLagDays: outcomeLagDaysFor(firstLeg),
+    campaigns,
+  };
 
   if (campaigns.length === 0) {
     return { ...withCampaigns, status: "unmeasured", unmeasuredReason: "no_campaigns" };
@@ -419,11 +432,13 @@ export function buildLearningPhase(input: LearningPhaseInput): LearningPhase {
   // A SCOPE IS PRICED THE MOMENT ANY OF ITS CAMPAIGNS IS — whatever the siblings are doing, and
   // whether or not that campaign is still running: evidence already gathered does not un-gather.
   const priced = campaigns.find(
-    (c) => c.outcomesObserved != null && c.outcomesObserved >= LEARNING_OUTCOMES_REQUIRED,
+    (c) => c.outcomesObserved != null && c.outcomesObserved >= outcomesRequiredFor(c.legKey),
   );
   if (priced) {
     return {
       ...withCampaigns,
+      outcomesRequired: outcomesRequiredFor(priced.legKey),
+      outcomeLagDays: outcomeLagDaysFor(priced.legKey),
       status: "priced",
       unmeasuredReason: null,
       campaignId: priced.campaignId,
@@ -442,16 +457,19 @@ export function buildLearningPhase(input: LearningPhaseInput): LearningPhase {
   if (!leader) return { ...withCampaigns, status: "paused", unmeasuredReason: null };
 
   const { input: lead, leg, outcomes } = leader;
+  const leaderLegKey = leg?.legKey ?? lead.legKey ?? null;
+  const required = outcomesRequiredFor(leaderLegKey);
   const named = {
     ...withCampaigns,
+    outcomesRequired: required,
+    outcomeLagDays: outcomeLagDaysFor(leaderLegKey),
     campaignId: lead.campaignId,
     campaignIdentityKey: lead.campaignIdentityKey,
     legKey: leg?.legKey ?? lead.legKey ?? null,
     outcomeStep: leg?.outcomeStep ?? null,
     outcomesObserved: outcomes,
     outcomeObserved: leg?.outcomeObserved ?? false,
-    progressPct:
-      outcomes == null ? null : Math.min(100, (100 * outcomes) / LEARNING_OUTCOMES_REQUIRED),
+    progressPct: outcomes == null ? null : Math.min(100, (100 * outcomes) / required),
     committedSpentUsd: input.leadingCommittedSpentUsd,
     dailyCeilingUsd: input.dailyCeilingUsd,
   };
@@ -468,7 +486,7 @@ export function buildLearningPhase(input: LearningPhaseInput): LearningPhase {
   const price = input.leadingCells ? expectedCostPerOutcome(input.leadingCells, leg) : null;
   if (price == null) return unmeasured("no_expected_price");
 
-  const spendTargetUsd = price * LEARNING_OUTCOMES_REQUIRED;
+  const spendTargetUsd = price * required;
   const committed = input.leadingCommittedSpentUsd ?? 0;
   const spendRemainingUsd = Math.max(0, spendTargetUsd - committed);
   const priceFigures = { expectedCostPerOutcomeUsd: price, spendTargetUsd, spendRemainingUsd };

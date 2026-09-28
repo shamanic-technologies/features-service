@@ -52,6 +52,15 @@ interface LeadRow {
    * would mis-attribute every lead served before the switch).
    */
   workflowSlug?: string | null;
+  /**
+   * WHEN the run that contacts this lead took it (lead-service#… `lastServedAt`): the original serve,
+   * or — for a row the retry pool re-handed to a later run — that later run's claim. The clock the
+   * mature cohort is cut on (`lib/maturity.ts`). Null when the row was never served; ABSENT on a
+   * producer predating the field.
+   */
+  lastServedAt?: string | null;
+  /** The audience the serve was drawn from, as tagged at serve time. Null when the serve carried none. */
+  audienceId?: string | null;
   email?: string | null;
   // Delivery-status overlay (brand- or campaign-scoped depending on the query params).
   contacted?: boolean;
@@ -370,6 +379,11 @@ export async function fetchLeadsForRevenue(
       leadId: row.leadId,
       campaignId: row.campaignId ?? null,
       workflowSlug: row.workflowSlug ?? null,
+      // The run-start clock of the mature cohort, and the audience the serve drew the lead from. An
+      // ABSENT field (a producer predating it) stays undefined, which is what tells "not stated" apart
+      // from a row that was never served (null).
+      ...(row.lastServedAt !== undefined ? { servedAt: row.lastServedAt } : {}),
+      ...(row.audienceId !== undefined ? { audienceId: row.audienceId } : {}),
       email: row.email ?? null,
       firstName: row.lead?.firstName ?? null,
       lastName: row.lead?.lastName ?? null,

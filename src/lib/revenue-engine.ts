@@ -132,6 +132,16 @@ export interface EnginePerson {
    */
   workflowSlug?: string | null;
   /**
+   * WHEN the run that contacts this lead took it — the serve, on the RUN-START clock the mature cohort
+   * is cut on (`lib/maturity.ts`). Carried for the same reason and under the same rules as `campaignId`:
+   * the engine never reads it, and `dedupPersonsByLead` keeps the first row's value because a deduped
+   * person is attributed to that row. Null when the row was never served; undefined when the producer
+   * states no serve date at all.
+   */
+  servedAt?: string | null;
+  /** The audience the serve drew this lead from, as tagged at serve time. Same rules as `servedAt`. */
+  audienceId?: string | null;
+  /**
    * Set ONLY when this person's positive reply is known SOLELY from the customer's CRM (lead-service's
    * ledger) — the sender classified no positive reply. It is what a surface counting positive replies
    * from ANOTHER source (email-gateway's per-audience / per-campaign aggregates) adds on top without

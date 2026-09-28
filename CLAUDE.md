@@ -1,5 +1,62 @@
 # Features Service — CLAUDE.md
 
+## A WORKFLOW IS PRICED ON ITS MATURE EVIDENCE ONCE IT IS MATURE ON THE FLEET OF ITS LEG — `lib/maturity.ts` is the ONE maturity rule
+
+Supersedes `OUTCOME_LAG_DAYS` (14) and the 10-outcome learning bar everywhere below. Prod 2026-09-28,
+campaign `3922c8e1…`: campaign-service picks the lowest `resolved.costPerOutcomeUsd`, and every figure
+divided everything spent to date by everything observed to date. A new workflow read cheap, took the
+budget, its own spend floor passed the leader before its outcomes landed, the next took over — a LADDER:
+$357 of $1,022 went to 33 workflows with zero positive replies, and the leader's own young spend
+inflated its price too. Owner decisions (do not re-litigate):
+
+- **EVERY FIGURE HAS TWO VERSIONS.** FLASH = everything to date (what every figure was before). MATURE =
+  the spend of runs STARTED before the cutoff over the outcomes, whenever they land, of the leads THOSE
+  runs served. ONE clock for both: the run start = the serve (lead-service compact `lastServedAt`,
+  sales-lead-service#642; `leads_campaigns.sent_at` is never read). A lead with no serve date is IN.
+- **PER LEG** (`legMaturity`): `start_to_conversation` 21 days / 1 positive reply; `start_to_website_visit`
+  21 days / 10 visits (21 days captures 92-95% of replies and 93-94% of visits; 14 caught 72-77% of
+  replies); every other leg 0 days / 10, so mature ≡ flash there. Cutoff = UTC midnight of today −
+  duration; runs are asked `startedBefore = cutoff − 1µs`. Published on `/public/channels` `legs[].maturity`.
+  `outcomesRequired` is also the learning bar (`learningPhase`) and contacted-value's brand-rate bar;
+  `MIN_MEASURED_FROM_REACHED` (effective rates) is a separate sample-size bar of 10 and stays.
+- **THE RANKING RULE (`workflow-projection?leg=`).** A workflow whose MATURE outcomes on the FLEET of its
+  leg (every org's campaigns performing it) reach `outcomesRequired` is priced on MATURE evidence at EVERY
+  grain, cascade included (`row.maturity.basis: "mature"`): its young spend counts nowhere. Otherwise it
+  is priced EXACTLY as before, flash plus cascade floor: its exploration phase. **The floor-as-exploration
+  doctrine below applies to FLASH rows only.** campaign-service needed no change (it reads `resolved`).
+- **WIRE, leg-keyed only (funnel/goal bodies byte-unchanged).** Every grain block: `basis`, `flash`,
+  `mature` (`OutcomeFigures` {spentUsd, contacted, outcomes, costPerOutcomeUsd, conversionRatePct},
+  OBSERVED, never floored) and `isMature` (that grain's mature outcomes vs the bar: the per-audience /
+  per-campaign Learning tag). Every row: `maturity {basis, isMature, matureOutcomes, resolved: {flash,
+  mature, isMature}}`. Response: `maturity` = the rule + `cutoffIso`, `measured`, `unmeasuredReason`.
+  Retired and explore-allowance rows are flash.
+- **MATURE COUNTS ARE PERSONS** (`lib/mature-evidence.ts`): email-gateway states no serve date, so they
+  are counted on lead-service's deduped population — brand / campaign / offer via `fetchScopePersons`,
+  the audience by the SERVE's audience tag, the fleet via the per-pair cell (`fetchFleetMatureSlugStats`,
+  buckets per campaign × slug × serve day). Mature spend is summed EXACTLY (`lib/decimal.ts`); the
+  fleet's per org (`fetchLegFleetMatureEvidence`, SWR per feature × leg × pricing × cutoff; `own` may be
+  null for a fleet read). Flash figures keep their existing sources byte for byte.
+- **FAIL TO FLASH, NEVER TO A FALSE MATURE, AND NEVER TO A 502.** ANY row without `lastServedAt` (a producer
+  predating it, a live lead copy snapshotted before it) makes the population uncuttable
+  (`serve_dates_unavailable`); a mature cost or person read that FAILS degrades the same way
+  (`mature_evidence_unavailable`, loud log) instead of taking down a ladder campaign-service ranks on.
+  Either way: `maturity.measured: false`, every row on flash, `mature: null`. The fleet mature cost cell is
+  keyed on the cutoff, so it is cold once a day; a build prunes only EARLIER cutoffs.
+- **The basis funnel of a leg is RANKED ON THE SAME TERMS**: `rankDeclaredFunnels` takes the `legKey`
+  and projects each candidate funnel on the leg's own terms (`legTermsForFunnel`) and maturity rule, so
+  `leg.returnPerDollar` / `leg.conversionRatePct` are the figures of a row priced like the rows beside them.
+- **The serve clock cuts EVERY cohort**: `/revenue`'s mature ROI (`roi-maturity.ts`), offer outcomes'
+  mature ROI, contacted-value's brand rate (`servedInMatureCohort`).
+- **Staff actual-cost twin**: same shape on the vendor basis. A block pair is known on its OWN grain and
+  version; a row's two prices when the fleet grain holds nothing unpriced on that version; `basis` and
+  `isMature` are the billed read's (the order never moves on the staff switch).
+- Guards: `lib/maturity.test.ts`, `routes/workflow-projection-maturity.test.ts` (the ladder: the leader
+  priced $5 mature vs $18.57 flash ranks first; young spend never moves it; audience mature; non-mature
+  byte-equal to an uncut read; the serve-date degrade; the conversation bar of 1; campaign-grain mature
+  spend and outcomes reconciled to the cent; leg-less unchanged), `lib/actual-cost-projection.test.ts`,
+  `lib/fleet-positive-repliers.test.ts`, `lib/offer-outcomes.test.ts` (serve clock vs contact clock),
+  `lib/channel-catalogue.test.ts`. (Set 2026-09-28, features-service#1196.)
+
 ## A LEG-KEYED `workflow-projection` COUNTS ONLY THE LEG'S CAMPAIGNS, AT EVERY GRAIN — a workflow's figure is its figure on ONE leg × ONE channel
 
 Owner rule (2026-09-27, every stat about a workflow, template or model): never a workflow's figure in the
@@ -192,7 +249,9 @@ billed whatever they are sent, guarded):
   the UNPRICED one only per-grain unpriced billed spend. A grain with unpriced spend, or floored against
   one that has (crossOrg → brand → campaign → audience, offer on brand), reads NULL money + `vendorCost`
   naming it; `resolved.vendorCostKnown` likewise. `recommendedBudgetUsd` null; `leg.returnPerDollar`
-  re-read on vendor evidence (null if anything is unpriced).
+  re-read on vendor evidence (null if anything is unpriced). The flash / mature pairs of a leg-keyed row
+  ride it too, each known on its OWN version (a grain whose young spend is unpriced still states a real
+  mature vendor cost); `basis` / `isMature` stay the billed read's (the maturity section at the top).
 - **`/internal/features/:slug/revenue/actual-cost?groupBy=workflow|campaignId`** — the billed grouped
   compute with `pricing: "vendor"` (views `revenue-by-workflow-actual-cost`, `revenue-grouped-actual-cost`),
   each group stamped by `lib/actual-cost-groups.ts` from a `vendorUnpriced` cost read on the SAME scope.
@@ -269,8 +328,9 @@ which `/brands/:brandId/contacted-value` (the Deals board's Contacted column) se
 
 - **Entry rates come from ONE cell**: `getBrandContactedValue` (view `brand-contacted-value`, `m:
   contacted-value-v3`) — the route and every pipeline read (`contactedPricingSoft`) share it, so the column
-  and the pipeline cannot price off two rates. `P(r | contacted)`: the brand's MATURE cohort once it holds
-  ≥10 outcomes, else the fleet's pooled email-gateway rate, else null. Path values `P(paid | r) × LTR` are the
+  and the pipeline cannot price off two rates. `P(r | contacted)`: the brand's MATURE cohort (leads SERVED before the
+  route leg's cutoff) once it holds that leg's `outcomesRequired` (1 positive reply / 10 visits,
+  `lib/maturity.ts`), else the fleet's pooled email-gateway rate, else null. Path values `P(paid | r) × LTR` are the
   scope's own engine paths (same as every engaged lead). FAIL-SOFT: unreadable → those leads add nothing (loud log).
 - **Who**: contacted, not bounced/unsubscribed, NO conversion signal of any kind (`isContactedOnly`). Engaged
   leads are valued exactly as before (guarded: identical `computeRevenue` output with and without the pricing).
@@ -605,7 +665,7 @@ funnels, so summing funnel rungs in a browser counts a lead twice; this read tak
   funnel containing it (own terms merged over the effective economics), MAX across them — the engine's own
   best-path rule. `valueUsd` = PRICED count (default cause `outreach`) × that unit. Null when no declared
   funnel prices the step, never 0. **ROI** = value ÷ spend on the MATURE COHORT (per-leg delay,
-  `fetchMatureSpendCents` + contact dates), `maturing` when nothing spent is mature.
+  `fetchMatureSpendCents` + each lead's SERVE date, `lib/maturity.ts`), `maturing` when nothing spent is mature.
 - **ROWS ARE NOT ADDITIVE** across outcomes (a lead who replied then booked is in both).
 - **ONLY LEGS OUR SOFTWARE PERFORMS**: a campaign on a channel stating `performedBy: person` is hidden
   (`hiddenCampaignIds`) — the customer's team (`your-team-*`) AND ours by hand (`agency-*`, cold calling,
@@ -681,18 +741,20 @@ the spend block's cost per click (×3) / reply / signup / meeting / form / sale,
 
 ## ROI, %CAC AND $CAC ARE MEASURED ON THE MATURE COHORT — a campaign's leg says how long its outcomes lag, and a young campaign reads `maturing`, never a terrible ratio
 
-A cold email's replies and visits keep arriving ~two weeks after it is sent, so a campaign that spent
-heavily in the last fortnight read a terrible ROI: the spend was counted, the outcomes it bought had
-not landed. Owner decision 2026-09-25 (do not re-litigate), `lib/roi-maturity.ts`:
+A cold email's replies and visits keep arriving for weeks after it is sent, so a campaign that spent
+heavily in the last three weeks read a terrible ROI: the spend was counted, the outcomes it bought had
+not landed. Owner decision 2026-09-25, duration and clock re-set 2026-09-28 (`lib/maturity.ts`, the
+section at the top), `lib/roi-maturity.ts`:
 
 - **THE DELAY IS A PROPERTY OF THE CAMPAIGN'S LEG**, read off campaign-service's `legKey`:
-  `OUTCOME_LAG_DAYS` (14, `lib/learning-phase.ts` — the single constant, never a second 14) for
-  `start_to_website_visit` and `start_to_conversation`; 0 for every other leg and for a row stating no
-  leg (every such row in prod is a stopped pre-leg ancestor).
+  `legMaturity(legKey).durationDays` (`lib/maturity.ts` — the single source, never a second constant):
+  21 for `start_to_website_visit` and `start_to_conversation`; 0 for every other leg and for a row
+  stating no leg (every such row in prod is a stopped pre-leg ancestor).
 - **ONLY THE RATIOS MOVE.** `roiMultiple`, `costOfAcquisitionPct`, `costPerAcquisitionUsd` (and the lens's
   `costPerConversionUsd`) divide the MATURE COHORT: committed cost of runs STARTED before the cutoff, over
-  the pipeline of the leads FIRST CONTACTED before it — their outcomes count whenever they happened. A
-  lead with no contact date is IN the cohort (owner: never lose information). `committedCostUsd`,
+  the pipeline of the leads those runs SERVED (lead-service `lastServedAt`, one clock with the spend) —
+  their outcomes count whenever they happened. A lead with no serve date is IN the cohort (owner: never
+  lose information). `committedCostUsd`,
   `actualCostUsd`, the headline pipeline, `outcomes`, `funnelSteps`, `leads[]`, the count series and the
   measured conversion rates keep the whole history. **This is NOT decay** (see the no-decay section): no
   outcome is discounted by age; young SPEND and the leads it reached leave the ratio until they can
@@ -762,7 +824,7 @@ the per-funnel `/funnel-rates` read is gone). Lifetime revenue stays per OFFER. 
 every arrow, and every money figure rests on the result.
 
 - **THREE SOURCES, IN ORDER, AND NOTHING ELSE.** MEASURED on the brand's own leads once at least
-  `MIN_MEASURED_FROM_REACHED` (= `LEARNING_OUTCOMES_REQUIRED`, 10) reached the arrow's FROM step — the bar
+  `MIN_MEASURED_FROM_REACHED` (10, its own sample-size bar — not the maturity bar) reached the arrow's FROM step — the bar
   is on the DENOMINATOR so an arrow truly at 0% still becomes measured; else the brand's MANUAL statement;
   else the cross-org MEDIAN of stated rates for that LEG. None → `effectiveRatePct: null`,
   `unresolvedReason: "no_rate_available"`. Never a default, never a 0.
@@ -1214,8 +1276,9 @@ goal, never a leg — verified on its `origin/main`).
 
 ## A COUNTDOWN PRICED OFF THE CHEAPEST WORKFLOW COUNTS DOWN TO THE WRONG NUMBER — `learningPhase`, five verdicts, and the price rests on cells that OBSERVED an outcome
 
-The dashboard told a customer "Learning: 0 days left" on a campaign that had **4 of the 10 outcomes it
-needs**, had been running for weeks, and was nowhere near done. It computed that countdown itself, in
+(The bar is the leg's `outcomesRequired` since 2026-09-28 — 1 positive reply on the conversation leg,
+10 visits on the visit leg, `lib/maturity.ts` — and the lag its `durationDays`, 21.) The dashboard told a
+customer "Learning: 0 days left" on a campaign that had **4 of the 10 outcomes it needed**, had been running for weeks, and was nowhere near done. It computed that countdown itself, in
 the browser, out of ingredients it assembled from three services, and it was wrong in both halves.
 
 It picked the expected price by taking the CHEAPEST figure across every workflow — which selects, by
@@ -1257,7 +1320,7 @@ arrive", so an overrun rendered as a countdown that had finished.
   `campaigns[]`, which lists every campaign of the scope so a reader can SEE why the verdict reads as
   it does.
 - **FINISHING THE SPEND IS NOT FINISHING THE GATHERING.** Cold email's outcomes keep arriving for about
-  **two weeks** after the spend is in, so `outcomeLagDays` rides the body: it is why `learning_limited`
+  **three weeks** after the spend is in (the leg's `durationDays`, 21), so `outcomeLagDays` rides the body: it is why `learning_limited`
   is not terminal, and a consumer has to be able to SAY that rather than render a finished bar. It is
   deliberately NOT folded into `daysRemaining`, which answers only "how long until the spend is in".
 - **THE SPEND IT COUNTS FROM IS THE LEDGER'S, NOT THE CELLS'.** The cells are rolled up by workflow
@@ -1598,13 +1661,15 @@ workflow that never runs never earns evidence, so it never wins.
   like it would pin one alphabetically-first workflow forever and it does not: the floor is
   `max(own spend, parent)`, so consuming a workflow raises its OWN floor and rotates it out, and the
   catalogue sweeps by attrition. That convergence is the explore/exploit mechanism this file already
-  states one section down for a single workflow — it holds per cell too. Adding randomisation would
-  replace a self-correcting sweep with noise.
-- **EXPECT THE MEASURED LEADER TO STOP RUNNING FOR A WHILE AFTER A CHANGE LIKE THIS, and do not read
-  it as a fault.** The explore floor ($21) sits about eight times below the measured leader ($175),
-  so every unproven workflow beats `lithium` in eleven of twelve columns until it has spent its way
-  past the floor — roughly $500 across the catalogue, about two days at this campaign's rate.
-  (Set 2026-09-14, campaign-service#456 / workflow-service#423.)
+  states one section down for a single workflow — it holds per cell too, for FLASH (not yet mature)
+  workflows only since 2026-09-28. Adding randomisation would replace a self-correcting sweep with noise.
+- **"THE MEASURED LEADER STOPS RUNNING FOR A WHILE" WAS THE BUG, NOT A PROPERTY TO EXPECT (supersedes
+  the 2026-09-14 note).** It read: the explore floor ($21) sat ~8x below the leader ($175), so every
+  unproven workflow beat it until each had spent past the floor. That is the LADDER features-service#1196
+  measured ($357 of $1,022 on 33 workflows with zero positive replies): the leader's price also carried
+  its own young spend. A workflow mature on the fleet of its leg is now priced on its mature evidence,
+  so its young spend no longer pushes it down the order. (Set 2026-09-14, campaign-service#456 /
+  workflow-service#423; corrected 2026-09-28.)
 
 ## WHAT RAN IS A FACT IN THE LEDGER, NOT A COLUMN ON THE CAMPAIGN ROW — `observedPicks`, read live, and nothing new is stored
 
@@ -3597,7 +3662,9 @@ from what we actually charge and actually measured.
   the derived funnels, each carrying its own funnel so a row renders without the consumer knowing the
   catalogue. The step vocabulary rides the payload under `steps` (renamed from `producibleSteps` when it
   widened past the entry subset; the gateway does not proxy `/public/*`, so it had no outside consumer)
-  so nothing hardcodes it.
+  so nothing hardcodes it. Each entry of the top-level `legs[]` states its MATURITY RULE (`maturity`:
+  durationDays, outcomesRequired, outcomeSignal, source — `lib/maturity.ts`); a consumer joins a
+  channel's `stepTransitions[].legKey` to it. The rule is per LEG, never per channel.
 - **THE `conversation` STEP IS LABELLED "Positive reply" — the funnels' OWN wording — AND "Sales
   interest" IS STILL NOT ITS NAME (supersedes the "Conversation" label of #879/#885).** These strings
   are CUSTOMER COPY: the onboarding's first screen renders one card per producible step to a SIGNED-OUT
@@ -4487,6 +4554,10 @@ column would price off the cheapest-click workflow while the Strategy page shows
 
 ### NEVER null `resolved.costPerOutcomeUsd` for a 0-outcome workflow — the floor IS the exploration device, and nulling it STARVES the fleet (v0.107.2 tried it, v0.107.3 reverted)
 
+**Scope since 2026-09-28: FLASH (not yet mature) workflows only.** A workflow mature on the fleet of its leg
+is priced on its mature evidence (the maturity section at the top); the rule below is its exploration phase
+and still holds there verbatim.
+
 **Standing product rule (Kevin, 2026-07-29): a workflow with no outcome must ALWAYS return a number.**
 `resolved.costPerOutcomeUsd` is the cascade floor `max(spend, parent)` when the workflow has produced zero
 of the goal's outcome, and that is CORRECT — it is a rankable estimate, not noise to gate away.
@@ -5081,7 +5152,8 @@ customer's campaign. The MIXED channel is the case with no answer, and it is the
 - **BOUNDED AND SELF-EXTINGUISHING, which is what keeps it from becoming the cheap-forever number.** It
   applies ONLY while the dynasty has no grain at all. One run gives it real spend, it leaves this path
   for good, and from then on its OWN floor prices it, rising as it spends — the documented explore /
-  exploit mechanism, unchanged. A workflow can consume the allowance once.
+  exploit mechanism, unchanged — until it is MATURE on the fleet of its leg, when its mature evidence
+  prices it instead (the maturity section at the top). A workflow can consume the allowance once.
 - **IT STATES A COST FLOOR AND NOTHING ELSE** — `costPerPaidClientUsd`, `roiMultiple` and `cacPct` stay
   NULL, `grain` stays null, `estimatesByGrain` is `{}`. A return needs evidence that the workflow
   converts; a return computed off an exploration floor would print the biggest number on the page.

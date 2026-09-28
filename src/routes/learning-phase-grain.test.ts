@@ -2,15 +2,19 @@
  * WHEN DO THIS SCOPE'S FIGURES STOP BEING NOISE — driven end to end, from ONE fixture shaped like the
  * campaign that reported it.
  *
- * Prod 2026-09-13, brand `a179bbd9…` / campaign `3922c8e1…` / leg `start_to_conversation`: `azalea`
- * produced **4 conversations on $310.73**, `tango` — the workflow the campaign currently runs —
- * produced **none on $127.27**, and `alioth` carries the cross-org **$21.22** explore floor with
- * nothing observed at all. Committed **$438.00**, ceiling **$8/day**.
+ * Prod 2026-09-13, brand `a179bbd9…` / campaign `3922c8e1…`: `azalea` produced **4 outcomes on
+ * $310.73**, `tango` — the workflow the campaign currently runs — produced **none on $127.27**, and
+ * `alioth` carries the cross-org **$21.22** explore floor with nothing observed at all. Committed
+ * **$438.00**, ceiling **$8/day**.
  *
  * The dashboard derived the countdown itself and picked `alioth`: a $212.20 target the campaign
  * passed weeks ago, so it rendered "0 days left" on a campaign 4 outcomes into 10. Every case here
  * asserts what the served answer DISAGREES with that one about — a suite that only checked "a block
  * came back" would pass on the implementation this replaces.
+ *
+ * The bar is the LEG's own (`lib/maturity.ts`, features-service#1196): 10 website visits, but ONE
+ * positive reply on the conversation leg — so the countdown runs on the VISIT leg (the same figures, as
+ * visits), and the conversation leg is asserted separately (its 4 replies read priced).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
@@ -51,6 +55,7 @@ const app = (await import("../index.js")).default;
 const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
 const SALES = "sales-cold-email-outreach";
 const CONVERSATION_LEG = "start_to_conversation";
+const VISIT_LEG = "start_to_website_visit";
 const MEETING_LEG = "conversation_to_meeting_booked";
 const FUNNEL = "sales_meetings_from_conversation";
 
@@ -105,7 +110,7 @@ function campaign(shape: CampaignShape): Record<string, unknown> {
     featureSlug: SALES,
     funnelKey: shape.funnelKey === undefined ? FUNNEL : shape.funnelKey,
     acquisitionChannel: shape.acquisitionChannel ?? "cold_email",
-    legKey: shape.legKey === undefined ? CONVERSATION_LEG : shape.legKey,
+    legKey: shape.legKey === undefined ? VISIT_LEG : shape.legKey,
     status: shape.status ?? "ongoing",
     createdAt: shape.createdAt ?? "2026-08-01T00:00:00.000Z",
   };
@@ -113,10 +118,12 @@ function campaign(shape: CampaignShape): Record<string, unknown> {
 
 interface Fixture {
   campaigns: Array<Record<string, unknown>>;
-  /** Per-campaign positive replies, as email-gateway's `groupBy=campaignId` serves them. */
-  repliesByCampaign: Record<string, number>;
-  /** Per-WORKFLOW spend cents + replies for the campaign-grain read — the (campaign × workflow) cells. */
-  cells: Record<string, { cents: number; replies: number }>;
+  /** Per-campaign outcomes of the counted signal, as email-gateway's `groupBy=campaignId` serves them. */
+  outcomesByCampaign: Record<string, number>;
+  /** Per-WORKFLOW spend cents + outcomes for the campaign-grain read — the (campaign × workflow) cells. */
+  cells: Record<string, { cents: number; outcomes: number }>;
+  /** Which counted signal the outcomes are: website visits (the visit leg, default) or positive replies. */
+  signal?: "click" | "reply";
   /** Cents a campaign committed on a workflow the DYNASTY rollup drops (a lineage since retired). It
    *  is real spend the ledger reports and the cells do not — the divergence the committed figure has
    *  to be read from the ledger to avoid. Keyed by campaign id. */
@@ -131,18 +138,21 @@ interface Fixture {
 
 /** prod's own numbers: azalea produced everything, tango produced nothing, alioth never ran here. */
 const PROD_CELLS = {
-  azalea: { cents: 31073, replies: 4 },
-  tango: { cents: 12727, replies: 0 },
+  azalea: { cents: 31073, outcomes: 4 },
+  tango: { cents: 12727, outcomes: 0 },
 };
 
-function broadcastGroup(key: string, replies: number): Record<string, unknown> {
+function broadcastGroup(key: string, n: number, signal: "click" | "reply"): Record<string, unknown> {
   return {
     key,
-    broadcast: { recipientStats: { contacted: 100, clicked: 0, repliesPositive: replies } },
+    broadcast: {
+      recipientStats: { contacted: 100, clicked: signal === "click" ? n : 0, repliesPositive: signal === "reply" ? n : 0 },
+    },
   };
 }
 
 function mockFetch(fixture: Fixture): void {
+  const signal = fixture.signal ?? "click";
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as { url: string }).url;
     const cid = (init?.headers as Record<string, string> | undefined)?.["x-campaign-id"];
@@ -157,7 +167,7 @@ function mockFetch(fixture: Fixture): void {
     if (url.includes("/daily-budget")) {
       if (fixture.billingDown) return new Response("boom", { status: 503 });
       const cents = fixture.dailyBudgetCents === undefined ? "800" : fixture.dailyBudgetCents;
-      return json({ brandId: "b1", legKey: CONVERSATION_LEG, dailyBudgetCents: cents, updatedAt: null, funnels: [], channels: [], offers: [], legs: [] });
+      return json({ brandId: "b1", legKey: VISIT_LEG, dailyBudgetCents: cents, updatedAt: null, funnels: [], channels: [], offers: [], legs: [] });
     }
     if (url.includes("/sales-funnels")) return new Response("not found", { status: 404 });
     if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
@@ -166,13 +176,13 @@ function mockFetch(fixture: Fixture): void {
       // The learning read's own per-campaign counts — one bucket per campaign that sent.
       if (url.includes("groupBy=campaignId")) {
         return json({
-          groups: Object.entries(fixture.repliesByCampaign).map(([id, replies]) => broadcastGroup(id, replies)),
+          groups: Object.entries(fixture.outcomesByCampaign).map(([id, n]) => broadcastGroup(id, n, signal)),
         });
       }
       // The leading campaign's per-(campaign × workflow) cells.
       if (url.includes("groupBy=workflowSlug")) {
         return json({
-          groups: Object.entries(fixture.cells).map(([slug, cell]) => broadcastGroup(slug, cell.replies)),
+          groups: Object.entries(fixture.cells).map(([slug, cell]) => broadcastGroup(slug, cell.outcomes, signal)),
         });
       }
       return json({ groups: [] });
@@ -183,7 +193,7 @@ function mockFetch(fixture: Fixture): void {
       // THE LEDGER: every campaign's committed cents, including spend on a lineage the dynasty rollup
       // drops. This is what the committed figure is read from, and what costEconomics rides.
       if (url.includes("groupBy=campaignId")) {
-        const ids = new Set([...Object.keys(fixture.repliesByCampaign), ...Object.keys(fixture.retiredLineageCents ?? {})]);
+        const ids = new Set([...Object.keys(fixture.outcomesByCampaign), ...Object.keys(fixture.retiredLineageCents ?? {})]);
         return json({
           groups: [...ids].map((id) => ({
             dimensions: { campaignId: id },
@@ -222,13 +232,13 @@ function mockFetch(fixture: Fixture): void {
     }
 
     if (url.includes("/orgs/leads")) {
-      // The lead population the per-campaign counts and the cells' replies are counted on (PEOPLE, the
-      // `/stats` basis): one positive replier per reply the fixture states. The live campaign's repliers
-      // sit on the cells' workflows, the rest on a workflow nobody spent on.
+      // The lead population the per-campaign counts and the cells' outcomes are counted on (PEOPLE, the
+      // `/stats` basis): one person per outcome the fixture states. The live campaign's people sit on
+      // the cells' workflows, the rest on a workflow nobody spent on.
       const campaignFilter = new URL(url).searchParams.get("campaignId");
       const rows: Array<Record<string, unknown>> = [];
-      for (const [id, n] of Object.entries(fixture.repliesByCampaign)) {
-        const pool = id === "c-live" ? Object.entries(fixture.cells).flatMap(([slug, cell]) => Array(cell.replies).fill(slug)) : [];
+      for (const [id, n] of Object.entries(fixture.outcomesByCampaign)) {
+        const pool = id === "c-live" ? Object.entries(fixture.cells).flatMap(([slug, cell]) => Array(cell.outcomes).fill(slug)) : [];
         for (let i = 0; i < n; i++) {
           rows.push({
             leadId: `${id}-${i}`,
@@ -236,8 +246,7 @@ function mockFetch(fixture: Fixture): void {
             workflowSlug: pool[i] ?? "never-spent",
             email: `${id}-${i}@x.com`,
             contacted: true,
-            replied: true,
-            replyClassification: "positive",
+            ...(signal === "click" ? { clicked: true } : { replied: true, replyClassification: "positive" }),
           });
         }
       }
@@ -257,7 +266,7 @@ async function learningPhase(query = "brandId=b1&campaignId=c-live"): Promise<Re
 
 const LIVE_ONLY: Fixture = {
   campaigns: [campaign({ id: "c-live" })],
-  repliesByCampaign: { "c-live": 4 },
+  outcomesByCampaign: { "c-live": 4 },
   cells: PROD_CELLS,
 };
 
@@ -273,8 +282,8 @@ describe("the countdown a browser could not compute", () => {
 
     expect(phase.status).toBe("learning");
     expect(phase.unmeasuredReason).toBeNull();
-    expect(phase.legKey).toBe(CONVERSATION_LEG);
-    expect(phase.outcomeStep.key).toBe("conversation");
+    expect(phase.legKey).toBe(VISIT_LEG);
+    expect(phase.outcomeStep.key).toBe("website_visit");
     expect(phase.outcomesObserved).toBe(4);
     expect(phase.outcomesRequired).toBe(10);
     expect(phase.progressPct).toBe(40);
@@ -286,7 +295,7 @@ describe("the countdown a browser could not compute", () => {
     expect(phase.spendRemainingUsd).toBeCloseTo(338.825, 3);
     expect(phase.dailyCeilingUsd).toBe(8);
     expect(phase.daysRemaining).toBe(43);
-    expect(phase.outcomeLagDays).toBe(14);
+    expect(phase.outcomeLagDays).toBe(21);
 
     // THE DIVERGENCE: the cheapest workflow's figure is an explore FLOOR. Ten of it is a target the
     // campaign passed weeks ago, which is why the browser rendered a finished countdown.
@@ -328,7 +337,7 @@ describe("the countdown a browser could not compute", () => {
     // Same campaign, three times its spend: the target is reached and the outcomes did not arrive.
     mockFetch({
       ...LIVE_ONLY,
-      cells: { azalea: { cents: 31073, replies: 4 }, tango: { cents: 100000, replies: 0 } },
+      cells: { azalea: { cents: 31073, outcomes: 4 }, tango: { cents: 100000, outcomes: 0 } },
     });
     const limited = await learningPhase();
     expect(limited.status).toBe("learning_limited");
@@ -337,20 +346,35 @@ describe("the countdown a browser could not compute", () => {
     expect(limited.ceilingScenarios).toEqual([]);
     // NOT priced — the evidence did not arrive — and `outcomeLagDays` says why it is not terminal.
     expect(limited.outcomesObserved).toBeLessThan(10);
-    expect(limited.outcomeLagDays).toBe(14);
+    expect(limited.outcomeLagDays).toBe(21);
 
     mockFetch(LIVE_ONLY);
     expect((await learningPhase()).status).toBe("learning");
 
-    mockFetch({ ...LIVE_ONLY, repliesByCampaign: { "c-live": 11 } });
+    mockFetch({ ...LIVE_ONLY, outcomesByCampaign: { "c-live": 11 } });
     expect((await learningPhase()).status).toBe("priced");
+  });
+
+  it("judges the CONVERSATION leg on its own bar of ONE positive reply: the same 4 outcomes read priced", async () => {
+    mockFetch({
+      ...LIVE_ONLY,
+      signal: "reply",
+      campaigns: [campaign({ id: "c-live", legKey: CONVERSATION_LEG })],
+    });
+    const phase = await learningPhase();
+    expect(phase.status).toBe("priced");
+    expect(phase.legKey).toBe(CONVERSATION_LEG);
+    expect(phase.outcomesRequired).toBe(1);
+    expect(phase.outcomeLagDays).toBe(21);
+    expect(phase.outcomesObserved).toBe(4);
   });
 
   it("measures a campaign on its OWN leg, never on the funnel's first step", async () => {
     mockFetch({
       campaigns: [campaign({ id: "c-live", legKey: MEETING_LEG })],
-      repliesByCampaign: { "c-live": 4 },
+      outcomesByCampaign: { "c-live": 4 },
       cells: PROD_CELLS,
+      signal: "reply",
     });
     const phase = await learningPhase();
     expect(phase.legKey).toBe(MEETING_LEG);
@@ -372,7 +396,7 @@ describe("the countdown a browser could not compute", () => {
   });
 
   it("reads a scope with no campaigns as unmeasured, never as gathering", async () => {
-    mockFetch({ campaigns: [], repliesByCampaign: {}, cells: {} });
+    mockFetch({ campaigns: [], outcomesByCampaign: {}, cells: {} });
     const phase = await learningPhase("brandId=b1");
     expect(phase.status).toBe("unmeasured");
     expect(phase.unmeasuredReason).toBe("no_campaigns");
@@ -399,8 +423,8 @@ describe("the countdown a browser could not compute", () => {
   it("has a FLOOR rather than a price when no cell has observed an outcome, and says so", async () => {
     mockFetch({
       ...LIVE_ONLY,
-      repliesByCampaign: { "c-live": 0 },
-      cells: { tango: { cents: 12727, replies: 0 } },
+      outcomesByCampaign: { "c-live": 0 },
+      cells: { tango: { cents: 12727, outcomes: 0 } },
     });
     const phase = await learningPhase();
     expect(phase.status).toBe("unmeasured");
@@ -423,7 +447,7 @@ describe("a scope wider than one campaign", () => {
       campaign({ id: "c-live" }),
       campaign({ id: "c-other", acquisitionChannel: "crm_email" }),
     ],
-    repliesByCampaign: { "c-live": 4, "c-other": 11 },
+    outcomesByCampaign: { "c-live": 4, "c-other": 11 },
     cells: PROD_CELLS,
   };
 
@@ -450,7 +474,7 @@ describe("a scope wider than one campaign", () => {
         campaign({ id: "c-dead", status: "stopped", acquisitionChannel: "crm_email" }),
         campaign({ id: "c-live" }),
       ],
-      repliesByCampaign: { "c-dead": 9, "c-live": 4 },
+      outcomesByCampaign: { "c-dead": 9, "c-live": 4 },
       cells: PROD_CELLS,
     });
     const phase = await learningPhase("brandId=b1");
