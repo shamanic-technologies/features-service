@@ -108,6 +108,40 @@ audiences, $107.77 on `/stats`.
   driving the `/revenue`-`/stats` builder, the audience rows and the offer row to the same flash, mature
   and verdict), `routes/offer-outcomes.test.ts`, the lean key sets in the grouped suites. (Set 2026-09-28.)
 
+## THE PUBLIC FLEET READS CARRY THE LEG'S FLASH + MATURE + `isMature`, AND EVERY FLEET MEDIAN OR BENCHMARK IS TAKEN OVER MATURE SCOPES ONLY (features-service#1196)
+
+- **`/public/stats/workflow-cost-per-outcome`**: `workflows[].maturity` (`LegMaturityFigures`) on the
+  objective's LEG (positiveReply → `start_to_conversation`, websiteVisit → `start_to_website_visit`; a
+  projected objective has no single leg: null) — every org's campaigns performing that leg, replies on
+  PEOPLE (the fleet person cell), mature via `fetchLegFleetMatureEvidence`: the byte-same evidence a
+  leg-keyed workflow-projection's crossOrg grain reads. `fleet` = the benchmark over the MATURE workflows
+  the read lists (`lib/fleet-leg-maturity.ts`): `best` (lowest MATURE cost, slug tie-break), `median`,
+  `matureWorkflowCount`, `measured`, `cutoffIso`. A young workflow's cheap flash figure never takes best.
+- **COMPUTED IN THE REFRESHER** (`GET /internal/fleet-leg-maturity`, api-key), whose fleet cells are
+  already warm; the server asks it and computes locally only when the refresher is off or unreachable (a
+  second fleet walk in the serving process is lead-service load nobody asked for). **Warmed OFF the request
+  path** — the landing gives this read 8 s and a cold fleet cell takes minutes — so before the first warm
+  lands `maturity` / `fleet` are null ("not stated yet") and the warm rebuilds the cached payload when it
+  lands. Store fresh 15 min; a warm is abandoned after 10 min so its single-flight flag always clears.
+- **The return medians** (`/public/stats/return-on-spend`, `funnel-return-on-spend` pairs,
+  `outcome-return-on-spend` legs and outcomes) gain `maturity: MatureScopesReturn` — the SAME median over
+  the brands whose own scope `isMature` (a leg-keyed row: the brand's verdict on the legs of the set it
+  performs, the multi-leg rule), on BOTH versions: `flash` = whole pipeline ÷ whole committed spend,
+  `mature` = the legacy mature ingredients. The legacy median fields are byte-unchanged (every brand past
+  the floor). Reasons: `no_snapshot_yet`, `maturity_not_recorded_yet` (a snapshot written before the
+  verdict; the next warm fills it), `not_enough_brands`.
+- **The snapshot rows carry the verdict**: `fleet_return_snapshots` / `fleet_funnel_return_snapshots` rows
+  gain `isMature`, `flashCommittedSpendUsd`, `flashExpectedPipelineUsd` (+ `legMaturity` per leg on the
+  channel rows), read off `computePairRevenue`'s body `maturity`. A brand claimed by several orgs is mature
+  only when every org's scope is (`combineVerdicts`: a young part is a young whole). Optional on the stored
+  shape; absent stays absent.
+- **NOT carried, stated**: the goal-bucketed `cost-per-outcome-trend` / `-lifetime` / `-distribution`
+  (staff analytics on a GOAL axis, not a leg; the landing dropped them), the best-model trend, the
+  showcase picks.
+- Guards: `routes/workflow-cost-leg-maturity.test.ts` (ONE fixture where the flash-cheapest workflow is
+  young: `best` names the mature one; the uncuttable cut; a projected objective reads nothing; the legacy
+  row figures unchanged), `lib/fleet-return-maturity.test.ts`. (Set 2026-09-28.)
+
 ## A LEG-KEYED `workflow-projection` COUNTS ONLY THE LEG'S CAMPAIGNS, AT EVERY GRAIN — a workflow's figure is its figure on ONE leg × ONE channel
 
 Owner rule (2026-09-27, every stat about a workflow, template or model): never a workflow's figure in the
