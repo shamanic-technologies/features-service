@@ -564,12 +564,17 @@ export function aggregateAcrossDynasties(
   costGroups: { dimensions: Record<string, string | null>; totalCostInUsdCents: string; runCount: number }[],
   outcomeMap: Map<string, Record<string, number>>,
   dimensionKey: string,
+  // EXACT cents (no per-slug rounding) — what a MATURE figure reads (`lib/maturity.ts`), so a scope's
+  // per-workflow cells add up to the scope's own mature spend to the cent. Omitted → the historical
+  // per-slug rounding, byte-identical for every flash figure.
+  options: { exactCents?: boolean } = {},
 ): { costMap: Map<string, { totalCostInUsdCents: number; completedRuns: number }>; aggregatedOutcomes: Map<string, Record<string, number>> } {
   const perSlugCost = new Map<string, { totalCostInUsdCents: number; completedRuns: number }>();
   for (const group of costGroups) {
     const slug = group.dimensions[dimensionKey];
     if (!slug) continue;
-    perSlugCost.set(slug, { totalCostInUsdCents: Math.round(Number(group.totalCostInUsdCents)), completedRuns: group.runCount });
+    const cents = Number(group.totalCostInUsdCents);
+    perSlugCost.set(slug, { totalCostInUsdCents: options.exactCents ? cents : Math.round(cents), completedRuns: group.runCount });
   }
 
   const costMap = new Map<string, { totalCostInUsdCents: number; completedRuns: number }>();

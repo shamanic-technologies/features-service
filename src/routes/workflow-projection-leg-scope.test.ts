@@ -33,6 +33,9 @@ vi.mock("../instrument.js", () => ({}));
 vi.mock("../lib/crm-only-repliers.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/crm-only-repliers.js")>()),
   fetchPositiveRepliers: vi.fn(async () => []),
+  // The mature cut's person read (lib/maturity.ts). The fleet person cell is mocked to "cannot be cut"
+  // suite-wide (src/vitest.setup.ts), so these flash-figure suites read exactly what they always did.
+  fetchScopePersons: vi.fn(async () => []),
 }));
 vi.mock("@sentry/node", () => ({
   default: { setupExpressErrorHandler: vi.fn() },

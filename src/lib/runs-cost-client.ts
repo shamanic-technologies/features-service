@@ -24,7 +24,9 @@
  * 0) — the revenue path treats cost as a core output, like its leads / economics clients.
  */
 import { fetchWithRetry } from "./fetch-retry.js";
-import { runsCostsUrl, selectCostCents, type Pricing } from "./pricing.js";
+import { runsCostsUrl, selectCostCents, selectCostCentsString, type Pricing } from "./pricing.js";
+import { sumDecimalStrings } from "./decimal.js";
+import { startedBeforeParam } from "./maturity.js";
 import { campaignFamilySet, singleCampaignId, type CampaignFilter } from "./campaign-scope.js";
 import { featureSlugsParam, type FeatureScope } from "./feature-scope.js";
 
@@ -352,23 +354,26 @@ export async function fetchMatureSpendCents(
   };
 
   // `startedBefore` is inclusive at microsecond precision — the same partition runs-cost-split.ts uses.
-  const beforeIso = `${new Date(new Date(plan.cutoffIso).getTime() - 1).toISOString().slice(0, 23)}999Z`;
+  const beforeIso = startedBeforeParam(plan.cutoffIso);
   const [before, after] = await Promise.all([read("startedBefore", beforeIso), read("startedAfter", plan.cutoffIso)]);
 
-  const bySlug = new Map<string, RunsCostCents>();
-  const total: RunsCostCents = { committedCents: 0, actualCents: 0 };
+  // EXACT decimal sums, rounded to the cent ONCE per figure (lib/decimal.ts): rounding each (workflow,
+  // campaign) group drifted the total by a cent every few groups, so the per-workflow cells of one
+  // campaign stopped adding up to the campaign's own mature spend.
+  const committedAll: string[] = [];
+  const actualAll: string[] = [];
+  const bySlugExact = new Map<string, { committed: string[]; actual: string[] }>();
   const add = (group: Record<string, unknown> & { dimensions?: Record<string, string | null> }) => {
-    const committedCents = Math.round(selectCostCents(group, "totalCostInUsdCents", pricing));
-    const actualCents = Math.round(selectCostCents(group, "actualCostInUsdCents", pricing));
-    total.committedCents += committedCents;
-    total.actualCents += actualCents;
+    const committed = selectCostCentsString(group, "totalCostInUsdCents", pricing);
+    const actual = selectCostCentsString(group, "actualCostInUsdCents", pricing);
+    committedAll.push(committed);
+    actualAll.push(actual);
     const slug = group.dimensions?.workflowSlug;
     if (!slug || slug === "__total__") return;
-    const prev = bySlug.get(slug);
-    bySlug.set(slug, {
-      committedCents: (prev?.committedCents ?? 0) + committedCents,
-      actualCents: (prev?.actualCents ?? 0) + actualCents,
-    });
+    const prev = bySlugExact.get(slug) ?? { committed: [], actual: [] };
+    prev.committed.push(committed);
+    prev.actual.push(actual);
+    bySlugExact.set(slug, prev);
   };
   const inFamily = (cid: string | null | undefined) => !family || (cid != null && family.has(cid));
   for (const group of before) {
@@ -379,6 +384,12 @@ export async function fetchMatureSpendCents(
     if (!inFamily(cid)) continue;
     if (cid && plan.delayedCampaignIds.has(cid)) continue;
     add(group);
+  }
+  const cents = (values: readonly string[]) => Math.round(Number(sumDecimalStrings(values, "runs-service cost group")));
+  const total: RunsCostCents = { committedCents: cents(committedAll), actualCents: cents(actualAll) };
+  const bySlug = new Map<string, RunsCostCents>();
+  for (const [slug, v] of bySlugExact) {
+    bySlug.set(slug, { committedCents: cents(v.committed), actualCents: cents(v.actual) });
   }
   return { total, bySlug };
 }

@@ -24,6 +24,9 @@ import { setPersonRepliesOnSlugStats, type CrmOnlyReplier, type PositiveReplier 
 import { mapWithConcurrency } from "./concurrency.js";
 import { runsCostsUrl, selectCostCents, selectCostCentsString, type Pricing } from "./pricing.js";
 import { type CostBasis } from "./cost-basis.js";
+import { matureAudienceDynastyCounts, matureSlugStats } from "./mature-evidence.js";
+import { startedBeforeParam } from "./maturity.js";
+import type { EnginePerson } from "./revenue-engine.js";
 
 /**
  * Workflow-ranking EVIDENCE (per-workflow / per-audience engagement) moves on the scale of minutes
@@ -90,11 +93,14 @@ async function fetchBrandCostGroups(
   campaignIds?: readonly string[],
   // Which runs-service aggregation answers: the billed one, or the staff-only vendor twin (pricing.ts).
   pricing: Pricing = "gross",
+  // MATURE cut (`lib/maturity.ts`): only runs started at or before this instant. Omitted → every run.
+  startedBefore?: string,
 ): Promise<CostGroup[]> {
   const baseUrl = process.env.RUNS_SERVICE_URL;
   if (!baseUrl) throw new Error("RUNS_SERVICE_URL not configured");
   const params = new URLSearchParams({ groupBy, brandId, featureSlugs: featureSlug });
   if (campaignIds && campaignIds.length > 0) params.set("campaignIds", campaignIds.join(","));
+  if (startedBefore) params.set("startedBefore", startedBefore);
   const response = await fetchWithRetry(runsCostsUrl(baseUrl, "org", pricing, params), { headers: runsHeaders(brandId, identity) });
   if (!response.ok) {
     const text = await response.text();
@@ -206,12 +212,13 @@ function rollUpGrain(
   costGroups: Array<{ dimensions: Record<string, string | null>; totalCostInUsdCents: string; runCount: number }>,
   emailStats: Map<string, Record<string, number>>,
   repliers: readonly PositiveReplier[] | undefined,
+  options: { exactCents?: boolean } = {},
 ): GrainEvidenceWithRetired {
   if (repliers) setPersonRepliesOnSlugStats(emailStats, repliers);
   const observed = costGroups.map((g) => g.dimensions.workflowSlug).filter((s): s is string => Boolean(s));
   const { active, retired } = brandGrainDynasties(workflows, observed);
   const toEvidence = (dynasties: Map<string, string[]>) => {
-    const { costMap, aggregatedOutcomes } = aggregateAcrossDynasties(dynasties, costGroups, emailStats, "workflowSlug");
+    const { costMap, aggregatedOutcomes } = aggregateAcrossDynasties(dynasties, costGroups, emailStats, "workflowSlug", options);
     const result = new Map<string, WorkflowGrainEvidence>();
     for (const [key, cost] of costMap) {
       const outcomes = aggregatedOutcomes.get(key) ?? {};
@@ -586,6 +593,8 @@ async function fetchCampaignCostGroups(
   campaignIds: string[],
   identity: Identity,
   pricing: Pricing = "gross",
+  // MATURE cut (`lib/maturity.ts`): only runs started at or before this instant. Omitted → every run.
+  startedBefore?: string,
 ): Promise<{ groups: CostGroup[]; filteredLocally: boolean }> {
   const baseUrl = process.env.RUNS_SERVICE_URL;
   if (!baseUrl) throw new Error("RUNS_SERVICE_URL not configured");
@@ -596,6 +605,7 @@ async function fetchCampaignCostGroups(
     featureSlugs: featureSlug,
   });
   if (single) params.set("campaignId", single);
+  if (startedBefore) params.set("startedBefore", startedBefore);
   const response = await fetchWithRetry(runsCostsUrl(baseUrl, "org", pricing, params), {
     headers: runsHeaders(brandId, identity),
   });
@@ -699,4 +709,112 @@ export async function fetchCampaignWorkflowEvidenceWithRetired(
     emailStats,
     repliers,
   );
+}
+
+// ── MATURE twins (`lib/maturity.ts`) ────────────────────────────────────────────────────────────────
+//
+// Each grain's MATURE evidence: the spend of runs STARTED before the cutoff, over the outcomes — whenever
+// they landed — of the leads those runs SERVED (run-start clock). The spend is read by the byte-same
+// request as the flash grain with runs-service's own `startedBefore` bound; the outcomes are counted on the
+// scope's deduped persons (email-gateway states no date filter at all). Spend is summed EXACTLY per slug —
+// no per-group rounding — so a scope's per-workflow cells add up to the scope's own mature spend.
+
+/**
+ * The MATURE twin of {@link fetchCampaignWorkflowEvidenceWithRetired}, for the campaigns in `campaignIds`
+ * (a campaign identity, an offer's campaigns, or a brand's campaigns on one leg). `persons` is the scope's
+ * deduped population; only those served under `campaignIds` before the cutoff are counted.
+ */
+export async function fetchCampaignWorkflowMatureEvidence(
+  brandId: string,
+  featureSlug: string,
+  campaignIds: string[],
+  workflows: WorkflowMetadata[],
+  identity: Identity,
+  pricing: Pricing,
+  basis: CostBasis,
+  persons: readonly EnginePerson[],
+  cutoffIso: string,
+): Promise<GrainEvidenceWithRetired> {
+  if (campaignIds.length === 0) return { active: new Map(), retired: new Map() };
+  const { groups, filteredLocally } = await fetchCampaignCostGroups(
+    brandId,
+    featureSlug,
+    campaignIds,
+    identity,
+    pricing,
+    startedBeforeParam(cutoffIso),
+  );
+  return rollUpGrain(
+    workflows,
+    mergeCostGroupsByWorkflowSlug(groups, filteredLocally ? new Set(campaignIds) : null, pricing, basis),
+    matureSlugStats(persons, cutoffIso, new Set(campaignIds)),
+    undefined,
+    { exactCents: true },
+  );
+}
+
+/**
+ * The MATURE twin of {@link fetchAudienceGrainEvidence}: per (audience × workflow dynasty), the spend of runs
+ * started before the cutoff (runs `groupBy=audienceId,workflowSlug` + `startedBefore`, summed exactly) and
+ * the leads they served — attributed to the audience their SERVE drew them from (lead-service's tag). One
+ * entry per audience of `audienceIds` (the flash grain's own list), in order. On a leg, only the brand's
+ * campaigns performing it (`legCampaignIds`; an EMPTY list is a real answer: no evidence, no read).
+ */
+export async function fetchAudienceMatureEvidence(
+  brandId: string,
+  featureSlug: string,
+  identity: Identity,
+  slugToDynasty: Map<string, string>,
+  pricing: Pricing,
+  audienceIds: readonly string[],
+  persons: readonly EnginePerson[],
+  legCampaignIds: readonly string[] | null,
+  cutoffIso: string,
+): Promise<AudienceGrainEvidence[]> {
+  if (audienceIds.length === 0) return [];
+  const legSet = legCampaignIds ? new Set(legCampaignIds) : null;
+  if (legSet && legSet.size === 0) return audienceIds.map((audienceId) => ({ audienceId, byDynasty: new Map() }));
+  const activeIds = new Set(audienceIds);
+  const groups = await fetchBrandCostGroups(
+    brandId,
+    featureSlug,
+    "audienceId,workflowSlug",
+    identity,
+    legCampaignIds ?? undefined,
+    pricing,
+    startedBeforeParam(cutoffIso),
+  );
+  const cents = new Map<string, Map<string, { cents: number; runs: number }>>();
+  for (const g of groups) {
+    const audienceId = audienceIdFromDimensions(g.dimensions);
+    const workflowSlug = g.dimensions?.workflowSlug;
+    if (!audienceId || !activeIds.has(audienceId)) continue;
+    if (!workflowSlug || workflowSlug === "__total__") continue;
+    const dynasty = slugToDynasty.get(workflowSlug) ?? workflowSlug;
+    const byDynasty = cents.get(audienceId) ?? new Map<string, { cents: number; runs: number }>();
+    const prev = byDynasty.get(dynasty) ?? { cents: 0, runs: 0 };
+    byDynasty.set(dynasty, {
+      cents: prev.cents + selectCostCents(g, "totalCostInUsdCents", pricing),
+      runs: prev.runs + Number(g.runCount ?? 1),
+    });
+    cents.set(audienceId, byDynasty);
+  }
+  const counts = matureAudienceDynastyCounts(persons, cutoffIso, activeIds, slugToDynasty, legSet);
+  return audienceIds.map((audienceId) => {
+    const costByDynasty = cents.get(audienceId) ?? new Map<string, { cents: number; runs: number }>();
+    const countByDynasty = counts.get(audienceId) ?? new Map();
+    const byDynasty = new Map<string, WorkflowGrainEvidence>();
+    for (const dynasty of new Set([...costByDynasty.keys(), ...countByDynasty.keys()])) {
+      const c = costByDynasty.get(dynasty) ?? { cents: 0, runs: 0 };
+      const o = countByDynasty.get(dynasty) ?? { contacted: 0, clicks: 0, replies: 0 };
+      byDynasty.set(dynasty, {
+        totalCostInUsdCents: c.cents,
+        completedRuns: c.runs,
+        contacted: o.contacted,
+        clicks: o.clicks,
+        replies: o.replies,
+      });
+    }
+    return { audienceId, byDynasty };
+  });
 }

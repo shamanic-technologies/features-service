@@ -8,6 +8,8 @@ import { vi } from "vitest";
 
 vi.mock("./lib/fleet-positive-repliers.js", () => ({
   fetchFleetPositiveRepliesBySlug: vi.fn(async () => undefined),
+  fetchFleetMatureSlugStats: vi.fn(async () => undefined),
+  bucketPopulation: vi.fn(),
   warmFleetPositiveRepliers: vi.fn(async () => undefined),
   __resetFleetPositiveRepliers: vi.fn(),
 }));
@@ -19,7 +21,9 @@ vi.mock("./lib/fleet-positive-repliers.js", () => ({
  */
 vi.mock("./lib/leg-fleet-evidence.js", () => ({
   fetchLegFleetEvidence: vi.fn(async () => undefined),
+  fetchLegFleetMatureEvidence: vi.fn(async () => undefined),
   __resetLegFleetEvidence: vi.fn(),
   mergeCostGroupsBySlug: vi.fn(),
   mergeEmailStats: vi.fn(),
+  mergeMatureCostGroups: vi.fn(),
 }));

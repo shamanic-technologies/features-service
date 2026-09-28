@@ -8,6 +8,7 @@ import {
   buildChannelCatalogue,
   parseAcquisitionChannel,
   channelStepCatalogue,
+  funnelLegCatalogue,
   salesFunnelCatalogue,
   MalformedAcquisitionChannelError,
   type CatalogueFeatureRow,
@@ -248,5 +249,32 @@ describe("building the public catalogue", () => {
     // A customer-operated channel spends none of the platform's money, and the zero is the statement.
     expect(channel.operatedBy).toBe("customer");
     expect(channel.terms.dailyOperatingCostCents).toBe(0);
+  });
+});
+
+describe("every published leg states its MATURITY RULE (lib/maturity.ts, features-service#1196)", () => {
+  const legs = new Map(funnelLegCatalogue().map((l) => [l.legKey, l]));
+
+  it("the two cold-email entry legs: 21 days; 1 positive reply / 10 website visits", () => {
+    expect(legs.get("start_to_conversation")!.maturity).toEqual({
+      durationDays: 21,
+      outcomesRequired: 1,
+      outcomeSignal: "positiveReply",
+      source: "measured",
+    });
+    expect(legs.get("start_to_website_visit")!.maturity).toEqual({
+      durationDays: 21,
+      outcomesRequired: 10,
+      outcomeSignal: "clicked",
+      source: "measured",
+    });
+  });
+
+  it("every other leg matures the day it is bought, on the bar of 10, and says the rule is a default", () => {
+    const others = [...legs.values()].filter((l) => !["start_to_conversation", "start_to_website_visit"].includes(l.legKey));
+    expect(others.length).toBeGreaterThan(0);
+    for (const leg of others) {
+      expect(leg.maturity).toEqual({ durationDays: 0, outcomesRequired: 10, outcomeSignal: null, source: "default" });
+    }
   });
 });

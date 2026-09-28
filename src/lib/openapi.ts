@@ -439,11 +439,11 @@ const revenueCostEconomicsSchema = z.object({
   costPerAcquisitionUsd: z.number().nullable().describe("Cost of winning ONE customer, on COMMITTED spend, for the scope this body describes — present on EVERY response including the default un-lensed brand read (the brand Overview is not lensed; it is the whole brand, every funnel). = committedCostUsd / expected paying clients, where expected paying clients = totalPipelineUsd / lifetimeRevenueUsd. Equivalently (costOfAcquisitionPct / 100) x lifetimeRevenueUsd, i.e. lifetimeRevenueUsd / roiMultiple — the same statement as ROI and %CAC in a third unit, which is why it MATCHES the lensed costPerConversionUsd for the same scope rather than being a second opinion (the lens divides the same committed spend by the same expected-client count). Uses the brand\'s own declared-funnel-priced economics — the same economics that produced totalPipelineUsd. NULL, never 0, when the brand states no lifetime revenue (or it is 0), when the pipeline is null/0, or when no funnel is wired: null means \'we could not measure this\', a 0 would mean \'a customer costs nothing\'."),
   expectedConversions: z.number().optional().describe("LENS ONLY — expected conversion count = sum of per-lead conversion probability (decimal) across the lensed leads (totalPipelineUsd = expectedConversions × LTR). Present only on a lensed (?lens=) response; absent on the default/grouped responses."),
   costPerConversionUsd: z.number().nullable().optional().describe("LENS ONLY — the mature cohort's committed spend / its expected conversions (see maturityDays). Null when that count is 0 or the scope is maturing. Present only on a lensed (?lens=) response; absent on the default/grouped responses."),
-  maturityDays: z.number().int().describe("The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 14 days for its replies and visits; every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads FIRST CONTACTED before it (their outcomes count whenever they happened; a lead with no contact date is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."),
+  maturityDays: z.number().int().describe("The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 21 days for its replies and visits (lib/maturity.ts); every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads those runs SERVED (a lead served before it, on the run-start clock; their outcomes count whenever they happened; a lead with no serve date stated is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."),
   unmeasuredReason: z.enum(["maturing", "maturity_unknown"]).nullable().describe("Why the ratios are null for a reason other than having nothing to divide. 'maturing' = the scope has spent, but none of that spend is older than maturityDays yet, so there is no mature cohort to measure — a young campaign, not a bad one. 'maturity_unknown' = campaign-service could not say which campaigns wait for their outcomes, so the mature cohort could not be separated (a degraded read, not a property of the scope). Null otherwise."),
   ratioBasis: z.object({
     committedCostUsd: z.number().nullable().describe("The committed spend (dollars) the ratios divide: the MATURE cohort's when maturityDays > 0 (runs old enough to have produced their outcomes), the whole scope's otherwise. Smaller than committedCostUsd by exactly the spend still maturing. Null under maturity_unknown."),
-    totalPipelineUsd: z.number().nullable().describe("The pipeline (dollars) the ratios divide: the mature cohort's (leads first contacted before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."),
+    totalPipelineUsd: z.number().nullable().describe("The pipeline (dollars) the ratios divide: the mature cohort's (leads served before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."),
   }).describe("THE TOTALS THE RATIOS DIVIDE, served so nobody inverts a ratio: roiMultiple = totalPipelineUsd / committedCostUsd; costOfAcquisitionPct = committedCostUsd / totalPipelineUsd × 100. Every cost per outcome on this body (spend.*Cents, outcomes.cpcCents/cpprCents, funnelSteps costPerReachCents, costPerOutcomeHistory) divides this same spend."),
   realizedReturn: z.object({
     closedWonCount: z.number().int().describe("Deals actually CLOSED WON in the same cohort the ratios divide, PRICED to our outreach (?cause=, default outreach) — the rule the pipeline's won rung follows. 0 is measured."),
@@ -455,7 +455,7 @@ const revenueCostEconomicsSchema = z.object({
 const roiHistoryPointSchema = z.object({
   date: z.string().describe("UTC calendar day (YYYY-MM-DD) this point describes."),
   cumulativeSpendUsd: z.number().describe("COMMITTED, MATURE COHORT — every dollar of committed spend (billed + open holds) from the brand's first spend up to and including this day, on the SAME basis and the SAME mature cohort costEconomics.roiMultiple divides (see costEconomics.maturityDays): from the maturity cutoff on, a maturing campaign's own spend is left out. So the curve's last point IS the headline ROI rather than a different currency or a different population. Dated by runs-service's own cost buckets (each run's started_at); nothing is spread, smoothed or amortised."),
-  cumulativePipelineUsd: z.number().describe("REALIZED, MATURE COHORT — every dollar of expected pipeline earned by a DATED outcome of a lead in the mature cohort (first contacted before the maturity cutoff, or undated) up to and including this day, from the same per-lead event timestamps the leads[] table and the daily signal series use. A day with spend but no new outcome carries the previous day's value forward, so the curve correctly dips."),
+  cumulativePipelineUsd: z.number().describe("REALIZED, MATURE COHORT — every dollar of expected pipeline earned by a DATED outcome of a lead in the mature cohort (served before the maturity cutoff, or undated) up to and including this day, from the same per-lead event timestamps the leads[] table and the daily signal series use. A day with spend but no new outcome carries the previous day's value forward, so the curve correctly dips."),
   roiMultiple: z.number().nullable().describe("cumulativePipelineUsd / cumulativeSpendUsd. NULL — never 0 — on a day whose cumulative spend is still 0 (a dated outcome before a dollar was ever spent divides by nothing): null means 'could not be measured', 0 would mean 'returned nothing'."),
 });
 
@@ -892,6 +892,37 @@ registry.registerPath({
 // 3-grain projection ladder (crossOrg → brand → audience) + a resolved pick, keyed per
 // (audienceId?, workflowDynasty). Replaces the flat per-workflow row + the deleted /candidates endpoint.
 
+// ── THE TWO VERSIONS OF EVERY FIGURE (lib/maturity.ts, features-service#1196) ─────────────────
+
+const legMaturityRuleSchema = registry.register(
+  "LegMaturityRule",
+  z.object({
+    durationDays: z.number().int().describe("How many days before today (UTC midnight) a run must have STARTED for its spend, and the leads it served, to count as MATURE. 21 on the two cold-email entry legs (a run's positive replies and visits keep arriving for weeks; 21 days captures 92-95% of them, measured in prod 2026-09-28); 0 on every other leg, whose mature figure is therefore its flash figure."),
+    outcomesRequired: z.number().int().describe("How many MATURE outcomes of the leg's step a scope must hold to be judged mature: 1 positive reply on start_to_conversation, 10 website visits on start_to_website_visit, 10 on every other leg."),
+    outcomeSignal: z.enum(["clicked", "positiveReply"]).nullable().describe("The counted signal the leg's outcome IS on an entry leg (a website visit is a click, a conversation is a positive reply). Null on every other leg, whose outcome is walked from a driver signal."),
+    source: z.enum(["measured", "default"]).describe("`measured` = the owner set this rule from production evidence; `default` = no leg-specific rule was measured, so the leg is mature the day it is bought and judged on the pre-existing bar of 10."),
+  }).describe("ONE LEG'S MATURITY RULE. Every figure exists in two versions: FLASH (everything to date) and MATURE (the spend of runs started more than durationDays ago, over the outcomes — whenever they land — of the leads those runs served). One clock for both: the run start, i.e. the serve."),
+);
+
+const outcomeFiguresSchema = registry.register(
+  "OutcomeFigures",
+  z.object({
+    spentUsd: z.number().describe("Committed spend on the request's pricing basis, summed exactly (never rounded per group), so a scope's rows add up to the scope. Null ONLY on the staff actual-cost twin, where this grain's spend on this version holds rows with no known vendor cost."),
+    contacted: z.number().describe("Leads reached."),
+    outcomes: z.number().describe("The leg's own outcomes (on an entry leg, distinct leads at its outcome signal)."),
+    costPerOutcomeUsd: z.number().nullable().describe("spentUsd / outcomes — OBSERVED, never floored. Null at 0 outcomes or 0 spend (and on the actual-cost twin where the vendor cost is unknown)."),
+    conversionRatePct: z.number().nullable().describe("100 × outcomes / contacted. Null only at 0 contacted; a measured 0 stays 0."),
+  }).describe("The observed figures of one scope on one version (flash or mature)."),
+);
+
+/** Both versions of one figure and the verdict, side by side (lib/maturity.ts `MaturityPair`). */
+const maturityPairSchema = <T extends z.ZodTypeAny>(inner: T) =>
+  z.object({
+    flash: inner.nullable().describe("Everything to date. Null when there is no flash figure at all."),
+    mature: inner.nullable().describe("The mature cohort's figure. NULL when the mature cut could not be made. A cut that was made and holds nothing states that instead: zeros on observed figures, null fields on a resolved price."),
+    isMature: z.boolean().nullable().describe("The verdict: at least the leg's outcomesRequired MATURE outcomes. Null = the mature outcomes could not be counted, never a verdict."),
+  });
+
 const grainBlockSchema = z.object({
   costBasis: z.enum(["charged", "incurred"]).optional().describe("Which accounting question THIS grain answers. crossOrg = \"incurred\": the fleet PERFORMANCE benchmark, where spend the platform comped counts at full value (one org being comped must not make a workflow look cheaper to everybody else). brand / audience = \"charged\": this customer's own billed money, where comped spend is absent. Stated per grain because this payload is the one place both questions sit side by side under the same words. Absent on an UNMEASURED row (estimatesByGrain is empty there)."),
   evidence: z.object({
@@ -919,6 +950,10 @@ const grainBlockSchema = z.object({
     outcomeObserved: z.boolean().describe("TRUE ⟺ the leg's step IS the observed signal (an ENTRY leg), so outcomeCount was COUNTED rather than projected."),
     spentUsd: z.number().describe("The spend behind them, at this grain — the third figure a panel comparing grains needs and may not derive."),
   }).optional().describe("Present ⟺ the request named a `?leg=`. WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP: a leg-keyed read is priced on the step the leg MOVES A LEAD TO, never on the step its basis funnel is named after (an entry leg's outcome is several rungs above that). Absent on every funnel- or goal-keyed request, whose bodies are byte-unchanged."),
+  basis: z.enum(["flash", "mature"]).optional().describe("WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis), never the grain, so every block of one row is on one version: `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before)."),
+  flash: outcomeFiguresSchema.nullable().optional().describe("This grain's FLASH figures (everything to date), observed. Present ⟺ `?leg=`. Null when the leg's outcome cannot be counted."),
+  mature: outcomeFiguresSchema.nullable().optional().describe("This grain's MATURE figures (runs started before the leg's cutoff, over the outcomes of the leads they served), observed. Present ⟺ `?leg=`. Null when the mature cut could not be made; a cut that holds nothing reads zeros."),
+  isMature: z.boolean().nullable().optional().describe("This grain's MATURE outcomes against the leg's outcomesRequired — what a surface tags `Learning` on per audience / campaign. Present ⟺ `?leg=`. Null when the mature cut could not be made."),
 });
 
 const resolvedBlockSchema = z.object({
@@ -931,6 +966,12 @@ const resolvedBlockSchema = z.object({
   roiMultiple: z.number().nullable(),
   cacPct: z.number().nullable(),
   conversionRatePct: z.number().nullable().describe("HOW MUCH OF THE LIST THIS WORKFLOW BURNS PER OUTCOME — 100 × resolvedOutcomeCount / observedContacted, read off the SAME grain the costs above came from, so the three figures describe one body of evidence (that grain's spend over its outcomes is costPerOutcomeUsd, and its outcomes over its people are this). It is what `?maximize=conversionRate` ranks on, and it is stated under BOTH objectives so the two answers are readable side by side. Measured only — no cascade floor, since the mirror of flooring a COST is reporting the honest measured RATE. A measured 0 is a real answer (this workflow reached people and converted nobody); NULL is 'we could not count this': the grain reached nobody, economics are absent (cold start), or this is an UNMEASURED row whose figures are an explore allowance rather than a measurement."),
+});
+
+const resolvedFiguresSchema = z.object({
+  grain: z.enum(["audience", "campaign", "brand", "crossOrg", "offer"]).nullable().describe("The provenance label of that version's resolved pick (as resolved.grain)."),
+  costPerOutcomeUsd: z.number().nullable().describe("That version's resolved (cascade-floored) cost per outcome — what resolved.costPerOutcomeUsd would read if the row were priced on it."),
+  conversionRatePct: z.number().nullable(),
 });
 
 const workflowProjectionRowSchema = z.object({
@@ -962,6 +1003,12 @@ const workflowProjectionRowSchema = z.object({
   }).optional().describe("TRANSITIONAL, DEPRECATED — the pre-assignment verdict block kept byte-compatible for readers not yet on `legAssignment` (campaign-service filters on `eligible`). `eligible` is now the leg assignment (active ⟺ true). Removed once every reader has moved."),
   measured: z.boolean().describe("TRUE ⟺ the row rests on real evidence (≥1 grain with spend) — every row an established channel serves. FALSE marks a row for a workflow this channel has measured NOTHING for: estimatesByGrain is empty and resolved carries the EXPLORE ALLOWANCE (a cost floor, no return), so a serving consumer that ranks on resolved.costPerOutcomeUsd can REACH an active workflow with no history — which is the only way it can earn a first run — while every display / benchmark surface filters on this flag instead of probing for nulls. Unmeasured rows appear beside measured ones in an established channel (the mixed case): an active dynasty with no grain anywhere is offered here, never recommended. When the channel has measured nothing whatsoever there is no allowance to state either and every resolved figure is null."),
   availableToContactCount: z.number().int().nullable().optional().describe("HOW MANY PEOPLE THIS ROW'S AUDIENCE CAN STILL BE SERVED — human-service's own `availableToContactCount` (pool members not suppressed inside the brand's 3-month re-contact window), read LIVE on every request, never from the cached evidence. Present on every audience row, absent on the brand / campaign column (audienceId null). `0` = the producer says the audience is served out, so a consumer picking an audience for a serve can skip it while another audience still has people (features-service#1035). `null` = we could not read it (human-service unreachable, or it stated no count) — treat as unknown, never as 0. Moves no figure and no order on this body."),
+  maturity: z.object({
+    basis: z.enum(["flash", "mature"]).describe("The version this row's estimatesByGrain and resolved are priced on — and therefore what campaign-service ranks. `mature` ⟺ the workflow is MATURE on the fleet of its leg (isMature) and a mature ladder exists; `flash` otherwise."),
+    isMature: z.boolean().nullable().describe("The WORKFLOW's verdict on the fleet of its leg (every org's campaigns performing it): at least the leg's outcomesRequired MATURE outcomes. Null when the cut could not be made."),
+    matureOutcomes: z.number().nullable().describe("The workflow's mature outcomes of the leg's step on the fleet. Null when the cut could not be made."),
+    resolved: maturityPairSchema(resolvedFiguresSchema).describe("The row's price on BOTH versions, so a consumer compares them without re-deriving anything. resolved (the block above) equals the one named by `basis`."),
+  }).optional().describe("THE ROW'S MATURITY (features-service#1196) — present ⟺ the request named a `?leg=`. A mature workflow's young spend no longer inflates its price while its outcomes are still on their way; a workflow that is not yet mature is priced exactly as before (flash, with the cascade floor that lets it be tried)."),
   retired: z.literal(true).optional().describe("TRUE on a row for a RETIRED lineage — a workflow dynasty with no active version left (or a slug the catalogue does not describe) that this brand or campaign still spent on; absent on every other row. It carries its real brand / campaign evidence so the per-workflow rows add up to the scope's own total (spend and positive replies), and it can never be put forward: `resolved` is all null, so it is unrankable, never recommended, and skipped by any consumer selecting on resolved.costPerOutcomeUsd."),
 });
 
@@ -1037,6 +1084,12 @@ const workflowProjectionResponseSchema = z.object({
   recommendedBudgetUsd: z.number().nullable().describe("10 target outcomes/month × the recommended row's resolved.costPerOutcomeUsd. Null when there is no pick."),
   measured: z.boolean().describe("TRUE ⟺ at least one row rests on real evidence — every answer an established channel gives. FALSE says this acquisition channel has measured nothing for this brand yet; unmeasuredReason then names what is missing."),
   recommendationWithheldReason: z.literal("no_eligible_workflow").optional().describe("Present ⟺ a `?leg=` read has workflows but NONE is assigned active on the leg (`legAssignment`). `recommendedWorkflowDynastySlug` is then null by refusal, never a fall back to an unassigned or deprecated workflow."),
+  maturity: legMaturityRuleSchema.extend({
+    legKey: z.string().nullable().describe("The leg the rule is for."),
+    cutoffIso: z.string().nullable().describe("Runs started, and leads served, before this instant (UTC midnight of today − durationDays) are mature. Null on a 0-day leg, where mature ≡ flash."),
+    measured: z.boolean().describe("TRUE ⟺ the mature cut could be made. FALSE ⟹ every row is priced on flash, as before."),
+    unmeasuredReason: z.enum(["serve_dates_unavailable", "mature_evidence_unavailable", "leg_scope_unavailable"]).nullable().describe("Why the cut could not be made: serve_dates_unavailable = a lead population states no serve date (lead-service's lastServedAt), so young leads could not be told from mature ones; mature_evidence_unavailable = a mature cost or person read failed on this refresh (the answer degrades to flash rather than failing); leg_scope_unavailable = the leg's campaigns could not be read."),
+  }).optional().describe("THE LEG'S MATURITY RULE, echoed on a leg-keyed answer (present ⟺ `?leg=`), and whether this answer could apply it."),
   unmeasuredReason: z.enum(["no_active_audiences", "no_active_workflows", "no_spend_recorded"]).optional().describe("Present ⟺ measured=false, and it is the whole point of the field: an empty `rows` must never be read as 'this brand has nobody to contact'. `no_active_audiences` = the brand is working no audience, so there is nothing to serve through ANY channel (rows is empty). `no_active_workflows` = this feature has no active workflow (rows is empty). `no_spend_recorded` = the brand HAS active audiences and this channel HAS active workflows, it has simply never run — rows then enumerate every (active audience × active workflow) couple, all measured=false."),
 });
 
@@ -1772,17 +1825,20 @@ const brandContactedValueResponseSchema = z.object({
     signal: z.string().describe("The engine signal of the entry route (`clicked`, `positiveReply`)."),
     step: z.string().describe("The funnel step the route lands on."),
     entryRatePct: z.number().nullable().describe("P(this step | contacted), 0..100."),
-    entryRateSource: z.enum(["brand_measured", "fleet_measured"]).nullable().describe("brand_measured = the brand's own mature cohort (first contacted before `matureBefore`) once it holds `minBrandOutcomes` outcomes; else fleet_measured = every brand's pooled outreach on the same channels."),
+    entryRateSource: z.enum(["brand_measured", "fleet_measured"]).nullable().describe("brand_measured = the brand's own mature cohort (served before `matureBefore`) once it holds `minBrandOutcomes` outcomes; else fleet_measured = every brand's pooled outreach on the same channels."),
     brand: contactedEntryCountsSchema,
     fleet: contactedEntryCountsSchema.nullable(),
     paidClientGivenStepPct: z.number().describe("P(paid client | this step) — the pipeline engine's own ladder."),
     valueAtStepUsd: z.number().describe("What a lead standing on this step is worth in the pipeline."),
+    maturityDays: z.number().describe("This route's leg's maturity duration (lib/maturity.ts): 21 on both cold-email entry legs."),
+    matureBefore: z.string().describe("This route's cutoff: the brand's own cohort counts leads SERVED before it."),
+    minBrandOutcomes: z.number().describe("This route's leg's outcomesRequired — the brand's own rate is used once its mature cohort holds this many outcomes of the route's step (1 positive reply; 10 website visits)."),
   })),
-  matureBefore: z.string(),
-  maturityDays: z.number(),
+  matureBefore: z.string().describe("The EARLIEST cutoff across the entry routes (each route states its own)."),
+  maturityDays: z.number().describe("The LONGEST duration across the entry routes (each route states its own)."),
   expiryDays: z.number().describe("A contacted lead whose LAST email sent is older than this many days is worth 0. A lead not sent anything yet counts while pending, up to this many days after hand-off."),
   lastSentOnOrAfter: z.string().describe("Leads whose last send is strictly before this instant have expired."),
-  minBrandOutcomes: z.number(),
+  minBrandOutcomes: z.number().describe("The LARGEST outcomesRequired across the entry routes (each route states its own)."),
   population: z.object({
     contactedOnly: z.number().describe("Contacted leads with no conversion signal (no click, no reply, no meeting, no signup, no form, no sale) that did not bounce or unsubscribe."),
     organizations: z.number(),
@@ -3391,6 +3447,7 @@ const funnelLegSchema = registry.register(
     fromStep: channelStepSchema.nullable().describe("The step a lead is taken OUT of. NULL is 'from nothing' — this leg STARTS a funnel. That is the special case in the DATA only: the identifier is as ordinary as any other, so a caller never spells an entry leg differently."),
     toStep: channelStepSchema.describe("The step a lead is moved TO."),
     funnelKeys: z.array(salesFunnelKeyEnum).describe("EVERY declared sales funnel this leg is a leg of, in catalogue order. Usually several — an ENTRY leg feeds every funnel that contains it AT ONCE, since nobody can buy traffic that travels down only one of them. Their figures therefore overlap and must never be summed."),
+    maturity: legMaturityRuleSchema.describe("THE LEG'S MATURITY RULE (features-service#1196). The workflow picker prices a workflow on its MATURE figures once it holds outcomesRequired mature outcomes on the fleet of this leg, and on its flash figures before that. Read from the same module every figure is cut on, so a published rule and a served figure never disagree."),
   }),
 );
 

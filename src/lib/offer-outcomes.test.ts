@@ -169,9 +169,11 @@ describe("assembleOfferOutcomes", () => {
   };
   // L2 was reached by BOTH channels — one lead, counted once on the outcome row.
   const persons = [
-    person("L1", "c1", { positiveReply: true, meeting: true }, { signalDates: { contacted: "2026-08-01T00:00:00Z" } }),
-    person("L2", "c1", { positiveReply: true }, { signalDates: { contacted: "2026-09-24T00:00:00Z" } }),
-    person("L2", "f1", { positiveReply: true }),
+    // L1 was SERVED before the cutoff but first CONTACTED after it (a queued send): mature on the serve
+    // clock, young on a contact clock. L2 was served after it on both campaigns.
+    person("L1", "c1", { positiveReply: true, meeting: true }, { servedAt: "2026-09-05T00:00:00Z", signalDates: { contacted: "2026-09-12T00:00:00Z" } }),
+    person("L2", "c1", { positiveReply: true }, { servedAt: "2026-09-24T00:00:00Z", signalDates: { contacted: "2026-09-24T00:00:00Z" } }),
+    person("L2", "f1", { positiveReply: true }, { servedAt: "2026-09-25T00:00:00Z", signalDates: { contacted: "2026-09-25T00:00:00Z" } }),
     person("L3", "f1", { positiveReply: true, meeting: true }, { unpricedSignals: ["positiveReply", "meeting"] }),
     person("L4", "c1", { clicked: true }),
     person("L5", "c1", { meeting: true }),
@@ -255,8 +257,20 @@ describe("assembleOfferOutcomes", () => {
 
     const mixed = build(new Map([[cold, whole(6000, 4000, cutoff)], [fb, whole(3000)], [ai, whole(1000)]]));
     const r2 = mixed.find((r) => r.step.key === "conversation")!;
-    // Mature priced: L1 (contacted before cutoff) via cold, L2 via feedback (zero-delay group) → 2 × $100 / $70.
+    // Mature priced: L1 (served before cutoff) via cold, L2 via feedback (zero-delay group) → 2 × $100 / $70.
     expect(r2.roiMultiple).toBeCloseTo(200 / 70);
+  });
+
+  it("the mature cohort is cut on the SERVE clock (lib/maturity.ts), never on the contact date", () => {
+    const cutoff = "2026-09-11T00:00:00.000Z";
+    // Both reply legs wait: only L1 was served before the cutoff (it was CONTACTED after it).
+    const rows = build(new Map([[cold, whole(6000, 4000, cutoff)], [fb, whole(3000, 2000, cutoff)], [ai, whole(1000)]]));
+    const reply = rows.find((r) => r.step.key === "conversation")!;
+    // L1 alone: $100 over the $60 of mature spend. A contact clock reads L1 young too, and states a 0 return.
+    expect(reply.roiMultiple).toBeCloseTo(100 / 60);
+    expect(reply.unmeasuredReason).toBeNull();
+    // The count keeps the whole history: L1, L2 and L3 reached the step.
+    expect(reply.recipientsReached).toBe(3);
   });
 
   it("unreadable evidence nulls the count; a step with no signal says so", () => {

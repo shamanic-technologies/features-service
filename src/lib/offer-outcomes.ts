@@ -31,9 +31,9 @@
  *                       price with. A rate the brand never declared leaves it null, never 0.
  *   valueUsd            PRICED outcomes × valuePerOutcomeUsd — only the outcomes we caused are priced
  *                       (`?cause=`, default `outreach`), as on every other money surface.
- *   roiMultiple         value ÷ spend on the MATURE COHORT (`lib/roi-maturity.ts`): a campaign on a
- *                       fourteen-day leg counts only the spend of runs started before the cutoff and the
- *                       leads first contacted before it. `maturing` when nothing spent is mature yet.
+ *   roiMultiple         value ÷ spend on the MATURE COHORT (`lib/maturity.ts`): a campaign on a
+ *                       21-day leg counts only the spend of runs started before the cutoff and the leads
+ *                       those runs SERVED. `maturing` when nothing spent is mature yet.
  *
  * ── WHAT DOES NOT ADD ───────────────────────────────────────────────────────────────────────────
  *
@@ -60,6 +60,7 @@ import { LEAD_FIELD_TO_SIGNAL, stepMeasured, type LeadStepField, type StepEviden
 import { dedupPersonsByLead, type EnginePerson } from "./revenue-engine.js";
 import type { DeclaredSalesFunnel } from "./sales-funnels-client.js";
 import { matchSalesFunnelKey, type SalesFunnelKey } from "./sales-funnels.js";
+import { servedInMatureCohort } from "./maturity.js";
 
 /** The `leads[]` field each step is counted by. `purchase` has no signal anywhere in the fleet. */
 export const STEP_LEAD_FIELD: Record<ChannelStepKey, LeadStepField | null> = {
@@ -277,11 +278,9 @@ function reachedByGroup(
       : actedLeadIds
         ? persons.filter((p) => actedLeadIds.has(p.leadId))
         : [...persons];
-  const isMature = (p: EnginePerson): boolean => {
-    if (!cutoffIso) return true;
-    const contacted = p.signalDates?.contacted ?? null;
-    return !contacted || contacted < cutoffIso;
-  };
+  // The mature cohort is cut on the SERVE clock (`lib/maturity.ts`): a lead served by a run that
+  // started before the cutoff. A lead whose serve date is not stated stays in the cohort.
+  const isMature = (p: EnginePerson): boolean => servedInMatureCohort(p.servedAt, cutoffIso);
   const out = { measured: true, notCounted: false, ...empty };
   const matureIds = new Set(dedupPersonsByLead(rows.filter(isMature)).map((p) => p.leadId));
   for (const p of dedupPersonsByLead(rows)) {

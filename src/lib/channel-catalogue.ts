@@ -32,6 +32,7 @@ import {
   type AcquisitionChannel,
 } from "./acquisition-channels.js";
 import { legKeyFor, FUNNEL_LEGS, type FunnelLegDef } from "./funnel-legs.js";
+import { legMaturity, type LegMaturity } from "./maturity.js";
 import { SALES_FUNNELS, SALES_FUNNEL_KEYS, type SalesFunnelKey } from "./sales-funnels.js";
 import { composeMinimumCommitment, minimumCommitmentDaysFor, type ComposedMinimumCommitment } from "./funnel-commercial-terms.js";
 
@@ -252,12 +253,25 @@ export function buildChannelCatalogue(rows: readonly CatalogueFeatureRow[]): Pub
   return channels.sort((a, b) => a.displayOrder - b.displayOrder || a.slug.localeCompare(b.slug));
 }
 
+/** One leg's MATURITY RULE as published: how long a run must have started ago before its spend and the
+ *  leads it served count as mature, and how many mature outcomes of the leg's step make a scope mature
+ *  (`lib/maturity.ts`, features-service#1196). The leg is the entry it rides on. */
+export type PublishedLegMaturity = Omit<LegMaturity, "legKey">;
+
+/** One leg of the published vocabulary, carrying its maturity rule. */
+export type PublicFunnelLeg = FunnelLegDef & { maturity: PublishedLegMaturity };
+
 /** The LEG vocabulary itself, published beside the channels so a consumer never has to hardcode it
  *  and never has to derive a leg from a pair of steps. Every leg of every declared funnel, each
  *  naming the funnels it is a leg of — usually several, which is why a campaign is bought per leg
- *  rather than per funnel. Their figures overlap and must never be summed. */
-export function funnelLegCatalogue(): FunnelLegDef[] {
-  return FUNNEL_LEGS.map((a) => ({ ...a, funnelKeys: [...a.funnelKeys] }));
+ *  rather than per funnel. Their figures overlap and must never be summed. Each leg states its OWN
+ *  maturity rule, read from the one module every figure is cut on, so a published parameter and a
+ *  served figure can never disagree. */
+export function funnelLegCatalogue(): PublicFunnelLeg[] {
+  return FUNNEL_LEGS.map((a) => {
+    const { legKey: _legKey, ...maturity } = legMaturity(a.legKey);
+    return { ...a, funnelKeys: [...a.funnelKeys], maturity };
+  });
 }
 
 /** The step vocabulary itself, published beside the channels so a consumer never has to hardcode it. */

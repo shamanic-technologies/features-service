@@ -22,32 +22,11 @@
  *
  * FAIL LOUD: a group field this merge does not know how to combine throws rather than being dropped.
  */
+import { addDecimals } from "./decimal.js";
+
 export const PAST_PART_REUSE_MS = 30_000;
 
 type Group = Record<string, unknown> & { dimensions?: Record<string, unknown> };
-
-/** Exact sum of two decimal strings, rendered with the larger of their decimal counts. */
-function addDecimals(x: unknown, y: unknown, field: string): string {
-  const parse = (raw: unknown) => {
-    const str = String(raw);
-    const m = /^(-?)(\d+)(?:\.(\d+))?$/.exec(str);
-    if (!m) throw new Error(`runs-service cost group ${field} is not a decimal: ${JSON.stringify(raw)}`);
-    return { neg: m[1] === "-", int: m[2], frac: m[3] ?? "" };
-  };
-  const a = parse(x);
-  const b = parse(y);
-  const places = Math.max(a.frac.length, b.frac.length);
-  const scaled = (p: { neg: boolean; int: string; frac: string }) => {
-    const v = BigInt(p.int + p.frac.padEnd(places, "0"));
-    return p.neg ? -v : v;
-  };
-  const sum = scaled(a) + scaled(b);
-  const neg = sum < 0n;
-  const digits = (neg ? -sum : sum).toString().padStart(places + 1, "0");
-  const int = digits.slice(0, digits.length - places);
-  const frac = digits.slice(digits.length - places);
-  return `${neg ? "-" : ""}${int}${places > 0 ? `.${frac}` : ""}`;
-}
 
 /** Numeric value of a decimal string, for ordering only. */
 function decimalValue(raw: unknown): number {
@@ -64,7 +43,7 @@ function mergeGroup(a: Group, b: Group): Group {
     } else if (value === undefined || value === null) {
       out[key] = prev;
     } else if (key.endsWith("CostInUsdCents") || key.endsWith("Quantity")) {
-      out[key] = addDecimals(prev, value, key);
+      out[key] = addDecimals(prev, value, `runs-service cost group ${key}`);
     } else if (key === "runCount") {
       out[key] = Number(prev) + Number(value);
     } else if (key === "minStartedAt") {

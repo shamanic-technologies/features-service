@@ -1,10 +1,10 @@
 /**
  * THE RETURN ON OUR OUTREACH IS MEASURED ON THE MATURE COHORT — driven end to end through /revenue.
  *
- * ONE fixture, on a clock pinned to 2026-10-01 (so the 14-day cutoff is 2026-09-17T00:00Z): a brand
+ * ONE fixture, on a clock pinned to 2026-10-01 (so the 21-day cutoff is 2026-09-10T00:00Z, `lib/maturity.ts`): a brand
  * that spent $60 on runs started before the cutoff and $40 after it, on a cold-email campaign bought
- * for `start_to_website_visit`. Seven of its ten leads clicked — three first contacted before the
- * cutoff, three after it, one whose contact date is unknown. Every clicked lead is its own company,
+ * for `start_to_website_visit`. Seven of its ten leads clicked — three SERVED before the cutoff (the
+ * run-start clock the spend is cut on), three after it, one whose serve date is unknown. Every clicked lead is its own company,
  * so each is worth the same, and the mature pipeline is exactly 4/7 of the whole (3 mature + 1
  * undated).
  *
@@ -52,7 +52,7 @@ const app = (await import("../index.js")).default;
 const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
 const SALES = "sales-cold-email-outreach";
 const NOW = "2026-10-01T12:00:00.000Z";
-const CUTOFF = "2026-09-17T00:00:00.000Z";
+const CUTOFF = "2026-09-10T00:00:00.000Z";
 
 const ECONOMICS = {
   lifetimeRevenueUsd: 5000,
@@ -90,7 +90,7 @@ interface Fixture {
 const CONTACTED: Record<string, string | null> = {
   l1: "2026-09-01T10:00:00.000Z",
   l2: "2026-09-02T10:00:00.000Z",
-  l3: "2026-09-10T10:00:00.000Z",
+  l3: "2026-09-08T10:00:00.000Z",
   l4: "2026-09-20T10:00:00.000Z",
   l5: "2026-09-25T10:00:00.000Z",
   l6: "2026-09-29T10:00:00.000Z",
@@ -172,6 +172,8 @@ function mockFetch(fixture: Fixture = {}): void {
           leadId: id,
           campaignId: "c-live",
           workflowSlug: "azalea",
+          // The serve, on the run-start clock the mature cohort is cut on (lead-service `lastServedAt`).
+          lastServedAt: CONTACTED[id],
           email: `${id}@example.com`,
           contacted: true, sent: true, delivered: true,
           clicked: CLICKERS.has(id),
@@ -222,7 +224,7 @@ describe("ROI, %CAC and $CAC are measured on the MATURE cohort", () => {
     vi.restoreAllMocks();
   });
 
-  it("divides the mature pipeline (mature + undated leads) by the mature spend, and says 14 days", async () => {
+  it("divides the mature pipeline (mature + undated leads) by the mature spend, and says 21 days", async () => {
     mockFetch();
     const res = await body();
     const whole = res.headline.totalPipelineUsd as number;
@@ -230,7 +232,7 @@ describe("ROI, %CAC and $CAC are measured on the MATURE cohort", () => {
 
     // The displays keep the whole history.
     expect(res.costEconomics.committedCostUsd).toBeCloseTo(100, 6);
-    expect(res.costEconomics.maturityDays).toBe(14);
+    expect(res.costEconomics.maturityDays).toBe(21);
     expect(res.costEconomics.unmeasuredReason).toBeNull();
 
     // THE DIVERGENCE: 4/7 of the pipeline over $60 — not 7/7 over $100, and not 3/7 (undated kept).
@@ -257,7 +259,7 @@ describe("ROI, %CAC and $CAC are measured on the MATURE cohort", () => {
     mockFetch({ allYoung: true });
     const res = await body();
     expect(res.costEconomics.committedCostUsd).toBeCloseTo(40, 6);
-    expect(res.costEconomics.maturityDays).toBe(14);
+    expect(res.costEconomics.maturityDays).toBe(21);
     expect(res.costEconomics.unmeasuredReason).toBe("maturing");
     expect(res.costEconomics.roiMultiple).toBeNull();
     expect(res.costEconomics.costOfAcquisitionPct).toBeNull();
@@ -321,7 +323,7 @@ describe("ROI, %CAC and $CAC are measured on the MATURE cohort", () => {
 
     // THE DIVERGENCE: $60 over the 4 mature clickers (3 dated + 1 undated) = $15, not $100 / 7.
     expect(res.spend.ratioBasis).toMatchObject({
-      maturityDays: 14,
+      maturityDays: 21,
       committedSpentCents: 6000,
       actualSpentCents: 6000,
       provisionedSpentCents: 0,
@@ -338,7 +340,7 @@ describe("ROI, %CAC and $CAC are measured on the MATURE cohort", () => {
     expect(res.recipientsClicked.total).toBe(7);
 
     expect(res.outcomes.cpcCents).toBeCloseTo(1500, 6);
-    expect(res.outcomes.ratioBasis).toMatchObject({ maturityDays: 14, committedSpentCents: 6000, recipientsClicked: 4 });
+    expect(res.outcomes.ratioBasis).toMatchObject({ maturityDays: 21, committedSpentCents: 6000, recipientsClicked: 4 });
     expect(res.outcomes.recipientsClicked).toBe(7);
 
     // (The funnel rungs ride the same basis — pinned in lib/ratio-basis.test.ts; this brand walks none.)
@@ -348,7 +350,7 @@ describe("ROI, %CAC and $CAC are measured on the MATURE cohort", () => {
     mockFetch({ allYoung: true });
     const res = await body();
     expect(res.spend.totalCpcCents).toBeNull();
-    expect(res.spend.ratioBasis).toMatchObject({ maturityDays: 14, committedSpentCents: null, unmeasuredReason: "maturing" });
+    expect(res.spend.ratioBasis).toMatchObject({ maturityDays: 21, committedSpentCents: null, unmeasuredReason: "maturing" });
     expect(res.outcomes.cpcCents).toBeNull();
     expect(res.outcomes.ratioBasis.unmeasuredReason).toBe("maturing");
     expect(res.spend.totalSpentCents).toBe(4000);
@@ -395,7 +397,7 @@ describe("ROI, %CAC and $CAC are measured on the MATURE cohort", () => {
     mockFetch();
     const res = await body("brandId=b1&leads=full&lens=signups");
     const whole = res.headline.totalPipelineUsd as number;
-    expect(res.costEconomics.maturityDays).toBe(14);
+    expect(res.costEconomics.maturityDays).toBe(21);
     expect(res.costEconomics.roiMultiple).toBeCloseTo((whole * 4) / 7 / 60, 6);
   });
 });
