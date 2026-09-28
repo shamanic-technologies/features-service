@@ -132,6 +132,8 @@ interface Options {
   net?: boolean;
   /** Days whose rows have NO known vendor cost (runs states their billed amount as unpriced). */
   unpricedDays?: string[];
+  /** Versioned slugs whose rows have NO known vendor cost on the undated grouped vendor read. */
+  unpricedSlugs?: string[];
 }
 
 /**
@@ -200,6 +202,33 @@ function mockFetch(options: Options = {}): FetchImpl {
           runCount: 1,
         }],
       });
+    }
+    // The UNDATED grouped vendor read: billed + vendor (a fifth of the billed) + unpriced per group.
+    if (url.pathname.includes("/internal/stats/costs/vendor")) {
+      const groupBy = (q.get("groupBy") ?? "").split(",");
+      const ids = q.get("campaignIds")?.split(",");
+      if (q.get("campaignId")) throw new Error("the vendor read takes campaignIds only");
+      const byKey = new Map<string, Record<string, unknown>>();
+      for (const c of COSTS.filter((r) => !ids || ids.includes(r.campaignId))) {
+        const dimensions: Record<string, string> = {};
+        if (groupBy.includes("workflowSlug")) dimensions.workflowSlug = c.workflowSlug;
+        if (groupBy.includes("campaignId")) dimensions.campaignId = c.campaignId;
+        const key = JSON.stringify(dimensions);
+        const unpriced = options.unpricedSlugs?.includes(c.workflowSlug) ?? false;
+        const prev = byKey.get(key) ?? {
+          dimensions, totalCostInUsdCents: 0, actualCostInUsdCents: 0,
+          vendorTotalCostInUsdCents: 0, vendorActualCostInUsdCents: 0, vendorRefundedCostInUsdCents: 0,
+          unpricedTotalCostInUsdCents: 0, unpricedActualCostInUsdCents: 0, unpricedRefundedCostInUsdCents: 0,
+        };
+        const add = (k: string, n: number) => { prev[k] = (prev[k] as number) + n; };
+        add("totalCostInUsdCents", c.committed);
+        add("actualCostInUsdCents", c.actual);
+        add(unpriced ? "unpricedTotalCostInUsdCents" : "vendorTotalCostInUsdCents", unpriced ? c.committed : c.committed / 5);
+        add(unpriced ? "unpricedActualCostInUsdCents" : "vendorActualCostInUsdCents", unpriced ? c.actual : c.actual / 5);
+        byKey.set(key, prev);
+      }
+      const groups = [...byKey.values()].map((g) => Object.fromEntries(Object.entries(g).map(([k, v]) => [k, k === "dimensions" ? v : String(v)])));
+      return json({ groups });
     }
     if (url.pathname.includes("/stats/public/costs/timeseries")) {
       // The ONE leg with no slug filter. It resolves the dynasty through workflow-service, which 404s
@@ -320,9 +349,9 @@ describe("GET /internal/features/:slug/revenue/actual-cost — the return curve 
     expect(a.daily.at(-1).cumulativePricedVendorCostUsd).toBe(0);
   });
 
-  it("refuses a grouping, a lens or a pricing selector on this basis", async () => {
+  it("refuses any other grouping, a lens or a pricing selector on this basis", async () => {
     mockFetch();
-    for (const q of ["&groupBy=workflow", "&lens=signups", "&pricing=net"]) {
+    for (const q of ["&groupBy=offerId", "&lens=signups", "&pricing=net", "&groupBy=workflow&pricing=net"]) {
       const res = await request(app).get(`${ACTUAL}${q}`).set(AUTH);
       expect(res.status).toBe(400);
       expect(res.body.reason).toBe("not_on_actual_cost_basis");
@@ -342,5 +371,68 @@ describe("the CUSTOMER read can never answer on the actual basis", () => {
     expect(plain.body.costBasis).toBe("charged");
     expect(JSON.stringify(plain.body)).not.toContain("actualCostHistory");
     expect(seen.some((u) => u.includes("/timeseries/vendor"))).toBe(false);
+  });
+});
+
+describe("GET /internal/features/:slug/revenue/actual-cost?groupBy= — the per-workflow / per-campaign rows at vendor cost", () => {
+  type Group = {
+    workflowDynastySlug?: string;
+    campaignId?: string;
+    costEconomics: { committedCostUsd: number | null; roiMultiple: number | null; costOfAcquisitionPct: number | null };
+    outcomes?: { committedSpentCents: number | null; cpprCents: number | null };
+    vendorCost?: { pricedVendorCostUsd: number; unpricedBilledCostUsd: number; vendorCostKnown: boolean };
+  };
+  const byWorkflow = (groups: Group[], slug: string) => groups.find((g) => g.workflowDynastySlug === slug)!;
+
+  it("each workflow's spend reads a FIFTH of the billed one and its ROI five times it, from the service-auth vendor read", async () => {
+    const seen = recordingFetch();
+    const billed = await request(app).get(`/features/${SALES}/revenue?brandId=${BRAND}&groupBy=workflow`).set(AUTH);
+    const actual = await request(app).get(`${ACTUAL}&groupBy=workflow`).set(AUTH);
+
+    expect(actual.status).toBe(200);
+    expect(actual.body.costBasis).toBe("actual");
+    const b = byWorkflow(billed.body.groups, "dawn");
+    const a = byWorkflow(actual.body.groups, "dawn");
+    // Billed dawn: 4000 + 1000 + 8000 committed cents = $130. Vendor: $26.
+    expect(b.costEconomics.committedCostUsd).toBeCloseTo(130, 6);
+    expect(a.costEconomics.committedCostUsd).toBeCloseTo(26, 6);
+    expect(a.costEconomics.roiMultiple).toBeCloseTo(b.costEconomics.roiMultiple! * 5, 6);
+    expect(a.outcomes!.committedSpentCents).toBe(2600);
+    expect(a.vendorCost).toEqual({ pricedVendorCostUsd: 26, unpricedBilledCostUsd: 0, vendorCostKnown: true });
+    // The billed body carries none of it.
+    expect(billed.body.costBasis).toBe("charged");
+    expect(JSON.stringify(billed.body)).not.toContain("vendorCost");
+    // Every cost read on the actual body went to the vendor aggregation, never the billed one.
+    expect(seen.some((u) => u.includes("/internal/stats/costs/vendor") && u.includes("groupBy=workflowSlug"))).toBe(true);
+  });
+
+  it("a workflow with unpriced spend reads NULL money and names what it could not price; the others are unaffected", async () => {
+    mockFetch({ unpricedSlugs: ["retired-v1"] });
+    const res = await request(app).get(`${ACTUAL}&groupBy=workflow`).set(AUTH);
+    const retired = byWorkflow(res.body.groups, "retired-v1");
+    expect(retired.costEconomics.committedCostUsd).toBeNull();
+    expect(retired.costEconomics.roiMultiple).toBeNull();
+    expect(retired.costEconomics.costOfAcquisitionPct).toBeNull();
+    expect(retired.outcomes!.committedSpentCents).toBeNull();
+    expect(retired.outcomes!.cpprCents).toBeNull();
+    expect(retired.vendorCost).toEqual({ pricedVendorCostUsd: 0, unpricedBilledCostUsd: 7, vendorCostKnown: false });
+    expect(byWorkflow(res.body.groups, "dawn").costEconomics.committedCostUsd).toBeCloseTo(26, 6);
+  });
+
+  it("per-campaign rows total the identity at vendor cost, and state its unpriced spend", async () => {
+    mockFetch({ unpricedSlugs: ["osprey-v1"] });
+    const billed = await request(app).get(`/features/${SALES}/revenue?brandId=${BRAND}&groupBy=campaignId`).set(AUTH);
+    const actual = await request(app).get(`${ACTUAL}&groupBy=campaignId`).set(AUTH);
+    expect(actual.status).toBe(200);
+    const other = (actual.body.groups as Group[]).find((g) => g.campaignId === "other")!;
+    const otherBilled = (billed.body.groups as Group[]).find((g) => g.campaignId === "other")!;
+    expect(otherBilled.costEconomics.committedCostUsd).toBeCloseTo(80, 6);
+    expect(other.costEconomics.committedCostUsd).toBeCloseTo(16, 6);
+    expect(other.vendorCost!.vendorCostKnown).toBe(true);
+    // The live identity spent 2000¢ on osprey, whose rows have no vendor cost: unknown, stated.
+    const live = (actual.body.groups as Group[]).find((g) => g.campaignId === "live")!;
+    expect(live.costEconomics.committedCostUsd).toBeNull();
+    expect(live.vendorCost!.unpricedBilledCostUsd).toBeCloseTo(20, 6);
+    expect(live.vendorCost!.vendorCostKnown).toBe(false);
   });
 });

@@ -178,6 +178,36 @@ reads the byte-same numbers under both:
   (reconciliation to the funnel figure, no key naming a funnel, the old bodies' key sets pinned).
   (Set 2026-09-26.)
 
+## THE LADDER AND THE GROUPED ROWS ON ACTUAL COST — staff twins, the `vendor` / `vendorUnpriced` bases ride `pricing`, and the ORDER stays billed
+
+The v2 staff "User cost / Actual cost" switch covers every cost figure the Workflows list and a Workflow
+page read. Two staff-only twins (the gateway mounts both behind `requireStaff`; the customer reads answer
+billed whatever they are sent, guarded):
+
+- **`GET /internal/features/:slug/workflow-projection/actual-cost`** — the same request as the ladder,
+  every money figure at vendor cost (`lib/actual-cost-projection.ts`). The body is projected THREE times
+  off three evidence reads (billed / `vendor` / `vendorUnpriced`, one Gold cell each via `pricing` in the
+  key): the BILLED projection gives the order (`rank`, `scopeRank`, the recommendation, `legAssignment`
+  — campaign-service acts on it, a staff switch must never move it), the VENDOR one every money figure,
+  the UNPRICED one only per-grain unpriced billed spend. A grain with unpriced spend, or floored against
+  one that has (crossOrg → brand → campaign → audience, offer on brand), reads NULL money + `vendorCost`
+  naming it; `resolved.vendorCostKnown` likewise. `recommendedBudgetUsd` null; `leg.returnPerDollar`
+  re-read on vendor evidence (null if anything is unpriced).
+- **`/internal/features/:slug/revenue/actual-cost?groupBy=workflow|campaignId`** — the billed grouped
+  compute with `pricing: "vendor"` (views `revenue-by-workflow-actual-cost`, `revenue-grouped-actual-cost`),
+  each group stamped by `lib/actual-cost-groups.ts` from a `vendorUnpriced` cost read on the SAME scope.
+
+**THE MECHANISM IS `pricing`** (`lib/pricing.ts`): `Pricing` gained `vendor` | `vendorUnpriced`, which
+`parsePricing` NEVER accepts (a customer cannot ask), and `runsCostsUrl` sends every grouped undated cost
+read on those bases to runs-service `GET /internal/stats/costs/vendor` (service-auth; org from `x-org-id`,
+fleet without it; `campaignId` moved onto `campaignIds`). `selectCostCentsString` reads
+`vendor<State>` / `unpriced<State>` + the `Refunded` bucket (comped rows were still paid to the vendor).
+FAIL-LOUD by construction: a cost read NOT routed to the vendor aggregation carries no vendor field and
+throws — never billed money under the vendor name (the billed dated read throws explicitly). The vendor
+read states no `runCount`; a group only exists for runs holding a cost row, so an absent count reads 1
+(the rollups use it only as "a run exists"). Guards: `routes/workflow-projection-actual-cost.test.ts`,
+the grouped block of `routes/actual-cost-history.test.ts`. (Set 2026-09-28.)
+
 ## THE RETURN CURVE ON ACTUAL COST — `GET /internal/features/:slug/revenue/actual-cost`, STAFF ONLY, and the customer read can never answer on it
 
 The dashboard v2 Workflows page toggles one workflow's cost / value / return charts between "User cost"
@@ -205,7 +235,8 @@ it really cost us: vendor cost BEFORE our markup). `lib/actual-cost-history.ts`.
   `75d7e3e8…`, lithium): every priced day reads billed/5 exactly; the unpriced $608 is ALL three retired
   Instantly per-send lines (`instantly-{account,domain}-email-sent`, `-contact-uploaded`), whose vendor
   rate costs-service has no record of (that infra is a fixed monthly bill, not a per-unit cost).
-- Refuses `groupBy`, `lens`, `pricing` (400 `not_on_actual_cost_basis`). Gold view `revenue-actual-cost`.
+- Refuses `lens`, `pricing` and any `groupBy` other than `workflow` / `campaignId` (400
+  `not_on_actual_cost_basis`; see the next section for the two groupings). Gold view `revenue-actual-cost`.
 - Guards: `lib/actual-cost-history.test.ts`, `lib/vendor-spend-by-day-client.test.ts`,
   `routes/actual-cost-history.test.ts`. (Set 2026-09-27.)
 
