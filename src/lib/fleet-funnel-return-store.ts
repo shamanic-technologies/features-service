@@ -35,12 +35,25 @@ function parseRow(raw: unknown): BrandFunnelReturnRow | null {
   if (typeof r.committedSpendUsd !== "number" || !Number.isFinite(r.committedSpendUsd)) return null;
   const num = (v: unknown): v is number | null => v === null || (typeof v === "number" && Number.isFinite(v));
   if (!num(r.expectedPipelineUsd) || !num(r.expectedPaidClients)) return null;
+  const isMature = r.isMature;
+  if (isMature !== undefined && isMature !== null && typeof isMature !== "boolean") return null;
+  const flashSpend = r.flashCommittedSpendUsd;
+  if (flashSpend !== undefined && (typeof flashSpend !== "number" || !Number.isFinite(flashSpend))) return null;
+  const flashPipeline = r.flashExpectedPipelineUsd;
+  if (flashPipeline !== undefined && flashPipeline !== null && (typeof flashPipeline !== "number" || !Number.isFinite(flashPipeline))) {
+    return null;
+  }
   return {
     brandId: r.brandId,
     funnelKey: r.funnelKey as SalesFunnelKey,
     committedSpendUsd: r.committedSpendUsd,
     expectedPipelineUsd: r.expectedPipelineUsd as number | null,
     expectedPaidClients: r.expectedPaidClients as number | null,
+    // ABSENT stays absent on every maturity field (a snapshot written before them), so the read can say
+    // "not recorded yet" rather than "not mature".
+    ...(isMature !== undefined ? { isMature: isMature as boolean | null } : {}),
+    ...(flashSpend !== undefined ? { flashCommittedSpendUsd: flashSpend as number } : {}),
+    ...(flashPipeline !== undefined ? { flashExpectedPipelineUsd: flashPipeline as number | null } : {}),
   };
 }
 

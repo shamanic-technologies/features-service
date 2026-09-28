@@ -16938,6 +16938,75 @@
           "asOf"
         ]
       },
+      "FleetMatureBenchmark": {
+        "type": "object",
+        "properties": {
+          "legKey": {
+            "type": "string",
+            "description": "The leg the objective's outcome IS (positiveReply → start_to_conversation, websiteVisit → start_to_website_visit)."
+          },
+          "basis": {
+            "type": "string",
+            "enum": [
+              "mature"
+            ],
+            "description": "Always `mature`: the figures below are MATURE figures of MATURE workflows."
+          },
+          "matureWorkflowCount": {
+            "type": "integer",
+            "description": "How many listed workflows are mature on the leg (mature outcomes ≥ the leg's outcomesRequired) with a mature cost."
+          },
+          "best": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "workflowDynastySlug": {
+                "type": "string"
+              },
+              "costPerOutcomeUsd": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "workflowDynastySlug",
+              "costPerOutcomeUsd"
+            ],
+            "description": "The mature workflow with the lowest MATURE cost per outcome (the slug breaks a tie). Null when none is mature. A workflow still inside its first 21 days never takes it, however cheap its flash figure reads."
+          },
+          "median": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "costPerOutcomeUsd": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "costPerOutcomeUsd"
+            ],
+            "description": "The median MATURE cost per outcome across the mature workflows. Null when none is mature."
+          },
+          "measured": {
+            "type": "boolean",
+            "description": "FALSE ⟺ the leg's mature cut could not be made (a pair states no serve date): every row's mature half is null and nothing is mature."
+          },
+          "cutoffIso": {
+            "type": "string",
+            "nullable": true,
+            "description": "Runs started, and leads served, before this instant are mature (UTC midnight of today − the leg's duration)."
+          }
+        },
+        "required": [
+          "legKey",
+          "basis",
+          "matureWorkflowCount",
+          "best",
+          "median",
+          "measured",
+          "cutoffIso"
+        ],
+        "description": "THE BENCHMARK ON ONE LEG, over MATURE workflows only (features-service#1196)."
+      },
       "FunnelLeg": {
         "type": "object",
         "properties": {
@@ -17622,6 +17691,102 @@
           "channelSlug",
           "pairs"
         ]
+      },
+      "MatureScopesReturn": {
+        "type": "object",
+        "properties": {
+          "basis": {
+            "type": "string",
+            "enum": [
+              "mature_scopes"
+            ],
+            "description": "Only brands whose OWN scope is mature (the isMature their dashboard states) are in the population."
+          },
+          "measured": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "no_snapshot_yet",
+              "maturity_not_recorded_yet",
+              "not_enough_brands"
+            ],
+            "description": "`maturity_not_recorded_yet` = the snapshot was written before brands carried a verdict; the next warm fills it in."
+          },
+          "brandCount": {
+            "type": "integer",
+            "description": "How many mature brands past the spend floor the medians were taken over. Always present."
+          },
+          "flash": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "median": {
+                "type": "number"
+              },
+              "p25": {
+                "type": "number"
+              },
+              "p75": {
+                "type": "number"
+              },
+              "min": {
+                "type": "number"
+              },
+              "max": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "median",
+              "p25",
+              "p75",
+              "min",
+              "max"
+            ],
+            "description": "Their return on everything to date: whole pipeline / whole committed spend (net)."
+          },
+          "mature": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "median": {
+                "type": "number"
+              },
+              "p25": {
+                "type": "number"
+              },
+              "p75": {
+                "type": "number"
+              },
+              "min": {
+                "type": "number"
+              },
+              "max": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "median",
+              "p25",
+              "p75",
+              "min",
+              "max"
+            ],
+            "description": "Their return on the mature cohort — the figure each client's own dashboard displays."
+          }
+        },
+        "required": [
+          "basis",
+          "measured",
+          "reason",
+          "brandCount",
+          "flash",
+          "mature"
+        ],
+        "description": "THE SAME MEDIAN OVER MATURE SCOPES ONLY, on both versions (features-service#1196). The legacy fields beside it are unchanged (every brand past the floor)."
       }
     },
     "parameters": {}
@@ -26982,6 +27147,65 @@
                             "nullable": true,
                             "description": "LIFETIME (all-history) pooled cost-per-outcome — what the workflow has cost per outcome over ALL history. Populated cost (projected cascade floor: max(spent, fleet unit cost) when the outcome denominator is 0), so non-null whenever the workflow has spend and fleet economics exist."
                           },
+                          "maturity": {
+                            "allOf": [
+                              {
+                                "$ref": "#/components/schemas/LegMaturityFigures"
+                              },
+                              {
+                                "allOf": [
+                                  {
+                                    "$ref": "#/components/schemas/LegMaturityRule"
+                                  },
+                                  {
+                                    "type": "object",
+                                    "nullable": true,
+                                    "properties": {
+                                      "legKey": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "description": "The leg these figures and this rule are for."
+                                      },
+                                      "flash": {
+                                        "allOf": [
+                                          {
+                                            "$ref": "#/components/schemas/OutcomeFigures"
+                                          },
+                                          {
+                                            "nullable": true,
+                                            "description": "Everything to date."
+                                          }
+                                        ]
+                                      },
+                                      "mature": {
+                                        "allOf": [
+                                          {
+                                            "$ref": "#/components/schemas/OutcomeFigures"
+                                          },
+                                          {
+                                            "nullable": true,
+                                            "description": "The runs started before the cutoff and the leads THOSE runs served (their outcomes whenever they landed). A cohort that was read and holds nothing is all zeros; null ONLY when the cut could not be made (legs unknown, serve dates not stated)."
+                                          }
+                                        ]
+                                      },
+                                      "isMature": {
+                                        "type": "boolean",
+                                        "nullable": true,
+                                        "description": "mature.outcomes >= outcomesRequired. Null = could not judge; never a Learning verdict."
+                                      }
+                                    },
+                                    "required": [
+                                      "legKey",
+                                      "flash",
+                                      "mature",
+                                      "isMature"
+                                    ]
+                                  }
+                                ],
+                                "description": "THIS WORKFLOW ON THE OBJECTIVE'S LEG, flash and mature (features-service#1196): every org's campaigns performing that leg only (a workflow's figure is its figure on one leg), the positive replies counted on PEOPLE — the byte-same evidence a leg-keyed workflow-projection's crossOrg grain reads. OBSERVED, never floored. Null for an objective with no single leg (a projected one), and until the leg's first background warm has landed."
+                              }
+                            ]
+                          },
                           "recentCostPerOutcomeUsd": {
                             "type": "number",
                             "nullable": true,
@@ -26996,10 +27220,22 @@
                           "observedClicks",
                           "observedPositiveReplies",
                           "costPerOutcomeUsd",
+                          "maturity",
                           "recentCostPerOutcomeUsd"
                         ]
                       },
                       "description": "One row per workflow dynasty, sorted by spend desc. Each row carries BOTH the lifetime cost-per-outcome and the recent trailing-window moving-average cost-per-outcome for the objective."
+                    },
+                    "fleet": {
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/FleetMatureBenchmark"
+                        },
+                        {
+                          "nullable": true,
+                          "description": "The benchmark on the objective's leg over MATURE workflows only. Null for an objective with no single leg, and until the leg's first background warm has landed."
+                        }
+                      ]
                     }
                   },
                   "required": [
@@ -27007,7 +27243,8 @@
                     "featureSlug",
                     "objective",
                     "windowOutcomes",
-                    "workflows"
+                    "workflows",
+                    "fleet"
                   ]
                 }
               }
@@ -28561,6 +28798,115 @@
         }
       }
     },
+    "/internal/fleet-leg-maturity": {
+      "get": {
+        "summary": "One leg's fleet figures per workflow dynasty, flash + mature + isMature (service-auth; the server asks the refresher, whose fleet cells are warm)",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "featureSlug",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "A known leg key."
+            },
+            "required": true,
+            "description": "A known leg key.",
+            "name": "legKey",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Per dynasty, the leg's LegMaturityFigures.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "legKey": {
+                      "type": "string"
+                    },
+                    "cutoffIso": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "measured": {
+                      "type": "boolean"
+                    },
+                    "byDynasty": {
+                      "type": "array",
+                      "items": {
+                        "type": "array",
+                        "items": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "$ref": "#/components/schemas/LegMaturityFigures"
+                            }
+                          ]
+                        },
+                        "minItems": 2,
+                        "maxItems": 2
+                      }
+                    }
+                  },
+                  "required": [
+                    "legKey",
+                    "cutoffIso",
+                    "measured",
+                    "byDynasty"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "featureSlug or legKey missing / unknown",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/public/stats/return-on-spend": {
       "get": {
         "summary": "Fleet MEDIAN return on spend across client brands, over a spend floor (public, no auth)",
@@ -28665,6 +29011,9 @@
                       "type": "string",
                       "nullable": true,
                       "description": "When the snapshot these figures were taken from was computed (ISO 8601). Null when no snapshot exists yet."
+                    },
+                    "maturity": {
+                      "$ref": "#/components/schemas/MatureScopesReturn"
                     }
                   },
                   "required": [
@@ -28680,7 +29029,8 @@
                     "p75ReturnPerDollar",
                     "minReturnPerDollar",
                     "maxReturnPerDollar",
-                    "computedAt"
+                    "computedAt",
+                    "maturity"
                   ]
                 }
               }
@@ -28880,6 +29230,9 @@
                             "type": "string",
                             "nullable": true,
                             "description": "When the snapshot these figures were taken from was computed (ISO 8601). Null when the channel has no snapshot yet."
+                          },
+                          "maturity": {
+                            "$ref": "#/components/schemas/MatureScopesReturn"
                           }
                         },
                         "required": [
@@ -28899,7 +29252,8 @@
                           "maxReturnPerDollar",
                           "medianCostPerPaidClientUsd",
                           "costPerPaidClientBrandCount",
-                          "computedAt"
+                          "computedAt",
+                          "maturity"
                         ]
                       },
                       "description": "Every (acquisition channel x sales funnel) pair in the catalogue, measured or not. A pair is never absent — absence would read as 'this channel does not sell this funnel'."
@@ -29550,6 +29904,16 @@
                                 },
                                 "costPerPaidClientBrandCount": {
                                   "type": "integer"
+                                },
+                                "maturity": {
+                                  "allOf": [
+                                    {
+                                      "$ref": "#/components/schemas/MatureScopesReturn"
+                                    },
+                                    {
+                                      "description": "The same median over the brands MATURE ON THESE LEGS (each judged on the legs of the set it performs), on both versions."
+                                    }
+                                  ]
                                 }
                               },
                               "required": [
@@ -29566,7 +29930,8 @@
                                 "minReturnPerDollar",
                                 "maxReturnPerDollar",
                                 "medianCostPerPaidClientUsd",
-                                "costPerPaidClientBrandCount"
+                                "costPerPaidClientBrandCount",
+                                "maturity"
                               ]
                             }
                           },
@@ -29647,6 +30012,16 @@
                                 },
                                 "costPerPaidClientBrandCount": {
                                   "type": "integer"
+                                },
+                                "maturity": {
+                                  "allOf": [
+                                    {
+                                      "$ref": "#/components/schemas/MatureScopesReturn"
+                                    },
+                                    {
+                                      "description": "The same median over the brands MATURE ON THESE LEGS (each judged on the legs of the set it performs), on both versions."
+                                    }
+                                  ]
                                 }
                               },
                               "required": [
@@ -29662,7 +30037,8 @@
                                 "minReturnPerDollar",
                                 "maxReturnPerDollar",
                                 "medianCostPerPaidClientUsd",
-                                "costPerPaidClientBrandCount"
+                                "costPerPaidClientBrandCount",
+                                "maturity"
                               ]
                             }
                           }
