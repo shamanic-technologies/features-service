@@ -139,7 +139,9 @@ registry.registerPath({
   path: "/internal/features/{featureSlug}/revenue/actual-cost",
   summary: "STAFF ONLY: the return-on-spend curve on ACTUAL cost (vendor cost, before markup)",
   description:
-    "The `/features/{featureSlug}/revenue` return curve (`roiHistory`) for the same scope (brandId + optional campaignId / offerId / workflow / cause), with its spend leg read at VENDOR cost from runs-service instead of at the billed committed price. The value leg is byte-identical to the billed curve. Reveals our margin, so it is served only here: the api-service gateway must mount this path behind requireStaff, and the customer `/revenue` read never answers on this basis whatever it is sent. Refuses `groupBy`, `lens` and `pricing` (400 `not_on_actual_cost_basis`). A day with billed spend of no known vendor cost nulls the spend and return from that day on and is named in `unpricedBilledCostUsd` / `unpricedFromDate`; `actualCostHistory` is null when the dated spend could not be read.",
+    "The `/features/{featureSlug}/revenue` return curve (`roiHistory`) for the same scope (brandId + optional campaignId / offerId / workflow / cause), with its spend leg read at VENDOR cost from runs-service instead of at the billed committed price. The value leg is byte-identical to the billed curve. Reveals our margin, so it is served only here: the api-service gateway must mount this path behind requireStaff, and the customer `/revenue` read never answers on this basis whatever it is sent. " +
+    "WITH `?groupBy=workflow` or `?groupBy=campaignId` it serves instead the per-workflow / per-campaign groups of the billed grouped read (same scope, same partition, same value leg) with every spend figure at VENDOR cost from runs-service `GET /internal/stats/costs/vendor`: costEconomics (committedCostUsd, actualCostUsd, roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, ratioBasis.committedCostUsd, realizedReturn.roiMultiple) and outcomes (committedSpentCents, actualSpentCents, cpcCents, cpprCents). Each group carries `vendorCost: {pricedVendorCostUsd, unpricedBilledCostUsd, vendorCostKnown}`; a group whose spend includes rows with no known vendor cost reads NULL on every one of those figures (never the billed figure, never the priced part as the whole). Comped rows count at vendor cost (they were still paid to the vendor). Body `costBasis: 'actual'`. " +
+    "Refuses any other `groupBy`, `lens` and `pricing` (400 `not_on_actual_cost_basis`). A day with billed spend of no known vendor cost nulls the spend and return from that day on and is named in `unpricedBilledCostUsd` / `unpricedFromDate`; `actualCostHistory` is null when the dated spend could not be read.",
   tags: ["Revenue"],
   request: {
     headers: identityHeaders,
@@ -150,11 +152,12 @@ registry.registerPath({
       offerId: z.string().optional(),
       workflow: z.string().optional().describe("Workflow DYNASTY slug (the key `?groupBy=workflow` emits)."),
       cause: z.string().optional(),
+      groupBy: z.enum(["workflow", "campaignId"]).optional().describe("Serve the per-workflow / per-campaign groups at vendor cost instead of the curve."),
     }),
   },
   responses: {
     200: {
-      description: "Actual-cost curve",
+      description: "Actual-cost curve (or, with `groupBy`, `{featureSlug, costBasis: 'actual', groupBy, groups[]}` — the billed grouped groups at vendor cost, each with `vendorCost`)",
       content: {
         "application/json": {
           schema: z.object({
@@ -1074,6 +1077,64 @@ registry.registerPath({
     404: { description: "Feature not found; or (reason='offer_not_found') the named `?offerId=` is not an offer of this brand; or (reason='leg_not_declared') no funnel this brand declared contains the requested `?leg=` — both bodies carry `declaredFunnelKeys`", content: { "application/json": { schema: errorResponse } } },
     409: { description: "(reason='several_offers') a `?leg=` read of a brand selling SEVERAL OFFERS that named no campaign. A leg is priced THROUGH one of the brand's declared funnels, and each offer declares its own — so the declared set is the ANSWER here rather than a refinement of it, and widening to every catalogue funnel containing the leg would price the brand on propositions it may not sell. The body lists the `offers`; name the campaign this leg is bought for (a campaign sells exactly one offer) and the read answers fully. A funnel- or goal-keyed read of the same brand degrades to a 200 instead — see declaredFunnelsUnresolved.", content: { "application/json": { schema: errorResponse } } },
     502: { description: "Downstream service error (reason='declared_funnels_unavailable' when the declared-funnel read could not be answered)", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+// ── GET /internal/features/:featureSlug/workflow-projection/actual-cost — STAFF ONLY ─────────────
+
+const vendorStatementSchema = z.object({
+  pricedVendorCostUsd: z.number().describe("Vendor cost of the grain's PRICED rows — the part we do know; NOT the whole when unpricedBilledCostUsd > 0."),
+  unpricedBilledCostUsd: z.number().describe("BILLED spend of the grain's rows with no known vendor cost. 0 when every row is priced."),
+  vendorCostKnown: z.boolean().describe("TRUE ⟺ this grain and every grain it floors against are fully priced, i.e. its money figures are real vendor cost."),
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/features/{featureSlug}/workflow-projection/actual-cost",
+  summary: "STAFF ONLY: the workflow projection ladder with every money figure at ACTUAL cost (vendor cost, before markup)",
+  description:
+    "The `/features/{featureSlug}/workflow-projection` body for the same request (brandId + goal/objective or leg, campaignId, offerId, maximize, picks), with every MONEY figure read at VENDOR cost from runs-service `GET /internal/stats/costs/vendor` instead of at the billed price: each grain's evidence.spentUsd, unitCosts, projected, legOutcome.costPerOutcomeUsd / spentUsd, and resolved costPerClickUsd / costPerOutcomeUsd / costPerPaidClientUsd / costPerMeetingBookedUsd / roiMultiple / cacPct; leg.returnPerDollar too. The ORDER is the billed one — rank, scopeRank, recommendedWorkflowDynastySlug and legAssignment are byte the billed body's (the ranking is what campaign-service acts on). Counts, rates and outcome counts are unchanged. Every grain carries `vendorCost` and resolved carries `vendorCostKnown`: a grain with billed spend of no known vendor cost — or floored against one that has — reads NULL money and names the unpriced billed amount, never the billed figure. `recommendedBudgetUsd` is null (a billed, customer-facing figure). Top-level `costBasis: 'actual'` and `unpricedBilledCostUsd`. Comped rows count at vendor cost. Reveals our margin: the api-service gateway must mount this path behind requireStaff, and the customer read never answers on this basis whatever it is sent. Refuses `pricing` (400 `not_on_actual_cost_basis`).",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ featureSlug: z.string() }),
+    query: z.object({
+      brandId: z.string(),
+      goal: z.string().optional(),
+      objective: z.string().optional(),
+      leg: z.string().optional(),
+      campaignId: z.string().optional(),
+      offerId: z.string().optional(),
+      picks: z.string().optional(),
+      maximize: z.string().optional(),
+    }),
+  },
+  responses: {
+    200: {
+      description: "The ladder at vendor cost",
+      content: {
+        "application/json": {
+          schema: z
+            .object({
+              costBasis: z.literal("actual"),
+              unpricedBilledCostUsd: z.number().describe("The largest unpriced billed spend any grain states (the fleet grain carries the fleet's whole). 0 when every row is priced."),
+              rows: z.array(
+                z
+                  .object({
+                    estimatesByGrain: z.record(z.string(), z.object({ vendorCost: vendorStatementSchema }).passthrough()),
+                    resolved: z.object({ vendorCostKnown: z.boolean() }).passthrough(),
+                  })
+                  .passthrough(),
+              ),
+            })
+            .passthrough(),
+        },
+      },
+    },
+    400: { description: "The billed read's 400s, plus reason='not_on_actual_cost_basis' for a pricing selector", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "As the billed read", content: { "application/json": { schema: errorResponse } } },
+    409: { description: "As the billed read", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "A downstream read failed (including the vendor aggregation)", content: { "application/json": { schema: errorResponse } } },
   },
 });
 

@@ -22,7 +22,7 @@ import type { WorkflowMetadata } from "./public-stats-clients.js";
 import { fetchActiveAudiences, fetchAudienceMemberEmails } from "./human-client.js";
 import { setPersonRepliesOnSlugStats, type CrmOnlyReplier, type PositiveReplier } from "./crm-only-repliers.js";
 import { mapWithConcurrency } from "./concurrency.js";
-import { selectCostCents, selectCostCentsString, type Pricing } from "./pricing.js";
+import { runsCostsUrl, selectCostCents, selectCostCentsString, type Pricing } from "./pricing.js";
 import { type CostBasis } from "./cost-basis.js";
 
 /**
@@ -74,6 +74,8 @@ interface CostGroup {
   totalCostInUsdCents: string;
   /** Frozen-NET twin (runs#179) — read via selectCostCents when pricing === "net". */
   netTotalCostInUsdCents?: string;
+  /** Absent on the vendor aggregation (pricing.ts), which only emits a group for runs holding a cost
+   *  row — so an absent count is read as one run, which is all the rollups use it for. */
   runCount: number;
 }
 
@@ -86,12 +88,14 @@ async function fetchBrandCostGroups(
   // LEG scope: only these campaigns' cost rows (runs-service `campaignIds`, ≤500 — a brand's campaigns on
   // one leg of one channel are far fewer). Omitted → every campaign of the brand, unchanged.
   campaignIds?: readonly string[],
+  // Which runs-service aggregation answers: the billed one, or the staff-only vendor twin (pricing.ts).
+  pricing: Pricing = "gross",
 ): Promise<CostGroup[]> {
   const baseUrl = process.env.RUNS_SERVICE_URL;
   if (!baseUrl) throw new Error("RUNS_SERVICE_URL not configured");
   const params = new URLSearchParams({ groupBy, brandId, featureSlugs: featureSlug });
   if (campaignIds && campaignIds.length > 0) params.set("campaignIds", campaignIds.join(","));
-  const response = await fetchWithRetry(`${baseUrl}/v1/stats/costs?${params}`, { headers: runsHeaders(brandId, identity) });
+  const response = await fetchWithRetry(runsCostsUrl(baseUrl, "org", pricing, params), { headers: runsHeaders(brandId, identity) });
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`runs-service /v1/stats/costs (groupBy=${groupBy}, brandId) failed (${response.status}): ${text}`);
@@ -262,14 +266,14 @@ export async function fetchBrandWorkflowEvidenceWithRetired(
   repliers?: readonly PositiveReplier[],
 ): Promise<GrainEvidenceWithRetired> {
   const [costGroups, emailStats] = await Promise.all([
-    fetchBrandCostGroups(brandId, featureSlug, "workflowSlug", identity),
+    fetchBrandCostGroups(brandId, featureSlug, "workflowSlug", identity, undefined, pricing),
     fetchBrandEmailStats(brandId, featureSlug, identity),
   ]);
   // Select gross vs frozen-net cost per group BEFORE the dynasty rollup, so the aggregated brand-grain
   // cost is net-or-gross end to end (no post-hoc multiply).
   return rollUpGrain(
     workflows,
-    costGroups.map((g) => ({ dimensions: g.dimensions, totalCostInUsdCents: selectCostCentsString(g, "totalCostInUsdCents", pricing, basis), runCount: g.runCount })),
+    costGroups.map((g) => ({ dimensions: g.dimensions, totalCostInUsdCents: selectCostCentsString(g, "totalCostInUsdCents", pricing, basis), runCount: g.runCount ?? 1 })),
     emailStats,
     repliers,
   );
@@ -329,7 +333,7 @@ async function fetchAudienceDynastyCosts(
   slugToDynasty: Map<string, string>,
   campaignIds?: readonly string[],
 ): Promise<Map<string, Map<string, DynastyCost>>> {
-  const groups = await fetchBrandCostGroups(brandId, featureSlug, "audienceId,workflowSlug", identity, campaignIds);
+  const groups = await fetchBrandCostGroups(brandId, featureSlug, "audienceId,workflowSlug", identity, campaignIds, pricing);
   const result = new Map<string, Map<string, DynastyCost>>();
   for (const g of groups) {
     const audienceId = audienceIdFromDimensions(g.dimensions);
@@ -342,7 +346,7 @@ async function fetchAudienceDynastyCosts(
     const prev = byDynasty.get(dynasty) ?? { totalCostInUsdCents: 0, completedRuns: 0 };
     byDynasty.set(dynasty, {
       totalCostInUsdCents: prev.totalCostInUsdCents + Math.round(selectCostCents(g, "totalCostInUsdCents", pricing)),
-      completedRuns: prev.completedRuns + Number(g.runCount),
+      completedRuns: prev.completedRuns + Number(g.runCount ?? 1),
     });
   }
   return result;
@@ -561,9 +565,9 @@ function mergeCostGroupsByWorkflowSlug(
     const existing = bySlug.get(slug);
     if (existing) {
       existing.cents += cents;
-      existing.runs += group.runCount;
+      existing.runs += group.runCount ?? 1;
     } else {
-      bySlug.set(slug, { cents, runs: group.runCount });
+      bySlug.set(slug, { cents, runs: group.runCount ?? 1 });
     }
   }
   return [...bySlug.entries()].map(([slug, v]) => ({
@@ -581,6 +585,7 @@ async function fetchCampaignCostGroups(
   featureSlug: string,
   campaignIds: string[],
   identity: Identity,
+  pricing: Pricing = "gross",
 ): Promise<{ groups: CostGroup[]; filteredLocally: boolean }> {
   const baseUrl = process.env.RUNS_SERVICE_URL;
   if (!baseUrl) throw new Error("RUNS_SERVICE_URL not configured");
@@ -591,7 +596,7 @@ async function fetchCampaignCostGroups(
     featureSlugs: featureSlug,
   });
   if (single) params.set("campaignId", single);
-  const response = await fetchWithRetry(`${baseUrl}/v1/stats/costs?${params}`, {
+  const response = await fetchWithRetry(runsCostsUrl(baseUrl, "org", pricing, params), {
     headers: runsHeaders(brandId, identity),
   });
   if (!response.ok) {
@@ -685,7 +690,7 @@ export async function fetchCampaignWorkflowEvidenceWithRetired(
   repliers?: readonly PositiveReplier[],
 ): Promise<GrainEvidenceWithRetired> {
   const [{ groups, filteredLocally }, emailStats] = await Promise.all([
-    fetchCampaignCostGroups(brandId, featureSlug, campaignIds, identity),
+    fetchCampaignCostGroups(brandId, featureSlug, campaignIds, identity, pricing),
     fetchCampaignEmailStats(brandId, featureSlug, campaignIds, identity),
   ]);
   return rollUpGrain(

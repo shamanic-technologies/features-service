@@ -1,4 +1,5 @@
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
+import { overlayVendorProjection } from "../lib/actual-cost-projection.js";
 import { fetchActiveAudienceAvailabilitySoft } from "../lib/human-client.js";
 import { fetchPricingFunnels } from "../lib/reading-funnels.js";
 import { FUNNEL_RETIRED_BODY, namesRetiredFunnel } from "../lib/retired-funnel-param.js";
@@ -1035,7 +1036,16 @@ function exploreResolved(
 // costs (never null), and projected cost-per-outcome from the brand's EFFECTIVE economics. The consumer
 // (campaign-service) ranks on resolved.costPerOutcomeUsd.
 
-router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req, res) => {
+/**
+ * WHICH COST the ladder's money is read on. `billed` = what the client is charged, the only basis a
+ * customer read ever answers on. `actual` = what running each workflow really cost us (vendor cost,
+ * before our markup) — STAFF ONLY, served on its own `/internal/...` path the gateway mounts behind its
+ * staff gate. The ORDER (rank, scopeRank, the recommendation) stays the billed one on both: it is what
+ * campaign-service acts on. See lib/actual-cost-projection.ts.
+ */
+type ProjectionCostBasis = "billed" | "actual";
+
+async function handleWorkflowProjection(req: Request, res: Response, costBasis: ProjectionCostBasis) {
   const { featureSlug } = req.params;
   const { orgId, userId, runId, featureSlug: headerFeatureSlug } = req as AuthenticatedRequest;
   const brandId = req.query.brandId as string | undefined;
@@ -1124,6 +1134,11 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
   let { objective, goal, singleStepGoal, formSubmissionGoal, meetingChannel } = inputs;
   const budgetUsd = budgetRaw != null && budgetRaw !== "" ? Number(budgetRaw) : null;
 
+  // The actual-cost basis has no discount axis: vendor cost is what the vendor charged us whatever the
+  // client pays. A pricing selector is refused, never silently ignored.
+  if (costBasis === "actual" && req.query.pricing !== undefined) {
+    return res.status(400).json({ error: "pricing not supported on the actual-cost basis", reason: "not_on_actual_cost_basis" });
+  }
   // GROSS (default) vs NET pricing. Omitted → gross → byte-identical to today.
   const pricing = parsePricing(req.query.pricing);
   if (pricing === null) {
@@ -1270,13 +1285,16 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     // job is to say what is happening right now cannot be served from a cell half an hour old. Fired in
     // the same round trip as the fan-out (it needs only the campaign ids, not the ladder), so it costs
     // no extra wall-clock, and FAIL-SOFT so a runs blip nulls one block rather than a whole page.
-    const [evidence, effective, triggerRuns, contentModels, legAssignments, audienceAvailability] = await Promise.all([
-      servedCached({
+    // The ladder's evidence on one cost basis. The billed body reads it on `pricing`; the staff
+    // actual-cost body ALSO reads it on the vendor basis (priced rows at vendor cost) and on the
+    // unpriced basis (billed amount of the rows with no known vendor cost) — same scope, same outcomes,
+    // one Gold cell each (`pricing` is in the key).
+    const evidenceOn = (evidencePricing: Pricing) => servedCached({
         view: "workflow-projection-evidence",
         scopeKey: buildScopeKey(featureSlug, {
           orgId,
           brandId,
-          pricing,
+          pricing: evidencePricing,
           // The IDENTITY, not the campaign: every member of one family asks the same question, so they
           // land on ONE cell instead of paying a full fan-out per stopped ancestor.
           ...(campaignIdentityView ? { campaign: campaignIdentityView.key } : {}),
@@ -1293,12 +1311,14 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
             featureSlug,
             brandId,
             identity,
-            pricing,
+            pricing: evidencePricing,
             campaignIds: campaignScopeIds,
             offerCampaignIds: offerScopeIds,
             legKey,
           }),
-      }),
+      });
+    const [evidence, effective, triggerRuns, contentModels, legAssignments, audienceAvailability, vendorEvidence, unpricedEvidence] = await Promise.all([
+      evidenceOn(pricing),
       fetchEffectiveEconomics(brandId, identity),
       campaignScopeIds && picksLimit > 0
         ? fetchCampaignTriggerRunsSoft(campaignScopeIds, { orgId, userId, runId, brandId }, picksLimit)
@@ -1313,6 +1333,8 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       // served out an hour ago must not be offered for a serve off a cell that predates it
       // (features-service#1035). Shared 30s with the evidence compute's own list read; fail-soft.
       fetchActiveAudienceAvailabilitySoft(brandId, { orgId, userId, runId, featureSlug: headerFeatureSlug }),
+      costBasis === "actual" ? evidenceOn("vendor") : Promise.resolve(null),
+      costBasis === "actual" ? evidenceOn("vendorUnpriced") : Promise.resolve(null),
     ]);
     // THE LEG'S BASIS FUNNEL. Ranked on the IDENTICAL `returnPerDollar` every per-brand return uses
     // (`rankDeclaredFunnels`, one implementation) and restricted to the funnels that actually contain the leg. Pure: it
@@ -1396,7 +1418,7 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     }
 
     const pricedFunnelKey = legBasisFunnelKey;
-    const response = projectFromEvidence({
+    const projectOn = (ev: WorkflowProjectionEvidence) => projectFromEvidence({
       featureSlug,
       objective,
       goal,
@@ -1407,10 +1429,11 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
       legTerms,
       legAssignmentByDynasty,
       modelAliasByDynasty,
-      evidence,
+      evidence: ev,
       economics: mergedEconomics,
       maximize,
     });
+    const response = projectOn(evidence);
 
     if (legKey && legBasisFunnelKey) {
       const leg = funnelLeg(legKey)!;
@@ -1451,6 +1474,35 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
           : null
         : undefined;
 
+    if (costBasis === "actual" && vendorEvidence && unpricedEvidence) {
+      // The ORDER is the billed one; only the money is read at vendor cost (lib/actual-cost-projection.ts).
+      const actual = overlayVendorProjection(response, projectOn(vendorEvidence), projectOn(unpricedEvidence));
+      // The leg's basis-funnel RETURN is a money ratio: re-read on vendor spend, and null when any spend
+      // behind it could not be priced — never the billed ratio under the actual name.
+      if (legBlock && legBasisFunnelKey && declaredFunnels) {
+        const vendorRanked = rankDeclaredFunnels({
+          featureSlug,
+          funnels: declaredFunnelsToRank(declaredFunnels).filter((f) => f.funnelKey === legBasisFunnelKey),
+          evidence: vendorEvidence,
+          economics: effective.economics,
+          maximize,
+        });
+        legBlock = {
+          ...legBlock,
+          returnPerDollar: actual.unpricedBilledCostUsd > 0 ? null : (vendorRanked.ranking[0]?.returnPerDollar ?? null),
+        };
+      }
+      const actualRows = withAudienceAvailability(actual.rows as unknown as ProjectionRow[], audienceAvailability);
+      return res.json({
+        ...actual,
+        costBasis: "actual" as const,
+        rows: actualRows,
+        ...(legBlock ? { leg: legBlock } : {}),
+        ...(campaignIdentityView ? { campaignIdentity: campaignIdentityView } : {}),
+        ...(observedPicks !== undefined ? { observedPicks } : {}),
+      });
+    }
+
     const rows = withAudienceAvailability(response.rows, audienceAvailability);
 
     res.json({
@@ -1464,7 +1516,18 @@ router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, async (req,
     console.error("[features-service] Workflow projection error:", error);
     res.status(502).json({ error: "Failed to compute workflow projection" });
   }
-});
+}
+
+// The customer read: ALWAYS the billed basis, whatever it is sent. Its gateway forward is transparent,
+// so the actual basis must not be reachable through any parameter of this path.
+router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, (req, res) => handleWorkflowProjection(req, res, "billed"));
+
+// STAFF ONLY — the same ladder with every money figure at VENDOR cost (before our markup); the order is
+// the billed one. The api-service gateway mounts this path behind requireStaff; it is never proxied on
+// a customer route. See lib/actual-cost-projection.ts.
+router.get("/internal/features/:featureSlug/workflow-projection/actual-cost", apiKeyAuth, (req, res) =>
+  handleWorkflowProjection(req, res, "actual"),
+);
 
 /**
  * The HEAVY, economics-INDEPENDENT half of the projection: every cross-service read the 3-grain ladder

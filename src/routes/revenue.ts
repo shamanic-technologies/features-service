@@ -19,7 +19,8 @@ import {
   type BrandProjectedParentsUsd,
 } from "../lib/audience-stats-brand-projection.js";
 import { fetchLeadsForRevenue } from "../lib/leads-client.js";
-import { fetchRunsCostCents, fetchCampaignIdsWithRuns, fetchMatureSpendCents, type RunsCostCents } from "../lib/runs-cost-client.js";
+import { fetchRunsCostCents, fetchRunsCostCentsByWorkflowSlug, fetchCampaignIdsWithRuns, fetchMatureSpendCents, type RunsCostCents } from "../lib/runs-cost-client.js";
+import { stampVendorGroup } from "../lib/actual-cost-groups.js";
 import { fetchSpendBreakdown, type SpendBreakdown, type SpendSource } from "../lib/spend-client.js";
 import { fetchConversionCounts, type ConversionCounts } from "../lib/conversion-counts-client.js";
 import { fetchConversionEmails } from "../lib/conversion-emails-client.js";
@@ -1880,7 +1881,10 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
   // for a different body. A grouping or a lens is a table / a lead subset it does not serve, and a
   // pricing selector is a discount basis vendor cost does not have. Refused, never silently ignored.
   if (costBasis === "actual") {
-    const refused = ["groupBy", "lens", "pricing"].filter((k) => req.query[k] !== undefined);
+    // `?groupBy=workflow` and `?groupBy=campaignId` ARE served on this basis: the per-workflow and
+    // per-campaign rows a Workflow page shows, their spend read at vendor cost (lib/actual-cost-groups.ts).
+    const groupedOk = groupBy === "workflow" || groupBy === "campaignId";
+    const refused = ["groupBy", "lens", "pricing"].filter((k) => req.query[k] !== undefined && !(k === "groupBy" && groupedOk));
     if (refused.length > 0) {
       return res.status(400).json({
         error: `${refused.join(", ")} not supported on the actual-cost basis`,
@@ -2027,8 +2031,9 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
       const workflowCampaignScope: CampaignFilter =
         workflowOfferCampaignIds ?? (campaignId ? (workflowIdentity?.campaignIds ?? campaignId) : undefined);
 
+      const workflowPricing: Pricing = costBasis === "actual" ? "vendor" : pricing;
       const payload = await servedCachedJson({
-        view: "revenue-by-workflow",
+        view: costBasis === "actual" ? "revenue-by-workflow-actual-cost" : "revenue-by-workflow",
         // The IDENTITY, not the campaign row, keys the cell — so every member of a family lands on
         // ONE cell instead of paying a full fan-out per stopped ancestor, exactly as the sibling
         // campaign-scoped reads key theirs. Absent → dropped → today's brand-grain keys are unmoved.
@@ -2041,7 +2046,7 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
           // brand-wide one would share a cell. Absent → dropped → today's keys are unmoved.
           offerId,
           groupBy: "workflow",
-          pricing,
+          pricing: workflowPricing,
           econ,
           decl,
           cause: causeKey,
@@ -2053,7 +2058,7 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
             brandId,
             funnel,
             headers,
-            pricing,
+            pricing: workflowPricing,
             // A campaign states the funnel it sells, so a campaign-scoped read is priced on THAT
             // funnel — the same rule the per-campaign groups apply. Brand-wide keeps the brand pick,
             // and so does an OFFER scope: an offer states no funnel to this service and its campaigns
@@ -2065,6 +2070,21 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
           });
 
           traceEvent(runId, { service: "features-service", event: "feature-revenue-by-workflow", detail: `featureSlug=${featureSlug}, brandId=${brandId}, campaignId=${campaignId ?? "none"}, workflows=${groups.length}` }, req.headers).catch(() => {});
+
+          if (costBasis === "actual") {
+            // What each workflow's spend could not be priced at vendor cost, on the SAME scope the
+            // group's own cost was read on, folded onto the group's versions exactly as the cost is.
+            const unpricedBySlug = await fetchRunsCostCentsByWorkflowSlug(brandId, featureSlug, headers, "vendorUnpriced", workflowCampaignScope);
+            return {
+              featureSlug,
+              costBasis: "actual" as const,
+              groupBy: "workflow",
+              campaignIdentity: campaignId ? describeIdentity(workflowIdentity, campaignId) : undefined,
+              groups: groups.map((g) =>
+                stampVendorGroup(g, g.workflowSlugs.reduce((sum, slug) => sum + (unpricedBySlug.get(slug)?.committedCents ?? 0), 0)),
+              ),
+            };
+          }
 
           return {
             featureSlug,
@@ -2135,9 +2155,10 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
     // ── Grouped: one lean group per campaign (dashboard campaigns list) ──────────
     // Served through the Gold snapshot cache (O(1) read; the fan-out recomputes off-path ~per TTL).
     if (groupBy === "campaignId") {
+      const campaignPricing: Pricing = costBasis === "actual" ? "vendor" : pricing;
       const payload = await servedCachedJson({
-        view: "revenue-grouped",
-        scopeKey: buildScopeKey(featureSlug, { orgId, brandId, groupBy: "campaignId", pricing, econ, decl, cause: causeKey }),
+        view: costBasis === "actual" ? "revenue-grouped-actual-cost" : "revenue-grouped",
+        scopeKey: buildScopeKey(featureSlug, { orgId, brandId, groupBy: "campaignId", pricing: campaignPricing, econ, decl, cause: causeKey }),
         orgId,
         compute: async () => {
           const [campaignIds, families] = await Promise.all([
@@ -2166,8 +2187,16 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
                 // own still belongs to the campaign, and dropping it would drop its leads.
                 const identity = families.identityOf(idsWithRuns[0]);
                 const scope = identity?.campaignIds ?? idsWithRuns;
-                const body = await computeFeatureRevenue(featureSlug, brandId, scope, funnel, headers, undefined, pricingForIdentity(identity), false, pricing, undefined, undefined, undefined, causes);
-                return idsWithRuns.map((cid) => ({
+                const body = await computeFeatureRevenue(featureSlug, brandId, scope, funnel, headers, undefined, pricingForIdentity(identity), false, campaignPricing, undefined, undefined, undefined, causes);
+                // On the actual-cost basis: the identity's billed spend on rows with no known vendor
+                // cost, read on the same scope its cost was.
+                const unpricedCents =
+                  costBasis === "actual"
+                    ? (await fetchRunsCostCents(brandId, scope, featureSlug, headers, "vendorUnpriced")).committedCents
+                    : null;
+                const stamp = <G extends { costEconomics: CostEconomics; outcomes?: object | null }>(g: G) =>
+                  unpricedCents === null ? g : stampVendorGroup(g, unpricedCents);
+                return idsWithRuns.map((cid) => stamp({
                   campaignId: cid,
                   campaignIdentity: describeIdentity(identity, cid),
                   headline: body.headline,
@@ -2185,7 +2214,7 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
 
           traceEvent(runId, { service: "features-service", event: "feature-revenue-grouped-done", detail: `featureSlug=${featureSlug}, groupCount=${groups.length}, identities=${byIdentity.size}` }, req.headers).catch(() => {});
 
-          return { featureSlug, costBasis: "charged" as const, groupBy: "campaignId", groups };
+          return { featureSlug, costBasis: costBasis === "actual" ? ("actual" as const) : ("charged" as const), groupBy: "campaignId", groups };
         },
       });
 

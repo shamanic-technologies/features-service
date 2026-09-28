@@ -6,7 +6,7 @@
 
 import { RUNS_CAMPAIGN_IDS_PER_REQUEST } from "./brand-spend-by-day-client.js";
 import { fetchWithRetry } from "./fetch-retry.js";
-import { selectCostCentsString, type Pricing } from "./pricing.js";
+import { runsCostsUrl, selectCostCentsString, type Pricing } from "./pricing.js";
 import { refundedCents, type CostBasis } from "./cost-basis.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -90,7 +90,9 @@ export async function fetchPublicCosts(
   const params = new URLSearchParams({ featureSlugs, groupBy });
   if (campaignIds && campaignIds.length > 0) params.set("campaignIds", campaignIds.join(","));
 
-  const url = `${process.env.RUNS_SERVICE_URL}/v1/stats/public/costs?${params}`;
+  // The vendor basis reads the service-auth vendor twin (no org header = the whole fleet), never the
+  // no-auth public route: the vendor cost is our margin (pricing.ts).
+  const url = runsCostsUrl(process.env.RUNS_SERVICE_URL!, "public", pricing, params);
   const response = await fetchWithRetry(url, {
     headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY! },
   });
@@ -105,6 +107,10 @@ export async function fetchPublicCosts(
   return data.groups.map((g) => ({
     ...g,
     totalCostInUsdCents: selectCostCentsString(g, "totalCostInUsdCents", pricing, basis),
+    // The vendor aggregation states no run count. It only emits a group for runs holding a cost row,
+    // so a group stands for at least one run — which is all the rollups read it for (a dynasty with
+    // no run is not a grain). Never displayed.
+    runCount: g.runCount ?? 1,
   }));
 }
 
