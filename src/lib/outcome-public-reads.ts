@@ -259,6 +259,8 @@ export type OutcomeReturnUnmeasuredReason =
   | "no_snapshot_yet"
   /** A snapshot exists but was written before brand legs were recorded; the next warm fills them in. */
   | "legs_not_recorded_yet"
+  /** The snapshot predates the brands' per-leg maturity verdicts (a median is over mature scopes only). */
+  | "maturity_not_recorded_yet"
   | "not_enough_brands";
 
 export interface OutcomeReturnFigures extends Omit<FunnelReturnOnSpend, "reason"> {
