@@ -56,6 +56,22 @@
  * fetched it at all. A null count nulls its cost and both rates that touch it, rather than letting an
  * unread rung read as a wall people never climbed.
  *
+ * ── A STEP NOTHING IN THE FLEET COUNTS IS STILL A STEP ──────────────────────────────────────────
+ *
+ * Two funnels carry a step no signal anywhere counts: the checkout on the brand's own site ("Direct
+ * purchase", `sales_from_website`) and the form an ad platform hosts (`lead_forms_from_ads`'s first
+ * step). `FUNNEL_LEG_SIGNALS` leaves them out on purpose rather than counting them on a lookalike, so
+ * the rungs are placed by the step's own WORDING (`leadFieldOfStep`), not by position: each labelled
+ * step takes the next leg signal only when that signal counts what the step's label says. A step no
+ * signal is placed on is stated UNMEASURED (`leadField: null`, count / cost / both rates null) — never
+ * dropped, which would change the shape of somebody's funnel, and never borrowed from another rung. A
+ * leg signal no step takes is the two catalogue mirrors disagreeing, and that still fails loud.
+ *
+ * Zipping by position threw on both funnels, and the throw was silent where it cost the most: prod
+ * 2026-09-28, the fleet-return warm dropped three brands
+ * (one of them the fleet's 43x client) from every public median and showcase pick, because their
+ * per-funnel pass walked `sales_from_website`.
+ *
  * The block itself is null when there is no ONE funnel to walk: no funnel is wired for the channel
  * (the leads were never read), or the read is priced on several declared funnels at once — a brand
  * selling several funnels has several chains, and picking one would state a funnel the caller never asked
@@ -98,6 +114,38 @@ const LEG_SIGNAL_TO_LEAD_FIELD: Record<string, LeadStepField> = {
   closeWin: "purchased",
 };
 
+/**
+ * A step's own wording, normalised for lookup. brand-service still spells the form rung "Form filled"
+ * and the ad's "Lead form submitted"; both are the one "Form submitted" step this fleet speaks of.
+ */
+export const normaliseStep = (label: string): string => {
+  const flat = label.trim().toLowerCase().replace(/[\s_-]+/g, " ");
+  return flat === "form filled" || flat === "lead form submitted" ? "form submitted" : flat;
+};
+
+/**
+ * The `leads[]` flag that says a lead REACHED a step, or null for a step nothing in the fleet counts.
+ * Keyed on the step's own wording, so a rung is counted, and an arrow measured
+ * (`lib/effective-conversion-rates.ts`), the same way in every funnel it appears in.
+ */
+const STEP_LEAD_FIELD: Record<string, LeadStepField | null> = {
+  "positive reply": "repliedPositive",
+  "website visit": "clicked",
+  "meeting booked": "meetingBooked",
+  "meeting attended": "meetingAttended",
+  signup: "signup",
+  "form submitted": "formSubmission",
+  "paid client": "purchased",
+  // A checkout on the brand's own site: nothing counts it (see FUNNEL_LEG_SIGNALS).
+  "direct purchase": null,
+  purchase: null,
+};
+
+/** The lead flag counting a step, by its wording; null for a step nothing in the fleet counts. */
+export function leadFieldOfStep(step: string): LeadStepField | null {
+  return STEP_LEAD_FIELD[normaliseStep(step)] ?? null;
+}
+
 /** The `EnginePerson.signals` key each lead field is read from. The engine's own vocabulary. */
 export const LEAD_FIELD_TO_SIGNAL: Record<LeadStepField, string> = {
   clicked: "clicked",
@@ -137,10 +185,14 @@ export class UnknownFunnelLegSignalError extends Error {
   }
 }
 
-/** A funnel whose labelled steps and evidenced legs disagree — the zip below would mislabel a rung. */
+/**
+ * A funnel whose evidenced legs cannot all be placed on its labelled steps: a leg signal counts
+ * something no step of the funnel names, in the order the funnel names it. Placing it anyway would
+ * mislabel a rung, so it fails loud.
+ */
 export class FunnelStepShapeError extends Error {
-  constructor(readonly funnelKey: SalesFunnelKey, steps: number, legs: number) {
-    super(`sales funnel ${funnelKey} states ${steps} steps but ${legs} legs`);
+  constructor(readonly funnelKey: SalesFunnelKey, steps: number, legs: number, unplaced: number) {
+    super(`sales funnel ${funnelKey} states ${steps} steps and ${legs} counted legs, ${unplaced} of which name no step`);
     this.name = "FunnelStepShapeError";
   }
 }
@@ -232,8 +284,12 @@ export interface FunnelStep {
   legKey: string;
   /** The funnel's own label for this step, in brand-service's words (`SALES_FUNNELS[key].steps`). */
   step: string;
-  /** The `leads[]` boolean this step counts, so a consumer can reconcile it against the rows. */
-  leadField: LeadStepField;
+  /**
+   * The `leads[]` boolean this step counts, so a consumer can reconcile it against the rows. Null on
+   * a step nothing in the fleet counts ("Direct purchase", an ad-hosted lead form): its count, cost
+   * and both rates touching it are null too — "we have no figure", never 0.
+   */
+  leadField: LeadStepField | null;
   /**
    * DISTINCT leads that reached this step. 0 is MEASURED ("nobody got here"); null is "we could not
    * measure this" — the producer behind this step's signal degraded or was never read.
@@ -336,10 +392,25 @@ export function buildFunnelSteps(
   const basisCohort = basisPersons(basis, wholeCost, persons);
   const basisDeduped = basisCohort ? dedupPersonsByLead(basisCohort) : null;
   const def = SALES_FUNNELS[funnelKey];
-  const legs = FUNNEL_LEG_SIGNALS[funnelKey];
-  // The labels and the legs are two mirrors of one catalogue. If they ever stop lining up, every rung
-  // after the divergence carries the wrong name — a silent mislabel, so it fails loud instead.
-  if (def.steps.length !== legs.length) throw new FunnelStepShapeError(funnelKey, def.steps.length, legs.length);
+  const legFields = FUNNEL_LEG_SIGNALS[funnelKey].map((signal) => {
+    const field = LEG_SIGNAL_TO_LEAD_FIELD[signal];
+    if (!field) throw new UnknownFunnelLegSignalError(funnelKey, signal);
+    return field;
+  });
+  // The labels and the legs are two mirrors of one catalogue, placed by WORDING: each labelled step
+  // takes the next leg signal only when that signal counts what the label names. A step no signal is
+  // placed on is one nothing in the fleet counts, stated unmeasured. A signal left over names no step,
+  // and placing it anyway would mislabel a rung — so that fails loud.
+  let placed = 0;
+  const rungFields: Array<LeadStepField | null> = def.steps.map((label) => {
+    const field = leadFieldOfStep(label);
+    if (field === null || placed >= legFields.length || legFields[placed] !== field) return null;
+    placed++;
+    return field;
+  });
+  if (placed !== legFields.length) {
+    throw new FunnelStepShapeError(funnelKey, def.steps.length, legFields.length, legFields.length - placed);
+  }
 
   // The funnel's own legs, in its own order — derived from the same catalogue the labels and the
   // legs are, so a rung, its label and its leg can never come from three different walks.
@@ -356,20 +427,19 @@ export function buildFunnelSteps(
   let fromStep = CONTACTED_LABEL;
   let fromRecipientsReached: number | null = contactedRecipients;
 
-  for (const [i, signal] of legs.entries()) {
-    const leadField = LEG_SIGNAL_TO_LEAD_FIELD[signal];
-    if (!leadField) throw new UnknownFunnelLegSignalError(funnelKey, signal);
-
-    const personSignal = LEAD_FIELD_TO_SIGNAL[leadField];
-    const recipientsReached = stepMeasured(leadField, evidence)
-      ? deduped.reduce((n, p) => n + (p.signals[personSignal] ? 1 : 0), 0)
-      : null;
+  for (const [i, leadField] of rungFields.entries()) {
+    // A step nothing counts has no signal to read: unmeasured, like a rung whose producer degraded.
+    const personSignal = leadField === null ? null : LEAD_FIELD_TO_SIGNAL[leadField];
+    const recipientsReached =
+      leadField !== null && personSignal !== null && stepMeasured(leadField, evidence)
+        ? deduped.reduce((n, p) => n + (p.signals[personSignal] ? 1 : 0), 0)
+        : null;
 
     // The statements made on THIS rung. A leg the platform works has no producer step at all, so it
     // reads the same empty set as one nobody has been asked about yet — both are "no figure stated",
-    // which is exactly what `platform_spend_only` says.
+    // which is exactly what `platform_spend_only` says. A step nothing counts is stated on nothing.
     const stated = customerCostsByStep
-      ? customerCostsByStep[LEAD_FIELD_TO_STEP_COST_STEP[leadField] ?? ""] ?? {
+      ? (leadField === null ? undefined : customerCostsByStep[LEAD_FIELD_TO_STEP_COST_STEP[leadField] ?? ""]) ?? {
           costCents: 0,
           statedCount: 0,
           unstatedCount: 0,
@@ -394,7 +464,7 @@ export function buildFunnelSteps(
         : null,
       ...(() => {
         const onBasis =
-          recipientsReached === null || !basisDeduped
+          recipientsReached === null || personSignal === null || !basisDeduped
             ? null
             : basisDeduped.reduce((n, p) => n + (p.signals[personSignal] ? 1 : 0), 0);
         return {
