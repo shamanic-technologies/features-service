@@ -3250,6 +3250,19 @@ const costPerOutcomeTrendResponseSchema = z.object({
   })).describe("Dense dated series (one point per trailing display day)."),
 });
 
+const fleetMatureBenchmarkSchema = registry.register(
+  "FleetMatureBenchmark",
+  z.object({
+    legKey: z.string().describe("The leg the objective's outcome IS (positiveReply → start_to_conversation, websiteVisit → start_to_website_visit)."),
+    basis: z.literal("mature").describe("Always `mature`: the figures below are MATURE figures of MATURE workflows."),
+    matureWorkflowCount: z.number().int().describe("How many listed workflows are mature on the leg (mature outcomes ≥ the leg's outcomesRequired) with a mature cost."),
+    best: z.object({ workflowDynastySlug: z.string(), costPerOutcomeUsd: z.number() }).nullable().describe("The mature workflow with the lowest MATURE cost per outcome (the slug breaks a tie). Null when none is mature. A workflow still inside its first 21 days never takes it, however cheap its flash figure reads."),
+    median: z.object({ costPerOutcomeUsd: z.number() }).nullable().describe("The median MATURE cost per outcome across the mature workflows. Null when none is mature."),
+    measured: z.boolean().describe("FALSE ⟺ the leg's mature cut could not be made (a pair states no serve date): every row's mature half is null and nothing is mature."),
+    cutoffIso: z.string().nullable().describe("Runs started, and leads served, before this instant are mature (UTC midnight of today − the leg's duration)."),
+  }).describe("THE BENCHMARK ON ONE LEG, over MATURE workflows only (features-service#1196)."),
+);
+
 const workflowCostPerOutcomeResponseSchema = z.object({
   costBasis: z.literal("incurred").describe("PERFORMANCE — the CROSS-ORG FLEET BENCHMARK: what a workflow COSTS to produce an outcome. Spend the platform COMPED counts here at FULL value, because a comped brand must not read artificially cheap, drag the fleet benchmark down for every other customer, or under-price what their budget buys. This is the opposite of a customer-facing money surface (/revenue, /stats, /audience-stats), which answers the CHARGED question and drops comped spend under the same words. ORTHOGONAL to ?pricing=gross|net."),
   featureSlug: z.string(),
@@ -3263,8 +3276,10 @@ const workflowCostPerOutcomeResponseSchema = z.object({
     observedClicks: z.number(),
     observedPositiveReplies: z.number(),
     costPerOutcomeUsd: z.number().nullable().describe("LIFETIME (all-history) pooled cost-per-outcome — what the workflow has cost per outcome over ALL history. Populated cost (projected cascade floor: max(spent, fleet unit cost) when the outcome denominator is 0), so non-null whenever the workflow has spend and fleet economics exist."),
+    maturity: legMaturityFiguresSchema.nullable().describe("THIS WORKFLOW ON THE OBJECTIVE'S LEG, flash and mature (features-service#1196): every org's campaigns performing that leg only (a workflow's figure is its figure on one leg), the positive replies counted on PEOPLE — the byte-same evidence a leg-keyed workflow-projection's crossOrg grain reads. OBSERVED, never floored. Null for an objective with no single leg (a projected one), and until the leg's first background warm has landed."),
     recentCostPerOutcomeUsd: z.number().nullable().describe("RECENT going rate — the trailing-window moving-average cost-per-outcome over the workflow's most recent ~windowOutcomes base outcomes (same window semantics as /public/stats/cost-per-outcome-trend, scoped to this dynasty). Distinct from the lifetime costPerOutcomeUsd. Null (never a false $0) when the workflow has no backed recent window, no fleet economics, or the projected objective's rate is absent."),
   })).describe("One row per workflow dynasty, sorted by spend desc. Each row carries BOTH the lifetime cost-per-outcome and the recent trailing-window moving-average cost-per-outcome for the objective."),
+  fleet: fleetMatureBenchmarkSchema.nullable().describe("The benchmark on the objective's leg over MATURE workflows only. Null for an objective with no single leg, and until the leg's first background warm has landed."),
 });
 
 const bestModelCostPerOutcomeTrendResponseSchema = z.object({
@@ -3747,7 +3762,58 @@ registry.registerPath({
   },
 });
 
+// ── GET /internal/fleet-leg-maturity (the refresher's half) ─────────────────
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/fleet-leg-maturity",
+  summary: "One leg's fleet figures per workflow dynasty, flash + mature + isMature (service-auth; the server asks the refresher, whose fleet cells are warm)",
+  request: {
+    query: z.object({
+      featureSlug: z.string(),
+      legKey: z.string().describe("A known leg key."),
+    }),
+  },
+  responses: {
+    200: {
+      description: "Per dynasty, the leg's LegMaturityFigures.",
+      content: {
+        "application/json": {
+          schema: z.object({
+            legKey: z.string(),
+            cutoffIso: z.string().nullable(),
+            measured: z.boolean(),
+            byDynasty: z.array(z.tuple([z.string(), legMaturityFiguresSchema])),
+          }),
+        },
+      },
+    },
+    400: { description: "featureSlug or legKey missing / unknown", content: { "application/json": { schema: errorResponse } } },
+    500: { description: "Internal error", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 // ── GET /public/stats/return-on-spend ────────────────────────────────────
+
+const returnQuantilesSchema = z.object({
+  median: z.number(),
+  p25: z.number(),
+  p75: z.number(),
+  min: z.number(),
+  max: z.number(),
+});
+
+const matureScopesReturnSchema = registry.register(
+  "MatureScopesReturn",
+  z.object({
+    basis: z.literal("mature_scopes").describe("Only brands whose OWN scope is mature (the isMature their dashboard states) are in the population."),
+    measured: z.boolean(),
+    reason: z.enum(["no_snapshot_yet", "maturity_not_recorded_yet", "not_enough_brands"]).nullable().describe("`maturity_not_recorded_yet` = the snapshot was written before brands carried a verdict; the next warm fills it in."),
+    brandCount: z.number().int().describe("How many mature brands past the spend floor the medians were taken over. Always present."),
+    flash: returnQuantilesSchema.nullable().describe("Their return on everything to date: whole pipeline / whole committed spend (net)."),
+    mature: returnQuantilesSchema.nullable().describe("Their return on the mature cohort — the figure each client's own dashboard displays."),
+  }).describe("THE SAME MEDIAN OVER MATURE SCOPES ONLY, on both versions (features-service#1196). The legacy fields beside it are unchanged (every brand past the floor)."),
+);
 
 const fleetReturnOnSpendResponseSchema = z.object({
   costBasis: z.literal("charged").describe("ACCOUNTING — the CUSTOMERS' money: what each brand was CHARGED (comped spend absent), on the COMMITTED basis (actual + provisioned holds) every money figure in this service rides. This ACCOUNTING axis is ORTHOGONAL to gross-vs-net pricing: the figures are also read NET (what each brand actually paid after its per-org usage discount), which is the basis a client's own dashboard reads, so the fleet median and one client's number are the same statistic at two grains."),
@@ -3763,6 +3829,7 @@ const fleetReturnOnSpendResponseSchema = z.object({
   minReturnPerDollar: z.number().nullable().describe("The weakest qualifying brand's return."),
   maxReturnPerDollar: z.number().nullable().describe("The strongest qualifying brand's return."),
   computedAt: z.string().nullable().describe("When the snapshot these figures were taken from was computed (ISO 8601). Null when no snapshot exists yet."),
+  maturity: matureScopesReturnSchema,
 });
 
 registry.registerPath({
@@ -3810,6 +3877,7 @@ const funnelReturnPairSchema = z.object({
   medianCostPerPaidClientUsd: z.number().nullable().describe("The MIDDLE brand's cost per PAYING CLIENT (its committed spend divided by the paying clients its pipeline is). Stated on its OWN population, because it needs one ingredient the return does not — the brand's lifetime revenue per client — so a pair can state a return and no cost per client. Null, never 0."),
   costPerPaidClientBrandCount: z.number().int().describe("How many brands the cost-per-paid-client median was taken over. Never inferred from `brandCount`."),
   computedAt: z.string().nullable().describe("When the snapshot these figures were taken from was computed (ISO 8601). Null when the channel has no snapshot yet."),
+  maturity: matureScopesReturnSchema,
 });
 
 const fleetFunnelReturnResponseSchema = z.object({
@@ -3935,6 +4003,7 @@ const c4RealizedFigures = {
   maxReturnPerDollar: z.number().nullable(),
   medianCostPerPaidClientUsd: z.number().nullable(),
   costPerPaidClientBrandCount: z.number().int(),
+  maturity: matureScopesReturnSchema.describe("The same median over the brands MATURE ON THESE LEGS (each judged on the legs of the set it performs), on both versions."),
 };
 
 registry.registerPath({

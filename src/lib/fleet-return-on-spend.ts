@@ -98,6 +98,19 @@ export interface BrandReturnRow {
    * Read only by the outcome-keyed cost-per-paid-client median. OPTIONAL, same reason as `legKeys`.
    */
   expectedPaidClients?: number | null;
+  /**
+   * THE BRAND'S MATURITY on this channel (`lib/scope-maturity.ts`, features-service#1196) — the verdict its
+   * own dashboard states, combined across the orgs claiming it (a young part is a young whole). The public
+   * medians' `maturity` block is taken over the brands where it is `true`. ABSENT on a row written before
+   * it existed (the read then says `maturity_not_recorded_yet`); null = the cut could not be made.
+   */
+  isMature?: boolean | null;
+  /** Whole-history committed spend (USD) — the flash twin of `committedSpendUsd` (the mature one). */
+  flashCommittedSpendUsd?: number;
+  /** Whole-history pipeline (USD), null when unpriced — the flash twin of `expectedPipelineUsd`. */
+  flashExpectedPipelineUsd?: number | null;
+  /** The brand's verdict per LEG it performs on the channel (the outcome-keyed median's population). */
+  legMaturity?: Record<string, boolean | null> | null;
 }
 
 /** Why a median could not be stated. Both are real answers; neither is an error. */
