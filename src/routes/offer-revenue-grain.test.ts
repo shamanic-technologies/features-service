@@ -242,7 +242,7 @@ describe("GET /revenue?groupBy=offerId — what each of a brand's offers returns
     expect(Object.keys(groups).sort()).toEqual(["offer-a", "offer-b"]);
     // Lean, exactly like the per-campaign grain: the identifier, its members, and the money.
     for (const g of res.body.groups) {
-      expect(Object.keys(g).sort()).toEqual(["campaignIds", "costEconomics", "headline", "offerId"]);
+      expect(Object.keys(g).sort()).toEqual(["campaignIds", "costEconomics", "headline", "maturity", "offerId"]);
     }
 
     // Offer A: two replying leads at 120 each, $30 + $20 of spend across its two campaigns.

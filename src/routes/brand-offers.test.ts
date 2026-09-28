@@ -335,7 +335,8 @@ describe("GET /brands/:brandId/offers — every offer, each combined across its 
     expect(res.status).toBe(200);
 
     const row = res.body.offers[0];
-    expect(Object.keys(row).sort()).toEqual(["channels", "costEconomics", "headline", "offerId"]);
+    // `maturity`: the offer's per-leg figures and verdict (#1196) — a handful of numbers, never people.
+    expect(Object.keys(row).sort()).toEqual(["channels", "costEconomics", "headline", "maturity", "offerId"]);
     expect(row.leads).toBeUndefined();
     expect(row.spend).toBeUndefined();
     expect(row.timeSeries).toBeUndefined();

@@ -49,6 +49,8 @@
  * (`lib/workflow-revenue.ts`). `routes/revenue.ts` re-exports both names, so nothing that already
  * imported them from there had to change.
  */
+import type { MaturityPair } from "./maturity.js";
+
 export interface CostEconomics {
   /** COMMITTED (billed + open holds) spend for this scope, in dollars. The single basis. */
   committedCostUsd: number;
@@ -95,7 +97,18 @@ export interface CostEconomics {
    * the legs are unknown, or the grain never computes it (lens / grouped / cross-org reads).
    */
   realizedReturn: RealizedReturn | null;
+  /**
+   * THE THREE RATIOS ON BOTH BASES, beside the verdict (`lib/maturity.ts`, features-service#1196):
+   * `flash` divides everything to date, `mature` divides the runs started before the leg's cutoff and the
+   * leads those runs served, `isMature` is the scope's verdict. Both halves divide the scope's spend summed
+   * EXACTLY (`lib/scope-maturity.ts`), so they agree with every other surface's pair for the same scope.
+   * Absent on a block this module built for a path that computes no pair (the cross-org public reads).
+   */
+  maturity?: MaturityPair<CostRatios>;
 }
+
+/** The three ratios a cost-economics block states, as one figure `MaturityPair` carries. */
+export type CostRatios = Pick<CostEconomics, "roiMultiple" | "costOfAcquisitionPct" | "costPerAcquisitionUsd">;
 
 export interface RealizedReturn {
   closedWonCount: number;
@@ -205,11 +218,11 @@ export function buildCostEconomics(input: {
   return block;
 }
 
-function ratiosOf(
+export function ratiosOf(
   committedCostUsd: number,
   totalPipelineUsd: number | null,
   lifetimeRevenueUsd: number | null | undefined,
-): Pick<CostEconomics, "costOfAcquisitionPct" | "roiMultiple" | "costPerAcquisitionUsd"> {
+): CostRatios {
   const costOfAcquisitionPct =
     totalPipelineUsd === null || totalPipelineUsd === 0 ? null : (committedCostUsd / totalPipelineUsd) * 100;
   const roiMultiple =

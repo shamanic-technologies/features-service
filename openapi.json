@@ -130,6 +130,610 @@
           "updatedAt"
         ]
       },
+      "OutcomeFigures": {
+        "type": "object",
+        "properties": {
+          "spentUsd": {
+            "type": "number",
+            "description": "COMMITTED spend on the request's pricing, summed EXACTLY from the producer's decimal text and never rounded here — so a scope's rows (audiences, workflows) add up to the scope within float epsilon. Round only for display."
+          },
+          "contacted": {
+            "type": "number",
+            "description": "Distinct leads reached (bounces and unsubscribes included)."
+          },
+          "outcomes": {
+            "type": "number",
+            "description": "Distinct leads that reached the leg's OWN outcome signal (a positive reply on the conversation leg, a website visit on the visit leg)."
+          },
+          "costPerOutcomeUsd": {
+            "type": "number",
+            "nullable": true,
+            "description": "spentUsd / outcomes — OBSERVED, never a floor. Null at 0 outcomes or 0 spend."
+          },
+          "conversionRatePct": {
+            "type": "number",
+            "nullable": true,
+            "description": "100 × outcomes / contacted. Null only at 0 contacted; a measured 0 stays 0."
+          }
+        },
+        "required": [
+          "spentUsd",
+          "contacted",
+          "outcomes",
+          "costPerOutcomeUsd",
+          "conversionRatePct"
+        ],
+        "description": "The figures of ONE scope on ONE basis — observed accounting."
+      },
+      "LegMaturityFigures": {
+        "type": "object",
+        "properties": {
+          "legKey": {
+            "type": "string",
+            "nullable": true,
+            "description": "The leg these figures and this rule are for."
+          },
+          "durationDays": {
+            "type": "integer",
+            "description": "How many days before today (UTC midnight) a run must have STARTED for its spend, and the leads it SERVED, to count as mature. 21 on the two cold-email entry legs, 0 on every other."
+          },
+          "outcomesRequired": {
+            "type": "integer",
+            "description": "MATURE outcomes of the leg's step a scope must hold to be mature: 1 positive reply (conversation leg), 10 website visits (visit leg), 10 elsewhere."
+          },
+          "outcomeSignal": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "clicked",
+              "positiveReply"
+            ],
+            "description": "The counted signal the leg's outcome IS."
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "measured",
+              "default"
+            ],
+            "description": "`measured` = the owner set the rule from production evidence; `default` = no leg-specific rule."
+          },
+          "flash": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OutcomeFigures"
+              },
+              {
+                "nullable": true,
+                "description": "Everything to date."
+              }
+            ]
+          },
+          "mature": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OutcomeFigures"
+              },
+              {
+                "nullable": true,
+                "description": "The runs started before the cutoff and the leads THOSE runs served (their outcomes whenever they landed). A cohort that was read and holds nothing is all zeros; null ONLY when the cut could not be made (legs unknown, serve dates not stated)."
+              }
+            ]
+          },
+          "isMature": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "mature.outcomes >= outcomesRequired. Null = could not judge; never a Learning verdict."
+          }
+        },
+        "required": [
+          "legKey",
+          "durationDays",
+          "outcomesRequired",
+          "outcomeSignal",
+          "source",
+          "flash",
+          "mature",
+          "isMature"
+        ],
+        "description": "ONE LEG of a scope on both bases, with the leg's own rule beside its figures."
+      },
+      "ScopeMaturity": {
+        "type": "object",
+        "properties": {
+          "isMature": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "The scope's verdict: mature when EVERY leg present in its mature figures (mature spend or mature leads) is mature. A scope with activity and no leg present yet is young: false. Null = could not judge (serve dates not stated, legs unreadable, or nothing to judge) — a consumer shows the mature value if any, else a dash, and no Learning tag."
+          },
+          "legs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LegMaturityFigures"
+            },
+            "description": "One entry per leg the scope's campaigns are bought for whose outcome is a counted signal (a campaign stating no leg, and the AI meeting-booking leg, carry none)."
+          }
+        },
+        "required": [
+          "isMature",
+          "legs"
+        ],
+        "description": "THE SCOPE'S MATURITY — the byte-same object every surface describing this scope serves (/revenue, audience rows, offer outcomes, /stats), so a consumer can reconcile them. features-service#1196."
+      },
+      "CostRatiosMaturity": {
+        "type": "object",
+        "properties": {
+          "flash": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "roiMultiple": {
+                "type": "number",
+                "nullable": true
+              },
+              "costOfAcquisitionPct": {
+                "type": "number",
+                "nullable": true
+              },
+              "costPerAcquisitionUsd": {
+                "type": "number",
+                "nullable": true
+              }
+            },
+            "required": [
+              "roiMultiple",
+              "costOfAcquisitionPct",
+              "costPerAcquisitionUsd"
+            ],
+            "description": "Everything to date."
+          },
+          "mature": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "roiMultiple": {
+                "type": "number",
+                "nullable": true
+              },
+              "costOfAcquisitionPct": {
+                "type": "number",
+                "nullable": true
+              },
+              "costPerAcquisitionUsd": {
+                "type": "number",
+                "nullable": true
+              }
+            },
+            "required": [
+              "roiMultiple",
+              "costOfAcquisitionPct",
+              "costPerAcquisitionUsd"
+            ],
+            "description": "The runs started before the leg's cutoff and the leads those runs served. Null only when the cut could not be made."
+          },
+          "isMature": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "The scope's verdict — the same value on every pair of one scope. Render Learning where it is false."
+          }
+        },
+        "required": [
+          "flash",
+          "mature",
+          "isMature"
+        ],
+        "description": "The three ratios on BOTH bases, beside the scope's verdict (features-service#1196). OBSERVED — never a floor: null at 0 outcomes. Display `mature`; `flash` is available for staff."
+      },
+      "SpendRatiosMaturity": {
+        "type": "object",
+        "properties": {
+          "flash": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "totalCpcCents": {
+                "type": "number",
+                "nullable": true
+              },
+              "cpprCents": {
+                "type": "number",
+                "nullable": true
+              },
+              "cpsCents": {
+                "type": "number",
+                "nullable": true
+              },
+              "cpsmCents": {
+                "type": "number",
+                "nullable": true
+              },
+              "cpfsCents": {
+                "type": "number",
+                "nullable": true
+              },
+              "cpSaleCents": {
+                "type": "number",
+                "nullable": true
+              }
+            },
+            "required": [
+              "totalCpcCents",
+              "cpprCents",
+              "cpsCents",
+              "cpsmCents",
+              "cpfsCents",
+              "cpSaleCents"
+            ],
+            "description": "Everything to date."
+          },
+          "mature": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "totalCpcCents": {
+                "type": "number",
+                "nullable": true
+              },
+              "cpprCents": {
+                "type": "number",
+                "nullable": true
+              },
+              "cpsCents": {
+                "type": "number",
+                "nullable": true
+              },
+              "cpsmCents": {
+                "type": "number",
+                "nullable": true
+              },
+              "cpfsCents": {
+                "type": "number",
+                "nullable": true
+              },
+              "cpSaleCents": {
+                "type": "number",
+                "nullable": true
+              }
+            },
+            "required": [
+              "totalCpcCents",
+              "cpprCents",
+              "cpsCents",
+              "cpsmCents",
+              "cpfsCents",
+              "cpSaleCents"
+            ],
+            "description": "The runs started before the leg's cutoff and the leads those runs served. Null only when the cut could not be made."
+          },
+          "isMature": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "The scope's verdict — the same value on every pair of one scope. Render Learning where it is false."
+          }
+        },
+        "required": [
+          "flash",
+          "mature",
+          "isMature"
+        ],
+        "description": "Every cost per outcome of the spend block on BOTH bases, beside the scope's verdict (features-service#1196). OBSERVED — never a floor: null at 0 outcomes. Display `mature`; `flash` is available for staff."
+      },
+      "OutcomeRatiosMaturity": {
+        "type": "object",
+        "properties": {
+          "flash": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "cpcCents": {
+                "type": "number",
+                "nullable": true
+              },
+              "cpprCents": {
+                "type": "number",
+                "nullable": true
+              }
+            },
+            "required": [
+              "cpcCents",
+              "cpprCents"
+            ],
+            "description": "Everything to date."
+          },
+          "mature": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "cpcCents": {
+                "type": "number",
+                "nullable": true
+              },
+              "cpprCents": {
+                "type": "number",
+                "nullable": true
+              }
+            },
+            "required": [
+              "cpcCents",
+              "cpprCents"
+            ],
+            "description": "The runs started before the leg's cutoff and the leads those runs served. Null only when the cut could not be made."
+          },
+          "isMature": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "The scope's verdict — the same value on every pair of one scope. Render Learning where it is false."
+          }
+        },
+        "required": [
+          "flash",
+          "mature",
+          "isMature"
+        ],
+        "description": "The two per-lead costs on BOTH bases, beside the scope's verdict (features-service#1196). OBSERVED — never a floor: null at 0 outcomes. Display `mature`; `flash` is available for staff."
+      },
+      "ConversionRateMaturity": {
+        "type": "object",
+        "properties": {
+          "flash": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "contacted": {
+                "type": "number"
+              },
+              "outcomes": {
+                "type": "number"
+              },
+              "conversionRatePct": {
+                "type": "number",
+                "nullable": true
+              }
+            },
+            "required": [
+              "contacted",
+              "outcomes",
+              "conversionRatePct"
+            ],
+            "description": "Everything to date."
+          },
+          "mature": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "contacted": {
+                "type": "number"
+              },
+              "outcomes": {
+                "type": "number"
+              },
+              "conversionRatePct": {
+                "type": "number",
+                "nullable": true
+              }
+            },
+            "required": [
+              "contacted",
+              "outcomes",
+              "conversionRatePct"
+            ],
+            "description": "The runs started before the leg's cutoff and the leads those runs served. Null only when the cut could not be made."
+          },
+          "isMature": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "The scope's verdict — the same value on every pair of one scope. Render Learning where it is false."
+          }
+        },
+        "required": [
+          "flash",
+          "mature",
+          "isMature"
+        ],
+        "description": "The scope's conversion on BOTH bases, beside the scope's verdict (features-service#1196). OBSERVED — never a floor: null at 0 outcomes. Display `mature`; `flash` is available for staff."
+      },
+      "AudienceMetricsMaturity": {
+        "type": "object",
+        "properties": {
+          "flash": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "cpcCents": {
+                "type": "number",
+                "nullable": true
+              },
+              "cpprCents": {
+                "type": "number",
+                "nullable": true
+              },
+              "cpfsCents": {
+                "type": "number",
+                "nullable": true
+              },
+              "cpsCents": {
+                "type": "number",
+                "nullable": true
+              },
+              "cpsaleCents": {
+                "type": "number",
+                "nullable": true
+              }
+            },
+            "required": [
+              "cpcCents",
+              "cpprCents",
+              "cpfsCents",
+              "cpsCents",
+              "cpsaleCents"
+            ],
+            "description": "Everything to date."
+          },
+          "mature": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "cpcCents": {
+                "type": "number",
+                "nullable": true
+              },
+              "cpprCents": {
+                "type": "number",
+                "nullable": true
+              },
+              "cpfsCents": {
+                "type": "number",
+                "nullable": true
+              },
+              "cpsCents": {
+                "type": "number",
+                "nullable": true
+              },
+              "cpsaleCents": {
+                "type": "number",
+                "nullable": true
+              }
+            },
+            "required": [
+              "cpcCents",
+              "cpprCents",
+              "cpfsCents",
+              "cpsCents",
+              "cpsaleCents"
+            ],
+            "description": "The runs started before the leg's cutoff and the leads those runs served. Null only when the cut could not be made."
+          },
+          "isMature": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "The scope's verdict — the same value on every pair of one scope. Render Learning where it is false."
+          }
+        },
+        "required": [
+          "flash",
+          "mature",
+          "isMature"
+        ],
+        "description": "This audience's own cost columns — spend attributed by the run's audience tag, people by the audience lead-service froze on the serve on BOTH bases, beside the scope's verdict (features-service#1196). OBSERVED — never a floor: null at 0 outcomes. Display `mature`; `flash` is available for staff."
+      },
+      "AudienceProjectionMaturity": {
+        "type": "object",
+        "properties": {
+          "flash": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "costPerPaidClientUsd": {
+                "type": "number",
+                "nullable": true
+              },
+              "returnPerDollar": {
+                "type": "number",
+                "nullable": true
+              },
+              "costOfAcquisitionPct": {
+                "type": "number",
+                "nullable": true
+              }
+            },
+            "required": [
+              "costPerPaidClientUsd",
+              "returnPerDollar",
+              "costOfAcquisitionPct"
+            ],
+            "description": "Everything to date."
+          },
+          "mature": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "costPerPaidClientUsd": {
+                "type": "number",
+                "nullable": true
+              },
+              "returnPerDollar": {
+                "type": "number",
+                "nullable": true
+              },
+              "costOfAcquisitionPct": {
+                "type": "number",
+                "nullable": true
+              }
+            },
+            "required": [
+              "costPerPaidClientUsd",
+              "returnPerDollar",
+              "costOfAcquisitionPct"
+            ],
+            "description": "The runs started before the leg's cutoff and the leads those runs served. Null only when the cut could not be made."
+          },
+          "isMature": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "The scope's verdict — the same value on every pair of one scope. Render Learning where it is false."
+          }
+        },
+        "required": [
+          "flash",
+          "mature",
+          "isMature"
+        ],
+        "description": "The projection priced from this audience's OBSERVED unit costs through the same funnel on BOTH bases, beside the scope's verdict (features-service#1196). OBSERVED — never a floor: null at 0 outcomes. Display `mature`; `flash` is available for staff."
+      },
+      "OfferOutcomeMaturity": {
+        "type": "object",
+        "properties": {
+          "flash": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "roiMultiple": {
+                "type": "number",
+                "nullable": true
+              },
+              "costPerOutcomeUsd": {
+                "type": "number",
+                "nullable": true
+              }
+            },
+            "required": [
+              "roiMultiple",
+              "costPerOutcomeUsd"
+            ],
+            "description": "Everything to date."
+          },
+          "mature": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "roiMultiple": {
+                "type": "number",
+                "nullable": true
+              },
+              "costPerOutcomeUsd": {
+                "type": "number",
+                "nullable": true
+              }
+            },
+            "required": [
+              "roiMultiple",
+              "costPerOutcomeUsd"
+            ],
+            "description": "The runs started before the leg's cutoff and the leads those runs served. Null only when the cut could not be made."
+          },
+          "isMature": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "The scope's verdict — the same value on every pair of one scope. Render Learning where it is false."
+          }
+        },
+        "required": [
+          "flash",
+          "mature",
+          "isMature"
+        ],
+        "description": "The return and cost per outcome (a row's verdict: the multi-leg rule over its legs) on BOTH bases, beside the scope's verdict (features-service#1196). OBSERVED — never a floor: null at 0 outcomes. Display `mature`; `flash` is available for staff."
+      },
       "SystemStats": {
         "type": "object",
         "properties": {
@@ -455,6 +1059,17 @@
               "type": "number",
               "nullable": true
             }
+          },
+          "maturity": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScopeMaturity"
+              },
+              {
+                "nullable": true,
+                "description": "Non-grouped reads with a brand: the scope's per-leg figures on both bases and its verdict — the byte-same object /revenue serves for this campaign, offer or brand. The costPer* stats keep their meaning (everything to date); display maturity.legs[].mature. Null on a workflow-narrowed read or when it could not be read."
+              }
+            ]
           }
         },
         "required": [
@@ -1081,6 +1696,9 @@
                   "unmeasuredReason"
                 ],
                 "description": "WHAT EVERY COST PER OUTCOME IN THIS BLOCK DIVIDES — the ROI's own basis, so the ratios and costEconomics.roiMultiple are one basis on one screen. Each ratio = the matching spend here ÷ the matching count here (outside the zero-outcome benchmark floor). The block's top-level totals and counts keep the WHOLE history."
+              },
+              "maturity": {
+                "$ref": "#/components/schemas/SpendRatiosMaturity"
               }
             },
             "required": [
@@ -1576,6 +2194,9 @@
                   "roiMultiple"
                 ],
                 "description": "THE MEASURED RETURN — revenue from deals actually closed won over the same matured spend the ROI divides. NULL when it cannot be measured on this read: no source of closed deals could be read, the legs are unknown, or the grain never computes it (lens, per-workflow, cross-org reads). Never a fabricated 0."
+              },
+              "maturity": {
+                "$ref": "#/components/schemas/CostRatiosMaturity"
               }
             },
             "required": [
@@ -2226,6 +2847,9 @@
                   "positiveReplyRatePct"
                 ],
                 "description": "WHAT HAPPENED TO THE EMAILS THIS GRAIN SENT — delivery and reply on ONE denominator (distinct leads sent to), whole history, same deduped person set as the counts above. Every rate is served so no consumer divides."
+              },
+              "maturity": {
+                "$ref": "#/components/schemas/OutcomeRatiosMaturity"
               }
             },
             "required": [
@@ -2697,6 +3321,9 @@
                 "type": "number",
                 "nullable": true,
                 "description": "THE WHOLE SCOPE'S RATE — every outcome over everybody reached, dated or not — SERVED so no consumer ever divides two of our figures. It reconciles with the outcomes block above it by construction: it IS 100 x (the leg's rate) x outcomes.recipientsClicked / outcomes.recipientsContacted (or recipientsRepliesPositive on a reply-driven funnel), one deduped person set counted once, and on an ENTRY leg it is also the funnelSteps rung for that same leg, which converts from Contacted. The curve's LAST point covers the DATED population alone, so it equals this figure exactly when nothing is undated and legitimately differs otherwise — undatedContacted and undatedOutcomes state that difference rather than hiding it, and neither leg is ever floored onto the other. NULL only when the scope has reached nobody."
+              },
+              "maturity": {
+                "$ref": "#/components/schemas/ConversionRateMaturity"
               }
             },
             "required": [
@@ -2964,6 +3591,17 @@
               "campaigns"
             ],
             "description": "WHEN THIS SCOPE'S FIGURES STOP BEING NOISE — the verdict, the countdown, and every figure the two rest on. A campaign has finished gathering once it has ten outcomes of the LEG IT IS BOUGHT FOR; a funnel, an offer or a brand has finished once at least one of its campaigns has. NULL when this path never computed it — the no-funnel short-circuit, the cold-start path, the lensed (?lens=) response and the lean ?groupBy= groups, the same gate `spend` and `funnelSteps` ride. A path that DID compute it always answers, 'unmeasured' included: 'we could not say' is a statement and it is never a zero."
+          },
+          "maturity": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScopeMaturity"
+              },
+              {
+                "nullable": true,
+                "description": "The scope's per-leg figures on both bases and its verdict. Null where the lead population was never read (no funnel wired)."
+              }
+            ]
           }
         },
         "required": [
@@ -3177,6 +3815,9 @@
                         "roiMultiple"
                       ],
                       "description": "THE MEASURED RETURN — revenue from deals actually closed won over the same matured spend the ROI divides. NULL when it cannot be measured on this read: no source of closed deals could be read, the legs are unknown, or the grain never computes it (lens, per-workflow, cross-org reads). Never a fabricated 0."
+                    },
+                    "maturity": {
+                      "$ref": "#/components/schemas/CostRatiosMaturity"
                     }
                   },
                   "required": [
@@ -3337,6 +3978,9 @@
                         "positiveReplyRatePct"
                       ],
                       "description": "WHAT HAPPENED TO THE EMAILS THIS GRAIN SENT — delivery and reply on ONE denominator (distinct leads sent to), whole history, same deduped person set as the counts above. Every rate is served so no consumer divides."
+                    },
+                    "maturity": {
+                      "$ref": "#/components/schemas/OutcomeRatiosMaturity"
                     }
                   },
                   "required": [
@@ -3354,6 +3998,17 @@
                     "sending"
                   ],
                   "description": "The VOLUME half of this campaign's answer — how much real outcome evidence its ROI, %CAC and pipeline rest on. It exists because those three are derived from however many outcomes the campaign has produced so far: with one or two behind them they are decided by whichever one landed and swing by whole multiples on the next reply, so a consumer that cannot see the volume reads noise as a measurement. Totalled over the campaign's IDENTITY exactly as the money is — its stopped ancestors included — and deduped inside it, so a lead served under two member rows is ONE person here as it is one person to the brand, and every member of an identity carries the identical block. Across identities the counts do NOT sum to the brand (a lead worked under two campaigns is one lead to the brand and belongs to both), the same counting-people property the money half carries. NULL only when no funnel is wired for the feature and the leads were never read — never a fabricated 0."
+                },
+                "maturity": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ScopeMaturity"
+                    },
+                    {
+                      "nullable": true,
+                      "description": "The identity's per-leg figures and verdict — the object its own ?campaignId= read serves."
+                    }
+                  ]
                 }
               },
               "required": [
@@ -3568,6 +4223,9 @@
                         "roiMultiple"
                       ],
                       "description": "THE MEASURED RETURN — revenue from deals actually closed won over the same matured spend the ROI divides. NULL when it cannot be measured on this read: no source of closed deals could be read, the legs are unknown, or the grain never computes it (lens, per-workflow, cross-org reads). Never a fabricated 0."
+                    },
+                    "maturity": {
+                      "$ref": "#/components/schemas/CostRatiosMaturity"
                     }
                   },
                   "required": [
@@ -3727,6 +4385,9 @@
                         "positiveReplyRatePct"
                       ],
                       "description": "WHAT HAPPENED TO THE EMAILS THIS GRAIN SENT — delivery and reply on ONE denominator (distinct leads sent to), whole history, same deduped person set as the counts above. Every rate is served so no consumer divides."
+                    },
+                    "maturity": {
+                      "$ref": "#/components/schemas/OutcomeRatiosMaturity"
                     }
                   },
                   "required": [
@@ -3744,6 +4405,17 @@
                     "sending"
                   ],
                   "description": "The VOLUME half of this workflow's answer — this brand's own outreach through this dynasty and what it cost, the same figures the un-grouped brand read gives for the whole brand. Every figure rides COMMITTED spend, the single basis costEconomics rides, so cpcCents × recipientsClicked ≈ committedSpentCents by construction. This block once rode billed-only spend to avoid a committed numerator beside a realized ROI; the ROI moved to committed, so that divergence would now BE the incoherence. Counts are distinct leads: a lead served under two workflows is one lead to the brand and belongs to both groups, so the groups do not sum to the brand (the same counting-people property the money half carries); a lead served under no workflow is in no group."
+                },
+                "maturity": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ScopeMaturity"
+                    },
+                    {
+                      "nullable": true,
+                      "description": "This workflow's per-leg figures and verdict in this scope."
+                    }
+                  ]
                 }
               },
               "required": [
@@ -3914,6 +4586,9 @@
                         "roiMultiple"
                       ],
                       "description": "THE MEASURED RETURN — revenue from deals actually closed won over the same matured spend the ROI divides. NULL when it cannot be measured on this read: no source of closed deals could be read, the legs are unknown, or the grain never computes it (lens, per-workflow, cross-org reads). Never a fabricated 0."
+                    },
+                    "maturity": {
+                      "$ref": "#/components/schemas/CostRatiosMaturity"
                     }
                   },
                   "required": [
@@ -3926,6 +4601,17 @@
                     "unmeasuredReason",
                     "ratioBasis",
                     "realizedReturn"
+                  ]
+                },
+                "maturity": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ScopeMaturity"
+                    },
+                    {
+                      "nullable": true,
+                      "description": "The offer's per-leg figures and verdict."
+                    }
                   ]
                 }
               },
@@ -6232,6 +6918,9 @@
                       "type": "number",
                       "nullable": true,
                       "description": "REAL cost per sale (OBSERVED) = totalCostInUsdCents / sales. Null when sales is 0/absent (not the website-purchase / combined-sales goal, or emails not served) OR no spend is attributed — never a false $0.00. Not used in ranking (both goals sort on cppr)."
+                    },
+                    "maturity": {
+                      "$ref": "#/components/schemas/AudienceMetricsMaturity"
                     }
                   },
                   "required": [
@@ -6269,6 +6958,9 @@
                       "type": "number",
                       "nullable": true,
                       "description": "PROJECTED — what winning a customer from this audience costs as a SHARE of what that customer is worth over their lifetime, percent = 100 x costPerPaidClientUsd / brandProjection.lifetimeRevenueUsd, which is exactly 100 / returnPerDollar. Below 100 means the audience pays for itself. Served rather than left to the consumer BECAUSE it is the reciprocal of a field already on this row: a consumer dividing one of our fields into another is how two surfaces come to print two numbers for one statistic. Same statement as returnPerDollar and costPerPaidClientUsd in a third unit, so the three can never disagree, and the identical definition one grain coarser at brandProjection.costOfAcquisitionPct. PROJECTED, NOT REALIZED: do not pair it with the realized /revenue costEconomics.costOfAcquisitionPct (measured spend / measured pipeline) as if they were the same figure — this one prices what the audience's own observed unit costs imply under the brand's declared economics. An audience with no measured grain of its own inherits brandProjection verbatim (the same brand-level fallback the derived cost columns and returnPerDollar take). NULL (never 0) whenever it could not be measured — no lifetime revenue, no path to a paying client, cold start; a 0 would say winning a customer costs nothing."
+                    },
+                    "maturity": {
+                      "$ref": "#/components/schemas/AudienceProjectionMaturity"
                     }
                   },
                   "required": [
@@ -6277,6 +6969,17 @@
                     "costOfAcquisitionPct"
                   ],
                   "description": "PROJECTED return for this audience, on the brand's own economics — three units of ONE statement (cost per paying client, return per dollar, and that cost as a share of lifetime revenue). See returnPerDollar."
+                },
+                "maturity": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ScopeMaturity"
+                    },
+                    {
+                      "nullable": true,
+                      "description": "This audience's per-leg figures on both bases and its verdict. The rows' spend and outcomes plus the envelope's unattributedMaturity add up to the envelope's maturity."
+                    }
+                  ]
                 }
               },
               "required": [
@@ -6317,6 +7020,16 @@
                 "type": "number",
                 "nullable": true,
                 "description": "PROJECTED brand-level cost of acquisition as a share of lifetime revenue, percent = 100 / returnPerDollar — the same definition as each row's, one grain coarser, and the value a row with no measured grain inherits. Read a row's share against this ('this audience wins customers at a smaller slice of their worth than the brand does'). PROJECTED, not the realized /revenue costEconomics.costOfAcquisitionPct. Null (never 0) when unmeasurable."
+              },
+              "maturity": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/AudienceProjectionMaturity"
+                  },
+                  {
+                    "description": "The SCOPE's own projection on both bases, beside its verdict (features-service#1196): priced from the scope's OBSERVED unit costs (every audience plus the untagged remainder) through the byte-same funnel rule the rows' projection.maturity uses, so the rows' pairs are a partition of this one. The fields above are the best workflow's cascade projection (the flash explore floor a row with no measured grain inherits); this pair is what the scope itself produced. Absent when the maturity inputs could not be read."
+                  }
+                ]
               }
             },
             "required": [
@@ -6408,6 +7121,28 @@
               "representativeId"
             ],
             "description": "Present ONLY on a ?campaignId= read: the campaign IDENTITY these per-audience figures were totalled over. A campaign as a customer knows it is (org, brand, sales funnel, acquisition channel) and is stored as MANY rows - campaign-service mints a new one every time the workflow switches and keeps the ancestors - so asking about any member returns the same, complete campaign, and every member lands on one cache cell. Byte-same block as /features/{slug}/revenue?campaignId= carries, so the two reads name one campaign one way."
+          },
+          "maturity": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScopeMaturity"
+              },
+              {
+                "nullable": true,
+                "description": "The scope's own maturity (campaign, offer or brand) — the byte-same object /revenue serves for it."
+              }
+            ]
+          },
+          "unattributedMaturity": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScopeMaturity"
+              },
+              {
+                "nullable": true,
+                "description": "Spend and leads of this scope whose serve carried NO audience tag."
+              }
+            ]
           }
         },
         "required": [
@@ -6667,6 +7402,9 @@
                   "unmeasuredReason"
                 ],
                 "description": "WHAT EVERY COST PER OUTCOME IN THIS BLOCK DIVIDES — the ROI's own basis, so the ratios and costEconomics.roiMultiple are one basis on one screen. Each ratio = the matching spend here ÷ the matching count here (outside the zero-outcome benchmark floor). The block's top-level totals and counts keep the WHOLE history."
+              },
+              "maturity": {
+                "$ref": "#/components/schemas/SpendRatiosMaturity"
               }
             },
             "required": [
@@ -7162,6 +7900,9 @@
                   "roiMultiple"
                 ],
                 "description": "THE MEASURED RETURN — revenue from deals actually closed won over the same matured spend the ROI divides. NULL when it cannot be measured on this read: no source of closed deals could be read, the legs are unknown, or the grain never computes it (lens, per-workflow, cross-org reads). Never a fabricated 0."
+              },
+              "maturity": {
+                "$ref": "#/components/schemas/CostRatiosMaturity"
               }
             },
             "required": [
@@ -7812,6 +8553,9 @@
                   "positiveReplyRatePct"
                 ],
                 "description": "WHAT HAPPENED TO THE EMAILS THIS GRAIN SENT — delivery and reply on ONE denominator (distinct leads sent to), whole history, same deduped person set as the counts above. Every rate is served so no consumer divides."
+              },
+              "maturity": {
+                "$ref": "#/components/schemas/OutcomeRatiosMaturity"
               }
             },
             "required": [
@@ -8283,6 +9027,9 @@
                 "type": "number",
                 "nullable": true,
                 "description": "THE WHOLE SCOPE'S RATE — every outcome over everybody reached, dated or not — SERVED so no consumer ever divides two of our figures. It reconciles with the outcomes block above it by construction: it IS 100 x (the leg's rate) x outcomes.recipientsClicked / outcomes.recipientsContacted (or recipientsRepliesPositive on a reply-driven funnel), one deduped person set counted once, and on an ENTRY leg it is also the funnelSteps rung for that same leg, which converts from Contacted. The curve's LAST point covers the DATED population alone, so it equals this figure exactly when nothing is undated and legitimately differs otherwise — undatedContacted and undatedOutcomes state that difference rather than hiding it, and neither leg is ever floored onto the other. NULL only when the scope has reached nobody."
+              },
+              "maturity": {
+                "$ref": "#/components/schemas/ConversionRateMaturity"
               }
             },
             "required": [
@@ -8551,6 +9298,17 @@
             ],
             "description": "WHEN THIS SCOPE'S FIGURES STOP BEING NOISE — the verdict, the countdown, and every figure the two rest on. A campaign has finished gathering once it has ten outcomes of the LEG IT IS BOUGHT FOR; a funnel, an offer or a brand has finished once at least one of its campaigns has. NULL when this path never computed it — the no-funnel short-circuit, the cold-start path, the lensed (?lens=) response and the lean ?groupBy= groups, the same gate `spend` and `funnelSteps` ride. A path that DID compute it always answers, 'unmeasured' included: 'we could not say' is a statement and it is never a zero."
           },
+          "maturity": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScopeMaturity"
+              },
+              {
+                "nullable": true,
+                "description": "The scope's per-leg figures on both bases and its verdict. Null where the lead population was never read (no funnel wired)."
+              }
+            ]
+          },
           "offerId": {
             "type": "string"
           },
@@ -8688,6 +9446,9 @@
                         "roiMultiple"
                       ],
                       "description": "THE MEASURED RETURN — revenue from deals actually closed won over the same matured spend the ROI divides. NULL when it cannot be measured on this read: no source of closed deals could be read, the legs are unknown, or the grain never computes it (lens, per-workflow, cross-org reads). Never a fabricated 0."
+                    },
+                    "maturity": {
+                      "$ref": "#/components/schemas/CostRatiosMaturity"
                     }
                   },
                   "required": [
@@ -8702,6 +9463,17 @@
                     "realizedReturn"
                   ],
                   "description": "Derived cost economics. Always present; ratios are null per the documented null semantics."
+                },
+                "maturity": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ScopeMaturity"
+                    },
+                    {
+                      "nullable": true,
+                      "description": "The scope's per-leg figures on both bases and its verdict. Null where the lead population was never read (no funnel wired)."
+                    }
+                  ]
                 }
               },
               "required": [
@@ -8956,6 +9728,9 @@
                           "nothing_spent",
                           "maturing"
                         ]
+                      },
+                      "maturity": {
+                        "$ref": "#/components/schemas/OfferOutcomeMaturity"
                       }
                     },
                     "required": [
@@ -8977,6 +9752,9 @@
                     ]
                   },
                   "description": "Every leg x channel serving this outcome, in parallel. Their counts can overlap (one lead reached by two channels); the outcome row's count is the distinct union."
+                },
+                "maturity": {
+                  "$ref": "#/components/schemas/OfferOutcomeMaturity"
                 }
               },
               "required": [
@@ -9352,6 +10130,9 @@
                       "type": "number",
                       "nullable": true,
                       "description": "REAL cost per sale (OBSERVED) = totalCostInUsdCents / sales. Null when sales is 0/absent (not the website-purchase / combined-sales goal, or emails not served) OR no spend is attributed — never a false $0.00. Not used in ranking (both goals sort on cppr)."
+                    },
+                    "maturity": {
+                      "$ref": "#/components/schemas/AudienceMetricsMaturity"
                     }
                   },
                   "required": [
@@ -9389,6 +10170,9 @@
                       "type": "number",
                       "nullable": true,
                       "description": "PROJECTED — what winning a customer from this audience costs as a SHARE of what that customer is worth over their lifetime, percent = 100 x costPerPaidClientUsd / brandProjection.lifetimeRevenueUsd, which is exactly 100 / returnPerDollar. Below 100 means the audience pays for itself. Served rather than left to the consumer BECAUSE it is the reciprocal of a field already on this row: a consumer dividing one of our fields into another is how two surfaces come to print two numbers for one statistic. Same statement as returnPerDollar and costPerPaidClientUsd in a third unit, so the three can never disagree, and the identical definition one grain coarser at brandProjection.costOfAcquisitionPct. PROJECTED, NOT REALIZED: do not pair it with the realized /revenue costEconomics.costOfAcquisitionPct (measured spend / measured pipeline) as if they were the same figure — this one prices what the audience's own observed unit costs imply under the brand's declared economics. An audience with no measured grain of its own inherits brandProjection verbatim (the same brand-level fallback the derived cost columns and returnPerDollar take). NULL (never 0) whenever it could not be measured — no lifetime revenue, no path to a paying client, cold start; a 0 would say winning a customer costs nothing."
+                    },
+                    "maturity": {
+                      "$ref": "#/components/schemas/AudienceProjectionMaturity"
                     }
                   },
                   "required": [
@@ -9397,6 +10181,17 @@
                     "costOfAcquisitionPct"
                   ],
                   "description": "PROJECTED return for this audience, on the brand's own economics — three units of ONE statement (cost per paying client, return per dollar, and that cost as a share of lifetime revenue). See returnPerDollar."
+                },
+                "maturity": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ScopeMaturity"
+                    },
+                    {
+                      "nullable": true,
+                      "description": "This audience's per-leg figures on both bases and its verdict. The rows' spend and outcomes plus the envelope's unattributedMaturity add up to the envelope's maturity."
+                    }
+                  ]
                 }
               },
               "required": [
@@ -9437,6 +10232,16 @@
                 "type": "number",
                 "nullable": true,
                 "description": "PROJECTED brand-level cost of acquisition as a share of lifetime revenue, percent = 100 / returnPerDollar — the same definition as each row's, one grain coarser, and the value a row with no measured grain inherits. Read a row's share against this ('this audience wins customers at a smaller slice of their worth than the brand does'). PROJECTED, not the realized /revenue costEconomics.costOfAcquisitionPct. Null (never 0) when unmeasurable."
+              },
+              "maturity": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/AudienceProjectionMaturity"
+                  },
+                  {
+                    "description": "The SCOPE's own projection on both bases, beside its verdict (features-service#1196): priced from the scope's OBSERVED unit costs (every audience plus the untagged remainder) through the byte-same funnel rule the rows' projection.maturity uses, so the rows' pairs are a partition of this one. The fields above are the best workflow's cascade projection (the flash explore floor a row with no measured grain inherits); this pair is what the scope itself produced. Absent when the maturity inputs could not be read."
+                  }
+                ]
               }
             },
             "required": [
@@ -9528,6 +10333,28 @@
               "representativeId"
             ],
             "description": "Present ONLY on a ?campaignId= read: the campaign IDENTITY these per-audience figures were totalled over. A campaign as a customer knows it is (org, brand, sales funnel, acquisition channel) and is stored as MANY rows - campaign-service mints a new one every time the workflow switches and keeps the ancestors - so asking about any member returns the same, complete campaign, and every member lands on one cache cell. Byte-same block as /features/{slug}/revenue?campaignId= carries, so the two reads name one campaign one way."
+          },
+          "maturity": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScopeMaturity"
+              },
+              {
+                "nullable": true,
+                "description": "The scope's own maturity (campaign, offer or brand) — the byte-same object /revenue serves for it."
+              }
+            ]
+          },
+          "unattributedMaturity": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScopeMaturity"
+              },
+              {
+                "nullable": true,
+                "description": "Spend and leads of this scope whose serve carried NO audience tag."
+              }
+            ]
           },
           "offerId": {
             "type": "string"
@@ -10062,6 +10889,9 @@
                   "unmeasuredReason"
                 ],
                 "description": "WHAT EVERY COST PER OUTCOME IN THIS BLOCK DIVIDES — the ROI's own basis, so the ratios and costEconomics.roiMultiple are one basis on one screen. Each ratio = the matching spend here ÷ the matching count here (outside the zero-outcome benchmark floor). The block's top-level totals and counts keep the WHOLE history."
+              },
+              "maturity": {
+                "$ref": "#/components/schemas/SpendRatiosMaturity"
               }
             },
             "required": [
@@ -10557,6 +11387,9 @@
                   "roiMultiple"
                 ],
                 "description": "THE MEASURED RETURN — revenue from deals actually closed won over the same matured spend the ROI divides. NULL when it cannot be measured on this read: no source of closed deals could be read, the legs are unknown, or the grain never computes it (lens, per-workflow, cross-org reads). Never a fabricated 0."
+              },
+              "maturity": {
+                "$ref": "#/components/schemas/CostRatiosMaturity"
               }
             },
             "required": [
@@ -11207,6 +12040,9 @@
                   "positiveReplyRatePct"
                 ],
                 "description": "WHAT HAPPENED TO THE EMAILS THIS GRAIN SENT — delivery and reply on ONE denominator (distinct leads sent to), whole history, same deduped person set as the counts above. Every rate is served so no consumer divides."
+              },
+              "maturity": {
+                "$ref": "#/components/schemas/OutcomeRatiosMaturity"
               }
             },
             "required": [
@@ -11678,6 +12514,9 @@
                 "type": "number",
                 "nullable": true,
                 "description": "THE WHOLE SCOPE'S RATE — every outcome over everybody reached, dated or not — SERVED so no consumer ever divides two of our figures. It reconciles with the outcomes block above it by construction: it IS 100 x (the leg's rate) x outcomes.recipientsClicked / outcomes.recipientsContacted (or recipientsRepliesPositive on a reply-driven funnel), one deduped person set counted once, and on an ENTRY leg it is also the funnelSteps rung for that same leg, which converts from Contacted. The curve's LAST point covers the DATED population alone, so it equals this figure exactly when nothing is undated and legitimately differs otherwise — undatedContacted and undatedOutcomes state that difference rather than hiding it, and neither leg is ever floored onto the other. NULL only when the scope has reached nobody."
+              },
+              "maturity": {
+                "$ref": "#/components/schemas/ConversionRateMaturity"
               }
             },
             "required": [
@@ -11946,6 +12785,17 @@
             ],
             "description": "WHEN THIS SCOPE'S FIGURES STOP BEING NOISE — the verdict, the countdown, and every figure the two rest on. A campaign has finished gathering once it has ten outcomes of the LEG IT IS BOUGHT FOR; a funnel, an offer or a brand has finished once at least one of its campaigns has. NULL when this path never computed it — the no-funnel short-circuit, the cold-start path, the lensed (?lens=) response and the lean ?groupBy= groups, the same gate `spend` and `funnelSteps` ride. A path that DID compute it always answers, 'unmeasured' included: 'we could not say' is a statement and it is never a zero."
           },
+          "maturity": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScopeMaturity"
+              },
+              {
+                "nullable": true,
+                "description": "The scope's per-leg figures on both bases and its verdict. Null where the lead population was never read (no funnel wired)."
+              }
+            ]
+          },
           "brandId": {
             "type": "string"
           },
@@ -12080,6 +12930,9 @@
                         "roiMultiple"
                       ],
                       "description": "THE MEASURED RETURN — revenue from deals actually closed won over the same matured spend the ROI divides. NULL when it cannot be measured on this read: no source of closed deals could be read, the legs are unknown, or the grain never computes it (lens, per-workflow, cross-org reads). Never a fabricated 0."
+                    },
+                    "maturity": {
+                      "$ref": "#/components/schemas/CostRatiosMaturity"
                     }
                   },
                   "required": [
@@ -12094,6 +12947,17 @@
                     "realizedReturn"
                   ],
                   "description": "Derived cost economics. Always present; ratios are null per the documented null semantics."
+                },
+                "maturity": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ScopeMaturity"
+                    },
+                    {
+                      "nullable": true,
+                      "description": "The scope's per-leg figures on both bases and its verdict. Null where the lead population was never read (no funnel wired)."
+                    }
+                  ]
                 }
               },
               "required": [
@@ -12317,6 +13181,9 @@
                         "roiMultiple"
                       ],
                       "description": "THE MEASURED RETURN — revenue from deals actually closed won over the same matured spend the ROI divides. NULL when it cannot be measured on this read: no source of closed deals could be read, the legs are unknown, or the grain never computes it (lens, per-workflow, cross-org reads). Never a fabricated 0."
+                    },
+                    "maturity": {
+                      "$ref": "#/components/schemas/CostRatiosMaturity"
                     }
                   },
                   "required": [
@@ -12331,6 +13198,17 @@
                     "realizedReturn"
                   ],
                   "description": "Derived cost economics. Always present; ratios are null per the documented null semantics."
+                },
+                "maturity": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ScopeMaturity"
+                    },
+                    {
+                      "nullable": true,
+                      "description": "The offer's per-leg figures and verdict — the object its own /offers/:offerId/revenue read serves."
+                    }
+                  ]
                 }
               },
               "required": [
@@ -13254,6 +14132,9 @@
                       "type": "number",
                       "nullable": true,
                       "description": "REAL cost per sale (OBSERVED) = totalCostInUsdCents / sales. Null when sales is 0/absent (not the website-purchase / combined-sales goal, or emails not served) OR no spend is attributed — never a false $0.00. Not used in ranking (both goals sort on cppr)."
+                    },
+                    "maturity": {
+                      "$ref": "#/components/schemas/AudienceMetricsMaturity"
                     }
                   },
                   "required": [
@@ -13291,6 +14172,9 @@
                       "type": "number",
                       "nullable": true,
                       "description": "PROJECTED — what winning a customer from this audience costs as a SHARE of what that customer is worth over their lifetime, percent = 100 x costPerPaidClientUsd / brandProjection.lifetimeRevenueUsd, which is exactly 100 / returnPerDollar. Below 100 means the audience pays for itself. Served rather than left to the consumer BECAUSE it is the reciprocal of a field already on this row: a consumer dividing one of our fields into another is how two surfaces come to print two numbers for one statistic. Same statement as returnPerDollar and costPerPaidClientUsd in a third unit, so the three can never disagree, and the identical definition one grain coarser at brandProjection.costOfAcquisitionPct. PROJECTED, NOT REALIZED: do not pair it with the realized /revenue costEconomics.costOfAcquisitionPct (measured spend / measured pipeline) as if they were the same figure — this one prices what the audience's own observed unit costs imply under the brand's declared economics. An audience with no measured grain of its own inherits brandProjection verbatim (the same brand-level fallback the derived cost columns and returnPerDollar take). NULL (never 0) whenever it could not be measured — no lifetime revenue, no path to a paying client, cold start; a 0 would say winning a customer costs nothing."
+                    },
+                    "maturity": {
+                      "$ref": "#/components/schemas/AudienceProjectionMaturity"
                     }
                   },
                   "required": [
@@ -13299,6 +14183,17 @@
                     "costOfAcquisitionPct"
                   ],
                   "description": "PROJECTED return for this audience, on the brand's own economics — three units of ONE statement (cost per paying client, return per dollar, and that cost as a share of lifetime revenue). See returnPerDollar."
+                },
+                "maturity": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ScopeMaturity"
+                    },
+                    {
+                      "nullable": true,
+                      "description": "This audience's per-leg figures on both bases and its verdict. The rows' spend and outcomes plus the envelope's unattributedMaturity add up to the envelope's maturity."
+                    }
+                  ]
                 }
               },
               "required": [
@@ -13339,6 +14234,16 @@
                 "type": "number",
                 "nullable": true,
                 "description": "PROJECTED brand-level cost of acquisition as a share of lifetime revenue, percent = 100 / returnPerDollar — the same definition as each row's, one grain coarser, and the value a row with no measured grain inherits. Read a row's share against this ('this audience wins customers at a smaller slice of their worth than the brand does'). PROJECTED, not the realized /revenue costEconomics.costOfAcquisitionPct. Null (never 0) when unmeasurable."
+              },
+              "maturity": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/AudienceProjectionMaturity"
+                  },
+                  {
+                    "description": "The SCOPE's own projection on both bases, beside its verdict (features-service#1196): priced from the scope's OBSERVED unit costs (every audience plus the untagged remainder) through the byte-same funnel rule the rows' projection.maturity uses, so the rows' pairs are a partition of this one. The fields above are the best workflow's cascade projection (the flash explore floor a row with no measured grain inherits); this pair is what the scope itself produced. Absent when the maturity inputs could not be read."
+                  }
+                ]
               }
             },
             "required": [
@@ -13430,6 +14335,28 @@
               "representativeId"
             ],
             "description": "Present ONLY on a ?campaignId= read: the campaign IDENTITY these per-audience figures were totalled over. A campaign as a customer knows it is (org, brand, sales funnel, acquisition channel) and is stored as MANY rows - campaign-service mints a new one every time the workflow switches and keeps the ancestors - so asking about any member returns the same, complete campaign, and every member lands on one cache cell. Byte-same block as /features/{slug}/revenue?campaignId= carries, so the two reads name one campaign one way."
+          },
+          "maturity": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScopeMaturity"
+              },
+              {
+                "nullable": true,
+                "description": "The scope's own maturity (campaign, offer or brand) — the byte-same object /revenue serves for it."
+              }
+            ]
+          },
+          "unattributedMaturity": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScopeMaturity"
+              },
+              {
+                "nullable": true,
+                "description": "Spend and leads of this scope whose serve carried NO audience tag."
+              }
+            ]
           },
           "channels": {
             "type": "array",
@@ -13860,6 +14787,9 @@
                         "roiMultiple"
                       ],
                       "description": "THE MEASURED RETURN — revenue from deals actually closed won over the same matured spend the ROI divides. NULL when it cannot be measured on this read: no source of closed deals could be read, the legs are unknown, or the grain never computes it (lens, per-workflow, cross-org reads). Never a fabricated 0."
+                    },
+                    "maturity": {
+                      "$ref": "#/components/schemas/CostRatiosMaturity"
                     }
                   },
                   "required": [
@@ -18131,6 +19061,17 @@
                         "type": "number",
                         "nullable": true
                       }
+                    },
+                    "maturity": {
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/ScopeMaturity"
+                        },
+                        {
+                          "nullable": true,
+                          "description": "Non-grouped reads with a brand: the scope's per-leg figures on both bases and its verdict — the byte-same object /revenue serves for this campaign, offer or brand. The costPer* stats keep their meaning (everything to date); display maturity.legs[].mature. Null on a workflow-narrowed read or when it could not be read."
+                        }
+                      ]
                     }
                   },
                   "required": [
@@ -21518,6 +22459,9 @@
                                 "type": "number",
                                 "nullable": true,
                                 "description": "REAL cost per sale (OBSERVED) = totalCostInUsdCents / sales. Null when sales is 0/absent (not the website-purchase / combined-sales goal, or emails not served) OR no spend is attributed — never a false $0.00. Not used in ranking (both goals sort on cppr)."
+                              },
+                              "maturity": {
+                                "$ref": "#/components/schemas/AudienceMetricsMaturity"
                               }
                             },
                             "required": [
@@ -21555,6 +22499,9 @@
                                 "type": "number",
                                 "nullable": true,
                                 "description": "PROJECTED — what winning a customer from this audience costs as a SHARE of what that customer is worth over their lifetime, percent = 100 x costPerPaidClientUsd / brandProjection.lifetimeRevenueUsd, which is exactly 100 / returnPerDollar. Below 100 means the audience pays for itself. Served rather than left to the consumer BECAUSE it is the reciprocal of a field already on this row: a consumer dividing one of our fields into another is how two surfaces come to print two numbers for one statistic. Same statement as returnPerDollar and costPerPaidClientUsd in a third unit, so the three can never disagree, and the identical definition one grain coarser at brandProjection.costOfAcquisitionPct. PROJECTED, NOT REALIZED: do not pair it with the realized /revenue costEconomics.costOfAcquisitionPct (measured spend / measured pipeline) as if they were the same figure — this one prices what the audience's own observed unit costs imply under the brand's declared economics. An audience with no measured grain of its own inherits brandProjection verbatim (the same brand-level fallback the derived cost columns and returnPerDollar take). NULL (never 0) whenever it could not be measured — no lifetime revenue, no path to a paying client, cold start; a 0 would say winning a customer costs nothing."
+                              },
+                              "maturity": {
+                                "$ref": "#/components/schemas/AudienceProjectionMaturity"
                               }
                             },
                             "required": [
@@ -21563,6 +22510,17 @@
                               "costOfAcquisitionPct"
                             ],
                             "description": "PROJECTED return for this audience, on the brand's own economics — three units of ONE statement (cost per paying client, return per dollar, and that cost as a share of lifetime revenue). See returnPerDollar."
+                          },
+                          "maturity": {
+                            "allOf": [
+                              {
+                                "$ref": "#/components/schemas/ScopeMaturity"
+                              },
+                              {
+                                "nullable": true,
+                                "description": "This audience's per-leg figures on both bases and its verdict. The rows' spend and outcomes plus the envelope's unattributedMaturity add up to the envelope's maturity."
+                              }
+                            ]
                           }
                         },
                         "required": [
@@ -21603,6 +22561,16 @@
                           "type": "number",
                           "nullable": true,
                           "description": "PROJECTED brand-level cost of acquisition as a share of lifetime revenue, percent = 100 / returnPerDollar — the same definition as each row's, one grain coarser, and the value a row with no measured grain inherits. Read a row's share against this ('this audience wins customers at a smaller slice of their worth than the brand does'). PROJECTED, not the realized /revenue costEconomics.costOfAcquisitionPct. Null (never 0) when unmeasurable."
+                        },
+                        "maturity": {
+                          "allOf": [
+                            {
+                              "$ref": "#/components/schemas/AudienceProjectionMaturity"
+                            },
+                            {
+                              "description": "The SCOPE's own projection on both bases, beside its verdict (features-service#1196): priced from the scope's OBSERVED unit costs (every audience plus the untagged remainder) through the byte-same funnel rule the rows' projection.maturity uses, so the rows' pairs are a partition of this one. The fields above are the best workflow's cascade projection (the flash explore floor a row with no measured grain inherits); this pair is what the scope itself produced. Absent when the maturity inputs could not be read."
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -21694,6 +22662,28 @@
                         "representativeId"
                       ],
                       "description": "Present ONLY on a ?campaignId= read: the campaign IDENTITY these per-audience figures were totalled over. A campaign as a customer knows it is (org, brand, sales funnel, acquisition channel) and is stored as MANY rows - campaign-service mints a new one every time the workflow switches and keeps the ancestors - so asking about any member returns the same, complete campaign, and every member lands on one cache cell. Byte-same block as /features/{slug}/revenue?campaignId= carries, so the two reads name one campaign one way."
+                    },
+                    "maturity": {
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/ScopeMaturity"
+                        },
+                        {
+                          "nullable": true,
+                          "description": "The scope's own maturity (campaign, offer or brand) — the byte-same object /revenue serves for it."
+                        }
+                      ]
+                    },
+                    "unattributedMaturity": {
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/ScopeMaturity"
+                        },
+                        {
+                          "nullable": true,
+                          "description": "Spend and leads of this scope whose serve carried NO audience tag."
+                        }
+                      ]
                     }
                   },
                   "required": [

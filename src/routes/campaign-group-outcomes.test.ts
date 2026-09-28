@@ -287,8 +287,10 @@ describe("a campaign group states how much outcome evidence its money rests on",
     });
 
     const byId = await groups();
+    // The pair beside the rates (#1196): observed on both bases, so it refuses exactly as they do.
+    expect(byId.cold.outcomes.maturity.flash).toEqual({ cpcCents: null, cpprCents: null });
     // Spent and reached nobody — the row a customer is hunting. Every count is a real 0.
-    expect(byId.cold.outcomes).toEqual({
+    expect({ ...byId.cold.outcomes, maturity: undefined }).toEqual({
       recipientsContacted: 0,
       recipientsConvertible: 0,
       recipientsBounced: 0,

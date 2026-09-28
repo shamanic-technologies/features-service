@@ -282,8 +282,11 @@ describe("GET /revenue?groupBy=workflow — which workflows made money", () => {
       (await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&groupBy=workflow").set(AUTH)).body,
     );
 
+    // The pair beside the rates (#1196): OBSERVED on both bases — here the whole history on both, since
+    // no leg is stated, so flash and mature agree with the rates above.
+    expect(groups.dawn.outcomes.maturity.flash).toEqual({ cpcCents: 2500, cpprCents: 5000 });
     // Dawn's versions fold into ONE dynasty on the volume half exactly as they do on the money half.
-    expect(groups.dawn.outcomes).toEqual({
+    expect({ ...groups.dawn.outcomes, maturity: undefined }).toEqual({
       recipientsContacted: 4,
       recipientsConvertible: 4,
       recipientsBounced: 0,

@@ -196,6 +196,8 @@ export interface LearningCampaignInput {
    * could not be read at all, which is a different answer from a measured 0.
    */
   observed: { clicks: number; replies: number } | null;
+  /** The same two counts over the campaign's MATURE cohort. Set ⟺ the scope's mature cut was made. */
+  matureObserved?: { clicks: number; replies: number } | null;
 }
 
 /** One (campaign × workflow) cell of the LEADING campaign: its spend and its raw driver count. */
@@ -329,6 +331,8 @@ export interface LearningPhaseInput {
   leadingCommittedSpentUsd: number | null;
   /** What billing has the leading campaign's leg funded at, per day. NULL = no ceiling stated. */
   dailyCeilingUsd: number | null;
+  /** The scope's verdict (`lib/scope-maturity.ts`). */
+  scopeIsMature?: boolean | null;
 }
 
 /**

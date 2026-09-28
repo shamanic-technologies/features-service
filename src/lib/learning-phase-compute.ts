@@ -39,6 +39,7 @@ import {
 import type { ScopeOutcomeTerms } from "./cost-per-outcome-history.js";
 import type { SalesEconomics } from "./funnel-registry.js";
 import type { Pricing } from "./pricing.js";
+import { legCutoffIso, servedInMatureCohort } from "./maturity.js";
 
 /**
  * The verdict, and the TERMS the scope's outcome is counted and priced on.
@@ -85,11 +86,20 @@ export interface LearningPhaseScope {
    * caller holds no population and the per-campaign email-gateway counts are read instead.
    */
   engagedLeadsByCampaign?: Promise<Map<string, EngagedLeads> | null>;
+  /**
+   * THE SCOPE'S VERDICT (`lib/scope-maturity.ts`) — the byte-same `isMature` the money on the body states,
+   * built by the route from the same campaigns, spend and people. Non-null ⟹ the mature cut could be made,
+   * so every campaign is counted on its MATURE cohort and `priced` ⟺ true. Null / absent ⟹ the cut could
+   * not be made and the per-campaign flash rule answers. Never rejects (the route catches it to null).
+   */
+  scopeIsMature?: Promise<boolean | null>;
 }
 
 export interface EngagedLeads {
   clickers: Set<string>;
   repliers: Set<string>;
+  /** Per engaged lead, the serve date of its row UNDER THIS CAMPAIGN (lead-service `lastServedAt`). */
+  servedAt: Map<string, string | null | undefined>;
 }
 
 /** Group a lead population's clickers and positive repliers by the campaign each row was served under. */
@@ -97,9 +107,14 @@ export function engagedLeadsByCampaign(persons: readonly EnginePerson[]): Map<st
   const out = new Map<string, EngagedLeads>();
   for (const p of persons) {
     if (!p.campaignId || (!p.signals.clicked && !p.signals.positiveReply)) continue;
-    const entry = out.get(p.campaignId) ?? { clickers: new Set<string>(), repliers: new Set<string>() };
+    const entry = out.get(p.campaignId) ?? {
+      clickers: new Set<string>(),
+      repliers: new Set<string>(),
+      servedAt: new Map<string, string | null | undefined>(),
+    };
     if (p.signals.clicked) entry.clickers.add(p.leadId);
     if (p.signals.positiveReply) entry.repliers.add(p.leadId);
+    entry.servedAt.set(p.leadId, p.servedAt);
     out.set(p.campaignId, entry);
   }
   return out;
@@ -129,13 +144,16 @@ export async function computeLearningPhase(scope: LearningPhaseScope): Promise<L
   const scopeIds = scope.campaignScopeIds.length > 0 ? new Set(scope.campaignScopeIds) : null;
   const scoped = rows.filter((row) => inScope(row, slugs, scopeIds));
 
-  const [driverCounts, committedCents, workflows, engaged] = await Promise.all([
+  const [driverCounts, committedCents, workflows, engaged, scopeVerdict] = await Promise.all([
     scope.engagedLeadsByCampaign ? Promise.resolve(null) : fetchCampaignDriverCounts(brandId, featureScope, headers),
     fetchCampaignCommittedCents(brandId, featureScope, headers, pricing),
     fetchPublicWorkflows(featureSlugsParam(featureScope), "all"),
     scope.engagedLeadsByCampaign ?? Promise.resolve(undefined),
+    scope.scopeIsMature ?? Promise.resolve(null),
   ]);
   if (engaged === null) throw new Error("lead population unavailable for the learning counts");
+  // Counted on the MATURE cohort ⟺ the scope's verdict exists (its cut was made) and we hold the people.
+  const matureCounts = scopeVerdict != null && engaged != null;
 
   const families = buildCampaignFamilies(scoped);
   const byId = new Map(scoped.map((row) => [row.id, row]));
@@ -153,16 +171,32 @@ export async function computeLearningPhase(scope: LearningPhaseScope): Promise<L
     // Summing the family's members is exact: a send carries exactly one campaign.
     let clicks = 0;
     let replies = 0;
+    let matureObserved: { clicks: number; replies: number } | undefined;
     if (engaged) {
       // PEOPLE, unioned over the identity's members — the basis `/stats` counts on.
       const clickers = new Set<string>();
       const repliers = new Set<string>();
+      // The MATURE cohort: a member's row served before THAT member's leg cutoff (the run-start clock,
+      // `lib/maturity.ts`) — the rule `lib/scope-maturity.ts` counts the scope's own mature outcomes on.
+      const matureClickers = new Set<string>();
+      const matureRepliers = new Set<string>();
       for (const id of memberIds) {
-        for (const leadId of engaged.get(id)?.clickers ?? []) clickers.add(leadId);
-        for (const leadId of engaged.get(id)?.repliers ?? []) repliers.add(leadId);
+        const bucket = engaged.get(id);
+        if (!bucket) continue;
+        const cutoff = legCutoffIso(byId.get(id)?.legKey ?? null);
+        const mature = (leadId: string) => servedInMatureCohort(bucket.servedAt.get(leadId), cutoff);
+        for (const leadId of bucket.clickers) {
+          clickers.add(leadId);
+          if (mature(leadId)) matureClickers.add(leadId);
+        }
+        for (const leadId of bucket.repliers) {
+          repliers.add(leadId);
+          if (mature(leadId)) matureRepliers.add(leadId);
+        }
       }
       clicks = clickers.size;
       replies = repliers.size;
+      if (matureCounts) matureObserved = { clicks: matureClickers.size, replies: matureRepliers.size };
     } else {
       for (const id of memberIds) {
         const counts = driverCounts?.get(id);
@@ -180,6 +214,7 @@ export async function computeLearningPhase(scope: LearningPhaseScope): Promise<L
       legKey: representative.legKey ?? memberIds.map((id) => byId.get(id)?.legKey).find((l) => l) ?? null,
       live: (family?.liveCampaignIds.length ?? 0) > 0 || representative.status === "ongoing",
       observed: { clicks, replies },
+      ...(matureObserved ? { matureObserved } : {}),
     });
   }
 
@@ -244,6 +279,7 @@ export async function computeLearningPhase(scope: LearningPhaseScope): Promise<L
       leadingCells,
       leadingCommittedSpentUsd,
       dailyCeilingUsd,
+      scopeIsMature: matureCounts ? scopeVerdict : null,
     }),
     outcomeTerms: outcomeTermsOf(leader?.leg ?? null),
   };

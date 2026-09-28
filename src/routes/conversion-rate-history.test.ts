@@ -531,13 +531,16 @@ describe("what share of this campaign's outreach converts, day by day", () => {
       const { conversionRateHistory, costPerOutcomeHistory, learningPhase, ...rest } = b;
       // A campaign stating no leg waits for nothing (lib/roi-maturity.ts), so the delay it states
       // differs by design; on this clock the cohort is the whole fixture, so every figure agrees.
+      // The scope's MATURITY is per leg by definition (#1196): a campaign naming no leg has no leg figure
+      // and no verdict, so every `maturity` names the leg too.
       const byLeg = (o: Record<string, any> | null) =>
-        o && { ...o, ratioBasis: { ...o.ratioBasis, maturityDays: "by leg" } };
+        o && { ...o, ratioBasis: { ...o.ratioBasis, maturityDays: "by leg" }, maturity: "by leg" };
       return {
         ...rest,
+        maturity: "by leg",
         // The identity key carries the leg (campaign-service's own index), so it names the leg too.
         campaignIdentity: { ...rest.campaignIdentity, key: "by leg" },
-        costEconomics: { ...rest.costEconomics, maturityDays: "by leg" },
+        costEconomics: { ...rest.costEconomics, maturityDays: "by leg", maturity: "by leg" },
         outcomes: byLeg(rest.outcomes),
         spend: byLeg(rest.spend),
         funnelSteps: byLeg(rest.funnelSteps),
