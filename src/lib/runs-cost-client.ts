@@ -24,7 +24,7 @@
  * 0) — the revenue path treats cost as a core output, like its leads / economics clients.
  */
 import { fetchWithRetry } from "./fetch-retry.js";
-import { selectCostCents, type Pricing } from "./pricing.js";
+import { runsCostsUrl, selectCostCents, type Pricing } from "./pricing.js";
 import { campaignFamilySet, singleCampaignId, type CampaignFilter } from "./campaign-scope.js";
 import { featureSlugsParam, type FeatureScope } from "./feature-scope.js";
 
@@ -92,7 +92,7 @@ export async function fetchRunsCostCents(
   if (campaignId) reqHeaders["x-campaign-id"] = campaignId;
   if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
 
-  const response = await fetchWithRetry(`${url}/v1/stats/costs?${params}`, { headers: reqHeaders });
+  const response = await fetchWithRetry(runsCostsUrl(url, "org", pricing, params), { headers: reqHeaders });
 
   if (!response.ok) {
     const text = await response.text();
@@ -173,7 +173,7 @@ export async function fetchRunsCostCentsByWorkflowSlug(
   if (campaignId) reqHeaders["x-campaign-id"] = campaignId;
   if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
 
-  const response = await fetchWithRetry(`${url}/v1/stats/costs?${params}`, { headers: reqHeaders });
+  const response = await fetchWithRetry(runsCostsUrl(url, "org", pricing, params), { headers: reqHeaders });
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`runs-service /v1/stats/costs (groupBy=workflowSlug) failed (${response.status}): ${text}`);
@@ -334,7 +334,7 @@ export async function fetchMatureSpendCents(
     if (workflowSlugs) params.set("workflowSlugs", workflowSlugs);
     params.set(bound, value);
     const response = await fetchWithRetry(
-      `${url}/v1/stats/costs?${params}`,
+      runsCostsUrl(url, "org", pricing, params),
       { headers: reqHeaders },
       bound === "startedBefore" ? { shareForMs: 30_000 } : undefined,
     );

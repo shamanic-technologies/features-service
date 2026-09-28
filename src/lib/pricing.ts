@@ -28,7 +28,41 @@
 
 import { refundedCents, type CostBasis } from "./cost-basis.js";
 
-export type Pricing = "gross" | "net";
+export type Pricing = "gross" | "net" | VendorPricing;
+
+/**
+ * STAFF-ONLY cost bases, never parseable from a query string (`parsePricing` accepts gross/net only), so
+ * no customer read can be made to answer on them. They are set by the `/internal/.../actual-cost`
+ * routes alone (lib/actual-cost-projection.ts, lib/actual-cost-groups.ts).
+ *   - `vendor`         — each group's spend at the VENDOR cost of its PRICED rows, before our markup.
+ *   - `vendorUnpriced` — each group's BILLED spend on the rows whose vendor cost is NOT known.
+ * Both read runs-service `GET /internal/stats/costs/vendor` (service-auth), never the billed
+ * aggregations — see {@link runsCostsUrl}.
+ */
+export type VendorPricing = "vendor" | "vendorUnpriced";
+
+export function isVendorPricing(pricing: Pricing): pricing is VendorPricing {
+  return pricing === "vendor" || pricing === "vendorUnpriced";
+}
+
+/**
+ * The runs-service URL a grouped, undated cost read goes to on this basis. Billed: the org-scoped
+ * `/v1/stats/costs` (or the no-auth fleet `/v1/stats/public/costs`). Vendor: the service-auth
+ * `/internal/stats/costs/vendor`, which serves both scopes (org from `x-org-id`, fleet without it) and
+ * takes a campaign family as `campaignIds` only — so a single `campaignId` is moved onto it here.
+ */
+export function runsCostsUrl(baseUrl: string, scope: "org" | "public", pricing: Pricing, params: URLSearchParams): string {
+  if (!isVendorPricing(pricing)) {
+    return `${baseUrl}/v1/stats/${scope === "public" ? "public/costs" : "costs"}?${params}`;
+  }
+  const p = new URLSearchParams(params);
+  const single = p.get("campaignId");
+  if (single) {
+    p.delete("campaignId");
+    p.set("campaignIds", single);
+  }
+  return `${baseUrl}/internal/stats/costs/vendor?${p}`;
+}
 
 /**
  * Parse the `?pricing=` query param. Absent / empty → "gross" (the default — backward-compatible).
@@ -71,6 +105,7 @@ export function selectCostCentsString(
   // whether we decided to bill it.
   basis: CostBasis = "charged",
 ): string {
+  if (isVendorPricing(pricing)) return vendorCostCentsString(group, grossField, pricing);
   const field = pricing === "net" ? NET_FIELD[grossField] : grossField;
   const raw = (group as Record<string, unknown>)[field];
   if (raw === undefined || raw === null || raw === "" || !Number.isFinite(Number(raw))) {
@@ -100,4 +135,35 @@ export function selectCostCents(
   basis: CostBasis = "charged",
 ): number {
   return Number(selectCostCentsString(group, grossField, pricing, basis));
+}
+
+const VENDOR_PREFIX: Record<VendorPricing, string> = { vendor: "vendor", vendorUnpriced: "unpriced" };
+const STATE_OF: Record<GrossCostField, string> = {
+  totalCostInUsdCents: "Total",
+  actualCostInUsdCents: "Actual",
+  provisionedCostInUsdCents: "Provisioned",
+};
+
+/**
+ * One group's cost on a VENDOR basis. The committed figure (`total`/`actual`) ADDS the refunded
+ * bucket: a row we comped was still paid to the vendor, so "what it really cost us" keeps it — the rule
+ * the vendor-basis return curve already applies (lib/vendor-spend-by-day-client.ts). A provisioned hold
+ * was never spent and carries no refund. The charged/incurred axis therefore does not apply here.
+ *
+ * FAIL-LOUD on a missing field: a group read off a billed aggregation carries no vendor field, so a
+ * cost read that was not routed to the vendor read throws here instead of serving billed money under
+ * the vendor name.
+ */
+function vendorCostCentsString(group: object, grossField: GrossCostField, pricing: VendorPricing): string {
+  const row = group as Record<string, unknown>;
+  const read = (state: string) => {
+    const field = `${VENDOR_PREFIX[pricing]}${state}CostInUsdCents`;
+    const raw = row[field];
+    if (raw === undefined || raw === null || raw === "" || !Number.isFinite(Number(raw))) {
+      throw new Error(`[features-service] runs-service cost group missing vendor-basis field '${field}': ${JSON.stringify(raw)}`);
+    }
+    return Number(raw);
+  };
+  const own = read(STATE_OF[grossField]);
+  return String(grossField === "provisionedCostInUsdCents" ? own : own + read("Refunded"));
 }

@@ -26,7 +26,7 @@
 
 import { fetchWithRetry } from "./fetch-retry.js";
 import { mapWithConcurrency } from "./concurrency.js";
-import type { Pricing } from "./pricing.js";
+import { isVendorPricing, type Pricing } from "./pricing.js";
 import { campaignScopeIds, type CampaignFilter } from "./campaign-scope.js";
 import { featureSlugsParam, type FeatureScope } from "./feature-scope.js";
 
@@ -91,6 +91,9 @@ async function fetchDatedSpendForCampaign(
     throw new Error("runs-service costs/timeseries returned no buckets array");
   }
 
+  // The billed dated spend only. A vendor basis has its own dated read (vendor-spend-by-day-client.ts);
+  // reaching this one with it would serve billed money under the vendor name.
+  if (isVendorPricing(pricing)) throw new Error(`fetchBrandCommittedSpendByDay: no billed dated spend on the ${pricing} basis`);
   const field = pricing === "net" ? "netTotalCostInUsdCents" : "totalCostInUsdCents";
   const byDay = new Map<string, number>();
   for (const bucket of data.buckets) {
