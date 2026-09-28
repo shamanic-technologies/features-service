@@ -443,20 +443,29 @@ export async function computeWorkflowRevenueGroups(input: {
     return { plan: legs.plan, matureCostBySlug: mature.bySlug };
   });
   // Each group's maturity pairs divide its versions' spend per campaign, summed exactly — one read
-  // split by (slug × campaign). Fail-loud like the cost read beside it; with the legs unknown it still
-  // reads the flash half and every mature half is null.
-  const splitPromise = input.withMaturity === false ? Promise.resolve(null) : legsPromise.then(async (legs) => ({
-    campaigns: legs?.campaigns ?? null,
-    split: await fetchSpendSplit({
-      brandId,
-      featureScope: featureSlug,
-      campaignIds: campaignScopeIds(campaignScope),
-      campaigns: legs?.campaigns ?? [],
-      by: "workflowSlug",
-      headers,
-      pricing,
-    }),
-  }));
+  // split by (slug × campaign). SOFT, with a loud log: a read these groups did not make before the pairs
+  // existed must null the pairs, never 502 the grouped read. With the legs unknown it still reads the
+  // flash half and every mature half is null.
+  const splitPromise =
+    input.withMaturity === false
+      ? Promise.resolve(null)
+      : legsPromise
+          .then(async (legs) => ({
+            campaigns: legs?.campaigns ?? null,
+            split: await fetchSpendSplit({
+              brandId,
+              featureScope: featureSlug,
+              campaignIds: campaignScopeIds(campaignScope),
+              campaigns: legs?.campaigns ?? [],
+              by: "workflowSlug",
+              headers,
+              pricing,
+            }),
+          }))
+          .catch((err: Error) => {
+            console.error(`[features-service] workflow maturity spend split unreadable for brand ${brandId} (pairs absent): ${err.message}`);
+            return null;
+          });
   const [costCentsBySlug, persons, workflows, maturity, contacted, maturitySplit] = await Promise.all([
     fetchRunsCostCentsByWorkflowSlug(brandId, featureSlug, headers, pricing, campaignScope),
     // The workflow grain PARTITIONS the leads of its scope: brand-wide by default, the campaign's own

@@ -1569,19 +1569,26 @@ export async function computeFeatureRevenue(
   const scopePromise = resolveMaturityPlan(brandId, featureScope, campaignScope, headers);
   const planPromise = scopePromise.then((scope) => scope.plan);
   // THE SCOPE'S SPEND PER CAMPAIGN ON BOTH BASES, summed exactly — what every maturity pair on this body
-  // divides (`lib/scope-maturity.ts`). Fail-loud like the cost reads beside it. With the scope's legs
-  // unknown it still reads the flash half (no cutoff to cut at); every mature half is then null.
-  const splitPromise: Promise<Map<string, SpendSplit> | null> = scopePromise.then((scope) =>
-    fetchSpendSplit({
-      brandId,
-      featureScope,
-      campaignIds: campaignScopeIds(campaignScope),
-      campaigns: scope.campaigns ?? [],
-      workflowSlugs: workflowScope?.producerSlugs,
-      headers,
-      pricing,
-    }),
-  );
+  // divides (`lib/scope-maturity.ts`). SOFT, with a loud log: it is a read this body did not make before
+  // the pairs existed, so its failure nulls `maturity` (and every pair) rather than 502-ing a read whose
+  // every other figure is right. With the scope's legs unknown it still reads the flash half (no cutoff
+  // to cut at); every mature half is then null.
+  const splitPromise: Promise<Map<string, SpendSplit> | null> = scopePromise
+    .then((scope) =>
+      fetchSpendSplit({
+        brandId,
+        featureScope,
+        campaignIds: campaignScopeIds(campaignScope),
+        campaigns: scope.campaigns ?? [],
+        workflowSlugs: workflowScope?.producerSlugs,
+        headers,
+        pricing,
+      }),
+    )
+    .catch((err: Error) => {
+      console.error(`[features-service] maturity spend split unreadable for brand ${brandId} (maturity null): ${err.message}`);
+      return null;
+    });
   const maturePromise = planPromise.then((plan) =>
     plan.cutoffIso
       ? fetchMatureSpendCents(brandId, campaignScope, featureScope, headers, pricing, plan, workflowScope?.producerSlugs).then(
