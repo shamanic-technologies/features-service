@@ -43,6 +43,8 @@
  * cost per click are two views of one number. `actualSpentCents` (billed-only) stays REPORTED for
  * the consumer transition and is divided by nowhere.
  */
+import type { MaturityPair } from "./maturity.js";
+import type { OutcomeRatios } from "./scope-maturity.js";
 import { dedupPersonsByLead, type EnginePerson } from "./revenue-engine.js";
 import { observedCostPerOutcome } from "./cost-engine.js";
 import type { RunsCostCents } from "./runs-cost-client.js";
@@ -168,6 +170,13 @@ export interface RevenueOutcomes {
   ratioBasis: OutcomesRatioBasis;
   /** Delivery and reply of the emails this grain sent. See {@link RevenueSending}. */
   sending: RevenueSending;
+  /**
+   * THE TWO RATES ON BOTH BASES, beside the scope's verdict (`lib/maturity.ts`, features-service#1196):
+   * `flash` divides everything to date, `mature` the runs started before the leg's cutoff and the leads
+   * those runs served. OBSERVED, never floored, and divided by the scope's spend summed exactly
+   * (`lib/scope-maturity.ts`), so they agree with every other surface's pair for the same scope.
+   */
+  maturity?: MaturityPair<OutcomeRatios>;
 }
 
 /**

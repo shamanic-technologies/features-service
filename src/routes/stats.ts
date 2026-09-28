@@ -1,3 +1,4 @@
+import { readScopeMaturitySoft } from "../lib/scope-maturity.js";
 import { Router } from "express";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
@@ -1244,7 +1245,12 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     const wantEngagementSnapshot = !groupBy && Boolean(snapshotBrandId) && wantsSnapshotKeys;
     const wantIdentityEngagement = groupBy === "campaignId" && Boolean(snapshotBrandId) && wantsSnapshotKeys;
 
-    const [rawEmailStatsMap, rawRunsStatsMap, rawOutletsStatsMap, rawJournalistsStatsMap, rawLeadsStatsMap, rawPipelineStatsMap, rawPressKitsStatsMap, journalistsQuotesStatsMap, aiVisibilityStatsMap, activeCampaigns, engagementSnapshot, engagementByIdentity] = await Promise.all([
+    // THE SCOPE'S MATURITY (`lib/scope-maturity.ts`, features-service#1196) — the byte-same object
+    // `/revenue` serves for this campaign, offer or brand, so a cost per outcome read here agrees with
+    // every other surface. Non-grouped reads with a brand only; a workflow-narrowed read carries none
+    // (its figures are a workflow's, and the scope object is the whole scope's).
+    const wantMaturity = !groupBy && Boolean(snapshotBrandId) && !filters.workflowSlug && !filters.workflowDynastySlug;
+    const [rawEmailStatsMap, rawRunsStatsMap, rawOutletsStatsMap, rawJournalistsStatsMap, rawLeadsStatsMap, rawPipelineStatsMap, rawPressKitsStatsMap, journalistsQuotesStatsMap, aiVisibilityStatsMap, activeCampaigns, engagementSnapshot, engagementByIdentity, scopeMaturity] = await Promise.all([
       neededSources.has("email-gateway") ? fetchEmailStats(orgId, fanOutGroupBy, fanOutFilters, identity) : skip(),
       fetchRunsStats(orgId, fanOutGroupBy, fanOutFilters, [featureSlug], identity, pricing),
       neededSources.has("outlets") ? fetchOutletsStats(orgId, fanOutGroupBy, fanOutFilters, identity) : skip(),
@@ -1262,6 +1268,15 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
         : Promise.resolve(null),
       wantIdentityEngagement
         ? fetchEngagementSnapshotByIdentity(snapshotBrandId!, identityKeyOfCampaign, { orgId, userId, runId, featureSlug })
+        : Promise.resolve(null),
+      wantMaturity
+        ? readScopeMaturitySoft({
+            brandId: snapshotBrandId!,
+            featureScope: featureSlug,
+            campaignIds: offerCampaignIds ?? requestedIdentity?.campaignIds ?? (filters.campaignId ? [filters.campaignId] : []),
+            headers: { orgId, userId, runId, featureSlug },
+            pricing,
+          })
         : Promise.resolve(null),
     ]);
 
@@ -1317,6 +1332,9 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
         featureSlug,
         systemStats: buildSystemStats(runsStatsMap.get("__total__"), activeCampaigns),
         stats: computeAllDerivedStats(rawStats),
+        // The scope's per-leg figures on both bases and its verdict. The `costPer*` keys above keep
+        // their meaning (everything to date); `maturity.legs[].mature` is the figure to display.
+        maturity: wantMaturity ? scopeMaturity : null,
       };
     }
 

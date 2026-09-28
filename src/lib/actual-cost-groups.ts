@@ -45,6 +45,9 @@ function nullSpend<G extends MoneyGroup>(group: G): G {
     ...(ce.costPerConversionUsd !== undefined ? { costPerConversionUsd: null } : {}),
     ...(ce.ratioBasis ? { ratioBasis: { ...ce.ratioBasis, committedCostUsd: null } } : {}),
     ...(ce.realizedReturn ? { realizedReturn: { ...ce.realizedReturn, roiMultiple: null } } : {}),
+    // Both halves of the maturity pair divide the same unknown vendor spend; the verdict is about
+    // outcomes, not money, so it stands.
+    ...(ce.maturity ? { maturity: { ...ce.maturity, flash: null, mature: null } } : {}),
   };
   const o = group.outcomes as Record<string, unknown> | null | undefined;
   const outcomes = o
@@ -55,6 +58,7 @@ function nullSpend<G extends MoneyGroup>(group: G): G {
         cpcCents: null,
         cpprCents: null,
         ...(o.ratioBasis ? { ratioBasis: { ...(o.ratioBasis as object), committedSpentCents: null } } : {}),
+        ...(o.maturity ? { maturity: { ...(o.maturity as object), flash: null, mature: null } } : {}),
       }
     : o;
   return { ...group, costEconomics, ...(o !== undefined ? { outcomes } : {}) };

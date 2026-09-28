@@ -280,7 +280,9 @@ describe("ROI, %CAC and $CAC are measured on the MATURE cohort", () => {
 
     // AC: every TOTAL keeps the whole history; only the RATIOS (and the basis they state) move.
     const totals = (b: Record<string, any>) => ({
-      outcomes: { ...b.outcomes, cpcCents: "ratio", cpprCents: "ratio", ratioBasis: "basis" },
+      // The maturity pairs are ratios on both bases beside their verdict — they move with the leg by
+      // construction (asserted in lib/scope-maturity.test.ts), so they are ratios here too.
+      outcomes: { ...b.outcomes, cpcCents: "ratio", cpprCents: "ratio", ratioBasis: "basis", maturity: "ratio" },
       funnelSteps: b.funnelSteps && {
         ...b.funnelSteps,
         ratioBasis: "basis",
@@ -292,6 +294,7 @@ describe("ROI, %CAC and $CAC are measured on the MATURE cohort", () => {
       },
       spend: {
         ...b.spend,
+        maturity: "ratio",
         totalCpcCents: "ratio",
         actualCpcCents: "ratio",
         provisionedCpcCents: "ratio",

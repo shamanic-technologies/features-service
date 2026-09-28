@@ -317,6 +317,7 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
             campaignIds: channel.campaignIds,
             headline: channelBody.headline,
             costEconomics: channelBody.costEconomics,
+            maturity: channelBody.maturity ?? null,
           };
         });
         return { brandId, costBasis: "charged" as const, channels: groups, ...applyLeadDetail(body, leadDetail) };
@@ -475,6 +476,9 @@ router.get("/brands/:brandId/offers", apiKeyAuth, async (req, res) => {
             channels: channels.map((c) => ({ featureSlug: c.featureSlug, campaignIds: c.campaignIds })),
             headline: body.headline,
             costEconomics: body.costEconomics,
+            // The offer's per-leg figures and verdict (`lib/scope-maturity.ts`) — the object its own
+            // `/offers/:offerId/revenue` read serves, so the row and the offer's page agree.
+            maturity: body.maturity ?? null,
           };
         });
         // WHOSE WINS EVERY ROW COUNTED. A lean row carries no `outcomeCauses` of its own, so the

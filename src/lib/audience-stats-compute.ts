@@ -12,12 +12,31 @@ import { flooredCostPerOutcome, derivedCostPerOutcome } from "./cost-engine.js";
 import {
   fetchBrandProjectedParents,
   fetchBrandProjectionEvidence,
+  priceObservedUnits,
   projectBrandParents,
   returnPerDollar,
   costOfAcquisitionPct,
   type BrandProjectedParentsUsd,
   type FunnelPricingReason,
 } from "./audience-stats-brand-projection.js";
+import { fetchBrandCampaignRows } from "./campaign-identity-client.js";
+import { serveDatesStated } from "./mature-evidence.js";
+import { maturityPair, type MaturityPair } from "./maturity.js";
+import type { EnginePerson } from "./revenue-engine.js";
+import { scopePredicate } from "./roi-maturity.js";
+import {
+  audienceMetricPair,
+  buildGroupMaturity,
+  fetchSpendSplit,
+  observedUnitCosts,
+  splitByCampaignFor,
+  type AudienceMetricRatios,
+  type GroupMaturity,
+  type ScopeBases,
+  type ScopeCampaign,
+  type ScopeMaturity,
+  type SpendSplit,
+} from "./scope-maturity.js";
 import { fetchConversionEmails } from "./conversion-emails-client.js";
 import { isGoal, matchSingleStepGoal, matchFormSubmissionGoal, matchWhatsappGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal, type Goal } from "./goals.js";
 import { salesFunnelIndex, SALES_FUNNEL_GOAL_ECHO, type SalesFunnelKey } from "./sales-funnels.js";
@@ -141,6 +160,15 @@ export interface AudienceStatsRow {
     // Cost per sale — DERIVED. null for any goal other than websitePurchase / sales or when the sale
     // conversion emails weren't served. Not part of the ranking (both goals rank on cppr).
     cpsaleCents: number | null;
+    /**
+     * THE FIVE COLUMNS ON BOTH BASES, beside the audience's verdict (`lib/scope-maturity.ts`,
+     * features-service#1196). OBSERVED — this audience's own spend over its own outcomes, null at 0 —
+     * never the floor the columns above take: `mature` divides the runs started before the leg's cutoff
+     * and the leads those runs served, `flash` everything to date. Attributed by the SERVE: spend by the
+     * run's audience tag, people by the audience lead-service froze on the serve. Absent when the lead
+     * population or the scope's campaigns could not be read.
+     */
+    maturity?: MaturityPair<AudienceMetricRatios>;
   };
   /**
    * WHAT THIS AUDIENCE RETURNS PER DOLLAR — the figure the brand Overview's Top-audiences card leads
@@ -189,7 +217,26 @@ export interface AudienceStatsRow {
      * of our fields into another is how two surfaces come to print two numbers for one statistic.
      */
     costOfAcquisitionPct: number | null;
+    /**
+     * The three figures on both bases, priced from this audience's OBSERVED unit costs (never the
+     * cascade) through the byte-same funnel the fields above use — the best-returning declared funnel
+     * on the brand-level read. Absent when the maturity inputs could not be read.
+     */
+    maturity?: MaturityPair<ProjectionRatios>;
   };
+  /**
+   * THIS AUDIENCE'S MATURITY (`lib/scope-maturity.ts`): its per-leg figures on both bases and its
+   * verdict — the object every surface serves. The rows' spend and outcomes, plus the envelope's
+   * `unattributedMaturity`, add up to the scope's own `maturity`. Null when it could not be read.
+   */
+  maturity?: ScopeMaturity | null;
+}
+
+/** An audience row's projection figures, as one figure `MaturityPair` carries. */
+export interface ProjectionRatios {
+  costPerPaidClientUsd: number | null;
+  returnPerDollar: number | null;
+  costOfAcquisitionPct: number | null;
 }
 
 /**
@@ -280,6 +327,15 @@ export interface AudienceStatsEnvelope {
     returnPerDollar: number | null;
     /** 100 / returnPerDollar — the brand-level twin of a row's `costOfAcquisitionPct`. */
     costOfAcquisitionPct: number | null;
+    /**
+     * The SCOPE's own projection on both bases, beside its verdict (features-service#1196): priced from
+     * the scope's OBSERVED unit costs (every audience plus the untagged remainder) through the byte-same
+     * funnel rule its rows' `projection.maturity` uses — so the rows' pairs are a partition of this one.
+     * The fields above are the best workflow's cascade projection (the flash explore floor a row with no
+     * measured grain inherits); this pair is what the scope itself produced. Absent when the maturity
+     * inputs could not be read.
+     */
+    maturity?: MaturityPair<ProjectionRatios>;
   };
   /**
    * Present ONLY on a `?campaignId=` read: the campaign IDENTITY these figures were totalled over.
@@ -291,6 +347,15 @@ export interface AudienceStatsEnvelope {
    * the two reads speak one vocabulary about one campaign.
    */
   campaignIdentity?: CampaignIdentityView;
+  /**
+   * THE SCOPE'S OWN MATURITY — the campaign, offer or brand this read is about, on the byte-same object
+   * `/revenue` serves for it (`lib/scope-maturity.ts`). The rows below partition it by the serve's
+   * audience tag; `unattributedMaturity` carries what no audience tag covers, so rows + unattributed ===
+   * scope for every spend and outcome figure. Null when the maturity inputs could not be read.
+   */
+  maturity?: ScopeMaturity | null;
+  /** Spend and leads of this scope whose serve carried NO audience tag, on the same object. */
+  unattributedMaturity?: ScopeMaturity | null;
 }
 
 export type ComputeResult =
@@ -423,6 +488,63 @@ function fetchSaleEmailsSoft(brandId: string): Promise<Set<string> | null> {
     );
     return null;
   });
+}
+
+/** What the per-audience maturity is built from — read once for the whole payload. */
+interface AudienceMaturityInputs {
+  campaigns: ScopeCampaign[];
+  /** The scope's lead rows (its campaigns only), each carrying the serve's audience tag. */
+  persons: EnginePerson[];
+  /** Spend per (audience × campaign) on both bases, summed exactly. */
+  split: Map<string, SpendSplit>;
+  /** The mature cut can be made: every row states its serve date. */
+  cuttable: boolean;
+}
+
+/**
+ * The scope's campaigns (with their legs), its lead rows and its spend split by audience — SOFT, with a
+ * loud log: the maturity pairs are an addition to a ranking whose every other figure is right, so an
+ * unreadable input leaves the pairs absent (a consumer shows a dash) rather than 502-ing the ranking.
+ *
+ * Also absent while the lead population states no serve audience at all (a producer predating it): the
+ * rows are attributed by that tag, and without it every audience would read zero outcomes it did have.
+ */
+async function fetchAudienceMaturityInputsSoft(
+  brandId: string,
+  featureScope: FeatureScope,
+  scopeCampaignIds: string[] | undefined,
+  identity: { orgId: string; userId?: string; runId?: string; featureSlug?: string },
+  pricing: Pricing,
+): Promise<AudienceMaturityInputs | null> {
+  try {
+    const [rows, allPersons] = await Promise.all([
+      fetchBrandCampaignRows(brandId, undefined, identity),
+      fetchLeadsForRevenue(brandId, scopeCampaignIds && scopeCampaignIds.length > 0 ? scopeCampaignIds : undefined, identity),
+    ]);
+    const inScope = scopePredicate({ featureSlugs: featureSlugList(featureScope), campaignIds: scopeCampaignIds ?? [] });
+    const campaigns = rows.filter(inScope).map((row): ScopeCampaign => ({ id: row.id, legKey: row.legKey ?? null }));
+    const ids = new Set(campaigns.map((c) => c.id));
+    const persons = allPersons.filter((p) => p.campaignId != null && ids.has(p.campaignId));
+    if (persons.length > 0 && persons.every((p) => p.audienceId === undefined)) {
+      console.warn(`[features-service] audience-stats: lead rows state no serve audience for brand ${brandId}; per-audience maturity absent`);
+      return null;
+    }
+    const split = await fetchSpendSplit({
+      brandId,
+      featureScope,
+      campaignIds: scopeCampaignIds ?? [],
+      campaigns,
+      by: "audienceId",
+      headers: identity,
+      pricing,
+    });
+    return { campaigns, persons, split, cuttable: serveDatesStated(persons) };
+  } catch (err) {
+    console.error(
+      `[features-service] audience-stats: maturity inputs unavailable for brand ${brandId}; per-audience maturity absent: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return null;
+  }
 }
 
 function readFiniteNumber(value: unknown, field: string): number {
@@ -1133,7 +1255,7 @@ export async function computeAudienceStats(
       ? campaignFamilyStatsParams(scopeCampaignIds!).map((scope) => ({ featureSlug, scope }))
       : [{ featureSlug }];
 
-  const [costs, membershipResult, engagementResult, projected] = await Promise.all([
+  const [costs, membershipResult, engagementResult, projected, maturityInputs] = await Promise.all([
     fetchAudienceCosts(brandId, featureScope, identity, pricing, scopeCampaignIds),
     fetchCrmOnlyReplierEmailsSoft(brandId, scopeCampaignIds, identity).then((crmReplyEmails) =>
       fetchAudienceMembership(brandId, audiences, identity, formSubmissionEmails, signupEmails, saleEmails, crmReplyEmails),
@@ -1170,6 +1292,7 @@ export async function computeAudienceStats(
       // Never empty: `scopeSlugs` always holds at least the channel the read is about, and every entry
       // carries a (non-null) parents object, so a winner always exists.
     }).then((byChannel) => pickBestChannel(byChannel)!),
+    fetchAudienceMaturityInputsSoft(brandId, featureScope, scopeCampaignIds, identity, pricing),
   ]);
   const membership = membershipResult.perAudience;
   const engagement = engagementResult.perAudience;
@@ -1198,6 +1321,68 @@ export async function computeAudienceStats(
   const brandParentCps = usdToCents(brandProjected.cpsUsd);
   const brandParentCpsale = usdToCents(brandProjected.cpsaleUsd);
 
+  // THE MATURITY OF EACH AUDIENCE, of the scope, and of what no audience tag covers — one partition of the
+  // scope's rows and spend by the serve's audience tag (`lib/scope-maturity.ts`).
+  const personsByAudience = new Map<string | null, EnginePerson[]>();
+  for (const p of maturityInputs?.persons ?? []) {
+    const key = p.audienceId ?? null;
+    const bucket = personsByAudience.get(key);
+    if (bucket) bucket.push(p);
+    else personsByAudience.set(key, [p]);
+  }
+  const groupMaturity = (keep: (audienceId: string | null) => boolean, persons: EnginePerson[]): GroupMaturity | null =>
+    maturityInputs
+      ? buildGroupMaturity({
+          campaigns: maturityInputs.campaigns,
+          persons,
+          spend: splitByCampaignFor(maturityInputs.split, keep),
+          serveDatesStated: maturityInputs.cuttable,
+        })
+      : null;
+  const conversionSets = { formSubmission: formSubmissionEmails, signup: signupEmails, sale: saleEmails };
+  /**
+   * The projection figures priced from OBSERVED unit costs through the byte-same funnel(s) the row's own
+   * projection uses: the named funnel on a single-funnel read, the best-returning declared funnel on the
+   * brand-level read (the SAME combination rule, ties on catalogue order).
+   */
+  const priceProjection = (spentUsd: number, rows: readonly EnginePerson[]): ProjectionRatios => {
+    const units = observedUnitCosts(spentUsd, rows);
+    const candidates = projected.priced
+      ? projected.priced.map((f) => ({ key: f.funnelKey as SalesFunnelKey | null, parents: f.parents }))
+      : [{ key: null as SalesFunnelKey | null, parents: brandProjected }];
+    let best: { key: SalesFunnelKey | null; ratios: ProjectionRatios } | null = null;
+    let cheapest: { key: SalesFunnelKey | null; ratios: ProjectionRatios } | null = null;
+    for (const { key, parents } of candidates) {
+      if (!parents.observedTerms) continue;
+      const cost = priceObservedUnits(parents.observedTerms, units).costPerPaidClientUsd;
+      const ratios: ProjectionRatios = {
+        costPerPaidClientUsd: cost,
+        returnPerDollar: returnPerDollar(parents.lifetimeRevenueUsd, cost),
+        costOfAcquisitionPct: costOfAcquisitionPct(parents.lifetimeRevenueUsd, cost),
+      };
+      const earlier = (a: SalesFunnelKey | null, b: SalesFunnelKey | null) =>
+        a != null && b != null && salesFunnelIndex(a) < salesFunnelIndex(b);
+      if (ratios.returnPerDollar != null) {
+        const incumbent = best?.ratios.returnPerDollar ?? null;
+        if (incumbent == null || ratios.returnPerDollar > incumbent || (ratios.returnPerDollar === incumbent && earlier(key, best!.key))) {
+          best = { key, ratios };
+        }
+      } else if (cost != null && cost > 0) {
+        const incumbent = cheapest?.ratios.costPerPaidClientUsd ?? null;
+        if (incumbent == null || cost < incumbent || (cost === incumbent && earlier(key, cheapest!.key))) {
+          cheapest = { key, ratios };
+        }
+      }
+    }
+    return (best ?? cheapest)?.ratios ?? { costPerPaidClientUsd: null, returnPerDollar: null, costOfAcquisitionPct: null };
+  };
+  const projectionPair = (bases: ScopeBases): MaturityPair<ProjectionRatios> =>
+    maturityPair(
+      priceProjection(bases.flashSpendUsd, bases.persons),
+      bases.matureSpendUsd != null && bases.maturePersons != null ? priceProjection(bases.matureSpendUsd, bases.maturePersons) : null,
+      bases.isMature,
+    );
+
   const audienceMap = new Map(audiences.map((audience) => [audience.id, audience]));
   const ids = new Set([...costs.keys(), ...membership.keys(), ...engagement.keys()]);
   const rows: AudienceStatsRow[] = [];
@@ -1222,9 +1407,11 @@ export async function computeAudienceStats(
       // The sender's send-tag count PLUS the members whose positive reply only the customer's CRM shows.
       positiveReplies: eng.positiveReplies + (member.crmPositiveReplies ?? 0),
     };
+    const group = groupMaturity((a) => a === audienceId, personsByAudience.get(audienceId) ?? []);
     rows.push({
       audienceId,
       brandProfileId,
+      maturity: group?.maturity ?? null,
       audience: {
         id: audienceId,
         name: audience.name,
@@ -1292,8 +1479,12 @@ export async function computeAudienceStats(
       // This audience's own measured grain when it has one, else the brand-level projection — the
       // SAME inheritance the derived cost columns take, so the two families can never disagree about
       // which evidence priced the row.
-      projection: resolveProjection(audienceId),
+      projection: {
+        ...resolveProjection(audienceId),
+        ...(group ? { maturity: projectionPair(group.bases) } : {}),
+      },
     });
+    if (group) rows[rows.length - 1]!.metrics.maturity = audienceMetricPair(group.bases, conversionSets);
   }
 
   // A brand has no goal, so the brand-level read ranks on the only thing that matters at that grain:
@@ -1302,7 +1493,11 @@ export async function computeAudienceStats(
   rows.sort((a, b) => compareByMetric(sortMetric, a, b));
   const audiencesOut = parsedLimit !== undefined ? rows.slice(0, parsedLimit) : rows;
 
-  const brandCombined = resolveProjection(null);
+  const scopeGroup = maturityInputs ? groupMaturity(() => true, maturityInputs.persons)! : null;
+  const brandCombined = {
+    ...resolveProjection(null),
+    ...(scopeGroup ? { maturity: projectionPair(scopeGroup.bases) } : {}),
+  };
 
   return {
     ok: true,
@@ -1317,6 +1512,12 @@ export async function computeAudienceStats(
       sortMetric,
       audiences: audiencesOut,
       brandProjection: brandCombined,
+      ...(maturityInputs && scopeGroup
+        ? {
+            maturity: scopeGroup.maturity,
+            unattributedMaturity: groupMaturity((a) => a === null, personsByAudience.get(null) ?? [])!.maturity,
+          }
+        : { maturity: null, unattributedMaturity: null }),
     },
   };
 }

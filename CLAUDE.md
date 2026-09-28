@@ -57,6 +57,57 @@ inflated its price too. Owner decisions (do not re-litigate):
   `lib/fleet-positive-repliers.test.ts`, `lib/offer-outcomes.test.ts` (serve clock vs contact clock),
   `lib/channel-catalogue.test.ts`. (Set 2026-09-28, features-service#1196.)
 
+## EVERY FIGURE ABOUT ONE SCOPE IS SERVED FLASH + MATURE + `isMature`, ON ONE OBJECT, AT EVERY GRAIN — `lib/scope-maturity.ts` (features-service#1196)
+
+The rule (21 days, the counts, the serve clock) is `lib/maturity.ts`'s and is restated nowhere. This
+section is where it is SERVED. Before it, one campaign (`3922c8e1…`, reply leg) read four costs per
+positive reply at once: $85.96 on `/revenue`, $68.38 on `workflow-projection`, $49.04 on 9 of 12
+audiences, $107.77 on `/stats`.
+
+- **ONE OBJECT: `ScopeMaturity {isMature, legs}`.** One entry per leg the scope performs:
+  `legMaturity(legKey)` + `flash` / `mature` `OutcomeFigures` (`spentUsd` exact, `contacted`, `outcomes`,
+  `costPerOutcomeUsd`, `conversionRatePct`, observed, null at 0) + that leg's `isMature`. A campaign with
+  no leg, or a leg whose outcome is no counted signal (an AI meeting leg), is in no leg.
+- **THE VERDICT IS THE MULTI-LEG RULE** (`scopeMaturityVerdict`): a leg is PRESENT when its mature spend
+  or mature contacted is > 0; the scope is mature ⟺ every present leg is. No leg present while the scope
+  has spent or reached somebody = a young scope, `false`, never null. A leg whose cut could not be made
+  is `null` (unless another leg already says `false`). Nothing at all = `null`.
+- **THE MATURE CUT NEEDS EVERY ROW'S SERVE DATE** (`serveDatesStated`, lead-service `lastServedAt`):
+  otherwise every mature half and every verdict is null — never the flash figure under the mature name.
+  A cut that holds nothing reads zeros (`isMature: false`), which is a measurement. A spend-split read
+  that FAILS nulls `maturity` and every pair with a loud log — never a 502 on a read that worked before
+  (offer outcomes excepted: there the split IS the spend read, and stays fail-loud like the one it replaced).
+- **SPEND IS SUMMED EXACTLY, NEVER ROUNDED PER GROUP** (`fetchSpendSplit`): one runs read flash + one
+  `startedBefore` read per distinct cutoff, grouped `[dimension,]campaignId`, summed on the producer's
+  decimal text. That is what makes rows add up to their scope to the cent. It moved ONE legacy figure:
+  `/offers/:id/outcomes` spend and `costPerOutcomeUsd` are now exact (were rounded per leg group).
+- **A BLOCK'S RATIOS RIDE BESIDE IT AS A PAIR** — `maturity: {flash, mature, isMature}` of that block's
+  own ratios, observed (no floor), each dividing the exact spend: `costEconomics.maturity`
+  (ROI, %CAC, $CAC), `outcomes.maturity` (cpc, cppr), `spend.maturity` (every cost per outcome),
+  `conversionRateHistory.maturity`, audience `metrics.maturity` / `projection.maturity`,
+  `brandProjection.maturity`, offer outcome rows AND legs (`roiMultiple`, `costPerOutcomeUsd`). Every
+  pair's `isMature` is the scope's verdict. Registered once per kind in OpenAPI (`CostRatiosMaturity`…).
+- **WHERE:** `/revenue` at every grain (brand, campaign identity, offer, funnel, lens, cold start) and its
+  `?groupBy=campaignId|offerId|workflow` groups (workflow groups split the spend by `workflowSlug`);
+  `/brands/:id/revenue`, `/offers/:id/revenue` and their channel rows; `/brands/:id/offers` rows; `/stats`
+  (the un-grouped brand read, `maturity`); `/audience-stats` rows (`maturity`), envelope `maturity` +
+  `unattributedMaturity`; `/offers/:id/outcomes` rows and legs; `learningPhase` (below).
+- **AN AUDIENCE IS ATTRIBUTED BY THE SERVE**: spend by the run's audience tag (runs `audienceId`), people
+  by the audience lead-service froze on the serve (compact row `audienceId`). What no tag covers is
+  `unattributedMaturity`, so rows + unattributed = the scope, for every spend and outcome figure. The
+  legacy top-level audience columns (email-gateway send-tag engagement, cascade-floored) are unchanged
+  and are NOT this basis: the pairs are what the dashboard displays; retire the legacy columns once it
+  has moved.
+- **`learningPhase` RIDES THE SAME VERDICT**: `priced` ⟺ the scope's `isMature` (the Learning tag is
+  `isMature: false`), its counts and progress are MATURE outcomes against the leg's count, flash counts
+  beside (`flashOutcomesObserved`). `outcomesBasis` says which; a scope whose cut could not be made keeps
+  the per-campaign flash rule.
+- **TOTALS STAY FLASH, THE RATIOS ARE SERVED ON BOTH.** Every pre-existing field keeps its value (the
+  additive rule), except the exact offer spend above and the 14 → 21 day move `lib/maturity.ts` made.
+- Guards: `lib/scope-maturity.test.ts` (the verdict, exact sums, the audience partition, and ONE fixture
+  driving the `/revenue`-`/stats` builder, the audience rows and the offer row to the same flash, mature
+  and verdict), `routes/offer-outcomes.test.ts`, the lean key sets in the grouped suites. (Set 2026-09-28.)
+
 ## A LEG-KEYED `workflow-projection` COUNTS ONLY THE LEG'S CAMPAIGNS, AT EVERY GRAIN — a workflow's figure is its figure on ONE leg × ONE channel
 
 Owner rule (2026-09-27, every stat about a workflow, template or model): never a workflow's figure in the
@@ -664,8 +715,9 @@ funnels, so summing funnel rungs in a browser counts a lead twice; this read tak
 - **VALUE = what STANDING on the step is worth**: the resolved path of that step's signal on each declared
   funnel containing it (own terms merged over the effective economics), MAX across them — the engine's own
   best-path rule. `valueUsd` = PRICED count (default cause `outreach`) × that unit. Null when no declared
-  funnel prices the step, never 0. **ROI** = value ÷ spend on the MATURE COHORT (per-leg delay,
-  `fetchMatureSpendCents` + each lead's SERVE date, `lib/maturity.ts`), `maturing` when nothing spent is mature.
+  funnel prices the step, never 0. **ROI** = value ÷ spend on the MATURE COHORT (per-leg duration, the
+  offer's ONE exact spend split `offerGroupSpend` + each lead's SERVE date, `lib/maturity.ts`), `maturing`
+  when nothing spent is mature. Spend is summed EXACTLY per group (was rounded per group before 2026-09-28).
 - **ROWS ARE NOT ADDITIVE** across outcomes (a lead who replied then booked is in both).
 - **ONLY LEGS OUR SOFTWARE PERFORMS**: a campaign on a channel stating `performedBy: person` is hidden
   (`hiddenCampaignIds`) — the customer's team (`your-team-*`) AND ours by hand (`agency-*`, cold calling,
@@ -1312,7 +1364,8 @@ arrive", so an overrun rendered as a countdown that had finished.
   countdown) · `learning_limited` (the spend target is reached and the outcomes have NOT arrived —
   neither priced nor still spending) · `paused` (nothing is running) · `unmeasured` (we cannot say,
   and `unmeasuredReason` names which of seven ingredients is missing). None of the five is a zero.
-- **A SCOPE FINISHES WHEN ITS FIRST CAMPAIGN DOES**, and a scope with NO campaigns is `unmeasured` /
+- **A SCOPE FINISHES WHEN ITS FIRST CAMPAIGN DOES — only when its mature cut cannot be made** (superseded
+  2026-09-28: `priced` ⟺ the scope's `isMature`, see the `lib/scope-maturity.ts` section), and a scope with NO campaigns is `unmeasured` /
   `no_campaigns` rather than gathering — nothing is being gathered and nothing ever will be. The
   countdown is the LEADING LIVE campaign's (most outcomes; the id breaks a tie so the same evidence
   always names the same campaign), because **a paused campaign is never the subject of a countdown**:

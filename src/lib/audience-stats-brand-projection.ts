@@ -165,6 +165,53 @@ export interface BrandProjectedParentsUsd {
    * brand's funnels went into a figure and why the others did not, instead of showing a silent gap.
    */
   pricingReason: FunnelPricingReason | null;
+  /**
+   * The funnel terms these parents were priced on, kept so a caller can price OBSERVED unit costs through
+   * the byte-same funnel (`priceObservedUnits`) — the flash and mature halves of an audience's projection
+   * pair (features-service#1196). Null when there is nothing to price with (no economics).
+   */
+  observedTerms?: ObservedPricingTerms | null;
+}
+
+/** Everything `projectOutcomeCosts` + `paidClientCostForGoal` need to price one grain's unit costs. */
+export interface ObservedPricingTerms {
+  econ: ProjectionEconomics;
+  pricedGoal: Goal;
+  objective: ReturnType<typeof goalToProjectionInputs>["objective"];
+  singleStepGoal: ReturnType<typeof goalToProjectionInputs>["singleStepGoal"];
+  formSubmissionGoal: ReturnType<typeof goalToProjectionInputs>["formSubmissionGoal"];
+  meetingChannel: PricingChannel;
+}
+
+/**
+ * PURE. OBSERVED unit costs (a grain's own spend over its own visits / replies — no cascade floor) priced
+ * through the SAME funnel `projectBrandParents` prices its parents on: the cost to win a paying client and
+ * the three funnel columns. A null unit cost (no such outcome observed) funds nothing, so a grain that
+ * observed neither has no path and every figure is null — never a floor, never 0.
+ */
+export function priceObservedUnits(
+  terms: ObservedPricingTerms,
+  units: { clickUsd: number | null; replyUsd: number | null },
+): AudienceProjectedCostsUsd {
+  const clickUsd = units.clickUsd != null && units.clickUsd > 0 ? units.clickUsd : null;
+  const replyUsd = units.replyUsd != null && units.replyUsd > 0 ? units.replyUsd : null;
+  const p = projectOutcomeCosts(terms.econ, {
+    clickUsd: terms.meetingChannel === "reply" ? null : clickUsd,
+    replyUsd: terms.meetingChannel === "click" ? null : replyUsd,
+  });
+  return {
+    cpfsUsd: p.costPerFormSubmissionUsd,
+    cpsUsd: p.costPerSignupUsd,
+    cpsaleUsd: terms.pricedGoal === "sales" ? p.costPerSaleUsd : p.costPerPurchaseUsd,
+    costPerPaidClientUsd: paidClientCostForGoal(
+      terms.econ,
+      { clickUsd, replyUsd },
+      terms.objective,
+      terms.singleStepGoal,
+      terms.formSubmissionGoal,
+      terms.meetingChannel,
+    ),
+  };
 }
 
 /**
@@ -488,6 +535,7 @@ export function projectBrandParents(
       // Told apart because a combining caller reports them apart: "this brand has no economics" and "no
       // workflow carries a cost of this funnel's outcome" are different gaps with different fixes.
       pricingReason: econ ? "no_workflow_evidence" : "no_economics",
+      observedTerms: econ ? { econ, pricedGoal, objective, singleStepGoal, formSubmissionGoal, meetingChannel } : null,
     };
   }
 
@@ -590,5 +638,6 @@ export function projectBrandParents(
         : returnPerDollar(economics?.lifetimeRevenueUsd ?? null, brandLevel.costPerPaidClientUsd) == null
           ? "no_return_defined"
           : null,
+    observedTerms: { econ: econ!, pricedGoal, objective, singleStepGoal, formSubmissionGoal, meetingChannel },
   };
 }

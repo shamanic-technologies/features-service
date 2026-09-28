@@ -34,12 +34,16 @@
  *
  * ── A SCOPE FINISHES WHEN ITS FIRST CAMPAIGN DOES ────────────────────────────────────────────────
  *
- * A campaign has finished gathering once it has its LEG's own number of outcomes of the thing it is
- * buying (`legMaturity(legKey).outcomesRequired`, `lib/maturity.ts`: 1 positive reply on the
- * conversation leg, 10 website visits on the visit leg, 10 on every leg the owner has not measured). A funnel, an offer or a brand has finished once at least ONE of its campaigns
- * has — so the scope's verdict is `priced` the moment any campaign crosses, whatever its siblings are
- * doing, and its COUNTDOWN is its LEADING campaign's: the live campaign with the most outcomes, which
- * is the one that will cross first. A scope with no campaigns at all has nothing to say — that is
+ * THE VERDICT IS THE SCOPE'S `isMature` (`lib/scope-maturity.ts`, features-service#1196) — the SAME verdict
+ * every money figure on the body states, so the Learning tag and the pairs beside it can never disagree.
+ * `priced` ⟺ `isMature: true`: every leg present in the scope's mature figures holds its leg's number
+ * of MATURE outcomes (`legMaturity(legKey).outcomesRequired`, `lib/maturity.ts`: 1 positive reply on the
+ * conversation leg, 10 website visits on the visit leg, 10 on every leg the owner has not measured),
+ * counted over the scope's campaigns together. Every count below is then a MATURE count (a lead served
+ * by a run started before its leg's cutoff), with the flash count beside it (`flashOutcomesObserved`).
+ * Only when the scope's mature cut could not be made (`isMature: null`) does the per-campaign FLASH rule
+ * answer: a scope is `priced` the moment any campaign crosses its leg's bar. Its COUNTDOWN is its LEADING
+ * campaign's: the live campaign with the most outcomes, which is the one that will cross first. A scope with no campaigns at all has nothing to say — that is
  * `unmeasured`, never `learning`, because nothing is being gathered and nothing ever will be.
  *
  * A PAUSED campaign is never the subject of a countdown: its days-left would be priced against a daily
@@ -126,10 +130,13 @@ export interface LearningCampaign {
   /** The step the count below is denominated in — the leg's OWN `toStep`. */
   outcomeStep: ChannelStepDef | null;
   /**
-   * How many of that step this campaign accounts for. NULL is "we could not count this" (no leg, an
-   * unpriceable rate, or a degraded producer); `0` is a measurement.
+   * How many of that step this campaign accounts for — its MATURE outcomes whenever the scope's mature
+   * cut could be made (`LearningPhase.outcomesBasis`), else everything to date. NULL is "we could not
+   * count this" (no leg, an unpriceable rate, or a degraded producer); `0` is a measurement.
    */
   outcomesObserved: number | null;
+  /** The same count on everything to date (flash). Equals `outcomesObserved` on the flash basis. */
+  flashOutcomesObserved: number | null;
   /** TRUE ⟺ the count is a raw OBSERVATION (an entry leg) rather than walked from the driver. */
   outcomeObserved: boolean;
   /** TRUE ⟺ at least one member is `ongoing`. A stopped campaign gathers nothing. */
@@ -148,8 +155,17 @@ export interface LearningPhase {
   legKey: string | null;
   outcomeStep: ChannelStepDef | null;
 
+  /**
+   * The SCOPE's verdict this status rides (`lib/scope-maturity.ts`): `priced` ⟺ true. NULL = the mature
+   * cut could not be made, and the per-campaign flash rule answered instead.
+   */
+  isMature: boolean | null;
+  /** Which count `outcomesObserved` and every campaign's count are: `mature` ⟺ the cut could be made. */
+  outcomesBasis: "mature" | "flash";
   /** The leading campaign's own count, and the bar it is measured against. */
   outcomesObserved: number | null;
+  /** That campaign's count on everything to date (flash). */
+  flashOutcomesObserved: number | null;
   outcomesRequired: number;
   /** `100 × observed / required`, clamped to 100. Null when the count is. */
   progressPct: number | null;
@@ -196,6 +212,11 @@ export interface LearningCampaignInput {
    * could not be read at all, which is a different answer from a measured 0.
    */
   observed: { clicks: number; replies: number } | null;
+  /**
+   * The same two counts over the campaign's MATURE cohort (leads served by runs started before its leg's
+   * cutoff). Set on every campaign of a scope whose mature cut could be made, on none otherwise.
+   */
+  matureObserved?: { clicks: number; replies: number } | null;
 }
 
 /** One (campaign × workflow) cell of the LEADING campaign: its spend and its raw driver count. */
@@ -329,6 +350,12 @@ export interface LearningPhaseInput {
   leadingCommittedSpentUsd: number | null;
   /** What billing has the leading campaign's leg funded at, per day. NULL = no ceiling stated. */
   dailyCeilingUsd: number | null;
+  /**
+   * The scope's verdict (`lib/scope-maturity.ts`) — the byte-same `isMature` the money on this body states.
+   * `true` ⇒ priced; `false` ⇒ never priced, whatever a campaign's flash count says; null / absent ⇒ the
+   * mature cut could not be made and the per-campaign flash rule answers.
+   */
+  scopeIsMature?: boolean | null;
 }
 
 /**
@@ -361,12 +388,25 @@ export function resolveLearningLeader(
   return scored[0] ?? null;
 }
 
-/** A campaign's count of its OWN leg's step. Null is "we could not count this", never 0. */
+/**
+ * A campaign's count of its OWN leg's step — on the MATURE cohort when the scope's cut could be made
+ * (`matureObserved` set), on everything to date otherwise. Null is "we could not count this", never 0.
+ */
 function countOutcomes(input: LearningCampaignInput, leg: ResolvedLeg | null): number | null {
-  if (!leg || !input.observed) return null;
+  if (input.matureObserved != null) return countOn(input.matureObserved, leg);
+  return countOn(input.observed, leg);
+}
+
+/** A campaign's count on everything to date. */
+function countFlashOutcomes(input: LearningCampaignInput, leg: ResolvedLeg | null): number | null {
+  return countOn(input.observed, leg);
+}
+
+function countOn(observed: { clicks: number; replies: number } | null | undefined, leg: ResolvedLeg | null): number | null {
+  if (!leg || !observed) return null;
   const rate = leg.rateFromDriver;
   if (rate == null) return null;
-  return driverCount(input.observed, leg.driver) * rate;
+  return driverCount(observed, leg.driver) * rate;
 }
 
 const EMPTY_VERDICT = {
@@ -375,6 +415,7 @@ const EMPTY_VERDICT = {
   legKey: null,
   outcomeStep: null,
   outcomesObserved: null,
+  flashOutcomesObserved: null,
   progressPct: null,
   outcomeObserved: false,
   expectedCostPerOutcomeUsd: null,
@@ -394,6 +435,7 @@ function describe(input: LearningCampaignInput, leg: ResolvedLeg | null): Learni
     legKey: leg?.legKey ?? input.legKey ?? null,
     outcomeStep: leg?.outcomeStep ?? null,
     outcomesObserved: countOutcomes(input, leg),
+    flashOutcomesObserved: countFlashOutcomes(input, leg),
     outcomeObserved: leg?.outcomeObserved ?? false,
     live: input.live,
   };
@@ -403,8 +445,13 @@ function describe(input: LearningCampaignInput, leg: ResolvedLeg | null): Learni
 export function buildLearningPhase(input: LearningPhaseInput): LearningPhase {
   // No campaign named yet: the rule of "no leg" (`lib/maturity.ts`), replaced by the named campaign's
   // own leg below as soon as there is one.
+  const matureBasis =
+    input.campaigns !== null && input.campaigns.length > 0 && input.campaigns.every((c) => c.matureObserved != null);
+  const verdict = matureBasis ? (input.scopeIsMature ?? null) : null;
   const base = {
     ...EMPTY_VERDICT,
+    isMature: verdict,
+    outcomesBasis: (matureBasis ? "mature" : "flash") as "mature" | "flash",
     outcomesRequired: outcomesRequiredFor(null),
     outcomeLagDays: outcomeLagDaysFor(null),
     campaigns: [] as LearningCampaign[],
@@ -429,11 +476,25 @@ export function buildLearningPhase(input: LearningPhaseInput): LearningPhase {
     return { ...withCampaigns, status: "unmeasured", unmeasuredReason: "no_campaigns" };
   }
 
-  // A SCOPE IS PRICED THE MOMENT ANY OF ITS CAMPAIGNS IS — whatever the siblings are doing, and
-  // whether or not that campaign is still running: evidence already gathered does not un-gather.
-  const priced = campaigns.find(
-    (c) => c.outcomesObserved != null && c.outcomesObserved >= outcomesRequiredFor(c.legKey),
-  );
+  // THE SCOPE IS PRICED ⟺ ITS VERDICT SAYS MATURE (the multi-leg rule over its mature outcomes, summed
+  // across its campaigns — so a scope can be priced before any single campaign crosses alone), and never
+  // while it says not. Only a scope whose cut could not be made keeps the per-campaign flash rule: priced
+  // the moment ANY campaign crosses, running or not — evidence already gathered does not un-gather. The
+  // campaign named is the one with the most outcomes (the id breaks a tie, as for the leader).
+  const byMostOutcomes = [...campaigns].sort((a, b) => {
+    const ao = a.outcomesObserved ?? -1;
+    const bo = b.outcomesObserved ?? -1;
+    if (ao !== bo) return bo - ao;
+    return a.campaignId < b.campaignId ? -1 : 1;
+  });
+  const priced =
+    verdict === true
+      ? (byMostOutcomes[0] ?? null)
+      : verdict === false
+        ? null
+        : (campaigns.find(
+            (c) => c.outcomesObserved != null && c.outcomesObserved >= outcomesRequiredFor(c.legKey),
+          ) ?? null);
   if (priced) {
     return {
       ...withCampaigns,
@@ -446,6 +507,7 @@ export function buildLearningPhase(input: LearningPhaseInput): LearningPhase {
       legKey: priced.legKey,
       outcomeStep: priced.outcomeStep,
       outcomesObserved: priced.outcomesObserved,
+      flashOutcomesObserved: priced.flashOutcomesObserved,
       outcomeObserved: priced.outcomeObserved,
       progressPct: 100,
     };
@@ -468,6 +530,7 @@ export function buildLearningPhase(input: LearningPhaseInput): LearningPhase {
     legKey: leg?.legKey ?? lead.legKey ?? null,
     outcomeStep: leg?.outcomeStep ?? null,
     outcomesObserved: outcomes,
+    flashOutcomesObserved: countFlashOutcomes(lead, leg),
     outcomeObserved: leg?.outcomeObserved ?? false,
     progressPct: outcomes == null ? null : Math.min(100, (100 * outcomes) / required),
     committedSpentUsd: input.leadingCommittedSpentUsd,

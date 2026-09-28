@@ -331,11 +331,14 @@ describe("a campaign-scoped /audience-stats read answers for the campaign IDENTI
     expect([...named].sort()).toEqual([...IDENTITY_MEMBERS].sort());
   });
 
-  it("leaves the BRAND-WIDE read byte-identical, and asks campaign-service nothing for it", async () => {
+  it("leaves the BRAND-WIDE read byte-identical, and asks campaign-service only for the legs its maturity needs", async () => {
     const body = await read();
     expect(body.campaignIdentity).toBeUndefined();
     expect(totalReplies(body)).toBe(13); // every campaign of the brand, this identity and the other
-    expect(calls.some((u) => u.includes("campaign:3000/campaigns"))).toBe(false);
+    // No IDENTITY is resolved for a brand-wide read (that read names the channel). The one campaign-service
+    // read is the brand's campaign rows, whose LEGS the per-audience maturity is cut on (#1196).
+    const campaignReads = calls.filter((u) => u.includes("campaign:3000/campaigns"));
+    expect(campaignReads.every((u) => !u.includes("featureSlug="))).toBe(true);
   });
 
   it("leaves an OFFER-scoped read on the offer's OWN campaign set — never widened by the identity", async () => {
