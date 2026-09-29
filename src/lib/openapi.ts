@@ -1654,6 +1654,100 @@ registry.registerPath({
   },
 });
 
+const salesPathStepSchema = z.object({ key: z.string(), label: z.string(), description: z.string() });
+const salesPathCandidateSchema = z.object({
+  slug: z.string(),
+  name: z.string(),
+  trigger: z.enum(["daily_budget", "step_reached"]),
+  costPerOutcomeUsd: z.number().nullable(),
+  workflowDynastySlug: z.string().nullable(),
+  grain: z.string().nullable().describe("Grain the price rests on: crossOrg (fleet benchmark), brand, offer."),
+  unpricedReason: z.string().nullable().describe("Null when priced; else why this channel states no price for the leg (e.g. no_recommended_workflow, leg_not_declared)."),
+});
+const salesPathLegSchema = z.object({
+  legKey: z.string(),
+  fromStep: salesPathStepSchema.nullable().describe("Null on the ENTRY leg (from nothing)."),
+  toStep: salesPathStepSchema,
+  conversionRatePct: z.number().nullable().describe("The rate RETAINED for the leg (0..100). Null on the entry leg."),
+  rateSource: z.enum(["crm_measured", "measured_on_our_leads", "customer_stated", "fleet_median", "industry_default"]).nullable(),
+  rateInputs: z
+    .object({
+      measured: z.object({ basis: z.enum(["our_leads", "crm"]), fromReached: z.number().nullable(), toReached: z.number().nullable(), ratePct: z.number().nullable(), sufficient: z.boolean() }),
+      customerStatedPct: z.number().nullable(),
+      fleetMedian: z.object({ ratePct: z.number().nullable(), brandCount: z.number() }),
+      industryDefaultPct: z.number().nullable(),
+    })
+    .nullable()
+    .describe("Every source the rate was resolved from (measured > customer stated > fleet median > industry default)."),
+  workedBy: z.enum(["platform", "human"]).describe("platform: a channel of ours publishes the leg; human: none does (the customer's team) — rate, no cost."),
+  channel: z
+    .object({
+      slug: z.string().nullable(),
+      name: z.string().nullable(),
+      trigger: z.enum(["daily_budget", "step_reached"]).nullable(),
+      workflowDynastySlug: z.string().nullable(),
+      grain: z.string().nullable(),
+      choice: z.enum(["only_priced_channel", "cheapest_cost_per_outcome", "no_priced_channel"]),
+      candidates: z.array(salesPathCandidateSchema),
+    })
+    .nullable()
+    .describe("Present on a platform leg: the channel we would run it on (lowest cost per outcome) and why."),
+  outcomesNeededPerPayingClient: z.number().nullable(),
+  costPerOutcomeUsd: z.number().nullable(),
+  costPerPayingClientUsd: z.number().nullable().describe("costPerOutcomeUsd × outcomesNeededPerPayingClient. Null on a human leg or when unpriced."),
+});
+const salesPathSchema = z.object({
+  rank: z.number(),
+  pathKey: z.string(),
+  legKeys: z.array(z.string()),
+  steps: z.array(salesPathStepSchema),
+  entryLegKey: z.string(),
+  entryChannelSlug: z.string().nullable().describe("The channel chosen for the entry leg — what a budget behind this path buys."),
+  legs: z.array(salesPathLegSchema),
+  entryToPayingClientPct: z.number().nullable(),
+  lifetimeRevenueUsd: z.number().nullable(),
+  costPerPayingClientUsd: z.number().nullable(),
+  roi: z.number().nullable().describe("lifetimeRevenueUsd ÷ costPerPayingClientUsd (a return multiple)."),
+  roiUnavailableReason: z.enum(["leg_cost_unavailable", "zero_conversion_rate", "no_lifetime_revenue", "no_platform_cost"]).nullable(),
+});
+const offerSalesPathsResponseRef = registry.register(
+  "OfferSalesPathsResponse",
+  z.object({
+    offerId: z.string(),
+    brandId: z.string(),
+    status: z.enum(["ok", "not_stated", "no_legs_selected", "no_complete_path"]),
+    statedAt: z.string().nullable(),
+    selectedLegKeys: z.array(z.string()),
+    unknownLegKeys: z.array(z.string()),
+    lifetimeRevenueUsd: z.number().nullable(),
+    pricing: z.literal("net"),
+    paths: z.array(salesPathSchema),
+  }),
+);
+
+registry.registerPath({
+  method: "get",
+  path: "/offers/{offerId}/sales-paths",
+  summary: "Every sales path an offer can sell through, ranked by ROI, with the per-leg breakdown",
+  description:
+    "A SALES PATH is a chain of the legs the customer ticked for the offer (brand-service sales-path) from an ENTRY leg (from nothing) to paid_client, visiting no step twice. " +
+    "Formula: needed(paid_client)=1; needed(from step of leg i)=needed(to step)/(rate_i/100); legCost_i = costPerOutcome_i × needed(to step of leg i) for a leg a channel of ours works (0 for a human leg); costPerPayingClient = Σ legCost_i; roi = offer lifetime revenue ÷ costPerPayingClient. " +
+    "rate_i is the brand's effective leg rate (CRM-measured / measured on our leads > customer stated > fleet median > industry default). costPerOutcome_i is the NET cost per outcome of the recommended workflow of each platform channel's leg-keyed workflow-projection ladder (?leg=&offerId=&pricing=net); the cheapest channel is chosen. " +
+    "Ranked by roi descending; a path whose roi is null (reason stated) sorts last. status not_stated / no_legs_selected / no_complete_path serve paths: [] — none is invented. Additive read.",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ offerId: z.string() }),
+    query: z.object({ brandId: z.string().describe("Brand UUID (required).") }),
+  },
+  responses: {
+    200: { description: "The offer's sales paths", content: { "application/json": { schema: offerSalesPathsResponseRef } } },
+    400: { description: "Missing brandId", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Offer not found or not an offer of this brand (reason: offer_not_found)", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 const offerAudienceStatsResponseSchema = audienceStatsResponseSchema.extend({
   offerId: z.string(),
   channels: z.array(offerChannelSchema).describe("The channels combined into every row below, ascending by slug."),
