@@ -5,6 +5,7 @@ import { describe, it, expect, vi } from "vitest";
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
 import { buildRevenueHistory, bucketizeRevenue, type RevenueHistoryDeps } from "./revenue-history-compute.js";
+import type { FleetRecurringRevenue } from "./recurring-revenue-client.js";
 import { enumerateBuckets } from "./active-users-compute.js";
 
 const NOW = new Date("2026-07-15T12:00:00Z"); // Wednesday
@@ -49,6 +50,24 @@ describe("bucketizeRevenue — summed spend per bucket + growth", () => {
   });
 });
 
+/** billing's fleet read, with one recurring org worth `mrrUsd` a month. */
+function fleetWorth(mrrUsd: number, orgId = "fleet-org"): FleetRecurringRevenue {
+  return {
+    asOf: NOW.toISOString(),
+    orgs: [
+      {
+        orgId,
+        paymentMode: "postpaid",
+        revenueClass: "recurring",
+        classReason: "postpaid_chargeable_card",
+        mrrCents: String(Math.round(mrrUsd * 100)),
+        unknownReason: null,
+      },
+    ],
+    unreadableOrgIds: [],
+  };
+}
+
 describe("buildRevenueHistory — integration via injected deps", () => {
   function deps(fixture: {
     orgs: string[];
@@ -56,7 +75,7 @@ describe("buildRevenueHistory — integration via injected deps", () => {
     currentMrrUsd: number;
     activeCount?: number;
     snapshots?: Array<{ date: string; mrrUsd: number }>;
-    capture?: { startedAfter?: string; recorded?: { dailyBudgetUsd: number; activeCount: number } };
+    capture?: { startedAfter?: string; recorded?: Array<{ orgId: string; revenueClass: string; mrrCents: string | null }> };
   }): RevenueHistoryDeps {
     return {
       featureMemberships: async () => fixture.orgs.map((orgId) => ({ orgId })),
@@ -64,16 +83,12 @@ describe("buildRevenueHistory — integration via injected deps", () => {
         if (fixture.capture) fixture.capture.startedAfter = startedAfterIso;
         return new Map(Object.entries(fixture.dailyCents[orgId] ?? {}));
       },
-      currentFleetStats: async () => ({
-        mrrUsd: fixture.currentMrrUsd,
-        dailyBudgetUsd: fixture.currentMrrUsd / 30,
-        activeCount: fixture.activeCount ?? 0,
-        pairs: [],
-      }),
-      recordCommittedSnapshot: async (dailyBudgetUsd, activeCount) => {
-        if (fixture.capture) fixture.capture.recorded = { dailyBudgetUsd, activeCount };
-      },
+      currentFleetStats: async () => ({ recurring: fleetWorth(fixture.currentMrrUsd), pairs: [] }),
       readCommittedSnapshots: async () => fixture.snapshots ?? [],
+      recordRecurringSnapshot: async (rows) => {
+        if (fixture.capture) fixture.capture.recorded = rows;
+      },
+      readRecurringSnapshots: async () => new Map(),
       readStatedAmounts: async () => [],
       budgetByDay: async () => ({ recordBeginsAt: null, byDay: new Map() }),
       currentDailyBudget: async () => null,
@@ -139,7 +154,7 @@ describe("buildRevenueHistory — integration via injected deps", () => {
   });
 
   it("committed MRR series: past periods from recorded snapshots, current period = live MRR, growth + ARR coherent", async () => {
-    const capture: { recorded?: { dailyBudgetUsd: number; activeCount: number } } = {};
+    const capture: { recorded?: Array<{ orgId: string; revenueClass: string; mrrCents: string | null }> } = {};
     const history = await buildRevenueHistory(
       COLD,
       NOW,
@@ -159,15 +174,17 @@ describe("buildRevenueHistory — integration via injected deps", () => {
       }),
     );
 
-    // Today's snapshot recorded going forward (budget = mrr/30, active count passed through).
-    expect(capture.recorded).toEqual({ dailyBudgetUsd: 100, activeCount: 4 });
+    // Today's billing MRR recorded going forward, per org, exactly as billing stated it.
+    expect(capture.recorded).toEqual([{ orgId: "fleet-org", revenueClass: "recurring", mrrCents: "300000" }]);
 
-    // Monthly: May $1000 → June $2000 (last snapshot) → July $3000 (live). Growth point-over-point.
-    expect(history.committedMrr.monthly.map((m) => [m.period, m.mrrUsd, m.arrUsd, m.growthPct])).toEqual([
-      ["2026-05", 1000, 12000, null],
-      ["2026-06", 2000, 24000, 100],
-      ["2026-07", 3000, 36000, 50],
+    // Monthly: May $1000 → June $2000 (legacy snapshots) → July $3000 (billing, live). Growth is read
+    // within a basis only: the legacy → billing step is a definition change, not growth.
+    expect(history.committedMrr.monthly.map((m) => [m.period, m.mrrUsd, m.arrUsd, m.basis, m.growthPct])).toEqual([
+      ["2026-05", 1000, 12000, "running_budget_x30", null],
+      ["2026-06", 2000, 24000, "running_budget_x30", 100],
+      ["2026-07", 3000, 36000, "billing_recurring", null],
     ]);
+    expect(history.committedMrr.basisChangedOn).toBe("2026-07-15");
   });
 
   it("NRR rides the SAME realized-revenue basis as the series, on both grains", async () => {
@@ -202,7 +219,7 @@ describe("buildRevenueHistory — integration via injected deps", () => {
   it("empty cold-email universe → zero totals + empty since-inception line, never throws", async () => {
     const history = await buildRevenueHistory("", NOW, { days: 2, weeks: 1, months: 1 }, deps({ orgs: [], dailyCents: {}, currentMrrUsd: 0 }));
     expect(history.totalRevenueUsd).toBe(0);
-    expect(history.currentMrrUsd).toBe(0);
+    expect(history.currentMrrUsd).toBeNull(); // no universe → billing was never asked
     expect(history.daily.every((d) => d.revenueUsd === 0)).toBe(true);
     expect(history.sinceInceptionDaily).toEqual([]);
     expect(history.monthly.length).toBe(1);
@@ -254,17 +271,24 @@ describe("buildRevenueHistory — the agency / self-serve split", () => {
     return {
       featureMemberships: async () => [{ orgId: AGENCY_ORG }, { orgId: SAAS_ORG }],
       orgDailySpendCents: async () => new Map(),
+      // billing's recurring verdict: both orgs recurring, $143/day and $102/day proactive running.
       currentFleetStats: async () => ({
-        mrrUsd: 7350,
-        dailyBudgetUsd: 245,
-        activeCount: 2,
+        recurring: {
+          asOf: SPLIT_NOW.toISOString(),
+          orgs: [
+            { ...fleetWorth(143 * 30, AGENCY_ORG).orgs[0] },
+            { ...fleetWorth(102 * 30, SAAS_ORG).orgs[0] },
+          ],
+          unreadableOrgIds: [],
+        },
         pairs: [
           { orgId: AGENCY_ORG, brandId: BRAND_BIG, brandName: "Big Agency Brand", brandDomain: "big.example", runningDailyBudgetUsd: 143, active: true },
           { orgId: SAAS_ORG, brandId: BRAND_SAAS, brandName: "Self Serve Co", brandDomain: "saas.example", runningDailyBudgetUsd: 102, active: true },
         ],
       }),
-      recordCommittedSnapshot: async () => {},
       readCommittedSnapshots: async () => [{ date: "2026-08-31", mrrUsd: 6000 }],
+      recordRecurringSnapshot: async () => {},
+      readRecurringSnapshots: async () => new Map(),
       readStatedAmounts: async () => [],
       budgetByDay: async (brandId, _orgId, from, to) => {
         calls.budget.push({ brandId, from, to });
@@ -331,77 +355,126 @@ describe("buildRevenueHistory — the agency / self-serve split", () => {
     expect(calls.firstBilled).toBe(0); // the stated row carries a start date
   });
 
-  it("reads TODAY's amount from billing's LIVE budget and the PAST from its replay, one call per pair", async () => {
-    // The production shape, measured 2026-09-14: the self-serve brand's live budget is $15/day while
-    // the newest row in billing's change log still says $1 — the figure was 15x too small — and the
-    // agency brand is funded live with NOTHING in the log at all, so the replay dropped it entirely.
-    const calls = emptyCalls();
+  it("TODAY's self-serve MRR is billing's recurring MRR over the non-agency orgs, whatever the budgets say", async () => {
+    // The budgets features-service used to multiply disagree with billing on purpose: billing's
+    // verdict wins, and nothing here re-derives it (no payment mode, no reactive/proactive test).
     const out = await buildRevenueHistory(
       COLD,
       SPLIT_NOW,
       WINDOWS,
-      splitDeps(
-        {
-          readStatedAmounts: async () => [STATED_ROW], // so BRAND_BIG is the agency side
-          budgetByDay: async (brandId, _orgId, from, to) => {
-            calls.budget.push({ brandId, from, to });
-            const byDay = new Map<string, number>();
-            if (brandId === BRAND_SAAS) {
-              byDay.set("2026-08-31", 102);
-              byDay.set(TODAY, 1); // the stale change row
-            }
-            // BRAND_BIG has no change rows whatsoever.
-            return { recordBeginsAt: "2026-07-15T00:00:00.000Z", byDay };
+      splitDeps({
+        readStatedAmounts: async () => [STATED_ROW], // AGENCY_ORG is the agency side
+        currentDailyBudget: async () => 999, // a live budget billing does NOT count as recurring
+        currentFleetStats: async () => ({
+          recurring: {
+            asOf: SPLIT_NOW.toISOString(),
+            orgs: [
+              { ...fleetWorth(1234.56, AGENCY_ORG).orgs[0] },
+              { ...fleetWorth(450.01, SAAS_ORG).orgs[0] },
+              // a one-off prepaid org: billing states 0 MRR — it spends its balance and stops
+              { ...fleetWorth(0, "oneoff-org").orgs[0], paymentMode: "prepaid", revenueClass: "one_off", classReason: "prepaid_no_auto_topup" },
+              // an org billing could not settle: listed, never a 0
+              { ...fleetWorth(0, "unknown-org").orgs[0], mrrCents: null, unknownReason: "campaign_recurrence_unknown" },
+            ],
+            unreadableOrgIds: ["unreadable-org"],
           },
-          currentDailyBudget: async (brandId, orgId) => {
-            calls.liveBudget.push({ brandId, orgId });
-            return brandId === BRAND_SAAS ? 15 : 8;
-          },
-        },
-        calls,
-      ),
+          pairs: [
+            { orgId: AGENCY_ORG, brandId: BRAND_BIG, brandName: null, brandDomain: null, runningDailyBudgetUsd: 143, active: true },
+            { orgId: SAAS_ORG, brandId: BRAND_SAAS, brandName: null, brandDomain: null, runningDailyBudgetUsd: 102, active: true },
+          ],
+        }),
+      }),
     );
-
     const split = out.mrrSplit!;
-    // $15/day, not the log's $1 — and not the $102 the earlier fixture's replay carried either.
-    expect(split.currentSelfServeMrrUsd).toBe(450);
-    expect(split.currentSelfServeMrrUsd).not.toBe(30);
-    // The agency brand billing never logged is funded too, so its budget half is no longer zero.
-    expect(split.currentAgencyBudgetMrrUsd).toBe(240);
+    expect(split.currentSelfServeMrrUsd).toBe(450.01); // to the cent, the non-agency orgs only
+    expect(split.currentSelfServeMrrUsd).not.toBe(999 * 30);
+    expect(split.currentAgencyMrrUsd).toBe(5000); // the stated amount, unchanged
+    expect(split.currentAgencyBudgetMrrUsd).toBe(1234.56);
+    expect(split.currentMrrBasis).toBe("billing_recurring");
+    expect(split.currentSelfServeUnknownOrgIds).toEqual(["unknown-org", "unreadable-org"]);
+    expect(split.currentSelfServeUnavailableReason).toBeNull();
+    expect(split.selfServeBreakdown).toBeNull();
+    // The terms of the sum, as billing states them; the one-off org is listed at 0, never counted.
+    expect(split.selfServeOrgs!.map((r) => [r.orgId, r.revenueClass, r.mrrUsd])).toEqual([
+      [SAAS_ORG, "recurring", 450.01],
+      ["oneoff-org", "one_off", 0],
+      ["unknown-org", "recurring", null],
+      ["unreadable-org", "unreadable", null],
+    ]);
+    const today = split.monthly.at(-1)!;
+    expect([today.referenceDate, today.selfServeMrrUsd, today.mrrBasis]).toEqual([TODAY, 450.01, "billing_recurring"]);
+    // The fleet MRR is the whole of billing's figure, agency included; ARR = MRR × 12.
+    expect(out.currentMrrUsd).toBe(1684.57);
+    expect(out.committedMrr.currentArrUsd).toBe(Math.round(1684.57 * 12 * 100) / 100);
 
-    const row = split.selfServeBreakdown.rows.find((r) => r.brandId === BRAND_SAAS)!;
-    expect([row.configuredDailyBudgetUsd, row.amountSource, row.countedMrrUsd]).toEqual([15, "live", 450]);
-    expect(row.excludedBy).toBeNull(); // never "no_recorded_amount" for a brand that is plainly funded
-    expect(split.selfServeBreakdown.countedMrrUsd).toBe(split.currentSelfServeMrrUsd);
-
-    // The PAST bucket still reads the replay: August is $102/day for the self-serve brand, and the
-    // agency brand the log never recorded contributes nothing there.
+    // The PAST bucket (before any billing-basis record) keeps its legacy replay, and says so.
     const aug = split.monthly.find((b) => b.period === "2026-08")!;
+    expect(aug.mrrBasis).toBe("features_four_conditions");
     expect(aug.selfServeMrrUsd).toBe(102 * 30);
-    expect(aug.agencyBudgetMrrUsd).toBe(0);
-
-    // ONE live read per pair, beside the one replay per pair — no second round trip per day.
-    expect(calls.liveBudget.map((c) => c.brandId).sort()).toEqual([BRAND_BIG, BRAND_SAAS]);
-    expect(calls.liveBudget.find((c) => c.brandId === BRAND_SAAS)!.orgId).toBe(SAAS_ORG);
-    expect(calls.budget.map((c) => c.brandId).sort()).toEqual([BRAND_BIG, BRAND_SAAS]);
   });
 
-  it("leaves a pair billing holds no live amount for uncounted, and says the gap is there", async () => {
+  it("billing unavailable → the self-serve half and the MRR are NULL with a reason, never the old computation", async () => {
     const out = await buildRevenueHistory(
       COLD,
       SPLIT_NOW,
       WINDOWS,
-      splitDeps({ readStatedAmounts: async () => [STATED_ROW], currentDailyBudget: async () => null }),
+      splitDeps({
+        readStatedAmounts: async () => [STATED_ROW],
+        currentFleetStats: async () => ({
+          recurring: null,
+          pairs: [
+            { orgId: AGENCY_ORG, brandId: BRAND_BIG, brandName: null, brandDomain: null, runningDailyBudgetUsd: 143, active: true },
+            { orgId: SAAS_ORG, brandId: BRAND_SAAS, brandName: null, brandDomain: null, runningDailyBudgetUsd: 102, active: true },
+          ],
+        }),
+      }),
     );
     const split = out.mrrSplit!;
-    // Both pairs are running and neither has an amount billing will state — nothing is invented.
-    expect(split.currentSelfServeMrrUsd).toBe(0);
-    const row = split.selfServeBreakdown.rows.find((r) => r.brandId === BRAND_SAAS)!;
-    expect(row.configuredDailyBudgetUsd).toBeNull();
-    expect(row.amountSource).toBeNull();
-    expect(row.excludedBy).toBe("no_recorded_amount");
-    const sep = split.monthly.find((b) => b.period === "2026-09")!;
-    expect(sep.selfServeUnrecordedBudgetPairCount).toBe(1);
+    expect(split.currentSelfServeMrrUsd).toBeNull();
+    expect(split.currentTotalMrrUsd).toBeNull();
+    expect(split.currentSelfServeUnavailableReason).toBe("billing_revenue_unavailable");
+    expect(split.currentAgencyBudgetMrrUsd).toBeNull();
+    expect(split.currentAgencyMrrUsd).toBe(5000); // the stated half needs no billing read
+    expect(split.selfServeOrgs).toBeNull();
+    expect(out.currentMrrUsd).toBeNull();
+    expect(out.committedMrr.currentMrrUsd).toBeNull();
+  });
+
+  it("a past day recorded on billing's basis is summed from the recorded per-org rows, not replayed", async () => {
+    const out = await buildRevenueHistory(
+      COLD,
+      SPLIT_NOW,
+      WINDOWS,
+      splitDeps({
+        readStatedAmounts: async () => [STATED_ROW],
+        readCommittedSnapshots: async () => [{ date: "2026-08-31", mrrUsd: 6000 }],
+        readRecurringSnapshots: async () =>
+          new Map([
+            [
+              "2026-09-05",
+              [
+                { orgId: AGENCY_ORG, revenueClass: "recurring", mrrCents: "30000" },
+                { orgId: SAAS_ORG, revenueClass: "recurring", mrrCents: "12345" },
+                { orgId: "other", revenueClass: "recurring", mrrCents: null },
+              ],
+            ],
+          ]),
+      }),
+    );
+    const split = out.mrrSplit!;
+    const sep = split.weekly.find((b) => b.referenceDate === "2026-09-05")!;
+    expect([sep.referenceDate, sep.mrrBasis, sep.selfServeMrrUsd, sep.agencyBudgetMrrUsd]).toEqual([
+      "2026-09-05",
+      "billing_recurring",
+      123.45,
+      300,
+    ]);
+    expect(sep.selfServeUnknownOrgIds).toEqual(["other"]);
+    expect(sep.committedMrrUsd).toBe(423.45);
+    expect(split.basisChangedOn).toBe("2026-09-05");
+    expect(out.committedMrr.basisChangedOn).toBe("2026-09-05");
+    // August predates the switch: legacy point, legacy basis.
+    expect(out.committedMrr.monthly.find((b) => b.period === "2026-08")!.basis).toBe("running_budget_x30");
   });
 
   it("asks campaign-service about the REFERENCE DATES only, never every day of the window", async () => {
@@ -565,7 +638,7 @@ describe("buildRevenueHistory — the agency / self-serve split", () => {
     );
     const aug = out.mrrSplit!.monthly.find((b) => b.period === "2026-08")!;
     expect(aug.committedMrrUsd).toBe(100);
-    expect(aug.agencyBudgetMrrUsd).toBeGreaterThan(aug.committedMrrUsd);
+    expect(aug.agencyBudgetMrrUsd).toBeGreaterThan(aug.committedMrrUsd!);
     expect(aug.selfServeMrrUsd).toBe(102 * 30);
     expect(aug.selfServeMrrUsd!).toBeGreaterThan(0);
     expect(aug.selfServeUnmeasurableReason).toBeNull();

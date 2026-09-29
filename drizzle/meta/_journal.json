@@ -127,6 +127,13 @@
       "when": 1787788800000,
       "tag": "0017_workflow_leg_assignments",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1790699118791,
+      "tag": "0018_recurring_mrr_org_snapshots",
+      "breakpoints": true
     }
   ]
 }

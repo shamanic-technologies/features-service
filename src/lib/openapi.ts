@@ -2462,13 +2462,19 @@ const accountRowSchema = z.object({
   status: z.enum(["active", "payment_declined", "no_payment_method", "paused", "inactive"]).describe("Precedence payment_declined / no_payment_method > active > paused > inactive: 'no_payment_method' iff billing cannot charge the org because it has no chargeable card (payment-outlook charge_blocked / no_chargeable_card; campaign-service stops it with stopReason no_payment_method); 'payment_declined' iff billing cannot charge it for any other reason (card declined, unusable, retries exhausted, or unsupported card country; stopReason payment_declined), whatever budget is configured or still reported running; billing's reason rides paymentDeclinedReason. Else 'active' iff runningDailyBudgetUsd>0 && (autoTopupEnabled || orgActualBalanceUsd>runningDailyBudgetUsd); else 'paused' iff configuredDailyBudgetUsd>0 (money posted, nothing running against it); else 'inactive'. There is no brand-level pause flag in this rule: that control was removed from the product and the flag lied in both directions."),
   paymentDeclinedReason: z.string().nullable().describe("billing's own reason it cannot charge this org (payment-outlook blockedReason: card_declined, card_unusable, retries_exhausted, no_chargeable_card, card_country_unsupported) when status is 'payment_declined'; null otherwise, and null if billing blocked without naming a reason."),
   revenueSide: z.enum(["agency", "self_serve"]).nullable().describe("The ORG's side of the revenue split, derived from the stated-monthly-amounts store exactly as the agency/self-serve MRR split derives it (no org id lives in code). 'agency' = the org holds at least one stated monthly amount: it pays cash up front at its own discretion, so its budget burn is an allocation of money already received, NOT revenue still to come. 'self_serve' = it holds none: it pays through the product, so its budget burn IS its recurring revenue. Same value on every brand row of one org. null = the stated-amounts store could not be read on this build (unknown, never guessed). This service has no notion of the platform's own internal org; a consumer that must exclude it does so itself. Informational: no status, total, MRR or ARR on this payload reads it."),
+  revenueClass: z.string().nullable().describe("billing-service's revenue class for the ORG (recurring | one_off | none), read from GET /internal/revenue/fleet. null = billing's read was unavailable, or billing could not read this org."),
+  revenueClassReason: z.string().nullable().describe("billing's reason for revenueClass (postpaid_chargeable_card, prepaid_auto_topup, prepaid_no_auto_topup, prepaid_no_chargeable_card, postpaid_no_chargeable_card, prepaid_balance_spent), or null."),
+  orgRecurringMrrUsd: z.number().nullable().describe("The ORG's recurring MRR as billing states it, USD. Org-level: every brand row of one org carries the same value — never sum it across rows (stats.mrrUsd is the fleet sum). 0 for a one-off or non-paying org; null = unknown."),
 });
 
 const accountsStatsSchema = z.object({
   totalRunningDailyBudgetUsd: z.number().describe("Σ RUNNING daily budget over ACTIVE rows only (USD; undiscounted — a budget is a config ceiling, not a charge; paused/inactive excluded). The staff metrics-page figure: what the fleet can actually spend today."),
   totalConfiguredDailyBudgetUsd: z.number().describe("Σ CONFIGURED daily budget over the SAME ACTIVE rows (USD). What those customers posted, whatever is running against it — stated beside the running total so the two can never be mistaken for one another."),
-  mrrUsd: z.number().describe("MRR = totalRunningDailyBudgetUsd × 30 (a budget projection, undiscounted)."),
-  arrUsd: z.number().describe("ARR = totalRunningDailyBudgetUsd × 365 (a budget projection, undiscounted)."),
+  mrrUsd: z.number().nullable().describe("MRR = billing-service's RECURRING revenue (GET /internal/revenue/fleet): an org is recurring when postpaid with a chargeable card, or prepaid with auto top-up and a chargeable card; its DRR is the daily budgets of its PROACTIVE campaigns running with audience left (reactive legs never count); MRR = DRR × 30, ARR = MRR × 12. A one-off prepaid org is not MRR. Read, never re-derived here. Σ of every org's KNOWN MRR (the whole fleet, the same figure GET /internal/stats/revenue states as currentMrrUsd); unknown orgs are listed in mrrUnknownOrgIds, never counted as 0. SUPERSEDES the running daily budget × 30 (until 2026-09-29). null = billing's read was unavailable (mrrUnavailableReason) — never the old computation."),
+  arrUsd: z.number().nullable().describe("ARR = mrrUsd × 12 (was running budget × 365 until 2026-09-29). null whenever mrrUsd is."),
+  mrrBasis: z.enum(["billing_recurring"]).describe("The basis of mrrUsd / arrUsd: billing's recurring revenue."),
+  mrrUnavailableReason: z.enum(["billing_revenue_unavailable", "not_requested"]).nullable().describe("Why mrrUsd is null, or null when it is stated."),
+  mrrUnknownOrgIds: z.array(z.string()).describe("Orgs whose MRR billing could not state (unsettled figure, or unreadable org) — listed beside the sum, never counted as 0. Sorted."),
   activeCount: z.number().int(),
   paymentDeclinedCount: z.number().int().describe("Rows billing cannot charge (status payment_declined). Excluded from every running/MRR/ARR total, like paused and inactive."),
   noPaymentMethodCount: z.number().int().describe("Rows with no chargeable card (status no_payment_method). Excluded from every running/MRR/ARR total, like paused and inactive."),
@@ -2491,7 +2497,7 @@ registry.registerPath({
   summary: "Fleet-wide cold-email customer accounts audit (internal, api-key; staff-gated at api-service)",
   description:
     "Cross-org, fleet-wide list of every cold-email customer account (org × brand) with BOTH of its daily budgets, the org's spendable credit balance, " +
-    "and a 3-way status, plus fleet financial stats (total RUNNING daily budget → MRR = ×30 → ARR = ×365). " +
+    "and a 3-way status, plus fleet financial stats (total RUNNING daily budget; MRR = billing-service's RECURRING revenue for the fleet, ARR = MRR × 12 — supersedes running budget × 30 / × 365 since 2026-09-29). " +
     "Two budgets, answering different questions: CONFIGURED is every ceiling the customer set in billing; RUNNING is the part of it standing behind a " +
     "campaign that is ongoing right now (campaign-service joins its own campaign status to billing's per-funnel ceilings — billing's brand total is " +
     "status-blind and counts money on funnels whose campaign is stopped or was never created). Everything that claims to be money in play reads RUNNING. " +
@@ -2721,13 +2727,16 @@ const revenueBucketSchema = z.object({
 const committedMrrBucketSchema = z.object({
   period: z.string().describe("Bucket label — `YYYY-MM` (monthly) or `YYYY-Www` ISO week (weekly)."),
   periodStart: z.string().describe("UTC start date of the bucket (`YYYY-MM-DD`): the month's 1st or the ISO week's Monday. For charting."),
-  mrrUsd: z.number().describe("Committed MRR as of this period (the last recorded snapshot in the period; the LIVE value for the current period), in USD (2-decimal). Budget projection (Σ active daily budget × 30) — UNDISCOUNTED (a budget is a config ceiling, not a charge)."),
-  arrUsd: z.number().describe("Committed ARR = mrrUsd × 12, in USD (2-decimal); undiscounted budget projection."),
+  mrrUsd: z.number().nullable().describe("Fleet MRR as of this period (the last recorded snapshot in the period; the LIVE value for the current period), USD (2-decimal). On the basis `basis` names: billing's recurring MRR from basisChangedOn on, the running daily budget × 30 before it. null = billing's read was unavailable for that point."),
+  arrUsd: z.number().nullable().describe("ARR = mrrUsd × 12, USD (2-decimal). null whenever mrrUsd is."),
+  basis: z.enum(["running_budget_x30", "billing_recurring"]).describe("Which definition this point is on. running_budget_x30 = the legacy recorded snapshot (Σ active running daily budget × 30), kept for history and no longer written; billing_recurring = billing-service's RECURRING revenue (GET /internal/revenue/fleet): an org is recurring when postpaid with a chargeable card, or prepaid with auto top-up and a chargeable card; its DRR is the daily budgets of its PROACTIVE campaigns running with audience left (reactive legs never count); MRR = DRR × 30, ARR = MRR × 12. A one-off prepaid org is not MRR. Read, never re-derived here. A chart must label the switch and never read growth across it."),
+  unknownOrgCount: z.number().int().describe("Orgs billing could not state on this point's day — left out of the sum, never counted as 0. 0 on the legacy basis."),
   growthPct: z.number().nullable().describe("Point-over-point growth vs the previous EMITTED bucket, in percent (1-decimal). null on the first bucket or when the previous point is 0."),
 });
 
 const committedMrrHistorySchema = z.object({
-  currentMrrUsd: z.number().describe("LIVE committed MRR — fleet active daily budget × 30 (UNDISCOUNTED budget projection). The current-period point of monthly/weekly equals this (reconciles with GET /internal/stats/accounts mrrUsd)."),
+  currentMrrUsd: z.number().nullable().describe("LIVE fleet MRR — billing-service's RECURRING revenue (GET /internal/revenue/fleet): an org is recurring when postpaid with a chargeable card, or prepaid with auto top-up and a chargeable card; its DRR is the daily budgets of its PROACTIVE campaigns running with audience left (reactive legs never count); MRR = DRR × 30, ARR = MRR × 12. A one-off prepaid org is not MRR. Read, never re-derived here. The current-period point of monthly/weekly equals this, and it equals GET /internal/stats/accounts stats.mrrUsd. null = billing unavailable."),
+  basisChangedOn: z.string().nullable().describe("First UTC day (`YYYY-MM-DD`) recorded on billing's basis. Every point before it is running_budget_x30. null = nothing recorded on the new basis yet."),
   currentArrUsd: z.number().describe("LIVE committed ARR = currentMrrUsd × 12, in USD; undiscounted budget projection."),
   monthly: z.array(committedMrrBucketSchema).describe("Committed MRR/ARR by calendar month (oldest→newest). Past points come from real recorded daily snapshots; the current month is the live value. Periods with no recorded snapshot are omitted."),
   weekly: z.array(committedMrrBucketSchema).describe("Committed MRR/ARR by ISO week (oldest→newest). Same snapshot sourcing as monthly."),
@@ -2792,28 +2801,46 @@ const mrrSplitBucketSchema = z.object({
         "exactly that many customers.",
     ),
   selfServeUnmeasurableReason: z
-    .enum(["no_records_for_period"])
+    .enum(["no_records_for_period", "billing_revenue_unavailable"])
     .nullable()
     .describe(
-      "Why the self-serve half could not be measured for this period, or null when it was. The only case — no_records_for_period — is a reference date on which NO producer held a single " +
+      "Why the self-serve half could not be measured for this period, or null when it was. billing_revenue_unavailable = the point is on billing's basis (today, or a day recorded from billing) and billing's read failed — the old computation never stands in. no_records_for_period (legacy basis only) is a reference date on which NO producer held a single " +
         "fact about any pair, which is a different statement from the SaaS business being worth nothing. (The retired reason agency_contribution_exceeds_recorded_total can no longer " +
         "occur: the half is a sum over the self-serve side now, not a subtraction from the fleet figure, so there is nothing for an over-large subtrahend to break.)",
     ),
+  mrrBasis: z
+    .enum(["features_four_conditions", "billing_recurring"])
+    .describe(
+      "Which definition selfServeMrrUsd and agencyBudgetMrrUsd are on for this point. billing_recurring = billing's recurring MRR summed over the side's orgs (today, and every day recorded " +
+        "from billing since basisChangedOn); features_four_conditions = the legacy replay (payment / running / amount / audience), which ignored payment mode and proactive vs reactive — " +
+        "kept for points before the switch, never restated. A chart must label the switch; growthPct is never read across it.",
+    ),
+  selfServeUnknownOrgIds: z.array(z.string()).describe("On the billing basis: self-serve orgs billing could not state that day, listed and not summed. [] on the legacy basis."),
   agencyBudgetMrrUsd: z
     .number()
     .describe(
-      "The agency side's qualifying daily budget × 30 on referenceDate, computed by the SAME four conditions as the self-serve half. Served so an agency brand nobody has stated an amount " +
+      "On the billing basis: billing's recurring MRR over the AGENCY orgs. On the legacy basis: the agency side's qualifying daily budget × 30 on referenceDate, computed by the SAME four conditions as the self-serve half. Served so an agency brand nobody has stated an amount " +
         "for is VISIBLE: when this exceeds agencyMrrUsd, that difference is in neither half.",
     ),
   agencyBudgetBasis: z.enum(["recorded", "approximated"]).nullable().describe("Basis of agencyBudgetMrrUsd, on the same rule as selfServeBasis. null when there is no agency side."),
   committedMrrUsd: z
     .number()
+    .nullable()
     .describe(
-      "The fleet committed run-rate this service RECORDED for this period (Σ ACTIVE running budget × 30 as of referenceDate), served for comparison. It is NOT the sum of the two halves " +
+      "The fleet MRR this service RECORDED for this period, on the committed series' basis for the same point (billing's recurring MRR from basisChangedOn, running budget × 30 before), served for comparison; null when unavailable. On the legacy basis: It is NOT the sum of the two halves " +
         "and is not claimed to be: it counts RUNNING money for active pairs on a daily snapshot, while the halves replay each producer's record of the CONFIGURED amount gated on all four " +
         "conditions — including audience exhaustion, which the snapshot has never known about.",
     ),
-  growthPct: z.number().nullable().describe("Point-over-point growth of totalMrrUsd vs the previous MEASURED bucket, percent (1-decimal). null on the first bucket, a 0 base, or an unmeasurable period — growth is never compared across a gap."),
+  growthPct: z.number().nullable().describe("Point-over-point growth of totalMrrUsd vs the previous MEASURED bucket on the SAME mrrBasis, percent (1-decimal). null on the first bucket, a 0 base, an unmeasurable period, or across the basis switch."),
+});
+
+const selfServeOrgRowSchema = z.object({
+  orgId: z.string(),
+  paymentMode: z.string().describe("billing's payment mode (postpaid | prepaid); `unknown` for an org billing could not read."),
+  revenueClass: z.string().describe("billing's class (recurring | one_off | none), or `unreadable`."),
+  classReason: z.string().describe("billing's reason for the class."),
+  mrrUsd: z.number().nullable().describe("billing's MRR for the org, USD; 0 when not recurring; null = unknown (unknownReason)."),
+  unknownReason: z.string().nullable(),
 });
 
 const selfServeBrandRowSchema = z.object({
@@ -2879,15 +2906,19 @@ const mrrSplitSchema = z.object({
     .number()
     .nullable()
     .describe(
-      "LIVE self-serve MRR — Σ of today's qualifying self-serve budgets × 30, USD, on the four conditions above. It is the SAME number as the current monthly bucket's selfServeMrrUsd, " +
-        "computed by the same evaluator, so the scalar and the chart can never state two answers. It therefore does NOT cancel against currentMrrUsd: that figure counts running money for " +
-        "active pairs and has never known about audience exhaustion.",
+      "LIVE self-serve MRR — Σ of billing's recurring MRR over every NON-AGENCY org (known rows, to the cent; unknown ones in currentSelfServeUnknownOrgIds). billing-service's RECURRING revenue (GET /internal/revenue/fleet): an org is recurring when postpaid with a chargeable card, or prepaid with auto top-up and a chargeable card; its DRR is the daily budgets of its PROACTIVE campaigns running with audience left (reactive legs never count); MRR = DRR × 30, ARR = MRR × 12. A one-off prepaid org is not MRR. Read, never re-derived here. " +
+        "The SAME number as the current buckets' selfServeMrrUsd. null = billing's read was unavailable (currentSelfServeUnavailableReason) — never the old four-condition computation. " +
+        "currentAgencyBudgetMrrUsd + this = currentMrrUsd (billing's fleet MRR) when nothing is unknown.",
     ),
   currentSelfServeArrUsd: z.number().nullable().describe("LIVE self-serve ARR = currentSelfServeMrrUsd × 12, USD."),
   currentTotalMrrUsd: z.number().nullable().describe("LIVE total = currentAgencyMrrUsd + currentSelfServeMrrUsd, USD."),
   currentTotalArrUsd: z.number().nullable().describe("LIVE total ARR = currentTotalMrrUsd × 12, USD."),
-  currentSelfServeBasis: z.enum(["recorded", "approximated"]).nullable().describe("Basis of the live self-serve figure, on the same rule as the buckets' selfServeBasis."),
-  currentAgencyBudgetMrrUsd: z.number().describe("The agency side's qualifying daily budget × 30 today, on the same four conditions, USD."),
+  currentSelfServeBasis: z.enum(["recorded", "approximated"]).nullable().describe("Basis of the live self-serve figure: `recorded` (billing's own verdict); null when unavailable."),
+  currentMrrBasis: z.enum(["billing_recurring"]).describe("The definition behind every current* figure: billing's recurring revenue."),
+  currentSelfServeUnknownOrgIds: z.array(z.string()).describe("Non-agency orgs whose MRR billing could not state today — listed, never counted as 0. Sorted."),
+  currentSelfServeUnavailableReason: z.enum(["billing_revenue_unavailable"]).nullable().describe("Why currentSelfServeMrrUsd is null, or null when it is stated."),
+  currentAgencyBudgetMrrUsd: z.number().nullable().describe("billing's recurring MRR over the AGENCY orgs today, USD (the agency brands' money in play, beside the stated currentAgencyMrrUsd). null when billing is unavailable. Was the four-condition budget × 30 until 2026-09-29."),
+  basisChangedOn: z.string().nullable().describe("First UTC day the history is recorded on billing's basis; every bucket before it is features_four_conditions. null = none recorded yet."),
   earningRecordBeginsOn: z
     .string()
     .nullable()
@@ -2897,8 +2928,15 @@ const mrrSplitSchema = z.object({
     ),
   agencyOrgIds: z.array(z.string()).describe("The orgs the stated rows identify as agency, sorted. DERIVED — an org carrying at least one stated amount, whatever its date range. No org id lives in code, so a second agency needs no change."),
   agencyPairKeys: z.array(z.string()).describe("Every (org, brand) pair excluded from the self-serve half, as `orgId::brandId`, sorted. Taken over the agency orgs' WHOLE brand set, not only their stated brands: a brand funded under an agency org is agency money whether or not anyone has stated an amount for it."),
-  selfServeBreakdown: selfServeBreakdownSchema.describe(
-    "THE ROWS BEHIND currentSelfServeMrrUsd — who is counted, who is not, and which of the four conditions excluded each one, so the SaaS figure can be read rather than taken on faith. " +
+  selfServeOrgs: z
+    .array(selfServeOrgRowSchema)
+    .nullable()
+    .describe(
+      "THE TERMS OF currentSelfServeMrrUsd: one row per non-agency org billing states as anything but `none` at 0, plus every unknown one — billing's class, reason and MRR as billing states them. " +
+        "Σ known mrrUsd IS currentSelfServeMrrUsd. Richest first, then org id. null when billing is unavailable.",
+    ),
+  selfServeBreakdown: selfServeBreakdownSchema.nullable().describe(
+    "DEPRECATED 2026-09-29 — always null. Read selfServeOrgs. Was: THE ROWS BEHIND currentSelfServeMrrUsd — who is counted, who is not, and which of the four conditions excluded each one, so the SaaS figure can be read rather than taken on faith. " +
       "Served for the LIVE figure only: the history's buckets each carry their own counts, and a row set per bucket would put (pairs × periods) objects on the payload to explain one number. " +
       "The rows are emitted by the loop that SUMS the figure, from the same verdicts it added, so they reconcile to it by construction and nothing here re-derives the total.",
   ),
@@ -2922,12 +2960,12 @@ const statedAmountRef = registry.register("StatedMonthlyAmount", statedAmountSch
 
 const revenueHistoryResponseSchema = z.object({
   totalRevenueUsd: z.number().describe("Cumulative NET realized revenue since inception (all orgs, all time; post per-org usage discount), in USD (2-decimal)."),
-  currentMrrUsd: z.number().describe("LIVE committed MRR — fleet active daily budget × 30 (UNDISCOUNTED budget projection). Matches the mrrUsd the admin page renders from GET /internal/stats/accounts."),
+  currentMrrUsd: z.number().nullable().describe("LIVE fleet MRR — billing-service's RECURRING revenue (GET /internal/revenue/fleet): an org is recurring when postpaid with a chargeable card, or prepaid with auto top-up and a chargeable card; its DRR is the daily budgets of its PROACTIVE campaigns running with audience left (reactive legs never count); MRR = DRR × 30, ARR = MRR × 12. A one-off prepaid org is not MRR. Read, never re-derived here. Equals GET /internal/stats/accounts stats.mrrUsd (one read, one answer). Was running budget × 30 until 2026-09-29. null = billing unavailable."),
   monthly: z.array(revenueBucketSchema).describe("Trailing calendar-month revenue buckets (oldest→newest)."),
   weekly: z.array(revenueBucketSchema).describe("Trailing ISO-week revenue buckets (oldest→newest)."),
   daily: z.array(revenueBucketSchema).describe("Trailing UTC-day revenue buckets (oldest→newest)."),
   sinceInceptionDaily: z.array(revenueBucketSchema).describe("Per-day realized-revenue line from the first billed day to today (the 'MRR over time' series)."),
-  committedMrr: committedMrrHistorySchema.describe("COMMITTED MRR/ARR over time (monthly + weekly, each with growth) — the point-in-time run-rate the fleet is CONTRACTED to bill (Σ active daily budget × 30), NOT realized spend. Recorded as daily snapshots going forward (no historical backfill); the current-period point equals currentMrrUsd, ARR = MRR × 12. Additive + non-breaking to the realized series above."),
+  committedMrr: committedMrrHistorySchema.describe("FLEET MRR/ARR over time (monthly + weekly, each with growth), NOT realized spend. From basisChangedOn (2026-09-29) each day records billing's RECURRING MRR per org (recurring orgs, proactive running campaigns with audience left, × 30); points before it are the legacy running daily budget × 30 and say so (basis). The current-period point equals currentMrrUsd, ARR = MRR × 12. Growth is never read across the basis switch."),
   netRevenueRetention: nrrHistorySchema.describe(
     "NET REVENUE RETENTION (NRR / NDR) over time, monthly + weekly. Standard aggregate definition: of the revenue existing customers produced in the PREVIOUS " +
       "period, how much those SAME customers produce in this one — expansion, contraction and churn among them, and NOTHING from customers acquired during the " +
@@ -2966,10 +3004,10 @@ registry.registerPath({
     "current live MRR. This is the MONEY twin of GET /internal/stats/active-users — the exact same per-day actualized cold-email spend signal, summed " +
     "in dollars instead of thresholded to a distinct-org headcount. A day of real billed cold-email spend is realized revenue that day (spend only " +
     "happens on a non-paused, budgeted, funded brand — the same conditions the accounts 'active' verdict checks, observed after the fact). currentMrrUsd " +
-    "is NOT reconstructed — it is the LIVE accounts-audit MRR (fleet active daily budget × 30), the SAME number GET /internal/stats/accounts renders, so " +
+    "is NOT reconstructed — it is billing-service's RECURRING revenue for the fleet (recurring orgs, proactive running campaigns with audience left, DRR × 30), the SAME number GET /internal/stats/accounts states as stats.mrrUsd, so " +
     "the two tabs reconcile; the last daily point (realized spend so far today) legitimately lags currentMrrUsd. Aggregate totals only — no per-org data. " +
-    "Also returns committedMrr: the COMMITTED MRR/ARR run-rate over time (monthly + weekly, each with growth) — Σ active daily budget × 30, what the fleet " +
-    "is CONTRACTED to bill (distinct from realized spend). Committed MRR is a point-in-time snapshot that cannot be reconstructed from spend, so it is " +
+    "Also returns committedMrr: the COMMITTED MRR/ARR run-rate over time (monthly + weekly, each with growth) — billing's recurring MRR per org from 2026-09-29 (basisChangedOn), the legacy running budget × 30 before it, every point naming its basis " +
+    "(distinct from realized spend). It is a point-in-time figure that cannot be reconstructed from spend, so it is " +
     "persisted as a daily snapshot recorded GOING FORWARD (no historical backfill); the current-period point equals currentMrrUsd (reconciles) and ARR = MRR × 12. " +
     "Also returns netRevenueRetention: NRR/NDR over time (monthly + weekly) on the SAME realized-revenue basis — the period's revenue from the customers who had " +
     "revenue in the PREVIOUS period, over those same customers' previous-period revenue. The cohort is fixed at the start of the period, so customers acquired " +

@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, boolean, integer, jsonb, timestamp, uniqueIndex, index } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, boolean, integer, jsonb, timestamp, uniqueIndex, index, primaryKey } from "drizzle-orm/pg-core";
 
 export const features = pgTable(
   "features",
@@ -161,6 +161,29 @@ export const committedMrrSnapshots = pgTable(
 );
 
 export type CommittedMrrSnapshot = typeof committedMrrSnapshots.$inferSelect;
+
+/**
+ * RECURRING MRR daily snapshots (`recurring_mrr_org_snapshots`) — one row per (UTC day, org): what
+ * billing-service stated as that org's RECURRING MRR that day (`GET /internal/revenue/fleet`). From
+ * 2026-09-29 this is the basis of every recorded MRR point (the committed series and the agency /
+ * self-serve split); `committed_mrr_snapshots` (running budget × 30) is the legacy basis before it, kept
+ * for history and no longer written. Per ORG rather than a fleet total so the split can be re-summed
+ * over whichever orgs are agency. Not rebuildable: billing does not keep its verdict over time.
+ */
+export const recurringMrrOrgSnapshots = pgTable(
+  "recurring_mrr_org_snapshots",
+  {
+    /** UTC calendar day (`YYYY-MM-DD`). */
+    snapshotDate: text("snapshot_date").notNull(),
+    orgId: uuid("org_id").notNull(),
+    /** billing's class that day (`recurring` | `one_off` | `none`), or `unreadable` when billing could not read the org. */
+    revenueClass: text("revenue_class").notNull(),
+    /** billing's MRR in cents as decimal text; NULL = unknown that day (never a 0). */
+    mrrCents: text("mrr_cents"),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.snapshotDate, table.orgId] })]
+);
 
 /**
  * FLEET RETURN-ON-SPEND snapshot store (`fleet_return_snapshots`) — one row per acquisition channel.
