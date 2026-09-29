@@ -9828,6 +9828,422 @@
           "hiddenCampaignIds"
         ]
       },
+      "OfferSalesPathsResponse": {
+        "type": "object",
+        "properties": {
+          "offerId": {
+            "type": "string"
+          },
+          "brandId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "not_stated",
+              "no_legs_selected",
+              "no_complete_path"
+            ]
+          },
+          "statedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "selectedLegKeys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "unknownLegKeys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "lifetimeRevenueUsd": {
+            "type": "number",
+            "nullable": true
+          },
+          "pricing": {
+            "type": "string",
+            "enum": [
+              "net"
+            ]
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "rank": {
+                  "type": "number"
+                },
+                "pathKey": {
+                  "type": "string"
+                },
+                "legKeys": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "steps": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string"
+                      },
+                      "label": {
+                        "type": "string"
+                      },
+                      "description": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "label",
+                      "description"
+                    ]
+                  }
+                },
+                "entryLegKey": {
+                  "type": "string"
+                },
+                "entryChannelSlug": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The channel chosen for the entry leg — what a budget behind this path buys."
+                },
+                "legs": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "legKey": {
+                        "type": "string"
+                      },
+                      "fromStep": {
+                        "type": "object",
+                        "nullable": true,
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "label",
+                          "description"
+                        ],
+                        "description": "Null on the ENTRY leg (from nothing)."
+                      },
+                      "toStep": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "label",
+                          "description"
+                        ]
+                      },
+                      "conversionRatePct": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "The rate RETAINED for the leg (0..100). Null on the entry leg."
+                      },
+                      "rateSource": {
+                        "type": "string",
+                        "nullable": true,
+                        "enum": [
+                          "crm_measured",
+                          "measured_on_our_leads",
+                          "customer_stated",
+                          "fleet_median",
+                          "industry_default"
+                        ]
+                      },
+                      "rateInputs": {
+                        "type": "object",
+                        "nullable": true,
+                        "properties": {
+                          "measured": {
+                            "type": "object",
+                            "properties": {
+                              "basis": {
+                                "type": "string",
+                                "enum": [
+                                  "our_leads",
+                                  "crm"
+                                ]
+                              },
+                              "fromReached": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "toReached": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "ratePct": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "sufficient": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "basis",
+                              "fromReached",
+                              "toReached",
+                              "ratePct",
+                              "sufficient"
+                            ]
+                          },
+                          "customerStatedPct": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "fleetMedian": {
+                            "type": "object",
+                            "properties": {
+                              "ratePct": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "brandCount": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "ratePct",
+                              "brandCount"
+                            ]
+                          },
+                          "industryDefaultPct": {
+                            "type": "number",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "measured",
+                          "customerStatedPct",
+                          "fleetMedian",
+                          "industryDefaultPct"
+                        ],
+                        "description": "Every source the rate was resolved from (measured > customer stated > fleet median > industry default)."
+                      },
+                      "workedBy": {
+                        "type": "string",
+                        "enum": [
+                          "platform",
+                          "human"
+                        ],
+                        "description": "platform: a channel of ours publishes the leg; human: none does (the customer's team) — rate, no cost."
+                      },
+                      "channel": {
+                        "type": "object",
+                        "nullable": true,
+                        "properties": {
+                          "slug": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "name": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "trigger": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "daily_budget",
+                              "step_reached"
+                            ]
+                          },
+                          "workflowDynastySlug": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "grain": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "choice": {
+                            "type": "string",
+                            "enum": [
+                              "only_priced_channel",
+                              "cheapest_cost_per_outcome",
+                              "no_priced_channel"
+                            ]
+                          },
+                          "candidates": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "slug": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                },
+                                "trigger": {
+                                  "type": "string",
+                                  "enum": [
+                                    "daily_budget",
+                                    "step_reached"
+                                  ]
+                                },
+                                "costPerOutcomeUsd": {
+                                  "type": "number",
+                                  "nullable": true
+                                },
+                                "workflowDynastySlug": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "grain": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "Grain the price rests on: crossOrg (fleet benchmark), brand, offer."
+                                },
+                                "unpricedReason": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "Null when priced; else why this channel states no price for the leg (e.g. no_recommended_workflow, leg_not_declared)."
+                                }
+                              },
+                              "required": [
+                                "slug",
+                                "name",
+                                "trigger",
+                                "costPerOutcomeUsd",
+                                "workflowDynastySlug",
+                                "grain",
+                                "unpricedReason"
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "slug",
+                          "name",
+                          "trigger",
+                          "workflowDynastySlug",
+                          "grain",
+                          "choice",
+                          "candidates"
+                        ],
+                        "description": "Present on a platform leg: the channel we would run it on (lowest cost per outcome) and why."
+                      },
+                      "outcomesNeededPerPayingClient": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "costPerOutcomeUsd": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "costPerPayingClientUsd": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "costPerOutcomeUsd × outcomesNeededPerPayingClient. Null on a human leg or when unpriced."
+                      }
+                    },
+                    "required": [
+                      "legKey",
+                      "fromStep",
+                      "toStep",
+                      "conversionRatePct",
+                      "rateSource",
+                      "rateInputs",
+                      "workedBy",
+                      "channel",
+                      "outcomesNeededPerPayingClient",
+                      "costPerOutcomeUsd",
+                      "costPerPayingClientUsd"
+                    ]
+                  }
+                },
+                "entryToPayingClientPct": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "lifetimeRevenueUsd": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "costPerPayingClientUsd": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "roi": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "lifetimeRevenueUsd ÷ costPerPayingClientUsd (a return multiple)."
+                },
+                "roiUnavailableReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "leg_cost_unavailable",
+                    "zero_conversion_rate",
+                    "no_lifetime_revenue",
+                    "no_platform_cost"
+                  ]
+                }
+              },
+              "required": [
+                "rank",
+                "pathKey",
+                "legKeys",
+                "steps",
+                "entryLegKey",
+                "entryChannelSlug",
+                "legs",
+                "entryToPayingClientPct",
+                "lifetimeRevenueUsd",
+                "costPerPayingClientUsd",
+                "roi",
+                "roiUnavailableReason"
+              ]
+            }
+          }
+        },
+        "required": [
+          "offerId",
+          "brandId",
+          "status",
+          "statedAt",
+          "selectedLegKeys",
+          "unknownLegKeys",
+          "lifetimeRevenueUsd",
+          "pricing",
+          "paths"
+        ]
+      },
       "OfferAudienceStatsResponse": {
         "type": "object",
         "properties": {
@@ -23345,6 +23761,144 @@
           },
           "404": {
             "description": "No campaign of this brand sells this offer (reason: offer_has_no_channels)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Downstream service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/offers/{offerId}/sales-paths": {
+      "get": {
+        "summary": "Every sales path an offer can sell through, ranked by ROI, with the per-leg breakdown",
+        "description": "A SALES PATH is a chain of the legs the customer ticked for the offer (brand-service sales-path) from an ENTRY leg (from nothing) to paid_client, visiting no step twice. Formula: needed(paid_client)=1; needed(from step of leg i)=needed(to step)/(rate_i/100); legCost_i = costPerOutcome_i × needed(to step of leg i) for a leg a channel of ours works (0 for a human leg); costPerPayingClient = Σ legCost_i; roi = offer lifetime revenue ÷ costPerPayingClient. rate_i is the brand's effective leg rate (CRM-measured / measured on our leads > customer stated > fleet median > industry default). costPerOutcome_i is the NET cost per outcome of the recommended workflow of each platform channel's leg-keyed workflow-projection ladder (?leg=&offerId=&pricing=net); the cheapest channel is chosen. Ranked by roi descending; a path whose roi is null (reason stated) sorts last. status not_stated / no_legs_selected / no_complete_path serve paths: [] — none is invented. Additive read.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "offerId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID (required)."
+            },
+            "required": true,
+            "description": "Brand UUID (required).",
+            "name": "brandId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The offer's sales paths",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfferSalesPathsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing brandId",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Offer not found or not an offer of this brand (reason: offer_not_found)",
             "content": {
               "application/json": {
                 "schema": {
