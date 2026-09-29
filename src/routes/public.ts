@@ -3068,7 +3068,7 @@ export async function handleAccounts(res: import("express").Response): Promise<v
     const allFeatures = await db.query.features.findMany({ columns: { slug: true } });
     const coldCsv = coldEmailOutreachSlugs(allFeatures.map((f) => f.slug)).join(",");
 
-    return buildAccountsAudit(coldCsv, new Date());
+    return buildAccountsAudit(coldCsv, new Date(), undefined, { recurringRevenue: true });
     },
   });
   res.json(payload);

@@ -1,5 +1,30 @@
 # Features Service — CLAUDE.md
 
+## "WHAT IS OUR MRR" HAS ONE ANSWER: billing-service's RECURRING revenue — read, never re-derived (`lib/recurring-revenue-client.ts`)
+
+Owner decision 2026-09-29. billing `GET /internal/revenue/fleet` (v0.81.23) classes each org (recurring =
+postpaid + chargeable card, or prepaid + auto top-up + card; one-off prepaid is NOT MRR) and states its MRR
+(DRR = PROACTIVE running campaigns with audience left; reactive never counts; × 30; ARR = MRR × 12).
+Supersedes every budget × 30 / × 365 MRR below (accounts audit, committed series, the self-serve half's
+four conditions).
+
+- **Accounts audit** `stats.mrrUsd` = Σ billing's KNOWN MRR over the whole fleet, `arrUsd` = × 12, unknown
+  orgs in `mrrUnknownOrgIds`; rows carry `revenueClass` / `revenueClassReason` / `orgRecurringMrrUsd`.
+  Read only when asked (`buildAccountsAudit(..., { recurringRevenue: true })`: the staff route); active-users
+  never pays the ~15 s read. `totalRunningDailyBudgetUsd` stays a BUDGET, never multiplied into MRR.
+- **Self-serve MRR** (live) = Σ billing MRR over NON-agency orgs (agency = orgs with a stated row, unchanged);
+  `selfServeOrgs` are its terms. `currentAgencyBudgetMrrUsd` = billing MRR over agency orgs.
+  `selfServeBreakdown` is DEPRECATED (always null).
+- **History**: `recurring_mrr_org_snapshots` records billing's per-org MRR each day (from 2026-09-29);
+  `committed_mrr_snapshots` (running budget × 30) is no longer written and serves only days before
+  `basisChangedOn`. Every point names its basis (`basis` / `mrrBasis`); growth is never read across the switch.
+  A split bucket before the switch keeps the four-condition replay (`features_four_conditions`).
+- **Unavailable billing → null + reason** (`billing_revenue_unavailable`), NEVER the old computation.
+- Consumers (admin Revenue MRR split, Audit > Accounts) must conform: `mrrUsd`/`arrUsd`/`currentMrrUsd`/
+  `currentAgencyBudgetMrrUsd`/`committedMrrUsd` are nullable now.
+- Guards: `recurring-revenue-client.test.ts`, the MRR block in `accounts-compute.test.ts`, the basis-change
+  block in `committed-mrr-compute.test.ts`, the billing cases in `revenue-history-compute.test.ts`. (Set 2026-09-29.)
+
 ## AN OFFER'S SALES PATHS, RANKED BY ROI — `GET /offers/:offerId/sales-paths?brandId=` (`lib/offer-sales-paths.ts`)
 
 Owner decision 2026-09-29 (phase 2 of "how an offer sells"). A path = a chain of the legs the offer
@@ -5751,7 +5776,7 @@ reading of a customer who set a ceiling and stopped, or never created, the campa
   that is what a day of spending actually costs the org. An **auto-topup** org never runs dry → active
   regardless of the momentary balance (`has_auto_topup` OPTIONAL, absent ⇒ not-enabled).
 - **All rows (active + paused + inactive) are LISTED — never dropped.** `stats.totalRunningDailyBudgetUsd`
-  and MRR(×30)/ARR(×365) sum **RUNNING** budget over ACTIVE rows only; `totalConfiguredDailyBudgetUsd`
+  sums **RUNNING** budget over ACTIVE rows only (MRR/ARR are billing's recurring revenue since 2026-09-29, see the top section); `totalConfiguredDailyBudgetUsd`
   rides alongside so a reader sees what those same customers POSTED and can never mistake one for the
   other. send-forecast's série-3 gate reuses `accountStatus` and counts only `"active"`, so it projects
   from the running budget too — a ceiling nobody spends against launches no sequences.

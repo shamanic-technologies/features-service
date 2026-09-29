@@ -48,6 +48,9 @@ function account(over: Partial<AccountRow> & { orgId: string; brandId: string; s
     autoTopupEnabled: false,
     paymentDeclinedReason: null,
     revenueSide: "self_serve",
+    revenueClass: null,
+    revenueClassReason: null,
+    orgRecurringMrrUsd: null,
     ...over,
   };
   return merged;
@@ -173,7 +176,7 @@ function makeDeps(fixtures: {
 }): CustomerHealthDeps {
   const audit: AccountsAudit = {
     rows: fixtures.accounts,
-    stats: { totalRunningDailyBudgetUsd: 0, totalConfiguredDailyBudgetUsd: 0, mrrUsd: 0, arrUsd: 0, activeCount: 0, paymentDeclinedCount: 0, noPaymentMethodCount: 0, pausedCount: 0, inactiveCount: 0, totalCount: fixtures.accounts.length },
+    stats: { totalRunningDailyBudgetUsd: 0, totalConfiguredDailyBudgetUsd: 0, mrrUsd: 0, arrUsd: 0, mrrBasis: "billing_recurring", mrrUnavailableReason: null, mrrUnknownOrgIds: [], activeCount: 0, paymentDeclinedCount: 0, noPaymentMethodCount: 0, pausedCount: 0, inactiveCount: 0, totalCount: fixtures.accounts.length },
     asOf: NOW.toISOString(),
   };
   const byUser: ActiveUsersByUser = {

@@ -209,8 +209,8 @@ describe("the self-serve half is a SUM, so it can never be negative", () => {
     expect(aug.referenceDate).toBe(AUG);
     expect(aug.committedMrrUsd).toBe(2610);
     expect(aug.agencyBudgetMrrUsd).toBe(3330); // (110 + 1) × 30
-    expect(aug.agencyBudgetMrrUsd).toBeGreaterThan(aug.committedMrrUsd);
-    expect(aug.committedMrrUsd - aug.agencyBudgetMrrUsd).toBeLessThan(0); // what the old code computed
+    expect(aug.agencyBudgetMrrUsd).toBeGreaterThan(aug.committedMrrUsd!);
+    expect(aug.committedMrrUsd! - aug.agencyBudgetMrrUsd).toBeLessThan(0); // what the old code computed
 
     // …and the sum answers a real figure instead: only BRAND_A qualifies ($100/day × 30).
     expect(aug.selfServeMrrUsd).toBe(3000);
@@ -436,7 +436,7 @@ describe("the live figures and the current bucket are ONE number", () => {
     // A ($100) counts; B ($2) is exhausted, C has no amount, D stopped paying.
     expect(split.currentSelfServeMrrUsd).toBe(3000);
     // The recorded fleet figure still carries B's money, so the two legitimately differ.
-    expect(split.currentSelfServeMrrUsd! + split.currentAgencyBudgetMrrUsd).not.toBe(5820);
+    expect(split.currentSelfServeMrrUsd! + split.currentAgencyBudgetMrrUsd!).not.toBe(5820);
   });
 
   it("emits the same periods as the committed series, against the same dates", () => {
@@ -565,21 +565,16 @@ describe("the amount in force — LIVE for today, REPLAYED for every earlier day
     expect(sumSideOn(SELF_KEYS, TODAY, nothing).nothingRecorded).toBe(true);
   });
 
-  it("carries the live amount through the whole split, live figure and breakdown alike", () => {
+  it("carries the live amount through the whole split's legacy (no billing read) path", () => {
     const split = buildMrrSplit(inputs({ facts: facts({ liveBudget: DIVERGENT }) }), NOW, WINDOWS);
     expect(split.currentSelfServeMrrUsd).toBe(450 + 240);
-
-    const rows = split.selfServeBreakdown.rows;
-    const a = rows.find((r) => r.brandId === BRAND_A)!;
-    const c = rows.find((r) => r.brandId === BRAND_C)!;
-    expect([a.configuredDailyBudgetUsd, a.amountSource, a.countedMrrUsd]).toEqual([15, "live", 450]);
-    expect([c.configuredDailyBudgetUsd, c.amountSource, c.countedMrrUsd]).toEqual([8, "live", 240]);
-    // The rows are still the terms of the sum, so they still add up to it.
-    expect(rows.reduce((t, r) => t + r.countedMrrUsd, 0)).toBe(split.currentSelfServeMrrUsd);
+    // The four-condition breakdown is retired: it no longer explains the billing-defined figure.
+    expect(split.selfServeBreakdown).toBeNull();
 
     // The HISTORY is untouched: August is still read off the replay.
     const aug = split.monthly.find((b) => b.period === "2026-08")!;
     const augReplay = buildMrrSplit(inputs(), NOW, WINDOWS).monthly.find((b) => b.period === "2026-08")!;
     expect(aug.selfServeMrrUsd).toBe(augReplay.selfServeMrrUsd);
+    expect(aug.mrrBasis).toBe("features_four_conditions");
   });
 });

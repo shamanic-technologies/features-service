@@ -1,4 +1,17 @@
 /**
+ * SUPERSEDED FOR THE SELF-SERVE HALF ON 2026-09-29 (owner decision): the SaaS side's MRR is
+ * billing-service's RECURRING revenue (`GET /internal/revenue/fleet`), summed over the non-agency orgs
+ * — read, never re-derived. The four conditions below are NOT how the current figure is computed any
+ * more: they ignored payment mode (a one-off prepaid org counted) and proactive vs reactive (a reactive
+ * leg's ceiling counted). What survives of them is HISTORY: a bucket whose reference date precedes the
+ * first billing-basis snapshot is still replayed with them, and says so (`mrrBasis:
+ * "features_four_conditions"`); from the first recorded billing day on every point is
+ * `mrrBasis: "billing_recurring"`, read from `recurring_mrr_org_snapshots`, and today's point is the
+ * live billing read. The agency half is unchanged: stated amounts, agency orgs decided by stated rows.
+ * The agency side's budget figure (`agencyBudgetMrrUsd`) moves to billing's recurring MRR over the
+ * agency orgs on the same days. billing unavailable ⇒ the self-serve half is `null` with
+ * `billing_revenue_unavailable`, never the old computation.
+ *
  * THE FLEET'S MONTHLY RUN-RATE, SPLIT IN TWO — and BOTH halves are now SUMS, which is the whole
  * change. A subtraction between two figures that were never measured the same way is not a quantity,
  * and this one came out NEGATIVE in production; a sum over the self-serve side cannot.
@@ -69,6 +82,12 @@ import { committedPointsByPeriod } from "./committed-mrr-compute.js";
 import { MRR_DAY_MULTIPLE } from "./committed-mrr-store.js";
 import { ARR_MONTH_MULTIPLE } from "./committed-mrr-compute.js";
 import type { StatedAmountRow } from "./stated-monthly-amounts-store.js";
+import type { MrrSnapshot } from "./committed-mrr-compute.js";
+import type { RecordedOrgMrr } from "./committed-mrr-store.js";
+import { sumRecurringMrr, type FleetRecurringRevenue, type OrgRecurringRevenue } from "./recurring-revenue-client.js";
+
+/** The basis a split bucket's self-serve and agency-budget figures were computed on. */
+export type SplitMrrBasis = "features_four_conditions" | "billing_recurring";
 import type { CampaignDayAnswer, FactBasis, PaymentStoppedFacts } from "./mrr-day-facts-clients.js";
 
 /**
@@ -125,7 +144,7 @@ export interface MrrSplitBucket {
    * `selfServeUnrecordedBudgetPairCount`, which is an under-statement rather than an approximation.
    */
   selfServeBasis: FactBasis | null;
-  /** How many self-serve pairs contributed a positive amount on `referenceDate`. */
+  /** How many self-serve pairs (on the billing basis: ORGS) contributed a positive amount on `referenceDate`. */
   selfServePairCount: number;
   /** Of those decisions, how many rested on activity evidence rather than a producer's record. */
   selfServeApproximatedPairCount: number;
@@ -134,8 +153,20 @@ export interface MrrSplitBucket {
    * they contributed nothing. The visible size of the under-statement — never silently filled in.
    */
   selfServeUnrecordedBudgetPairCount: number;
-  /** Why the self-serve half could not be measured at all, or null when it was. */
-  selfServeUnmeasurableReason: "no_records_for_period" | null;
+  /**
+   * Why the self-serve half could not be measured at all, or null when it was. `billing_revenue_unavailable`
+   * = the point is on the billing basis and billing's read failed — never replaced by the old computation.
+   */
+  selfServeUnmeasurableReason: "no_records_for_period" | "billing_revenue_unavailable" | null;
+  /**
+   * Which basis `selfServeMrrUsd` and `agencyBudgetMrrUsd` are on. `billing_recurring` = billing's
+   * recurring MRR summed over the side's orgs (every point from the first billing-basis day, and today);
+   * `features_four_conditions` = the legacy replay (payment / running / amount / audience), for points
+   * before it. The two are different definitions; a chart must not read growth across them.
+   */
+  mrrBasis: SplitMrrBasis;
+  /** On the billing basis: self-serve orgs billing could not state that day, listed and not summed. [] otherwise. */
+  selfServeUnknownOrgIds: string[];
   /**
    * The agency side's qualifying daily budget × 30 on `referenceDate`, computed by the SAME four
    * conditions as the self-serve half. Served so an agency brand nobody has stated an amount for is
@@ -145,12 +176,13 @@ export interface MrrSplitBucket {
   /** Basis of `agencyBudgetMrrUsd`, on the same rule as `selfServeBasis`. */
   agencyBudgetBasis: FactBasis | null;
   /**
-   * The fleet committed run-rate this service RECORDED for this period (Σ active running budget × 30
-   * as of the reference date), served for comparison. It is NOT the sum of the two halves above and
+   * The fleet MRR this service RECORDED for this period, on the basis the committed series states for
+   * the same point (running budget × 30 before the switch, billing's recurring MRR after), served for
+   * comparison. null = unavailable on that point. It is NOT the sum of the two halves above and
    * is not claimed to be: it counts running money for active pairs on a snapshot, while the halves
    * are replayed from each producer's own record of the configured amount.
    */
-  committedMrrUsd: number;
+  committedMrrUsd: number | null;
   /** Point-over-point growth of `totalMrrUsd` vs the previous MEASURED bucket, percent (1-decimal). */
   growthPct: number | null;
 }
@@ -182,20 +214,48 @@ export interface SelfServeBreakdown {
   rows: SelfServeBrandRow[];
 }
 
+/** One self-serve org behind the live SaaS MRR, as billing states it. */
+export interface SelfServeOrgRow {
+  orgId: string;
+  paymentMode: string;
+  /** billing's class: `recurring` | `one_off` | `none`. */
+  revenueClass: string;
+  /** billing's reason (`postpaid_chargeable_card`, `prepaid_no_auto_topup`, …). */
+  classReason: string;
+  /** billing's MRR for the org, USD; 0 when not recurring; null = unknown (`unknownReason`). */
+  mrrUsd: number | null;
+  unknownReason: string | null;
+}
+
 export interface MrrSplit {
   /** LIVE agency MRR — Σ stated amounts in force today. */
   currentAgencyMrrUsd: number;
   currentAgencyArrUsd: number;
-  /** LIVE self-serve MRR — Σ today's qualifying self-serve budgets × 30. The current bucket's figure. */
+  /**
+   * LIVE self-serve MRR — Σ billing's recurring MRR over every non-agency org (known rows; the unknown
+   * ones are in `currentSelfServeUnknownOrgIds`). The current bucket's figure. null = billing's read
+   * was unavailable (`currentSelfServeUnavailableReason`).
+   */
   currentSelfServeMrrUsd: number | null;
   currentSelfServeArrUsd: number | null;
   /** LIVE total = agency + self-serve. */
   currentTotalMrrUsd: number | null;
   currentTotalArrUsd: number | null;
-  /** Basis of the live self-serve figure — `approximated` while campaign-service's record is young. */
+  /** Basis of the live self-serve figure: always `recorded` (billing's own verdict), null when unavailable. */
   currentSelfServeBasis: FactBasis | null;
-  /** The agency side's qualifying budget × 30 today, on the same four conditions. */
-  currentAgencyBudgetMrrUsd: number;
+  /** The definition behind every `current*` figure: billing's recurring revenue. */
+  currentMrrBasis: "billing_recurring";
+  /** Non-agency orgs whose MRR billing could not state today — listed, never counted as 0. */
+  currentSelfServeUnknownOrgIds: string[];
+  /** Why `currentSelfServeMrrUsd` is null, or null when it is stated. */
+  currentSelfServeUnavailableReason: "billing_revenue_unavailable" | null;
+  /** billing's recurring MRR over the AGENCY orgs today. null when billing is unavailable. */
+  currentAgencyBudgetMrrUsd: number | null;
+  /**
+   * First UTC day the history is recorded on billing's basis (`recurring_mrr_org_snapshots`); every
+   * bucket before it is `features_four_conditions`. null = none recorded yet.
+   */
+  basisChangedOn: string | null;
   /**
    * The earliest UTC day campaign-service has ANY recorded answer about a campaign running or its
    * audience. Every bucket whose reference date is before this is necessarily approximated; null when
@@ -207,11 +267,16 @@ export interface MrrSplit {
   /** Every (org, brand) pair excluded from the self-serve half, as `orgId::brandId`. Sorted. */
   agencyPairKeys: string[];
   /**
-   * The rows behind `currentSelfServeMrrUsd`. Served for the LIVE figure only: the history's buckets
-   * each carry their own counts, and a row set per bucket would put (pairs × periods) objects on a
-   * payload to explain one number a reader is looking at.
+   * DEPRECATED 2026-09-29 — always `null`. Its rows were the four-condition verdicts per (org, brand);
+   * they no longer explain `currentSelfServeMrrUsd` and would contradict it. Read `selfServeOrgs`.
    */
-  selfServeBreakdown: SelfServeBreakdown;
+  selfServeBreakdown: SelfServeBreakdown | null;
+  /**
+   * The terms of `currentSelfServeMrrUsd`: one row per non-agency org billing states as anything but
+   * `none` with 0, plus every unknown one — billing's class, reason and MRR, as billing states them.
+   * Σ known `mrrUsd` IS `currentSelfServeMrrUsd`. Richest first, then org id. null when billing is unavailable.
+   */
+  selfServeOrgs: SelfServeOrgRow[] | null;
   monthly: MrrSplitBucket[];
   weekly: MrrSplitBucket[];
 }
@@ -606,18 +671,20 @@ export interface MrrSplitInputs {
   facts: DayFacts;
   /** First UTC day of billed spend per pair key — the floor for a stated row with no start. null = never billed. */
   firstBilledDayByPair: Map<string, string | null>;
-  /** Recorded committed snapshots (date → fleet committed MRR, USD), oldest→newest. Periods + comparison only. */
-  snapshots: Array<{ date: string; mrrUsd: number }>;
-  /** The LIVE fleet committed MRR (accounts-audit Σ ACTIVE running budget × 30) — served beside, not subtracted. */
-  currentMrrUsd: number;
+  /** Recorded fleet MRR snapshots (both bases), oldest→newest. Periods + comparison only. */
+  snapshots: MrrSnapshot[];
+  /** The LIVE fleet MRR (billing's recurring revenue) — served beside, not subtracted. null = unavailable. */
+  currentMrrUsd: number | null;
+  /**
+   * billing's recurring revenue: the LIVE read (null = unavailable) and the per-org rows recorded per
+   * day. A reference date found in `byDay` (or today) is computed on billing's basis. Absent ⇒ the
+   * legacy four-condition replay everywhere (pure-test fixtures only).
+   */
+  recurring?: { live: FleetRecurringRevenue | null; byDay: Map<string, RecordedOrgMrr[]> };
+  /** First billing-basis day, echoed on the response. */
+  basisChangedOn?: string | null;
   /** Earliest UTC day campaign-service has any recorded status/audience answer, or null. */
   earningRecordBeginsOn: string | null;
-  /**
-   * pair key → the brand's name and domain, for the breakdown rows. Taken from the accounts audit,
-   * which already batches that read for its own table, so naming a brand costs nothing extra. An
-   * absent pair is reported with a `null` name rather than an invented one.
-   */
-  brandNamesByPair?: Map<string, { name: string | null; domain: string | null }>;
 }
 
 /** The agency orgs, derived: any org carrying at least one stated amount, whatever its date range. Pure. */
@@ -655,15 +722,15 @@ export function selfServePairKeysOf(
 
 /** The reference dates the split will be read on — one per emitted period, deduped and sorted. Pure. */
 export function referenceDatesOf(
-  snapshots: Array<{ date: string; mrrUsd: number }>,
+  snapshots: MrrSnapshot[],
   todayIso: string,
   windows: { weeks: number; months: number },
-  currentMrrUsd: number,
+  currentMrrUsd: number | null,
 ): string[] {
   const dates = new Set<string>();
   for (const g of ["month", "week"] as const) {
     const buckets = enumerateBuckets(todayIso, g, g === "month" ? windows.months : windows.weeks);
-    const points = committedPointsByPeriod(snapshots, buckets, g, bucketOf(todayIso, g).periodStart, currentMrrUsd, todayIso);
+    const points = committedPointsByPeriod(snapshots, buckets, g, bucketOf(todayIso, g).periodStart, { mrrUsd: currentMrrUsd, unknownOrgCount: 0 }, todayIso);
     for (const p of points.values()) dates.add(p.referenceDate);
   }
   return [...dates].sort();
@@ -683,9 +750,10 @@ function buildSeries(
     buckets,
     g,
     bucketOf(todayIso, g).periodStart,
-    inputs.currentMrrUsd,
+    { mrrUsd: inputs.currentMrrUsd, unknownOrgCount: 0 },
     todayIso,
   );
+  const agencyOrgs = new Set(agencyOrgIdsOf(inputs.statedRows));
 
   const emitted: MrrSplitBucket[] = [];
   for (const b of buckets) {
@@ -694,17 +762,53 @@ function buildSeries(
 
     const day = point.referenceDate;
     const agencyMrr = agencyStatedMrrOn(inputs.statedRows, day, inputs.firstBilledDayByPair);
-    const self = sumSideOn(selfServeKeys, day, inputs.facts);
-    const agencyBudget = sumSideOn(agencyKeys, day, inputs.facts);
+    const billing = billingSidesOn(inputs, day, todayIso, agencyOrgs);
 
-    // A sum cannot go negative, so the only thing that can make it unmeasurable is having no record
-    // at all for the day — which is a different statement from "the SaaS business was worth nothing".
-    const unmeasurable = self.nothingRecorded;
-    const selfServeMrr = unmeasurable ? null : self.mrrUsd;
+    let selfServeMrr: number | null;
+    let unmeasurableReason: MrrSplitBucket["selfServeUnmeasurableReason"];
+    let basis: FactBasis | null;
+    let pairCount: number;
+    let approximatedPairCount = 0;
+    let unrecordedBudgetPairCount = 0;
+    let agencyBudgetMrr: number;
+    let agencyBudgetBasis: FactBasis | null;
+    let unknownOrgIds: string[] = [];
+    const mrrBasis: SplitMrrBasis = billing === null ? "features_four_conditions" : "billing_recurring";
+    if (billing === "unavailable") {
+      selfServeMrr = null;
+      unmeasurableReason = "billing_revenue_unavailable";
+      basis = null;
+      pairCount = 0;
+      agencyBudgetMrr = 0;
+      agencyBudgetBasis = null;
+    } else if (billing !== null) {
+      selfServeMrr = billing.self.mrrUsd;
+      unmeasurableReason = null;
+      basis = "recorded";
+      pairCount = billing.self.contributingOrgCount;
+      agencyBudgetMrr = billing.agency.mrrUsd;
+      agencyBudgetBasis = agencyOrgs.size === 0 ? null : "recorded";
+      unknownOrgIds = billing.self.unknownOrgIds;
+    } else {
+      const self = sumSideOn(selfServeKeys, day, inputs.facts);
+      const agencyBudget = sumSideOn(agencyKeys, day, inputs.facts);
+      // A sum cannot go negative, so the only thing that can make it unmeasurable is having no record
+      // at all for the day — which is a different statement from "the SaaS business was worth nothing".
+      const unmeasurable = self.nothingRecorded;
+      selfServeMrr = unmeasurable ? null : self.mrrUsd;
+      unmeasurableReason = unmeasurable ? "no_records_for_period" : null;
+      basis = unmeasurable ? null : self.basis;
+      pairCount = self.pairCount;
+      approximatedPairCount = self.approximatedPairCount;
+      unrecordedBudgetPairCount = self.unrecordedBudgetPairCount;
+      agencyBudgetMrr = agencyBudget.mrrUsd;
+      agencyBudgetBasis = agencyKeys.length === 0 ? null : agencyBudget.basis;
+    }
     const totalMrr = selfServeMrr === null ? null : agencyMrr + selfServeMrr;
 
-    // Growth against the previous MEASURED point — never compared across a gap.
-    const prevMeasured = [...emitted].reverse().find((e) => e.totalMrrUsd !== null)?.totalMrrUsd ?? null;
+    // Growth against the previous MEASURED point on the SAME basis — never across a gap or a basis change.
+    const lastMeasured = [...emitted].reverse().find((e) => e.totalMrrUsd !== null);
+    const prevMeasured = lastMeasured && lastMeasured.mrrBasis === mrrBasis ? lastMeasured.totalMrrUsd : null;
     const growthPct =
       totalMrr !== null && prevMeasured !== null && prevMeasured > 0
         ? Math.round(((totalMrr - prevMeasured) / prevMeasured) * 1000) / 10
@@ -720,18 +824,72 @@ function buildSeries(
       selfServeArrUsd: selfServeMrr === null ? null : usd2(selfServeMrr * ARR_MONTH_MULTIPLE),
       totalMrrUsd: totalMrr === null ? null : usd2(totalMrr),
       totalArrUsd: totalMrr === null ? null : usd2(totalMrr * ARR_MONTH_MULTIPLE),
-      selfServeBasis: unmeasurable ? null : self.basis,
-      selfServePairCount: self.pairCount,
-      selfServeApproximatedPairCount: self.approximatedPairCount,
-      selfServeUnrecordedBudgetPairCount: self.unrecordedBudgetPairCount,
-      selfServeUnmeasurableReason: unmeasurable ? "no_records_for_period" : null,
-      agencyBudgetMrrUsd: usd2(agencyBudget.mrrUsd),
-      agencyBudgetBasis: agencyKeys.length === 0 ? null : agencyBudget.basis,
-      committedMrrUsd: usd2(point.mrrUsd),
+      selfServeBasis: basis,
+      selfServePairCount: pairCount,
+      selfServeApproximatedPairCount: approximatedPairCount,
+      selfServeUnrecordedBudgetPairCount: unrecordedBudgetPairCount,
+      selfServeUnmeasurableReason: unmeasurableReason,
+      mrrBasis,
+      selfServeUnknownOrgIds: unknownOrgIds,
+      agencyBudgetMrrUsd: usd2(agencyBudgetMrr),
+      agencyBudgetBasis,
+      committedMrrUsd: point.mrrUsd === null ? null : usd2(point.mrrUsd),
       growthPct,
     });
   }
   return emitted;
+}
+
+/**
+ * billing's two sides on one reference date: today → the live read ("unavailable" when it failed);
+ * a day recorded in `recurring_mrr_org_snapshots` → those rows; any other day → null (legacy replay).
+ * Pure.
+ */
+function billingSidesOn(
+  inputs: MrrSplitInputs,
+  day: string,
+  todayIso: string,
+  agencyOrgs: Set<string>,
+): { self: ReturnType<typeof sumRecurringMrr>; agency: ReturnType<typeof sumRecurringMrr> } | "unavailable" | null {
+  if (!inputs.recurring) return null;
+  let fleet: { orgs: Array<Pick<OrgRecurringRevenue, "orgId" | "mrrCents">>; unreadableOrgIds: string[] };
+  if (day === todayIso) {
+    if (inputs.recurring.live === null) return "unavailable";
+    fleet = inputs.recurring.live;
+  } else {
+    const rows = inputs.recurring.byDay.get(day);
+    if (!rows) return null;
+    fleet = { orgs: rows.map((r) => ({ orgId: r.orgId, mrrCents: r.mrrCents })), unreadableOrgIds: [] };
+  }
+  const f = fleet as FleetRecurringRevenue;
+  return {
+    self: sumRecurringMrr(f, (id) => !agencyOrgs.has(id)),
+    agency: sumRecurringMrr(f, (id) => agencyOrgs.has(id)),
+  };
+}
+
+/** The terms of the live self-serve MRR, from billing's rows. Pure. */
+function selfServeOrgRowsOf(live: FleetRecurringRevenue, agencyOrgs: Set<string>): SelfServeOrgRow[] {
+  const rows: SelfServeOrgRow[] = [];
+  for (const o of live.orgs) {
+    if (agencyOrgs.has(o.orgId)) continue;
+    const mrrUsd = o.mrrCents === null ? null : Math.round(Number(o.mrrCents)) / 100;
+    if (o.revenueClass === "none" && mrrUsd === 0) continue; // nothing to explain
+    rows.push({
+      orgId: o.orgId,
+      paymentMode: o.paymentMode,
+      revenueClass: o.revenueClass,
+      classReason: o.classReason,
+      mrrUsd,
+      unknownReason: o.unknownReason,
+    });
+  }
+  for (const id of live.unreadableOrgIds) {
+    if (agencyOrgs.has(id)) continue;
+    rows.push({ orgId: id, paymentMode: "unknown", revenueClass: "unreadable", classReason: "billing_could_not_read", mrrUsd: null, unknownReason: "billing_could_not_read" });
+  }
+  rows.sort((a, b) => (b.mrrUsd ?? -1) - (a.mrrUsd ?? -1) || (a.orgId < b.orgId ? -1 : 1));
+  return rows;
 }
 
 /**
@@ -754,9 +912,11 @@ export function buildMrrSplit(inputs: MrrSplitInputs, now: Date, windows: { week
   const weekly = buildSeries(inputs, agencyKeys, selfServeKeys, enumerateBuckets(todayIso, "week", windows.weeks), "week", todayIso);
 
   const currentAgencyMrr = agencyStatedMrrOn(inputs.statedRows, todayIso, inputs.firstBilledDayByPair);
-  const self = sumSideOn(selfServeKeys, todayIso, inputs.facts);
-  const agencyBudget = sumSideOn(agencyKeys, todayIso, inputs.facts);
-  const currentSelfServeMrr = self.nothingRecorded ? null : self.mrrUsd;
+  // TODAY is billing's live read — the same figure the current bucket carries, by construction.
+  const current = monthly.find((b) => b.referenceDate === todayIso) ?? weekly.find((b) => b.referenceDate === todayIso);
+  const agencyOrgs = new Set(agencyOrgIdsOf(inputs.statedRows));
+  const live = inputs.recurring?.live ?? null;
+  const currentSelfServeMrr = current ? current.selfServeMrrUsd : null;
   const currentTotalMrr = currentSelfServeMrr === null ? null : currentAgencyMrr + currentSelfServeMrr;
 
   return {
@@ -766,49 +926,19 @@ export function buildMrrSplit(inputs: MrrSplitInputs, now: Date, windows: { week
     currentSelfServeArrUsd: currentSelfServeMrr === null ? null : usd2(currentSelfServeMrr * ARR_MONTH_MULTIPLE),
     currentTotalMrrUsd: currentTotalMrr === null ? null : usd2(currentTotalMrr),
     currentTotalArrUsd: currentTotalMrr === null ? null : usd2(currentTotalMrr * ARR_MONTH_MULTIPLE),
-    currentSelfServeBasis: currentSelfServeMrr === null ? null : self.basis,
-    currentAgencyBudgetMrrUsd: usd2(agencyBudget.mrrUsd),
+    currentSelfServeBasis: current?.selfServeBasis ?? null,
+    currentMrrBasis: "billing_recurring",
+    currentSelfServeUnknownOrgIds: current?.selfServeUnknownOrgIds ?? [],
+    currentSelfServeUnavailableReason:
+      current?.selfServeUnmeasurableReason === "billing_revenue_unavailable" ? "billing_revenue_unavailable" : null,
+    currentAgencyBudgetMrrUsd: current && current.selfServeUnmeasurableReason !== "billing_revenue_unavailable" ? current.agencyBudgetMrrUsd : null,
+    basisChangedOn: inputs.basisChangedOn ?? null,
     earningRecordBeginsOn: inputs.earningRecordBeginsOn,
     agencyOrgIds: agencyOrgIdsOf(inputs.statedRows),
     agencyPairKeys: agencyKeys,
-    selfServeBreakdown: breakdownOf(self, todayIso, currentSelfServeMrr, inputs.brandNamesByPair),
+    selfServeBreakdown: null,
+    selfServeOrgs: live ? selfServeOrgRowsOf(live, agencyOrgs) : null,
     monthly,
     weekly,
-  };
-}
-
-/**
- * Name the terms of the live self-serve sum and order them for reading. The FIGURES are the ones the
- * sum already produced — this joins a name onto each and sorts; it recomputes nothing, so the rows
- * cannot disagree with the total they explain. Pure.
- */
-function breakdownOf(
-  self: SideSum,
-  referenceDate: string,
-  countedMrrUsd: number | null,
-  names: Map<string, { name: string | null; domain: string | null }> | undefined,
-): SelfServeBreakdown {
-  const rows: SelfServeBrandRow[] = self.rows.map((r) => {
-    const named = names?.get(pairKey(r.orgId, r.brandId));
-    return { ...r, brandName: named?.name ?? null, brandDomain: named?.domain ?? null };
-  });
-  // Richest first — a reader scanning for "who is this figure" wants the customers that carry it —
-  // then by brand id, so two brands on the same amount always come back in the same order.
-  rows.sort((a, b) => {
-    if (b.countedMrrUsd !== a.countedMrrUsd) return b.countedMrrUsd - a.countedMrrUsd;
-    const ca = a.configuredDailyBudgetUsd ?? 0;
-    const cb = b.configuredDailyBudgetUsd ?? 0;
-    if (cb !== ca) return cb - ca;
-    return a.brandId < b.brandId ? -1 : a.brandId > b.brandId ? 1 : 0;
-  });
-
-  let configured = 0;
-  for (const r of rows) configured += (r.configuredDailyBudgetUsd ?? 0) * MRR_DAY_MULTIPLE;
-
-  return {
-    referenceDate,
-    countedMrrUsd: countedMrrUsd === null ? null : usd2(countedMrrUsd),
-    configuredMrrUsd: usd2(configured),
-    rows,
   };
 }
