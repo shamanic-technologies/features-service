@@ -28,6 +28,24 @@
  *   exact read campaign-service ranks on), read off its brand-level row (`resolved.costPerOutcomeUsd`).
  *   The channel chosen is the one with the lowest such cost.
  *
+ * ── WHICH CHANNELS COUNT: ONLY THE THREE WE MANAGE (owner 2026-09-29) ────────────────────────
+ *
+ *   The platform MANAGES exactly `MANAGED_CHANNEL_SLUGS` (cold email, AI meeting booking, AI instant
+ *   call) — "on ne gère rien du reste". A leg is `workedBy: "platform"` only when one of those publishes
+ *   it, and only those are channel candidates. Every other leg (meeting attendance, closing, a booking
+ *   call turned into a meeting, …) is the customer's own team: `workedBy: "human"`, it carries its rate
+ *   and costs 0 to us, whatever other catalogue channel (agency, SMS, …) also publishes it.
+ *
+ * ── EVERY MANAGED LEG IS PRICED (the cost cascade, like the rate cascade ends on a default) ──
+ *
+ *   costPerOutcome = the recommended workflow's net cost per outcome (the ladder, above)   `workflow`
+ *                  > the channel's MEASURED fleet cost per outcome on the leg, when real
+ *                    spend exists (runs-service, `/public/stats/outcome-prices` legs)     `fleet_measured`
+ *                  > the seeded `DEFAULT_COST_PER_OUTCOME_USD` for (channel, leg)        `default`
+ *
+ *   So a managed leg never yields `leg_cost_unavailable` merely because no workflow is active or
+ *   eligible; `costSource` states which rung priced it.
+ *
  * ── NULLS ARE REASONS, NEVER ZEROS ────────────────────────────────────────────────────────────
  *
  * A path with a platform leg no channel could price, a leg converting at 0%, or an offer with no lifetime
@@ -52,6 +70,36 @@ export type SalesPathRateSource =
   /** The seeded industry benchmark for the leg. */
   | "industry_default";
 
+/** The ONLY channels the platform manages today. A leg nothing here publishes is the customer's team. */
+export const MANAGED_CHANNEL_SLUGS: ReadonlySet<string> = new Set([
+  "sales-cold-email-outreach",
+  "ai-meeting-booking",
+  "ai-instant-call",
+]);
+
+/**
+ * The LAST rung of the cost cascade: a conservative cost per outcome for every (managed channel, leg),
+ * used only when neither a workflow nor the fleet can price the leg. Net USD per outcome of the leg's
+ * TO step. Keyed `${legKey}|${channelSlug}` (`priceKey`).
+ *
+ *  - cold email → positive reply $50: above the fleet's live best (~$45 on the offer that surfaced
+ *    this), inside the documented $70-250 market band's lower edge — conservative, never flattering.
+ *  - cold email → website visit $5: the documented $4-7 per click band, mid-point.
+ *  - AI meeting booking → meeting booked $5: a few AI email turns (LLM tokens + sends) per conversation
+ *    worked, ~1 in 3 conversations booking, at our price multiple.
+ *  - AI instant call → booking call $2: one bridged phone call (Twilio both legs, a few minutes) plus
+ *    the LLM qualification, counting unanswered rings, at our price multiple.
+ */
+export const DEFAULT_COST_PER_OUTCOME_USD: ReadonlyMap<string, number> = new Map([
+  ["start_to_conversation|sales-cold-email-outreach", 50],
+  ["start_to_website_visit|sales-cold-email-outreach", 5],
+  ["conversation_to_meeting_booked|ai-meeting-booking", 5],
+  ["conversation_to_booking_call|ai-instant-call", 2],
+]);
+
+/** Which rung of the cost cascade priced a candidate. */
+export type SalesPathCostSource = "workflow" | "fleet_measured" | "default";
+
 export interface SalesPathChannelInput {
   slug: string;
   name: string;
@@ -74,10 +122,16 @@ export interface SalesPathChannelCandidate {
   slug: string;
   name: string;
   trigger: "daily_budget" | "step_reached";
+  /** The cost the cascade resolved (workflow > fleet measured > default). Null only when nothing priced it. */
   costPerOutcomeUsd: number | null;
+  /** Which rung priced it. Null when unpriced. */
+  costSource: SalesPathCostSource | null;
   workflowDynastySlug: string | null;
   grain: string | null;
+  /** Null when priced (by any rung); otherwise why this channel states no price for the leg. */
   unpricedReason: string | null;
+  /** Why the WORKFLOW rung did not price it (the ladder's reason), even when a later rung did. Null when it did. */
+  workflowUnpricedReason: string | null;
 }
 
 export type SalesPathChannelChoice =
@@ -102,7 +156,7 @@ export interface SalesPathLeg {
     fleetMedian: { ratePct: number | null; brandCount: number };
     industryDefaultPct: number | null;
   } | null;
-  /** `platform`: at least one channel of ours publishes this leg. `human`: none does (the customer's team). */
+  /** `platform`: one of the MANAGED channels publishes this leg. `human`: none does (the customer's team). */
   workedBy: "platform" | "human";
   /** Present on a platform leg: the channel we would run it on, and why. */
   channel: {
@@ -111,6 +165,7 @@ export interface SalesPathLeg {
     trigger: "daily_budget" | "step_reached" | null;
     workflowDynastySlug: string | null;
     grain: string | null;
+    costSource: SalesPathCostSource | null;
     choice: SalesPathChannelChoice;
     candidates: SalesPathChannelCandidate[];
   } | null;
@@ -118,6 +173,8 @@ export interface SalesPathLeg {
   outcomesNeededPerPayingClient: number | null;
   /** Cost of one outcome of this leg's step on the chosen channel. Null on a human leg or unpriced. */
   costPerOutcomeUsd: number | null;
+  /** Which rung of the cost cascade priced the leg. Null on a human leg or unpriced. */
+  costSource: SalesPathCostSource | null;
   /** `costPerOutcomeUsd × outcomesNeededPerPayingClient`. Null on a human leg (no cost) or unpriced. */
   costPerPayingClientUsd: number | null;
 }
@@ -224,13 +281,37 @@ export interface BuildOfferSalesPathsInput {
   channels: readonly SalesPathChannelInput[];
   /** `${legKey}|${channelSlug}` → what that channel's ladder priced for the leg. */
   prices: ReadonlyMap<string, LegChannelPrice>;
+  /** `${legKey}|${channelSlug}` → the channel's MEASURED fleet cost per outcome on the leg (real spend only). */
+  fleetPrices?: ReadonlyMap<string, number>;
+  /** The channels the platform manages (default `MANAGED_CHANNEL_SLUGS`). */
+  managedChannelSlugs?: ReadonlySet<string>;
+  /** The last rung of the cost cascade (default `DEFAULT_COST_PER_OUTCOME_USD`). */
+  defaultCosts?: ReadonlyMap<string, number>;
 }
 
 export const priceKey = (legKey: string, slug: string): string => `${legKey}|${slug}`;
 
-/** PURE: the platform channels publishing each leg — the (leg, channel) pairs the route must price. */
-export function platformChannelsForLeg(channels: readonly SalesPathChannelInput[], legKey: string): SalesPathChannelInput[] {
-  return channels.filter((c) => c.operatedBy === "platform" && c.legKeys.includes(legKey));
+/** PURE: the MANAGED platform channels publishing each leg — the (leg, channel) pairs the route must price. */
+export function platformChannelsForLeg(
+  channels: readonly SalesPathChannelInput[],
+  legKey: string,
+  managed: ReadonlySet<string> = MANAGED_CHANNEL_SLUGS,
+): SalesPathChannelInput[] {
+  return channels.filter((c) => c.operatedBy === "platform" && managed.has(c.slug) && c.legKeys.includes(legKey));
+}
+
+const usable = (v: number | null | undefined): v is number => typeof v === "number" && Number.isFinite(v) && v > 0;
+
+/** PURE: the cost cascade for one (leg, channel) — workflow > fleet measured > default. */
+export function resolveLegChannelCost(
+  price: LegChannelPrice | undefined,
+  fleetCost: number | undefined,
+  defaultCost: number | undefined,
+): { costPerOutcomeUsd: number | null; costSource: SalesPathCostSource | null } {
+  if (usable(price?.costPerOutcomeUsd)) return { costPerOutcomeUsd: price!.costPerOutcomeUsd, costSource: "workflow" };
+  if (usable(fleetCost)) return { costPerOutcomeUsd: fleetCost, costSource: "fleet_measured" };
+  if (usable(defaultCost)) return { costPerOutcomeUsd: defaultCost, costSource: "default" };
+  return { costPerOutcomeUsd: null, costSource: null };
 }
 
 /** PURE: the whole body. */
@@ -253,6 +334,9 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
   if (chains.length === 0) return { ...base, status: "no_complete_path", paths: [] };
 
   const arrows = new Map(input.rates.map((a) => [legPairKey(a.fromStep, a.toStep), a]));
+  const managed = input.managedChannelSlugs ?? MANAGED_CHANNEL_SLUGS;
+  const fleetPrices = input.fleetPrices ?? new Map<string, number>();
+  const defaultCosts = input.defaultCosts ?? DEFAULT_COST_PER_OUTCOME_USD;
   const ltr = input.lifetimeRevenueUsd;
 
   const paths = chains.map((legKeys): Omit<SalesPath, "rank"> => {
@@ -281,22 +365,28 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
     let total = 0;
     const legs: SalesPathLeg[] = defs.map((d, i) => {
       const arrow = legRates[i];
-      const platform = platformChannelsForLeg(input.channels, d.legKey);
+      const platform = platformChannelsForLeg(input.channels, d.legKey, managed);
       let channel: SalesPathLeg["channel"] = null;
       let costPerOutcomeUsd: number | null = null;
       let costPerPayingClientUsd: number | null = null;
       if (platform.length > 0) {
         anyPlatform = true;
         const candidates: SalesPathChannelCandidate[] = platform.map((c) => {
-          const p = input.prices.get(priceKey(d.legKey, c.slug));
+          const key = priceKey(d.legKey, c.slug);
+          const p = input.prices.get(key);
+          const resolved = resolveLegChannelCost(p, fleetPrices.get(key), defaultCosts.get(key));
+          const workflowPriced = resolved.costSource === "workflow";
+          const workflowUnpricedReason = workflowPriced ? null : (p ? (p.unpricedReason ?? "recommended_workflow_unpriced") : "not_priced");
           return {
             slug: c.slug,
             name: c.name,
             trigger: c.trigger,
-            costPerOutcomeUsd: p?.costPerOutcomeUsd ?? null,
-            workflowDynastySlug: p?.workflowDynastySlug ?? null,
-            grain: p?.grain ?? null,
-            unpricedReason: p ? p.unpricedReason : "not_priced",
+            costPerOutcomeUsd: resolved.costPerOutcomeUsd,
+            costSource: resolved.costSource,
+            workflowDynastySlug: workflowPriced ? (p?.workflowDynastySlug ?? null) : null,
+            grain: workflowPriced ? (p?.grain ?? null) : resolved.costSource === "fleet_measured" ? "crossOrg" : null,
+            unpricedReason: resolved.costSource === null ? workflowUnpricedReason : null,
+            workflowUnpricedReason,
           };
         });
         const { chosen, choice } = chooseLegChannel(candidates);
@@ -306,6 +396,7 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
           trigger: chosen?.trigger ?? null,
           workflowDynastySlug: chosen?.workflowDynastySlug ?? null,
           grain: chosen?.grain ?? null,
+          costSource: chosen?.costSource ?? null,
           choice,
           candidates,
         };
@@ -340,6 +431,7 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
         channel,
         outcomesNeededPerPayingClient: needed[i],
         costPerOutcomeUsd,
+        costSource: channel?.costSource ?? null,
         costPerPayingClientUsd,
       };
     });

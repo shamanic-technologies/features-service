@@ -4584,6 +4584,24 @@ export function warmOutcomePrices(): Promise<void> {
   return outcomePricesWarm;
 }
 
+/**
+ * The fleet's MEASURED cost per outcome on each leg the outcome-prices payload prices, keyed
+ * `${legKey}|${featureSlug}` — read from the last build, never a request-path fleet walk. A leg with no
+ * measured price is absent. Kicks a background warm when stale. (Read by `/offers/:offerId/sales-paths`.)
+ */
+export function fleetLegCostsFromOutcomePrices(): Map<string, number> {
+  void warmOutcomePrices();
+  const out = new Map<string, number>();
+  const value = outcomePricesStore?.value;
+  if (!value) return out;
+  for (const leg of [...value.outcomes.websiteVisit.legs, ...value.outcomes.meetingBooked.legs]) {
+    if (leg.costPerOutcomeUsd !== null && Number.isFinite(leg.costPerOutcomeUsd) && leg.costPerOutcomeUsd > 0) {
+      out.set(`${leg.legKey}|${leg.featureSlug}`, leg.costPerOutcomeUsd);
+    }
+  }
+  return out;
+}
+
 /** Test seam. */
 export function __resetOutcomePrices(): void {
   outcomePricesStore = null;
