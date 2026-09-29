@@ -782,6 +782,19 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.status).toBe(502);
   });
 
+  it("a brand brand-service refuses for this org (403) is a named 404 about the request, never a 502", async () => {
+    mockFetch({ economics: ECONOMICS, leads: [] });
+    const impl = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, init) =>
+      String(typeof input === "string" ? input : (input as URL).toString()).includes("/sales-economics-effective")
+        ? new Response(JSON.stringify({ error: "Brand does not belong to the caller's org" }), { status: 403 })
+        : impl(input, init),
+    );
+    const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
+    expect(res.status).toBe(404);
+    expect(res.body.reason).toBe("brand_not_found");
+  });
+
   it("lens with no matching leads → empty leads + 0 pipeline; expectedConversions 0, costPerConversionUsd null", async () => {
     mockFetch({ economics: ECONOMICS, leads: [LENS_LEADS[3]], costCents: 5000 }); // only the cold lead, $50 cost
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&lens=signups").set(AUTH);

@@ -12,6 +12,7 @@ import { matchSingleStepGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal }
 import {
   fetchEffectiveEconomics,
   economicsFingerprint,
+  BrandOwnershipError,
   type EffectiveEconomics,
 } from "../lib/sales-economics-client.js";
 import {
@@ -944,6 +945,31 @@ function emptyBody(
     // cold-start path, which DID read it, replaces this through `attachMaturity`.
     maturity: null,
   };
+}
+
+/**
+ * The body of a brand that runs NO acquisition channel yet — a customer who signed up and has not
+ * launched a campaign. Nothing was bought, so the committed and actual spend are an exact zero (the
+ * brand grain reads spend by channel, and there is no channel to read) — the `spend` block included, so
+ * the cost card reads $0 rather than a skeleton; nothing was sold, so there is no pipeline to price and
+ * every ratio is null. The volume half (`outcomes`, `funnelSteps`) is null
+ * exactly as on the no-funnel path: no lead population was read. Same shape as every other revenue
+ * body, so a consumer renders it without a special case.
+ */
+export function noChannelRevenueBody(causes: readonly OutcomeCause[] = DEFAULT_PRICED_CAUSES): RevenueBody {
+  const nothingBought: SpendBreakdown = {
+    totalSpentCents: 0,
+    actualSpentCents: 0,
+    provisionedSpentCents: 0,
+    totalSpentTodayCents: 0,
+    actualSpentTodayCents: 0,
+    provisionedSpentTodayCents: 0,
+    sources: [],
+  };
+  // Nothing was sent either: an empty series, not null — the dashboard's schema takes `sequences` as a
+  // series or absent, and "no campaign" is a known zero, not an unreadable one.
+  const nothingSent: SignalSeries = { total: 0, daily: [], undatedCount: 0 };
+  return emptyBody(null, { committedCents: 0, actualCents: 0 }, buildSpend(nothingBought, []), nothingSent, null, null, null, [], causes);
 }
 
 /**
@@ -2601,6 +2627,12 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
     // reason, never the brand's own numbers under the offer's label, and never a fabricated zero.
     if (error instanceof OfferHasNoCampaignsError) {
       return res.status(404).json({ error: error.message, reason: "offer_has_no_campaigns", offerId: error.offerId });
+    }
+    // brand-service refused the brand for this org (403 foreign / 404 gone): the caller named a brand it
+    // does not hold — typically a tab still pointed at the previous tenant's brand. That is a named 404
+    // about the REQUEST, not a failure of this service, so it is neither a 502 nor an error trace.
+    if (error instanceof BrandOwnershipError) {
+      return res.status(404).json({ error: error.message, reason: "brand_not_found", brandId: error.brandId });
     }
     console.error("[features-service] Feature revenue error:", error);
     if (runId) {
