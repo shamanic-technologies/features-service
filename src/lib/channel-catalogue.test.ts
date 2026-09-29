@@ -239,6 +239,8 @@ describe("building the public catalogue", () => {
         legKey: "meeting_attended_to_paid_client",
         from: expect.objectContaining({ key: "meeting_attended" }),
         to: expect.objectContaining({ key: "paid_client" }),
+        // Nobody named this channel's crew, so none is invented.
+        crewName: null,
       },
     ]);
     expect(channel.salesFunnels.map((f) => f.key)).toEqual([
@@ -276,5 +278,24 @@ describe("every published leg states its MATURITY RULE (lib/maturity.ts, feature
     for (const leg of others) {
       expect(leg.maturity).toEqual({ durationDays: 0, outcomesRequired: 10, outcomeSignal: null, source: "default" });
     }
+  });
+});
+
+describe("crew names — the teammate name each leg a channel performs carries", () => {
+  const named = (slug: string) => buildChannelCatalogue([row({ slug, acquisitionChannel: CHANNEL })])[0];
+
+  it("cold email names its positive-reply leg Herald and its website-visit leg Scout", () => {
+    const channel = named("sales-cold-email-outreach");
+    const byTo = Object.fromEntries(channel.stepTransitions.map((t) => [t.to.key, t.crewName]));
+    expect(byTo).toEqual({ conversation: "Herald", website_visit: "Scout" });
+  });
+
+  it("a channel-wide name covers every leg the channel performs", () => {
+    const channel = buildChannelCatalogue([row({ slug: "ai-meeting-booking", acquisitionChannel: CLOSER })])[0];
+    expect(channel.stepTransitions.map((t) => t.crewName)).toEqual(["Pilot"]);
+  });
+
+  it("an unnamed channel publishes null, never an invented name", () => {
+    expect(named("some-unnamed-channel").stepTransitions.map((t) => t.crewName)).toEqual([null, null]);
   });
 });

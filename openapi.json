@@ -17249,12 +17249,18 @@
                     "description"
                   ],
                   "description": "The step this channel moves the lead TO."
+                },
+                "crewName": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The teammate name the product gives the crew performing this leg (e.g. `Herald` for cold email landing on a positive reply, `Scout` for its website-visit leg, `Pilot` for AI meeting booking). A (channel, landing step) pair may carry its own name; otherwise the channel has one name for all its legs. NULL when nobody named it — never invented; a consumer falls back to the channel's `name`. Colours and glyphs are a consumer concern."
                 }
               },
               "required": [
                 "legKey",
                 "from",
-                "to"
+                "to",
+                "crewName"
               ]
             },
             "description": "Every LEG this channel performs: which step it moves a lead FROM and which step it moves it TO. A funnel is sold leg by leg, not only end to end — booking a meeting, getting it held, and closing it are three separate things to buy. `from: null` means the channel moves a lead from nothing onto the funnel's first step."
