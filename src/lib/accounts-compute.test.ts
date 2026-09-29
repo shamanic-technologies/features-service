@@ -125,7 +125,7 @@ describe("accountStatus — a payment billing cannot collect beats every budget"
 });
 
 describe("buildAccountsAudit", () => {
-  it("builds a row per (org,brand) with both budgets + 3-way status, stats sum ACTIVE only, mrr=×30 arr=×365", async () => {
+  it("builds a row per (org,brand) with both budgets + 3-way status, stats sum ACTIVE only", async () => {
     const d = deps({
       memberships: [
         { orgId: "o1", brandId: "b1" }, // active: running 10, balance 100
@@ -174,8 +174,6 @@ describe("buildAccountsAudit", () => {
     // Stats: active running budgets 10 + 20 = 30 (the paused rows are NOT counted).
     expect(r.stats.totalRunningDailyBudgetUsd).toBe(30);
     expect(r.stats.totalConfiguredDailyBudgetUsd).toBe(30);
-    expect(r.stats.mrrUsd).toBe(900);
-    expect(r.stats.arrUsd).toBe(30 * 365);
     expect(r.stats.activeCount).toBe(2);
     expect(r.stats.pausedCount).toBe(2);
     expect(r.stats.inactiveCount).toBe(2);
@@ -201,7 +199,6 @@ describe("buildAccountsAudit", () => {
     expect(row.runningDailyBudgetUsd).toBe(50);
     expect(r.stats.totalRunningDailyBudgetUsd).toBe(50);
     expect(r.stats.totalConfiguredDailyBudgetUsd).toBe(60);
-    expect(r.stats.mrrUsd).toBe(1500); // not 1800
   });
 
   it("a brand that spends while a stale pause flag called it paused is ACTIVE — the flag is not read", async () => {
@@ -248,7 +245,6 @@ describe("buildAccountsAudit", () => {
     expect(r.stats.totalRunningDailyBudgetUsd).toBe(40);
     expect(r.stats.activeCount).toBe(2);
     expect(r.stats.pausedCount).toBe(1);
-    expect(r.stats.mrrUsd).toBe(1200);
   });
 
   it("dedupes (org,brand) pairs that appear under multiple workflows/features", async () => {
@@ -300,8 +296,11 @@ describe("buildAccountsAudit", () => {
     expect(r.stats).toEqual({
       totalRunningDailyBudgetUsd: 0,
       totalConfiguredDailyBudgetUsd: 0,
-      mrrUsd: 0,
-      arrUsd: 0,
+      mrrUsd: null,
+      arrUsd: null,
+      mrrBasis: "billing_recurring",
+      mrrUnavailableReason: "not_requested",
+      mrrUnknownOrgIds: [],
       activeCount: 0,
       paymentDeclinedCount: 0,
       noPaymentMethodCount: 0,
@@ -333,8 +332,6 @@ describe("buildAccountsAudit", () => {
 
     // Fleet total is the undiscounted budget projection: 20 + 20 = 40.
     expect(r.stats.totalRunningDailyBudgetUsd).toBe(40);
-    expect(r.stats.mrrUsd).toBe(40 * 30);
-    expect(r.stats.arrUsd).toBe(40 * 365);
     expect(r.stats.activeCount).toBe(2);
   });
 
@@ -393,7 +390,6 @@ describe("buildAccountsAudit", () => {
     expect(doc.paymentDeclinedReason).toBeNull();
     // Only the healthy account is money in play: $20, not $69.
     expect(audit.stats.totalRunningDailyBudgetUsd).toBe(20);
-    expect(audit.stats.mrrUsd).toBe(600);
     expect(audit.stats).toMatchObject({ activeCount: 1, paymentDeclinedCount: 1, pausedCount: 0, inactiveCount: 0, totalCount: 2 });
     expect(audit.rows.map((r) => r.status)).toEqual(["active", "payment_declined"]);
   });
@@ -441,5 +437,67 @@ describe("buildAccountsAudit — each row states the ORG's side of the revenue s
   it("an empty store is a measured answer: nobody is agency", async () => {
     const audit = await buildAccountsAudit(COLD, NOW, { ...deps(fixture), statedAmounts: async () => [] });
     expect(new Set(audit.rows.map((r) => r.revenueSide))).toEqual(new Set(["self_serve"]));
+  });
+
+  describe("MRR / ARR are billing's RECURRING revenue, never the running budget × 30 (2026-09-29)", () => {
+    const fixture = {
+      memberships: [
+        { orgId: "post", brandId: "b-post" },
+        { orgId: "prep", brandId: "b-prep" },
+      ],
+      balanceUsd: { post: 500, prep: 500 },
+      autoTopup: { post: true, prep: false },
+      configuredUsd: { "b-post": 20, "b-prep": 20 },
+    };
+    const recurring = async () => ({
+      asOf: NOW.toISOString(),
+      orgs: [
+        // postpaid with a card: its PROACTIVE running budget only ($12/day) — a $8 reactive leg is not in it
+        { orgId: "post", paymentMode: "postpaid", revenueClass: "recurring", classReason: "postpaid_chargeable_card", mrrCents: "36000.0000000000", unknownReason: null },
+        // prepaid, no auto top-up: ONE-OFF, not MRR, however much it has running
+        { orgId: "prep", paymentMode: "prepaid", revenueClass: "one_off", classReason: "prepaid_no_auto_topup", mrrCents: "0.0000000000", unknownReason: null },
+        // an org outside the cold-email universe still counts toward the fleet's one MRR
+        { orgId: "elsewhere", paymentMode: "postpaid", revenueClass: "recurring", classReason: "postpaid_chargeable_card", mrrCents: "15000.0100000000", unknownReason: null },
+        { orgId: "unsettled", paymentMode: "postpaid", revenueClass: "recurring", classReason: "postpaid_chargeable_card", mrrCents: null, unknownReason: "campaign_recurrence_unknown" },
+      ],
+      unreadableOrgIds: ["unreadable"],
+    });
+
+    it("states billing's fleet MRR to the cent, ARR = 12 × MRR, and each row's class", async () => {
+      const audit = await buildAccountsAudit(COLD, NOW, { ...deps(fixture), recurringRevenue: recurring }, { recurringRevenue: true });
+      // Both rows are ACTIVE with $20/day running: the old rule said $1,200 MRR. billing says $510.00.
+      expect(audit.stats.totalRunningDailyBudgetUsd).toBe(40);
+      expect(audit.stats.mrrUsd).toBe(510);
+      expect(audit.stats.mrrUsd).not.toBe(40 * 30);
+      expect(audit.stats.arrUsd).toBe(510 * 12);
+      expect(audit.stats.mrrBasis).toBe("billing_recurring");
+      expect(audit.stats.mrrUnavailableReason).toBeNull();
+      expect(audit.stats.mrrUnknownOrgIds).toEqual(["unreadable", "unsettled"]);
+      const post = audit.rows.find((r) => r.orgId === "post")!;
+      const prep = audit.rows.find((r) => r.orgId === "prep")!;
+      expect([post.revenueClass, post.revenueClassReason, post.orgRecurringMrrUsd]).toEqual(["recurring", "postpaid_chargeable_card", 360]);
+      expect([prep.revenueClass, prep.revenueClassReason, prep.orgRecurringMrrUsd]).toEqual(["one_off", "prepaid_no_auto_topup", 0]);
+    });
+
+    it("billing unavailable → MRR and ARR are NULL with the reason; the rows and budgets still answer", async () => {
+      const audit = await buildAccountsAudit(
+        COLD,
+        NOW,
+        { ...deps(fixture), recurringRevenue: async () => { throw new Error("billing down"); } },
+        { recurringRevenue: true },
+      );
+      expect(audit.stats.mrrUsd).toBeNull();
+      expect(audit.stats.arrUsd).toBeNull();
+      expect(audit.stats.mrrUnavailableReason).toBe("billing_revenue_unavailable");
+      expect(audit.stats.totalRunningDailyBudgetUsd).toBe(40); // never multiplied into an MRR
+      expect(audit.rows.every((r) => r.revenueClass === null && r.orgRecurringMrrUsd === null)).toBe(true);
+    });
+
+    it("a caller that does not ask for the MRR never pays for billing's fleet read", async () => {
+      let called = 0;
+      const audit = await buildAccountsAudit(COLD, NOW, { ...deps(fixture), recurringRevenue: async () => { called += 1; return recurring(); } });
+      expect(called).toBe(0);
+      expect(audit.stats.mrrUnavailableReason).toBe("not_requested");
+    });
   });
 });

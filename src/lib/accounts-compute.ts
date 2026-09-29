@@ -9,7 +9,8 @@
  * the configured one and is status-BLIND, so a brand running one campaign at $50 beside one stopped at
  * $10 answers $60; measured in production 2026-08-27, ~$25/day of a $138/day fleet sat on funnels whose
  * campaign was stopped or never created. Everything that claims to be money in play — the active
- * verdict, the fleet total, MRR, ARR — therefore reads RUNNING. CONFIGURED stays on the row because a
+ * verdict and the fleet budget total — therefore reads RUNNING. MRR/ARR are NOT budgets: they are
+ * billing's recurring revenue (2026-09-29). CONFIGURED stays on the row because a
  * customer's own settings screen must still be able to state what they set.
  *
  * STATUS rule (exact, precedence order):
@@ -37,7 +38,8 @@
  * NEITHER BUDGET CARRIES THE PER-ORG USAGE DISCOUNT — the discount is a modifier on CHARGES only
  * (frozen gross+net per cost row in the runs/billing ledger); a daily budget is a configuration value,
  * not a charge, so it is the same number for every customer whether or not they have a discount. The
- * fleet total/MRR/ARR are pure budget projections (budget × 30 / × 365), so they are undiscounted too.
+ * fleet running/configured totals are pure budget figures, so they are undiscounted too. MRR/ARR are
+ * billing-service's RECURRING revenue (read, never re-derived; see `AccountsStats.mrrUsd`).
  * (Actual-charge / realized-revenue figures — e.g. the `/internal/stats/revenue` realized-spend buckets
  * — legitimately stay net; those are not computed here.)
  *
@@ -49,6 +51,7 @@
  * every (org, brand) pair in ONE batched campaign-service call; brand name/domain is one batched
  * brand-service call. Fail loud.
  */
+import { ARR_MONTHS, fetchFleetRecurringRevenue, sumRecurringMrr, type FleetRecurringRevenue } from "./recurring-revenue-client.js";
 import { fetchFeatureMemberships } from "./feature-memberships-client.js";
 import {
   fetchOrgBalance,
@@ -121,6 +124,20 @@ export interface AccountRow {
    * not be read on this build, so the side is unknown — never guessed as self-serve.
    */
   revenueSide: RevenueSide | null;
+  /**
+   * billing-service's revenue class for the ORG (`recurring` | `one_off` | `none`), read from
+   * `GET /internal/revenue/fleet` — never re-derived here. `null` = billing's revenue read was not
+   * requested or unavailable on this build (see `stats.mrrUnavailableReason`), or billing could not
+   * read this org.
+   */
+  revenueClass: string | null;
+  /** billing's reason for `revenueClass` (`postpaid_chargeable_card`, `prepaid_no_auto_topup`, …), or null. */
+  revenueClassReason: string | null;
+  /**
+   * The ORG's recurring MRR as billing states it (USD, org-level — every brand row of one org carries
+   * the same value; never sum it across rows). 0 for a one-off or non-paying org; `null` = unknown.
+   */
+  orgRecurringMrrUsd: number | null;
 }
 
 export interface AccountsStats {
@@ -128,10 +145,23 @@ export interface AccountsStats {
   totalRunningDailyBudgetUsd: number;
   /** Σ CONFIGURED daily budget over ACTIVE rows only (USD). What those customers set, whatever is running. */
   totalConfiguredDailyBudgetUsd: number;
-  /** MRR = totalRunningDailyBudgetUsd × 30 (a budget projection, undiscounted). */
-  mrrUsd: number;
-  /** ARR = totalRunningDailyBudgetUsd × 365 (a budget projection, undiscounted). */
-  arrUsd: number;
+  /**
+   * MRR = billing-service's RECURRING revenue for the whole fleet (Σ of every org's known MRR, billing
+   * `GET /internal/revenue/fleet`): recurring orgs only (postpaid with a chargeable card, or prepaid with
+   * auto top-up and a card), proactive running campaigns with audience left only, DRR × 30. A reactive
+   * campaign's budget and a one-off prepaid org are NOT in it. Supersedes the old
+   * `totalRunningDailyBudgetUsd × 30` (2026-09-29). `null` = billing's read was unavailable
+   * (`mrrUnavailableReason`), never the old computation.
+   */
+  mrrUsd: number | null;
+  /** ARR = mrrUsd × 12. null whenever the MRR is. (Was running budget × 365 until 2026-09-29.) */
+  arrUsd: number | null;
+  /** The basis of `mrrUsd`: always billing's recurring figure. */
+  mrrBasis: "billing_recurring";
+  /** Why `mrrUsd` is null (`billing_revenue_unavailable` / `not_requested`), or null when it is stated. */
+  mrrUnavailableReason: "billing_revenue_unavailable" | "not_requested" | null;
+  /** Orgs whose MRR billing could not state — listed beside the sum, never counted as 0. */
+  mrrUnknownOrgIds: string[];
   activeCount: number;
   paymentDeclinedCount: number;
   /** Rows with no chargeable card (status no_payment_method); excluded from every money total. */
@@ -163,6 +193,16 @@ export interface AccountsDeps {
    * care about the revenue side need not state it; absent ⇒ every row reads `revenueSide: null`.
    */
   statedAmounts?: () => Promise<Array<{ orgId: string }> | null>;
+  /** billing's recurring revenue for every org. Read only when the caller asks for the MRR. */
+  recurringRevenue?: () => Promise<FleetRecurringRevenue>;
+}
+
+export interface AccountsAuditOptions {
+  /**
+   * Read billing's recurring revenue (a ~15 s fleet read) to state MRR/ARR and each row's revenue
+   * class. The staff Accounts page and the revenue history ask for it; the active-users count does not.
+   */
+  recurringRevenue?: boolean;
 }
 
 const REAL_DEPS: AccountsDeps = {
@@ -173,6 +213,7 @@ const REAL_DEPS: AccountsDeps = {
   spendableBudgets: fetchSpendableBudgets,
   brandsBasic: fetchBrandsBasic,
   statedAmounts: readStatedAmountsSoft,
+  recurringRevenue: fetchFleetRecurringRevenue,
 };
 
 /**
@@ -202,10 +243,17 @@ export function accountStatus(
   return "inactive";
 }
 
+/** One org's billing MRR (cents text) as USD, or null when unknown / not read. */
+function orgMrrUsd(cents: string | null | undefined): number | null {
+  if (cents === null || cents === undefined) return null;
+  return Math.round(Number(cents)) / 100;
+}
+
 export async function buildAccountsAudit(
   coldEmailSlugsCsv: string,
   now: Date = new Date(),
   deps: AccountsDeps = REAL_DEPS,
+  opts: AccountsAuditOptions = {},
 ): Promise<AccountsAudit> {
   // 1. Enumerate distinct (org, brand) accounts across the cold-email feature set.
   const memberships = coldEmailSlugsCsv ? await deps.featureMemberships(coldEmailSlugsCsv) : [];
@@ -216,12 +264,22 @@ export async function buildAccountsAudit(
   const brandIds = [...new Set([...pairs.values()].map((p) => p.brandId))];
   // One batched call for every pair's configured + running budget — a fleet audit cannot afford a
   // request per brand, and both figures come from the same producer computation.
-  const [budgets, statedRows] = await Promise.all([
+  const wantRecurring = opts.recurringRevenue === true && deps.recurringRevenue !== undefined;
+  const [budgets, statedRows, recurring] = await Promise.all([
     deps.spendableBudgets([...pairs.values()]),
     // Fail-soft: the side is additive information on a fail-loud audit whose other consumers (revenue
     // history, send-forecast, customer-health) must not gain a new way to fail. Unreadable ⇒ null side.
     deps.statedAmounts ? deps.statedAmounts() : Promise.resolve(null),
+    // Fail-soft to NULL with a reason: an unavailable billing read makes the MRR unknown — it never
+    // falls back to the running-budget computation this replaced, and never fails the audit's rows.
+    wantRecurring
+      ? deps.recurringRevenue!().catch((err) => {
+          console.error("[features-service] accounts: billing recurring revenue unavailable (soft):", err);
+          return null;
+        })
+      : Promise.resolve(null),
   ]);
+  const recurringByOrg = new Map((recurring?.orgs ?? []).map((o) => [o.orgId, o]));
   // The agency rule, byte-for-byte `agencyOrgIdsOf` (agency-self-serve-compute.ts): any org carrying a
   // stated amount, whatever its date range. Restated rather than imported because that module imports
   // active-users-compute, which imports this one.
@@ -280,6 +338,9 @@ export async function buildAccountsAudit(
         ),
         paymentDeclinedReason: info.hold?.blockedReason ?? null,
         revenueSide: agencyOrgIds === null ? null : agencyOrgIds.has(p.orgId) ? "agency" : "self_serve",
+        revenueClass: recurringByOrg.get(p.orgId)?.revenueClass ?? null,
+        revenueClassReason: recurringByOrg.get(p.orgId)?.classReason ?? null,
+        orgRecurringMrrUsd: orgMrrUsd(recurringByOrg.get(p.orgId)?.mrrCents),
       };
   });
 
@@ -298,7 +359,7 @@ export async function buildAccountsAudit(
   });
 
   // 4. Fleet stats — sum the RUNNING daily budget over ACTIVE rows only (paused/inactive don't spend);
-  //    MRR ×30, ARR ×365. Undiscounted budget projection (a ceiling is config, not a charge). Active ⇒
+  //    Undiscounted budget total (a ceiling is config, not a charge); NOT the MRR (see step 5). Active ⇒
   //    running > 0 by the verdict rule, so the sum is over positive numbers. The configured total rides
   //    alongside so a reader can see what those same customers posted, and can never be mistaken for it.
   let totalRunningDailyBudgetUsd = 0;
@@ -325,13 +386,19 @@ export async function buildAccountsAudit(
   totalRunningDailyBudgetUsd = Math.round(totalRunningDailyBudgetUsd * 100) / 100;
   totalConfiguredDailyBudgetUsd = Math.round(totalConfiguredDailyBudgetUsd * 100) / 100;
 
+  // 5. MRR / ARR — billing's recurring figure for the fleet, summed on its own decimal text. The
+  //    running budget above is configuration in play, not revenue, and is no longer multiplied into MRR.
+  const mrr = recurring ? sumRecurringMrr(recurring) : null;
   return {
     rows,
     stats: {
       totalRunningDailyBudgetUsd,
       totalConfiguredDailyBudgetUsd,
-      mrrUsd: totalRunningDailyBudgetUsd * 30,
-      arrUsd: totalRunningDailyBudgetUsd * 365,
+      mrrUsd: mrr ? mrr.mrrUsd : null,
+      arrUsd: mrr ? Math.round(mrr.mrrUsd * ARR_MONTHS * 100) / 100 : null,
+      mrrBasis: "billing_recurring",
+      mrrUnavailableReason: mrr ? null : wantRecurring ? "billing_revenue_unavailable" : "not_requested",
+      mrrUnknownOrgIds: mrr ? mrr.unknownOrgIds : [],
       activeCount,
       paymentDeclinedCount,
       noPaymentMethodCount,

@@ -26,8 +26,14 @@ import { buildAccountsAudit } from "./accounts-compute.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { addUtcDays } from "./send-forecast-compute.js";
 import { bucketOf, enumerateBuckets, type Granularity } from "./active-users-compute.js";
-import { recordCommittedMrrSnapshotSoft, readCommittedMrrSnapshotsSoft } from "./committed-mrr-store.js";
-import { buildCommittedMrrHistory, type CommittedMrrHistory } from "./committed-mrr-compute.js";
+import {
+  readCommittedMrrSnapshotsSoft,
+  readRecurringMrrSnapshotsSoft,
+  recordRecurringMrrSnapshotSoft,
+  type RecordedOrgMrr,
+} from "./committed-mrr-store.js";
+import { buildCommittedMrrHistory, mergeMrrSnapshots, type CommittedMrrHistory, type MrrSnapshot } from "./committed-mrr-compute.js";
+import { fetchFleetRecurringRevenue, sumRecurringMrr, type FleetRecurringRevenue } from "./recurring-revenue-client.js";
 import { buildNetRevenueRetention, type NrrHistory } from "./nrr-compute.js";
 import { readStatedAmountsSoft, type StatedAmountRow } from "./stated-monthly-amounts-store.js";
 import {
@@ -95,8 +101,11 @@ export interface RevenueBucket {
 export interface RevenueHistory {
   /** Cumulative realized revenue since inception (all orgs, all time), in USD (2-decimal). */
   totalRevenueUsd: number;
-  /** LIVE MRR — fleet active daily budget × 30 (the accounts-audit verdict). Matches the accounts snapshot. */
-  currentMrrUsd: number;
+  /**
+   * LIVE MRR — billing-service's recurring revenue for the fleet (the accounts audit's `stats.mrrUsd`,
+   * same read). Was running budget × 30 until 2026-09-29. null = billing's read was unavailable.
+   */
+  currentMrrUsd: number | null;
   monthly: RevenueBucket[];
   weekly: RevenueBucket[];
   daily: RevenueBucket[];
@@ -149,9 +158,8 @@ export interface RevenueHistoryDeps {
     coldEmailSlugsCsv: string,
     now: Date,
   ) => Promise<{
-    mrrUsd: number;
-    dailyBudgetUsd: number;
-    activeCount: number;
+    /** billing's recurring revenue for every org, or null when billing's read was unavailable. */
+    recurring: FleetRecurringRevenue | null;
     pairs: Array<{
       orgId: string;
       brandId: string;
@@ -161,10 +169,12 @@ export interface RevenueHistoryDeps {
       active: boolean;
     }>;
   }>;
-  /** Persist today's committed-budget snapshot (fail-soft; recorded going forward, no boot backfill). */
-  recordCommittedSnapshot: (dailyBudgetUsd: number, activeCount: number, now: Date) => Promise<void>;
-  /** Read committed snapshots on/after a `YYYY-MM-DD` lower bound → {date, mrrUsd} oldest→newest (fail-soft → []). */
+  /** Read LEGACY (running budget × 30) snapshots on/after a bound → {date, mrrUsd} oldest→newest (fail-soft → []). No longer written. */
   readCommittedSnapshots: (sinceIso: string) => Promise<Array<{ date: string; mrrUsd: number }>>;
+  /** Persist today's per-org billing MRR (fail-soft; the billing-basis history, recorded going forward). */
+  recordRecurringSnapshot: (rows: RecordedOrgMrr[], now: Date) => Promise<void>;
+  /** Read per-org billing MRR recorded on/after a bound, grouped by day (fail-soft → empty map). */
+  readRecurringSnapshots: (sinceIso: string) => Promise<Map<string, RecordedOrgMrr[]>>;
   /** Every stated monthly amount on record (fail-soft → null = "could not read", distinct from [] = "none stated"). */
   readStatedAmounts: () => Promise<StatedAmountRow[] | null>;
   /** What amount billing recorded as in force for one (org, brand) on each UTC day of a range. Fails loud. */
@@ -191,12 +201,17 @@ const REAL_DEPS: RevenueHistoryDeps = {
   featureMemberships: async (csv) => (await fetchFeatureMemberships(csv)).map((m) => ({ orgId: m.orgId })),
   orgDailySpendCents: fetchOrgDailySpendCents,
   currentFleetStats: async (csv, now) => {
-    const audit = await buildAccountsAudit(csv, now);
-    const s = audit.stats;
+    // The SAME billing read the accounts audit's MRR is summed from (shared in-process), so the two
+    // staff pages state one MRR.
+    const [audit, recurring] = await Promise.all([
+      buildAccountsAudit(csv, now),
+      fetchFleetRecurringRevenue().catch((err) => {
+        console.error("[features-service] revenue history: billing recurring revenue unavailable (soft):", err);
+        return null;
+      }),
+    ]);
     return {
-      mrrUsd: s.mrrUsd,
-      dailyBudgetUsd: s.totalRunningDailyBudgetUsd,
-      activeCount: s.activeCount,
+      recurring,
       pairs: audit.rows.map((r) => ({
         orgId: r.orgId,
         brandId: r.brandId,
@@ -209,8 +224,9 @@ const REAL_DEPS: RevenueHistoryDeps = {
       })),
     };
   },
-  recordCommittedSnapshot: recordCommittedMrrSnapshotSoft,
   readCommittedSnapshots: readCommittedMrrSnapshotsSoft,
+  recordRecurringSnapshot: recordRecurringMrrSnapshotSoft,
+  readRecurringSnapshots: readRecurringMrrSnapshotsSoft,
   readStatedAmounts: readStatedAmountsSoft,
   budgetByDay: fetchBrandBudgetByDay,
   currentDailyBudget: fetchBrandCurrentDailyBudget,
@@ -221,6 +237,14 @@ const REAL_DEPS: RevenueHistoryDeps = {
     fetchBrandCommittedSpendByDay(brandId, undefined, coldEmailSlugsCsv.split(","), { orgId }),
   firstBilledDay: fetchBrandFirstBilledDay,
 };
+
+/** billing's fleet read as the rows the billing-basis history records (unreadable orgs as unknown). Pure. */
+export function recordedRowsOf(fleet: FleetRecurringRevenue): RecordedOrgMrr[] {
+  return [
+    ...fleet.orgs.map((o) => ({ orgId: o.orgId, revenueClass: o.revenueClass, mrrCents: o.mrrCents })),
+    ...fleet.unreadableOrgIds.map((orgId) => ({ orgId, revenueClass: "unreadable", mrrCents: null })),
+  ];
+}
 
 /** Round a cents amount to whole USD dollars-and-cents (2 decimals), FP-safe. */
 function centsToUsd(cents: number): number {
@@ -285,23 +309,42 @@ export async function buildRevenueHistory(
     mapWithConcurrency(orgIds, ORG_FANOUT_CONCURRENCY, async (orgId): Promise<[string, Map<string, number>]> => {
       return [orgId, await deps.orgDailySpendCents(orgId, coldEmailSlugsCsv, INCEPTION_FLOOR_ISO)];
     }),
-    coldEmailSlugsCsv ? deps.currentFleetStats(coldEmailSlugsCsv, now) : Promise.resolve({ mrrUsd: 0, dailyBudgetUsd: 0, activeCount: 0, pairs: [] }),
+    coldEmailSlugsCsv
+      ? deps.currentFleetStats(coldEmailSlugsCsv, now)
+      : Promise.resolve({ recurring: null as FleetRecurringRevenue | null, pairs: [] }),
   ]);
   const orgDailyCents = new Map(orgDayEntries);
-  const currentMrrUsd = fleet.mrrUsd;
+  // The ONE live MRR: billing's recurring revenue summed over every org it states (known rows).
+  const liveSum = fleet.recurring ? sumRecurringMrr(fleet.recurring) : null;
+  const currentMrrUsd = liveSum ? liveSum.mrrUsd : null;
+  const current = { mrrUsd: currentMrrUsd, unknownOrgCount: liveSum ? liveSum.unknownOrgIds.length : 0 };
 
-  // 2b. COMMITTED MRR: record today's committed-budget snapshot (going forward, fail-soft), then read the
-  //     recorded snapshots over the displayed window and build the monthly/weekly committed series. The
-  //     current-period point uses the LIVE MRR, so it reconciles with the accounts audit by construction.
-  let committedMrr: CommittedMrrHistory = buildCommittedMrrHistory([], currentMrrUsd, now, { weeks: windows.weeks, months: windows.months });
-  let committedSnapshots: Array<{ date: string; mrrUsd: number }> = [];
+  // 2b. MRR OVER TIME. From 2026-09-29 each day records billing's per-org MRR (going forward, fail-soft);
+  //     the legacy running-budget snapshots are read for the days before the first billing record and
+  //     are no longer written. Every point states its basis. The current-period point is the LIVE read,
+  //     so it reconciles with the accounts audit by construction.
+  let committedMrr: CommittedMrrHistory = buildCommittedMrrHistory([], current, now, { weeks: windows.weeks, months: windows.months });
+  let committedSnapshots: MrrSnapshot[] = [];
+  let recurringByDay = new Map<string, RecordedOrgMrr[]>();
+  let basisChangedOn: string | null = null;
   if (coldEmailSlugsCsv) {
-    await deps.recordCommittedSnapshot(fleet.dailyBudgetUsd, fleet.activeCount, now);
+    if (fleet.recurring) await deps.recordRecurringSnapshot(recordedRowsOf(fleet.recurring), now);
     const committedSinceIso = [monthlyBuckets[0]?.periodStart, weeklyBuckets[0]?.periodStart]
       .filter((s): s is string => Boolean(s))
       .reduce((a, b) => (a < b ? a : b), todayIso);
-    committedSnapshots = await deps.readCommittedSnapshots(committedSinceIso);
-    committedMrr = buildCommittedMrrHistory(committedSnapshots, currentMrrUsd, now, { weeks: windows.weeks, months: windows.months });
+    const [legacy, byDay] = await Promise.all([
+      deps.readCommittedSnapshots(committedSinceIso),
+      deps.readRecurringSnapshots(committedSinceIso),
+    ]);
+    recurringByDay = byDay;
+    const billingPoints: MrrSnapshot[] = [...byDay].map(([date, rows]) => {
+      const sum = sumRecurringMrr({ orgs: rows.map((r) => ({ ...r, paymentMode: "", classReason: "", unknownReason: null })), unreadableOrgIds: [] });
+      return { date, mrrUsd: sum.mrrUsd, basis: "billing_recurring", unknownOrgCount: sum.unknownOrgIds.length };
+    });
+    const merged = mergeMrrSnapshots(legacy, billingPoints);
+    committedSnapshots = merged.snapshots;
+    basisChangedOn = merged.basisChangedOn ?? (fleet.recurring ? todayIso : null);
+    committedMrr = buildCommittedMrrHistory(committedSnapshots, current, now, { weeks: windows.weeks, months: windows.months }, basisChangedOn);
   }
 
   // 2c. AGENCY / SELF-SERVE SPLIT: the same run-rate, divided into the half a human STATED a monthly
@@ -309,7 +352,14 @@ export async function buildRevenueHistory(
   //     enrichment must never 502 a revenue read whose every other figure is correct — and NEVER
   //     half-computed: a partial read would state a self-serve figure that is quietly wrong.
   const mrrSplit = await buildMrrSplitSoft(
-    { coldEmailSlugsCsv, snapshots: committedSnapshots, currentMrrUsd, pairs: fleet.pairs },
+    {
+      coldEmailSlugsCsv,
+      snapshots: committedSnapshots,
+      currentMrrUsd,
+      pairs: fleet.pairs,
+      recurring: { live: fleet.recurring, byDay: recurringByDay },
+      basisChangedOn,
+    },
     now,
     { weeks: windows.weeks, months: windows.months },
     deps,
@@ -372,9 +422,11 @@ export async function buildRevenueHistory(
 async function buildMrrSplitSoft(
   ctx: {
     coldEmailSlugsCsv: string;
-    snapshots: Array<{ date: string; mrrUsd: number }>;
-    currentMrrUsd: number;
+    snapshots: MrrSnapshot[];
+    currentMrrUsd: number | null;
     pairs: Array<{ orgId: string; brandId: string; brandName?: string | null; brandDomain?: string | null }>;
+    recurring: { live: FleetRecurringRevenue | null; byDay: Map<string, RecordedOrgMrr[]> };
+    basisChangedOn: string | null;
   },
   now: Date,
   windows: { weeks: number; months: number },
@@ -527,9 +579,8 @@ async function buildMrrSplitSoft(
         snapshots: ctx.snapshots,
         currentMrrUsd: ctx.currentMrrUsd,
         earningRecordBeginsOn,
-        brandNamesByPair: new Map(
-          ctx.pairs.map((p) => [pairKey(p.orgId, p.brandId), { name: p.brandName ?? null, domain: p.brandDomain ?? null }]),
-        ),
+        recurring: ctx.recurring,
+        basisChangedOn: ctx.basisChangedOn,
       },
       now,
       windows,

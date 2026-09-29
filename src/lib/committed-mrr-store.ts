@@ -9,9 +9,9 @@
  * fail-soft-display pattern used by the /revenue conversion-count tiles). The next request retries the
  * upsert; a failed read degrades the committed series to the current live point only.
  */
-import { gte } from "drizzle-orm";
+import { eq, gte } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { committedMrrSnapshots } from "../db/schema.js";
+import { committedMrrSnapshots, recurringMrrOrgSnapshots } from "../db/schema.js";
 
 /** MRR = daily budget × 30 (calendar-month run-rate); the accounts-audit convention. */
 export const MRR_DAY_MULTIPLE = 30;
@@ -63,5 +63,61 @@ export async function readCommittedMrrSnapshotsSoft(
   } catch (err) {
     console.error("[features-service] committed-mrr snapshot read failed (soft):", err);
     return [];
+  }
+}
+
+/**
+ * One org's recorded billing MRR on one day. `mrrCents` null = billing could not state it that day
+ * (unknown, never a 0). `revenueClass` `unreadable` = billing could not read the org at all.
+ */
+export interface RecordedOrgMrr {
+  orgId: string;
+  revenueClass: string;
+  mrrCents: string | null;
+}
+
+/**
+ * Upsert today's per-org billing MRR (idempotent on (day, org); the day's rows are REPLACED so an org
+ * that left billing's fleet does not linger). Fail-soft like the legacy store: a write blip logs loud and
+ * the next read retries; the live figures on the response never depend on it.
+ */
+export async function recordRecurringMrrSnapshotSoft(rows: RecordedOrgMrr[], now: Date): Promise<void> {
+  try {
+    const snapshotDate = now.toISOString().slice(0, 10);
+    await db.transaction(async (tx) => {
+      await tx.delete(recurringMrrOrgSnapshots).where(eq(recurringMrrOrgSnapshots.snapshotDate, snapshotDate));
+      if (rows.length > 0) {
+        await tx.insert(recurringMrrOrgSnapshots).values(
+          rows.map((r) => ({ snapshotDate, orgId: r.orgId, revenueClass: r.revenueClass, mrrCents: r.mrrCents, recordedAt: now })),
+        );
+      }
+    });
+  } catch (err) {
+    console.error("[features-service] recurring-mrr snapshot record failed (soft):", err);
+  }
+}
+
+/** Recorded per-org billing MRR on/after a `YYYY-MM-DD` bound, grouped by day. Fail-soft → empty map. */
+export async function readRecurringMrrSnapshotsSoft(sinceIso: string): Promise<Map<string, RecordedOrgMrr[]>> {
+  try {
+    const rows = await db
+      .select({
+        date: recurringMrrOrgSnapshots.snapshotDate,
+        orgId: recurringMrrOrgSnapshots.orgId,
+        revenueClass: recurringMrrOrgSnapshots.revenueClass,
+        mrrCents: recurringMrrOrgSnapshots.mrrCents,
+      })
+      .from(recurringMrrOrgSnapshots)
+      .where(gte(recurringMrrOrgSnapshots.snapshotDate, sinceIso.slice(0, 10)));
+    const byDay = new Map<string, RecordedOrgMrr[]>();
+    for (const r of rows) {
+      const list = byDay.get(r.date) ?? [];
+      list.push({ orgId: r.orgId, revenueClass: r.revenueClass, mrrCents: r.mrrCents });
+      byDay.set(r.date, list);
+    }
+    return byDay;
+  } catch (err) {
+    console.error("[features-service] recurring-mrr snapshot read failed (soft):", err);
+    return new Map();
   }
 }
