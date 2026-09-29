@@ -27340,6 +27340,295 @@
         }
       }
     },
+    "/public/stats/outcome-prices": {
+      "get": {
+        "summary": "Expected price of one website visit and one booked meeting, for a brand with no data yet (public, no auth)",
+        "description": "Fleet grain (every org's campaigns), incurred cost basis. Per leg, the BEST workflow's price: its MATURE figure when any eligible workflow is mature on the leg, else the best FLASH figure; a workflow deprecated on the leg never competes. websiteVisit = the cold-email leg start → website visit. meetingBooked = cold email (start → positive reply) then the AI meeting booking (positive reply → meeting booked): price = replyCost ÷ (meetingRatePct / 100) + meetingLegCost, every term stated in `arithmetic`. Built off the request path; before the first build every price is null with `not_computed_yet`.",
+        "tags": [
+          "Public"
+        ],
+        "responses": {
+          "200": {
+            "description": "The two outcome prices",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "grain": {
+                      "type": "string",
+                      "enum": [
+                        "fleet"
+                      ]
+                    },
+                    "costBasis": {
+                      "type": "string",
+                      "enum": [
+                        "incurred"
+                      ]
+                    },
+                    "computedAt": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "outcomes": {
+                      "type": "object",
+                      "properties": {
+                        "websiteVisit": {
+                          "type": "object",
+                          "properties": {
+                            "maturity": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "mature",
+                                "early"
+                              ],
+                              "description": "`mature` when EVERY leg the price rests on is priced on mature evidence, `early` when any is flash."
+                            },
+                            "priceUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "The expected price of ONE outcome. Null = unmeasured (see `unmeasuredReason`), never 0."
+                            },
+                            "unmeasuredReason": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "no_campaigns_on_leg",
+                                "no_workflow_with_outcomes",
+                                "leg_unmeasured",
+                                "not_computed_yet"
+                              ]
+                            },
+                            "legs": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "legKey": {
+                                    "type": "string"
+                                  },
+                                  "featureSlug": {
+                                    "type": "string",
+                                    "description": "The channel performing the leg (cold email for the entry legs, the AI meeting booking for the meeting leg)."
+                                  },
+                                  "basis": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "mature",
+                                      "flash"
+                                    ],
+                                    "description": "`mature` = the chosen workflow is mature on the leg and priced on its mature evidence; `flash` = no eligible workflow is mature, so the best early figure; null = unmeasured."
+                                  },
+                                  "workflowDynastySlug": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "costPerOutcomeUsd": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "The chosen workflow's cost per outcome of the leg, on `basis`."
+                                  },
+                                  "conversionRatePct": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "The chosen workflow's conversion on the leg (outcomes ÷ people it worked), on `basis`."
+                                  },
+                                  "figures": {
+                                    "allOf": [
+                                      {
+                                        "$ref": "#/components/schemas/OutcomeFigures"
+                                      },
+                                      {
+                                        "nullable": true
+                                      }
+                                    ]
+                                  },
+                                  "matureWorkflowCount": {
+                                    "type": "number"
+                                  },
+                                  "unmeasuredReason": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "no_campaigns_on_leg",
+                                      "no_workflow_with_outcomes"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "legKey",
+                                  "featureSlug",
+                                  "basis",
+                                  "workflowDynastySlug",
+                                  "costPerOutcomeUsd",
+                                  "conversionRatePct",
+                                  "figures",
+                                  "matureWorkflowCount",
+                                  "unmeasuredReason"
+                                ]
+                              }
+                            }
+                          },
+                          "required": [
+                            "maturity",
+                            "priceUsd",
+                            "unmeasuredReason",
+                            "legs"
+                          ]
+                        },
+                        "meetingBooked": {
+                          "type": "object",
+                          "properties": {
+                            "maturity": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "mature",
+                                "early"
+                              ],
+                              "description": "`mature` when EVERY leg the price rests on is priced on mature evidence, `early` when any is flash."
+                            },
+                            "priceUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "The expected price of ONE outcome. Null = unmeasured (see `unmeasuredReason`), never 0."
+                            },
+                            "unmeasuredReason": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "no_campaigns_on_leg",
+                                "no_workflow_with_outcomes",
+                                "leg_unmeasured",
+                                "not_computed_yet"
+                              ]
+                            },
+                            "legs": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "legKey": {
+                                    "type": "string"
+                                  },
+                                  "featureSlug": {
+                                    "type": "string",
+                                    "description": "The channel performing the leg (cold email for the entry legs, the AI meeting booking for the meeting leg)."
+                                  },
+                                  "basis": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "mature",
+                                      "flash"
+                                    ],
+                                    "description": "`mature` = the chosen workflow is mature on the leg and priced on its mature evidence; `flash` = no eligible workflow is mature, so the best early figure; null = unmeasured."
+                                  },
+                                  "workflowDynastySlug": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "costPerOutcomeUsd": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "The chosen workflow's cost per outcome of the leg, on `basis`."
+                                  },
+                                  "conversionRatePct": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "The chosen workflow's conversion on the leg (outcomes ÷ people it worked), on `basis`."
+                                  },
+                                  "figures": {
+                                    "allOf": [
+                                      {
+                                        "$ref": "#/components/schemas/OutcomeFigures"
+                                      },
+                                      {
+                                        "nullable": true
+                                      }
+                                    ]
+                                  },
+                                  "matureWorkflowCount": {
+                                    "type": "number"
+                                  },
+                                  "unmeasuredReason": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "no_campaigns_on_leg",
+                                      "no_workflow_with_outcomes"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "legKey",
+                                  "featureSlug",
+                                  "basis",
+                                  "workflowDynastySlug",
+                                  "costPerOutcomeUsd",
+                                  "conversionRatePct",
+                                  "figures",
+                                  "matureWorkflowCount",
+                                  "unmeasuredReason"
+                                ]
+                              }
+                            },
+                            "arithmetic": {
+                              "type": "object",
+                              "nullable": true,
+                              "properties": {
+                                "replyCostUsd": {
+                                  "type": "number"
+                                },
+                                "meetingRatePct": {
+                                  "type": "number"
+                                },
+                                "repliesCostPerMeetingUsd": {
+                                  "type": "number"
+                                },
+                                "meetingLegCostUsd": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "replyCostUsd",
+                                "meetingRatePct",
+                                "repliesCostPerMeetingUsd",
+                                "meetingLegCostUsd"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "maturity",
+                            "priceUsd",
+                            "unmeasuredReason",
+                            "legs",
+                            "arithmetic"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "websiteVisit",
+                        "meetingBooked"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "grain",
+                    "costBasis",
+                    "computedAt",
+                    "outcomes"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/public/stats/workflow-return-history": {
       "get": {
         "summary": "One workflow's fleet-wide dated spend, value and return on spend — BILLED basis (public, no auth)",

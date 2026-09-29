@@ -24,6 +24,31 @@ Owner decisions 2026-09-29 (the dashboard's offer beta lists every step, leg, ch
   is byte-unchanged; published on every `/public/channels` row). Not fundable or schedulable; nothing here
   provisions off it. (Set 2026-09-29.)
 
+## WHAT ONE WEBSITE VISIT / ONE BOOKED MEETING COSTS A BRAND WITH NO DATA — `GET /public/stats/outcome-prices`
+
+The public onboarding (`/get-started`, signed-out) asks what the customer buys and prices each option.
+Fleet grain, incurred basis, no identity. `lib/outcome-prices.ts` (pick + compose, pure),
+`lib/meeting-leg-fleet.ts` (the AI meeting leg), handler in `routes/public.ts`.
+
+- **Per leg, the BEST workflow (owner rule 2026-09-29)**: cheapest MATURE figure among workflows mature
+  on the leg; none mature → cheapest FLASH figure with ≥1 outcome; none → `unmeasured` + reason. A
+  workflow DEPRECATED on the leg (`workflow_leg_assignments`) never competes; active + unassigned do.
+- **Website visits** = cold-email `start_to_website_visit`'s price. **Meetings booked** = cold email
+  (`start_to_conversation`) then `ai-meeting-booking` (`conversation_to_meeting_booked`):
+  `replyCost / (meetingRatePct / 100) + meetingLegCost`, every term served in `arithmetic`. `maturity`
+  is `mature` only when every leg is.
+- **Cold-email legs** read the byte-same per-workflow fleet leg maturity `/public/stats/workflow-cost-per-outcome`
+  rides (`fetchFleetLegWorkflowMaturity`, refresher-backed). **The meeting leg** has no email signal, so it is
+  read like `/offers/:id/outcomes`' acted leads, fleet-wide: every org's leg campaigns, the leads each
+  campaign's worker ANSWERED (lead-service followup-actions) = `contacted`, those at "meeting booked"
+  (every cause) = `outcomes`, runs incurred spend per campaign (public costs are single-dimension, so one
+  read per campaign). A campaign whose runs span several dynasties is left out, logged. Rule 0 days / 10.
+- **Built OFF the request path** (boot warm + single-flight warm on a read past 15 min); a read answers the
+  last build, before the first `computedAt: null` + every price `not_computed_yet`. Never a guessed figure.
+- Prod at ship (2026-09-29): visit $2.49 (osprey, mature); meeting $92.02 = $36.35 / 40% + $1.16 (reply leg
+  osprey mature, meeting leg rhodium flash, 2 of 5) → `early`.
+- Guards: `lib/outcome-prices.test.ts`. (Set 2026-09-29.)
+
 ## A WORKFLOW IS PRICED ON ITS MATURE EVIDENCE ONCE IT IS MATURE ON THE FLEET OF ITS LEG — `lib/maturity.ts` is the ONE maturity rule
 
 Supersedes `OUTCOME_LAG_DAYS` (14) and the 10-outcome learning bar everywhere below. Prod 2026-09-28,
