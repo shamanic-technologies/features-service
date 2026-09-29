@@ -145,6 +145,15 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
       }
     });
 
+    // The cascade's middle rung: the fleet's measured cost per outcome, from the last outcome-prices build
+    // (lazy import: that router is large and this rung is optional — an unwarmed store falls to the default).
+    let fleetPrices = new Map<string, number>();
+    try {
+      fleetPrices = (await import("./public.js")).fleetLegCostsFromOutcomePrices();
+    } catch (error) {
+      console.error(`[features-service] sales-paths: fleet leg costs unreadable, defaults apply: ${(error as Error).message}`);
+    }
+
     return res.json(
       buildOfferSalesPaths({
         offerId,
@@ -156,6 +165,7 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
         rates: rates.legs,
         channels,
         prices,
+        fleetPrices,
       }),
     );
   } catch (error) {

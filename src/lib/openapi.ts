@@ -1659,10 +1659,12 @@ const salesPathCandidateSchema = z.object({
   slug: z.string(),
   name: z.string(),
   trigger: z.enum(["daily_budget", "step_reached"]),
-  costPerOutcomeUsd: z.number().nullable(),
+  costPerOutcomeUsd: z.number().nullable().describe("The cost the cascade resolved: recommended workflow > measured fleet cost > seeded default."),
+  costSource: z.enum(["workflow", "fleet_measured", "default"]).nullable().describe("Which rung of the cost cascade priced the candidate. Null when unpriced."),
   workflowDynastySlug: z.string().nullable(),
   grain: z.string().nullable().describe("Grain the price rests on: crossOrg (fleet benchmark), brand, offer."),
-  unpricedReason: z.string().nullable().describe("Null when priced; else why this channel states no price for the leg (e.g. no_recommended_workflow, leg_not_declared)."),
+  unpricedReason: z.string().nullable().describe("Null when priced by any rung; else why this channel states no price for the leg."),
+  workflowUnpricedReason: z.string().nullable().describe("Why the WORKFLOW rung did not price it (e.g. no_eligible_workflow, leg_not_declared), even when a later rung did. Null when it did."),
 });
 const salesPathLegSchema = z.object({
   legKey: z.string(),
@@ -1679,7 +1681,7 @@ const salesPathLegSchema = z.object({
     })
     .nullable()
     .describe("Every source the rate was resolved from (measured > customer stated > fleet median > industry default)."),
-  workedBy: z.enum(["platform", "human"]).describe("platform: a channel of ours publishes the leg; human: none does (the customer's team) — rate, no cost."),
+  workedBy: z.enum(["platform", "human"]).describe("platform: one of the channels the platform MANAGES (sales-cold-email-outreach, ai-meeting-booking, ai-instant-call) publishes the leg; human: none does (the customer's team) — rate, no cost."),
   channel: z
     .object({
       slug: z.string().nullable(),
@@ -1687,6 +1689,7 @@ const salesPathLegSchema = z.object({
       trigger: z.enum(["daily_budget", "step_reached"]).nullable(),
       workflowDynastySlug: z.string().nullable(),
       grain: z.string().nullable(),
+      costSource: z.enum(["workflow", "fleet_measured", "default"]).nullable(),
       choice: z.enum(["only_priced_channel", "cheapest_cost_per_outcome", "no_priced_channel"]),
       candidates: z.array(salesPathCandidateSchema),
     })
@@ -1694,6 +1697,7 @@ const salesPathLegSchema = z.object({
     .describe("Present on a platform leg: the channel we would run it on (lowest cost per outcome) and why."),
   outcomesNeededPerPayingClient: z.number().nullable(),
   costPerOutcomeUsd: z.number().nullable(),
+  costSource: z.enum(["workflow", "fleet_measured", "default"]).nullable().describe("Which rung of the cost cascade priced the leg: workflow > fleet_measured > default. Null on a human leg."),
   costPerPayingClientUsd: z.number().nullable().describe("costPerOutcomeUsd × outcomesNeededPerPayingClient. Null on a human leg or when unpriced."),
 });
 const salesPathSchema = z.object({
@@ -1732,7 +1736,7 @@ registry.registerPath({
   description:
     "A SALES PATH is a chain of the legs the customer ticked for the offer (brand-service sales-path) from an ENTRY leg (from nothing) to paid_client, visiting no step twice. " +
     "Formula: needed(paid_client)=1; needed(from step of leg i)=needed(to step)/(rate_i/100); legCost_i = costPerOutcome_i × needed(to step of leg i) for a leg a channel of ours works (0 for a human leg); costPerPayingClient = Σ legCost_i; roi = offer lifetime revenue ÷ costPerPayingClient. " +
-    "rate_i is the brand's effective leg rate (CRM-measured / measured on our leads > customer stated > fleet median > industry default). costPerOutcome_i is the NET cost per outcome of the recommended workflow of each platform channel's leg-keyed workflow-projection ladder (?leg=&offerId=&pricing=net); the cheapest channel is chosen. " +
+    "rate_i is the brand's effective leg rate (CRM-measured / measured on our leads > customer stated > fleet median > industry default). costPerOutcome_i is the NET cost per outcome of the recommended workflow of each platform channel's leg-keyed workflow-projection ladder (?leg=&offerId=&pricing=net), else the channel's measured fleet cost per outcome on the leg, else a seeded default (costSource says which); the cheapest channel is chosen. Only the managed channels (sales-cold-email-outreach, ai-meeting-booking, ai-instant-call) are candidates; every other leg is the customer's team (workedBy human, cost 0). " +
     "Ranked by roi descending; a path whose roi is null (reason stated) sorts last. status not_stated / no_legs_selected / no_complete_path serve paths: [] — none is invented. Additive read.",
   tags: ["Stats"],
   request: {
