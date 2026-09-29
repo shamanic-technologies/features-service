@@ -3577,6 +3577,7 @@ const channelStepTransitionSchema = z.object({
   legKey: z.string().describe("The ONE canonical identifier of the LEG this leg is (e.g. `start_to_conversation`, `meeting_booked_to_meeting_attended`) — minted and owned by features-service, and the value the fleet keys a campaign and a budget on. Performance is measured per LEG; a sales funnel is a way of READING legs, because one leg belongs to several funnels at once. Name a leg with this alone: the two steps ride BESIDE it as `from`/`to`, so a consumer READS them and NEVER splits the string. A leg that STARTS a funnel carries an ordinary identifier like every other — `from: null` is the special case in the data, never in the vocabulary."),
   from: channelStepSchema.nullable().describe("The step this channel takes a lead OUT of. NULL is 'from nothing' — the lead was not on the funnel at all until this channel produced its first step, which is the SPECIAL case rather than the rule."),
   to: channelStepSchema.describe("The step this channel moves the lead TO."),
+  crewName: z.string().nullable().describe("The teammate name the product gives the crew performing this leg (e.g. `Herald` for cold email landing on a positive reply, `Scout` for its website-visit leg, `Pilot` for AI meeting booking). A (channel, landing step) pair may carry its own name; otherwise the channel has one name for all its legs. NULL when nobody named it — never invented; a consumer falls back to the channel's `name`. Colours and glyphs are a consumer concern."),
 });
 
 const publicChannelSchema = registry.register(

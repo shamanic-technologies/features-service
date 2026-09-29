@@ -31,6 +31,7 @@ import {
   type ChannelStepTransition,
   type AcquisitionChannel,
 } from "./acquisition-channels.js";
+import { crewNameFor } from "./crew-names.js";
 import { legKeyFor, FUNNEL_LEGS, type FunnelLegDef } from "./funnel-legs.js";
 import { legMaturity, type LegMaturity } from "./maturity.js";
 import { SALES_FUNNELS, SALES_FUNNEL_KEYS, type SalesFunnelKey } from "./sales-funnels.js";
@@ -67,6 +68,9 @@ export interface ChannelStepTransitionWire {
   legKey: string;
   from: ChannelStepDefWire | null;
   to: ChannelStepDefWire;
+  /** The teammate name the product gives the crew performing this leg (`lib/crew-names.ts`), e.g.
+   *  "Herald". NULL when nobody named it — never invented; fall back to the channel's `name`. */
+  crewName: string | null;
 }
 
 export interface PublicChannel {
@@ -240,6 +244,7 @@ export function buildChannelCatalogue(rows: readonly CatalogueFeatureRow[]): Pub
         legKey: legKeyFor(t),
         from: t.from == null ? null : stepWire(t.from),
         to: stepWire(t.to),
+        crewName: crewNameFor(row.slug, t.to),
       })),
       producibleSteps: producibleStepsOf(channel.stepTransitions).map(stepWire),
       salesFunnels: sellableFunnelsFor(channel.stepTransitions).map((key) => ({

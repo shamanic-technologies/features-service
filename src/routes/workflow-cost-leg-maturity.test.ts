@@ -43,7 +43,8 @@ const fleetRepliers = await import("../lib/fleet-positive-repliers.js");
 
 const FEATURE = { id: "f1", slug: "sales-cold-email-outreach", name: "Sales", description: "x", status: "active", createdAt: new Date(), updatedAt: new Date() };
 const LEG = "start_to_conversation";
-const CUTOFF = "2026-09-07T00:00:00.000Z";
+// Derived from the one rule, never a literal: the cutoff moves with today, so a pinned date goes red a day later.
+const CUTOFF = (await import("../lib/maturity.js")).legCutoffIso(LEG)!;
 
 function wf(slug: string): Record<string, unknown> {
   return { id: `id-${slug}`, workflowSlug: slug, workflowName: slug, workflowDynastyName: slug, workflowDynastySlug: slug, version: 1, status: "active", featureSlug: FEATURE.slug, createdForBrandId: null, upgradedTo: null };
