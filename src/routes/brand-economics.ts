@@ -76,6 +76,7 @@ import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { getFunnel } from "../lib/funnel-registry.js";
 import {
   computeFeatureRevenue,
+  noChannelRevenueBody,
   fetchDeclaredFunnelsSoft,
   priceOnDeclaredFunnel,
   type DownstreamHeaders,
@@ -90,7 +91,7 @@ import { buildOfferChannelMap, offerCampaignIds, offerFeatureSlugs } from "../li
 import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
 import { computeAudienceStats, type ComputeResult } from "../lib/audience-stats-compute.js";
 import { computeBrandPipelineActivity } from "./pipeline-activity.js";
-import { fetchEffectiveEconomics, economicsFingerprint } from "../lib/sales-economics-client.js";
+import { fetchEffectiveEconomics, economicsFingerprint, BrandOwnershipError } from "../lib/sales-economics-client.js";
 import { servedCached, servedCachedJson, sendSnapshotJson, buildScopeKey } from "../lib/view-cache.js";
 import { withInteractiveReads } from "../lib/lead-copy.js";
 import { applyLeadDetail, parseLeadDetail, LEAD_DETAIL_VALUES } from "../lib/lead-detail.js";
@@ -162,8 +163,31 @@ function describeChannels(channels: BrandChannel[]) {
   return channels.map((channel) => ({ featureSlug: channel.featureSlug, campaignIds: channel.campaignIds }));
 }
 
-/** Named 404 / 409 / 502, shared by the three handlers. */
+/**
+ * A BRAND WITH NO CAMPAIGN YET IS A STATE, NOT AN ERROR.
+ *
+ * A customer who has just signed up owns a brand and has launched nothing: campaign-service lists no
+ * campaign for it, so it runs no channel. The brand page polls `/revenue` and `/offers` from the first
+ * second, and answering those 404 made every poll a failed run (prod 2026-09-28, brand `fbe7898b…`:
+ * 92 + 76 failed runs before its first campaign existed). So the two reads the page polls answer 200
+ * with the empty body their own shape already expresses — zero spend, no pipeline, no offers, no
+ * channels — once the caller is confirmed to HOLD the brand.
+ *
+ * That confirmation is what keeps an unknown or foreign brand a 404: campaign-service is read with the
+ * org alone, so "no campaign" is also what a brand of another org (or no brand at all) looks like.
+ * brand-service owns the org → brand edge and refuses 403/404 — {@link BrandOwnershipError} — and that
+ * refusal is the named `brand_not_found` 404. The economics read is the check because the non-empty
+ * path already makes it: no new producer call, and the revenue read has it in flight already.
+ */
+async function assertBrandHeld(pendingEconomics: Promise<unknown>): Promise<void> {
+  await pendingEconomics;
+}
+
+/** Named 404 / 409 / 502, shared by the handlers. */
 function handleError(res: import("express").Response, error: unknown, what: string) {
+  if (error instanceof BrandOwnershipError) {
+    return res.status(404).json({ error: error.message, reason: "brand_not_found", brandId: error.brandId });
+  }
   if (error instanceof BrandHasNoChannelsError) {
     return res.status(404).json({ error: error.message, reason: "brand_has_no_channels", brandId: error.brandId });
   }
@@ -209,9 +233,12 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
       }),
     };
     speculative.economics.catch(() => {}); // awaited below only when a funnel prices; never unhandled
-    const resolved = await resolveRequest(req as never);
-    if (!resolved.ok) return res.status(resolved.status).json({ error: resolved.error });
-    const { brandId, pricing, headers, channels, featureSlugs } = resolved;
+    // No campaign yet → `null` here, answered below once the query is validated (see assertBrandHeld).
+    const resolved = await resolveRequest(req as never).catch((error: unknown) => {
+      if (error instanceof BrandHasNoChannelsError) return null;
+      throw error;
+    });
+    if (resolved && !resolved.ok) return res.status(resolved.status).json({ error: resolved.error });
 
     // HOW MUCH OF A PERSON this body carries — omitted → `outcomes`, the twelve fields a browser reads
     // on the rows that reached something. `full` is the hydrated array. See lib/lead-detail.ts.
@@ -231,6 +258,16 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
     }
     const causeKey = causeScopeKeyPart(causes);
 
+    if (!resolved) {
+      await assertBrandHeld(speculative.economics);
+      return res.json({
+        brandId: req.params.brandId,
+        costBasis: "charged" as const,
+        channels: [],
+        ...applyLeadDetail(noChannelRevenueBody(causes), leadDetail),
+      });
+    }
+    const { brandId, pricing, headers, channels, featureSlugs } = resolved;
 
     const funnel = resolveBrandFunnel(brandId, channels);
 
@@ -373,10 +410,10 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
 // its spend and its leads. Both are properties of counting people, and the brand's own total (which
 // narrows by nothing) stays the number to trust for "what did this brand do".
 //
-// `offers: []` is a real answer and a different one from a 404: it says campaign-service lists
-// campaigns for this brand but none of them states an offer — the transition state while the producer
-// catches up. A brand it lists NO campaign for is the named `brand_has_no_channels` 404, because then
-// we cannot tell which channels any figure should span.
+// `offers: []` is a real answer: either campaign-service lists campaigns for this brand but none of them
+// states an offer (the transition state while the producer catches up), or it lists NO campaign at all —
+// a brand that has launched nothing yet (see assertBrandHeld). A brand the caller does not hold is the
+// named `brand_not_found` 404.
 router.get("/brands/:brandId/offers", apiKeyAuth, async (req, res) => {
   try {
     // `?funnel=` is RETIRED (wave C2): refused, never silently ignored. See lib/retired-funnel-param.ts.
@@ -417,7 +454,10 @@ router.get("/brands/:brandId/offers", apiKeyAuth, async (req, res) => {
       userId: authed.userId,
       runId: authed.runId,
     });
-    if (buildBrandChannels(rows).length === 0) throw new BrandHasNoChannelsError(brandId);
+    if (buildBrandChannels(rows).length === 0) {
+      await assertBrandHeld(fetchEffectiveEconomics(brandId, headers));
+      return res.json({ brandId, costBasis: "charged" as const, outcomeCauses: { priced: [...causes] }, offers: [] });
+    }
 
     const map = buildOfferChannelMap(rows);
     const offers = map.offerIds.map((offerId) => ({ offerId, channels: map.channelsOf(offerId) }));
