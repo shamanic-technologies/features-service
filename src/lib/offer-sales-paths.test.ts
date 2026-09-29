@@ -3,8 +3,12 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 import {
   buildOfferSalesPaths,
+  DEFAULT_COST_PER_OUTCOME_USD,
   enumerateSalesPaths,
+  MANAGED_CHANNEL_SLUGS,
+  platformChannelsForLeg,
   priceKey,
+  resolveLegChannelCost,
   type LegChannelPrice,
   type SalesPathChannelInput,
 } from "./offer-sales-paths.js";
@@ -62,6 +66,9 @@ const base = {
   rates: RATES,
   channels: CHANNELS,
   prices: PRICES,
+  // These fixtures use made-up slugs: manage them all, and state no default, so the formula is tested alone.
+  managedChannelSlugs: new Set(CHANNELS.map((c) => c.slug)),
+  defaultCosts: new Map<string, number>(),
 };
 
 describe("enumerateSalesPaths", () => {
@@ -160,5 +167,92 @@ describe("priceFromLadder", () => {
     expect(priceFromLadder(200, { recommendedWorkflowDynastySlug: null, unmeasuredReason: "no_active_workflows" }).unpricedReason).toBe(
       "no_active_workflows",
     );
+  });
+});
+
+describe("the managed-channel rule (owner 2026-09-29)", () => {
+  const REAL: SalesPathChannelInput[] = [
+    { slug: "sales-cold-email-outreach", name: "Cold email", operatedBy: "platform", trigger: "daily_budget", legKeys: ["start_to_conversation"] },
+    { slug: "cold-sms-outreach", name: "Cold SMS", operatedBy: "platform", trigger: "daily_budget", legKeys: ["start_to_conversation"] },
+    { slug: "ai-meeting-booking", name: "AI booking", operatedBy: "platform", trigger: "step_reached", legKeys: ["conversation_to_meeting_booked"] },
+    { slug: "agency-meeting-booking", name: "Agency booking", operatedBy: "platform", trigger: "step_reached", legKeys: ["conversation_to_meeting_booked"] },
+    { slug: "ai-instant-call", name: "AI call", operatedBy: "platform", trigger: "step_reached", legKeys: ["conversation_to_booking_call"] },
+    { slug: "agency-meeting-attendance", name: "Attendance", operatedBy: "platform", trigger: "daily_budget", legKeys: ["meeting_booked_to_meeting_attended"] },
+    { slug: "agency-closing-calls", name: "Closing", operatedBy: "platform", trigger: "daily_budget", legKeys: ["meeting_attended_to_paid_client"] },
+  ];
+
+  it("is exactly the three channels we manage", () => {
+    expect([...MANAGED_CHANNEL_SLUGS].sort()).toEqual(["ai-instant-call", "ai-meeting-booking", "sales-cold-email-outreach"]);
+    expect(platformChannelsForLeg(REAL, "start_to_conversation").map((c) => c.slug)).toEqual(["sales-cold-email-outreach"]);
+    expect(platformChannelsForLeg(REAL, "conversation_to_meeting_booked").map((c) => c.slug)).toEqual(["ai-meeting-booking"]);
+    expect(platformChannelsForLeg(REAL, "meeting_attended_to_paid_client")).toEqual([]);
+  });
+
+  it("prices every path of the prod offer: unmanaged legs are the customer's team, missing workflows fall to fleet then default", () => {
+    const body = buildOfferSalesPaths({
+      offerId: "o",
+      brandId: "b",
+      stated: true,
+      statedAt: null,
+      lifetimeRevenueUsd: 5000,
+      rates: [
+        arrow("Positive reply", "Meeting booked", 30),
+        arrow("Positive reply", "Booking call", 40),
+        arrow("Booking call", "Meeting booked", 50),
+        arrow("Meeting booked", "Meeting attended", 80),
+        arrow("Meeting attended", "Paid client", 25),
+      ],
+      channels: REAL,
+      prices: new Map<string, LegChannelPrice>([
+        [priceKey("start_to_conversation", "sales-cold-email-outreach"), price(44.83)],
+        [priceKey("conversation_to_meeting_booked", "ai-meeting-booking"), { ...price(null), unpricedReason: "no_eligible_workflow" }],
+        [priceKey("conversation_to_booking_call", "ai-instant-call"), { ...price(null), unpricedReason: "leg_not_declared" }],
+      ]),
+      fleetPrices: new Map([[priceKey("conversation_to_meeting_booked", "ai-meeting-booking"), 7.5]]),
+      legKeys: [
+        "start_to_conversation",
+        "conversation_to_meeting_booked",
+        "conversation_to_booking_call",
+        "booking_call_to_meeting_booked",
+        "meeting_booked_to_meeting_attended",
+        "meeting_attended_to_paid_client",
+      ],
+    });
+    expect(body.paths.length).toBe(2);
+    for (const p of body.paths) {
+      expect(p.roi).not.toBeNull();
+      expect(p.roiUnavailableReason).toBeNull();
+      const byKey = new Map(p.legs.map((l) => [l.legKey, l]));
+      expect(byKey.get("start_to_conversation")!.costSource).toBe("workflow");
+      expect(byKey.get("meeting_booked_to_meeting_attended")!.workedBy).toBe("human");
+      expect(byKey.get("meeting_attended_to_paid_client")!.workedBy).toBe("human");
+    }
+    const viaAi = body.paths.find((p) => p.legKeys.includes("conversation_to_meeting_booked"))!;
+    const booking = viaAi.legs.find((l) => l.legKey === "conversation_to_meeting_booked")!;
+    expect(booking.costSource).toBe("fleet_measured");
+    expect(booking.costPerOutcomeUsd).toBe(7.5);
+    expect(booking.channel!.candidates.map((c) => c.slug)).toEqual(["ai-meeting-booking"]);
+    expect(booking.channel!.candidates[0].workflowUnpricedReason).toBe("no_eligible_workflow");
+    const viaCall = body.paths.find((p) => p.legKeys.includes("conversation_to_booking_call"))!;
+    const call = viaCall.legs.find((l) => l.legKey === "conversation_to_booking_call")!;
+    expect(call.costSource).toBe("default");
+    expect(call.costPerOutcomeUsd).toBe(DEFAULT_COST_PER_OUTCOME_USD.get(priceKey("conversation_to_booking_call", "ai-instant-call")));
+    expect(viaCall.legs.find((l) => l.legKey === "booking_call_to_meeting_booked")!.workedBy).toBe("human");
+  });
+});
+
+describe("resolveLegChannelCost", () => {
+  it("workflow > fleet measured > default, and never a zero", () => {
+    expect(resolveLegChannelCost(price(10), 7, 5)).toEqual({ costPerOutcomeUsd: 10, costSource: "workflow" });
+    expect(resolveLegChannelCost(price(null), 7, 5)).toEqual({ costPerOutcomeUsd: 7, costSource: "fleet_measured" });
+    expect(resolveLegChannelCost(undefined, undefined, 5)).toEqual({ costPerOutcomeUsd: 5, costSource: "default" });
+    expect(resolveLegChannelCost(price(0), 0, undefined)).toEqual({ costPerOutcomeUsd: null, costSource: null });
+  });
+
+  it("seeds a default for every leg a managed channel publishes", () => {
+    for (const k of DEFAULT_COST_PER_OUTCOME_USD.keys()) expect(MANAGED_CHANNEL_SLUGS.has(k.split("|")[1])).toBe(true);
+    expect(DEFAULT_COST_PER_OUTCOME_USD.has(priceKey("conversation_to_booking_call", "ai-instant-call"))).toBe(true);
+    expect(DEFAULT_COST_PER_OUTCOME_USD.has(priceKey("conversation_to_meeting_booked", "ai-meeting-booking"))).toBe(true);
+    expect(DEFAULT_COST_PER_OUTCOME_USD.has(priceKey("start_to_conversation", "sales-cold-email-outreach"))).toBe(true);
   });
 });
