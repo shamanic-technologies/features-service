@@ -27,6 +27,16 @@ import {
   type FleetMatureBenchmark,
 } from "../lib/fleet-leg-maturity.js";
 import { refresherBaseUrl } from "../lib/view-refresher.js";
+import {
+  meetingBookedPrice,
+  pickLegPrice,
+  websiteVisitPrice,
+  type LegPrice,
+  type MeetingPriceArithmetic,
+  type OutcomePrice,
+} from "../lib/outcome-prices.js";
+import { computeMeetingLegFleet, MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY } from "../lib/meeting-leg-fleet.js";
+import { fetchLegAssignments } from "../lib/workflow-leg-assignments.js";
 import { getFunnel, type SalesEconomics } from "../lib/funnel-registry.js";
 import { projectedCostPerOutcome } from "../lib/cost-engine.js";
 import {
@@ -4474,6 +4484,125 @@ router.get("/internal/fleet-leg-maturity", apiKeyOnly, async (req, res) => {
     console.error("[features-service] Internal fleet leg maturity error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
+});
+
+// ── GET /public/stats/outcome-prices ─────────────────────────────────────────
+//
+// What ONE website visit and ONE booked meeting are expected to cost a brand with no data of its own — the
+// public onboarding's "what do you want to buy" choice (`lib/outcome-prices.ts` states the rule). Fleet grain,
+// no identity. Every leg's figures are fleet walks that take seconds to minutes, so the payload is built OFF
+// the request path (boot warm + a warm kicked by a read past the fresh window) and a read always answers
+// from the last build; before the first build it answers `computedAt: null` with every price unmeasured
+// (`not_computed_yet`), never a guessed figure.
+
+const COLD_EMAIL_FEATURE_SLUG = "sales-cold-email-outreach";
+const OUTCOME_PRICES_FRESH_MS = 15 * 60_000;
+const OUTCOME_PRICES_WARM_TIMEOUT_MS = 10 * 60_000;
+
+type OutcomePriceServed = Omit<OutcomePrice, "unmeasuredReason"> & {
+  unmeasuredReason: OutcomePrice["unmeasuredReason"] | "not_computed_yet";
+};
+
+export interface OutcomePricesPayload {
+  grain: "fleet";
+  costBasis: "incurred";
+  computedAt: string | null;
+  outcomes: {
+    websiteVisit: OutcomePriceServed & { legs: LegPrice[] };
+    meetingBooked: OutcomePriceServed & { arithmetic: MeetingPriceArithmetic | null; legs: LegPrice[] };
+  };
+}
+
+let outcomePricesStore: { value: OutcomePricesPayload; computedAt: number } | null = null;
+let outcomePricesWarm: Promise<void> | null = null;
+
+/** Every workflow the owner DEPRECATED on the leg — it never competes for the price. */
+async function deprecatedOnLeg(featureSlug: string, legKey: string): Promise<Set<string>> {
+  const rows = await fetchLegAssignments(featureSlug, legKey);
+  return new Set([...rows.values()].filter((r) => r.state === "deprecated").map((r) => r.workflowDynastySlug));
+}
+
+async function coldEmailLegPrice(legKey: string): Promise<LegPrice> {
+  const [maturity, excluded, campaigns] = await Promise.all([
+    fetchFleetLegWorkflowMaturity(COLD_EMAIL_FEATURE_SLUG, legKey),
+    deprecatedOnLeg(COLD_EMAIL_FEATURE_SLUG, legKey),
+    fetchFleetLegCampaigns(COLD_EMAIL_FEATURE_SLUG, legKey),
+  ]);
+  return pickLegPrice({
+    legKey,
+    featureSlug: COLD_EMAIL_FEATURE_SLUG,
+    byDynasty: new Map(maturity.byDynasty),
+    excluded,
+    campaignCount: campaigns.length,
+  });
+}
+
+export async function computeOutcomePrices(): Promise<OutcomePricesPayload> {
+  const [visitLeg, replyLeg, meetingFleet, meetingExcluded] = await Promise.all([
+    coldEmailLegPrice("start_to_website_visit"),
+    coldEmailLegPrice("start_to_conversation"),
+    computeMeetingLegFleet(),
+    deprecatedOnLeg(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY),
+  ]);
+  const meetingLeg = pickLegPrice({
+    legKey: MEETING_BOOKING_LEG_KEY,
+    featureSlug: MEETING_BOOKING_FEATURE_SLUG,
+    byDynasty: new Map(meetingFleet.byDynasty),
+    excluded: meetingExcluded,
+    campaignCount: meetingFleet.campaignCount,
+  });
+  if (meetingFleet.unattributableCampaignIds.length > 0) {
+    console.warn(
+      `[features-service] outcome prices: ${meetingFleet.unattributableCampaignIds.length} meeting-booking campaign(s) ran several workflows and are left out of every workflow: ${meetingFleet.unattributableCampaignIds.join(",")}`,
+    );
+  }
+  return {
+    grain: "fleet",
+    costBasis: "incurred",
+    computedAt: new Date().toISOString(),
+    outcomes: {
+      websiteVisit: { ...websiteVisitPrice(visitLeg), legs: [visitLeg] },
+      meetingBooked: { ...meetingBookedPrice(replyLeg, meetingLeg), legs: [replyLeg, meetingLeg] },
+    },
+  };
+}
+
+/** Rebuild the payload in the background when absent or past its fresh window (single-flight). */
+export function warmOutcomePrices(): Promise<void> {
+  if (outcomePricesStore && Date.now() - outcomePricesStore.computedAt < OUTCOME_PRICES_FRESH_MS) return Promise.resolve();
+  if (outcomePricesWarm) return outcomePricesWarm;
+  outcomePricesWarm = withTimeout(computeOutcomePrices(), OUTCOME_PRICES_WARM_TIMEOUT_MS, "outcome prices")
+    .then((value) => {
+      outcomePricesStore = { value, computedAt: Date.now() };
+    })
+    .catch((error) => {
+      console.error("[features-service] outcome prices warm failed, keeping the previous value:", error);
+    })
+    .finally(() => {
+      outcomePricesWarm = null;
+    });
+  return outcomePricesWarm;
+}
+
+/** Test seam. */
+export function __resetOutcomePrices(): void {
+  outcomePricesStore = null;
+  outcomePricesWarm = null;
+}
+
+function notComputedYet(): OutcomePricesPayload {
+  const none = { maturity: null, priceUsd: null, unmeasuredReason: "not_computed_yet" as const };
+  return {
+    grain: "fleet",
+    costBasis: "incurred",
+    computedAt: null,
+    outcomes: { websiteVisit: { ...none, legs: [] }, meetingBooked: { ...none, arithmetic: null, legs: [] } },
+  };
+}
+
+router.get("/public/stats/outcome-prices", (_req, res) => {
+  void warmOutcomePrices();
+  res.json(outcomePricesStore?.value ?? notComputedYet());
 });
 
 // ── GET /public/stats/best-model-cost-per-outcome-trend ──────────────────────

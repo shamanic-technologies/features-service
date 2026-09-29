@@ -21,7 +21,7 @@ import contactedValueRoutes from "./routes/contacted-value.js";
 import dealsValueRoutes from "./routes/deals-value.js";
 import conversionRatesRoutes from "./routes/conversion-rates.js";
 import audienceStatsRoutes from "./routes/audience-stats.js";
-import publicRoutes, { warmFleetReturnSnapshotsOnBoot, warmShowcaseFunnelsOnBoot } from "./routes/public.js";
+import publicRoutes, { warmFleetReturnSnapshotsOnBoot, warmShowcaseFunnelsOnBoot, warmOutcomePrices } from "./routes/public.js";
 import viewCacheAdminRoutes from "./routes/view-cache-admin.js";
 import workflowLegAssignmentsRoutes from "./routes/workflow-leg-assignments.js";
 import transferBrandRoutes from "./routes/transfer-brand.js";
@@ -134,6 +134,8 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
         // Same reason, same shape: the homepage gives its showcase read 8 seconds and drops the
         // section rather than block a build, so the cell must never be cold when it asks.
         warmShowcaseFunnelsOnBoot();
+        // The onboarding prices each outcome off this payload; its fleet walks must never run on a read.
+        void warmOutcomePrices();
         // With the refresher off, projections compute in this process — warm its fleet cell instead.
         if (process.env.VIEW_REFRESHER_ENABLED === "false") warmFleetPositiveRepliersOnBoot();
       });
