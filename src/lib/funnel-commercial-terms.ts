@@ -56,6 +56,7 @@ export const FUNNEL_MINIMUM_COMMITMENT_DAYS: Record<SalesFunnelKey, number | nul
   sales_meetings_from_ads: null,
   lead_forms_from_ads: null,
   sales_from_website: null,
+  sales_meetings_from_call: null,
 };
 
 const isPositiveInt = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v > 0;

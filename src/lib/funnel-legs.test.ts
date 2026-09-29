@@ -51,11 +51,13 @@ describe("funnel legs", () => {
       "sales_meetings_from_conversation",
       "sales_meetings_from_website",
       "sales_meetings_from_ads",
+      "sales_meetings_from_call",
     ]);
     expect(funnelsContainingLeg("meeting_attended_to_paid_client")).toEqual([
       "sales_meetings_from_conversation",
       "sales_meetings_from_website",
       "sales_meetings_from_ads",
+      "sales_meetings_from_call",
     ]);
     // The website-visit entry leg feeds every website-led funnel AT ONCE — nobody can buy traffic
     // that only travels down one of them.
@@ -68,7 +70,11 @@ describe("funnel legs", () => {
     expect(funnelsContainingLeg("start_to_conversation")).toEqual([
       "sales_meetings_from_conversation",
       "sales_from_conversation",
+      "sales_meetings_from_call",
     ]);
+    // The booking call's two legs are published like any other.
+    expect(funnelsContainingLeg("conversation_to_booking_call")).toEqual(["sales_meetings_from_call"]);
+    expect(funnelsContainingLeg("booking_call_to_meeting_booked")).toEqual(["sales_meetings_from_call"]);
     // And a leg only one funnel has stays that way — both of them the entry leg of an AD funnel, whose
     // first step the advertising platform DELIVERS.
     expect(funnelsContainingLeg("start_to_form_submitted")).toEqual(["lead_forms_from_ads"]);

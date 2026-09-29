@@ -1,5 +1,29 @@
 # Features Service — CLAUDE.md
 
+## EVERY LEG ALWAYS HAS A CONVERSION RATE, AND THE BOOKING CALL IS A STEP — `lib/default-leg-rates.ts`, `booking_call`, `ai-instant-call`
+
+Owner decisions 2026-09-29 (the dashboard's offer beta lists every step, leg, channel and path by ROI):
+
+- **A 4th rate source, `default`** (supersedes "no source → `null` + `no_rate_available`" in the effective-rates
+  section): measured > manual > median > the seeded per-leg industry benchmark (`DEFAULT_LEG_RATE_PCT`,
+  keyed `<from>><to>` step keys). Served `source: "default"` + `defaultRatePct` on every arrow, so a reader
+  tells it from the brand's number; `unresolvedReason` stays on the wire, null on every catalogue leg. A
+  default PRICES (`stated_default` provenance) but never CHOOSES a path (`ownRate` reads measured/manual
+  only). Guard: `default-leg-rates.test.ts` fails when a funnel/step is added without a default.
+- **Step `booking_call` ("Booking call")** between a positive reply and a booked meeting, in the funnel
+  `sales_meetings_from_call` ("Sales Meeting from Booking Call": reply → booking call → booked → attended →
+  paid), authored HERE (brand-service's catalogue does not carry it). Legs `conversation_to_booking_call`,
+  `booking_call_to_meeting_booked` (the second is the brand's rep; no channel publishes it yet). Nothing
+  counts the step, so both legs price on stated/median/default; its ladder/pricing is the reply funnel's.
+- **DISPLAY ONLY (`DISPLAY_ONLY_SALES_FUNNELS`)**: never a reading funnel (`reading-funnels.ts`), so no
+  brand is priced through it and no live figure moves; it does appear in `/public/channels`,
+  `/public/channel-funnel-economics` pairs, and every conversation-entry channel's `salesFunnels`.
+- **Channel `ai-instant-call`** performs Positive reply → Booking call (instantly-service
+  `ring-rep-on-sales-interest`), platform + software, `terms(0, 30, 0)`, and states `trigger: "step_reached"`:
+  a NEW optional channel field (absent ⇒ `daily_budget`, written only when not default so every other blob
+  is byte-unchanged; published on every `/public/channels` row). Not fundable or schedulable; nothing here
+  provisions off it. (Set 2026-09-29.)
+
 ## A WORKFLOW IS PRICED ON ITS MATURE EVIDENCE ONCE IT IS MATURE ON THE FLEET OF ITS LEG — `lib/maturity.ts` is the ONE maturity rule
 
 Supersedes `OUTCOME_LAG_DAYS` (14) and the 10-outcome learning bar everywhere below. Prod 2026-09-28,

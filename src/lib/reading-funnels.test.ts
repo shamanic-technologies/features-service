@@ -143,3 +143,18 @@ describe("fetchPricingFunnels — the brand's leg rates and the OFFER's lifetime
     expect(await fetchPricingFunnels("b1", "org-1", "offer-self", { rates: "stated", legKeys: [] })).toEqual([]);
   });
 });
+
+describe("the booking-call funnel is DISPLAY ONLY", () => {
+  it("is never a reading funnel, whatever the scope performs or states", () => {
+    const all = readingFunnelsForLegs(
+      ["start_to_conversation", "conversation_to_booking_call", "booking_call_to_meeting_booked", "meeting_booked_to_meeting_attended"],
+      () => true,
+      () => 1,
+    );
+    expect(all).not.toContain("sales_meetings_from_call");
+    expect(readingFunnelsForLegs(["start_to_conversation"], () => false, () => null)).toEqual([
+      "sales_meetings_from_conversation",
+      "sales_from_conversation",
+    ]);
+  });
+});

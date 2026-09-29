@@ -92,7 +92,8 @@
                 "sales_from_conversation",
                 "sales_meetings_from_ads",
                 "lead_forms_from_ads",
-                "sales_from_website"
+                "sales_from_website",
+                "sales_meetings_from_call"
               ]
             },
             "description": "WHICH SALES FUNNELS THIS FEATURE MAY BE SOLD THROUGH, in brand-service's own funnel keys. A product statement about the feature, owned by this service: the dashboard offers only valid (funnel, feature) pairs from it and campaign-service refuses to provision a pair that is not in it. ALWAYS PRESENT, so an absent answer can never be mistaken for 'all of them' — a feature that sells through no sales funnel states `[]` (every non-sales feature: PR, hiring, VC, accelerators, AI visibility, press kit, outlet discovery, expert quotes) and one that sells through every declared funnel states every one of those keys explicitly. A shorter list is a real restriction, not a gap: the feedback-request cold email states `sales_meetings_from_conversation` alone, because its offer buys a conversation and has no website step to sell."
@@ -2984,7 +2985,8 @@
                   "sales_from_conversation",
                   "sales_meetings_from_ads",
                   "lead_forms_from_ads",
-                  "sales_from_website"
+                  "sales_from_website",
+                  "sales_meetings_from_call"
                 ],
                 "description": "The sales funnel these rungs belong to."
               },
@@ -3172,6 +3174,7 @@
                     "enum": [
                       "conversation",
                       "website_visit",
+                      "booking_call",
                       "meeting_booked",
                       "meeting_attended",
                       "signup",
@@ -3265,6 +3268,7 @@
                     "enum": [
                       "conversation",
                       "website_visit",
+                      "booking_call",
                       "meeting_booked",
                       "meeting_attended",
                       "signup",
@@ -3417,6 +3421,7 @@
                     "enum": [
                       "conversation",
                       "website_visit",
+                      "booking_call",
                       "meeting_booked",
                       "meeting_attended",
                       "signup",
@@ -3563,6 +3568,7 @@
                           "enum": [
                             "conversation",
                             "website_visit",
+                            "booking_call",
                             "meeting_booked",
                             "meeting_attended",
                             "signup",
@@ -8656,7 +8662,8 @@
                   "sales_from_conversation",
                   "sales_meetings_from_ads",
                   "lead_forms_from_ads",
-                  "sales_from_website"
+                  "sales_from_website",
+                  "sales_meetings_from_call"
                 ],
                 "description": "The sales funnel these rungs belong to."
               },
@@ -8844,6 +8851,7 @@
                     "enum": [
                       "conversation",
                       "website_visit",
+                      "booking_call",
                       "meeting_booked",
                       "meeting_attended",
                       "signup",
@@ -8937,6 +8945,7 @@
                     "enum": [
                       "conversation",
                       "website_visit",
+                      "booking_call",
                       "meeting_booked",
                       "meeting_attended",
                       "signup",
@@ -9089,6 +9098,7 @@
                     "enum": [
                       "conversation",
                       "website_visit",
+                      "booking_call",
                       "meeting_booked",
                       "meeting_attended",
                       "signup",
@@ -9235,6 +9245,7 @@
                           "enum": [
                             "conversation",
                             "website_visit",
+                            "booking_call",
                             "meeting_booked",
                             "meeting_attended",
                             "signup",
@@ -12181,7 +12192,8 @@
                   "sales_from_conversation",
                   "sales_meetings_from_ads",
                   "lead_forms_from_ads",
-                  "sales_from_website"
+                  "sales_from_website",
+                  "sales_meetings_from_call"
                 ],
                 "description": "The sales funnel these rungs belong to."
               },
@@ -12369,6 +12381,7 @@
                     "enum": [
                       "conversation",
                       "website_visit",
+                      "booking_call",
                       "meeting_booked",
                       "meeting_attended",
                       "signup",
@@ -12462,6 +12475,7 @@
                     "enum": [
                       "conversation",
                       "website_visit",
+                      "booking_call",
                       "meeting_booked",
                       "meeting_attended",
                       "signup",
@@ -12614,6 +12628,7 @@
                     "enum": [
                       "conversation",
                       "website_visit",
+                      "booking_call",
                       "meeting_booked",
                       "meeting_attended",
                       "signup",
@@ -12760,6 +12775,7 @@
                           "enum": [
                             "conversation",
                             "website_visit",
+                            "booking_call",
                             "meeting_booked",
                             "meeting_attended",
                             "signup",
@@ -13362,7 +13378,7 @@
                       "effectiveRatePct": {
                         "type": "number",
                         "nullable": true,
-                        "description": "The rate every money figure (pipeline, ROI, CAC, projections) is priced on for this arrow, 0..100. Null when no source exists — never a default."
+                        "description": "The rate every money figure (pipeline, ROI, CAC, projections) is priced on for this arrow, 0..100. Never null on a catalogue leg: the seeded per-leg default is the last source."
                       },
                       "source": {
                         "type": "string",
@@ -13370,9 +13386,10 @@
                         "enum": [
                           "measured",
                           "manual",
-                          "median"
+                          "median",
+                          "default"
                         ],
-                        "description": "Which source effectiveRatePct is, in precedence order: measured on the brand's own leads (≥ minMeasuredFromReached on the FROM step), else what the brand stated by hand (brand-service brand-grain store), else the cross-org median of what brands stated. Null exactly when effectiveRatePct is null."
+                        "description": "Which source effectiveRatePct is, in precedence order: measured on the brand's own leads (≥ minMeasuredFromReached on the FROM step), else what the brand stated by hand (brand-service brand-grain store), else the cross-org median of what brands stated, else `default`: the seeded per-leg industry benchmark (defaultRatePct), never the brand's own figure. Null only for a leg outside the catalogue that nothing prices."
                       },
                       "unresolvedReason": {
                         "type": "string",
@@ -13380,7 +13397,7 @@
                         "enum": [
                           "no_rate_available"
                         ],
-                        "description": "Present exactly when effectiveRatePct is null: nothing measured, nothing stated, and no brand in the fleet stated this arrow."
+                        "description": "Null on every catalogue leg (a default always exists). Kept for readers of the older contract."
                       },
                       "measured": {
                         "type": "object",
@@ -13465,6 +13482,11 @@
                           "ratePct",
                           "brandCount"
                         ]
+                      },
+                      "defaultRatePct": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "The seeded per-leg default (industry benchmark, 0..100], stated whether or not it is the effective source."
                       }
                     },
                     "required": [
@@ -13475,7 +13497,8 @@
                       "unresolvedReason",
                       "measured",
                       "manualRatePct",
-                      "median"
+                      "median",
+                      "defaultRatePct"
                     ]
                   },
                   "description": "One entry per consecutive pair of the funnel's steps, in order."
@@ -17026,6 +17049,7 @@
                 "enum": [
                   "conversation",
                   "website_visit",
+                  "booking_call",
                   "meeting_booked",
                   "meeting_attended",
                   "signup",
@@ -17056,6 +17080,7 @@
                 "enum": [
                   "conversation",
                   "website_visit",
+                  "booking_call",
                   "meeting_booked",
                   "meeting_attended",
                   "signup",
@@ -17198,6 +17223,7 @@
                       "enum": [
                         "conversation",
                         "website_visit",
+                        "booking_call",
                         "meeting_booked",
                         "meeting_attended",
                         "signup",
@@ -17228,6 +17254,7 @@
                       "enum": [
                         "conversation",
                         "website_visit",
+                        "booking_call",
                         "meeting_booked",
                         "meeting_attended",
                         "signup",
@@ -17265,6 +17292,14 @@
             },
             "description": "Every LEG this channel performs: which step it moves a lead FROM and which step it moves it TO. A funnel is sold leg by leg, not only end to end — booking a meeting, getting it held, and closing it are three separate things to buy. `from: null` means the channel moves a lead from nothing onto the funnel's first step."
           },
+          "trigger": {
+            "type": "string",
+            "enum": [
+              "daily_budget",
+              "step_reached"
+            ],
+            "description": "What starts the channel's work. `daily_budget`: funded and paced on a daily budget (every channel but the instant call). `step_reached`: it runs when a lead reaches the step its leg moves out of (the instant call rings the brand's sales rep the moment a reply is qualified as a sales interest). A `step_reached` channel is NOT fundable or schedulable: offer no daily budget for it."
+          },
           "producibleSteps": {
             "type": "array",
             "items": {
@@ -17275,6 +17310,7 @@
                   "enum": [
                     "conversation",
                     "website_visit",
+                    "booking_call",
                     "meeting_booked",
                     "meeting_attended",
                     "signup",
@@ -17356,6 +17392,7 @@
           "performedBy",
           "terms",
           "stepTransitions",
+          "trigger",
           "producibleSteps",
           "salesFunnels"
         ]
@@ -17407,6 +17444,7 @@
                       "enum": [
                         "conversation",
                         "website_visit",
+                        "booking_call",
                         "meeting_booked",
                         "meeting_attended",
                         "signup",
@@ -17461,6 +17499,7 @@
                   "enum": [
                     "conversation",
                     "website_visit",
+                    "booking_call",
                     "meeting_booked",
                     "meeting_attended",
                     "signup",
@@ -17939,7 +17978,8 @@
                                 "sales_from_conversation",
                                 "sales_meetings_from_ads",
                                 "lead_forms_from_ads",
-                                "sales_from_website"
+                                "sales_from_website",
+                                "sales_meetings_from_call"
                               ]
                             },
                             "description": "WHICH SALES FUNNELS THIS FEATURE MAY BE SOLD THROUGH, in brand-service's own funnel keys. A product statement about the feature, owned by this service: the dashboard offers only valid (funnel, feature) pairs from it and campaign-service refuses to provision a pair that is not in it. ALWAYS PRESENT, so an absent answer can never be mistaken for 'all of them' — a feature that sells through no sales funnel states `[]` (every non-sales feature: PR, hiring, VC, accelerators, AI visibility, press kit, outlet discovery, expert quotes) and one that sells through every declared funnel states every one of those keys explicitly. A shorter list is a real restriction, not a gap: the feedback-request cold email states `sales_meetings_from_conversation` alone, because its offer buys a conversation and has no website step to sell."
@@ -18377,7 +18417,8 @@
                               "sales_from_conversation",
                               "sales_meetings_from_ads",
                               "lead_forms_from_ads",
-                              "sales_from_website"
+                              "sales_from_website",
+                              "sales_meetings_from_call"
                             ]
                           },
                           "description": "WHICH SALES FUNNELS THIS FEATURE MAY BE SOLD THROUGH, in brand-service's own funnel keys. A product statement about the feature, owned by this service: the dashboard offers only valid (funnel, feature) pairs from it and campaign-service refuses to provision a pair that is not in it. ALWAYS PRESENT, so an absent answer can never be mistaken for 'all of them' — a feature that sells through no sales funnel states `[]` (every non-sales feature: PR, hiring, VC, accelerators, AI visibility, press kit, outlet discovery, expert quotes) and one that sells through every declared funnel states every one of those keys explicitly. A shorter list is a real restriction, not a gap: the feedback-request cold email states `sales_meetings_from_conversation` alone, because its offer buys a conversation and has no website step to sell."
@@ -25172,7 +25213,8 @@
                                 "sales_from_conversation",
                                 "sales_meetings_from_ads",
                                 "lead_forms_from_ads",
-                                "sales_from_website"
+                                "sales_from_website",
+                                "sales_meetings_from_call"
                               ]
                             },
                             "description": "WHICH SALES FUNNELS THIS FEATURE MAY BE SOLD THROUGH, in brand-service's own funnel keys. A product statement about the feature, owned by this service: the dashboard offers only valid (funnel, feature) pairs from it and campaign-service refuses to provision a pair that is not in it. ALWAYS PRESENT, so an absent answer can never be mistaken for 'all of them' — a feature that sells through no sales funnel states `[]` (every non-sales feature: PR, hiring, VC, accelerators, AI visibility, press kit, outlet discovery, expert quotes) and one that sells through every declared funnel states every one of those keys explicitly. A shorter list is a real restriction, not a gap: the feedback-request cold email states `sales_meetings_from_conversation` alone, because its offer buys a conversation and has no website step to sell."

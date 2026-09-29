@@ -67,6 +67,8 @@ import { matchSalesFunnelKey, type SalesFunnelKey } from "./sales-funnels.js";
 /** The `leads[]` field each step is counted by. `purchase` has no signal anywhere in the fleet. */
 export const STEP_LEAD_FIELD: Record<ChannelStepKey, LeadStepField | null> = {
   conversation: "repliedPositive",
+  // Nothing counts a lead as called yet (the instant call records no conversion event here).
+  booking_call: null,
   website_visit: "clicked",
   meeting_booked: "meetingBooked",
   meeting_attended: "meetingAttended",

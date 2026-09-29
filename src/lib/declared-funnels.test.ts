@@ -33,6 +33,8 @@ describe("the funnel key is the whole vocabulary", () => {
       "sales_meetings_from_ads",
       "lead_forms_from_ads",
       "sales_from_website",
+      // AUTHORED here, not mirrored (owner, 2026-09-29): the reply funnel with the booking call in it.
+      "sales_meetings_from_call",
     ]);
   });
 

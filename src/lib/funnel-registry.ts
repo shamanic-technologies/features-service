@@ -467,6 +467,15 @@ const FUNNEL_LADDERS: Record<SalesFunnelKey, (e: SalesEconomics) => LadderRung[]
     { tag: "meetingAttended", signal: "meetingAttended", pClose: attendedClose(e) },
     CLOSE_WIN,
   ],
+  // The instant-call funnel: the call rung between the reply and the meeting has no signal anywhere in
+  // the fleet, so the ladder is the conversation funnel's (`replyToMeetingPct` is reply→booked whatever
+  // happened in between). Display-only today (`DISPLAY_ONLY_SALES_FUNNELS`), never a reading funnel.
+  sales_meetings_from_call: (e) => [
+    { tag: "reply", signal: "positiveReply", pClose: pct(e.replyToMeetingPct) * bookedClose(e), engagementRoute: true },
+    { tag: "meeting", signal: "meeting", pClose: bookedClose(e) },
+    { tag: "meetingAttended", signal: "meetingAttended", pClose: attendedClose(e) },
+    CLOSE_WIN,
+  ],
   sales_meetings_from_website: (e) => [
     { tag: "visit", signal: "clicked", pClose: clickCloseViaMeeting(e), engagementRoute: true },
     { tag: "meeting", signal: "meeting", pClose: bookedClose(e) },
@@ -611,6 +620,8 @@ const salesFunnel: FunnelDefinition = {
 export const FUNNEL_LEG_SIGNALS: Record<SalesFunnelKey, readonly string[]> = {
   sales_meetings_from_conversation: ["positiveReply", "meeting", "meetingAttended", "closeWin"],
   sales_meetings_from_website: ["clicked", "meeting", "meetingAttended", "closeWin"],
+  // The call rung is counted by no signal, so it is absent rather than mapped onto a lookalike.
+  sales_meetings_from_call: ["positiveReply", "meeting", "meetingAttended", "closeWin"],
   website_purchases: ["clicked", "signup", "closeWin"],
   form_magnet: ["clicked", "formSubmission", "closeWin"],
   sales_from_conversation: ["positiveReply", "closeWin"],
