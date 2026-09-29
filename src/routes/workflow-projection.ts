@@ -1116,7 +1116,7 @@ function exploreResolved(
  */
 type ProjectionCostBasis = "billed" | "actual";
 
-async function handleWorkflowProjection(req: Request, res: Response, costBasis: ProjectionCostBasis) {
+export async function handleWorkflowProjection(req: Request, res: Response, costBasis: ProjectionCostBasis) {
   const { featureSlug } = req.params;
   const { orgId, userId, runId, featureSlug: headerFeatureSlug } = req as AuthenticatedRequest;
   const brandId = req.query.brandId as string | undefined;

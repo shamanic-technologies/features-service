@@ -1,5 +1,20 @@
 # Features Service — CLAUDE.md
 
+## AN OFFER'S SALES PATHS, RANKED BY ROI — `GET /offers/:offerId/sales-paths?brandId=` (`lib/offer-sales-paths.ts`)
+
+Owner decision 2026-09-29 (phase 2 of "how an offer sells"). A path = a chain of the legs the offer
+TICKED (brand-service `GET /internal/offers/:offerId/sales-path`) from an entry leg to `paid_client`, no
+step twice. Formula (also in the OpenAPI description): needed(paid)=1, needed(from)=needed(to)/(rate/100);
+legCost = costPerOutcome × needed(to) on a platform leg, none on a human leg (no channel of ours publishes
+it); costPerPayingClient = Σ; roi = offer LTR ÷ that. Rate = the brand's effective leg rate (source named:
+crm_measured / measured_on_our_leads / customer_stated / fleet_median / industry_default). costPerOutcome =
+the NET recommended workflow of each platform channel's leg-keyed ladder (`?leg=&offerId=&pricing=net`,
+the exported `handleWorkflowProjection` invoked IN-PROCESS so the pick is byte-the-same), cheapest channel
+chosen; `entryChannelSlug` names what a budget behind the path buys (campaign-service's next read).
+Nothing ticked / no legs / no complete chain → `status` says so, `paths: []`. An unpriced platform leg, a 0%
+leg or a missing LTR → `roi: null` + reason, sorted last, never priced as free. Guards:
+`lib/offer-sales-paths.test.ts`. (Set 2026-09-29.)
+
 ## EVERY LEG ALWAYS HAS A CONVERSION RATE, AND THE BOOKING CALL IS A STEP — `lib/default-leg-rates.ts`, `booking_call`, `ai-instant-call`
 
 Owner decisions 2026-09-29 (the dashboard's offer beta lists every step, leg, channel and path by ROI):
