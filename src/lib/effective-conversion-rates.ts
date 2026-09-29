@@ -20,8 +20,12 @@
  *      values only: the store has no default behind it, so a brand that stated nothing contributes
  *      nothing.
  *
- * When none of the three exists the answer is `null` with `unresolvedReason` — never a default, never
- * a 0, never borrowed from a neighbouring arrow.
+ *   4. DEFAULT — the seeded per-leg industry benchmark (`lib/default-leg-rates.ts`, owner rule
+ *      2026-09-29: every leg is prefilled, none may be empty). Served as `source: "default"`, so a
+ *      reader always tells it apart from the brand's own number. Supersedes "null, never a default".
+ *
+ * Only a leg outside the catalogue with none of the four is `null` + `unresolvedReason`; never a 0, never
+ * borrowed from a neighbouring arrow.
  *
  * ── THE MEASURED RATE IS THE FUNNEL-STEP CONVERSION, BYTE FOR BYTE ─────────────────────────────
  *
@@ -80,7 +84,8 @@ import {
 } from "./funnel-steps.js";
 import { SALES_FUNNELS, SALES_FUNNEL_KEYS, salesFunnelIndex, type SalesFunnelKey } from "./sales-funnels.js";
 import { fetchBrandLegEconomics, type BrandLegEconomics, type BrandLegRate } from "./brand-leg-economics-client.js";
-import { FUNNEL_STEP_LABEL_TO_KEY } from "./acquisition-channels.js";
+import { CHANNEL_STEP_KEYS, FUNNEL_STEP_LABEL_TO_KEY, type ChannelStepKey } from "./acquisition-channels.js";
+import { defaultLegRatePct } from "./default-leg-rates.js";
 import { median } from "./stated-economics.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { servedCached, buildScopeKey } from "./view-cache.js";
@@ -99,7 +104,7 @@ import {
  */
 export const MIN_MEASURED_FROM_REACHED = 10;
 
-export type EffectiveRateSource = "measured" | "manual" | "median";
+export type EffectiveRateSource = "measured" | "manual" | "median" | "default";
 
 /** Why an arrow's measured rate is not the effective one. */
 export type MeasuredRateGap =
@@ -138,17 +143,21 @@ export interface MeasuredArrowRate {
 export interface EffectiveArrowRate {
   fromStep: string;
   toStep: string;
-  /** The rate every money figure is priced on for this arrow, 0..100. Null when no source exists. */
+  /** The rate every money figure is priced on for this arrow, 0..100. Never null on a catalogue leg: the
+   *  per-leg default is the last source (`lib/default-leg-rates.ts`). */
   effectiveRatePct: number | null;
-  /** Which source `effectiveRatePct` is. Null exactly when it is null. */
+  /** Which source `effectiveRatePct` is: `default` is the seeded industry benchmark, never the brand's. */
   source: EffectiveRateSource | null;
-  /** Present exactly when `effectiveRatePct` is null. */
+  /** Kept for readers of the older contract: null on every catalogue leg now that a default exists.
+   *  Set only for a leg outside the catalogue that no source prices. */
   unresolvedReason: "no_rate_available" | null;
   measured: MeasuredArrowRate;
   /** What the brand stated by hand for this arrow, or null when it has not. */
   manualRatePct: number | null;
   /** The cross-org median of what brands stated for this (funnel, arrow), over `brandCount` brands. */
   median: { ratePct: number | null; brandCount: number };
+  /** The seeded per-leg default (industry benchmark), whether or not it is the effective source. */
+  defaultRatePct: number | null;
 }
 
 export interface EffectiveFunnelRates {
@@ -413,6 +422,14 @@ export function legPairKey(fromStep: string, toStep: string): string {
   return `${key(fromStep)}>${key(toStep)}`;
 }
 
+/** The seeded default of the leg between two step LABELS (either spelling), or null when none is seeded. */
+function defaultRateOfLeg(fromStep: string, toStep: string): number | null {
+  const [from, to] = legPairKey(fromStep, toStep).split(">");
+  return isChannelStepKey(from) && isChannelStepKey(to) ? defaultLegRatePct(from, to) : null;
+}
+const isChannelStepKey = (v: string | undefined): v is ChannelStepKey =>
+  v !== undefined && (CHANNEL_STEP_KEYS as readonly string[]).includes(v);
+
 export type FleetArrowMedians = Map<string, { ratePct: number | null; brandCount: number }>;
 
 /** PURE: the median per LEG over the brands that STATED it — one data point per brand. */
@@ -504,6 +521,7 @@ export function resolveArrow(
   measured: MeasuredArrowRate,
   manualRatePct: number | null,
   medianRate: { ratePct: number | null; brandCount: number },
+  defaultRatePct: number | null = null,
 ): EffectiveArrowRate {
   let effectiveRatePct: number | null = null;
   let source: EffectiveRateSource | null = null;
@@ -516,6 +534,9 @@ export function resolveArrow(
   } else if (medianRate.ratePct !== null) {
     effectiveRatePct = medianRate.ratePct;
     source = "median";
+  } else if (defaultRatePct !== null) {
+    effectiveRatePct = defaultRatePct;
+    source = "default";
   }
   return {
     fromStep,
@@ -526,6 +547,7 @@ export function resolveArrow(
     measured,
     manualRatePct,
     median: medianRate,
+    defaultRatePct,
   };
 }
 
@@ -569,6 +591,7 @@ export function buildBrandEffectiveRates(input: {
       measureLeg(fromStep, toStep),
       manualByLeg.get(key) ?? null,
       input.medians.get(key) ?? { ratePct: null, brandCount: 0 },
+      defaultRateOfLeg(fromStep, toStep),
     );
     legs.set(key, resolved);
     return resolved;

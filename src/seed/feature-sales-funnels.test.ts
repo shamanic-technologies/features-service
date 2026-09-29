@@ -65,6 +65,7 @@ describe("per-feature sales funnels", () => {
       "form_magnet",
       "sales_from_conversation",
       "sales_from_website",
+      "sales_meetings_from_call",
     ]);
     expect(none).not.toEqual(all);
     // The distinction a consumer actually makes: an empty list offers nothing, a full one offers
@@ -107,6 +108,7 @@ describe("per-feature sales funnels", () => {
     expect(bySlug(FEEDBACK_SLUG)!.salesFunnels).toEqual([
       "sales_meetings_from_conversation",
       "sales_from_conversation",
+      "sales_meetings_from_call",
     ]);
   });
 

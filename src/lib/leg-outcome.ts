@@ -59,6 +59,7 @@ export const FUNNEL_DRIVER: Record<SalesFunnelKey, LegDriver | null> = {
   sales_from_website: "click",
   sales_meetings_from_ads: null,
   lead_forms_from_ads: null,
+  sales_meetings_from_call: "reply",
 };
 
 export interface LegOutcomeTerms {
@@ -121,6 +122,13 @@ export function legOutcomeTerms(
     if (outcomeObserved) return 1;
     switch (funnelKey) {
       case "sales_meetings_from_conversation":
+        if (outcomeStep === "meeting_booked") return chain(econ.r2m);
+        if (outcomeStep === "meeting_attended") return chain(econ.r2m, bookedToAttended);
+        if (outcomeStep === "paid_client") return chain(econ.r2m, econ.m2c);
+        return null;
+      // The instant-call funnel walks the reply funnel's rates; the CALL itself has no rate here
+      // (`SalesEconomics` states no reply→called field), so a leg denominated in it is unpriceable.
+      case "sales_meetings_from_call":
         if (outcomeStep === "meeting_booked") return chain(econ.r2m);
         if (outcomeStep === "meeting_attended") return chain(econ.r2m, bookedToAttended);
         if (outcomeStep === "paid_client") return chain(econ.r2m, econ.m2c);

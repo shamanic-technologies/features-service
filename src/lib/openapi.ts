@@ -759,6 +759,7 @@ const channelStepSchema = z.object({
   key: z.enum([
     "conversation",
     "website_visit",
+    "booking_call",
     "meeting_booked",
     "meeting_attended",
     "signup",
@@ -1870,15 +1871,16 @@ const measuredArrowRateSchema = z.object({
 const effectiveArrowRateSchema = z.object({
   fromStep: z.string(),
   toStep: z.string(),
-  effectiveRatePct: z.number().nullable().describe("The rate every money figure (pipeline, ROI, CAC, projections) is priced on for this arrow, 0..100. Null when no source exists — never a default."),
-  source: z.enum(["measured", "manual", "median"]).nullable().describe("Which source effectiveRatePct is, in precedence order: measured on the brand's own leads (≥ minMeasuredFromReached on the FROM step), else what the brand stated by hand (brand-service brand-grain store), else the cross-org median of what brands stated. Null exactly when effectiveRatePct is null."),
-  unresolvedReason: z.enum(["no_rate_available"]).nullable().describe("Present exactly when effectiveRatePct is null: nothing measured, nothing stated, and no brand in the fleet stated this arrow."),
+  effectiveRatePct: z.number().nullable().describe("The rate every money figure (pipeline, ROI, CAC, projections) is priced on for this arrow, 0..100. Never null on a catalogue leg: the seeded per-leg default is the last source."),
+  source: z.enum(["measured", "manual", "median", "default"]).nullable().describe("Which source effectiveRatePct is, in precedence order: measured on the brand's own leads (≥ minMeasuredFromReached on the FROM step), else what the brand stated by hand (brand-service brand-grain store), else the cross-org median of what brands stated, else `default`: the seeded per-leg industry benchmark (defaultRatePct), never the brand's own figure. Null only for a leg outside the catalogue that nothing prices."),
+  unresolvedReason: z.enum(["no_rate_available"]).nullable().describe("Null on every catalogue leg (a default always exists). Kept for readers of the older contract."),
   measured: measuredArrowRateSchema,
   manualRatePct: z.number().nullable().describe("What the brand stated by hand for this arrow, or null when it has not."),
   median: z.object({
     ratePct: z.number().nullable().describe("The cross-org MEDIAN (never a mean) of the rates brands STATED for this (funnel, arrow). Null when none did."),
     brandCount: z.number().int().describe("How many brands' statements the median is taken over."),
   }),
+  defaultRatePct: z.number().nullable().describe("The seeded per-leg default (industry benchmark, 0..100], stated whether or not it is the effective source."),
 });
 const brandConversionRatesResponseRef = registry.register(
   "BrandConversionRatesResponse",
@@ -3593,6 +3595,7 @@ const publicChannelSchema = registry.register(
     performedBy: z.enum(["software", "person"]).describe("WHAT does the leg's work, orthogonal to `operatedBy`. `software` is a machine end to end (our AI replying to a prospect, an email sender, an ad platform); `person` is somebody by hand — the customer's own team, a specialist of ours on an agency leg, a caller on the phone, an SEO specialist. Our agency channels are `platform` + `person` and our AI channel is `platform` + `software`, which `operatedBy` alone cannot tell apart. Stated per channel, never inferred from the name, the family or the price."),
     terms: channelTermsSchema,
     stepTransitions: z.array(channelStepTransitionSchema).describe("Every LEG this channel performs: which step it moves a lead FROM and which step it moves it TO. A funnel is sold leg by leg, not only end to end — booking a meeting, getting it held, and closing it are three separate things to buy. `from: null` means the channel moves a lead from nothing onto the funnel's first step."),
+    trigger: z.enum(["daily_budget", "step_reached"]).describe("What starts the channel's work. `daily_budget`: funded and paced on a daily budget (every channel but the instant call). `step_reached`: it runs when a lead reaches the step its leg moves out of (the instant call rings the brand's sales rep the moment a reply is qualified as a sales interest). A `step_reached` channel is NOT fundable or schedulable: offer no daily budget for it."),
     producibleSteps: z.array(channelStepSchema).describe("The steps this channel produces FROM NOTHING — DERIVED as the `to` of its `from: null` legs, and unchanged in meaning from before a channel could state an internal leg. A channel that only performs internal legs of a funnel legitimately produces none."),
     salesFunnels: z.array(z.object({
       key: z.string(),

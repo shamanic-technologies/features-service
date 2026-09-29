@@ -18,6 +18,8 @@ import {
   CHANNEL_FAMILIES,
   CHANNEL_OPERATORS,
   CHANNEL_PERFORMERS,
+  CHANNEL_TRIGGERS,
+  type ChannelTrigger,
   CHANNEL_STEPS,
   CHANNEL_STEP_KEYS,
   matchChannelStepKey,
@@ -90,6 +92,10 @@ export interface PublicChannel {
    *  customer's team, a specialist of ours, a caller). Orthogonal to `operatedBy`: our agency channels
    *  are `platform` + `person`, our AI channel is `platform` + `software`. */
   performedBy: ChannelPerformer;
+  /** What starts the channel's work. `daily_budget`: funded and paced on a daily budget (every channel
+   *  but one). `step_reached`: runs when a lead reaches the step its leg moves out of (the instant call
+   *  rings the moment a reply is qualified) — NOT fundable or schedulable, so offer no daily budget. */
+  trigger: ChannelTrigger;
   /** The commercial terms a buyer commits to, before any performance is measured. */
   terms: AcquisitionChannel["terms"];
   /** Every leg this channel performs, `from` → `to`. `from: null` is "from nothing". */
@@ -124,6 +130,7 @@ export class MalformedAcquisitionChannelError extends Error {
 const isFamily = (v: unknown): v is ChannelFamily => (CHANNEL_FAMILIES as readonly string[]).includes(v as string);
 const isOperator = (v: unknown): v is ChannelOperator => (CHANNEL_OPERATORS as readonly string[]).includes(v as string);
 const isPerformer = (v: unknown): v is ChannelPerformer => (CHANNEL_PERFORMERS as readonly string[]).includes(v as string);
+const isTrigger = (v: unknown): v is ChannelTrigger => (CHANNEL_TRIGGERS as readonly string[]).includes(v as string);
 const isWholeNonNegative = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0;
 const isPositiveInt = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v > 0;
 
@@ -194,10 +201,15 @@ export function parseAcquisitionChannel(slug: string, raw: unknown): Acquisition
     throw new MalformedAcquisitionChannelError(slug, "a customer-operated channel states a non-zero daily operating cost");
   }
 
+  // Absent on every blob predating the field, and every one of those is funded on a daily budget.
+  if (blob.trigger !== undefined && !isTrigger(blob.trigger)) {
+    throw new MalformedAcquisitionChannelError(slug, `unknown trigger ${JSON.stringify(blob.trigger)}`);
+  }
   return {
     family: blob.family,
     operatedBy: blob.operatedBy,
     performedBy: blob.performedBy,
+    ...(blob.trigger !== undefined ? { trigger: blob.trigger as ChannelTrigger } : {}),
     stepTransitions: transitions,
     terms: {
       dailyOperatingCostCents: t.dailyOperatingCostCents,
@@ -239,6 +251,7 @@ export function buildChannelCatalogue(rows: readonly CatalogueFeatureRow[]): Pub
       family: channel.family,
       operatedBy: channel.operatedBy,
       performedBy: channel.performedBy,
+      trigger: channel.trigger ?? "daily_budget",
       terms: channel.terms,
       stepTransitions: channel.stepTransitions.map((t) => ({
         legKey: legKeyFor(t),

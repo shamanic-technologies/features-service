@@ -47,6 +47,14 @@ const row = (over: Partial<CatalogueFeatureRow> = {}): CatalogueFeatureRow => ({
 });
 
 describe("reading a stored channel", () => {
+  it("reads the trigger, and refuses an unknown one", () => {
+    expect(parseAcquisitionChannel("x", { ...CHANNEL, trigger: "step_reached" })?.trigger).toBe("step_reached");
+    expect(parseAcquisitionChannel("x", CHANNEL)?.trigger).toBeUndefined();
+    expect(() => parseAcquisitionChannel("x", { ...CHANNEL, trigger: "hourly" })).toThrow(/unknown trigger/);
+    const [published] = buildChannelCatalogue([row({ acquisitionChannel: { ...CHANNEL, trigger: "step_reached" } })]);
+    expect(published.trigger).toBe("step_reached");
+  });
+
   it("reads a well-formed one", () => {
     const parsed = parseAcquisitionChannel("cold-email", CHANNEL);
     expect(parsed).toEqual(CHANNEL);
@@ -124,7 +132,10 @@ describe("building the public catalogue", () => {
       "form_magnet",
       "sales_from_conversation",
       "sales_from_website",
+      "sales_meetings_from_call",
     ]);
+    // Every daily-budget channel predates the trigger field and reads `daily_budget` on the wire.
+    expect(channel.trigger).toBe("daily_budget");
     // A funnel arrives with its funnel, so a row renders without the consumer knowing the catalogue.
     expect(channel.salesFunnels[0].steps).toEqual([
       "Positive reply",
@@ -143,6 +154,7 @@ describe("building the public catalogue", () => {
       ["form_magnet", null, 30, "channel"],
       ["sales_from_conversation", null, 30, "channel"],
       ["sales_from_website", null, 30, "channel"],
+      ["sales_meetings_from_call", null, 30, "channel"],
     ]);
     // The bare field is GONE — two grains under one word on one payload is what it cost to remove.
     expect(channel.salesFunnels.every((f) => !("minimumCommitmentDays" in f))).toBe(true);
@@ -247,6 +259,7 @@ describe("building the public catalogue", () => {
       "sales_meetings_from_conversation",
       "sales_meetings_from_website",
       "sales_meetings_from_ads",
+      "sales_meetings_from_call",
     ]);
     // A customer-operated channel spends none of the platform's money, and the zero is the statement.
     expect(channel.operatedBy).toBe("customer");

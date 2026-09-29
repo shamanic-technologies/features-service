@@ -190,7 +190,11 @@ describe("every published channel is BOOKABLE — no coming-soon state", () => {
   it("carries NO availability flag — slowness is expressed in the terms, never hidden behind a boolean", () => {
     for (const channel of channels) {
       const blob = channel.acquisitionChannel as unknown as Record<string, unknown>;
-      expect(Object.keys(blob).sort(), channel.slug).toEqual(["family", "operatedBy", "performedBy", "stepTransitions", "terms"]);
+      // `trigger` is written only on the one event-triggered channel; every other blob is byte-unchanged.
+      const expected = ["family", "operatedBy", "performedBy", "stepTransitions", "terms"];
+      if (channel.slug === "ai-instant-call") expected.push("trigger");
+      expected.sort();
+      expect(Object.keys(blob).sort(), channel.slug).toEqual(expected);
       for (const banned of ["available", "comingSoon", "beta", "enabled", "launched"]) {
         expect(blob, `${channel.slug} must not carry ${banned}`).not.toHaveProperty(banned);
       }
@@ -362,6 +366,7 @@ describe("what each channel can produce, and what follows from it", () => {
     expect(bySlug("cold-call-outreach")!.salesFunnels).toEqual([
       "sales_meetings_from_conversation",
       "sales_from_conversation",
+      "sales_meetings_from_call",
     ]);
   });
 
@@ -376,13 +381,37 @@ describe("what each channel can produce, and what follows from it", () => {
       "form_magnet",
       "sales_from_conversation",
       "sales_from_website",
+      "sales_meetings_from_call",
     ];
     expect(bySlug("sales-cold-email-outreach")!.salesFunnels).toEqual(CONVERSATION_AND_VISIT_FUNNELS);
     expect(bySlug("sales-crm-email-outreach")!.salesFunnels).toEqual(CONVERSATION_AND_VISIT_FUNNELS);
     expect(bySlug("feedback-request-cold-email-outreach")!.salesFunnels).toEqual([
       "sales_meetings_from_conversation",
       "sales_from_conversation",
+      "sales_meetings_from_call",
     ]);
+  });
+});
+
+describe("the AI instant call — Positive reply -> Booking call, event-triggered, display only", () => {
+  it("performs exactly one leg, is platform-run software, and is NOT funded on a daily budget", () => {
+    const call = bySlug("ai-instant-call")!;
+    expect(call.acquisitionChannel).toMatchObject({
+      family: "conversion",
+      operatedBy: "platform",
+      performedBy: "software",
+      trigger: "step_reached",
+      stepTransitions: [{ from: "conversation", to: "booking_call" }],
+    });
+    expect(call.acquisitionChannel!.terms.dailyOperatingCostCents).toBe(0);
+    expect(call.salesFunnels).toEqual(["sales_meetings_from_call"]);
+  });
+
+  it("every other channel carries no trigger, i.e. stays on its daily budget", () => {
+    for (const channel of channels) {
+      if (channel.slug === "ai-instant-call") continue;
+      expect(channel.acquisitionChannel!.trigger, channel.slug).toBeUndefined();
+    }
   });
 });
 
@@ -419,11 +448,13 @@ describe("A FUNNEL IS SOLD LEG BY LEG — a channel states where it picks a lead
       "sales_meetings_from_conversation",
       "sales_meetings_from_website",
       "sales_meetings_from_ads",
+      "sales_meetings_from_call",
     ]);
     expect(bySlug("agency-closing-calls")!.salesFunnels).toEqual([
       "sales_meetings_from_conversation",
       "sales_meetings_from_website",
       "sales_meetings_from_ads",
+      "sales_meetings_from_call",
     ]);
   });
 

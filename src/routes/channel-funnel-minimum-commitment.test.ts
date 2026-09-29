@@ -39,7 +39,7 @@ const { __resetChannelCatalogueCache } = await import("./public.js");
 const CONVERSATION = "sales_meetings_from_conversation";
 // Every other funnel a conversation or a website visit enters. The two AD funnels are absent because
 // neither of these channels delivers their first step, which is the join doing its job.
-const OTHER_FUNNELS = ["sales_meetings_from_website", "website_purchases", "form_magnet", "sales_from_conversation", "sales_from_website"];
+const OTHER_FUNNELS = ["sales_meetings_from_website", "website_purchases", "form_magnet", "sales_from_conversation", "sales_from_website", "sales_meetings_from_call"];
 
 const FAST_CHANNEL = "fast-cold-email-outreach";
 const SLOW_CHANNEL = "slow-seo-outreach";
@@ -148,6 +148,7 @@ describe("the public catalogue states ONE composed minimum run length per pair",
       "sales_meetings_from_ads",
       "lead_forms_from_ads",
       "sales_from_website",
+      "sales_meetings_from_call",
     ]);
     // brand-service's OWN names, including the two that MOVED on funnels we already mirrored.
     expect(funnels.find((f) => f.key === "sales_meetings_from_conversation")!.name).toBe("Sales Meeting from Positive Reply");
@@ -160,7 +161,7 @@ describe("the public catalogue states ONE composed minimum run length per pair",
     const startedBy = (stepKey: string) => funnels.filter((f) => f.entryStep.key === stepKey).map((f) => f.key);
     expect(startedBy("form_submitted")).toEqual(["lead_forms_from_ads"]);
     expect(startedBy("meeting_booked")).toEqual(["sales_meetings_from_ads"]);
-    expect(startedBy("conversation")).toEqual(["sales_meetings_from_conversation", "sales_from_conversation"]);
+    expect(startedBy("conversation")).toEqual(["sales_meetings_from_conversation", "sales_from_conversation", "sales_meetings_from_call"]);
 
     // Every produced step of every published channel starts at least one funnel that channel sells —
     // no channel publishes a production that leads nowhere.

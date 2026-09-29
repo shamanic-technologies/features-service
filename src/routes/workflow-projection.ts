@@ -593,6 +593,9 @@ export function funnelToProjectionInputs(key: SalesFunnelKey): {
       return { objective: "meeting-booked", goalEcho: "meetingBooked", singleStepGoal: null, formSubmissionGoal: false, meetingChannel: "reply" };
     case "sales_meetings_from_website":
       return { objective: "meeting-booked", goalEcho: "meetingBooked", singleStepGoal: null, formSubmissionGoal: false, meetingChannel: "click" };
+    // The instant-call funnel is the reply funnel with a call inserted: same meeting, bought with a reply.
+    case "sales_meetings_from_call":
+      return { objective: "meeting-booked", goalEcho: "meetingBooked", singleStepGoal: null, formSubmissionGoal: false, meetingChannel: "reply" };
     case "website_purchases":
       return { objective: "signup", goalEcho: "signup", singleStepGoal: null, formSubmissionGoal: false, meetingChannel: null };
     case "form_magnet":

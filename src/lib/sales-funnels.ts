@@ -52,6 +52,7 @@ export const SALES_FUNNEL_KEYS = [
   "sales_meetings_from_ads",
   "lead_forms_from_ads",
   "sales_from_website",
+  "sales_meetings_from_call",
 ] as const;
 
 export type SalesFunnelKey = (typeof SALES_FUNNEL_KEYS)[number];
@@ -161,6 +162,16 @@ export const SALES_FUNNELS: Record<SalesFunnelKey, SalesFunnelDef> = {
     // rather than observed.
     meetingChannel: "none",
   },
+  sales_meetings_from_call: {
+    key: "sales_meetings_from_call",
+    name: "Sales Meeting from Booking Call",
+    // The reply funnel with the instant call in it: the moment a reply is qualified as a sales interest,
+    // the brand's sales rep is rung and connected to the buyer, and books the meeting on that call.
+    // features-service authors this one (owner, 2026-09-29) — brand-service's catalogue does not carry
+    // it yet — and it is DISPLAY ONLY (`DISPLAY_ONLY_SALES_FUNNELS`).
+    steps: ["Positive reply", "Booking call", "Meeting booked", "Meeting attended", "Paid client"],
+    meetingChannel: "reply",
+  },
   sales_from_website: {
     key: "sales_from_website",
     name: "Website Purchase",
@@ -183,6 +194,15 @@ export const SALES_FUNNELS: Record<SalesFunnelKey, SalesFunnelDef> = {
     meetingChannel: null,
   },
 };
+
+/**
+ * Funnels this service DISPLAYS but does not yet PRICE a brand through. A funnel here is in the step and
+ * leg catalogue (so its legs are published and every leg carries a rate) and in `/public/channels`, but
+ * it is never a READING funnel of a scope (`reading-funnels.ts`): adding it as a candidate would let a
+ * path nobody has run yet out-bid, on default rates, the path a brand actually walks, and move live
+ * pipeline figures. Phase 1 of the instant call is display only (owner, 2026-09-29).
+ */
+export const DISPLAY_ONLY_SALES_FUNNELS: ReadonlySet<SalesFunnelKey> = new Set<SalesFunnelKey>(["sales_meetings_from_call"]);
 
 const isSalesFunnelKey = (value: string): value is SalesFunnelKey =>
   (SALES_FUNNEL_KEYS as readonly string[]).includes(value);
@@ -236,4 +256,5 @@ export const SALES_FUNNEL_GOAL_ECHO: Record<
   // `meetingBooked`, and an ad lead form echoes the nearest form word the goal vocabulary has.
   sales_meetings_from_ads: "meetingBooked",
   lead_forms_from_ads: "formSubmission",
+  sales_meetings_from_call: "meetingBooked",
 };
