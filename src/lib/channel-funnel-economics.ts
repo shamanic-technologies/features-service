@@ -116,6 +116,7 @@ export const FUNNEL_MILESTONE_STEP: Record<SalesFunnelKey, string> = {
   // this map states gives "Direct purchase" rather than the terminal it named while the purchase was folded
   // inside the sale.
   sales_from_website: "Direct purchase",
+  sales_meetings_from_call: "Meeting booked",
 };
 
 /** A funnel is bought through ONE channel; the other one's evidence is masked away so it cannot dilute
@@ -203,6 +204,19 @@ export function pricePair(input: PricePairInput): PairResult {
       // 100% show-up rate, which is the exact bug the composed rate exists to prevent.
       priced(def.steps[2], isMilestone(def.steps[2]), null, "rate_not_declared"),
       priced(def.steps[3], isMilestone(def.steps[3]), costPerSaleUsd, "rate_is_zero"),
+    ];
+  } else if (funnelKey === "sales_meetings_from_call") {
+    // The reply funnel with the instant call inserted. `replyToMeetingPct` is reply→booked whatever
+    // happened in between, so the booked meeting and the sale are priced exactly as on the conversation
+    // funnel. The CALL rung carries no price: `SalesEconomics` states no reply→called rate, and pricing
+    // it would say a phone call costs what a reply or a meeting costs.
+    costPerSaleUsd = p.costPerMeetingPaidClientUsd;
+    steps = [
+      priced(def.steps[0], isMilestone(def.steps[0]), entryUnitCost, "rate_is_zero"),
+      priced(def.steps[1], isMilestone(def.steps[1]), null, "rate_not_declared"),
+      priced(def.steps[2], isMilestone(def.steps[2]), p.costPerMeetingBookedUsd, "rate_is_zero"),
+      priced(def.steps[3], isMilestone(def.steps[3]), null, "rate_not_declared"),
+      priced(def.steps[4], isMilestone(def.steps[4]), costPerSaleUsd, "rate_is_zero"),
     ];
   } else if (funnelKey === "website_purchases") {
     costPerSaleUsd = p.costPerSignupPaidClientUsd;

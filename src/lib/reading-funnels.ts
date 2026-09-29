@@ -56,7 +56,7 @@ import {
   OfferNotOfBrandError,
   type DeclaredSalesFunnel,
 } from "./sales-funnels-client.js";
-import { matchSalesFunnelKey, SALES_FUNNELS, salesFunnelIndex, type SalesFunnelKey } from "./sales-funnels.js";
+import { DISPLAY_ONLY_SALES_FUNNELS, matchSalesFunnelKey, SALES_FUNNELS, salesFunnelIndex, type SalesFunnelKey } from "./sales-funnels.js";
 import { CHANNEL_STEPS } from "./acquisition-channels.js";
 import { SEED_FEATURES } from "../seed/features.js";
 
@@ -86,7 +86,11 @@ export function readingFunnelsForLegs(
     // leg INTO that step the brand states, or the scope performs, are how its leads got there; a funnel
     // reached some other way (an ad delivering the meeting) is not this brand's path. Nobody said →
     // every candidate stays, and the onward rule below decides.
-    let candidates = funnelsContainingLeg(legKey).sort(byCatalogue);
+    // A DISPLAY-ONLY funnel (the instant-call funnel, phase 1) is never a reading funnel: on default rates
+    // it could out-bid the path a brand actually walks and move live figures.
+    let candidates = funnelsContainingLeg(legKey)
+      .filter((f) => !DISPLAY_ONLY_SALES_FUNNELS.has(f))
+      .sort(byCatalogue);
     if (from !== null) {
       const prevOf = (f: SalesFunnelKey) => funnelLegs(f).find((t) => t.to === from) ?? null;
       const walked = candidates.filter((f) => {
@@ -356,7 +360,7 @@ export async function fetchBrandStatedFunnels(
   }
   const covered = new Set(reading.map((f) => f.funnelKey));
   const others = (Object.keys(SALES_FUNNELS) as SalesFunnelKey[]).filter(
-    (k) => !covered.has(k) && funnelArrows(k).some((a) => statedByLeg.has(legPairKey(a.fromStep, a.toStep))),
+    (k) => !covered.has(k) && !DISPLAY_ONLY_SALES_FUNNELS.has(k) && funnelArrows(k).some((a) => statedByLeg.has(legPairKey(a.fromStep, a.toStep))),
   );
   const extra = buildPricingFunnels({
     funnelKeys: others,

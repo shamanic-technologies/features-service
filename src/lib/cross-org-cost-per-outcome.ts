@@ -493,6 +493,7 @@ export const OBJECTIVE_FUNNEL_BUCKET: Record<Goal, readonly SalesFunnelKey[]> = 
     "sales_meetings_from_ads",
     "lead_forms_from_ads",
     "sales_from_website",
+    "sales_meetings_from_call",
   ],
   whatsappConversation: [],
 };

@@ -69,6 +69,9 @@ const BOOKS_THE_MEETING: readonly ChannelStepTransition[] = [
 // ours. A website visit produces no email to reply to, so it is deliberately NOT one of these legs —
 // that variant is a later ship, and stating it now would sell a leg nothing performs.
 const AI_BOOKS_THE_MEETING: readonly ChannelStepTransition[] = [{ from: "conversation", to: "meeting_booked" }];
+// The instant call: the moment a reply is qualified as a sales interest, we ring the brand's sales rep and
+// connect them to the buyer (instantly-service `ring-rep-on-sales-interest`). Positive reply -> Booking call.
+const RINGS_THE_REP: readonly ChannelStepTransition[] = [{ from: "conversation", to: "booking_call" }];
 const GETS_THE_MEETING_HELD: readonly ChannelStepTransition[] = [{ from: "meeting_booked", to: "meeting_attended" }];
 const CLOSES_THE_MEETING: readonly ChannelStepTransition[] = [{ from: "meeting_attended", to: "paid_client" }];
 const CONVERTS_THE_SELF_SERVE_LEAD: readonly ChannelStepTransition[] = [
@@ -761,6 +764,9 @@ interface ChannelSeed {
   /** WHAT does the leg's work — our/their software, or a person by hand. Stated on every row, never
    *  defaulted: a phone call and a specialist's salary are people even on a platform-run channel. */
   performedBy: AcquisitionChannel["performedBy"];
+  /** Defaults to `daily_budget` — every channel is funded on a daily budget unless the row says it runs
+   *  when a lead reaches a step. */
+  trigger?: AcquisitionChannel["trigger"];
   stepTransitions: readonly ChannelStepTransition[];
   terms: AcquisitionChannel["terms"];
   inputs: unknown[];
@@ -936,6 +942,16 @@ const PUBLISHED_CHANNELS: ChannelSeed[] = [
     description: "Your own team works the replies and site visits, and books the meetings itself.",
     inputs: OFFER_INPUTS },
 
+  { slug: "ai-instant-call", name: "AI Instant Call", displayOrder: 50, icon: "phone-call", family: "conversion", performedBy: "software",
+    // EVENT-TRIGGERED, NOT FUNDED: it rings when a reply is qualified as a sales interest, never on a
+    // daily budget. Publishing it is DISPLAY ONLY (owner, 2026-09-29): nothing provisions, funds or
+    // schedules it off this row, and the day-rate is 0 because no day of work exists to charge.
+    trigger: "step_reached",
+    stepTransitions: RINGS_THE_REP,
+    terms: terms(0, 30, 0),
+    description: "The moment a prospect replies with interest, we ring your sales rep and connect them to the prospect by phone.",
+    inputs: OFFER_INPUTS },
+
   { slug: "agency-meeting-attendance", name: "Agency Meeting Attendance", displayOrder: 44, icon: "bell", family: "conversion", performedBy: "person", stepTransitions: GETS_THE_MEETING_HELD,
     // Confirming, reminding and rescheduling is a standing job, not a per-meeting one.
     terms: terms(6000, 30, 3),
@@ -980,6 +996,8 @@ for (const channel of PUBLISHED_CHANNELS) {
       family: channel.family,
       operatedBy: channel.operatedBy ?? "platform",
       performedBy: channel.performedBy,
+      // Written only when it is not the default, so every daily-budget channel's stored blob is byte-unchanged.
+      ...(channel.trigger ? { trigger: channel.trigger } : {}),
       stepTransitions: channel.stepTransitions,
       terms: channel.terms,
     },

@@ -101,6 +101,7 @@ import { SALES_FUNNELS, SALES_FUNNEL_KEYS, type SalesFunnelKey } from "./sales-f
 export const CHANNEL_STEP_KEYS = [
   "conversation",
   "website_visit",
+  "booking_call",
   "meeting_booked",
   "meeting_attended",
   "signup",
@@ -144,6 +145,18 @@ export const CHANNEL_STEPS: Record<ChannelStepKey, ChannelStepDef> = {
     key: "website_visit",
     label: "Website visit",
     description: "A buyer lands on the brand's own website.",
+  },
+  booking_call: {
+    key: "booking_call",
+    // The phone call between a positive reply and a booked meeting. Our instant call places it: the
+    // moment a reply is qualified as a sales interest, we ring the brand's sales rep and connect them to
+    // the buyer (instantly-service `ring-rep-on-sales-interest`). What happens ON the call — turning it
+    // into a meeting — is the rep's work, which is why the leg out of this step is a person's.
+    //
+    // Nothing counts this step on a lead yet, so no rate is ever MEASURED for either leg touching it; the
+    // brand's stated rate, the fleet median or the per-leg default prices them (`lib/default-leg-rates.ts`).
+    label: "Booking call",
+    description: "A sales rep calls the buyer by phone, right after they replied with interest, to book the meeting.",
   },
   meeting_booked: {
     key: "meeting_booked",
@@ -263,6 +276,7 @@ export function producibleStepsOf(transitions: readonly ChannelStepTransition[])
  */
 export const FUNNEL_STEP_LABEL_TO_KEY: Record<string, ChannelStepKey> = {
   "Positive reply": "conversation",
+  "Booking call": "booking_call",
   "Website visit": "website_visit",
   "Meeting booked": "meeting_booked",
   "Meeting attended": "meeting_attended",
@@ -380,6 +394,16 @@ export type ChannelOperator = (typeof CHANNEL_OPERATORS)[number];
 export const CHANNEL_PERFORMERS = ["software", "person"] as const;
 export type ChannelPerformer = (typeof CHANNEL_PERFORMERS)[number];
 
+/**
+ * WHAT STARTS the channel's work. `daily_budget` is every channel published before 2026-09-29: it is
+ * funded with a daily budget and paced on it. `step_reached` runs when a lead REACHES the step its leg
+ * moves out of (the instant call rings the moment a reply is qualified as a sales interest) — it is not
+ * funded, paced or scheduled, and a consumer must not offer a daily budget for it. Purely descriptive
+ * here: nothing in this service provisions, funds or runs a channel off this field.
+ */
+export const CHANNEL_TRIGGERS = ["daily_budget", "step_reached"] as const;
+export type ChannelTrigger = (typeof CHANNEL_TRIGGERS)[number];
+
 /** The whole acquisition-channel statement carried by a feature. `null` on a feature says, out loud,
  *  that the feature is not an acquisition channel (hiring, investor and accelerator outreach, the
  *  internal discovery and page-generation tools) — never that nobody got round to filling it in. */
@@ -387,6 +411,9 @@ export interface AcquisitionChannel {
   family: ChannelFamily;
   operatedBy: ChannelOperator;
   performedBy: ChannelPerformer;
+  /** What starts its work — see `CHANNEL_TRIGGERS`. Absent on every blob predating the field, which
+   *  all read `daily_budget` (the only kind there was); the public wire always states it. */
+  trigger?: ChannelTrigger;
   stepTransitions: readonly ChannelStepTransition[];
   terms: ChannelCommercialTerms;
 }

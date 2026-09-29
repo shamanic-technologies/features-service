@@ -31,6 +31,7 @@ describe("the steps a channel can move a lead between", () => {
     expect([...CHANNEL_STEP_KEYS]).toEqual([
       "conversation",
       "website_visit",
+      "booking_call",
       "meeting_booked",
       "meeting_attended",
       "signup",
@@ -147,6 +148,8 @@ describe("which pairings are possible", () => {
     expect(sellableFunnelsFor(producesFromNothing("conversation"))).toEqual([
       "sales_meetings_from_conversation",
       "sales_from_conversation",
+      // The instant-call funnel starts on the same positive reply.
+      "sales_meetings_from_call",
     ]);
   });
 
@@ -167,6 +170,7 @@ describe("which pairings are possible", () => {
       "form_magnet",
       "sales_from_conversation",
       "sales_from_website",
+      "sales_meetings_from_call",
     ];
     expect(sellableFunnelsFor(producesFromNothing("conversation", "website_visit"))).toEqual(bothChannels);
     // Order is the catalogue's, not the order the channel happens to list its legs in.
@@ -200,6 +204,19 @@ describe("which pairings are possible", () => {
     ]);
   });
 
+  it("THE INSTANT CALL performs Positive reply -> Booking call, a leg of the instant-call funnel alone", () => {
+    expect(CHANNEL_STEPS.booking_call).toMatchObject({ key: "booking_call", label: "Booking call" });
+    expect(sellableFunnelsFor([{ from: "conversation", to: "booking_call" }])).toEqual(["sales_meetings_from_call"]);
+    expect(sellableFunnelsFor([{ from: "booking_call", to: "meeting_booked" }])).toEqual(["sales_meetings_from_call"]);
+    expect(SALES_FUNNELS.sales_meetings_from_call.steps).toEqual([
+      "Positive reply",
+      "Booking call",
+      "Meeting booked",
+      "Meeting attended",
+      "Paid client",
+    ]);
+  });
+
   it("AN INTERNAL LEG SELLS ITS FUNNEL TOO — that is the whole point of the widened join", () => {
     // Booking the meeting off a reply is a leg of the conversation funnel; off a visit, of the website
     // funnel. A channel that does both sells both, and neither of them is anyone's ENTRY step.
@@ -215,11 +232,13 @@ describe("which pairings are possible", () => {
       "sales_meetings_from_conversation",
       "sales_meetings_from_website",
       "sales_meetings_from_ads",
+      "sales_meetings_from_call",
     ]);
     expect(sellableFunnelsFor([{ from: "meeting_attended", to: "paid_client" }])).toEqual([
       "sales_meetings_from_conversation",
       "sales_meetings_from_website",
       "sales_meetings_from_ads",
+      "sales_meetings_from_call",
     ]);
     // And the two self-serve funnels close through their own milestone. Closing a lead who submitted a
     // form sells BOTH form funnels now, and that is the merge behaving as intended rather than a false
@@ -362,6 +381,7 @@ describe("what a VISITOR reads on a step", () => {
     expect([...CHANNEL_STEP_KEYS]).toEqual([
       "conversation",
       "website_visit",
+      "booking_call",
       "meeting_booked",
       "meeting_attended",
       "signup",
