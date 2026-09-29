@@ -105,6 +105,8 @@ interface Fixture {
   daysByCampaign?: Record<string, Record<string, { contacted: number; opened: number; clicked: number }>>;
   audiences?: Array<Record<string, unknown>>;
   dailyBudgetCents?: number;
+  /** brand-service refuses the brand for this org (403) — a brand the caller does not hold. */
+  foreignBrand?: boolean;
 }
 
 /**
@@ -176,7 +178,10 @@ function mockFetch(fixture: Fixture): void {
       return json({ groups });
     }
 
-    if (path.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
+    if (path.includes("/sales-economics-effective")) {
+      if (fixture.foreignBrand) return new Response(JSON.stringify({ error: "Brand does not belong to the caller's org" }), { status: 403 });
+      return json({ economics: ECONOMICS, source: "user" });
+    }
 
     if (path.endsWith("/orgs/leads")) {
       const only = q.get("campaignId");
@@ -338,11 +343,34 @@ describe("GET /brands/:brandId/revenue — a brand's money, across every channel
     expect(perFeature.body.channels).toBeUndefined();
   });
 
-  it("a brand campaign-service lists no campaign for is a named 404, never a number about nothing", async () => {
+  it("a brand the caller holds with no campaign yet is an EMPTY 200 in the ordinary shape, not an error", async () => {
     mockFetch({ campaigns: {}, costByCampaign: {}, leads: [] });
+    const res = await request(app).get(`/brands/${BRAND}/revenue?pricing=net`).set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.brandId).toBe(BRAND);
+    expect(res.body.channels).toEqual([]);
+    expect(res.body.leads).toEqual([]);
+    expect(res.body.headline.totalPipelineUsd).toBeNull();
+    // Nothing bought: an exact zero, not "unknown".
+    expect(res.body.costEconomics.committedCostUsd).toBe(0);
+    expect(res.body.costEconomics.roiMultiple).toBeNull();
+    expect(res.body.outcomeCauses.priced.length).toBeGreaterThan(0);
+    // No channel means nothing may be read unscoped: no spend, lead or stats read goes out at all.
+    const paths = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.map((c) => String(c[0]));
+    expect(paths.some((u) => u.includes("/stats/costs") || u.endsWith("/orgs/leads"))).toBe(false);
+  });
+
+  it("a brand with no campaign that the caller does NOT hold stays a named 404", async () => {
+    mockFetch({ campaigns: {}, costByCampaign: {}, leads: [], foreignBrand: true });
     const res = await request(app).get(`/brands/${BRAND}/revenue`).set(AUTH);
     expect(res.status).toBe(404);
-    expect(res.body.reason).toBe("brand_has_no_channels");
+    expect(res.body.reason).toBe("brand_not_found");
+  });
+
+  it("still validates the query on the no-campaign path", async () => {
+    mockFetch({ campaigns: {}, costByCampaign: {}, leads: [] });
+    const res = await request(app).get(`/brands/${BRAND}/revenue?leads=nope`).set(AUTH);
+    expect(res.status).toBe(400);
   });
 });
 

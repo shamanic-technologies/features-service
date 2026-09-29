@@ -1790,9 +1790,9 @@ registry.registerPath({
     }),
   },
   responses: {
-    200: { description: "The brand's money plus its per-channel breakdown", content: { "application/json": { schema: brandRevenueResponseRef } } },
+    200: { description: "The brand's money plus its per-channel breakdown. A brand the caller holds that has launched NO campaign yet is answered here too, not as an error: `channels: []`, zero committed and actual spend, a null pipeline and null ratios, `leads: []` — the same shape, empty.", content: { "application/json": { schema: brandRevenueResponseRef } } },
     400: { description: "An invalid pricing value. The retired `funnel` parameter is refused with reason='funnel_retired' (name a leg or nothing).", content: { "application/json": { schema: errorResponse } } },
-    404: { description: "campaign-service lists no campaign for this brand, so it runs no acquisition channel (reason: brand_has_no_channels) — never a number about an unknown subset of channels", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "The caller does not hold this brand — brand-service refuses it for this org, or it does not exist (reason: brand_not_found)", content: { "application/json": { schema: errorResponse } } },
     409: { description: "The brand runs channels that price on different funnels (reason: brand_channels_price_differently), so its money cannot honestly be answered as one figure", content: { "application/json": { schema: errorResponse } } },
     502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
   },
@@ -1850,9 +1850,9 @@ registry.registerPath({
     }),
   },
   responses: {
-    200: { description: "One lean row per offer the brand sells", content: { "application/json": { schema: brandOffersResponseRef } } },
+    200: { description: "One lean row per offer the brand sells. `offers: []` when its campaigns state no offer yet, and when the brand has launched no campaign at all (a state, not an error).", content: { "application/json": { schema: brandOffersResponseRef } } },
     400: { description: "An invalid pricing value. The retired `funnel` parameter is refused with reason='funnel_retired' (name a leg or nothing).", content: { "application/json": { schema: errorResponse } } },
-    404: { description: "campaign-service lists no campaign for this brand, so it runs no acquisition channel (reason: brand_has_no_channels) — distinct from an empty offers array, which means its campaigns state no offer yet", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "The caller does not hold this brand — brand-service refuses it for this org, or it does not exist (reason: brand_not_found)", content: { "application/json": { schema: errorResponse } } },
     409: { description: "One of the brand's offers is sold through channels that price on different funnels (reason: offer_channels_price_differently, with the offerId), so that offer's money cannot honestly be answered as one figure", content: { "application/json": { schema: errorResponse } } },
     502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
   },

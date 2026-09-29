@@ -104,6 +104,8 @@ interface Fixture {
   /** runs-service spend in cents per campaign id. */
   costByCampaign: Record<string, number>;
   leads: Array<Record<string, unknown>>;
+  /** brand-service refuses the brand for this org (403) — a brand the caller does not hold. */
+  foreignBrand?: boolean;
 }
 
 /**
@@ -175,7 +177,10 @@ function mockFetch(fixture: Fixture): void {
       return json({ groups });
     }
 
-    if (path.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
+    if (path.includes("/sales-economics-effective")) {
+      if (fixture.foreignBrand) return new Response(JSON.stringify({ error: "Brand does not belong to the caller's org" }), { status: 403 });
+      return json({ economics: ECONOMICS, source: "user" });
+    }
 
     if (path.endsWith("/orgs/leads")) {
       const only = q.get("campaignId");
@@ -347,7 +352,7 @@ describe("GET /brands/:brandId/offers — every offer, each combined across its 
     expect(row.costEconomics.committedCostUsd).toBeGreaterThan(0);
   });
 
-  it("campaigns that state no offer are an EMPTY list, and no campaign at all is a named 404", async () => {
+  it("campaigns that state no offer, and no campaign at all, are both an EMPTY list; a brand not held is a 404", async () => {
     mockFetch({
       campaigns: { c1: { featureSlug: PITCH, offerId: null } },
       costByCampaign: { c1: 1000 },
@@ -361,8 +366,16 @@ describe("GET /brands/:brandId/offers — every offer, each combined across its 
     withFeatures();
     mockFetch({ campaigns: {}, costByCampaign: {}, leads: [] });
     const none = await request(app).get(`/brands/${BRAND}/offers`).set(AUTH);
-    expect(none.status).toBe(404);
-    expect(none.body.reason).toBe("brand_has_no_channels");
+    expect(none.status).toBe(200);
+    expect(none.body).toMatchObject({ brandId: BRAND, costBasis: "charged", offers: [] });
+    expect(none.body.outcomeCauses.priced.length).toBeGreaterThan(0);
+
+    vi.restoreAllMocks();
+    withFeatures();
+    mockFetch({ campaigns: {}, costByCampaign: {}, leads: [], foreignBrand: true });
+    const foreign = await request(app).get(`/brands/${BRAND}/offers`).set(AUTH);
+    expect(foreign.status).toBe(404);
+    expect(foreign.body.reason).toBe("brand_not_found");
   });
 
   it("rejects an unrecognised pricing or funnel rather than answering on a guess", async () => {
