@@ -3534,6 +3534,64 @@ registry.registerPath({
   },
 });
 
+// ── GET /public/stats/outcome-prices ─────────────────────────────────────────
+
+const outcomePriceLegSchema = z.object({
+  legKey: z.string(),
+  featureSlug: z.string().describe("The channel performing the leg (cold email for the entry legs, the AI meeting booking for the meeting leg)."),
+  basis: z.enum(["mature", "flash"]).nullable().describe("`mature` = the chosen workflow is mature on the leg and priced on its mature evidence; `flash` = no eligible workflow is mature, so the best early figure; null = unmeasured."),
+  workflowDynastySlug: z.string().nullable(),
+  costPerOutcomeUsd: z.number().nullable().describe("The chosen workflow's cost per outcome of the leg, on `basis`."),
+  conversionRatePct: z.number().nullable().describe("The chosen workflow's conversion on the leg (outcomes ÷ people it worked), on `basis`."),
+  figures: outcomeFiguresSchema.nullable(),
+  matureWorkflowCount: z.number(),
+  unmeasuredReason: z.enum(["no_campaigns_on_leg", "no_workflow_with_outcomes"]).nullable(),
+});
+
+const outcomePriceSchema = {
+  maturity: z.enum(["mature", "early"]).nullable().describe("`mature` when EVERY leg the price rests on is priced on mature evidence, `early` when any is flash."),
+  priceUsd: z.number().nullable().describe("The expected price of ONE outcome. Null = unmeasured (see `unmeasuredReason`), never 0."),
+  unmeasuredReason: z.enum(["no_campaigns_on_leg", "no_workflow_with_outcomes", "leg_unmeasured", "not_computed_yet"]).nullable(),
+  legs: z.array(outcomePriceLegSchema),
+};
+
+registry.registerPath({
+  method: "get",
+  path: "/public/stats/outcome-prices",
+  summary: "Expected price of one website visit and one booked meeting, for a brand with no data yet (public, no auth)",
+  description:
+    "Fleet grain (every org's campaigns), incurred cost basis. Per leg, the BEST workflow's price: its MATURE figure when any eligible workflow is mature on the leg, else the best FLASH figure; a workflow deprecated on the leg never competes. websiteVisit = the cold-email leg start → website visit. meetingBooked = cold email (start → positive reply) then the AI meeting booking (positive reply → meeting booked): price = replyCost ÷ (meetingRatePct / 100) + meetingLegCost, every term stated in `arithmetic`. Built off the request path; before the first build every price is null with `not_computed_yet`.",
+  tags: ["Public"],
+  responses: {
+    200: {
+      description: "The two outcome prices",
+      content: {
+        "application/json": {
+          schema: z.object({
+            grain: z.literal("fleet"),
+            costBasis: z.literal("incurred"),
+            computedAt: z.string().nullable(),
+            outcomes: z.object({
+              websiteVisit: z.object(outcomePriceSchema),
+              meetingBooked: z.object({
+                ...outcomePriceSchema,
+                arithmetic: z
+                  .object({
+                    replyCostUsd: z.number(),
+                    meetingRatePct: z.number(),
+                    repliesCostPerMeetingUsd: z.number(),
+                    meetingLegCostUsd: z.number(),
+                  })
+                  .nullable(),
+              }),
+            }),
+          }),
+        },
+      },
+    },
+  },
+});
+
 // ── GET /public/stats/workflow-return-history (+ staff actual-cost twin) ─────
 
 const workflowReturnHistoryQuery = z.object({
