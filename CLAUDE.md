@@ -89,6 +89,24 @@ Fleet grain, incurred basis, no identity. `lib/outcome-prices.ts` (pick + compos
   osprey mature, meeting leg rhodium flash, 2 of 5) → `early`.
 - Guards: `lib/outcome-prices.test.ts`. (Set 2026-09-29.)
 
+## EVERY WORKFLOW ON ONE LEG, RANKED AT THE FLEET GRAIN — `GET /public/stats/leg-workflow-ranking?featureSlug=&leg=`
+
+The dashboard's Research pages name no org, brand, offer, campaign or audience (owner rule 2026-09-30: a
+research result never depends on who is looking), so they cannot read a leg-keyed `workflow-projection`,
+which is per brand. This is their read. `lib/leg-workflow-ranking.ts` (pure, real unit tests), route in
+`routes/public.ts`, gateway `/v1/public/features/leg-workflow-ranking`.
+
+- **Figures**: the byte-same per-workflow fleet leg figures outcome-prices picks from
+  (`fetchFleetLegWorkflowMaturity`, incurred). A mature workflow reads its MATURE half, a learning one its
+  flash half; a cost per outcome is observed (null at 0 outcomes, never a spend floor). ROI = the fleet
+  pipeline on the leg (`getFleetWorkflowPipelines`) ÷ the billed net spend on the leg's campaigns.
+- **Order (owner rule 2026-09-30)**: the best MATURE workflow holds the money (`moneyGoesHere`); LEARNING
+  workflows already cheaper than it sit above it; the other mature ones below; then learning ones that do
+  not beat it (no price last); then deprecated / unassigned-that-spent. Ties on the slug. Rank 1 selectable
+  = `goesFirst`. The per-brand ladder's `rank` is NOT changed by this (campaign-service reads that one).
+- Built off the request path (boot warm of both cold-email legs + 15 min single-flight warm); before the
+  first build `computedAt: null` and no rows.
+
 ## A WORKFLOW IS PRICED ON ITS MATURE EVIDENCE ONCE IT IS MATURE ON THE FLEET OF ITS LEG — `lib/maturity.ts` is the ONE maturity rule
 
 Supersedes `OUTCOME_LAG_DAYS` (14) and the 10-outcome learning bar everywhere below. Prod 2026-09-28,
