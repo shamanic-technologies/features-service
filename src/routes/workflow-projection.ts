@@ -87,6 +87,7 @@ import {
   type OutcomeFigures,
 } from "../lib/maturity.js";
 import { serveDatesStated } from "../lib/mature-evidence.js";
+import { orderMissionWorkflows } from "../lib/mission-workflow-order.js";
 import type { EnginePerson } from "../lib/revenue-engine.js";
 
 const router = Router();
@@ -322,6 +323,11 @@ export interface ProjectionRow {
    * coincidence. It is a TOTAL order — no ties and no gaps — broken deterministically on the dynasty
    * slug, and a workflow that has never run (the explore allowance) can never outrank one with
    * measured evidence.
+   *
+   * ON A MISSION READ (`?leg=&campaignId=` whose campaign states an offer) the order is instead the
+   * OFFER grain's mature cost per outcome, ascending (owner rule 2026-09-30): a workflow still learning
+   * on the offer, or with no outcome there, sorts after every priced one, and one that never ran for the
+   * offer after those. There `recommendedWorkflowDynastySlug` keeps its own order and may not be rank 1.
    */
   rank?: number;
   /**
@@ -2542,8 +2548,42 @@ export function projectFromEvidence(input: {
       return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0;
     });
 
+    // ── ON A MISSION READ, `rank` IS THE OFFER'S OWN COST PER OUTCOME, ASCENDING ─────────────────
+    //
+    // A mission (a `?campaignId=` beside the `?leg=`, whose campaign states an offer — i.e. the offer
+    // grain was read) is ordered on ONE figure: the offer grain's MATURE cost per outcome, the number a
+    // reader sees in the Offer column. Owner rule 2026-09-30. The dynasty order above takes each
+    // workflow's single cheapest CELL across every audience, so one lucky reply on a small audience put
+    // a learning workflow first (prod, campaign `07ba2403…`: helm at $9.46 on one audience ahead of
+    // ballad $67 and lithium $131, both mature on the offer), and a zero-outcome workflow was placed
+    // on what it SPENT. Neither is a price.
+    //
+    //   selectable before non-selectable (leg assignment) → priced (the offer grain is mature and states
+    //   a cost; ascending) → offer evidence but no price (learning, or no outcome) → no offer evidence
+    //   (never ran for this offer) → retired; the dynasty slug breaks every tie.
+    //
+    // Only `rank` moves. `recommendedWorkflowDynastySlug` stays the head of the order above, and
+    // `scopeRank` is untouched — so on a mission read rank 1 and the recommendation can differ.
+    const missionOrder: string[] | null =
+      legTerms && evidence.offerGrain
+        ? (() => {
+            const brandRowBySlug = new Map<string, ProjectionRow>();
+            for (const row of rows) {
+              if (row.audienceId === null && !brandRowBySlug.has(row.workflow.workflowDynastySlug)) {
+                brandRowBySlug.set(row.workflow.workflowDynastySlug, row);
+              }
+            }
+            return orderMissionWorkflows(
+              [...bestByDynasty.keys()].map((slug) => {
+                const row = brandRowBySlug.get(slug);
+                return { slug, excluded: excludedTier(slug) === 1, retired: row?.retired === true, offer: row?.estimatesByGrain.offer ?? null };
+              }),
+            );
+          })()
+        : null;
+
     const rankByDynasty = new Map<string, number>();
-    orderedDynasties.forEach(([slug], i) => rankByDynasty.set(slug, i + 1));
+    (missionOrder ?? orderedDynasties.map(([slug]) => slug)).forEach((slug, i) => rankByDynasty.set(slug, i + 1));
     // Only a leg-keyed answer carries the rank on the wire — every funnel- and goal-keyed body is
     // byte-unchanged, which is what keeps campaign-service's production workflow selection untouched.
     if (legTerms) {
