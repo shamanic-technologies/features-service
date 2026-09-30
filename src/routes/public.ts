@@ -19,7 +19,8 @@ import {
 import { fetchLegFleetEvidence, fetchLegFleetMatureEvidence } from "../lib/leg-fleet-evidence.js";
 import { fetchFleetPositiveRepliesBySlug } from "../lib/fleet-positive-repliers.js";
 import { setReplyCountsOnSlugStats } from "../lib/crm-only-repliers.js";
-import { legCutoffIso, type LegMaturityFigures } from "../lib/maturity.js";
+import { legCutoffIso, legMaturity, type LegMaturityFigures } from "../lib/maturity.js";
+import { rankLegWorkflows, type LegWorkflowRankingRow } from "../lib/leg-workflow-ranking.js";
 import {
   buildFleetLegMaturity,
   buildFleetMatureBenchmark,
@@ -4621,6 +4622,139 @@ function notComputedYet(): OutcomePricesPayload {
 router.get("/public/stats/outcome-prices", (_req, res) => {
   void warmOutcomePrices();
   res.json(outcomePricesStore?.value ?? notComputedYet());
+});
+
+// ── GET /public/stats/leg-workflow-ranking ───────────────────────────────────
+//
+// Every workflow on ONE leg, ranked at the FLEET grain, for a research surface that names no org, brand,
+// offer, campaign or audience (`lib/leg-workflow-ranking.ts` states the owner's order rule). Built off the
+// request path like outcome-prices: the leg's figures, its pipeline and its billed spend are fleet walks;
+// a read answers the last build, before the first `computedAt: null` + no rows, never a guessed figure.
+
+const LEG_RANKING_FRESH_MS = 15 * 60_000;
+const LEG_RANKING_WARM_TIMEOUT_MS = 10 * 60_000;
+const LEG_RANKING_SPEND_CONCURRENCY = 4;
+
+export interface LegWorkflowRankingPayload {
+  featureSlug: string;
+  legKey: string;
+  grain: "fleet";
+  /** The cost per outcome, outcomes, spend and rate are on the incurred fleet basis (outcome-prices'). */
+  costBasis: "incurred";
+  /** The return divides the fleet pipeline by what clients were billed, net (workflow-return-history's). */
+  roiBasis: "billed";
+  computedAt: string | null;
+  maturity: { durationDays: number; outcomesRequired: number; cutoffIso: string | null; measured: boolean };
+  rows: LegWorkflowRankingRow[];
+}
+
+const legRankingStore = new Map<string, { value: LegWorkflowRankingPayload; computedAt: number }>();
+const legRankingWarm = new Map<string, Promise<void>>();
+
+export async function computeLegWorkflowRanking(featureSlug: string, legKey: string): Promise<LegWorkflowRankingPayload> {
+  const [maturity, assignmentRows, workflows, pipelines, campaigns] = await Promise.all([
+    fetchFleetLegWorkflowMaturity(featureSlug, legKey),
+    fetchLegAssignments(featureSlug, legKey),
+    fetchPublicWorkflows(featureSlug, "all"),
+    getFleetWorkflowPipelines(featureSlug, legKey),
+    getFleetLegCampaigns(featureSlug, legKey),
+  ]);
+  const byDynasty = new Map(maturity.byDynasty);
+  const campaignIds = campaigns.map((c) => c.campaignId);
+  const spent = [...byDynasty].filter(([, f]) => (f.flash?.spentUsd ?? 0) > 0).map(([slug]) => slug);
+  const billedSpendUsd = new Map<string, number>();
+  await mapWithConcurrency(spent, LEG_RANKING_SPEND_CONCURRENCY, async (slug) => {
+    try {
+      const byDay = await fetchDynastyBilledSpendByDay(featureSlug, slug, campaignIds);
+      billedSpendUsd.set(slug, [...byDay.values()].reduce((a, b) => a + b, 0));
+    } catch (error) {
+      console.error(`[features-service] leg workflow ranking: billed spend read failed (${featureSlug}, ${legKey}, ${slug}); its return is unstated:`, error);
+    }
+  });
+  const assignments = new Map<string, "active" | "deprecated">();
+  for (const [slug, row] of assignmentRows) {
+    if (row.state === "active" || row.state === "deprecated") assignments.set(slug, row.state);
+  }
+  const names = new Map<string, string | null>();
+  for (const w of workflows) if (!names.has(w.workflowDynastySlug)) names.set(w.workflowDynastySlug, w.workflowDynastyName ?? null);
+  const pipelineUsd = new Map<string, number | null>();
+  for (const [slug, p] of pipelines.byDynasty) pipelineUsd.set(slug, p.totalPipelineUsd);
+  const rule = legMaturity(legKey);
+  return {
+    featureSlug,
+    legKey,
+    grain: "fleet",
+    costBasis: "incurred",
+    roiBasis: "billed",
+    computedAt: new Date().toISOString(),
+    maturity: { durationDays: rule.durationDays, outcomesRequired: rule.outcomesRequired, cutoffIso: maturity.cutoffIso, measured: maturity.measured },
+    rows: rankLegWorkflows({ byDynasty, names, assignments, pipelineUsd, billedSpendUsd }),
+  };
+}
+
+/** Rebuild one leg's ranking in the background when absent or past its fresh window (single-flight). */
+export function warmLegWorkflowRanking(featureSlug: string, legKey: string): Promise<void> {
+  const key = `${featureSlug}|${legKey}`;
+  const entry = legRankingStore.get(key);
+  if (entry && Date.now() - entry.computedAt < LEG_RANKING_FRESH_MS) return Promise.resolve();
+  const inFlight = legRankingWarm.get(key);
+  if (inFlight) return inFlight;
+  const warm = withTimeout(computeLegWorkflowRanking(featureSlug, legKey), LEG_RANKING_WARM_TIMEOUT_MS, `leg workflow ranking ${key}`)
+    .then((value) => {
+      legRankingStore.set(key, { value, computedAt: Date.now() });
+    })
+    .catch((error) => {
+      console.error(`[features-service] leg workflow ranking warm failed (${key}), keeping the previous value:`, error);
+    })
+    .finally(() => {
+      legRankingWarm.delete(key);
+    });
+  legRankingWarm.set(key, warm);
+  return warm;
+}
+
+/** Test seam. */
+export function __resetLegWorkflowRanking(): void {
+  legRankingStore.clear();
+  legRankingWarm.clear();
+}
+
+router.get("/public/stats/leg-workflow-ranking", async (req, res) => {
+  const featureSlug = req.query.featureSlug as string | undefined;
+  const legKey = matchFunnelLegKey(String(req.query.leg ?? ""));
+  if (!featureSlug || !legKey) {
+    res.status(400).json({ error: `featureSlug and leg are required; leg must be one of: ${FUNNEL_LEG_KEYS.join(", ")}` });
+    return;
+  }
+  try {
+    const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
+    if (!feature) {
+      res.status(404).json({ error: "Feature not found" });
+      return;
+    }
+  } catch (error) {
+    console.error("[features-service] leg workflow ranking: feature lookup failed:", error);
+    res.status(500).json({ error: "Internal server error" });
+    return;
+  }
+  void warmLegWorkflowRanking(featureSlug, legKey);
+  const stored = legRankingStore.get(`${featureSlug}|${legKey}`)?.value;
+  if (stored) {
+    res.json(stored);
+    return;
+  }
+  const rule = legMaturity(legKey);
+  const empty: LegWorkflowRankingPayload = {
+    featureSlug,
+    legKey,
+    grain: "fleet",
+    costBasis: "incurred",
+    roiBasis: "billed",
+    computedAt: null,
+    maturity: { durationDays: rule.durationDays, outcomesRequired: rule.outcomesRequired, cutoffIso: null, measured: false },
+    rows: [],
+  };
+  res.json(empty);
 });
 
 // ── GET /public/stats/best-model-cost-per-outcome-trend ──────────────────────

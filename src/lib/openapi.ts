@@ -1082,7 +1082,7 @@ const workflowProjectionRowSchema = z.object({
     audience: grainBlockSchema.optional().describe("Audience-attributed evidence (audience-WIDE, same across the audience's workflow rows — the fleet does not tag outcomes per audience×workflow). Present only on audienceId != null rows with audience spend > 0."),
   }).describe("A grain block is included ONLY when that grain has spentUsd > 0. Always EMPTY on an UNMEASURED row (measured=false) — nothing is borrowed from the workflows that do have evidence."),
   resolved: resolvedBlockSchema,
-  rank: z.number().optional().describe("THIS WORKFLOW'S POSITION IN THE ORDER THIS SERVICE SELECTS ON — 1-based, present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). It exists so NO consumer re-derives one: a page ranking the subset it displays produces a second order that disagrees with the pick. The rank is a property of the WORKFLOW, so every row of one dynasty carries the same number and `recommendedWorkflowDynastySlug` is rank 1 BY CONSTRUCTION. A TOTAL order — no ties, no gaps — broken deterministically on the dynasty slug, with never-run workflows (the explore allowance) always after every workflow with measured evidence. A workflow not assigned active on the leg (`legAssignment.selectable` false) ranks after EVERY selectable workflow, whatever its evidence, and is never the recommendation."),
+  rank: z.number().optional().describe("THIS WORKFLOW'S POSITION IN THE ORDER THIS SERVICE SELECTS ON — 1-based, present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). It exists so NO consumer re-derives one: a page ranking the subset it displays produces a second order that disagrees with the pick. The rank is a property of the WORKFLOW, so every row of one dynasty carries the same number and `recommendedWorkflowDynastySlug` is rank 1 BY CONSTRUCTION. A TOTAL order — no ties, no gaps — broken deterministically on the dynasty slug, with never-run workflows (the explore allowance) always after every workflow with measured evidence. A workflow not assigned active on the leg (`legAssignment.selectable` false) ranks after EVERY selectable workflow, whatever its evidence, and is never the recommendation. ON A MISSION READ (`?leg=&campaignId=` whose campaign states an offer) the order is instead the OFFER grain's MATURE cost per outcome (`estimatesByGrain.offer.mature.costPerOutcomeUsd` where `offer.isMature` is true), ASCENDING: workflows still learning on the offer or with no outcome there follow every priced one, those that never ran for the offer follow those, retired lineages last; the slug breaks ties. There `recommendedWorkflowDynastySlug` keeps its own order and may differ from rank 1."),
   scopeRank: z.number().optional().describe("THIS ROW'S POSITION AMONG THE ROWS IT IS COMPARABLE WITH — 1-based, present ⟺ `rank` is (the request named a `?leg=`). `rank` is scored over EVERY row a dynasty has, so the cell that won it is usually not the cell on screen: measured in prod 2026-09-13 the rank-1 workflow read $175 on its campaign row and $20.35 on the audience cell that crowned it, which makes a column ordered on `rank` look arbitrary. `scopeRank` orders the rows sharing this row's `audienceId` (null = the brand / campaign column) on their OWN resolved metric, under the same `?maximize=` objective, the same three groups and the same slug tie-break — a TOTAL order per scope, with non-selectable workflows (`legAssignment.selectable: false`) after every selectable one and never-run workflows last within each. The two ranks legitimately DISAGREE: `rank` says what we would put the customer on next, `scopeRank` says what the column they are reading says. Serve both; derive neither."),
   legAssignment: z.object({
     state: z.enum(["active", "deprecated", "unassigned"]).describe("`active` = the owner assigned this workflow to the leg; a new run may pick it here. `deprecated` = retired ON THIS LEG ONLY: no new run picks it here, its history stays on every stats read. `unassigned` = never put on this leg, so never selectable on it (a new workflow dynasty is on no leg until assigned)."),
@@ -1748,6 +1748,37 @@ registry.registerPath({
     200: { description: "The offer's sales paths", content: { "application/json": { schema: offerSalesPathsResponseRef } } },
     400: { description: "Missing brandId", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Offer not found or not an offer of this brand (reason: offer_not_found)", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+const usageCategorySchema = z.object({
+  key: z.enum(["setup", "finding_contacts", "writing_emails", "sending_emails", "reading_replies", "notifications", "other"]),
+  label: z.string(),
+  billedUsd: z.number().describe("Net actual spend in this category (what was billed)."),
+  setAsideUsd: z.number().describe("Net provisioned spend in this category (held, not yet billed)."),
+});
+const orgUsageResponseRef = registry.register(
+  "OrgUsageResponse",
+  z.object({
+    basis: z.literal("billed"),
+    totalBilledUsd: z.number().describe("Sum of every category's billedUsd; equals billing's Billed figure for the org."),
+    totalSetAsideUsd: z.number(),
+    categories: z.array(usageCategorySchema).describe("Every category, in a fixed order, zeros included."),
+  }),
+);
+
+registry.registerPath({
+  method: "get",
+  path: "/orgs/usage",
+  summary: "Where an org's money went, by customer-facing activity",
+  description:
+    "The org's whole net spend (every brand, every campaign, and the setup work outside any campaign), grouped into activities a customer recognises: setting up the brand, finding contacts, writing emails, sending emails, reading replies, notifications. " +
+    "Read from runs-service costs grouped by service, task and campaign, on the NET basis; totalBilledUsd equals the Billed figure billing shows. A line the classifier does not recognise lands in 'other', never dropped. Vendor and model names never appear.",
+  tags: ["Stats"],
+  request: { headers: identityHeaders },
+  responses: {
+    200: { description: "Usage by category", content: { "application/json": { schema: orgUsageResponseRef } } },
     502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
   },
 });
@@ -3572,6 +3603,67 @@ registry.registerPath({
   responses: {
     200: { description: "Per-workflow cross-org cost-per-outcome", content: { "application/json": { schema: workflowCostPerOutcomeResponseSchema } } },
     400: { description: "Missing or invalid parameters", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+// ── GET /public/stats/leg-workflow-ranking ───────────────────────────────────
+
+const legWorkflowRankingRowSchema = z.object({
+  rank: z.number().int().describe("1-based, total, no gaps. The owner's order: the best MATURE workflow holds the money; the LEARNING workflows already cheaper than it sit above it; the other mature ones below it; then the learning ones that do not beat it (no price last); then every non-selectable one in the same order."),
+  workflowDynastySlug: z.string(),
+  workflowDynastyName: z.string().nullable(),
+  assignment: z.enum(["active", "deprecated", "unassigned"]).describe("The owner's assignment on the leg. An unassigned workflow that never spent on the leg is not listed."),
+  selectable: z.boolean().describe("TRUE ⟺ active: the only state a run may pick."),
+  isMature: z.boolean().nullable().describe("The workflow's verdict on the fleet of the leg. Null when the mature cut could not be made."),
+  basis: z.enum(["mature", "flash"]).describe("The half the figures are read on: mature when the workflow is mature, else flash."),
+  costPerOutcomeUsd: z.number().nullable().describe("Observed on `basis`: spend ÷ outcomes. Null at 0 outcomes, never a spend floor."),
+  conversionRatePct: z.number().nullable(),
+  outcomes: z.number(),
+  contacted: z.number(),
+  spentUsd: z.number(),
+  roiMultiple: z.number().nullable().describe("Lifetime on the leg: the fleet pipeline for the workflow ÷ what clients were billed for it (net). Null when either is absent."),
+  goesFirst: z.boolean().describe("Rank 1, when selectable."),
+  moneyGoesHere: z.boolean().describe("The best mature workflow. At most one row."),
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/public/stats/leg-workflow-ranking",
+  summary: "Every workflow on one leg, ranked at the fleet grain (public, no auth)",
+  description:
+    "Fleet grain: every org's campaigns performing the leg, no identity. The figures are the per-workflow fleet leg figures /public/stats/outcome-prices picks its winner from (incurred basis). Built off the request path (boot warm + a warm kicked by a read past 15 min); before the first build `computedAt` is null and `rows` is empty.",
+  tags: ["Public"],
+  request: {
+    query: z.object({
+      featureSlug: z.string().describe("Feature slug (required)."),
+      leg: z.string().describe("A funnel leg key, e.g. start_to_conversation (required)."),
+    }),
+  },
+  responses: {
+    200: {
+      description: "The ranking",
+      content: {
+        "application/json": {
+          schema: z.object({
+            featureSlug: z.string(),
+            legKey: z.string(),
+            grain: z.literal("fleet"),
+            costBasis: z.literal("incurred"),
+            roiBasis: z.literal("billed"),
+            computedAt: z.string().nullable(),
+            maturity: z.object({
+              durationDays: z.number(),
+              outcomesRequired: z.number(),
+              cutoffIso: z.string().nullable(),
+              measured: z.boolean(),
+            }),
+            rows: z.array(legWorkflowRankingRowSchema),
+          }),
+        },
+      },
+    },
+    400: { description: "Missing or unknown featureSlug / leg", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
   },
 });

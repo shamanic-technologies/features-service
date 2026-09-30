@@ -16,12 +16,13 @@ import pipelineActivityRoutes from "./routes/pipeline-activity.js";
 import offerEconomicsRoutes from "./routes/offer-economics.js";
 import offerOutcomesRoutes from "./routes/offer-outcomes.js";
 import offerSalesPathsRoutes from "./routes/offer-sales-paths.js";
+import usageRoutes from "./routes/usage.js";
 import brandEconomicsRoutes from "./routes/brand-economics.js";
 import contactedValueRoutes from "./routes/contacted-value.js";
 import dealsValueRoutes from "./routes/deals-value.js";
 import conversionRatesRoutes from "./routes/conversion-rates.js";
 import audienceStatsRoutes from "./routes/audience-stats.js";
-import publicRoutes, { warmFleetReturnSnapshotsOnBoot, warmShowcaseFunnelsOnBoot, warmOutcomePrices } from "./routes/public.js";
+import publicRoutes, { warmFleetReturnSnapshotsOnBoot, warmShowcaseFunnelsOnBoot, warmOutcomePrices, warmLegWorkflowRanking } from "./routes/public.js";
 import viewCacheAdminRoutes from "./routes/view-cache-admin.js";
 import workflowLegAssignmentsRoutes from "./routes/workflow-leg-assignments.js";
 import transferBrandRoutes from "./routes/transfer-brand.js";
@@ -68,6 +69,7 @@ app.use(audienceStatsRoutes);
 app.use(offerEconomicsRoutes);
 app.use(offerOutcomesRoutes);
 app.use(offerSalesPathsRoutes);
+app.use(usageRoutes);
 app.use(brandEconomicsRoutes);
 app.use(contactedValueRoutes);
 app.use(dealsValueRoutes);
@@ -136,6 +138,9 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
         warmShowcaseFunnelsOnBoot();
         // The onboarding prices each outcome off this payload; its fleet walks must never run on a read.
         void warmOutcomePrices();
+        // Research reads the cold-email legs' fleet ranking; warm both so its first read is not empty.
+        void warmLegWorkflowRanking("sales-cold-email-outreach", "start_to_conversation");
+        void warmLegWorkflowRanking("sales-cold-email-outreach", "start_to_website_visit");
         // With the refresher off, projections compute in this process — warm its fleet cell instead.
         if (process.env.VIEW_REFRESHER_ENABLED === "false") warmFleetPositiveRepliersOnBoot();
       });

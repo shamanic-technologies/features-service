@@ -6050,7 +6050,7 @@
                 },
                 "rank": {
                   "type": "number",
-                  "description": "THIS WORKFLOW'S POSITION IN THE ORDER THIS SERVICE SELECTS ON — 1-based, present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). It exists so NO consumer re-derives one: a page ranking the subset it displays produces a second order that disagrees with the pick. The rank is a property of the WORKFLOW, so every row of one dynasty carries the same number and `recommendedWorkflowDynastySlug` is rank 1 BY CONSTRUCTION. A TOTAL order — no ties, no gaps — broken deterministically on the dynasty slug, with never-run workflows (the explore allowance) always after every workflow with measured evidence. A workflow not assigned active on the leg (`legAssignment.selectable` false) ranks after EVERY selectable workflow, whatever its evidence, and is never the recommendation."
+                  "description": "THIS WORKFLOW'S POSITION IN THE ORDER THIS SERVICE SELECTS ON — 1-based, present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). It exists so NO consumer re-derives one: a page ranking the subset it displays produces a second order that disagrees with the pick. The rank is a property of the WORKFLOW, so every row of one dynasty carries the same number and `recommendedWorkflowDynastySlug` is rank 1 BY CONSTRUCTION. A TOTAL order — no ties, no gaps — broken deterministically on the dynasty slug, with never-run workflows (the explore allowance) always after every workflow with measured evidence. A workflow not assigned active on the leg (`legAssignment.selectable` false) ranks after EVERY selectable workflow, whatever its evidence, and is never the recommendation. ON A MISSION READ (`?leg=&campaignId=` whose campaign states an offer) the order is instead the OFFER grain's MATURE cost per outcome (`estimatesByGrain.offer.mature.costPerOutcomeUsd` where `offer.isMature` is true), ASCENDING: workflows still learning on the offer or with no outcome there follow every priced one, those that never ran for the offer follow those, retired lineages last; the slug breaks ties. There `recommendedWorkflowDynastySlug` keeps its own order and may differ from rank 1."
                 },
                 "scopeRank": {
                   "type": "number",
@@ -10281,6 +10281,68 @@
           "lifetimeRevenueUsd",
           "pricing",
           "paths"
+        ]
+      },
+      "OrgUsageResponse": {
+        "type": "object",
+        "properties": {
+          "basis": {
+            "type": "string",
+            "enum": [
+              "billed"
+            ]
+          },
+          "totalBilledUsd": {
+            "type": "number",
+            "description": "Sum of every category's billedUsd; equals billing's Billed figure for the org."
+          },
+          "totalSetAsideUsd": {
+            "type": "number"
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "enum": [
+                    "setup",
+                    "finding_contacts",
+                    "writing_emails",
+                    "sending_emails",
+                    "reading_replies",
+                    "notifications",
+                    "other"
+                  ]
+                },
+                "label": {
+                  "type": "string"
+                },
+                "billedUsd": {
+                  "type": "number",
+                  "description": "Net actual spend in this category (what was billed)."
+                },
+                "setAsideUsd": {
+                  "type": "number",
+                  "description": "Net provisioned spend in this category (held, not yet billed)."
+                }
+              },
+              "required": [
+                "key",
+                "label",
+                "billedUsd",
+                "setAsideUsd"
+              ]
+            },
+            "description": "Every category, in a fixed order, zeros included."
+          }
+        },
+        "required": [
+          "basis",
+          "totalBilledUsd",
+          "totalSetAsideUsd",
+          "categories"
         ]
       },
       "OfferAudienceStatsResponse": {
@@ -21829,7 +21891,7 @@
                           },
                           "rank": {
                             "type": "number",
-                            "description": "THIS WORKFLOW'S POSITION IN THE ORDER THIS SERVICE SELECTS ON — 1-based, present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). It exists so NO consumer re-derives one: a page ranking the subset it displays produces a second order that disagrees with the pick. The rank is a property of the WORKFLOW, so every row of one dynasty carries the same number and `recommendedWorkflowDynastySlug` is rank 1 BY CONSTRUCTION. A TOTAL order — no ties, no gaps — broken deterministically on the dynasty slug, with never-run workflows (the explore allowance) always after every workflow with measured evidence. A workflow not assigned active on the leg (`legAssignment.selectable` false) ranks after EVERY selectable workflow, whatever its evidence, and is never the recommendation."
+                            "description": "THIS WORKFLOW'S POSITION IN THE ORDER THIS SERVICE SELECTS ON — 1-based, present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). It exists so NO consumer re-derives one: a page ranking the subset it displays produces a second order that disagrees with the pick. The rank is a property of the WORKFLOW, so every row of one dynasty carries the same number and `recommendedWorkflowDynastySlug` is rank 1 BY CONSTRUCTION. A TOTAL order — no ties, no gaps — broken deterministically on the dynasty slug, with never-run workflows (the explore allowance) always after every workflow with measured evidence. A workflow not assigned active on the leg (`legAssignment.selectable` false) ranks after EVERY selectable workflow, whatever its evidence, and is never the recommendation. ON A MISSION READ (`?leg=&campaignId=` whose campaign states an offer) the order is instead the OFFER grain's MATURE cost per outcome (`estimatesByGrain.offer.mature.costPerOutcomeUsd` where `offer.isMature` is true), ASCENDING: workflows still learning on the offer or with no outcome there follow every priced one, those that never ran for the offer follow those, retired lineages last; the slug breaks ties. There `recommendedWorkflowDynastySlug` keeps its own order and may differ from rank 1."
                           },
                           "scopeRank": {
                             "type": "number",
@@ -24150,6 +24212,90 @@
                   "required": [
                     "error"
                   ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Downstream service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/usage": {
+      "get": {
+        "summary": "Where an org's money went, by customer-facing activity",
+        "description": "The org's whole net spend (every brand, every campaign, and the setup work outside any campaign), grouped into activities a customer recognises: setting up the brand, finding contacts, writing emails, sending emails, reading replies, notifications. Read from runs-service costs grouped by service, task and campaign, on the NET basis; totalBilledUsd equals the Billed figure billing shows. A line the classifier does not recognise lands in 'other', never dropped. Vendor and model names never appear.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Usage by category",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrgUsageResponse"
                 }
               }
             }
@@ -28096,6 +28242,242 @@
           },
           "400": {
             "description": "Missing or invalid parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Feature not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/public/stats/leg-workflow-ranking": {
+      "get": {
+        "summary": "Every workflow on one leg, ranked at the fleet grain (public, no auth)",
+        "description": "Fleet grain: every org's campaigns performing the leg, no identity. The figures are the per-workflow fleet leg figures /public/stats/outcome-prices picks its winner from (incurred basis). Built off the request path (boot warm + a warm kicked by a read past 15 min); before the first build `computedAt` is null and `rows` is empty.",
+        "tags": [
+          "Public"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Feature slug (required)."
+            },
+            "required": true,
+            "description": "Feature slug (required).",
+            "name": "featureSlug",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "A funnel leg key, e.g. start_to_conversation (required)."
+            },
+            "required": true,
+            "description": "A funnel leg key, e.g. start_to_conversation (required).",
+            "name": "leg",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The ranking",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "featureSlug": {
+                      "type": "string"
+                    },
+                    "legKey": {
+                      "type": "string"
+                    },
+                    "grain": {
+                      "type": "string",
+                      "enum": [
+                        "fleet"
+                      ]
+                    },
+                    "costBasis": {
+                      "type": "string",
+                      "enum": [
+                        "incurred"
+                      ]
+                    },
+                    "roiBasis": {
+                      "type": "string",
+                      "enum": [
+                        "billed"
+                      ]
+                    },
+                    "computedAt": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "maturity": {
+                      "type": "object",
+                      "properties": {
+                        "durationDays": {
+                          "type": "number"
+                        },
+                        "outcomesRequired": {
+                          "type": "number"
+                        },
+                        "cutoffIso": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "measured": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "durationDays",
+                        "outcomesRequired",
+                        "cutoffIso",
+                        "measured"
+                      ]
+                    },
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "rank": {
+                            "type": "integer",
+                            "description": "1-based, total, no gaps. The owner's order: the best MATURE workflow holds the money; the LEARNING workflows already cheaper than it sit above it; the other mature ones below it; then the learning ones that do not beat it (no price last); then every non-selectable one in the same order."
+                          },
+                          "workflowDynastySlug": {
+                            "type": "string"
+                          },
+                          "workflowDynastyName": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "assignment": {
+                            "type": "string",
+                            "enum": [
+                              "active",
+                              "deprecated",
+                              "unassigned"
+                            ],
+                            "description": "The owner's assignment on the leg. An unassigned workflow that never spent on the leg is not listed."
+                          },
+                          "selectable": {
+                            "type": "boolean",
+                            "description": "TRUE ⟺ active: the only state a run may pick."
+                          },
+                          "isMature": {
+                            "type": "boolean",
+                            "nullable": true,
+                            "description": "The workflow's verdict on the fleet of the leg. Null when the mature cut could not be made."
+                          },
+                          "basis": {
+                            "type": "string",
+                            "enum": [
+                              "mature",
+                              "flash"
+                            ],
+                            "description": "The half the figures are read on: mature when the workflow is mature, else flash."
+                          },
+                          "costPerOutcomeUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Observed on `basis`: spend ÷ outcomes. Null at 0 outcomes, never a spend floor."
+                          },
+                          "conversionRatePct": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "outcomes": {
+                            "type": "number"
+                          },
+                          "contacted": {
+                            "type": "number"
+                          },
+                          "spentUsd": {
+                            "type": "number"
+                          },
+                          "roiMultiple": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Lifetime on the leg: the fleet pipeline for the workflow ÷ what clients were billed for it (net). Null when either is absent."
+                          },
+                          "goesFirst": {
+                            "type": "boolean",
+                            "description": "Rank 1, when selectable."
+                          },
+                          "moneyGoesHere": {
+                            "type": "boolean",
+                            "description": "The best mature workflow. At most one row."
+                          }
+                        },
+                        "required": [
+                          "rank",
+                          "workflowDynastySlug",
+                          "workflowDynastyName",
+                          "assignment",
+                          "selectable",
+                          "isMature",
+                          "basis",
+                          "costPerOutcomeUsd",
+                          "conversionRatePct",
+                          "outcomes",
+                          "contacted",
+                          "spentUsd",
+                          "roiMultiple",
+                          "goesFirst",
+                          "moneyGoesHere"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "featureSlug",
+                    "legKey",
+                    "grain",
+                    "costBasis",
+                    "roiBasis",
+                    "computedAt",
+                    "maturity",
+                    "rows"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or unknown featureSlug / leg",
             "content": {
               "application/json": {
                 "schema": {
