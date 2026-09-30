@@ -7293,3 +7293,7 @@ backlog of people SERVED and not yet emailed: it drains to 0 on every brand that
 2026-09-26 it made Living Vital (361 of 609 still servable) and webprime (3,874) read "0 left, CRITICAL"
 in the daily brief. An unreadable pool reads `null`, never 0 (0 would read as exhausted). Guarded in
 `src/lib/customer-health-compute.test.ts`.
+
+## `GET /orgs/usage` — WHERE AN ORG'S MONEY WENT, by activity a customer recognises (`lib/usage-categories.ts`)
+
+The billing page's "Usage" section. ONE runs read (`/v1/stats/costs?groupBy=serviceName,taskName,campaignId`, org-scoped by `x-org-id`, NO brand filter) on the NET basis: `totalBilledUsd` = net actual = billing's Billed figure to the cent, `totalSetAsideUsd` = net provisioned. Categories (fixed order, zeros included): setup (any cost with no campaign), finding contacts, writing emails, sending emails, reading replies (`judgments` task), notifications, other. A line the classifier does not recognise lands in `other`, never dropped; vendor and model names never reach the wire; any read failure is a 502. Classification lives HERE so the dashboard only renders. Gateway: `GET /v1/features/orgs/usage`. Guards: `lib/usage-categories.test.ts`. (Set 2026-09-30.)

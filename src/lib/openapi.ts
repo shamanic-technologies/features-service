@@ -1752,6 +1752,37 @@ registry.registerPath({
   },
 });
 
+const usageCategorySchema = z.object({
+  key: z.enum(["setup", "finding_contacts", "writing_emails", "sending_emails", "reading_replies", "notifications", "other"]),
+  label: z.string(),
+  billedUsd: z.number().describe("Net actual spend in this category (what was billed)."),
+  setAsideUsd: z.number().describe("Net provisioned spend in this category (held, not yet billed)."),
+});
+const orgUsageResponseRef = registry.register(
+  "OrgUsageResponse",
+  z.object({
+    basis: z.literal("billed"),
+    totalBilledUsd: z.number().describe("Sum of every category's billedUsd; equals billing's Billed figure for the org."),
+    totalSetAsideUsd: z.number(),
+    categories: z.array(usageCategorySchema).describe("Every category, in a fixed order, zeros included."),
+  }),
+);
+
+registry.registerPath({
+  method: "get",
+  path: "/orgs/usage",
+  summary: "Where an org's money went, by customer-facing activity",
+  description:
+    "The org's whole net spend (every brand, every campaign, and the setup work outside any campaign), grouped into activities a customer recognises: setting up the brand, finding contacts, writing emails, sending emails, reading replies, notifications. " +
+    "Read from runs-service costs grouped by service, task and campaign, on the NET basis; totalBilledUsd equals the Billed figure billing shows. A line the classifier does not recognise lands in 'other', never dropped. Vendor and model names never appear.",
+  tags: ["Stats"],
+  request: { headers: identityHeaders },
+  responses: {
+    200: { description: "Usage by category", content: { "application/json": { schema: orgUsageResponseRef } } },
+    502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 const offerAudienceStatsResponseSchema = audienceStatsResponseSchema.extend({
   offerId: z.string(),
   channels: z.array(offerChannelSchema).describe("The channels combined into every row below, ascending by slug."),

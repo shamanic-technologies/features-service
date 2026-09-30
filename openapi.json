@@ -10283,6 +10283,68 @@
           "paths"
         ]
       },
+      "OrgUsageResponse": {
+        "type": "object",
+        "properties": {
+          "basis": {
+            "type": "string",
+            "enum": [
+              "billed"
+            ]
+          },
+          "totalBilledUsd": {
+            "type": "number",
+            "description": "Sum of every category's billedUsd; equals billing's Billed figure for the org."
+          },
+          "totalSetAsideUsd": {
+            "type": "number"
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "enum": [
+                    "setup",
+                    "finding_contacts",
+                    "writing_emails",
+                    "sending_emails",
+                    "reading_replies",
+                    "notifications",
+                    "other"
+                  ]
+                },
+                "label": {
+                  "type": "string"
+                },
+                "billedUsd": {
+                  "type": "number",
+                  "description": "Net actual spend in this category (what was billed)."
+                },
+                "setAsideUsd": {
+                  "type": "number",
+                  "description": "Net provisioned spend in this category (held, not yet billed)."
+                }
+              },
+              "required": [
+                "key",
+                "label",
+                "billedUsd",
+                "setAsideUsd"
+              ]
+            },
+            "description": "Every category, in a fixed order, zeros included."
+          }
+        },
+        "required": [
+          "basis",
+          "totalBilledUsd",
+          "totalSetAsideUsd",
+          "categories"
+        ]
+      },
       "OfferAudienceStatsResponse": {
         "type": "object",
         "properties": {
@@ -24150,6 +24212,90 @@
                   "required": [
                     "error"
                   ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Downstream service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/usage": {
+      "get": {
+        "summary": "Where an org's money went, by customer-facing activity",
+        "description": "The org's whole net spend (every brand, every campaign, and the setup work outside any campaign), grouped into activities a customer recognises: setting up the brand, finding contacts, writing emails, sending emails, reading replies, notifications. Read from runs-service costs grouped by service, task and campaign, on the NET basis; totalBilledUsd equals the Billed figure billing shows. A line the classifier does not recognise lands in 'other', never dropped. Vendor and model names never appear.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Usage by category",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrgUsageResponse"
                 }
               }
             }
