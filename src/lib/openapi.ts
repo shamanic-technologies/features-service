@@ -3576,6 +3576,67 @@ registry.registerPath({
   },
 });
 
+// ── GET /public/stats/leg-workflow-ranking ───────────────────────────────────
+
+const legWorkflowRankingRowSchema = z.object({
+  rank: z.number().int().describe("1-based, total, no gaps. The owner's order: the best MATURE workflow holds the money; the LEARNING workflows already cheaper than it sit above it; the other mature ones below it; then the learning ones that do not beat it (no price last); then every non-selectable one in the same order."),
+  workflowDynastySlug: z.string(),
+  workflowDynastyName: z.string().nullable(),
+  assignment: z.enum(["active", "deprecated", "unassigned"]).describe("The owner's assignment on the leg. An unassigned workflow that never spent on the leg is not listed."),
+  selectable: z.boolean().describe("TRUE ⟺ active: the only state a run may pick."),
+  isMature: z.boolean().nullable().describe("The workflow's verdict on the fleet of the leg. Null when the mature cut could not be made."),
+  basis: z.enum(["mature", "flash"]).describe("The half the figures are read on: mature when the workflow is mature, else flash."),
+  costPerOutcomeUsd: z.number().nullable().describe("Observed on `basis`: spend ÷ outcomes. Null at 0 outcomes, never a spend floor."),
+  conversionRatePct: z.number().nullable(),
+  outcomes: z.number(),
+  contacted: z.number(),
+  spentUsd: z.number(),
+  roiMultiple: z.number().nullable().describe("Lifetime on the leg: the fleet pipeline for the workflow ÷ what clients were billed for it (net). Null when either is absent."),
+  goesFirst: z.boolean().describe("Rank 1, when selectable."),
+  moneyGoesHere: z.boolean().describe("The best mature workflow. At most one row."),
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/public/stats/leg-workflow-ranking",
+  summary: "Every workflow on one leg, ranked at the fleet grain (public, no auth)",
+  description:
+    "Fleet grain: every org's campaigns performing the leg, no identity. The figures are the per-workflow fleet leg figures /public/stats/outcome-prices picks its winner from (incurred basis). Built off the request path (boot warm + a warm kicked by a read past 15 min); before the first build `computedAt` is null and `rows` is empty.",
+  tags: ["Public"],
+  request: {
+    query: z.object({
+      featureSlug: z.string().describe("Feature slug (required)."),
+      leg: z.string().describe("A funnel leg key, e.g. start_to_conversation (required)."),
+    }),
+  },
+  responses: {
+    200: {
+      description: "The ranking",
+      content: {
+        "application/json": {
+          schema: z.object({
+            featureSlug: z.string(),
+            legKey: z.string(),
+            grain: z.literal("fleet"),
+            costBasis: z.literal("incurred"),
+            roiBasis: z.literal("billed"),
+            computedAt: z.string().nullable(),
+            maturity: z.object({
+              durationDays: z.number(),
+              outcomesRequired: z.number(),
+              cutoffIso: z.string().nullable(),
+              measured: z.boolean(),
+            }),
+            rows: z.array(legWorkflowRankingRowSchema),
+          }),
+        },
+      },
+    },
+    400: { description: "Missing or unknown featureSlug / leg", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 // ── GET /public/stats/outcome-prices ─────────────────────────────────────────
 
 const outcomePriceLegSchema = z.object({
