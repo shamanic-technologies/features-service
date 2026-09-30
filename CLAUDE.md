@@ -1779,6 +1779,18 @@ leg by leg. **Do NOT reintroduce any price / tier / model-based filtering.**
   per leg, deprecated kept with figures, never recommended even when cheapest, the withheld case, the
   goal-keyed read reading nothing). Suites testing leg ORDERS mock every dynasty active
   (`lib/leg-assignments-fixture.ts`). (Set 2026-09-27.)
+## A MISSION'S `rank` IS THE OFFER'S OWN COST PER OUTCOME, ASCENDING — `lib/mission-workflow-order.ts`
+
+Owner rule 2026-09-30 (supersedes, for a MISSION read only, the per-dynasty argmin `rank` below). A mission =
+a leg-keyed `workflow-projection` with `?campaignId=` whose campaign states an offer (the offer grain was read).
+Its `rank` orders on ONE figure: `estimatesByGrain.offer.mature.costPerOutcomeUsd` where `offer.isMature` is
+true (the dashboard's Offer column). Tiers: selectable → priced ascending → offer evidence but learning / no
+outcome → never ran for the offer → retired; slug ties. Never the cheapest audience cell, the fleet, or spend.
+Prod before (campaign `07ba2403…`): helm #1 on one $9.46 audience cell while learning on the offer, lithium
+($131 mature) ahead of ballad ($67 mature). ONLY `rank` moves: `recommendedWorkflowDynastySlug` keeps the
+argmin order (so it may differ from rank 1 there), `scopeRank` untouched; campaign-service reads neither on a
+leg read. Guard: `lib/mission-workflow-order.test.ts` (the prod shape). (Set 2026-09-30.)
+
 ## A RANK SCORED OVER EVERY CELL CANNOT BE READ BESIDE ONE COLUMN — `scopeRank` orders the rows a reader is actually comparing, and the two ranks are MEANT to disagree
 
 The campaign Workflows page listed 24 workflows numbered 1..24 and, in the column beside the number,
