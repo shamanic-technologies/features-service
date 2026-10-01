@@ -96,4 +96,41 @@ describe("orderMissionWorkflows", () => {
       ]),
     ).toEqual(["a", "b", "z-retired"]);
   });
+
+  it("owner 2026-10-01: a learning workflow cheaper than the best mature sits above it; a dearer one below", () => {
+    const order = orderMissionWorkflows([
+      entry("osprey", { crossOrg: mature(2.26) }, { learningCostPerOutcomeUsd: 1.9 }),
+      entry("rampart", { crossOrg: mature(3) }),
+      entry("lyonesse", { crossOrg: learning(1.5) }, { learningCostPerOutcomeUsd: 1.5 }),
+      entry("estuary", { crossOrg: learning(2) }, { learningCostPerOutcomeUsd: 2.1 }),
+      entry("azalea", { crossOrg: learning(5) }, { learningCostPerOutcomeUsd: 2.5 }),
+      entry("sirius", {}, { learningCostPerOutcomeUsd: null }),
+    ]);
+    expect(order).toEqual(["lyonesse", "estuary", "osprey", "rampart", "azalea", "sirius"]);
+  });
+
+  it("the bar is the BEST mature workflow's mission price (finest grain), not a cheaper coarse one", () => {
+    const order = orderMissionWorkflows([
+      entry("offer-proven", { offer: mature(30), crossOrg: mature(20) }),
+      entry("fleet-only", { crossOrg: mature(0.5) }),
+      entry("learner", { crossOrg: learning(10) }, { learningCostPerOutcomeUsd: 10 }),
+    ]);
+    expect(order).toEqual(["learner", "offer-proven", "fleet-only"]);
+  });
+
+  it("with nothing mature, every workflow keeps the general order", () => {
+    const order = orderMissionWorkflows([
+      { slug: "b", excluded: false, grains: {}, fallbackPosition: 0, learningCostPerOutcomeUsd: 9 },
+      { slug: "a", excluded: false, grains: {}, fallbackPosition: 1, learningCostPerOutcomeUsd: 1 },
+    ]);
+    expect(order).toEqual(["b", "a"]);
+  });
+
+  it("a non-selectable learning workflow never jumps a selectable mature one", () => {
+    const order = orderMissionWorkflows([
+      entry("deprecated-cheap", {}, { excluded: true, learningCostPerOutcomeUsd: 0.1 }),
+      entry("priced", { offer: mature(90) }),
+    ]);
+    expect(order).toEqual(["priced", "deprecated-cheap"]);
+  });
 });
