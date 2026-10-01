@@ -1367,9 +1367,8 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
     // actual-cost body ALSO reads it on the vendor basis (priced rows at vendor cost) and on the
     // unpriced basis (billed amount of the rows with no known vendor cost) — same scope, same outcomes,
     // one Gold cell each (`pricing` is in the key).
-    const evidenceOn = (evidencePricing: Pricing) => servedCached({
-        view: "workflow-projection-evidence",
-        scopeKey: buildScopeKey(featureSlug, {
+    const evidenceScopeKey = (evidencePricing: Pricing | "actual") =>
+        buildScopeKey(featureSlug, {
           orgId,
           brandId,
           pricing: evidencePricing,
@@ -1382,21 +1381,47 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
           // A leg-keyed read's evidence is scoped to the leg's campaigns, so it never shares a cell with
           // a leg-less read (or the other leg).
           ...(legKey ? { leg: legKey } : {}),
-        }),
-        orgId,
-        compute: () =>
-          fetchWorkflowProjectionEvidence({
-            featureSlug,
-            brandId,
-            identity,
-            pricing: evidencePricing,
-            campaignIds: campaignScopeIds,
-            offerCampaignIds: offerScopeIds,
-            legKey,
-          }),
+        });
+    const computeEvidence = (evidencePricing: Pricing) =>
+      fetchWorkflowProjectionEvidence({
+        featureSlug,
+        brandId,
+        identity,
+        pricing: evidencePricing,
+        campaignIds: campaignScopeIds,
+        offerCampaignIds: offerScopeIds,
+        legKey,
       });
-    const [evidence, effective, triggerRuns, contentModels, legAssignments, audienceAvailability, vendorEvidence, unpricedEvidence] = await Promise.all([
-      evidenceOn(pricing),
+    const evidenceOn = (evidencePricing: Pricing) =>
+      servedCached({
+        view: "workflow-projection-evidence",
+        scopeKey: evidenceScopeKey(evidencePricing),
+        orgId,
+        compute: () => computeEvidence(evidencePricing),
+      });
+    // The actual-cost body JOINS three versions of the evidence row by row (billed counts, vendor money,
+    // unpriced money), so they must be ONE snapshot of the world: three cells refreshed independently
+    // served a 13-hour-old billed cell beside fresh vendor cells (prod 2026-10-01, campaign 583a4e74…:
+    // 64 contacted / 1 visit beside the billed read's 126 / 2, and a $33.74 grain stated "unknown" with
+    // 0 priced and 0 unpriced). One cell, computed together, always one age.
+    const actualEvidence = () =>
+      servedCached({
+        view: "workflow-projection-evidence-actual",
+        scopeKey: evidenceScopeKey("actual"),
+        orgId,
+        compute: async () => {
+          const [billed, vendor, unpriced] = await Promise.all([
+            computeEvidence(pricing),
+            computeEvidence("vendor"),
+            computeEvidence("vendorUnpriced"),
+          ]);
+          return { billed, vendor, unpriced };
+        },
+      });
+    const [evidenceSet, effective, triggerRuns, contentModels, legAssignments, audienceAvailability] = await Promise.all([
+      costBasis === "actual"
+        ? actualEvidence()
+        : evidenceOn(pricing).then((billed) => ({ billed, vendor: null, unpriced: null })),
       fetchEffectiveEconomics(brandId, identity),
       campaignScopeIds && picksLimit > 0
         ? fetchCampaignTriggerRunsSoft(campaignScopeIds, { orgId, userId, runId, brandId }, picksLimit)
@@ -1411,9 +1436,8 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
       // served out an hour ago must not be offered for a serve off a cell that predates it
       // (features-service#1035). Shared 30s with the evidence compute's own list read; fail-soft.
       fetchActiveAudienceAvailabilitySoft(brandId, { orgId, userId, runId, featureSlug: headerFeatureSlug }),
-      costBasis === "actual" ? evidenceOn("vendor") : Promise.resolve(null),
-      costBasis === "actual" ? evidenceOn("vendorUnpriced") : Promise.resolve(null),
     ]);
+    const { billed: evidence, vendor: vendorEvidence, unpriced: unpricedEvidence } = evidenceSet;
     // THE LEG'S BASIS FUNNEL. Ranked on the IDENTICAL `returnPerDollar` every per-brand return uses
     // (`rankDeclaredFunnels`, one implementation) and restricted to the funnels that actually contain the leg. Pure: it
     // projects the SAME already-fetched evidence once per candidate and issues no further IO.

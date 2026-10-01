@@ -30,6 +30,18 @@ vi.mock("../lib/crm-only-repliers.js", async (importOriginal) => ({
   // suite-wide (src/vitest.setup.ts), so these flash-figure suites read exactly what they always did.
   fetchScopePersons: vi.fn(async () => []),
 }));
+// Which Gold cells a read asks for (the cache itself is off in this suite: compute runs through).
+const cellViews = vi.hoisted(() => [] as string[]);
+vi.mock("../lib/view-cache.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/view-cache.js")>();
+  return {
+    ...actual,
+    servedCached: vi.fn((args: Parameters<typeof actual.servedCached>[0]) => {
+      cellViews.push(args.view);
+      return actual.servedCached(args);
+    }),
+  };
+});
 vi.mock("@sentry/node", () => ({
   default: { setupExpressErrorHandler: vi.fn() },
   setupExpressErrorHandler: vi.fn(),
@@ -275,6 +287,18 @@ describe("GET /internal/features/:slug/workflow-projection/actual-cost — the l
     // Its counts are still stated.
     expect(lyo.estimatesByGrain.brand.evidence.observedClicks).toBe(15);
     expect(res.body.unpricedBilledCostUsd).toBeGreaterThan(0);
+  });
+
+  it("reads its three evidence versions as ONE cell, so the billed counts and the vendor money are one age", async () => {
+    cellViews.length = 0;
+    const res = await getActual(`leg=${VISIT}`);
+    expect(res.status).toBe(200);
+    const evidenceCells = cellViews.filter((v) => v.startsWith("workflow-projection-evidence"));
+    expect(evidenceCells).toEqual(["workflow-projection-evidence-actual"]);
+    // The billed read keeps its own single cell.
+    cellViews.length = 0;
+    await get(`leg=${VISIT}`);
+    expect(cellViews.filter((v) => v.startsWith("workflow-projection-evidence"))).toEqual(["workflow-projection-evidence"]);
   });
 
   it("refuses a pricing selector on this basis", async () => {
