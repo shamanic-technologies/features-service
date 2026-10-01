@@ -2595,22 +2595,24 @@ export function projectFromEvidence(input: {
       return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0;
     });
 
-    // ── ON A MISSION READ, THE MONEY GOES TO THE CHEAPEST MATURE WORKFLOW FOR THE OFFER ───────────
+    // ── ON A MISSION READ: CHEAPER LEARNING WORKFLOWS, THEN THE CHEAPEST MATURE FOR THE OFFER ─────
     //
     // A mission (a `?campaignId=` beside the `?leg=`, whose campaign states an offer — i.e. the offer
     // grain was read) is ordered on MATURE cost per outcome, finest grain first: the offer's own price
     // (owner rule 2026-09-30), and for a workflow not mature on the offer yet its brand, then its fleet
     // mature price (owner rule 2026-10-01; `lib/mission-workflow-order.ts`). Workflows no mature price
-    // places keep the general order below; the slug breaks a tie only after every price. The dynasty order above takes each
-    // workflow's single cheapest CELL across every audience, so one lucky reply on a small audience put
-    // a learning workflow first (prod, campaign `07ba2403…`: helm at $9.46 on one audience ahead of
-    // ballad $67 and lithium $131, both mature on the offer), and a zero-outcome workflow was placed
-    // on what it SPENT. Neither is a price.
+    // places keep the general order below; the slug breaks a tie only after every price.
     //
-    //   selectable before non-selectable (leg assignment) → mature on the offer → mature on the brand →
-    //   mature on the fleet (each ascending) → the rest in the general order → retired.
+    //   selectable before non-selectable (leg assignment) → learning workflows cheaper than the best
+    //   mature one → mature on the offer → mature on the brand → mature on the fleet (each ascending) →
+    //   the rest in the general order → retired.
     //
-    // ONE answer: when rank 1 holds a mature price, it IS `recommendedWorkflowDynastySlug` (below), so
+    // A LEARNING workflow (no mature price anywhere) whose general-order figure (its best rankable
+    // resolved cost per outcome, flash with its cascade floor) is already cheaper than the best mature
+    // one's mature price sits ABOVE it, cheapest first: the general order's rule and figure (owner
+    // 2026-10-01; withdraws "learning below every mature on a mission" from #1233).
+    //
+    // ONE answer: rank 1 IS `recommendedWorkflowDynastySlug` (below), mature or learning, so
     // the row a page marks "money goes here" and the recommendation cannot disagree (prod 2026-10-01:
     // the page said dawn while the recommendation and the money were osprey). `scopeRank` is untouched.
     const missionOrder: string[] | null =
@@ -2633,6 +2635,9 @@ export function projectFromEvidence(input: {
                   retired: row?.retired === true,
                   grains: { offer: g?.offer ?? null, brand: g?.brand ?? null, crossOrg: g?.crossOrg ?? null },
                   fallbackPosition: generalPosition.get(slug)!,
+                  // The general order's own figure: a learning workflow cheaper on it than the best
+                  // mature one goes above it, exactly as in the general order (owner 2026-10-01).
+                  learningCostPerOutcomeUsd: maximize === "conversionRate" ? null : bestByDynasty.get(slug)!.metric,
                 };
               }),
             );
@@ -2709,15 +2714,19 @@ export function projectFromEvidence(input: {
     // key), and the answer is then no recommendation, stated with its reason — never a fall back.
     const head = orderedDynasties[0];
     const headExcluded = head != null && excludedTier(head[0]) === 1;
-    // On a mission read whose rank-1 workflow holds a mature price, the recommendation IS rank 1 (its
-    // brand-level row). Otherwise the mission order's head is the general order's head, so the two agree.
+    // On a mission read the recommendation IS rank 1: its brand-level row when it holds a mature price,
+    // else its best rankable row (a learning workflow cheaper than the best mature).
     const missionHeadRow: ProjectionRow | null = (() => {
       const slug = missionOrder?.[0];
       if (!slug || excludedTier(slug) === 1) return null;
       const row = rows.find((r) => r.audienceId === null && r.workflow.workflowDynastySlug === slug);
       if (!row || row.retired) return null;
       const g = row.estimatesByGrain;
-      return missionPriceOf({ grains: { offer: g.offer ?? null, brand: g.brand ?? null, crossOrg: g.crossOrg ?? null } }) ? row : null;
+      if (missionPriceOf({ grains: { offer: g.offer ?? null, brand: g.brand ?? null, crossOrg: g.crossOrg ?? null } })) return row;
+      // A learning workflow placed first (cheaper than the best mature): its best rankable row, as the
+      // general order recommends it.
+      const best = bestByDynasty.get(slug);
+      return best && best.metric != null ? best.row : null;
     })();
     const recommended: ProjectionRow | null =
       missionHeadRow ?? (head && !headExcluded && head[1].metric != null ? head[1].row : null);
