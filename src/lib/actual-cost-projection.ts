@@ -36,7 +36,13 @@
  * The verdict (`isMature`) and every count are the billed read's, untouched.
  */
 
-import type { GrainName, MaturityBasis, ProjectionRow, WorkflowProjectionResponse } from "../routes/workflow-projection.js";
+import type {
+  GrainHeldPrice,
+  GrainName,
+  MaturityBasis,
+  ProjectionRow,
+  WorkflowProjectionResponse,
+} from "../routes/workflow-projection.js";
 
 /** The grains a grain floors against, coarsest first (see `resolvePick` / the cascade). */
 const PARENTS: Record<GrainName, GrainName[]> = {
@@ -59,9 +65,13 @@ export interface GrainVendorStatement {
   vendorCostKnown: boolean;
 }
 
-export type ActualCostProjectionRow = Omit<ProjectionRow, "estimatesByGrain" | "resolved"> & {
+/** A held price (`priceByGrain`) on the vendor basis: known ⟺ the grain it is read from is fully priced. */
+export type VendorHeldPrice = GrainHeldPrice & { vendorCostKnown: boolean };
+
+export type ActualCostProjectionRow = Omit<ProjectionRow, "estimatesByGrain" | "resolved" | "priceByGrain"> & {
   estimatesByGrain: Partial<Record<GrainName, Record<string, unknown> & { vendorCost: GrainVendorStatement }>>;
   resolved: ProjectionRow["resolved"] & { vendorCostKnown: boolean };
+  priceByGrain?: Partial<Record<GrainName, { flash: VendorHeldPrice; mature: VendorHeldPrice }>>;
 };
 
 const rowKey = (r: ProjectionRow) => `${r.audienceId ?? ""}|${r.workflow.workflowDynastySlug}`;
@@ -226,7 +236,36 @@ export function overlayVendorProjection(
         })()
       : undefined;
 
-    return { ...b, estimatesByGrain, resolved, ...(maturity ? { maturity: maturity as ProjectionRow["maturity"] } : {}) };
+    // THE HELD PRICES (`priceByGrain`): each is read off ONE grain's block on ONE version, floored through
+    // the grains above it, so it is known when that grain and every grain it floors against are fully
+    // priced on that version, and the vendor read held the price on the SAME grain. Otherwise the billed
+    // provenance is kept and the money reads null (`vendor_cost_unknown`) — never the billed figure.
+    const priceByGrain = b.priceByGrain
+      ? Object.fromEntries(
+          (Object.keys(b.priceByGrain) as GrainName[]).map((g) => {
+            const held = (version: MaturityBasis): VendorHeldPrice => {
+              const billedHeld = b.priceByGrain![g]![version];
+              if (!billedHeld.fromGrain) return { ...billedHeld, vendorCostKnown: true };
+              const vendorHeld = v?.priceByGrain?.[g]?.[version];
+              if (vendorHeld && vendorHeld.fromGrain === billedHeld.fromGrain && known(billedHeld.fromGrain, version)) {
+                return { ...vendorHeld, vendorCostKnown: true };
+              }
+              return { ...billedHeld, costPerOutcomeUsd: null, unpricedReason: "vendor_cost_unknown", vendorCostKnown: false };
+            };
+            return [g, { flash: held("flash"), mature: held("mature") }];
+          }),
+        ) as ActualCostProjectionRow["priceByGrain"]
+      : undefined;
+
+    const { priceByGrain: _billedHeld, ...billedRest } = b;
+    void _billedHeld;
+    return {
+      ...billedRest,
+      estimatesByGrain,
+      resolved,
+      ...(maturity ? { maturity: maturity as ProjectionRow["maturity"] } : {}),
+      ...(priceByGrain ? { priceByGrain } : {}),
+    };
   });
 
   return {

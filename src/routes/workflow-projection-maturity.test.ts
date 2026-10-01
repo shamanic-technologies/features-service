@@ -84,6 +84,7 @@ const { db } = await import("../db/index.js");
 const { __resetLegFleetEvidence } = await import("../lib/leg-fleet-evidence.js");
 const { __resetFleetPositiveRepliers } = await import("../lib/fleet-positive-repliers.js");
 const { maturityCutoffIso } = await import("../lib/maturity.js");
+const { heldPriceOn } = await import("./workflow-projection.js");
 const app = (await import("../index.js")).default;
 
 const ORG = "org-1";
@@ -478,5 +479,88 @@ describe("a leg-keyed ladder prices a MATURE workflow on its mature evidence (fe
         expect(block).not.toHaveProperty("mature");
       }
     }
+  });
+});
+
+describe("heldPriceOn — the cascade walked once, here, never by a reader", () => {
+  const block = (cost: number | null) => ({ legOutcome: { costPerOutcomeUsd: cost } });
+
+  it("a grain with its OWN block states its own (floored) price", () => {
+    expect(heldPriceOn({ crossOrg: block(2.39), offer: block(2.51) }, "offer")).toEqual({
+      costPerOutcomeUsd: 2.51, source: "own", fromGrain: "offer", unpricedReason: null,
+    });
+  });
+
+  it("a grain with NO block inherits the NEAREST coarser grain's price, provenance stated (rampart)", () => {
+    expect(heldPriceOn({ crossOrg: block(2.39) }, "offer")).toEqual({
+      costPerOutcomeUsd: 2.39, source: "inherited", fromGrain: "crossOrg", unpricedReason: null,
+    });
+    // The nearest, never a cheaper one further up: the brand's floor is what the offer would stand on.
+    expect(heldPriceOn({ crossOrg: block(1), brand: block(7) }, "campaign")).toMatchObject({
+      costPerOutcomeUsd: 7, source: "inherited", fromGrain: "brand",
+    });
+    expect(heldPriceOn({ crossOrg: block(1), campaign: block(4) }, "audience")).toMatchObject({ costPerOutcomeUsd: 4, fromGrain: "campaign" });
+  });
+
+  it("nothing held is NULL with a reason, never 0", () => {
+    expect(heldPriceOn({}, "brand")).toEqual({ costPerOutcomeUsd: null, source: null, fromGrain: null, unpricedReason: "no_evidence" });
+    expect(heldPriceOn(null, "brand")).toMatchObject({ costPerOutcomeUsd: null, unpricedReason: "mature_cut_unavailable" });
+    expect(heldPriceOn({ brand: block(null) }, "brand")).toMatchObject({ costPerOutcomeUsd: null, source: "own", unpricedReason: "leg_unpriceable" });
+  });
+});
+
+describe("priceByGrain — every grain of a mission row priced on BOTH bases (prod 2026-10-01, osprey / rampart)", () => {
+  beforeEach(() => {
+    vi.mocked(db.query.features.findFirst).mockResolvedValue(FEATURE as any);
+    __resetLegFleetEvidence();
+    __resetFleetPositiveRepliers();
+    RUNS = [...BASE_RUNS];
+    fixture.persons = basePersons();
+    mockFetch();
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("a fleet-mature row's YOUNG mission grain: mature INHERITED from the brand, flash its OWN figure", async () => {
+    CAMPAIGNS.push({ id: "c-young", orgId: ORG, brandIds: [BRAND], featureSlug: SLUG, legKey: VISIT });
+    RUNS.push({ campaignId: "c-young", orgId: ORG, brandId: BRAND, slug: "wf-old", cents: 3374, started: D3, audienceId: "aud-1" });
+    fixture.persons.push(...lead(20, { ...own, campaignId: "c-young", slug: "wf-old", servedAt: D3, clicks: 2, audienceId: "aud-1" }));
+    try {
+      const res = await get(`leg=${VISIT}&campaignId=c-young`);
+      expect(res.status).toBe(200);
+      const old = brandRow(res.body, "dyn-old");
+      expect(old.maturity.basis).toBe("mature");
+      const campaign = old.priceByGrain.campaign;
+      // Flash: the mission's own $33.74 over its own 2 visits.
+      expect(campaign.flash).toMatchObject({ source: "own", fromGrain: "campaign", unpricedReason: null });
+      expect(campaign.flash.costPerOutcomeUsd).toBeCloseTo(33.74 / 2, 6);
+      // Mature: the mission holds none, so it is what its parent holds — the brand's $60 / 12 visits.
+      expect(campaign.mature).toMatchObject({ source: "inherited", fromGrain: "brand", unpricedReason: null });
+      expect(campaign.mature.costPerOutcomeUsd).toBeCloseTo(5, 6);
+      // …which is exactly the mature block the brand grain serves, and the fleet's own mature price.
+      expect(old.priceByGrain.brand.mature).toMatchObject({ source: "own", fromGrain: "brand" });
+      expect(old.priceByGrain.crossOrg.mature.costPerOutcomeUsd).toBeCloseTo(old.estimatesByGrain.crossOrg.legOutcome.costPerOutcomeUsd, 9);
+      // The observed blocks and the selection are untouched.
+      expect(old.estimatesByGrain.campaign.basis).toBe("flash");
+      expect(old.resolved.costPerOutcomeUsd).toBeCloseTo(old.maturity.resolved.mature.costPerOutcomeUsd, 9);
+
+      // A workflow the mission never ran: flash inherited from its brand ($30 / 3 visits), and nothing
+      // mature anywhere — null with a reason, never the flash figure under the mature name.
+      const fresh = brandRow(res.body, "dyn-new");
+      expect(fresh.estimatesByGrain.campaign).toBeUndefined();
+      expect(fresh.priceByGrain.campaign.flash).toMatchObject({ source: "inherited", fromGrain: "brand" });
+      expect(fresh.priceByGrain.campaign.flash.costPerOutcomeUsd).toBeCloseTo(10, 6);
+      expect(fresh.priceByGrain.campaign.mature).toEqual({ costPerOutcomeUsd: null, source: null, fromGrain: null, unpricedReason: "no_evidence" });
+    } finally {
+      CAMPAIGNS.pop();
+    }
+  });
+
+  it("audience rows list the audience grain; a leg-less read carries no priceByGrain", async () => {
+    const res = await get(`leg=${VISIT}`);
+    const aud = audienceRow(res.body, "dyn-old");
+    expect(Object.keys(aud.priceByGrain).sort()).toEqual(["audience", "brand", "crossOrg"]);
+    expect(aud.priceByGrain.audience.mature).toMatchObject({ source: "own", fromGrain: "audience" });
+    const legless = await get("goal=meetingBooked");
+    for (const row of legless.body.rows) expect(row.priceByGrain).toBeUndefined();
   });
 });

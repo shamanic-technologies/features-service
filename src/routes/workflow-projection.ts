@@ -213,6 +213,76 @@ export interface ResolvedFigures {
   conversionRatePct: number | null;
 }
 
+/** Why a grain holds no price on one basis (`GrainHeldPrice.unpricedReason`). */
+export type GrainPriceUnpricedReason =
+  /** Neither this grain nor any grain it inherits from holds evidence on this basis. */
+  | "no_evidence"
+  /** The grain that holds the evidence cannot walk it to the leg's step (an undeclared rate). */
+  | "leg_unpriceable"
+  /** The mature cut could not be made for this read, so nothing is held on the mature basis. */
+  | "mature_cut_unavailable"
+  /** Actual-cost read only: the grain the price comes from (or one it floors against) holds unpriced spend. */
+  | "vendor_cost_unknown";
+
+/**
+ * THE PRICE THIS SERVICE HOLDS FOR A WORKFLOW AT ONE GRAIN, ON ONE BASIS — the cascade resolved here so
+ * no reader re-walks it. A grain with its own evidence on the basis states its own block's cost per
+ * outcome (a real ratio, or its floor `max(own spend, parent)` when it observed no outcome); a grain
+ * without inherits the price of the nearest coarser grain that holds one (offer/campaign → brand →
+ * crossOrg; audience → campaign → brand → crossOrg), exactly what the floor would hand it.
+ */
+export interface GrainHeldPrice {
+  costPerOutcomeUsd: number | null;
+  /** `own` = this grain's evidence; `inherited` = a coarser grain's price; null ⟺ nothing is held. */
+  source: "own" | "inherited" | null;
+  /** The grain whose block the price was read from (this grain when `own`). Null ⟺ nothing is held. */
+  fromGrain: GrainName | null;
+  /** Why `costPerOutcomeUsd` is null. Null ⟺ a price is held. */
+  unpricedReason: GrainPriceUnpricedReason | null;
+}
+
+/** One grain's held price on BOTH bases (see {@link GrainHeldPrice}). */
+export interface GrainHeldPrices {
+  flash: GrainHeldPrice;
+  mature: GrainHeldPrice;
+}
+
+/** The grains a grain inherits from when it holds no evidence, nearest first. */
+const INHERITS_FROM: Record<GrainName, GrainName[]> = {
+  crossOrg: [],
+  brand: ["crossOrg"],
+  offer: ["brand", "crossOrg"],
+  campaign: ["brand", "crossOrg"],
+  audience: ["campaign", "brand", "crossOrg"],
+};
+
+const NOTHING_HELD = (reason: GrainPriceUnpricedReason): GrainHeldPrice => ({
+  costPerOutcomeUsd: null,
+  source: null,
+  fromGrain: null,
+  unpricedReason: reason,
+});
+
+/**
+ * The price held for `grain` on one version's ladder. `grains` is that version's ladder (null = the cut
+ * could not be made). Pure: the nearest grain WITH a block decides, never a cheaper one further up.
+ */
+export function heldPriceOn(
+  grains: Partial<Record<GrainName, { legOutcome?: { costPerOutcomeUsd: number | null } }>> | null,
+  grain: GrainName,
+): GrainHeldPrice {
+  if (!grains) return NOTHING_HELD("mature_cut_unavailable");
+  const from = [grain, ...INHERITS_FROM[grain]].find((g) => grains[g]);
+  if (!from) return NOTHING_HELD("no_evidence");
+  const cost = grains[from]!.legOutcome?.costPerOutcomeUsd ?? null;
+  return {
+    costPerOutcomeUsd: cost,
+    source: from === grain ? "own" : "inherited",
+    fromGrain: from,
+    unpricedReason: cost == null ? "leg_unpriceable" : null,
+  };
+}
+
 /**
  * THE ROW'S MATURITY — present ⟺ the caller named a `?leg=`. `isMature` is the WORKFLOW's verdict on the
  * fleet of its leg (every org's campaigns performing the leg): at least the leg's required MATURE outcomes.
@@ -376,6 +446,15 @@ export interface ProjectionRow {
   modelEligibility?: TransitionalModelEligibility;
   /** Present ⟺ the caller named a `?leg=`. See {@link RowMaturity}. */
   maturity?: RowMaturity;
+  /**
+   * THE PRICE HELD FOR THIS WORKFLOW AT EVERY GRAIN THE ROW'S CASCADE COVERS, ON BOTH BASES — present ⟺
+   * the caller named a `?leg=`. A grain with no evidence of its own is still priced (inherited from its
+   * parent, provenance stated), so a page never shows a dash where this service holds an opinion and
+   * never re-walks the cascade. Additive: `estimatesByGrain` (observed + floored blocks) is untouched.
+   * Grains listed: crossOrg, brand, plus campaign on a `?campaignId=` read, offer where the read has an
+   * offer grain (brand-level rows), audience on audience rows.
+   */
+  priceByGrain?: Partial<Record<GrainName, GrainHeldPrices>>;
 }
 
 /** See `ProjectionRow.modelEligibility`. */
@@ -2305,12 +2384,32 @@ export function projectFromEvidence(input: {
         block.isMature = mature && matureFigures ? isMatureCount(matureFigures.outcomes, legKey) : null;
       }
     };
+    // The grains a row's cascade covers (see `ProjectionRow.priceByGrain`): the fleet and the brand on every
+    // row, the campaign on a `?campaignId=` read, the offer where the read has one (brand-level rows), the
+    // audience on its own rows.
+    const heldGrainsOf = (audienceRow: boolean): GrainName[] => [
+      "crossOrg",
+      "brand",
+      ...(flashSources.campaignGrain ? (["campaign"] as const) : []),
+      ...(audienceRow ? (["audience"] as const) : flashSources.offerGrain ? (["offer"] as const) : []),
+    ];
+    // The price held at each of those grains on BOTH versions, each walked on its own version's ladder
+    // (never one version's price under the other's name). `matureGrains` null = the cut could not be made.
+    const heldPrices = (
+      heldGrains: GrainName[],
+      flashGrains: Ladder["grains"],
+      matureGrains: Ladder["grains"] | null,
+    ): Partial<Record<GrainName, GrainHeldPrices>> =>
+      Object.fromEntries(
+        heldGrains.map((g) => [g, { flash: heldPriceOn(flashGrains, g), mature: heldPriceOn(matureGrains, g) }]),
+      );
     // The row PRICED by the rule: its ladder, its resolved pick, and (leg reads) its maturity block.
     const priceRow = (
       flash: Ladder,
       mature: Ladder | null,
       verdict: { isMature: boolean | null; matureOutcomes: number | null },
-    ): Pick<ProjectionRow, "estimatesByGrain" | "resolved" | "maturity"> => {
+      heldGrains: GrainName[],
+    ): Pick<ProjectionRow, "estimatesByGrain" | "resolved" | "maturity" | "priceByGrain"> => {
       if (!legTerms) return { estimatesByGrain: stampGrainBases(flash.grains), resolved: resolve(flash.grains) };
       // The OFFER grain is a stated grain only (never resolved), so a ladder holding nothing else has no price.
       const matureHasGrain =
@@ -2330,6 +2429,8 @@ export function projectFromEvidence(input: {
         basis === "mature"
           ? (Object.keys(flash.grains) as GrainName[]).filter((g) => g !== "audience" && !mature!.grains[g])
           : [];
+      // Read BEFORE the ladders are merged into the served blocks (a mature row's priced ladder holds both).
+      const priceByGrain = heldPrices(heldGrains, flash.grains, mature ? mature.grains : null);
       const priced: Ladder["grains"] =
         basis === "mature"
           ? { ...mature!.grains, ...Object.fromEntries(youngGrains.map((g) => [g, flash.grains[g]])) }
@@ -2348,6 +2449,7 @@ export function projectFromEvidence(input: {
             verdict.isMature,
           ),
         },
+        priceByGrain,
       };
     };
 
@@ -2361,7 +2463,7 @@ export function projectFromEvidence(input: {
       // is no grain to resolve — skip the row (nothing to project).
       if (!flash.grains.crossOrg && !flash.grains.brand && !flash.grains.campaign) continue;
       const mature = matureSources ? activeLadder(matureSources, activeSlug, null) : null;
-      const priced = priceRow(flash, mature, verdictOf(activeSlug));
+      const priced = priceRow(flash, mature, verdictOf(activeSlug), heldGrainsOf(false));
       rows.push({
         audienceId: null,
         workflow: {
@@ -2372,6 +2474,7 @@ export function projectFromEvidence(input: {
         resolved: priced.resolved,
         measured: true,
         ...(priced.maturity ? { maturity: priced.maturity } : {}),
+        ...(priced.priceByGrain ? { priceByGrain: priced.priceByGrain } : {}),
       });
     }
 
@@ -2389,6 +2492,8 @@ export function projectFromEvidence(input: {
       const flash = retiredLadder(flashSources, dynastySlug);
       if (!flash.grains.brand && !flash.grains.campaign && !flash.grains.offer) continue;
       const mature = matureSources ? retiredLadder(matureSources, dynastySlug) : null;
+      // A retired lineage has no fleet grain: its held prices are its own brand / campaign / offer blocks.
+      const retiredHeld = legTerms ? heldPrices(heldGrainsOf(false), flash.grains, mature ? mature.grains : null) : null;
       if (legTerms) stampVersions(flash.grains, "flash", flash, mature);
       rows.push({
         audienceId: null,
@@ -2400,6 +2505,7 @@ export function projectFromEvidence(input: {
         ...(legTerms
           ? { maturity: { basis: "flash" as const, isMature: null, matureOutcomes: null, resolved: maturityPair<ResolvedFigures>(null, null, null) } }
           : {}),
+        ...(retiredHeld ? { priceByGrain: retiredHeld } : {}),
       });
     }
 
@@ -2421,7 +2527,7 @@ export function projectFromEvidence(input: {
         // A couple with no grain at all (no crossOrg/brand/campaign/audience spend) has nothing to project.
         if (!flash.grains.crossOrg && !flash.grains.brand && !flash.grains.campaign && !flash.grains.audience) continue;
         const mature = matureSources ? activeLadder(matureSources, activeSlug, target) : null;
-        const priced = priceRow(flash, mature, verdictOf(activeSlug));
+        const priced = priceRow(flash, mature, verdictOf(activeSlug), heldGrainsOf(true));
         rows.push({
           audienceId: ev.audienceId,
           workflow: {
@@ -2432,6 +2538,7 @@ export function projectFromEvidence(input: {
           resolved: priced.resolved,
           measured: true,
           ...(priced.maturity ? { maturity: priced.maturity } : {}),
+          ...(priced.priceByGrain ? { priceByGrain: priced.priceByGrain } : {}),
         });
       }
     }
@@ -2483,11 +2590,14 @@ export function projectFromEvidence(input: {
         : UNMEASURED_RESOLVED;
 
     // An unproven workflow is priced on the allowance (flash, its exploration phase) whatever its verdict.
-    const unprovenMaturity = (dynastySlug: string): Pick<ProjectionRow, "maturity"> => {
+    // Its held prices: nothing on any grain (no evidence anywhere on the leg) — the explore allowance is
+    // the price of a first try, not a price of the workflow, so it is never stated as one.
+    const unprovenMaturity = (dynastySlug: string, audienceRow: boolean): Pick<ProjectionRow, "maturity" | "priceByGrain"> => {
       if (!legTerms) return {};
       const activeSlug = activeSlugByDynasty.get(dynastySlug);
       const verdict = activeSlug ? verdictOf(activeSlug) : { isMature: null, matureOutcomes: null };
       return {
+        priceByGrain: heldPrices(heldGrainsOf(audienceRow), {}, matureSources ? {} : null),
         maturity: {
           basis: "flash",
           isMature: verdict.isMature,
@@ -2502,9 +2612,9 @@ export function projectFromEvidence(input: {
           workflowDynastySlug: dynastySlug,
           workflowDynastyName: dynastyNameBySlug.get(dynastySlug) ?? null,
         };
-        rows.push({ audienceId: null, workflow, estimatesByGrain: {}, resolved: { ...unprovenResolved }, measured: false, ...unprovenMaturity(dynastySlug) });
+        rows.push({ audienceId: null, workflow, estimatesByGrain: {}, resolved: { ...unprovenResolved }, measured: false, ...unprovenMaturity(dynastySlug, false) });
         for (const ev of audienceEvidence) {
-          rows.push({ audienceId: ev.audienceId, workflow, estimatesByGrain: {}, resolved: { ...unprovenResolved }, measured: false, ...unprovenMaturity(dynastySlug) });
+          rows.push({ audienceId: ev.audienceId, workflow, estimatesByGrain: {}, resolved: { ...unprovenResolved }, measured: false, ...unprovenMaturity(dynastySlug, true) });
         }
       }
     }

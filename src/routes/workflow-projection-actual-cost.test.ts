@@ -260,6 +260,10 @@ describe("GET /internal/features/:slug/workflow-projection/actual-cost — the l
     expect(a.estimatesByGrain.brand.vendorCost).toEqual({ pricedVendorCostUsd: 6, unpricedBilledCostUsd: 0, vendorCostKnown: true });
     // Counts are the billed ones: same rows, same outcomes.
     expect(a.estimatesByGrain.brand.evidence.observedClicks).toBe(b.estimatesByGrain.brand.evidence.observedClicks);
+    // The held prices ride the vendor read too: the brand's own price at a fifth, provenance kept.
+    expect(a.priceByGrain.brand.flash).toMatchObject({ source: "own", fromGrain: "brand", vendorCostKnown: true });
+    expect(a.priceByGrain.brand.flash.costPerOutcomeUsd).toBeCloseTo(b.priceByGrain.brand.flash.costPerOutcomeUsd / 5, 6);
+    expect(a.priceByGrain.crossOrg.flash.costPerOutcomeUsd).toBeCloseTo(b.priceByGrain.crossOrg.flash.costPerOutcomeUsd / 5, 6);
 
     // The ORDER is what campaign-service acts on: byte the billed one.
     const order = (body: any) => body.rows.map((r: any) => [r.audienceId, r.workflow.workflowDynastySlug, r.rank, r.scopeRank]);
@@ -286,6 +290,10 @@ describe("GET /internal/features/:slug/workflow-projection/actual-cost — the l
     expect(lyo.estimatesByGrain.brand.vendorCost).toEqual({ pricedVendorCostUsd: 0, unpricedBilledCostUsd: 30, vendorCostKnown: false });
     // Its counts are still stated.
     expect(lyo.estimatesByGrain.brand.evidence.observedClicks).toBe(15);
+    // Its held price names where it would come from and why it reads null — never the billed figure.
+    expect(lyo.priceByGrain.brand.flash).toEqual({
+      costPerOutcomeUsd: null, source: "own", fromGrain: "brand", unpricedReason: "vendor_cost_unknown", vendorCostKnown: false,
+    });
     expect(res.body.unpricedBilledCostUsd).toBeGreaterThan(0);
   });
 
