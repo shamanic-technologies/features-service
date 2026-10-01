@@ -769,6 +769,7 @@ const channelStepSchema = z.object({
   ]),
   label: z.string(),
   description: z.string(),
+  shortDescription: z.string().describe("A 3-to-5-word caption printed under the step's label (onboarding cards, the offer's sales-path cards) and read by the AI that pre-ticks a visitor's steps, so every consumer reads the same words. Example: 'Buys online, no sales call' under 'Direct purchase'."),
 });
 
 const learningCampaignSchema = z.object({
@@ -1149,7 +1150,7 @@ const salesFunnelKeyEnum = z.enum(["sales_meetings_from_conversation", "sales_me
 const MAXIMIZE_DESC_PROJECTION = "WHAT TO MAXIMISE. `return` (DEFAULT, and byte-identical to every answer given before this existed) ranks on the most outcome per DOLLAR — the right question while the pool of people to reach is effectively unbounded and the binding constraint is the customer\'s budget. `conversionRate` ranks on the most outcome per PERSON REACHED — the right question when the pool is small and finite, because the list is what runs out and burning fewer people per outcome matters more than what each outcome costs. Snake/kebab spellings accepted; the key may also be spelled `maximise`. A present-but-unrecognised word is a 400 (reason=\'maximize_unrecognised\'), never a silent fall back to `return`. NOT the same question as `goal`/`objective`, which name the kind of OUTCOME being bought. On this endpoint it shapes the RECOMMENDATION (which workflow) and, on a `?leg=` request, which of the brand\'s declared funnels the leg is priced through — nothing else: every row carries both figures either way.";
 
 /** One end of a leg, worded for a buyer — the same shape /public/channels publishes as a step. */
-const legStepSchema = z.object({ key: z.string(), label: z.string(), description: z.string() });
+const legStepSchema = z.object({ key: z.string(), label: z.string(), description: z.string(), shortDescription: z.string() });
 
 const workflowProjectionResponseSchema = z.object({
   featureSlug: z.string(),
@@ -1648,7 +1649,7 @@ const offerOutcomesResponseSchema = z.object({
   maturityDays: z.number().int().describe("The longest maturity delay of any leg in scope (0 = nothing waits)."),
   outcomes: z.array(
     z.object({
-      step: z.object({ key: z.string(), label: z.string(), description: z.string() }),
+      step: z.object({ key: z.string(), label: z.string(), description: z.string(), shortDescription: z.string() }),
       valueBasisFunnelKey: z.string().nullable(),
       ...outcomeFiguresShape,
       legs: z.array(offerOutcomeLegSchema).describe("Every leg x channel serving this outcome, in parallel. Their counts can overlap (one lead reached by two channels); the outcome row's count is the distinct union."),
@@ -1686,7 +1687,7 @@ registry.registerPath({
   },
 });
 
-const salesPathStepSchema = z.object({ key: z.string(), label: z.string(), description: z.string() });
+const salesPathStepSchema = z.object({ key: z.string(), label: z.string(), description: z.string(), shortDescription: z.string() });
 const salesPathCandidateSchema = z.object({
   slug: z.string(),
   name: z.string(),

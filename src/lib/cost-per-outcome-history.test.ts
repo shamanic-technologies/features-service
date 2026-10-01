@@ -13,8 +13,8 @@ import { describe, it, expect } from "vitest";
 import { buildCostPerOutcomeHistory, type ScopeOutcomeTerms } from "./cost-per-outcome-history.js";
 import type { SignalSeries } from "./revenue-engine.js";
 
-const VISIT_STEP = { key: "website_visit", label: "Website visit", description: "A buyer lands on the brand's own website." } as const;
-const MEETING_STEP = { key: "meeting_booked", label: "Meeting booked", description: "A meeting is on the calendar." } as const;
+const VISIT_STEP = { key: "website_visit", label: "Website visit", description: "A buyer lands on the brand's own website.", shortDescription: "x" } as const;
+const MEETING_STEP = { key: "meeting_booked", label: "Meeting booked", description: "A meeting is on the calendar.", shortDescription: "x" } as const;
 
 /** The reported campaign's entry leg: the click IS the outcome, so the rate is 1. */
 const ENTRY: ScopeOutcomeTerms = {
