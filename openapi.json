@@ -6253,6 +6253,547 @@
                   ],
                   "description": "THE ROW'S MATURITY (features-service#1196) — present ⟺ the request named a `?leg=`. A mature workflow's young spend no longer inflates its price while its outcomes are still on their way; a workflow that is not yet mature is priced exactly as before (flash, with the cascade floor that lets it be tried)."
                 },
+                "priceByGrain": {
+                  "type": "object",
+                  "properties": {
+                    "crossOrg": {
+                      "type": "object",
+                      "properties": {
+                        "flash": {
+                          "type": "object",
+                          "properties": {
+                            "costPerOutcomeUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "The cost of ONE outcome of the leg this service holds for the workflow at this grain on this basis — the cascade already walked. Null ⟺ nothing is held (see unpricedReason)."
+                            },
+                            "source": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "own",
+                                "inherited"
+                              ],
+                              "description": "`own` = this grain's own evidence on this basis (a real ratio, or its floor max(own spend, parent) when it observed no outcome); `inherited` = the grain holds no evidence on this basis, so its price is the nearest coarser grain's (offer/campaign → brand → crossOrg; audience → campaign → brand → crossOrg), exactly what the floor would hand it. Null ⟺ nothing is held."
+                            },
+                            "fromGrain": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "crossOrg",
+                                "brand",
+                                "offer",
+                                "campaign",
+                                "audience"
+                              ],
+                              "description": "The grain the price was read from (this grain when own). Null ⟺ nothing is held."
+                            },
+                            "unpricedReason": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "no_evidence",
+                                "leg_unpriceable",
+                                "mature_cut_unavailable",
+                                "vendor_cost_unknown"
+                              ],
+                              "description": "Why costPerOutcomeUsd is null: no grain up the cascade holds evidence on this basis; the grain holding it cannot walk it to the leg's step (an undeclared rate); the mature cut could not be made for this read; (actual-cost read only) the grain it comes from, or one it floors against, holds spend of no known vendor cost. Null ⟺ a price is held."
+                            }
+                          },
+                          "required": [
+                            "costPerOutcomeUsd",
+                            "source",
+                            "fromGrain",
+                            "unpricedReason"
+                          ],
+                          "description": "On FLASH evidence (everything to date)."
+                        },
+                        "mature": {
+                          "type": "object",
+                          "properties": {
+                            "costPerOutcomeUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "The cost of ONE outcome of the leg this service holds for the workflow at this grain on this basis — the cascade already walked. Null ⟺ nothing is held (see unpricedReason)."
+                            },
+                            "source": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "own",
+                                "inherited"
+                              ],
+                              "description": "`own` = this grain's own evidence on this basis (a real ratio, or its floor max(own spend, parent) when it observed no outcome); `inherited` = the grain holds no evidence on this basis, so its price is the nearest coarser grain's (offer/campaign → brand → crossOrg; audience → campaign → brand → crossOrg), exactly what the floor would hand it. Null ⟺ nothing is held."
+                            },
+                            "fromGrain": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "crossOrg",
+                                "brand",
+                                "offer",
+                                "campaign",
+                                "audience"
+                              ],
+                              "description": "The grain the price was read from (this grain when own). Null ⟺ nothing is held."
+                            },
+                            "unpricedReason": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "no_evidence",
+                                "leg_unpriceable",
+                                "mature_cut_unavailable",
+                                "vendor_cost_unknown"
+                              ],
+                              "description": "Why costPerOutcomeUsd is null: no grain up the cascade holds evidence on this basis; the grain holding it cannot walk it to the leg's step (an undeclared rate); the mature cut could not be made for this read; (actual-cost read only) the grain it comes from, or one it floors against, holds spend of no known vendor cost. Null ⟺ a price is held."
+                            }
+                          },
+                          "required": [
+                            "costPerOutcomeUsd",
+                            "source",
+                            "fromGrain",
+                            "unpricedReason"
+                          ],
+                          "description": "On MATURE evidence (runs started before the leg's cutoff) — held even when the row is priced on flash."
+                        }
+                      },
+                      "required": [
+                        "flash",
+                        "mature"
+                      ]
+                    },
+                    "brand": {
+                      "type": "object",
+                      "properties": {
+                        "flash": {
+                          "type": "object",
+                          "properties": {
+                            "costPerOutcomeUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "The cost of ONE outcome of the leg this service holds for the workflow at this grain on this basis — the cascade already walked. Null ⟺ nothing is held (see unpricedReason)."
+                            },
+                            "source": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "own",
+                                "inherited"
+                              ],
+                              "description": "`own` = this grain's own evidence on this basis (a real ratio, or its floor max(own spend, parent) when it observed no outcome); `inherited` = the grain holds no evidence on this basis, so its price is the nearest coarser grain's (offer/campaign → brand → crossOrg; audience → campaign → brand → crossOrg), exactly what the floor would hand it. Null ⟺ nothing is held."
+                            },
+                            "fromGrain": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "crossOrg",
+                                "brand",
+                                "offer",
+                                "campaign",
+                                "audience"
+                              ],
+                              "description": "The grain the price was read from (this grain when own). Null ⟺ nothing is held."
+                            },
+                            "unpricedReason": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "no_evidence",
+                                "leg_unpriceable",
+                                "mature_cut_unavailable",
+                                "vendor_cost_unknown"
+                              ],
+                              "description": "Why costPerOutcomeUsd is null: no grain up the cascade holds evidence on this basis; the grain holding it cannot walk it to the leg's step (an undeclared rate); the mature cut could not be made for this read; (actual-cost read only) the grain it comes from, or one it floors against, holds spend of no known vendor cost. Null ⟺ a price is held."
+                            }
+                          },
+                          "required": [
+                            "costPerOutcomeUsd",
+                            "source",
+                            "fromGrain",
+                            "unpricedReason"
+                          ],
+                          "description": "On FLASH evidence (everything to date)."
+                        },
+                        "mature": {
+                          "type": "object",
+                          "properties": {
+                            "costPerOutcomeUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "The cost of ONE outcome of the leg this service holds for the workflow at this grain on this basis — the cascade already walked. Null ⟺ nothing is held (see unpricedReason)."
+                            },
+                            "source": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "own",
+                                "inherited"
+                              ],
+                              "description": "`own` = this grain's own evidence on this basis (a real ratio, or its floor max(own spend, parent) when it observed no outcome); `inherited` = the grain holds no evidence on this basis, so its price is the nearest coarser grain's (offer/campaign → brand → crossOrg; audience → campaign → brand → crossOrg), exactly what the floor would hand it. Null ⟺ nothing is held."
+                            },
+                            "fromGrain": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "crossOrg",
+                                "brand",
+                                "offer",
+                                "campaign",
+                                "audience"
+                              ],
+                              "description": "The grain the price was read from (this grain when own). Null ⟺ nothing is held."
+                            },
+                            "unpricedReason": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "no_evidence",
+                                "leg_unpriceable",
+                                "mature_cut_unavailable",
+                                "vendor_cost_unknown"
+                              ],
+                              "description": "Why costPerOutcomeUsd is null: no grain up the cascade holds evidence on this basis; the grain holding it cannot walk it to the leg's step (an undeclared rate); the mature cut could not be made for this read; (actual-cost read only) the grain it comes from, or one it floors against, holds spend of no known vendor cost. Null ⟺ a price is held."
+                            }
+                          },
+                          "required": [
+                            "costPerOutcomeUsd",
+                            "source",
+                            "fromGrain",
+                            "unpricedReason"
+                          ],
+                          "description": "On MATURE evidence (runs started before the leg's cutoff) — held even when the row is priced on flash."
+                        }
+                      },
+                      "required": [
+                        "flash",
+                        "mature"
+                      ]
+                    },
+                    "offer": {
+                      "type": "object",
+                      "properties": {
+                        "flash": {
+                          "type": "object",
+                          "properties": {
+                            "costPerOutcomeUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "The cost of ONE outcome of the leg this service holds for the workflow at this grain on this basis — the cascade already walked. Null ⟺ nothing is held (see unpricedReason)."
+                            },
+                            "source": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "own",
+                                "inherited"
+                              ],
+                              "description": "`own` = this grain's own evidence on this basis (a real ratio, or its floor max(own spend, parent) when it observed no outcome); `inherited` = the grain holds no evidence on this basis, so its price is the nearest coarser grain's (offer/campaign → brand → crossOrg; audience → campaign → brand → crossOrg), exactly what the floor would hand it. Null ⟺ nothing is held."
+                            },
+                            "fromGrain": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "crossOrg",
+                                "brand",
+                                "offer",
+                                "campaign",
+                                "audience"
+                              ],
+                              "description": "The grain the price was read from (this grain when own). Null ⟺ nothing is held."
+                            },
+                            "unpricedReason": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "no_evidence",
+                                "leg_unpriceable",
+                                "mature_cut_unavailable",
+                                "vendor_cost_unknown"
+                              ],
+                              "description": "Why costPerOutcomeUsd is null: no grain up the cascade holds evidence on this basis; the grain holding it cannot walk it to the leg's step (an undeclared rate); the mature cut could not be made for this read; (actual-cost read only) the grain it comes from, or one it floors against, holds spend of no known vendor cost. Null ⟺ a price is held."
+                            }
+                          },
+                          "required": [
+                            "costPerOutcomeUsd",
+                            "source",
+                            "fromGrain",
+                            "unpricedReason"
+                          ],
+                          "description": "On FLASH evidence (everything to date)."
+                        },
+                        "mature": {
+                          "type": "object",
+                          "properties": {
+                            "costPerOutcomeUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "The cost of ONE outcome of the leg this service holds for the workflow at this grain on this basis — the cascade already walked. Null ⟺ nothing is held (see unpricedReason)."
+                            },
+                            "source": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "own",
+                                "inherited"
+                              ],
+                              "description": "`own` = this grain's own evidence on this basis (a real ratio, or its floor max(own spend, parent) when it observed no outcome); `inherited` = the grain holds no evidence on this basis, so its price is the nearest coarser grain's (offer/campaign → brand → crossOrg; audience → campaign → brand → crossOrg), exactly what the floor would hand it. Null ⟺ nothing is held."
+                            },
+                            "fromGrain": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "crossOrg",
+                                "brand",
+                                "offer",
+                                "campaign",
+                                "audience"
+                              ],
+                              "description": "The grain the price was read from (this grain when own). Null ⟺ nothing is held."
+                            },
+                            "unpricedReason": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "no_evidence",
+                                "leg_unpriceable",
+                                "mature_cut_unavailable",
+                                "vendor_cost_unknown"
+                              ],
+                              "description": "Why costPerOutcomeUsd is null: no grain up the cascade holds evidence on this basis; the grain holding it cannot walk it to the leg's step (an undeclared rate); the mature cut could not be made for this read; (actual-cost read only) the grain it comes from, or one it floors against, holds spend of no known vendor cost. Null ⟺ a price is held."
+                            }
+                          },
+                          "required": [
+                            "costPerOutcomeUsd",
+                            "source",
+                            "fromGrain",
+                            "unpricedReason"
+                          ],
+                          "description": "On MATURE evidence (runs started before the leg's cutoff) — held even when the row is priced on flash."
+                        }
+                      },
+                      "required": [
+                        "flash",
+                        "mature"
+                      ]
+                    },
+                    "campaign": {
+                      "type": "object",
+                      "properties": {
+                        "flash": {
+                          "type": "object",
+                          "properties": {
+                            "costPerOutcomeUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "The cost of ONE outcome of the leg this service holds for the workflow at this grain on this basis — the cascade already walked. Null ⟺ nothing is held (see unpricedReason)."
+                            },
+                            "source": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "own",
+                                "inherited"
+                              ],
+                              "description": "`own` = this grain's own evidence on this basis (a real ratio, or its floor max(own spend, parent) when it observed no outcome); `inherited` = the grain holds no evidence on this basis, so its price is the nearest coarser grain's (offer/campaign → brand → crossOrg; audience → campaign → brand → crossOrg), exactly what the floor would hand it. Null ⟺ nothing is held."
+                            },
+                            "fromGrain": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "crossOrg",
+                                "brand",
+                                "offer",
+                                "campaign",
+                                "audience"
+                              ],
+                              "description": "The grain the price was read from (this grain when own). Null ⟺ nothing is held."
+                            },
+                            "unpricedReason": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "no_evidence",
+                                "leg_unpriceable",
+                                "mature_cut_unavailable",
+                                "vendor_cost_unknown"
+                              ],
+                              "description": "Why costPerOutcomeUsd is null: no grain up the cascade holds evidence on this basis; the grain holding it cannot walk it to the leg's step (an undeclared rate); the mature cut could not be made for this read; (actual-cost read only) the grain it comes from, or one it floors against, holds spend of no known vendor cost. Null ⟺ a price is held."
+                            }
+                          },
+                          "required": [
+                            "costPerOutcomeUsd",
+                            "source",
+                            "fromGrain",
+                            "unpricedReason"
+                          ],
+                          "description": "On FLASH evidence (everything to date)."
+                        },
+                        "mature": {
+                          "type": "object",
+                          "properties": {
+                            "costPerOutcomeUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "The cost of ONE outcome of the leg this service holds for the workflow at this grain on this basis — the cascade already walked. Null ⟺ nothing is held (see unpricedReason)."
+                            },
+                            "source": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "own",
+                                "inherited"
+                              ],
+                              "description": "`own` = this grain's own evidence on this basis (a real ratio, or its floor max(own spend, parent) when it observed no outcome); `inherited` = the grain holds no evidence on this basis, so its price is the nearest coarser grain's (offer/campaign → brand → crossOrg; audience → campaign → brand → crossOrg), exactly what the floor would hand it. Null ⟺ nothing is held."
+                            },
+                            "fromGrain": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "crossOrg",
+                                "brand",
+                                "offer",
+                                "campaign",
+                                "audience"
+                              ],
+                              "description": "The grain the price was read from (this grain when own). Null ⟺ nothing is held."
+                            },
+                            "unpricedReason": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "no_evidence",
+                                "leg_unpriceable",
+                                "mature_cut_unavailable",
+                                "vendor_cost_unknown"
+                              ],
+                              "description": "Why costPerOutcomeUsd is null: no grain up the cascade holds evidence on this basis; the grain holding it cannot walk it to the leg's step (an undeclared rate); the mature cut could not be made for this read; (actual-cost read only) the grain it comes from, or one it floors against, holds spend of no known vendor cost. Null ⟺ a price is held."
+                            }
+                          },
+                          "required": [
+                            "costPerOutcomeUsd",
+                            "source",
+                            "fromGrain",
+                            "unpricedReason"
+                          ],
+                          "description": "On MATURE evidence (runs started before the leg's cutoff) — held even when the row is priced on flash."
+                        }
+                      },
+                      "required": [
+                        "flash",
+                        "mature"
+                      ]
+                    },
+                    "audience": {
+                      "type": "object",
+                      "properties": {
+                        "flash": {
+                          "type": "object",
+                          "properties": {
+                            "costPerOutcomeUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "The cost of ONE outcome of the leg this service holds for the workflow at this grain on this basis — the cascade already walked. Null ⟺ nothing is held (see unpricedReason)."
+                            },
+                            "source": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "own",
+                                "inherited"
+                              ],
+                              "description": "`own` = this grain's own evidence on this basis (a real ratio, or its floor max(own spend, parent) when it observed no outcome); `inherited` = the grain holds no evidence on this basis, so its price is the nearest coarser grain's (offer/campaign → brand → crossOrg; audience → campaign → brand → crossOrg), exactly what the floor would hand it. Null ⟺ nothing is held."
+                            },
+                            "fromGrain": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "crossOrg",
+                                "brand",
+                                "offer",
+                                "campaign",
+                                "audience"
+                              ],
+                              "description": "The grain the price was read from (this grain when own). Null ⟺ nothing is held."
+                            },
+                            "unpricedReason": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "no_evidence",
+                                "leg_unpriceable",
+                                "mature_cut_unavailable",
+                                "vendor_cost_unknown"
+                              ],
+                              "description": "Why costPerOutcomeUsd is null: no grain up the cascade holds evidence on this basis; the grain holding it cannot walk it to the leg's step (an undeclared rate); the mature cut could not be made for this read; (actual-cost read only) the grain it comes from, or one it floors against, holds spend of no known vendor cost. Null ⟺ a price is held."
+                            }
+                          },
+                          "required": [
+                            "costPerOutcomeUsd",
+                            "source",
+                            "fromGrain",
+                            "unpricedReason"
+                          ],
+                          "description": "On FLASH evidence (everything to date)."
+                        },
+                        "mature": {
+                          "type": "object",
+                          "properties": {
+                            "costPerOutcomeUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "The cost of ONE outcome of the leg this service holds for the workflow at this grain on this basis — the cascade already walked. Null ⟺ nothing is held (see unpricedReason)."
+                            },
+                            "source": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "own",
+                                "inherited"
+                              ],
+                              "description": "`own` = this grain's own evidence on this basis (a real ratio, or its floor max(own spend, parent) when it observed no outcome); `inherited` = the grain holds no evidence on this basis, so its price is the nearest coarser grain's (offer/campaign → brand → crossOrg; audience → campaign → brand → crossOrg), exactly what the floor would hand it. Null ⟺ nothing is held."
+                            },
+                            "fromGrain": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "crossOrg",
+                                "brand",
+                                "offer",
+                                "campaign",
+                                "audience"
+                              ],
+                              "description": "The grain the price was read from (this grain when own). Null ⟺ nothing is held."
+                            },
+                            "unpricedReason": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "no_evidence",
+                                "leg_unpriceable",
+                                "mature_cut_unavailable",
+                                "vendor_cost_unknown"
+                              ],
+                              "description": "Why costPerOutcomeUsd is null: no grain up the cascade holds evidence on this basis; the grain holding it cannot walk it to the leg's step (an undeclared rate); the mature cut could not be made for this read; (actual-cost read only) the grain it comes from, or one it floors against, holds spend of no known vendor cost. Null ⟺ a price is held."
+                            }
+                          },
+                          "required": [
+                            "costPerOutcomeUsd",
+                            "source",
+                            "fromGrain",
+                            "unpricedReason"
+                          ],
+                          "description": "On MATURE evidence (runs started before the leg's cutoff) — held even when the row is priced on flash."
+                        }
+                      },
+                      "required": [
+                        "flash",
+                        "mature"
+                      ]
+                    }
+                  },
+                  "description": "THE PRICE THIS SERVICE HOLDS FOR THE WORKFLOW AT EVERY GRAIN THE ROW'S CASCADE COVERS, ON BOTH BASES — present ⟺ the request named a `?leg=`. Grains listed: crossOrg and brand on every row, campaign on a `?campaignId=` read, offer where the read has an offer grain (brand-level rows), audience on audience rows. A grain absent from estimatesByGrain (no own spend) or with no evidence on one basis is still priced, inherited from its parent with its provenance stated, so a page reads one cell per (grain, basis) and never re-walks the cascade. estimatesByGrain (observed + floored blocks), resolved, rank and the recommendation are unchanged. An unmeasured (explore-allowance) row holds nothing at any grain (`no_evidence`): the allowance is the price of a first try, not a price of the workflow. On the actual-cost read each held price also carries `vendorCostKnown`."
+                },
                 "retired": {
                   "type": "boolean",
                   "enum": [
@@ -22094,6 +22635,547 @@
                             ],
                             "description": "THE ROW'S MATURITY (features-service#1196) — present ⟺ the request named a `?leg=`. A mature workflow's young spend no longer inflates its price while its outcomes are still on their way; a workflow that is not yet mature is priced exactly as before (flash, with the cascade floor that lets it be tried)."
                           },
+                          "priceByGrain": {
+                            "type": "object",
+                            "properties": {
+                              "crossOrg": {
+                                "type": "object",
+                                "properties": {
+                                  "flash": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerOutcomeUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "The cost of ONE outcome of the leg this service holds for the workflow at this grain on this basis — the cascade already walked. Null ⟺ nothing is held (see unpricedReason)."
+                                      },
+                                      "source": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "own",
+                                          "inherited"
+                                        ],
+                                        "description": "`own` = this grain's own evidence on this basis (a real ratio, or its floor max(own spend, parent) when it observed no outcome); `inherited` = the grain holds no evidence on this basis, so its price is the nearest coarser grain's (offer/campaign → brand → crossOrg; audience → campaign → brand → crossOrg), exactly what the floor would hand it. Null ⟺ nothing is held."
+                                      },
+                                      "fromGrain": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "crossOrg",
+                                          "brand",
+                                          "offer",
+                                          "campaign",
+                                          "audience"
+                                        ],
+                                        "description": "The grain the price was read from (this grain when own). Null ⟺ nothing is held."
+                                      },
+                                      "unpricedReason": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "no_evidence",
+                                          "leg_unpriceable",
+                                          "mature_cut_unavailable",
+                                          "vendor_cost_unknown"
+                                        ],
+                                        "description": "Why costPerOutcomeUsd is null: no grain up the cascade holds evidence on this basis; the grain holding it cannot walk it to the leg's step (an undeclared rate); the mature cut could not be made for this read; (actual-cost read only) the grain it comes from, or one it floors against, holds spend of no known vendor cost. Null ⟺ a price is held."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerOutcomeUsd",
+                                      "source",
+                                      "fromGrain",
+                                      "unpricedReason"
+                                    ],
+                                    "description": "On FLASH evidence (everything to date)."
+                                  },
+                                  "mature": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerOutcomeUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "The cost of ONE outcome of the leg this service holds for the workflow at this grain on this basis — the cascade already walked. Null ⟺ nothing is held (see unpricedReason)."
+                                      },
+                                      "source": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "own",
+                                          "inherited"
+                                        ],
+                                        "description": "`own` = this grain's own evidence on this basis (a real ratio, or its floor max(own spend, parent) when it observed no outcome); `inherited` = the grain holds no evidence on this basis, so its price is the nearest coarser grain's (offer/campaign → brand → crossOrg; audience → campaign → brand → crossOrg), exactly what the floor would hand it. Null ⟺ nothing is held."
+                                      },
+                                      "fromGrain": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "crossOrg",
+                                          "brand",
+                                          "offer",
+                                          "campaign",
+                                          "audience"
+                                        ],
+                                        "description": "The grain the price was read from (this grain when own). Null ⟺ nothing is held."
+                                      },
+                                      "unpricedReason": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "no_evidence",
+                                          "leg_unpriceable",
+                                          "mature_cut_unavailable",
+                                          "vendor_cost_unknown"
+                                        ],
+                                        "description": "Why costPerOutcomeUsd is null: no grain up the cascade holds evidence on this basis; the grain holding it cannot walk it to the leg's step (an undeclared rate); the mature cut could not be made for this read; (actual-cost read only) the grain it comes from, or one it floors against, holds spend of no known vendor cost. Null ⟺ a price is held."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerOutcomeUsd",
+                                      "source",
+                                      "fromGrain",
+                                      "unpricedReason"
+                                    ],
+                                    "description": "On MATURE evidence (runs started before the leg's cutoff) — held even when the row is priced on flash."
+                                  }
+                                },
+                                "required": [
+                                  "flash",
+                                  "mature"
+                                ]
+                              },
+                              "brand": {
+                                "type": "object",
+                                "properties": {
+                                  "flash": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerOutcomeUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "The cost of ONE outcome of the leg this service holds for the workflow at this grain on this basis — the cascade already walked. Null ⟺ nothing is held (see unpricedReason)."
+                                      },
+                                      "source": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "own",
+                                          "inherited"
+                                        ],
+                                        "description": "`own` = this grain's own evidence on this basis (a real ratio, or its floor max(own spend, parent) when it observed no outcome); `inherited` = the grain holds no evidence on this basis, so its price is the nearest coarser grain's (offer/campaign → brand → crossOrg; audience → campaign → brand → crossOrg), exactly what the floor would hand it. Null ⟺ nothing is held."
+                                      },
+                                      "fromGrain": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "crossOrg",
+                                          "brand",
+                                          "offer",
+                                          "campaign",
+                                          "audience"
+                                        ],
+                                        "description": "The grain the price was read from (this grain when own). Null ⟺ nothing is held."
+                                      },
+                                      "unpricedReason": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "no_evidence",
+                                          "leg_unpriceable",
+                                          "mature_cut_unavailable",
+                                          "vendor_cost_unknown"
+                                        ],
+                                        "description": "Why costPerOutcomeUsd is null: no grain up the cascade holds evidence on this basis; the grain holding it cannot walk it to the leg's step (an undeclared rate); the mature cut could not be made for this read; (actual-cost read only) the grain it comes from, or one it floors against, holds spend of no known vendor cost. Null ⟺ a price is held."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerOutcomeUsd",
+                                      "source",
+                                      "fromGrain",
+                                      "unpricedReason"
+                                    ],
+                                    "description": "On FLASH evidence (everything to date)."
+                                  },
+                                  "mature": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerOutcomeUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "The cost of ONE outcome of the leg this service holds for the workflow at this grain on this basis — the cascade already walked. Null ⟺ nothing is held (see unpricedReason)."
+                                      },
+                                      "source": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "own",
+                                          "inherited"
+                                        ],
+                                        "description": "`own` = this grain's own evidence on this basis (a real ratio, or its floor max(own spend, parent) when it observed no outcome); `inherited` = the grain holds no evidence on this basis, so its price is the nearest coarser grain's (offer/campaign → brand → crossOrg; audience → campaign → brand → crossOrg), exactly what the floor would hand it. Null ⟺ nothing is held."
+                                      },
+                                      "fromGrain": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "crossOrg",
+                                          "brand",
+                                          "offer",
+                                          "campaign",
+                                          "audience"
+                                        ],
+                                        "description": "The grain the price was read from (this grain when own). Null ⟺ nothing is held."
+                                      },
+                                      "unpricedReason": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "no_evidence",
+                                          "leg_unpriceable",
+                                          "mature_cut_unavailable",
+                                          "vendor_cost_unknown"
+                                        ],
+                                        "description": "Why costPerOutcomeUsd is null: no grain up the cascade holds evidence on this basis; the grain holding it cannot walk it to the leg's step (an undeclared rate); the mature cut could not be made for this read; (actual-cost read only) the grain it comes from, or one it floors against, holds spend of no known vendor cost. Null ⟺ a price is held."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerOutcomeUsd",
+                                      "source",
+                                      "fromGrain",
+                                      "unpricedReason"
+                                    ],
+                                    "description": "On MATURE evidence (runs started before the leg's cutoff) — held even when the row is priced on flash."
+                                  }
+                                },
+                                "required": [
+                                  "flash",
+                                  "mature"
+                                ]
+                              },
+                              "offer": {
+                                "type": "object",
+                                "properties": {
+                                  "flash": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerOutcomeUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "The cost of ONE outcome of the leg this service holds for the workflow at this grain on this basis — the cascade already walked. Null ⟺ nothing is held (see unpricedReason)."
+                                      },
+                                      "source": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "own",
+                                          "inherited"
+                                        ],
+                                        "description": "`own` = this grain's own evidence on this basis (a real ratio, or its floor max(own spend, parent) when it observed no outcome); `inherited` = the grain holds no evidence on this basis, so its price is the nearest coarser grain's (offer/campaign → brand → crossOrg; audience → campaign → brand → crossOrg), exactly what the floor would hand it. Null ⟺ nothing is held."
+                                      },
+                                      "fromGrain": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "crossOrg",
+                                          "brand",
+                                          "offer",
+                                          "campaign",
+                                          "audience"
+                                        ],
+                                        "description": "The grain the price was read from (this grain when own). Null ⟺ nothing is held."
+                                      },
+                                      "unpricedReason": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "no_evidence",
+                                          "leg_unpriceable",
+                                          "mature_cut_unavailable",
+                                          "vendor_cost_unknown"
+                                        ],
+                                        "description": "Why costPerOutcomeUsd is null: no grain up the cascade holds evidence on this basis; the grain holding it cannot walk it to the leg's step (an undeclared rate); the mature cut could not be made for this read; (actual-cost read only) the grain it comes from, or one it floors against, holds spend of no known vendor cost. Null ⟺ a price is held."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerOutcomeUsd",
+                                      "source",
+                                      "fromGrain",
+                                      "unpricedReason"
+                                    ],
+                                    "description": "On FLASH evidence (everything to date)."
+                                  },
+                                  "mature": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerOutcomeUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "The cost of ONE outcome of the leg this service holds for the workflow at this grain on this basis — the cascade already walked. Null ⟺ nothing is held (see unpricedReason)."
+                                      },
+                                      "source": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "own",
+                                          "inherited"
+                                        ],
+                                        "description": "`own` = this grain's own evidence on this basis (a real ratio, or its floor max(own spend, parent) when it observed no outcome); `inherited` = the grain holds no evidence on this basis, so its price is the nearest coarser grain's (offer/campaign → brand → crossOrg; audience → campaign → brand → crossOrg), exactly what the floor would hand it. Null ⟺ nothing is held."
+                                      },
+                                      "fromGrain": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "crossOrg",
+                                          "brand",
+                                          "offer",
+                                          "campaign",
+                                          "audience"
+                                        ],
+                                        "description": "The grain the price was read from (this grain when own). Null ⟺ nothing is held."
+                                      },
+                                      "unpricedReason": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "no_evidence",
+                                          "leg_unpriceable",
+                                          "mature_cut_unavailable",
+                                          "vendor_cost_unknown"
+                                        ],
+                                        "description": "Why costPerOutcomeUsd is null: no grain up the cascade holds evidence on this basis; the grain holding it cannot walk it to the leg's step (an undeclared rate); the mature cut could not be made for this read; (actual-cost read only) the grain it comes from, or one it floors against, holds spend of no known vendor cost. Null ⟺ a price is held."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerOutcomeUsd",
+                                      "source",
+                                      "fromGrain",
+                                      "unpricedReason"
+                                    ],
+                                    "description": "On MATURE evidence (runs started before the leg's cutoff) — held even when the row is priced on flash."
+                                  }
+                                },
+                                "required": [
+                                  "flash",
+                                  "mature"
+                                ]
+                              },
+                              "campaign": {
+                                "type": "object",
+                                "properties": {
+                                  "flash": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerOutcomeUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "The cost of ONE outcome of the leg this service holds for the workflow at this grain on this basis — the cascade already walked. Null ⟺ nothing is held (see unpricedReason)."
+                                      },
+                                      "source": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "own",
+                                          "inherited"
+                                        ],
+                                        "description": "`own` = this grain's own evidence on this basis (a real ratio, or its floor max(own spend, parent) when it observed no outcome); `inherited` = the grain holds no evidence on this basis, so its price is the nearest coarser grain's (offer/campaign → brand → crossOrg; audience → campaign → brand → crossOrg), exactly what the floor would hand it. Null ⟺ nothing is held."
+                                      },
+                                      "fromGrain": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "crossOrg",
+                                          "brand",
+                                          "offer",
+                                          "campaign",
+                                          "audience"
+                                        ],
+                                        "description": "The grain the price was read from (this grain when own). Null ⟺ nothing is held."
+                                      },
+                                      "unpricedReason": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "no_evidence",
+                                          "leg_unpriceable",
+                                          "mature_cut_unavailable",
+                                          "vendor_cost_unknown"
+                                        ],
+                                        "description": "Why costPerOutcomeUsd is null: no grain up the cascade holds evidence on this basis; the grain holding it cannot walk it to the leg's step (an undeclared rate); the mature cut could not be made for this read; (actual-cost read only) the grain it comes from, or one it floors against, holds spend of no known vendor cost. Null ⟺ a price is held."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerOutcomeUsd",
+                                      "source",
+                                      "fromGrain",
+                                      "unpricedReason"
+                                    ],
+                                    "description": "On FLASH evidence (everything to date)."
+                                  },
+                                  "mature": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerOutcomeUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "The cost of ONE outcome of the leg this service holds for the workflow at this grain on this basis — the cascade already walked. Null ⟺ nothing is held (see unpricedReason)."
+                                      },
+                                      "source": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "own",
+                                          "inherited"
+                                        ],
+                                        "description": "`own` = this grain's own evidence on this basis (a real ratio, or its floor max(own spend, parent) when it observed no outcome); `inherited` = the grain holds no evidence on this basis, so its price is the nearest coarser grain's (offer/campaign → brand → crossOrg; audience → campaign → brand → crossOrg), exactly what the floor would hand it. Null ⟺ nothing is held."
+                                      },
+                                      "fromGrain": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "crossOrg",
+                                          "brand",
+                                          "offer",
+                                          "campaign",
+                                          "audience"
+                                        ],
+                                        "description": "The grain the price was read from (this grain when own). Null ⟺ nothing is held."
+                                      },
+                                      "unpricedReason": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "no_evidence",
+                                          "leg_unpriceable",
+                                          "mature_cut_unavailable",
+                                          "vendor_cost_unknown"
+                                        ],
+                                        "description": "Why costPerOutcomeUsd is null: no grain up the cascade holds evidence on this basis; the grain holding it cannot walk it to the leg's step (an undeclared rate); the mature cut could not be made for this read; (actual-cost read only) the grain it comes from, or one it floors against, holds spend of no known vendor cost. Null ⟺ a price is held."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerOutcomeUsd",
+                                      "source",
+                                      "fromGrain",
+                                      "unpricedReason"
+                                    ],
+                                    "description": "On MATURE evidence (runs started before the leg's cutoff) — held even when the row is priced on flash."
+                                  }
+                                },
+                                "required": [
+                                  "flash",
+                                  "mature"
+                                ]
+                              },
+                              "audience": {
+                                "type": "object",
+                                "properties": {
+                                  "flash": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerOutcomeUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "The cost of ONE outcome of the leg this service holds for the workflow at this grain on this basis — the cascade already walked. Null ⟺ nothing is held (see unpricedReason)."
+                                      },
+                                      "source": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "own",
+                                          "inherited"
+                                        ],
+                                        "description": "`own` = this grain's own evidence on this basis (a real ratio, or its floor max(own spend, parent) when it observed no outcome); `inherited` = the grain holds no evidence on this basis, so its price is the nearest coarser grain's (offer/campaign → brand → crossOrg; audience → campaign → brand → crossOrg), exactly what the floor would hand it. Null ⟺ nothing is held."
+                                      },
+                                      "fromGrain": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "crossOrg",
+                                          "brand",
+                                          "offer",
+                                          "campaign",
+                                          "audience"
+                                        ],
+                                        "description": "The grain the price was read from (this grain when own). Null ⟺ nothing is held."
+                                      },
+                                      "unpricedReason": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "no_evidence",
+                                          "leg_unpriceable",
+                                          "mature_cut_unavailable",
+                                          "vendor_cost_unknown"
+                                        ],
+                                        "description": "Why costPerOutcomeUsd is null: no grain up the cascade holds evidence on this basis; the grain holding it cannot walk it to the leg's step (an undeclared rate); the mature cut could not be made for this read; (actual-cost read only) the grain it comes from, or one it floors against, holds spend of no known vendor cost. Null ⟺ a price is held."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerOutcomeUsd",
+                                      "source",
+                                      "fromGrain",
+                                      "unpricedReason"
+                                    ],
+                                    "description": "On FLASH evidence (everything to date)."
+                                  },
+                                  "mature": {
+                                    "type": "object",
+                                    "properties": {
+                                      "costPerOutcomeUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "The cost of ONE outcome of the leg this service holds for the workflow at this grain on this basis — the cascade already walked. Null ⟺ nothing is held (see unpricedReason)."
+                                      },
+                                      "source": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "own",
+                                          "inherited"
+                                        ],
+                                        "description": "`own` = this grain's own evidence on this basis (a real ratio, or its floor max(own spend, parent) when it observed no outcome); `inherited` = the grain holds no evidence on this basis, so its price is the nearest coarser grain's (offer/campaign → brand → crossOrg; audience → campaign → brand → crossOrg), exactly what the floor would hand it. Null ⟺ nothing is held."
+                                      },
+                                      "fromGrain": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "crossOrg",
+                                          "brand",
+                                          "offer",
+                                          "campaign",
+                                          "audience"
+                                        ],
+                                        "description": "The grain the price was read from (this grain when own). Null ⟺ nothing is held."
+                                      },
+                                      "unpricedReason": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "no_evidence",
+                                          "leg_unpriceable",
+                                          "mature_cut_unavailable",
+                                          "vendor_cost_unknown"
+                                        ],
+                                        "description": "Why costPerOutcomeUsd is null: no grain up the cascade holds evidence on this basis; the grain holding it cannot walk it to the leg's step (an undeclared rate); the mature cut could not be made for this read; (actual-cost read only) the grain it comes from, or one it floors against, holds spend of no known vendor cost. Null ⟺ a price is held."
+                                      }
+                                    },
+                                    "required": [
+                                      "costPerOutcomeUsd",
+                                      "source",
+                                      "fromGrain",
+                                      "unpricedReason"
+                                    ],
+                                    "description": "On MATURE evidence (runs started before the leg's cutoff) — held even when the row is priced on flash."
+                                  }
+                                },
+                                "required": [
+                                  "flash",
+                                  "mature"
+                                ]
+                              }
+                            },
+                            "description": "THE PRICE THIS SERVICE HOLDS FOR THE WORKFLOW AT EVERY GRAIN THE ROW'S CASCADE COVERS, ON BOTH BASES — present ⟺ the request named a `?leg=`. Grains listed: crossOrg and brand on every row, campaign on a `?campaignId=` read, offer where the read has an offer grain (brand-level rows), audience on audience rows. A grain absent from estimatesByGrain (no own spend) or with no evidence on one basis is still priced, inherited from its parent with its provenance stated, so a page reads one cell per (grain, basis) and never re-walks the cascade. estimatesByGrain (observed + floored blocks), resolved, rank and the recommendation are unchanged. An unmeasured (explore-allowance) row holds nothing at any grain (`no_evidence`): the allowance is the price of a first try, not a price of the workflow. On the actual-cost read each held price also carries `vendorCostKnown`."
+                          },
                           "retired": {
                             "type": "boolean",
                             "enum": [
@@ -22465,6 +23547,123 @@
                             "required": [
                               "vendorCostKnown"
                             ]
+                          },
+                          "priceByGrain": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "object",
+                              "properties": {
+                                "flash": {
+                                  "type": "object",
+                                  "properties": {
+                                    "costPerOutcomeUsd": {
+                                      "type": "number",
+                                      "nullable": true,
+                                      "description": "The cost of ONE outcome of the leg this service holds for the workflow at this grain on this basis — the cascade already walked. Null ⟺ nothing is held (see unpricedReason)."
+                                    },
+                                    "source": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "own",
+                                        "inherited"
+                                      ],
+                                      "description": "`own` = this grain's own evidence on this basis (a real ratio, or its floor max(own spend, parent) when it observed no outcome); `inherited` = the grain holds no evidence on this basis, so its price is the nearest coarser grain's (offer/campaign → brand → crossOrg; audience → campaign → brand → crossOrg), exactly what the floor would hand it. Null ⟺ nothing is held."
+                                    },
+                                    "fromGrain": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "crossOrg",
+                                        "brand",
+                                        "offer",
+                                        "campaign",
+                                        "audience"
+                                      ],
+                                      "description": "The grain the price was read from (this grain when own). Null ⟺ nothing is held."
+                                    },
+                                    "unpricedReason": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "no_evidence",
+                                        "leg_unpriceable",
+                                        "mature_cut_unavailable",
+                                        "vendor_cost_unknown"
+                                      ],
+                                      "description": "Why costPerOutcomeUsd is null: no grain up the cascade holds evidence on this basis; the grain holding it cannot walk it to the leg's step (an undeclared rate); the mature cut could not be made for this read; (actual-cost read only) the grain it comes from, or one it floors against, holds spend of no known vendor cost. Null ⟺ a price is held."
+                                    },
+                                    "vendorCostKnown": {
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "required": [
+                                    "costPerOutcomeUsd",
+                                    "source",
+                                    "fromGrain",
+                                    "unpricedReason",
+                                    "vendorCostKnown"
+                                  ]
+                                },
+                                "mature": {
+                                  "type": "object",
+                                  "properties": {
+                                    "costPerOutcomeUsd": {
+                                      "type": "number",
+                                      "nullable": true,
+                                      "description": "The cost of ONE outcome of the leg this service holds for the workflow at this grain on this basis — the cascade already walked. Null ⟺ nothing is held (see unpricedReason)."
+                                    },
+                                    "source": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "own",
+                                        "inherited"
+                                      ],
+                                      "description": "`own` = this grain's own evidence on this basis (a real ratio, or its floor max(own spend, parent) when it observed no outcome); `inherited` = the grain holds no evidence on this basis, so its price is the nearest coarser grain's (offer/campaign → brand → crossOrg; audience → campaign → brand → crossOrg), exactly what the floor would hand it. Null ⟺ nothing is held."
+                                    },
+                                    "fromGrain": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "crossOrg",
+                                        "brand",
+                                        "offer",
+                                        "campaign",
+                                        "audience"
+                                      ],
+                                      "description": "The grain the price was read from (this grain when own). Null ⟺ nothing is held."
+                                    },
+                                    "unpricedReason": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "no_evidence",
+                                        "leg_unpriceable",
+                                        "mature_cut_unavailable",
+                                        "vendor_cost_unknown"
+                                      ],
+                                      "description": "Why costPerOutcomeUsd is null: no grain up the cascade holds evidence on this basis; the grain holding it cannot walk it to the leg's step (an undeclared rate); the mature cut could not be made for this read; (actual-cost read only) the grain it comes from, or one it floors against, holds spend of no known vendor cost. Null ⟺ a price is held."
+                                    },
+                                    "vendorCostKnown": {
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "required": [
+                                    "costPerOutcomeUsd",
+                                    "source",
+                                    "fromGrain",
+                                    "unpricedReason",
+                                    "vendorCostKnown"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "flash",
+                                "mature"
+                              ]
+                            },
+                            "description": "The billed read's priceByGrain at VENDOR cost: a held price is known when the grain it is read from and every grain it floors against are fully priced on that basis; otherwise costPerOutcomeUsd is null with unpricedReason `vendor_cost_unknown` and the billed provenance kept."
                           }
                         },
                         "required": [
