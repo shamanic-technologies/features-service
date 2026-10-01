@@ -85,6 +85,7 @@ import {
 import { SALES_FUNNELS, SALES_FUNNEL_KEYS, salesFunnelIndex, type SalesFunnelKey } from "./sales-funnels.js";
 import { fetchBrandLegEconomics, type BrandLegEconomics, type BrandLegRate } from "./brand-leg-economics-client.js";
 import { CHANNEL_STEP_KEYS, FUNNEL_STEP_LABEL_TO_KEY, type ChannelStepKey } from "./acquisition-channels.js";
+import { FUNNEL_LEGS, funnelLeg, legKeyBetween } from "./funnel-legs.js";
 import { defaultLegRatePct } from "./default-leg-rates.js";
 import { median } from "./stated-economics.js";
 import { mapWithConcurrency } from "./concurrency.js";
@@ -141,8 +142,21 @@ export interface MeasuredArrowRate {
 }
 
 export interface EffectiveArrowRate {
+  /** brand-service's own wording for the FROM step (joins the brand-service leg-rate write). */
   fromStep: string;
+  /** brand-service's own wording for the TO step. */
   toStep: string;
+  /**
+   * The leg's identity in this service's PUBLIC catalogue (`/public/channels` `legs[].legKey`), so a
+   * consumer joins the two reads on one token with no translation table: brand-service may still spell
+   * a step differently ("Form filled", "Purchase") from the catalogue ("Form submitted", "Direct
+   * purchase"). Null only for a leg the catalogue does not carry.
+   */
+  legKey: string | null;
+  /** The FROM step's catalogue label (`legs[].fromStep.label`). Null when `legKey` is. */
+  catalogueFromStep: string | null;
+  /** The TO step's catalogue label (`legs[].toStep.label`). Null when `legKey` is. */
+  catalogueToStep: string | null;
   /** The rate every money figure is priced on for this arrow, 0..100. Never null on a catalogue leg: the
    *  per-leg default is the last source (`lib/default-leg-rates.ts`). */
   effectiveRatePct: number | null;
@@ -422,6 +436,15 @@ export function legPairKey(fromStep: string, toStep: string): string {
   return `${key(fromStep)}>${key(toStep)}`;
 }
 
+/** PURE: the catalogue identity of the leg between two step LABELS (either spelling), or nulls when the
+ *  public catalogue carries no such leg. */
+export function catalogueLegOf(fromStep: string, toStep: string): Pick<EffectiveArrowRate, "legKey" | "catalogueFromStep" | "catalogueToStep"> {
+  const [from, to] = legPairKey(fromStep, toStep).split(">");
+  const leg = isChannelStepKey(from) && isChannelStepKey(to) ? funnelLeg(legKeyBetween(from, to)) : null;
+  if (!leg || !leg.fromStep) return { legKey: null, catalogueFromStep: null, catalogueToStep: null };
+  return { legKey: leg.legKey, catalogueFromStep: leg.fromStep.label, catalogueToStep: leg.toStep.label };
+}
+
 /** The seeded default of the leg between two step LABELS (either spelling), or null when none is seeded. */
 function defaultRateOfLeg(fromStep: string, toStep: string): number | null {
   const [from, to] = legPairKey(fromStep, toStep).split(">");
@@ -541,6 +564,7 @@ export function resolveArrow(
   return {
     fromStep,
     toStep,
+    ...catalogueLegOf(fromStep, toStep),
     effectiveRatePct,
     source,
     unresolvedReason: effectiveRatePct === null ? "no_rate_available" : null,
@@ -598,6 +622,9 @@ export function buildBrandEffectiveRates(input: {
   };
   // Every leg of the whole catalogue is resolved, so a pricing read can walk any path from any step.
   for (const funnelKey of SALES_FUNNEL_KEYS) for (const a of funnelArrows(funnelKey)) resolveLeg(a.fromStep, a.toStep);
+  // ...and every leg between two steps of the PUBLIC catalogue, by its catalogue labels, so a leg the
+  // catalogue gains is served (with its default at worst) without anyone remembering to add it here.
+  for (const leg of FUNNEL_LEGS) if (leg.fromStep) resolveLeg(leg.fromStep.label, leg.toStep.label);
   const funnels = [...input.funnelKeys]
     .sort((a, b) => salesFunnelIndex(a) - salesFunnelIndex(b))
     .map((funnelKey): EffectiveFunnelRates => ({
