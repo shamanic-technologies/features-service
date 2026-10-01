@@ -114,11 +114,29 @@ describe("overlayVendorProjection — both versions of a leg-keyed row", () => {
     expect(row.estimatesByGrain.brand.mature).toMatchObject({ spentUsd: 12 });
     // …but its priced fields floor against the fleet, whose mature money is unknown.
     expect(row.estimatesByGrain.brand.vendorCost.vendorCostKnown).toBe(false);
-    // Its FLASH side cannot be read at all (the unpriced read sat on mature): unknown, not zero.
-    expect(row.estimatesByGrain.brand.flash).toMatchObject({ spentUsd: null, costPerOutcomeUsd: null });
+    // Its FLASH side is real vendor money: a mature unpriced row states every non-audience grain that holds
+    // unpriced spend (on flash when it has no mature evidence), so the brand's absence is a real zero.
+    expect(row.estimatesByGrain.brand.flash).toMatchObject({ spentUsd: 52 });
     expect(row.maturity.resolved.mature.costPerOutcomeUsd).toBeNull();
     expect(row.resolved.costPerOutcomeUsd).toBeNull();
     expect(row.resolved.vendorCostKnown).toBe(false);
+  });
+
+  it("a YOUNG grain of a mature row (served on flash) is priced on its own flash version", () => {
+    // The mission is younger than the cut: no mature evidence, so the projection serves its FLASH block.
+    const young = (spent: number, outcomes: number) => ({ ...block("flash", [spent, outcomes], [0, 0]), isMature: false });
+    const billed = response("mature", { ...BILLED.rows[0].estimatesByGrain, campaign: young(33.74, 2) }, { flash: 260 / 14, mature: 5 });
+    const vendor = response("mature", { ...VENDOR.rows[0].estimatesByGrain, campaign: young(6.75, 2) }, { flash: 52 / 14, mature: 1 });
+    const unpriced = response("flash", {}, { flash: 1, mature: 1 });
+    const row = overlayVendorProjection(billed, vendor, unpriced).rows[0] as any;
+    expect(row.estimatesByGrain.campaign.basis).toBe("flash");
+    expect(row.estimatesByGrain.campaign.isMature).toBe(false);
+    expect(row.estimatesByGrain.campaign.vendorCost.vendorCostKnown).toBe(true);
+    expect(row.estimatesByGrain.campaign.evidence.spentUsd).toBe(6.75);
+    expect(row.estimatesByGrain.campaign.flash).toMatchObject({ spentUsd: 6.75, outcomes: 2 });
+    // The rest of the row stays on its mature version.
+    expect(row.estimatesByGrain.brand.basis).toBe("mature");
+    expect(row.estimatesByGrain.brand.evidence.spentUsd).toBe(12);
   });
 
   it("a vendor read that priced the row on the OTHER version never lends its fields to this one", () => {
