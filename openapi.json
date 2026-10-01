@@ -14512,10 +14512,27 @@
                     "type": "object",
                     "properties": {
                       "fromStep": {
-                        "type": "string"
+                        "type": "string",
+                        "description": "The FROM step in brand-service's own wording, so the arrow joins the brand-service leg-rate write. May differ from the public catalogue's label (brand-service 'Form filled' vs catalogue 'Form submitted'): join the catalogue on legKey or catalogueFromStep instead."
                       },
                       "toStep": {
-                        "type": "string"
+                        "type": "string",
+                        "description": "The TO step in brand-service's own wording. Same join rule as fromStep."
+                      },
+                      "legKey": {
+                        "type": "string",
+                        "nullable": true,
+                        "description": "This leg's identity in the public catalogue (GET /public/channels legs[].legKey), so the two reads join on one token with no translation table. Null only for a leg the catalogue does not carry."
+                      },
+                      "catalogueFromStep": {
+                        "type": "string",
+                        "nullable": true,
+                        "description": "The FROM step's label in the public catalogue (legs[].fromStep.label). Null when legKey is."
+                      },
+                      "catalogueToStep": {
+                        "type": "string",
+                        "nullable": true,
+                        "description": "The TO step's label in the public catalogue (legs[].toStep.label). Null when legKey is."
                       },
                       "effectiveRatePct": {
                         "type": "number",
@@ -14634,6 +14651,9 @@
                     "required": [
                       "fromStep",
                       "toStep",
+                      "legKey",
+                      "catalogueFromStep",
+                      "catalogueToStep",
                       "effectiveRatePct",
                       "source",
                       "unresolvedReason",
@@ -14654,6 +14674,165 @@
               ]
             },
             "description": "Every funnel of the catalogue, in catalogue order — the same set brand-service's brand-grain read serves."
+          },
+          "legs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "fromStep": {
+                  "type": "string",
+                  "description": "The FROM step in brand-service's own wording, so the arrow joins the brand-service leg-rate write. May differ from the public catalogue's label (brand-service 'Form filled' vs catalogue 'Form submitted'): join the catalogue on legKey or catalogueFromStep instead."
+                },
+                "toStep": {
+                  "type": "string",
+                  "description": "The TO step in brand-service's own wording. Same join rule as fromStep."
+                },
+                "legKey": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "This leg's identity in the public catalogue (GET /public/channels legs[].legKey), so the two reads join on one token with no translation table. Null only for a leg the catalogue does not carry."
+                },
+                "catalogueFromStep": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The FROM step's label in the public catalogue (legs[].fromStep.label). Null when legKey is."
+                },
+                "catalogueToStep": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The TO step's label in the public catalogue (legs[].toStep.label). Null when legKey is."
+                },
+                "effectiveRatePct": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "The rate every money figure (pipeline, ROI, CAC, projections) is priced on for this arrow, 0..100. Never null on a catalogue leg: the seeded per-leg default is the last source."
+                },
+                "source": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "measured",
+                    "manual",
+                    "median",
+                    "default"
+                  ],
+                  "description": "Which source effectiveRatePct is, in precedence order: measured on the brand's own leads (≥ minMeasuredFromReached on the FROM step), else what the brand stated by hand (brand-service brand-grain store), else the cross-org median of what brands stated, else `default`: the seeded per-leg industry benchmark (defaultRatePct), never the brand's own figure. Null only for a leg outside the catalogue that nothing prices."
+                },
+                "unresolvedReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "no_rate_available"
+                  ],
+                  "description": "Null on every catalogue leg (a default always exists). Kept for readers of the older contract."
+                },
+                "measured": {
+                  "type": "object",
+                  "properties": {
+                    "basis": {
+                      "type": "string",
+                      "enum": [
+                        "our_leads",
+                        "crm"
+                      ],
+                      "description": "WHERE this leg was measured. crm: the brand's CRM directly evidences BOTH ends of the leg, so it is measured on the client's WHOLE CRM history (crm-service funnel reach, contactsAtOrBeyond(TO) / contactsAtOrBeyond(FROM)). our_leads: on this brand's leads. fromReached is the population either way, so a consumer can say 'measured on 251 contacts in your CRM' or 'measured on 26 of our leads'."
+                    },
+                    "outcomesCounted": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "all",
+                        "caused_by_our_outreach"
+                      ],
+                      "description": "On our_leads, which outcomes the counts include: caused_by_our_outreach whenever the brand's CRM is available (crm.status used) — a leg only our outreach can observe is not credited with CRM outcomes our outreach did not cause; all otherwise (today's rule). Null on a crm-measured leg. Measurement only: what the ROI prices is unchanged."
+                    },
+                    "fromReached": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "Distinct leads (basis our_leads) or CRM contacts (basis crm) that reached the arrow's FROM step — the population the rate is measured on. Null when that step is not counted by anything in the fleet, or its evidence was unreadable."
+                    },
+                    "toReached": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "Distinct leads that reached the TO step. Same null rule."
+                    },
+                    "ratePct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "toReached / fromReached × 100 — the brand's funnel-step conversion for this arrow, byte-equal to funnelSteps.conversionFromPreviousPct for the rung. Null when either count is null or fromReached is 0."
+                    },
+                    "sufficient": {
+                      "type": "boolean",
+                      "description": "True exactly when fromReached ≥ minMeasuredFromReached, i.e. this measured rate is the effective one. The bar is on the DENOMINATOR, so an arrow truly at 0% still becomes measured."
+                    },
+                    "gap": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "step_not_counted",
+                        "evidence_unreadable",
+                        "below_learning_bar",
+                        "to_exceeds_from"
+                      ],
+                      "description": "Why the measured rate is not the effective one; null when it is. to_exceeds_from: more leads at TO than FROM, so the ratio is no probability (never clamped)."
+                    }
+                  },
+                  "required": [
+                    "basis",
+                    "outcomesCounted",
+                    "fromReached",
+                    "toReached",
+                    "ratePct",
+                    "sufficient",
+                    "gap"
+                  ]
+                },
+                "manualRatePct": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "What the brand stated by hand for this arrow, or null when it has not."
+                },
+                "median": {
+                  "type": "object",
+                  "properties": {
+                    "ratePct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "The cross-org MEDIAN (never a mean) of the rates brands STATED for this (funnel, arrow). Null when none did."
+                    },
+                    "brandCount": {
+                      "type": "integer",
+                      "description": "How many brands' statements the median is taken over."
+                    }
+                  },
+                  "required": [
+                    "ratePct",
+                    "brandCount"
+                  ]
+                },
+                "defaultRatePct": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "The seeded per-leg default (industry benchmark, 0..100], stated whether or not it is the effective source."
+                }
+              },
+              "required": [
+                "fromStep",
+                "toStep",
+                "legKey",
+                "catalogueFromStep",
+                "catalogueToStep",
+                "effectiveRatePct",
+                "source",
+                "unresolvedReason",
+                "measured",
+                "manualRatePct",
+                "median",
+                "defaultRatePct"
+              ]
+            },
+            "description": "Every leg between two steps, once (the grain a rate lives at), including EVERY non-entry leg of the public catalogue (GET /public/channels legs[] with a fromStep), each with a non-null effectiveRatePct and its source (the seeded default at worst). Join to the catalogue on legKey."
           }
         },
         "required": [
@@ -14661,7 +14840,8 @@
           "crm",
           "minMeasuredFromReached",
           "contactedRecipients",
-          "funnels"
+          "funnels",
+          "legs"
         ]
       },
       "BrandContactedValueResponse": {

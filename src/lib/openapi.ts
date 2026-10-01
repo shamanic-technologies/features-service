@@ -2031,8 +2031,11 @@ const measuredArrowRateSchema = z.object({
   gap: z.enum(["step_not_counted", "evidence_unreadable", "below_learning_bar", "to_exceeds_from"]).nullable().describe("Why the measured rate is not the effective one; null when it is. to_exceeds_from: more leads at TO than FROM, so the ratio is no probability (never clamped)."),
 });
 const effectiveArrowRateSchema = z.object({
-  fromStep: z.string(),
-  toStep: z.string(),
+  fromStep: z.string().describe("The FROM step in brand-service's own wording, so the arrow joins the brand-service leg-rate write. May differ from the public catalogue's label (brand-service 'Form filled' vs catalogue 'Form submitted'): join the catalogue on legKey or catalogueFromStep instead."),
+  toStep: z.string().describe("The TO step in brand-service's own wording. Same join rule as fromStep."),
+  legKey: z.string().nullable().describe("This leg's identity in the public catalogue (GET /public/channels legs[].legKey), so the two reads join on one token with no translation table. Null only for a leg the catalogue does not carry."),
+  catalogueFromStep: z.string().nullable().describe("The FROM step's label in the public catalogue (legs[].fromStep.label). Null when legKey is."),
+  catalogueToStep: z.string().nullable().describe("The TO step's label in the public catalogue (legs[].toStep.label). Null when legKey is."),
   effectiveRatePct: z.number().nullable().describe("The rate every money figure (pipeline, ROI, CAC, projections) is priced on for this arrow, 0..100. Never null on a catalogue leg: the seeded per-leg default is the last source."),
   source: z.enum(["measured", "manual", "median", "default"]).nullable().describe("Which source effectiveRatePct is, in precedence order: measured on the brand's own leads (≥ minMeasuredFromReached on the FROM step), else what the brand stated by hand (brand-service brand-grain store), else the cross-org median of what brands stated, else `default`: the seeded per-leg industry benchmark (defaultRatePct), never the brand's own figure. Null only for a leg outside the catalogue that nothing prices."),
   unresolvedReason: z.enum(["no_rate_available"]).nullable().describe("Null on every catalogue leg (a default always exists). Kept for readers of the older contract."),
@@ -2061,6 +2064,7 @@ const brandConversionRatesResponseRef = registry.register(
       steps: z.array(z.string()),
       arrows: z.array(effectiveArrowRateSchema).describe("One entry per consecutive pair of the funnel's steps, in order."),
     })).describe("Every funnel of the catalogue, in catalogue order — the same set brand-service's brand-grain read serves."),
+    legs: z.array(effectiveArrowRateSchema).describe("Every leg between two steps, once (the grain a rate lives at), including EVERY non-entry leg of the public catalogue (GET /public/channels legs[] with a fromStep), each with a non-null effectiveRatePct and its source (the seeded default at worst). Join to the catalogue on legKey."),
   }),
 );
 

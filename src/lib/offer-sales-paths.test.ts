@@ -18,6 +18,9 @@ import { priceFromLadder } from "../routes/offer-sales-paths.js";
 const arrow = (fromStep: string, toStep: string, pct: number, source: EffectiveArrowRate["source"] = "manual"): EffectiveArrowRate => ({
   fromStep,
   toStep,
+  legKey: null,
+  catalogueFromStep: null,
+  catalogueToStep: null,
   effectiveRatePct: pct,
   source,
   unresolvedReason: null,
