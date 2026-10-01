@@ -36,9 +36,12 @@ function deps(fixture: {
       const out = new Map<string, BrandSpendableBudget>();
       for (const p of pairs) {
         const configuredUsd = fixture.budgetUsd[p.brandId] ?? 0;
+        const runningUsd = fixture.runningUsd?.[p.brandId] ?? configuredUsd;
         out.set(spendableKey(p.orgId, p.brandId), {
           configuredUsd,
-          runningUsd: fixture.runningUsd?.[p.brandId] ?? configuredUsd,
+          runningUsd,
+          proactiveRunningUsd: runningUsd,
+          reactiveRunningUsd: 0,
         });
       }
       return out;
@@ -246,7 +249,7 @@ describe("aggregateFleetNewSequences", () => {
       },
       paymentHold: async () => null,
       spendableBudgets: async (pairs) =>
-        new Map(pairs.map((p) => [spendableKey(p.orgId, p.brandId), { configuredUsd: 100, runningUsd: 100 }])),
+        new Map(pairs.map((p) => [spendableKey(p.orgId, p.brandId), { configuredUsd: 100, runningUsd: 100, proactiveRunningUsd: 100, reactiveRunningUsd: 0 }])),
       brandSpentTodayUsd: async () => 0,
     };
     await aggregateFleetNewSequences(COLD, NOW, d);

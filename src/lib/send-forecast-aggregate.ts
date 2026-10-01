@@ -156,7 +156,8 @@ export async function aggregateFleetNewSequences(
       if (
         accountStatus(
           spendable.configuredUsd,
-          spendable.runningUsd,
+          spendable.proactiveRunningUsd,
+          spendable.reactiveRunningUsd,
           balance.actualUsd,
           balance.autoTopupEnabled,
           holdByOrg.get(b.orgId) ?? null,
@@ -164,7 +165,8 @@ export async function aggregateFleetNewSequences(
       ) {
         return null;
       }
-      const budget = spendable.runningUsd; // "active" guarantees > 0
+      // Proactive only: a reactive cap starts no conversation, so it forecasts no new contact. "active" guarantees > 0.
+      const budget = spendable.proactiveRunningUsd;
 
       const R = budget * bestInvRate;
       const spentTodayUsd = await deps.brandSpentTodayUsd(b.brandId, featureList.join(","), b.orgId, now);
