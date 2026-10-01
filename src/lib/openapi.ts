@@ -2509,6 +2509,98 @@ registry.registerPath({
   },
 });
 
+// ── GET /internal/orgs/{orgId}/period-recap (lib/org-period-recap.ts) ──
+const recapNullReason = z
+  .enum(["nothing_sent", "reply_rate_unavailable", "economics_missing", "no_spend_in_window", "lifetime_revenue_differs_across_brands"])
+  .describe("Why the figure beside it is null. nothing_sent = no email went out in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue / reply-to-paid rate; no_spend_in_window = the org spent nothing in the window; lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]).");
+const recapBrandSchema = z.object({
+  brandId: z.string(),
+  emailsSent: z.number().int(),
+  emailsDelivered: z.number().int(),
+  recipientsContacted: z.number().int(),
+  positiveReplyRatePct: z.number().nullable().describe("Positive replies per 100 contacted leads used for the expectation."),
+  rateSource: z.enum(["brand_mature", "fleet"]).nullable().describe("brand_mature = the brand's own leads contacted before the start_to_conversation maturity cutoff, holding at least outcomesRequired positive replies; fleet = the public onboarding's fleet rate (best workflow on start_to_conversation). A brand a few days old is priced on the fleet rate."),
+  matureCohort: z.object({
+    cutoffDate: z.string(),
+    recipientsContacted: z.number().int(),
+    recipientsRepliesPositive: z.number().int(),
+    outcomesRequired: z.number().int(),
+  }).describe("The brand's own mature cohort (contacted on days before cutoffDate) the rate is read from when it qualifies."),
+  expectedPositiveReplies: z.number().nullable(),
+  replyToPaidClientPct: z.number().nullable().describe("P(paid client | positive reply) from the brand's effective economics (replyToPaidClientPct, else replyToMeeting x meetingToClose)."),
+  lifetimeRevenuePerClientUsd: z.number().nullable(),
+  economicsSource: z.enum(["user", "cross-brand-average"]).nullable(),
+  expectedPaidClients: z.number().nullable(),
+  expectedRevenueUsd: z.number().nullable(),
+  nullReason: recapNullReason.nullable(),
+});
+const orgPeriodRecapResponseRef = registry.register(
+  "OrgPeriodRecapResponse",
+  z.object({
+    orgId: z.string(),
+    window: z.object({ from: z.string(), to: z.string(), grain: z.literal("utc_day"), days: z.number().int() }),
+    pricing: z.literal("net"),
+    costBasis: z.literal("committed"),
+    outbound: z.object({
+      emailsSent: z.number().int().describe("Emails sent in the window, every step of every sequence (email-gateway emailStats.sent per UTC day, summed). 0 is measured."),
+      emailsDelivered: z.number().int(),
+      recipientsContacted: z.number().int().describe("Leads contacted in the window: the per-day series behind the dashboard's Outreach card, summed over the window."),
+      deliveryRatePct: z.number().nullable().describe("100 x emailsDelivered / emailsSent in the window. The WINDOW twin of the dashboard's whole-history outcomes.sending.deliveryRatePct (lead grain); never relabel one as the other."),
+      deliveryRateNullReason: recapNullReason.nullable(),
+    }),
+    expectedPositiveReplies: z.number().nullable().describe("Sum over brands of recipientsContacted x positiveReplyRatePct. 0 when nothing was contacted (true); null when a brand that sent has no rate."),
+    expectedPositiveRepliesNullReason: recapNullReason.nullable(),
+    spendUsd: z.number().describe("The org's whole COMMITTED spend in the window, NET basis (every brand, setup included)."),
+    expectedReturn: z.object({
+      basis: z.literal("positive_replies").describe("Only the positive-reply route is priced; website visits are not, so this under-states rather than over-states."),
+      expectedPaidClients: z.number().nullable(),
+      expectedRevenueUsd: z.number().nullable(),
+      roiMultiple: z.number().nullable().describe("expectedRevenueUsd / spendUsd."),
+      lifetimeRevenuePerClientUsd: z.number().nullable().describe("The lifetime revenue per client the ROI is based on (brand effective economics), when every brand that sent shares one."),
+      lifetimeRevenueNullReason: recapNullReason.nullable(),
+      nullReason: recapNullReason.nullable(),
+    }),
+    budgetIncrease: z.object({
+      amountUsd: z.number(),
+      basis: z.literal("linear_at_current_results").describe("amountUsd more buys amountUsd/spendUsd more of the same volume at the same results; no diminishing or improving returns are claimed."),
+      expectedAdditionalPositiveReplies: z.number().nullable(),
+      expectedAdditionalRevenueUsd: z.number().nullable().describe("amountUsd x roiMultiple."),
+      revenueMultiple: z.number().nullable().describe("(spendUsd + amountUsd) / spendUsd: the revenue multiple versus this window at current results."),
+      nullReason: recapNullReason.nullable(),
+    }),
+    brands: z.array(recapBrandSchema).describe("Every brand the org ever broadcast for, ascending brandId. Counts add up to the top-level figures."),
+    fleetPositiveReplyRate: z.object({
+      ratePct: z.number(),
+      basis: z.enum(["mature", "flash"]),
+      workflowDynastySlug: z.string().nullable(),
+    }).nullable().describe("The fleet benchmark used for brands with no mature rate; null before the first outcome-prices build."),
+  }),
+);
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/orgs/{orgId}/period-recap",
+  summary: "One org's outbound over a window and what it is expected to return (internal, api-key)",
+  description:
+    "Ready-to-display figures for ONE org over ONE window of whole UTC days (both bounds inclusive), across every brand it broadcasts for: emails sent, delivery rate, EXPECTED positive replies for that volume, EXPECTED return multiple on the window's net committed spend with the lifetime revenue per client it rests on, and the expected gain of $100 more at current results. " +
+    "Built for billing-service's subscription email: billing owns the moment and the send, every figure is computed here from the producers the dashboard reads. Expected replies use the brand's own MATURE positive-reply rate when it has one, else the fleet rate the public onboarding quotes, and say which (rateSource). " +
+    "Unknown is null with a reason, never 0; a 0 is served only where it is true (nothing sent). Service-to-service: x-api-key only, the org in the path, no user identity. Not cached.",
+  tags: ["Internal"],
+  request: {
+    params: z.object({ orgId: z.string().uuid() }),
+    query: z.object({
+      from: z.string().describe("First UTC day of the window, YYYY-MM-DD, inclusive."),
+      to: z.string().describe("Last UTC day of the window, YYYY-MM-DD, inclusive. At most 93 days after from."),
+    }),
+  },
+  responses: {
+    200: { description: "The recap", content: { "application/json": { schema: orgPeriodRecapResponseRef } } },
+    400: { description: "Invalid orgId or window (code org_id_invalid | window_invalid | window_too_long)", content: { "application/json": { schema: errorResponse } } },
+    401: { description: "Invalid or missing API key", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "A producer could not be read", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 // ── GET /internal/stats/accounts ──────────────────────────────────────────────
 
 const accountRowSchema = z.object({
