@@ -13,12 +13,21 @@
  * billing's recurring revenue (2026-09-29). CONFIGURED stays on the row because a
  * customer's own settings screen must still be able to state what they set.
  *
- * STATUS rule (exact, precedence order):
+ * PROACTIVE vs REACTIVE (owner rule 2026-10-01). A PROACTIVE campaign starts conversations (its leg
+ * is an ENTRY leg, `fromStep: null`, e.g. cold email) and spends its daily budget; a REACTIVE one only
+ * acts on a conversation that already exists (AI meeting booking) and its budget is a CAP, rarely
+ * spent. The running budget a client is charged for is PROACTIVE ONLY, so `runningDailyBudgetUsd` is
+ * the proactive running budget (re-based in place 2026-10-01; it used to fold the reactive cap in, and
+ * read Doc Dinners "active at $20/day" on an AI-meeting-booking cap with its cold email stopped). The
+ * reactive cap rides beside it as `reactiveRunningDailyCapUsd`, never summed into money in play.
+ *
+ * STATUS rule (exact, precedence order; "running" = PROACTIVE running):
  *   0a. billing cannot charge the org because it has NO chargeable card (`no_chargeable_card`)     → "no_payment_method"
  *   0b. billing cannot charge the org for any other reason (payment-outlook `charge_blocked`)      → "payment_declined"
  *   1. runningDailyBudgetUsd > 0 && (autoTopupEnabled || actualBalanceUsd > runningDailyBudgetUsd) → "active"
- *   2. else configuredDailyBudgetUsd > 0                                                          → "paused"
- *   3. else                                                                                       → "inactive"
+ *   2. else runningDailyBudgetUsd == 0 && reactiveRunningDailyCapUsd > 0                           → "reactive_only"
+ *   3. else configuredDailyBudgetUsd > 0                                                          → "paused"
+ *   4. else                                                                                       → "inactive"
  * PAYMENT_DECLINED wins over everything: billing's verdict is that the org's card is refused (or
  * unusable, or from an unsupported country), campaign-service stops every campaign of such an org, and
  * any budget still reported as running is money that cannot be collected. `paymentDeclinedReason`
@@ -74,7 +83,7 @@ import { readStatedAmountsSoft } from "./stated-monthly-amounts-store.js";
  * its own stop reason (`no_payment_method`) and the customer dashboard says "no payment method"; the
  * audit says the same thing rather than calling it a declined payment (owner rule 2026-09-27).
  */
-export type AccountStatus = "active" | "payment_declined" | "no_payment_method" | "paused" | "inactive";
+export type AccountStatus = "active" | "payment_declined" | "no_payment_method" | "reactive_only" | "paused" | "inactive";
 
 /** billing's blockedReason for an org with no chargeable card. */
 export const NO_CHARGEABLE_CARD = "no_chargeable_card";
@@ -103,10 +112,18 @@ export interface AccountRow {
    */
   configuredDailyBudgetUsd: number;
   /**
-   * The part of the configured ceiling standing behind a campaign that is ongoing right now, in USD.
-   * This is the money in play, and the figure the ACTIVE verdict and every fleet total read.
+   * The part of the configured ceiling standing behind a PROACTIVE campaign that is ongoing right now,
+   * in USD. This is the money in play, and the figure the ACTIVE verdict and every fleet total read.
+   * Equals `proactiveRunningDailyBudgetUsd` (re-based to proactive-only 2026-10-01).
    */
   runningDailyBudgetUsd: number;
+  /** The PROACTIVE running daily budget, in USD (same value as `runningDailyBudgetUsd`, named for what it is). */
+  proactiveRunningDailyBudgetUsd: number;
+  /**
+   * The ceiling standing behind REACTIVE campaigns that are ongoing right now, in USD: a CAP on work
+   * that fires only when a lead reaches its step, rarely spent. Never money in play, never in a total of it.
+   */
+  reactiveRunningDailyCapUsd: number;
   /** Org SPENDABLE balance in USD (billing balance_cents/100; committed usage incl. holds subtracted). Display. */
   orgBalanceUsd: number;
   /** Org ACTUAL balance in USD (billing actual_balance_cents/100; only actualized usage subtracted). The active-verdict figure. */
@@ -141,8 +158,10 @@ export interface AccountRow {
 }
 
 export interface AccountsStats {
-  /** Σ RUNNING daily budget over ACTIVE rows only (USD; undiscounted — a budget is not a charge). The staff-page figure. */
+  /** Σ PROACTIVE RUNNING daily budget over ACTIVE rows only (USD; undiscounted — a budget is not a charge). The staff-page figure. */
   totalRunningDailyBudgetUsd: number;
+  /** Σ REACTIVE running cap over ACTIVE and REACTIVE_ONLY rows (USD). A cap, never added to the figure above. */
+  totalReactiveRunningDailyCapUsd: number;
   /** Σ CONFIGURED daily budget over ACTIVE rows only (USD). What those customers set, whatever is running. */
   totalConfiguredDailyBudgetUsd: number;
   /**
@@ -163,6 +182,8 @@ export interface AccountsStats {
   /** Orgs whose MRR billing could not state — listed beside the sum, never counted as 0. */
   mrrUnknownOrgIds: string[];
   activeCount: number;
+  /** Rows with nothing proactive running but a reactive campaign still on (status reactive_only). */
+  reactiveOnlyCount: number;
   paymentDeclinedCount: number;
   /** Rows with no chargeable card (status no_payment_method); excluded from every money total. */
   noPaymentMethodCount: number;
@@ -220,6 +241,10 @@ const REAL_DEPS: AccountsDeps = {
  * The exact status rule (single source, used by the accounts row builder, the send-forecast active
  * gate, and asserted directly in tests). Precedence: payment_declined / no_payment_method > active > paused > inactive.
  *
+ * REACTIVE_ONLY is the account whose proactive campaigns are all stopped while a reactive one is still
+ * on: it starts no conversation and spends next to nothing, so it is not active, and it is not paused
+ * either (something still runs). Like paused it is excluded from every fleet money total.
+ *
  * PAYMENT_DECLINED first: when billing cannot charge the org, nothing it has configured or running is
  * money in play, so it can never read active (nor paused, which is the customer's own choice).
  *
@@ -232,13 +257,15 @@ const REAL_DEPS: AccountsDeps = {
  */
 export function accountStatus(
   configuredDailyBudgetUsd: number,
-  runningDailyBudgetUsd: number,
+  proactiveRunningDailyBudgetUsd: number,
+  reactiveRunningDailyCapUsd: number,
   actualBalanceUsd: number,
   autoTopupEnabled: boolean,
   paymentHold: PaymentHold | null,
 ): AccountStatus {
   if (paymentHold) return paymentHold.blockedReason === NO_CHARGEABLE_CARD ? "no_payment_method" : "payment_declined";
-  if (runningDailyBudgetUsd > 0 && (autoTopupEnabled || actualBalanceUsd > runningDailyBudgetUsd)) return "active";
+  if (proactiveRunningDailyBudgetUsd > 0 && (autoTopupEnabled || actualBalanceUsd > proactiveRunningDailyBudgetUsd)) return "active";
+  if (proactiveRunningDailyBudgetUsd === 0 && reactiveRunningDailyCapUsd > 0) return "reactive_only";
   if (configuredDailyBudgetUsd > 0) return "paused";
   return "inactive";
 }
@@ -325,13 +352,16 @@ export async function buildAccountsAudit(
         brandName: brand?.name ?? null,
         brandDomain: brand?.domain ?? null,
         configuredDailyBudgetUsd: budget.configuredUsd,
-        runningDailyBudgetUsd: budget.runningUsd,
+        runningDailyBudgetUsd: budget.proactiveRunningUsd,
+        proactiveRunningDailyBudgetUsd: budget.proactiveRunningUsd,
+        reactiveRunningDailyCapUsd: budget.reactiveRunningUsd,
         orgBalanceUsd: balance.spendableUsd,
         orgActualBalanceUsd: balance.actualUsd,
         autoTopupEnabled: balance.autoTopupEnabled,
         status: accountStatus(
           budget.configuredUsd,
-          budget.runningUsd,
+          budget.proactiveRunningUsd,
+          budget.reactiveRunningUsd,
           balance.actualUsd,
           balance.autoTopupEnabled,
           info.hold,
@@ -344,13 +374,16 @@ export async function buildAccountsAudit(
       };
   });
 
-  // Deterministic order: active → payment_declined → no_payment_method → paused → inactive, then running budget desc, tiebreak on the
+  // Deterministic order: active → payment_declined → no_payment_method → reactive_only → paused → inactive, then running budget desc, tiebreak on the
   // configured one (a paused row runs nothing, so its posted money is what ranks it), then brandId.
-  const statusRank: Record<AccountStatus, number> = { active: 0, payment_declined: 1, no_payment_method: 2, paused: 3, inactive: 4 };
+  const statusRank: Record<AccountStatus, number> = { active: 0, payment_declined: 1, no_payment_method: 2, reactive_only: 3, paused: 4, inactive: 5 };
   rows.sort((a, b) => {
     if (a.status !== b.status) return statusRank[a.status] - statusRank[b.status];
     if (a.runningDailyBudgetUsd !== b.runningDailyBudgetUsd) {
       return b.runningDailyBudgetUsd - a.runningDailyBudgetUsd;
+    }
+    if (a.reactiveRunningDailyCapUsd !== b.reactiveRunningDailyCapUsd) {
+      return b.reactiveRunningDailyCapUsd - a.reactiveRunningDailyCapUsd;
     }
     if (a.configuredDailyBudgetUsd !== b.configuredDailyBudgetUsd) {
       return b.configuredDailyBudgetUsd - a.configuredDailyBudgetUsd;
@@ -364,7 +397,9 @@ export async function buildAccountsAudit(
   //    alongside so a reader can see what those same customers posted, and can never be mistaken for it.
   let totalRunningDailyBudgetUsd = 0;
   let totalConfiguredDailyBudgetUsd = 0;
+  let totalReactiveRunningDailyCapUsd = 0;
   let activeCount = 0;
+  let reactiveOnlyCount = 0;
   let pausedCount = 0;
   let paymentDeclinedCount = 0;
   let noPaymentMethodCount = 0;
@@ -372,7 +407,11 @@ export async function buildAccountsAudit(
     if (row.status === "active") {
       totalRunningDailyBudgetUsd += row.runningDailyBudgetUsd;
       totalConfiguredDailyBudgetUsd += row.configuredDailyBudgetUsd;
+      totalReactiveRunningDailyCapUsd += row.reactiveRunningDailyCapUsd;
       activeCount += 1;
+    } else if (row.status === "reactive_only") {
+      totalReactiveRunningDailyCapUsd += row.reactiveRunningDailyCapUsd;
+      reactiveOnlyCount += 1;
     } else if (row.status === "paused") {
       pausedCount += 1;
     } else if (row.status === "payment_declined") {
@@ -381,10 +420,11 @@ export async function buildAccountsAudit(
       noPaymentMethodCount += 1;
     }
   }
-  const inactiveCount = rows.length - activeCount - pausedCount - paymentDeclinedCount - noPaymentMethodCount;
+  const inactiveCount = rows.length - activeCount - reactiveOnlyCount - pausedCount - paymentDeclinedCount - noPaymentMethodCount;
   // Round the fleet totals to cents defensively (per-row budgets are already dollars-and-cents).
   totalRunningDailyBudgetUsd = Math.round(totalRunningDailyBudgetUsd * 100) / 100;
   totalConfiguredDailyBudgetUsd = Math.round(totalConfiguredDailyBudgetUsd * 100) / 100;
+  totalReactiveRunningDailyCapUsd = Math.round(totalReactiveRunningDailyCapUsd * 100) / 100;
 
   // 5. MRR / ARR — billing's recurring figure for the fleet, summed on its own decimal text. The
   //    running budget above is configuration in play, not revenue, and is no longer multiplied into MRR.
@@ -394,12 +434,14 @@ export async function buildAccountsAudit(
     stats: {
       totalRunningDailyBudgetUsd,
       totalConfiguredDailyBudgetUsd,
+      totalReactiveRunningDailyCapUsd,
       mrrUsd: mrr ? mrr.mrrUsd : null,
       arrUsd: mrr ? Math.round(mrr.mrrUsd * ARR_MONTHS * 100) / 100 : null,
       mrrBasis: "billing_recurring",
       mrrUnavailableReason: mrr ? null : wantRecurring ? "billing_revenue_unavailable" : "not_requested",
       mrrUnknownOrgIds: mrr ? mrr.unknownOrgIds : [],
       activeCount,
+      reactiveOnlyCount,
       paymentDeclinedCount,
       noPaymentMethodCount,
       pausedCount,

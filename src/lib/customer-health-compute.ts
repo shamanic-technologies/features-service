@@ -197,8 +197,12 @@ export interface CustomerHealthRow {
   paymentDeclinedReason: string | null;
   /** Every ceiling this (org, brand) configured, in USD — what they set. */
   configuredDailyBudgetUsd: number;
-  /** The part of it standing behind an ongoing campaign, in USD — what is actually in play. */
+  /** The part of it standing behind an ongoing PROACTIVE campaign, in USD — what is actually in play. */
   runningDailyBudgetUsd: number;
+  /** Same value as `runningDailyBudgetUsd`, named for what it is. */
+  proactiveRunningDailyBudgetUsd: number;
+  /** The cap standing behind ongoing REACTIVE campaigns, in USD — rarely spent, never money in play. */
+  reactiveRunningDailyCapUsd: number;
   orgBalanceUsd: number;
   orgActualBalanceUsd: number;
   autoTopupEnabled: boolean;
@@ -246,6 +250,7 @@ export interface CustomerHealthRow {
 export interface CustomerHealthStats {
   totalCustomers: number;
   activeCount: number;
+  reactiveOnlyCount: number;
   paymentDeclinedCount: number;
   noPaymentMethodCount: number;
   pausedCount: number;
@@ -511,7 +516,7 @@ function composeHealth(
   };
 }
 
-const STATUS_RANK: Record<AccountStatus, number> = { active: 0, payment_declined: 1, no_payment_method: 2, paused: 3, inactive: 4 };
+const STATUS_RANK: Record<AccountStatus, number> = { active: 0, payment_declined: 1, no_payment_method: 2, reactive_only: 3, paused: 4, inactive: 5 };
 
 /**
  * Build the full customer-health board. Reuses the accounts audit (identity + status + budget + balance)
@@ -710,6 +715,8 @@ export async function buildCustomerHealthBoard(
       paymentDeclinedReason: account.paymentDeclinedReason,
       configuredDailyBudgetUsd: account.configuredDailyBudgetUsd,
       runningDailyBudgetUsd: account.runningDailyBudgetUsd,
+      proactiveRunningDailyBudgetUsd: account.proactiveRunningDailyBudgetUsd,
+      reactiveRunningDailyCapUsd: account.reactiveRunningDailyCapUsd,
       orgBalanceUsd: account.orgBalanceUsd,
       orgActualBalanceUsd: account.orgActualBalanceUsd,
       autoTopupEnabled: account.autoTopupEnabled,
@@ -749,6 +756,7 @@ export async function buildCustomerHealthBoard(
 
   // 4. Fleet stats.
   let activeCount = 0;
+  let reactiveOnlyCount = 0;
   let pausedCount = 0;
   let paymentDeclinedCount = 0;
   let noPaymentMethodCount = 0;
@@ -757,6 +765,7 @@ export async function buildCustomerHealthBoard(
   let redCount = 0;
   for (const row of rows) {
     if (row.status === "active") activeCount += 1;
+    else if (row.status === "reactive_only") reactiveOnlyCount += 1;
     else if (row.status === "paused") pausedCount += 1;
     else if (row.status === "payment_declined") paymentDeclinedCount += 1;
     else if (row.status === "no_payment_method") noPaymentMethodCount += 1;
@@ -770,10 +779,11 @@ export async function buildCustomerHealthBoard(
     stats: {
       totalCustomers: rows.length,
       activeCount,
+      reactiveOnlyCount,
       paymentDeclinedCount,
       noPaymentMethodCount,
       pausedCount,
-      inactiveCount: rows.length - activeCount - pausedCount - paymentDeclinedCount - noPaymentMethodCount,
+      inactiveCount: rows.length - activeCount - reactiveOnlyCount - pausedCount - paymentDeclinedCount - noPaymentMethodCount,
       greenCount,
       yellowCount,
       redCount,

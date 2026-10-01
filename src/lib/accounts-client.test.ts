@@ -83,8 +83,17 @@ describe("fetchSpendableBudgets", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonRes({
         brands: [
-          { orgId: "o1", brandId: "b1", configuredDailyBudgetCents: 6000, runningDailyBudgetCents: 5000 },
-          { orgId: "o2", brandId: "b2", configuredDailyBudgetCents: 1000, runningDailyBudgetCents: 0 },
+          {
+            orgId: "o1", brandId: "b1", configuredDailyBudgetCents: 6000, runningDailyBudgetCents: 5000,
+            rows: [
+              { legKey: "start_to_conversation", dailyBudgetCents: 5000, running: true, campaignId: "c1" },
+              { legKey: "start_to_website_visit", dailyBudgetCents: 1000, running: false, campaignId: "c2" },
+            ],
+          },
+          {
+            orgId: "o2", brandId: "b2", configuredDailyBudgetCents: 1000, runningDailyBudgetCents: 0,
+            rows: [{ legKey: "start_to_conversation", dailyBudgetCents: 1000, running: false, campaignId: null }],
+          },
         ],
         unavailable: [],
       }),
@@ -93,16 +102,22 @@ describe("fetchSpendableBudgets", () => {
       { orgId: "o1", brandId: "b1" },
       { orgId: "o2", brandId: "b2" },
     ]);
-    expect(out.get(spendableKey("o1", "b1"))).toEqual({ configuredUsd: 60, runningUsd: 50 });
-    expect(out.get(spendableKey("o2", "b2"))).toEqual({ configuredUsd: 10, runningUsd: 0 });
+    expect(out.get(spendableKey("o1", "b1"))).toEqual({ configuredUsd: 60, runningUsd: 50, proactiveRunningUsd: 50, reactiveRunningUsd: 0 });
+    expect(out.get(spendableKey("o2", "b2"))).toEqual({ configuredUsd: 10, runningUsd: 0, proactiveRunningUsd: 0, reactiveRunningUsd: 0 });
   });
 
   it("keys on the PAIR, so one brand claimed by two orgs keeps each org's own money", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonRes({
         brands: [
-          { orgId: "oA", brandId: "shared", configuredDailyBudgetCents: 2000, runningDailyBudgetCents: 2000 },
-          { orgId: "oB", brandId: "shared", configuredDailyBudgetCents: 500, runningDailyBudgetCents: 0 },
+          {
+            orgId: "oA", brandId: "shared", configuredDailyBudgetCents: 2000, runningDailyBudgetCents: 2000,
+            rows: [{ legKey: "start_to_conversation", dailyBudgetCents: 2000, running: true, campaignId: "cA" }],
+          },
+          {
+            orgId: "oB", brandId: "shared", configuredDailyBudgetCents: 500, runningDailyBudgetCents: 0,
+            rows: [{ legKey: "start_to_conversation", dailyBudgetCents: 500, running: false, campaignId: "cB" }],
+          },
         ],
         unavailable: [],
       }),
@@ -113,6 +128,80 @@ describe("fetchSpendableBudgets", () => {
     ]);
     expect(out.get(spendableKey("oA", "shared"))?.runningUsd).toBe(20);
     expect(out.get(spendableKey("oB", "shared"))?.runningUsd).toBe(0);
+  });
+
+  it("splits the running money into PROACTIVE (entry leg) and REACTIVE (continues a conversation)", async () => {
+    // Doc Dinners, prod 2026-10-01: cold email ($107 + $10) stopped, AI meeting booking ($20) still on.
+    // Olive: one ongoing cold-email campaign at $20 on start_to_website_visit.
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonRes({
+        brands: [
+          {
+            orgId: "oDoc", brandId: "doc", configuredDailyBudgetCents: 13700, runningDailyBudgetCents: 2000,
+            rows: [
+              { legKey: "conversation_to_meeting_booked", dailyBudgetCents: 2000, running: true, campaignId: "cMeet" },
+              { legKey: "start_to_conversation", dailyBudgetCents: 1000, running: false, campaignId: "cFb" },
+              { legKey: "start_to_conversation", dailyBudgetCents: 10700, running: false, campaignId: "cCold" },
+            ],
+          },
+          {
+            orgId: "oOlive", brandId: "olive", configuredDailyBudgetCents: 2000, runningDailyBudgetCents: 2000,
+            rows: [{ legKey: "start_to_website_visit", dailyBudgetCents: 2000, running: true, campaignId: "cOl" }],
+          },
+        ],
+        unavailable: [],
+      }),
+    );
+    const out = await fetchSpendableBudgets([
+      { orgId: "oDoc", brandId: "doc" },
+      { orgId: "oOlive", brandId: "olive" },
+    ]);
+    expect(out.get(spendableKey("oDoc", "doc"))).toEqual({ configuredUsd: 137, runningUsd: 20, proactiveRunningUsd: 0, reactiveRunningUsd: 20 });
+    expect(out.get(spendableKey("oOlive", "olive"))).toEqual({ configuredUsd: 20, runningUsd: 20, proactiveRunningUsd: 20, reactiveRunningUsd: 0 });
+  });
+
+  it("reads the leg of the campaign behind a leg-less ceiling (brand-grain pot)", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonRes({
+        brands: [
+          {
+            orgId: "o1", brandId: "b1", configuredDailyBudgetCents: 3000, runningDailyBudgetCents: 3000,
+            rows: [{ legKey: null, dailyBudgetCents: 3000, running: true, campaignId: "cMeet" }],
+            campaigns: [{ campaignId: "cMeet", legKey: "conversation_to_meeting_booked" }],
+          },
+        ],
+        unavailable: [],
+      }),
+    );
+    const out = await fetchSpendableBudgets([{ orgId: "o1", brandId: "b1" }]);
+    expect(out.get(spendableKey("o1", "b1"))).toMatchObject({ proactiveRunningUsd: 0, reactiveRunningUsd: 30 });
+  });
+
+  it("counts a running ceiling naming no published leg as PROACTIVE (pre-leg campaigns were cold email)", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonRes({
+        brands: [
+          {
+            orgId: "o1", brandId: "b1", configuredDailyBudgetCents: 1500, runningDailyBudgetCents: 1500,
+            rows: [{ legKey: null, dailyBudgetCents: 1500, running: true, campaignId: null }],
+          },
+        ],
+        unavailable: [],
+      }),
+    );
+    const out = await fetchSpendableBudgets([{ orgId: "o1", brandId: "b1" }]);
+    expect(out.get(spendableKey("o1", "b1"))).toMatchObject({ proactiveRunningUsd: 15, reactiveRunningUsd: 0 });
+  });
+
+  it("THROWS when the producer sends no ceiling rows (the split cannot be made)", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonRes({
+        brands: [{ orgId: "o1", brandId: "b1", configuredDailyBudgetCents: 1000, runningDailyBudgetCents: 1000 }],
+        unavailable: [],
+      }),
+    );
+    await expect(fetchSpendableBudgets([{ orgId: "o1", brandId: "b1" }])).rejects.toThrow(/no ceiling rows/);
   });
 
   it("THROWS on an unavailable pair rather than reading it as zero", async () => {

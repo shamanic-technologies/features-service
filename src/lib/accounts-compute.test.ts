@@ -29,6 +29,8 @@ function deps(fixture: {
   // Running ceilings per brandId — the part behind an ongoing campaign. Defaults to the configured one,
   // i.e. "everything this brand funded is actually running".
   runningUsd?: Record<string, number>;
+  /** Reactive running cap per brand (USD). Absent ⇒ 0. */
+  reactiveUsd?: Record<string, number>;
   brands?: Record<string, BrandBasic>;
   // billing's payment hold per org (charge_blocked → its reason); absent = billing can charge it.
   paymentHold?: Record<string, PaymentHold>;
@@ -46,9 +48,13 @@ function deps(fixture: {
       const out = new Map<string, BrandSpendableBudget>();
       for (const p of pairs) {
         const configuredUsd = fixture.configuredUsd[p.brandId] ?? 0;
+        const proactiveRunningUsd = fixture.runningUsd?.[p.brandId] ?? configuredUsd;
+        const reactiveRunningUsd = fixture.reactiveUsd?.[p.brandId] ?? 0;
         out.set(spendableKey(p.orgId, p.brandId), {
           configuredUsd,
-          runningUsd: fixture.runningUsd?.[p.brandId] ?? configuredUsd,
+          runningUsd: proactiveRunningUsd + reactiveRunningUsd,
+          proactiveRunningUsd,
+          reactiveRunningUsd,
         });
       }
       return out;
@@ -57,46 +63,46 @@ function deps(fixture: {
   };
 }
 
-// accountStatus(configuredDailyBudgetUsd, runningDailyBudgetUsd, actualBalanceUsd, autoTopupEnabled)
+// accountStatus(configuredDailyBudgetUsd, runningDailyBudgetUsd, 0, actualBalanceUsd, autoTopupEnabled)
 describe("accountStatus — the exact status rule (active > paused > inactive)", () => {
   it("money posted with NOTHING running is paused, however well funded the org is", () => {
     // The production shape this rule exists for: a brand funds a funnel whose campaign is stopped, or
     // was never created at all. It cannot spend a cent, so it is not an active customer.
-    expect(accountStatus(10, 0, 1000, false, null)).toBe("paused");
-    expect(accountStatus(10, 0, 1000, true, null)).toBe("paused"); // auto-topup does not rescue it
-    expect(accountStatus(15, 0, 100, false, null)).toBe("paused");
+    expect(accountStatus(10, 0, 0, 1000, false, null)).toBe("paused");
+    expect(accountStatus(10, 0, 0, 1000, true, null)).toBe("paused"); // auto-topup does not rescue it
+    expect(accountStatus(15, 0, 0, 100, false, null)).toBe("paused");
   });
 
   it("running money decides active, not the configured ceiling above it", () => {
     // A brand configured at 60 with only 50 of it running is active on the 50 — and a balance that
     // covers the running figure but not the configured one is enough.
-    expect(accountStatus(60, 50, 55, false, null)).toBe("active");
+    expect(accountStatus(60, 50, 0, 55, false, null)).toBe("active");
     // The same brand read on its configured ceiling loses its active status: 55 no longer covers a
     // day, so it falls to paused — money posted that the org cannot fund.
-    expect(accountStatus(60, 60, 55, false, null)).toBe("paused");
+    expect(accountStatus(60, 60, 0, 55, false, null)).toBe("paused");
   });
 
   it("auto-topup enabled + running>0 → active even when the actual balance is below one day's budget", () => {
     // The concrete case: distribute.you — running 20, actual 53.17, auto-topup ON.
-    expect(accountStatus(20, 20, 53.17, true, null)).toBe("active");
+    expect(accountStatus(20, 20, 0, 53.17, true, null)).toBe("active");
     // Auto-topup covers even a near-empty balance (never runs dry).
-    expect(accountStatus(20, 20, 1, true, null)).toBe("active");
-    expect(accountStatus(20, 20, 0, true, null)).toBe("active");
+    expect(accountStatus(20, 20, 0, 1, true, null)).toBe("active");
+    expect(accountStatus(20, 20, 0, 0, true, null)).toBe("active");
   });
 
   it("actual balance > running budget + auto-topup OFF → active", () => {
-    expect(accountStatus(10, 10, 100, false, null)).toBe("active");
-    expect(accountStatus(20, 20, 53.17, false, null)).toBe("active");
+    expect(accountStatus(10, 10, 0, 100, false, null)).toBe("active");
+    expect(accountStatus(20, 20, 0, 53.17, false, null)).toBe("active");
   });
 
   it("nothing configured and nothing running → inactive, whatever the balance", () => {
-    expect(accountStatus(0, 0, 100, false, null)).toBe("inactive");
-    expect(accountStatus(0, 0, 100, true, null)).toBe("inactive"); // auto-topup does not rescue a 0 budget
+    expect(accountStatus(0, 0, 0, 100, false, null)).toBe("inactive");
+    expect(accountStatus(0, 0, 0, 100, true, null)).toBe("inactive"); // auto-topup does not rescue a 0 budget
   });
 
   it("actual balance <= running budget AND auto-topup OFF → paused, not inactive: the money is posted", () => {
-    expect(accountStatus(10, 10, 10, false, null)).toBe("paused"); // actual == budget → cannot cover next day
-    expect(accountStatus(10, 10, 9, false, null)).toBe("paused");
+    expect(accountStatus(10, 10, 0, 10, false, null)).toBe("paused"); // actual == budget → cannot cover next day
+    expect(accountStatus(10, 10, 0, 9, false, null)).toBe("paused");
   });
 });
 
@@ -104,27 +110,71 @@ describe("accountStatus — a payment billing cannot collect beats every budget"
   const declined: PaymentHold = { blockedReason: "card_declined" };
   it("a charge_blocked org is payment_declined even while its budget still reads running and funded", () => {
     // PPE Pro Solutions, prod 2026-09-26: $49/day running, auto-topup on, card declined.
-    expect(accountStatus(49, 49, 1000, true, declined)).toBe("payment_declined");
-    expect(accountStatus(49, 49, -50, false, declined)).toBe("payment_declined");
+    expect(accountStatus(49, 49, 0, 1000, true, declined)).toBe("payment_declined");
+    expect(accountStatus(49, 49, 0, -50, false, declined)).toBe("payment_declined");
     // The same account with a card billing CAN charge reads active — the hold is the only difference.
-    expect(accountStatus(49, 49, 1000, true, null)).toBe("active");
+    expect(accountStatus(49, 49, 0, 1000, true, null)).toBe("active");
   });
   it("an org held for having no chargeable card is no_payment_method, never payment_declined (nothing was declined)", () => {
-    expect(accountStatus(5, 5, 12, false, { blockedReason: "no_chargeable_card" })).toBe("no_payment_method");
-    expect(accountStatus(5, 0, 12, false, { blockedReason: "no_chargeable_card" })).toBe("no_payment_method");
+    expect(accountStatus(5, 5, 0, 12, false, { blockedReason: "no_chargeable_card" })).toBe("no_payment_method");
+    expect(accountStatus(5, 0, 0, 12, false, { blockedReason: "no_chargeable_card" })).toBe("no_payment_method");
     for (const r of ["card_declined", "card_unusable", "retries_exhausted", "card_country_unsupported"]) {
-      expect(accountStatus(5, 5, 12, false, { blockedReason: r })).toBe("payment_declined");
+      expect(accountStatus(5, 5, 0, 12, false, { blockedReason: r })).toBe("payment_declined");
     }
   });
 
   it("a held org whose campaigns are already stopped is payment_declined, not paused (paused is the customer's choice)", () => {
     // The Federal Architect: configured $10, nothing running, card country unsupported.
-    expect(accountStatus(10, 0, 18, false, { blockedReason: "card_country_unsupported" })).toBe("payment_declined");
-    expect(accountStatus(10, 0, 18, false, null)).toBe("paused");
+    expect(accountStatus(10, 0, 0, 18, false, { blockedReason: "card_country_unsupported" })).toBe("payment_declined");
+    expect(accountStatus(10, 0, 0, 18, false, null)).toBe("paused");
+  });
+});
+
+describe("accountStatus — proactive vs reactive (owner rule 2026-10-01)", () => {
+  it("only a reactive campaign running → reactive_only, never active, never paused", () => {
+    // Doc Dinners: cold email stopped, AI meeting booking still on at a $20 cap.
+    expect(accountStatus(137, 0, 20, 500, true, null)).toBe("reactive_only");
+    expect(accountStatus(137, 0, 20, 0, false, null)).toBe("reactive_only");
+  });
+  it("a reactive cap never makes an account active, and never blocks a proactive one from being active", () => {
+    expect(accountStatus(40, 20, 20, 500, false, null)).toBe("active");
+    expect(accountStatus(0, 0, 0, 500, false, null)).toBe("inactive");
+  });
+  it("a payment hold still beats reactive_only", () => {
+    expect(accountStatus(137, 0, 20, 500, true, { blockedReason: "card_declined" })).toBe("payment_declined");
   });
 });
 
 describe("buildAccountsAudit", () => {
+  it("serves the proactive budget as the running one and the reactive cap beside it; a reactive-only account is excluded from the totals", async () => {
+    const d = deps({
+      memberships: [
+        { orgId: "oDoc", brandId: "doc" },
+        { orgId: "oOlive", brandId: "olive" },
+        { orgId: "oMix", brandId: "mix" },
+      ],
+      balanceUsd: { oDoc: 500, oOlive: 500, oMix: 500 },
+      configuredUsd: { doc: 137, olive: 20, mix: 70 },
+      runningUsd: { doc: 0, olive: 20, mix: 50 },
+      reactiveUsd: { doc: 20, mix: 20 },
+    });
+    const r = await buildAccountsAudit(COLD, NOW, d);
+    const byBrand = Object.fromEntries(r.rows.map((row) => [row.brandId, row]));
+
+    expect(byBrand.doc).toMatchObject({ status: "reactive_only", runningDailyBudgetUsd: 0, proactiveRunningDailyBudgetUsd: 0, reactiveRunningDailyCapUsd: 20 });
+    expect(byBrand.olive).toMatchObject({ status: "active", runningDailyBudgetUsd: 20, proactiveRunningDailyBudgetUsd: 20, reactiveRunningDailyCapUsd: 0 });
+    expect(byBrand.mix).toMatchObject({ status: "active", runningDailyBudgetUsd: 50, reactiveRunningDailyCapUsd: 20 });
+
+    // Money in play is proactive only: 20 + 50. Reactive caps ride beside it: 20 (doc) + 20 (mix).
+    expect(r.stats.totalRunningDailyBudgetUsd).toBe(70);
+    expect(r.stats.totalReactiveRunningDailyCapUsd).toBe(40);
+    expect(r.stats.activeCount).toBe(2);
+    expect(r.stats.reactiveOnlyCount).toBe(1);
+    expect(r.stats.pausedCount + r.stats.inactiveCount).toBe(0);
+    expect(r.rows.map((x) => x.brandId)).toEqual(["mix", "olive", "doc"]);
+  });
+
+
   it("builds a row per (org,brand) with both budgets + 3-way status, stats sum ACTIVE only", async () => {
     const d = deps({
       memberships: [
@@ -296,12 +346,14 @@ describe("buildAccountsAudit", () => {
     expect(r.stats).toEqual({
       totalRunningDailyBudgetUsd: 0,
       totalConfiguredDailyBudgetUsd: 0,
+      totalReactiveRunningDailyCapUsd: 0,
       mrrUsd: null,
       arrUsd: null,
       mrrBasis: "billing_recurring",
       mrrUnavailableReason: "not_requested",
       mrrUnknownOrgIds: [],
       activeCount: 0,
+      reactiveOnlyCount: 0,
       paymentDeclinedCount: 0,
       noPaymentMethodCount: 0,
       pausedCount: 0,
