@@ -184,6 +184,26 @@ describe("the public catalogue states ONE composed minimum run length per pair",
     }
   });
 
+  it("GET /public/channels — every step carries a 3-to-5-word shortDescription, no em-dash", async () => {
+    // The onboarding card, the offer's sales-path card and the AI pre-tick prompt all print these words
+    // under the label; a label read cold is ambiguous ("Direct purchase" read as the payment after a signup).
+    mockRows();
+    const res = await request(app).get("/public/channels");
+    expect(res.status).toBe(200);
+    const steps = res.body.steps as Array<{ key: string; shortDescription: string }>;
+    expect(steps.length).toBe(9);
+    for (const step of steps) {
+      const words = step.shortDescription.trim().split(/\s+/).length;
+      expect(words, step.key).toBeGreaterThanOrEqual(3);
+      expect(words, step.key).toBeLessThanOrEqual(6);
+      expect(step.shortDescription).not.toContain("\u2014");
+    }
+    expect(steps.find((s) => s.key === "purchase")!.shortDescription).toBe("Buys online, no sales call");
+    // Riding the shared step shape, so a leg's ends carry it too.
+    const leg = (res.body.legs as Array<{ toStep: { shortDescription: string } }>)[0];
+    expect(leg.toStep.shortDescription).toEqual(expect.any(String));
+  });
+
   it("GET /public/channels — publishes the PURCHASE step, and the website-purchase funnel's three rungs", async () => {
     // AC, read exactly as a consumer reads it: the step vocabulary carries the purchase, the funnel
     // that goes to the sale has it in the MIDDLE, and both its arrows are in the leg vocabulary.

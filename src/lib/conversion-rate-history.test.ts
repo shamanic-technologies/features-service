@@ -19,8 +19,8 @@ import { buildConversionRateHistory } from "./conversion-rate-history.js";
 import type { ScopeOutcomeTerms } from "./cost-per-outcome-history.js";
 import type { SignalSeries } from "./revenue-engine.js";
 
-const VISIT_STEP = { key: "website_visit", label: "Website visit", description: "A buyer lands on the brand's own website." } as const;
-const FORM_STEP = { key: "form_submitted", label: "Form submitted", description: "A buyer fills the brand's form." } as const;
+const VISIT_STEP = { key: "website_visit", label: "Website visit", description: "A buyer lands on the brand's own website.", shortDescription: "x" } as const;
+const FORM_STEP = { key: "form_submitted", label: "Form submitted", description: "A buyer fills the brand's form.", shortDescription: "x" } as const;
 
 /** The reported campaign's entry leg: the click IS the outcome, so the rate is 1 and the count raw. */
 const ENTRY: ScopeOutcomeTerms = {

@@ -118,6 +118,13 @@ export interface ChannelStepDef {
   label: string;
   /** What the step actually is, in the buyer's terms. */
   description: string;
+  /**
+   * The 3-to-5-word caption the onboarding card and the offer's sales-path card print under the label,
+   * and the words the AI that pre-ticks a visitor's steps reads. Owner-approved copy (2026-10-01): a
+   * label read cold is ambiguous ("Direct purchase" read as the payment after a signup), so every
+   * consumer reads the SAME caption from here rather than hardcoding its own. No em-dash.
+   */
+  shortDescription: string;
 }
 
 export const CHANNEL_STEPS: Record<ChannelStepKey, ChannelStepDef> = {
@@ -140,11 +147,13 @@ export const CHANNEL_STEPS: Record<ChannelStepKey, ChannelStepDef> = {
     // reference it; only what a person READS moved.
     label: "Positive reply",
     description: "A buyer answers with interest, on whatever medium the channel runs on.",
+    shortDescription: "Replies they're interested",
   },
   website_visit: {
     key: "website_visit",
     label: "Website visit",
     description: "A buyer lands on the brand's own website.",
+    shortDescription: "Clicks through to your site",
   },
   booking_call: {
     key: "booking_call",
@@ -157,21 +166,25 @@ export const CHANNEL_STEPS: Record<ChannelStepKey, ChannelStepDef> = {
     // brand's stated rate, the fleet median or the per-leg default prices them (`lib/default-leg-rates.ts`).
     label: "Booking call",
     description: "A sales rep calls the buyer by phone, right after they replied with interest, to book the meeting.",
+    shortDescription: "Short qualifying phone call",
   },
   meeting_booked: {
     key: "meeting_booked",
     label: "Meeting booked",
     description: "A buyer takes a slot in the calendar. Nobody has met yet.",
+    shortDescription: "Books a meeting with you",
   },
   meeting_attended: {
     key: "meeting_attended",
     label: "Meeting attended",
     description: "The booked meeting is actually held, with the buyer in the room.",
+    shortDescription: "Shows up to the meeting",
   },
   signup: {
     key: "signup",
     label: "Signup",
     description: "A buyer creates an account on the brand's own product, without paying yet.",
+    shortDescription: "Creates an account or trial",
   },
   form_submitted: {
     key: "form_submitted",
@@ -194,6 +207,7 @@ export const CHANNEL_STEPS: Record<ChannelStepKey, ChannelStepDef> = {
     label: "Form submitted",
     description:
       "A buyer fills a form and hands over their details, either on the brand's own site or on a form hosted by the ad platform.",
+    shortDescription: "Fills a contact or quote form",
   },
   purchase: {
     key: "purchase",
@@ -212,11 +226,13 @@ export const CHANNEL_STEPS: Record<ChannelStepKey, ChannelStepDef> = {
     // paid on the spot with no account created first, as against a signup that may pay later.
     label: "Direct purchase",
     description: "A buyer pays at checkout on the brand's own site. No account needed.",
+    shortDescription: "Buys online, no sales call",
   },
   paid_client: {
     key: "paid_client",
     label: "Paid client",
     description: "A buyer pays. This is the SALE every funnel terminates in.",
+    shortDescription: "Becomes a paying client",
   },
 };
 

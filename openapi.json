@@ -3188,12 +3188,17 @@
                   },
                   "description": {
                     "type": "string"
+                  },
+                  "shortDescription": {
+                    "type": "string",
+                    "description": "A 3-to-5-word caption printed under the step's label (onboarding cards, the offer's sales-path cards) and read by the AI that pre-ticks a visitor's steps, so every consumer reads the same words. Example: 'Buys online, no sales call' under 'Direct purchase'."
                   }
                 },
                 "required": [
                   "key",
                   "label",
-                  "description"
+                  "description",
+                  "shortDescription"
                 ],
                 "description": "The step EVERY count here is denominated in — the scope's own leg's toStep, named by this service rather than chosen by the caller, and the byte-same step learningPhase.outcomeStep reports (one leader resolution serves both, so the curve and the verdict beside it can never be denominated in two different things). A consumer labels the chart with it."
               },
@@ -3282,12 +3287,17 @@
                   },
                   "description": {
                     "type": "string"
+                  },
+                  "shortDescription": {
+                    "type": "string",
+                    "description": "A 3-to-5-word caption printed under the step's label (onboarding cards, the offer's sales-path cards) and read by the AI that pre-ticks a visitor's steps, so every consumer reads the same words. Example: 'Buys online, no sales call' under 'Direct purchase'."
                   }
                 },
                 "required": [
                   "key",
                   "label",
-                  "description"
+                  "description",
+                  "shortDescription"
                 ],
                 "description": "The step EVERY count here is denominated in — the scope's own leg's toStep, named by this service rather than chosen by the caller, and the byte-same step costPerOutcomeHistory.outcomeStep and learningPhase.outcomeStep report (one leader resolution serves all three, so three curves on one screen can never be measuring different steps). A consumer labels the chart with it and never picks a noun."
               },
@@ -3435,12 +3445,17 @@
                   },
                   "description": {
                     "type": "string"
+                  },
+                  "shortDescription": {
+                    "type": "string",
+                    "description": "A 3-to-5-word caption printed under the step's label (onboarding cards, the offer's sales-path cards) and read by the AI that pre-ticks a visitor's steps, so every consumer reads the same words. Example: 'Buys online, no sales call' under 'Direct purchase'."
                   }
                 },
                 "required": [
                   "key",
                   "label",
-                  "description"
+                  "description",
+                  "shortDescription"
                 ],
                 "description": "The leg's own toStep. A campaign converting a reply into a meeting is measured on MEETINGS, never on the replies it does not produce."
               },
@@ -3582,12 +3597,17 @@
                         },
                         "description": {
                           "type": "string"
+                        },
+                        "shortDescription": {
+                          "type": "string",
+                          "description": "A 3-to-5-word caption printed under the step's label (onboarding cards, the offer's sales-path cards) and read by the AI that pre-ticks a visitor's steps, so every consumer reads the same words. Example: 'Buys online, no sales call' under 'Direct purchase'."
                         }
                       },
                       "required": [
                         "key",
                         "label",
-                        "description"
+                        "description",
+                        "shortDescription"
                       ],
                       "description": "The step `outcomesObserved` is denominated in — the leg's OWN toStep, never the first step of the funnel the leg belongs to."
                     },
@@ -4766,12 +4786,16 @@
                   },
                   "description": {
                     "type": "string"
+                  },
+                  "shortDescription": {
+                    "type": "string"
                   }
                 },
                 "required": [
                   "key",
                   "label",
-                  "description"
+                  "description",
+                  "shortDescription"
                 ],
                 "description": "The step a lead is taken out of; null on an entry leg. Read these rather than splitting `legKey`."
               },
@@ -4786,12 +4810,16 @@
                   },
                   "description": {
                     "type": "string"
+                  },
+                  "shortDescription": {
+                    "type": "string"
                   }
                 },
                 "required": [
                   "key",
                   "label",
-                  "description"
+                  "description",
+                  "shortDescription"
                 ],
                 "description": "The step a lead is moved to."
               },
@@ -9406,12 +9434,17 @@
                   },
                   "description": {
                     "type": "string"
+                  },
+                  "shortDescription": {
+                    "type": "string",
+                    "description": "A 3-to-5-word caption printed under the step's label (onboarding cards, the offer's sales-path cards) and read by the AI that pre-ticks a visitor's steps, so every consumer reads the same words. Example: 'Buys online, no sales call' under 'Direct purchase'."
                   }
                 },
                 "required": [
                   "key",
                   "label",
-                  "description"
+                  "description",
+                  "shortDescription"
                 ],
                 "description": "The step EVERY count here is denominated in — the scope's own leg's toStep, named by this service rather than chosen by the caller, and the byte-same step learningPhase.outcomeStep reports (one leader resolution serves both, so the curve and the verdict beside it can never be denominated in two different things). A consumer labels the chart with it."
               },
@@ -9500,12 +9533,17 @@
                   },
                   "description": {
                     "type": "string"
+                  },
+                  "shortDescription": {
+                    "type": "string",
+                    "description": "A 3-to-5-word caption printed under the step's label (onboarding cards, the offer's sales-path cards) and read by the AI that pre-ticks a visitor's steps, so every consumer reads the same words. Example: 'Buys online, no sales call' under 'Direct purchase'."
                   }
                 },
                 "required": [
                   "key",
                   "label",
-                  "description"
+                  "description",
+                  "shortDescription"
                 ],
                 "description": "The step EVERY count here is denominated in — the scope's own leg's toStep, named by this service rather than chosen by the caller, and the byte-same step costPerOutcomeHistory.outcomeStep and learningPhase.outcomeStep report (one leader resolution serves all three, so three curves on one screen can never be measuring different steps). A consumer labels the chart with it and never picks a noun."
               },
@@ -9653,12 +9691,17 @@
                   },
                   "description": {
                     "type": "string"
+                  },
+                  "shortDescription": {
+                    "type": "string",
+                    "description": "A 3-to-5-word caption printed under the step's label (onboarding cards, the offer's sales-path cards) and read by the AI that pre-ticks a visitor's steps, so every consumer reads the same words. Example: 'Buys online, no sales call' under 'Direct purchase'."
                   }
                 },
                 "required": [
                   "key",
                   "label",
-                  "description"
+                  "description",
+                  "shortDescription"
                 ],
                 "description": "The leg's own toStep. A campaign converting a reply into a meeting is measured on MEETINGS, never on the replies it does not produce."
               },
@@ -9800,12 +9843,17 @@
                         },
                         "description": {
                           "type": "string"
+                        },
+                        "shortDescription": {
+                          "type": "string",
+                          "description": "A 3-to-5-word caption printed under the step's label (onboarding cards, the offer's sales-path cards) and read by the AI that pre-ticks a visitor's steps, so every consumer reads the same words. Example: 'Buys online, no sales call' under 'Direct purchase'."
                         }
                       },
                       "required": [
                         "key",
                         "label",
-                        "description"
+                        "description",
+                        "shortDescription"
                       ],
                       "description": "The step `outcomesObserved` is denominated in — the leg's OWN toStep, never the first step of the funnel the leg belongs to."
                     },
@@ -10137,12 +10185,16 @@
                     },
                     "description": {
                       "type": "string"
+                    },
+                    "shortDescription": {
+                      "type": "string"
                     }
                   },
                   "required": [
                     "key",
                     "label",
-                    "description"
+                    "description",
+                    "shortDescription"
                   ]
                 },
                 "valueBasisFunnelKey": {
@@ -10443,12 +10495,16 @@
                       },
                       "description": {
                         "type": "string"
+                      },
+                      "shortDescription": {
+                        "type": "string"
                       }
                     },
                     "required": [
                       "key",
                       "label",
-                      "description"
+                      "description",
+                      "shortDescription"
                     ]
                   }
                 },
@@ -10480,12 +10536,16 @@
                           },
                           "description": {
                             "type": "string"
+                          },
+                          "shortDescription": {
+                            "type": "string"
                           }
                         },
                         "required": [
                           "key",
                           "label",
-                          "description"
+                          "description",
+                          "shortDescription"
                         ],
                         "description": "Null on the ENTRY leg (from nothing)."
                       },
@@ -10500,12 +10560,16 @@
                           },
                           "description": {
                             "type": "string"
+                          },
+                          "shortDescription": {
+                            "type": "string"
                           }
                         },
                         "required": [
                           "key",
                           "label",
-                          "description"
+                          "description",
+                          "shortDescription"
                         ]
                       },
                       "conversionRatePct": {
@@ -13453,12 +13517,17 @@
                   },
                   "description": {
                     "type": "string"
+                  },
+                  "shortDescription": {
+                    "type": "string",
+                    "description": "A 3-to-5-word caption printed under the step's label (onboarding cards, the offer's sales-path cards) and read by the AI that pre-ticks a visitor's steps, so every consumer reads the same words. Example: 'Buys online, no sales call' under 'Direct purchase'."
                   }
                 },
                 "required": [
                   "key",
                   "label",
-                  "description"
+                  "description",
+                  "shortDescription"
                 ],
                 "description": "The step EVERY count here is denominated in — the scope's own leg's toStep, named by this service rather than chosen by the caller, and the byte-same step learningPhase.outcomeStep reports (one leader resolution serves both, so the curve and the verdict beside it can never be denominated in two different things). A consumer labels the chart with it."
               },
@@ -13547,12 +13616,17 @@
                   },
                   "description": {
                     "type": "string"
+                  },
+                  "shortDescription": {
+                    "type": "string",
+                    "description": "A 3-to-5-word caption printed under the step's label (onboarding cards, the offer's sales-path cards) and read by the AI that pre-ticks a visitor's steps, so every consumer reads the same words. Example: 'Buys online, no sales call' under 'Direct purchase'."
                   }
                 },
                 "required": [
                   "key",
                   "label",
-                  "description"
+                  "description",
+                  "shortDescription"
                 ],
                 "description": "The step EVERY count here is denominated in — the scope's own leg's toStep, named by this service rather than chosen by the caller, and the byte-same step costPerOutcomeHistory.outcomeStep and learningPhase.outcomeStep report (one leader resolution serves all three, so three curves on one screen can never be measuring different steps). A consumer labels the chart with it and never picks a noun."
               },
@@ -13700,12 +13774,17 @@
                   },
                   "description": {
                     "type": "string"
+                  },
+                  "shortDescription": {
+                    "type": "string",
+                    "description": "A 3-to-5-word caption printed under the step's label (onboarding cards, the offer's sales-path cards) and read by the AI that pre-ticks a visitor's steps, so every consumer reads the same words. Example: 'Buys online, no sales call' under 'Direct purchase'."
                   }
                 },
                 "required": [
                   "key",
                   "label",
-                  "description"
+                  "description",
+                  "shortDescription"
                 ],
                 "description": "The leg's own toStep. A campaign converting a reply into a meeting is measured on MEETINGS, never on the replies it does not produce."
               },
@@ -13847,12 +13926,17 @@
                         },
                         "description": {
                           "type": "string"
+                        },
+                        "shortDescription": {
+                          "type": "string",
+                          "description": "A 3-to-5-word caption printed under the step's label (onboarding cards, the offer's sales-path cards) and read by the AI that pre-ticks a visitor's steps, so every consumer reads the same words. Example: 'Buys online, no sales call' under 'Direct purchase'."
                         }
                       },
                       "required": [
                         "key",
                         "label",
-                        "description"
+                        "description",
+                        "shortDescription"
                       ],
                       "description": "The step `outcomesObserved` is denominated in — the leg's OWN toStep, never the first step of the funnel the leg belongs to."
                     },
@@ -18321,12 +18405,17 @@
               },
               "description": {
                 "type": "string"
+              },
+              "shortDescription": {
+                "type": "string",
+                "description": "A 3-to-5-word caption printed under the step's label (onboarding cards, the offer's sales-path cards) and read by the AI that pre-ticks a visitor's steps, so every consumer reads the same words. Example: 'Buys online, no sales call' under 'Direct purchase'."
               }
             },
             "required": [
               "key",
               "label",
-              "description"
+              "description",
+              "shortDescription"
             ],
             "description": "The step a lead is taken OUT of. NULL is 'from nothing' — this leg STARTS a funnel. That is the special case in the DATA only: the identifier is as ordinary as any other, so a caller never spells an entry leg differently."
           },
@@ -18352,12 +18441,17 @@
               },
               "description": {
                 "type": "string"
+              },
+              "shortDescription": {
+                "type": "string",
+                "description": "A 3-to-5-word caption printed under the step's label (onboarding cards, the offer's sales-path cards) and read by the AI that pre-ticks a visitor's steps, so every consumer reads the same words. Example: 'Buys online, no sales call' under 'Direct purchase'."
               }
             },
             "required": [
               "key",
               "label",
-              "description"
+              "description",
+              "shortDescription"
             ],
             "description": "The step a lead is moved TO."
           },
@@ -18495,12 +18589,17 @@
                     },
                     "description": {
                       "type": "string"
+                    },
+                    "shortDescription": {
+                      "type": "string",
+                      "description": "A 3-to-5-word caption printed under the step's label (onboarding cards, the offer's sales-path cards) and read by the AI that pre-ticks a visitor's steps, so every consumer reads the same words. Example: 'Buys online, no sales call' under 'Direct purchase'."
                     }
                   },
                   "required": [
                     "key",
                     "label",
-                    "description"
+                    "description",
+                    "shortDescription"
                   ],
                   "description": "The step this channel takes a lead OUT of. NULL is 'from nothing' — the lead was not on the funnel at all until this channel produced its first step, which is the SPECIAL case rather than the rule."
                 },
@@ -18526,12 +18625,17 @@
                     },
                     "description": {
                       "type": "string"
+                    },
+                    "shortDescription": {
+                      "type": "string",
+                      "description": "A 3-to-5-word caption printed under the step's label (onboarding cards, the offer's sales-path cards) and read by the AI that pre-ticks a visitor's steps, so every consumer reads the same words. Example: 'Buys online, no sales call' under 'Direct purchase'."
                     }
                   },
                   "required": [
                     "key",
                     "label",
-                    "description"
+                    "description",
+                    "shortDescription"
                   ],
                   "description": "The step this channel moves the lead TO."
                 },
@@ -18582,12 +18686,17 @@
                 },
                 "description": {
                   "type": "string"
+                },
+                "shortDescription": {
+                  "type": "string",
+                  "description": "A 3-to-5-word caption printed under the step's label (onboarding cards, the offer's sales-path cards) and read by the AI that pre-ticks a visitor's steps, so every consumer reads the same words. Example: 'Buys online, no sales call' under 'Direct purchase'."
                 }
               },
               "required": [
                 "key",
                 "label",
-                "description"
+                "description",
+                "shortDescription"
               ]
             },
             "description": "The steps this channel produces FROM NOTHING — DERIVED as the `to` of its `from: null` legs, and unchanged in meaning from before a channel could state an internal leg. A channel that only performs internal legs of a funnel legitimately produces none."
@@ -18716,12 +18825,17 @@
                     },
                     "description": {
                       "type": "string"
+                    },
+                    "shortDescription": {
+                      "type": "string",
+                      "description": "A 3-to-5-word caption printed under the step's label (onboarding cards, the offer's sales-path cards) and read by the AI that pre-ticks a visitor's steps, so every consumer reads the same words. Example: 'Buys online, no sales call' under 'Direct purchase'."
                     }
                   },
                   "required": [
                     "key",
                     "label",
-                    "description"
+                    "description",
+                    "shortDescription"
                   ],
                   "description": "The step this funnel STARTS on. Spelled in the shared step vocabulary, so it joins directly against a channel's `producibleSteps`. An ad funnel starts on the step the ad DELIVERS (a booked meeting, a lead form submitted) — the click before it is not a step anybody buys."
                 },
@@ -18771,12 +18885,17 @@
                 },
                 "description": {
                   "type": "string"
+                },
+                "shortDescription": {
+                  "type": "string",
+                  "description": "A 3-to-5-word caption printed under the step's label (onboarding cards, the offer's sales-path cards) and read by the AI that pre-ticks a visitor's steps, so every consumer reads the same words. Example: 'Buys online, no sales call' under 'Direct purchase'."
                 }
               },
               "required": [
                 "key",
                 "label",
-                "description"
+                "description",
+                "shortDescription"
               ]
             },
             "description": "The step vocabulary itself, published so a consumer never hardcodes it to join a channel's legs against a funnel's. It spans EVERY step of every funnel, not only the ones a funnel can start from — a channel performing an internal leg names the step it moves a lead OUT of, and that step is never one a funnel starts at."
@@ -21148,12 +21267,16 @@
                             },
                             "description": {
                               "type": "string"
+                            },
+                            "shortDescription": {
+                              "type": "string"
                             }
                           },
                           "required": [
                             "key",
                             "label",
-                            "description"
+                            "description",
+                            "shortDescription"
                           ],
                           "description": "The step a lead is taken out of; null on an entry leg. Read these rather than splitting `legKey`."
                         },
@@ -21168,12 +21291,16 @@
                             },
                             "description": {
                               "type": "string"
+                            },
+                            "shortDescription": {
+                              "type": "string"
                             }
                           },
                           "required": [
                             "key",
                             "label",
-                            "description"
+                            "description",
+                            "shortDescription"
                           ],
                           "description": "The step a lead is moved to."
                         },

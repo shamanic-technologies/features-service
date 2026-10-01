@@ -58,6 +58,7 @@ export interface ChannelStepDefWire {
   key: ChannelStepKey;
   label: string;
   description: string;
+  shortDescription: string;
 }
 
 /** One leg, rendered: the step it takes a lead out of (null when the lead did not exist on the funnel
