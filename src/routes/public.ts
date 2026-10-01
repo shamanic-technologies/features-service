@@ -1701,14 +1701,14 @@ export async function handleFleetFunnelReturn(
 
 interface ChannelLegReturnRow extends OutcomeReturnFigures {
   legKey: string;
-  fromStep: { key: string; label: string; description: string } | null;
-  toStep: { key: string; label: string; description: string };
+  fromStep: { key: string; label: string; description: string; shortDescription: string } | null;
+  toStep: { key: string; label: string; description: string; shortDescription: string };
   /** The same median over the brands MATURE ON THIS LEG, on both versions. */
   maturity: MatureScopesReturn;
 }
 
 interface ChannelOutcomeReturnRow extends OutcomeReturnFigures {
-  step: { key: string; label: string; description: string };
+  step: { key: string; label: string; description: string; shortDescription: string };
   /** The legs of this channel landing on the step, whose brands make up the population. */
   legKeys: string[];
   /** The same median over the brands mature on every one of these legs they perform, on both versions. */
