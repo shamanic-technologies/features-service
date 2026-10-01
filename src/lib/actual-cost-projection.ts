@@ -132,12 +132,16 @@ export function overlayVendorProjection(
     /**
      * The BILLED spend of grain `g` with no known vendor cost, on `version` (the row's basis when null).
      * The unpriced read states a grain only where it holds unpriced spend on ITS OWN basis, so a grain it
-     * does not state holds none — except the FLASH side of a row the unpriced read priced on its MATURE
-     * version: young unpriced spend is then not stated anywhere, and the answer is "unknown" (Infinity).
+     * does not state holds none — except the FLASH side of the AUDIENCE grain of a row the unpriced read
+     * priced on its MATURE version: young unpriced spend is then not stated anywhere, and the answer is
+     * "unknown" (Infinity). Every other grain of a mature row is stated on flash when it holds no mature
+     * evidence, so its absence is a real zero.
      */
     const unpricedOn = (g: GrainName, version: MaturityBasis | null): number => {
       const block = u?.estimatesByGrain[g];
-      if (!block) return version === "flash" && u?.maturity?.basis === "mature" ? Infinity : 0;
+      // A mature row states its young non-audience grains on flash, so only its AUDIENCE grain can hide
+      // young unpriced spend.
+      if (!block) return version === "flash" && u?.maturity?.basis === "mature" && g === "audience" ? Infinity : 0;
       if (version === null) return block.evidence.spentUsd ?? 0;
       const figures = block[version];
       if (figures) return figures.spentUsd;
@@ -152,12 +156,19 @@ export function overlayVendorProjection(
     // mature dollar is unpriced — its row can then sit on flash while the billed row sits on mature.
     // Its priced fields are then the other version's, so they are never served under this row's.
     const vendorOnRowBasis = rowBasis === null || v?.maturity?.basis === rowBasis;
-    const mainKnown = (g: GrainName) => vendorOnRowBasis && known(g);
+    // A young grain of a mature row is served on FLASH (its own `basis`): its main fields are known on that
+    // version, and only when the vendor read serves the same grain on the same version.
+    const grainBasis = (g: GrainName): MaturityBasis | null => b.estimatesByGrain[g]?.basis ?? rowBasis;
+    const mainKnown = (g: GrainName) => {
+      const gb = grainBasis(g);
+      if (gb === rowBasis) return vendorOnRowBasis && known(g);
+      return (v?.estimatesByGrain[g]?.basis ?? null) === gb && known(g, gb);
+    };
 
     const estimatesByGrain: ActualCostProjectionRow["estimatesByGrain"] = {};
     for (const g of grains) {
       const vendorBlock = v?.estimatesByGrain[g];
-      const unpriced = unpricedOn(g, rowBasis);
+      const unpriced = unpricedOn(g, grainBasis(g));
       const statement: GrainVendorStatement = {
         pricedVendorCostUsd: vendorBlock?.evidence.spentUsd ?? 0,
         unpricedBilledCostUsd: Number.isFinite(unpriced) ? unpriced : 0,
@@ -178,7 +189,7 @@ export function overlayVendorProjection(
             : nullPairMoney(billedBlock[version]);
         }
         block.isMature = billedBlock.isMature ?? null;
-        block.basis = rowBasis;
+        block.basis = grainBasis(g);
       }
       estimatesByGrain[g] = { ...block, vendorCost: statement };
     }

@@ -413,6 +413,39 @@ describe("a leg-keyed ladder prices a MATURE workflow on its mature evidence (fe
     expect(outcomes).toBe(ledgerVisits);
   });
 
+  it("a FLEET-MATURE workflow keeps a YOUNG mission's grain, served on flash with its own verdict (prod 2026-10-01, osprey)", async () => {
+    // A mission started 3 days ago: $33.74 of wf-old runs, 20 leads served, 2 visits — nothing mature yet.
+    CAMPAIGNS.push({ id: "c-young", orgId: ORG, brandIds: [BRAND], featureSlug: SLUG, legKey: VISIT });
+    RUNS.push({ campaignId: "c-young", orgId: ORG, brandId: BRAND, slug: "wf-old", cents: 3374, started: D3, audienceId: "aud-1" });
+    fixture.persons.push(...lead(20, { ...own, campaignId: "c-young", slug: "wf-old", servedAt: D3, clicks: 2, audienceId: "aud-1" }));
+    try {
+      const res = await get(`leg=${VISIT}&campaignId=c-young`);
+      expect(res.status).toBe(200);
+      const old = brandRow(res.body, "dyn-old");
+      // The workflow is still priced on its mature fleet evidence…
+      expect(old.maturity).toMatchObject({ basis: "mature", isMature: true });
+      expect(old.estimatesByGrain.crossOrg.basis).toBe("mature");
+      // …but the mission's grain exists, on flash, with an empty mature half and its own verdict.
+      const campaign = old.estimatesByGrain.campaign;
+      expect(campaign).toBeDefined();
+      expect(campaign.basis).toBe("flash");
+      expect(campaign.isMature).toBe(false);
+      expect(campaign.flash).toMatchObject({ spentUsd: 33.74, contacted: 20, outcomes: 2 });
+      expect(campaign.mature).toMatchObject({ spentUsd: 0, outcomes: 0, costPerOutcomeUsd: null });
+      expect(campaign.evidence.spentUsd).toBeCloseTo(33.74, 6);
+      // RECONCILES with the mission: summed over workflows, the flash half is the mission's whole spend.
+      const rows = res.body.rows.filter((r: any) => r.audienceId === null && r.estimatesByGrain.campaign);
+      const spent = rows.reduce((t: number, r: any) => t + r.estimatesByGrain.campaign.flash.spentUsd, 0);
+      const visits = rows.reduce((t: number, r: any) => t + r.estimatesByGrain.campaign.flash.outcomes, 0);
+      expect(spent).toBeCloseTo(33.74, 6);
+      expect(visits).toBe(2);
+      // The selection is untouched: the row still resolves on its mature ladder.
+      expect(old.resolved.costPerOutcomeUsd).toBeCloseTo(old.maturity.resolved.mature.costPerOutcomeUsd, 9);
+    } finally {
+      CAMPAIGNS.pop();
+    }
+  });
+
   it("a FAILED mature read degrades the answer to flash and says so — it never 502s the ladder", async () => {
     vi.restoreAllMocks();
     mockFetch({ failMatureCosts: true });
