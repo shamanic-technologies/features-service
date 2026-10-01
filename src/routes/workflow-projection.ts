@@ -87,7 +87,7 @@ import {
   type OutcomeFigures,
 } from "../lib/maturity.js";
 import { serveDatesStated } from "../lib/mature-evidence.js";
-import { orderMissionWorkflows } from "../lib/mission-workflow-order.js";
+import { missionPriceOf, orderMissionWorkflows } from "../lib/mission-workflow-order.js";
 import type { EnginePerson } from "../lib/revenue-engine.js";
 
 const router = Router();
@@ -190,8 +190,9 @@ interface GrainBlock {
    * WHICH VERSION OF THE EVIDENCE this block's own fields (`evidence`, `unitCosts`, `legOutcome`,
    * `resolvedOutcomeCount`, `projected`) are on — present ⟺ the caller named a `?leg=` (`lib/maturity.ts`).
    * `mature` for a workflow that is mature on the fleet of its leg (its young spend counts nowhere),
-   * `flash` otherwise (its exploration phase, priced exactly as before). The ROW decides, never the grain,
-   * so every block of one row is on one basis.
+   * `flash` otherwise (its exploration phase, priced exactly as before). The ROW decides, except for a grain
+   * of a MATURE row that holds no mature evidence yet (a young brand / offer / mission): that grain is still
+   * served, on its flash block, with `basis: "flash"` and its own `isMature: false` — never dropped.
    */
   basis?: MaturityBasis;
   /** This grain's figures on BOTH bases, observed (never floored) — see `OutcomeFigures`. */
@@ -324,10 +325,10 @@ export interface ProjectionRow {
    * slug, and a workflow that has never run (the explore allowance) can never outrank one with
    * measured evidence.
    *
-   * ON A MISSION READ (`?leg=&campaignId=` whose campaign states an offer) the order is instead the
-   * OFFER grain's mature cost per outcome, ascending (owner rule 2026-09-30): a workflow still learning
-   * on the offer, or with no outcome there, sorts after every priced one, and one that never ran for the
-   * offer after those. There `recommendedWorkflowDynastySlug` keeps its own order and may not be rank 1.
+   * ON A MISSION READ (`?leg=&campaignId=` whose campaign states an offer) the order is instead MATURE
+   * cost per outcome, finest grain first (owner rules 2026-09-30, 2026-10-01): mature on the offer, then
+   * mature on the brand, then on the fleet, each ascending; the rest keep the order above. When rank 1
+   * holds a mature price it is `recommendedWorkflowDynastySlug`, so the two never disagree.
    */
   rank?: number;
   /**
@@ -2263,11 +2264,18 @@ export function projectFromEvidence(input: {
     });
     const NOTHING_RESOLVED: ResolvedFigures = { grain: null, costPerOutcomeUsd: null, conversionRatePct: null };
     // Stamp every block of the PRICED ladder with its version, both versions' figures, and its verdict.
-    const stampVersions = (priced: Ladder["grains"], basis: MaturityBasis, flash: Ladder, mature: Ladder | null): void => {
+    // `basisOf` names a grain served on another version than the row (a young grain of a mature row).
+    const stampVersions = (
+      priced: Ladder["grains"],
+      basis: MaturityBasis,
+      flash: Ladder,
+      mature: Ladder | null,
+      basisOf: (g: GrainName) => MaturityBasis = () => basis,
+    ): void => {
       for (const g of Object.keys(priced) as GrainName[]) {
         const block = priced[g]!;
         const matureFigures = mature ? figuresOf(mature.evidence[g]) : null;
-        block.basis = basis;
+        block.basis = basisOf(g);
         block.flash = figuresOf(flash.evidence[g]);
         block.mature = matureFigures;
         block.isMature = mature && matureFigures ? isMatureCount(matureFigures.outcomes, legKey) : null;
@@ -2286,8 +2294,23 @@ export function projectFromEvidence(input: {
       const basis: MaturityBasis = verdict.isMature === true && matureHasGrain ? "mature" : "flash";
       const flashResolved = resolve(flash.grains);
       const matureResolved = matureHasGrain ? resolve(mature!.grains) : null;
-      const priced = basis === "mature" ? mature!.grains : flash.grains;
-      stampVersions(priced, basis, flash, mature);
+      // A MATURE row prices on its mature ladder, but a grain that holds no mature evidence yet (a brand,
+      // offer or mission younger than the leg's cut) is still a scope with evidence: it is served on its
+      // FLASH block, stamped `basis: "flash"`, with its own (empty) mature half and `isMature: false`.
+      // The fleet verdict never decides whether a grain EXISTS (prod 2026-10-01: osprey's $33.74 and 2
+      // visits on a 2-day-old mission vanished because the workflow was mature on the fleet). `resolved`
+      // stays the mature ladder's pick, so nothing campaign-service ranks moves. The AUDIENCE grain is
+      // NOT filled: campaign-service's audience draw reads its evidence, and on a mature workflow that
+      // evidence is the mature one by design (young spend must not enter the draw).
+      const youngGrains: GrainName[] =
+        basis === "mature"
+          ? (Object.keys(flash.grains) as GrainName[]).filter((g) => g !== "audience" && !mature!.grains[g])
+          : [];
+      const priced: Ladder["grains"] =
+        basis === "mature"
+          ? { ...mature!.grains, ...Object.fromEntries(youngGrains.map((g) => [g, flash.grains[g]])) }
+          : flash.grains;
+      stampVersions(priced, basis, flash, mature, (g) => (youngGrains.includes(g) ? "flash" : basis));
       return {
         estimatesByGrain: stampGrainBases(priced),
         resolved: basis === "mature" ? matureResolved! : flashResolved,
@@ -2548,22 +2571,24 @@ export function projectFromEvidence(input: {
       return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0;
     });
 
-    // ── ON A MISSION READ, `rank` IS THE OFFER'S OWN COST PER OUTCOME, ASCENDING ─────────────────
+    // ── ON A MISSION READ, THE MONEY GOES TO THE CHEAPEST MATURE WORKFLOW FOR THE OFFER ───────────
     //
     // A mission (a `?campaignId=` beside the `?leg=`, whose campaign states an offer — i.e. the offer
-    // grain was read) is ordered on ONE figure: the offer grain's MATURE cost per outcome, the number a
-    // reader sees in the Offer column. Owner rule 2026-09-30. The dynasty order above takes each
+    // grain was read) is ordered on MATURE cost per outcome, finest grain first: the offer's own price
+    // (owner rule 2026-09-30), and for a workflow not mature on the offer yet its brand, then its fleet
+    // mature price (owner rule 2026-10-01; `lib/mission-workflow-order.ts`). Workflows no mature price
+    // places keep the general order below; the slug breaks a tie only after every price. The dynasty order above takes each
     // workflow's single cheapest CELL across every audience, so one lucky reply on a small audience put
     // a learning workflow first (prod, campaign `07ba2403…`: helm at $9.46 on one audience ahead of
     // ballad $67 and lithium $131, both mature on the offer), and a zero-outcome workflow was placed
     // on what it SPENT. Neither is a price.
     //
-    //   selectable before non-selectable (leg assignment) → priced (the offer grain is mature and states
-    //   a cost; ascending) → offer evidence but no price (learning, or no outcome) → no offer evidence
-    //   (never ran for this offer) → retired; the dynasty slug breaks every tie.
+    //   selectable before non-selectable (leg assignment) → mature on the offer → mature on the brand →
+    //   mature on the fleet (each ascending) → the rest in the general order → retired.
     //
-    // Only `rank` moves. `recommendedWorkflowDynastySlug` stays the head of the order above, and
-    // `scopeRank` is untouched — so on a mission read rank 1 and the recommendation can differ.
+    // ONE answer: when rank 1 holds a mature price, it IS `recommendedWorkflowDynastySlug` (below), so
+    // the row a page marks "money goes here" and the recommendation cannot disagree (prod 2026-10-01:
+    // the page said dawn while the recommendation and the money were osprey). `scopeRank` is untouched.
     const missionOrder: string[] | null =
       legTerms && evidence.offerGrain
         ? (() => {
@@ -2573,10 +2598,18 @@ export function projectFromEvidence(input: {
                 brandRowBySlug.set(row.workflow.workflowDynastySlug, row);
               }
             }
+            const generalPosition = new Map(orderedDynasties.map(([slug], i) => [slug, i]));
             return orderMissionWorkflows(
               [...bestByDynasty.keys()].map((slug) => {
                 const row = brandRowBySlug.get(slug);
-                return { slug, excluded: excludedTier(slug) === 1, retired: row?.retired === true, offer: row?.estimatesByGrain.offer ?? null };
+                const g = row?.estimatesByGrain;
+                return {
+                  slug,
+                  excluded: excludedTier(slug) === 1,
+                  retired: row?.retired === true,
+                  grains: { offer: g?.offer ?? null, brand: g?.brand ?? null, crossOrg: g?.crossOrg ?? null },
+                  fallbackPosition: generalPosition.get(slug)!,
+                };
               }),
             );
           })()
@@ -2652,8 +2685,18 @@ export function projectFromEvidence(input: {
     // key), and the answer is then no recommendation, stated with its reason — never a fall back.
     const head = orderedDynasties[0];
     const headExcluded = head != null && excludedTier(head[0]) === 1;
+    // On a mission read whose rank-1 workflow holds a mature price, the recommendation IS rank 1 (its
+    // brand-level row). Otherwise the mission order's head is the general order's head, so the two agree.
+    const missionHeadRow: ProjectionRow | null = (() => {
+      const slug = missionOrder?.[0];
+      if (!slug || excludedTier(slug) === 1) return null;
+      const row = rows.find((r) => r.audienceId === null && r.workflow.workflowDynastySlug === slug);
+      if (!row || row.retired) return null;
+      const g = row.estimatesByGrain;
+      return missionPriceOf({ grains: { offer: g.offer ?? null, brand: g.brand ?? null, crossOrg: g.crossOrg ?? null } }) ? row : null;
+    })();
     const recommended: ProjectionRow | null =
-      head && !headExcluded && head[1].metric != null ? head[1].row : null;
+      missionHeadRow ?? (head && !headExcluded && head[1].metric != null ? head[1].row : null);
     // The budget still answers "what does a month of this cost", whichever way the pick was made — it is
     // priced off the RECOMMENDED row's own cost per outcome, so it describes the workflow that was
     // actually chosen rather than the one the other objective would have chosen.

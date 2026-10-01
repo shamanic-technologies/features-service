@@ -5252,7 +5252,7 @@
                             "flash",
                             "mature"
                           ],
-                          "description": "WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis), never the grain, so every block of one row is on one version: `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before)."
+                          "description": "WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis): `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before). One exception: a grain (offer / brand / campaign / crossOrg) of a MATURE row that holds no mature evidence yet — a scope younger than the leg's cut — is still served, on its FLASH block, with `basis: \"flash\"` and `isMature: false`; the workflow's fleet verdict never removes a grain that has evidence. The audience grain of a mature row stays mature-only (campaign-service's audience draw reads it)."
                         },
                         "flash": {
                           "allOf": [
@@ -5424,7 +5424,7 @@
                             "flash",
                             "mature"
                           ],
-                          "description": "WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis), never the grain, so every block of one row is on one version: `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before)."
+                          "description": "WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis): `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before). One exception: a grain (offer / brand / campaign / crossOrg) of a MATURE row that holds no mature evidence yet — a scope younger than the leg's cut — is still served, on its FLASH block, with `basis: \"flash\"` and `isMature: false`; the workflow's fleet verdict never removes a grain that has evidence. The audience grain of a mature row stays mature-only (campaign-service's audience draw reads it)."
                         },
                         "flash": {
                           "allOf": [
@@ -5596,7 +5596,7 @@
                             "flash",
                             "mature"
                           ],
-                          "description": "WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis), never the grain, so every block of one row is on one version: `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before)."
+                          "description": "WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis): `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before). One exception: a grain (offer / brand / campaign / crossOrg) of a MATURE row that holds no mature evidence yet — a scope younger than the leg's cut — is still served, on its FLASH block, with `basis: \"flash\"` and `isMature: false`; the workflow's fleet verdict never removes a grain that has evidence. The audience grain of a mature row stays mature-only (campaign-service's audience draw reads it)."
                         },
                         "flash": {
                           "allOf": [
@@ -5768,7 +5768,7 @@
                             "flash",
                             "mature"
                           ],
-                          "description": "WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis), never the grain, so every block of one row is on one version: `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before)."
+                          "description": "WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis): `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before). One exception: a grain (offer / brand / campaign / crossOrg) of a MATURE row that holds no mature evidence yet — a scope younger than the leg's cut — is still served, on its FLASH block, with `basis: \"flash\"` and `isMature: false`; the workflow's fleet verdict never removes a grain that has evidence. The audience grain of a mature row stays mature-only (campaign-service's audience draw reads it)."
                         },
                         "flash": {
                           "allOf": [
@@ -5940,7 +5940,7 @@
                             "flash",
                             "mature"
                           ],
-                          "description": "WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis), never the grain, so every block of one row is on one version: `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before)."
+                          "description": "WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis): `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before). One exception: a grain (offer / brand / campaign / crossOrg) of a MATURE row that holds no mature evidence yet — a scope younger than the leg's cut — is still served, on its FLASH block, with `basis: \"flash\"` and `isMature: false`; the workflow's fleet verdict never removes a grain that has evidence. The audience grain of a mature row stays mature-only (campaign-service's audience draw reads it)."
                         },
                         "flash": {
                           "allOf": [
@@ -6050,7 +6050,7 @@
                 },
                 "rank": {
                   "type": "number",
-                  "description": "THIS WORKFLOW'S POSITION IN THE ORDER THIS SERVICE SELECTS ON — 1-based, present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). It exists so NO consumer re-derives one: a page ranking the subset it displays produces a second order that disagrees with the pick. The rank is a property of the WORKFLOW, so every row of one dynasty carries the same number and `recommendedWorkflowDynastySlug` is rank 1 BY CONSTRUCTION. A TOTAL order — no ties, no gaps — broken deterministically on the dynasty slug, with never-run workflows (the explore allowance) always after every workflow with measured evidence. A workflow not assigned active on the leg (`legAssignment.selectable` false) ranks after EVERY selectable workflow, whatever its evidence, and is never the recommendation. ON A MISSION READ (`?leg=&campaignId=` whose campaign states an offer) the order is instead the OFFER grain's MATURE cost per outcome (`estimatesByGrain.offer.mature.costPerOutcomeUsd` where `offer.isMature` is true), ASCENDING: workflows still learning on the offer or with no outcome there follow every priced one, those that never ran for the offer follow those, retired lineages last; the slug breaks ties. There `recommendedWorkflowDynastySlug` keeps its own order and may differ from rank 1."
+                  "description": "THIS WORKFLOW'S POSITION IN THE ORDER THIS SERVICE SELECTS ON — 1-based, present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). It exists so NO consumer re-derives one: a page ranking the subset it displays produces a second order that disagrees with the pick. The rank is a property of the WORKFLOW, so every row of one dynasty carries the same number and `recommendedWorkflowDynastySlug` is rank 1 BY CONSTRUCTION. A TOTAL order — no ties, no gaps — broken deterministically on the dynasty slug, with never-run workflows (the explore allowance) always after every workflow with measured evidence. A workflow not assigned active on the leg (`legAssignment.selectable` false) ranks after EVERY selectable workflow, whatever its evidence, and is never the recommendation. ON A MISSION READ (`?leg=&campaignId=` whose campaign states an offer) the order is instead MATURE cost per outcome, finest grain first: workflows mature on the OFFER (`estimatesByGrain.offer.mature.costPerOutcomeUsd` where `offer.isMature`), ascending; then those mature only on the BRAND, then only on the FLEET (`crossOrg`), each ascending; then every other workflow in the general order; retired lineages last. The slug breaks a tie only after every price. When rank 1 holds a mature price it IS `recommendedWorkflowDynastySlug` (the money goes to the cheapest mature workflow for the offer, else on the next coarser grain that has one)."
                 },
                 "scopeRank": {
                   "type": "number",
@@ -6273,7 +6273,7 @@
           "recommendedWorkflowDynastySlug": {
             "type": "string",
             "nullable": true,
-            "description": "Dynasty of the MEASURED row that best answers what the caller is maximising: under `maximize=return` (the default) the LOWEST resolved.costPerOutcomeUsd, under `maximize=conversionRate` the HIGHEST resolved.conversionRatePct. The same catalogue legitimately ranks differently under the two, so the two answers may differ for one (brand, channel, leg). An unmeasured row (explore allowance) is reachable but never recommended under either. On a `?leg=` read a workflow not assigned active on the leg (`legAssignment.selectable: false`) is never recommended either. Null when none has usable data, or when no workflow is assigned active (then `recommendationWithheldReason` says so)."
+            "description": "Dynasty of the MEASURED row that best answers what the caller is maximising: under `maximize=return` (the default) the LOWEST resolved.costPerOutcomeUsd, under `maximize=conversionRate` the HIGHEST resolved.conversionRatePct. The same catalogue legitimately ranks differently under the two, so the two answers may differ for one (brand, channel, leg). An unmeasured row (explore allowance) is reachable but never recommended under either. On a `?leg=` read a workflow not assigned active on the leg (`legAssignment.selectable: false`) is never recommended either. On a MISSION read (`?leg=&campaignId=` whose campaign states an offer) whose rank-1 workflow holds a mature price (offer, else brand, else fleet), it is that rank-1 workflow, so rank 1 and the recommendation never disagree. Null when none has usable data, or when no workflow is assigned active (then `recommendationWithheldReason` says so)."
           },
           "recommendedBudgetUsd": {
             "type": "number",
@@ -21093,7 +21093,7 @@
                                       "flash",
                                       "mature"
                                     ],
-                                    "description": "WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis), never the grain, so every block of one row is on one version: `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before)."
+                                    "description": "WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis): `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before). One exception: a grain (offer / brand / campaign / crossOrg) of a MATURE row that holds no mature evidence yet — a scope younger than the leg's cut — is still served, on its FLASH block, with `basis: \"flash\"` and `isMature: false`; the workflow's fleet verdict never removes a grain that has evidence. The audience grain of a mature row stays mature-only (campaign-service's audience draw reads it)."
                                   },
                                   "flash": {
                                     "allOf": [
@@ -21265,7 +21265,7 @@
                                       "flash",
                                       "mature"
                                     ],
-                                    "description": "WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis), never the grain, so every block of one row is on one version: `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before)."
+                                    "description": "WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis): `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before). One exception: a grain (offer / brand / campaign / crossOrg) of a MATURE row that holds no mature evidence yet — a scope younger than the leg's cut — is still served, on its FLASH block, with `basis: \"flash\"` and `isMature: false`; the workflow's fleet verdict never removes a grain that has evidence. The audience grain of a mature row stays mature-only (campaign-service's audience draw reads it)."
                                   },
                                   "flash": {
                                     "allOf": [
@@ -21437,7 +21437,7 @@
                                       "flash",
                                       "mature"
                                     ],
-                                    "description": "WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis), never the grain, so every block of one row is on one version: `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before)."
+                                    "description": "WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis): `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before). One exception: a grain (offer / brand / campaign / crossOrg) of a MATURE row that holds no mature evidence yet — a scope younger than the leg's cut — is still served, on its FLASH block, with `basis: \"flash\"` and `isMature: false`; the workflow's fleet verdict never removes a grain that has evidence. The audience grain of a mature row stays mature-only (campaign-service's audience draw reads it)."
                                   },
                                   "flash": {
                                     "allOf": [
@@ -21609,7 +21609,7 @@
                                       "flash",
                                       "mature"
                                     ],
-                                    "description": "WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis), never the grain, so every block of one row is on one version: `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before)."
+                                    "description": "WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis): `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before). One exception: a grain (offer / brand / campaign / crossOrg) of a MATURE row that holds no mature evidence yet — a scope younger than the leg's cut — is still served, on its FLASH block, with `basis: \"flash\"` and `isMature: false`; the workflow's fleet verdict never removes a grain that has evidence. The audience grain of a mature row stays mature-only (campaign-service's audience draw reads it)."
                                   },
                                   "flash": {
                                     "allOf": [
@@ -21781,7 +21781,7 @@
                                       "flash",
                                       "mature"
                                     ],
-                                    "description": "WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis), never the grain, so every block of one row is on one version: `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before)."
+                                    "description": "WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis): `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before). One exception: a grain (offer / brand / campaign / crossOrg) of a MATURE row that holds no mature evidence yet — a scope younger than the leg's cut — is still served, on its FLASH block, with `basis: \"flash\"` and `isMature: false`; the workflow's fleet verdict never removes a grain that has evidence. The audience grain of a mature row stays mature-only (campaign-service's audience draw reads it)."
                                   },
                                   "flash": {
                                     "allOf": [
@@ -21891,7 +21891,7 @@
                           },
                           "rank": {
                             "type": "number",
-                            "description": "THIS WORKFLOW'S POSITION IN THE ORDER THIS SERVICE SELECTS ON — 1-based, present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). It exists so NO consumer re-derives one: a page ranking the subset it displays produces a second order that disagrees with the pick. The rank is a property of the WORKFLOW, so every row of one dynasty carries the same number and `recommendedWorkflowDynastySlug` is rank 1 BY CONSTRUCTION. A TOTAL order — no ties, no gaps — broken deterministically on the dynasty slug, with never-run workflows (the explore allowance) always after every workflow with measured evidence. A workflow not assigned active on the leg (`legAssignment.selectable` false) ranks after EVERY selectable workflow, whatever its evidence, and is never the recommendation. ON A MISSION READ (`?leg=&campaignId=` whose campaign states an offer) the order is instead the OFFER grain's MATURE cost per outcome (`estimatesByGrain.offer.mature.costPerOutcomeUsd` where `offer.isMature` is true), ASCENDING: workflows still learning on the offer or with no outcome there follow every priced one, those that never ran for the offer follow those, retired lineages last; the slug breaks ties. There `recommendedWorkflowDynastySlug` keeps its own order and may differ from rank 1."
+                            "description": "THIS WORKFLOW'S POSITION IN THE ORDER THIS SERVICE SELECTS ON — 1-based, present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). It exists so NO consumer re-derives one: a page ranking the subset it displays produces a second order that disagrees with the pick. The rank is a property of the WORKFLOW, so every row of one dynasty carries the same number and `recommendedWorkflowDynastySlug` is rank 1 BY CONSTRUCTION. A TOTAL order — no ties, no gaps — broken deterministically on the dynasty slug, with never-run workflows (the explore allowance) always after every workflow with measured evidence. A workflow not assigned active on the leg (`legAssignment.selectable` false) ranks after EVERY selectable workflow, whatever its evidence, and is never the recommendation. ON A MISSION READ (`?leg=&campaignId=` whose campaign states an offer) the order is instead MATURE cost per outcome, finest grain first: workflows mature on the OFFER (`estimatesByGrain.offer.mature.costPerOutcomeUsd` where `offer.isMature`), ascending; then those mature only on the BRAND, then only on the FLEET (`crossOrg`), each ascending; then every other workflow in the general order; retired lineages last. The slug breaks a tie only after every price. When rank 1 holds a mature price it IS `recommendedWorkflowDynastySlug` (the money goes to the cheapest mature workflow for the offer, else on the next coarser grain that has one)."
                           },
                           "scopeRank": {
                             "type": "number",
@@ -22114,7 +22114,7 @@
                     "recommendedWorkflowDynastySlug": {
                       "type": "string",
                       "nullable": true,
-                      "description": "Dynasty of the MEASURED row that best answers what the caller is maximising: under `maximize=return` (the default) the LOWEST resolved.costPerOutcomeUsd, under `maximize=conversionRate` the HIGHEST resolved.conversionRatePct. The same catalogue legitimately ranks differently under the two, so the two answers may differ for one (brand, channel, leg). An unmeasured row (explore allowance) is reachable but never recommended under either. On a `?leg=` read a workflow not assigned active on the leg (`legAssignment.selectable: false`) is never recommended either. Null when none has usable data, or when no workflow is assigned active (then `recommendationWithheldReason` says so)."
+                      "description": "Dynasty of the MEASURED row that best answers what the caller is maximising: under `maximize=return` (the default) the LOWEST resolved.costPerOutcomeUsd, under `maximize=conversionRate` the HIGHEST resolved.conversionRatePct. The same catalogue legitimately ranks differently under the two, so the two answers may differ for one (brand, channel, leg). An unmeasured row (explore allowance) is reachable but never recommended under either. On a `?leg=` read a workflow not assigned active on the leg (`legAssignment.selectable: false`) is never recommended either. On a MISSION read (`?leg=&campaignId=` whose campaign states an offer) whose rank-1 workflow holds a mature price (offer, else brand, else fleet), it is that rank-1 workflow, so rank 1 and the recommendation never disagree. Null when none has usable data, or when no workflow is assigned active (then `recommendationWithheldReason` says so)."
                     },
                     "recommendedBudgetUsd": {
                       "type": "number",
