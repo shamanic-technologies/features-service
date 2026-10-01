@@ -1071,6 +1071,18 @@ const resolvedFiguresSchema = z.object({
   conversionRatePct: z.number().nullable(),
 });
 
+const grainHeldPriceSchema = z.object({
+  costPerOutcomeUsd: z.number().nullable().describe("The cost of ONE outcome of the leg this service holds for the workflow at this grain on this basis — the cascade already walked. Null ⟺ nothing is held (see unpricedReason)."),
+  source: z.enum(["own", "inherited"]).nullable().describe("`own` = this grain's own evidence on this basis (a real ratio, or its floor max(own spend, parent) when it observed no outcome); `inherited` = the grain holds no evidence on this basis, so its price is the nearest coarser grain's (offer/campaign → brand → crossOrg; audience → campaign → brand → crossOrg), exactly what the floor would hand it. Null ⟺ nothing is held."),
+  fromGrain: z.enum(["crossOrg", "brand", "offer", "campaign", "audience"]).nullable().describe("The grain the price was read from (this grain when own). Null ⟺ nothing is held."),
+  unpricedReason: z.enum(["no_evidence", "leg_unpriceable", "mature_cut_unavailable", "vendor_cost_unknown"]).nullable().describe("Why costPerOutcomeUsd is null: no grain up the cascade holds evidence on this basis; the grain holding it cannot walk it to the leg's step (an undeclared rate); the mature cut could not be made for this read; (actual-cost read only) the grain it comes from, or one it floors against, holds spend of no known vendor cost. Null ⟺ a price is held."),
+});
+
+const grainHeldPricesSchema = z.object({
+  flash: grainHeldPriceSchema.describe("On FLASH evidence (everything to date)."),
+  mature: grainHeldPriceSchema.describe("On MATURE evidence (runs started before the leg's cutoff) — held even when the row is priced on flash."),
+});
+
 const workflowProjectionRowSchema = z.object({
   audienceId: z.string().nullable().describe("null = brand-level row (crossOrg + brand grains). Non-null = one row per (active audience × workflow dynasty) couple that ran (adds the audience grain)."),
   workflow: z.object({ workflowDynastySlug: z.string(), workflowDynastyName: z.string().nullable() }),
@@ -1106,6 +1118,16 @@ const workflowProjectionRowSchema = z.object({
     matureOutcomes: z.number().nullable().describe("The workflow's mature outcomes of the leg's step on the fleet. Null when the cut could not be made."),
     resolved: maturityPairSchema(resolvedFiguresSchema).describe("The row's price on BOTH versions, so a consumer compares them without re-deriving anything. resolved (the block above) equals the one named by `basis`."),
   }).optional().describe("THE ROW'S MATURITY (features-service#1196) — present ⟺ the request named a `?leg=`. A mature workflow's young spend no longer inflates its price while its outcomes are still on their way; a workflow that is not yet mature is priced exactly as before (flash, with the cascade floor that lets it be tried)."),
+  priceByGrain: z
+    .object({
+      crossOrg: grainHeldPricesSchema.optional(),
+      brand: grainHeldPricesSchema.optional(),
+      offer: grainHeldPricesSchema.optional(),
+      campaign: grainHeldPricesSchema.optional(),
+      audience: grainHeldPricesSchema.optional(),
+    })
+    .optional()
+    .describe("THE PRICE THIS SERVICE HOLDS FOR THE WORKFLOW AT EVERY GRAIN THE ROW'S CASCADE COVERS, ON BOTH BASES — present ⟺ the request named a `?leg=`. Grains listed: crossOrg and brand on every row, campaign on a `?campaignId=` read, offer where the read has an offer grain (brand-level rows), audience on audience rows. A grain absent from estimatesByGrain (no own spend) or with no evidence on one basis is still priced, inherited from its parent with its provenance stated, so a page reads one cell per (grain, basis) and never re-walks the cascade. estimatesByGrain (observed + floored blocks), resolved, rank and the recommendation are unchanged. An unmeasured (explore-allowance) row holds nothing at any grain (`no_evidence`): the allowance is the price of a first try, not a price of the workflow. On the actual-cost read each held price also carries `vendorCostKnown`."),
   retired: z.literal(true).optional().describe("TRUE on a row for a RETIRED lineage — a workflow dynasty with no active version left (or a slug the catalogue does not describe) that this brand or campaign still spent on; absent on every other row. It carries its real brand / campaign evidence so the per-workflow rows add up to the scope's own total (spend and positive replies), and it can never be put forward: `resolved` is all null, so it is unrankable, never recommended, and skipped by any consumer selecting on resolved.costPerOutcomeUsd."),
 });
 
@@ -1273,6 +1295,16 @@ registry.registerPath({
                   .object({
                     estimatesByGrain: z.record(z.string(), z.object({ vendorCost: vendorStatementSchema }).passthrough()),
                     resolved: z.object({ vendorCostKnown: z.boolean() }).passthrough(),
+                    priceByGrain: z
+                      .record(
+                        z.string(),
+                        z.object({
+                          flash: grainHeldPriceSchema.extend({ vendorCostKnown: z.boolean() }),
+                          mature: grainHeldPriceSchema.extend({ vendorCostKnown: z.boolean() }),
+                        }),
+                      )
+                      .optional()
+                      .describe("The billed read's priceByGrain at VENDOR cost: a held price is known when the grain it is read from and every grain it floors against are fully priced on that basis; otherwise costPerOutcomeUsd is null with unpricedReason `vendor_cost_unknown` and the billed provenance kept."),
                   })
                   .passthrough(),
               ),
