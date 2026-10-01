@@ -15,6 +15,7 @@ import {
 import { ALL_STEP_EVIDENCE, type LeadStepField } from "./funnel-steps.js";
 import { declaredEconomicsForFunnel } from "./declared-funnels.js";
 import { buildPricingFunnels } from "./reading-funnels.js";
+import { funnelLegCatalogue } from "./channel-catalogue.js";
 
 const NONE: Record<LeadStepField, boolean> = {
   clicked: false,
@@ -189,6 +190,51 @@ describe("each arrow is named in brand-service's own step wording", () => {
       ["Website visit", "Form filled", 16.5],
       ["Form filled", "Paid client", null],
     ]);
+  });
+});
+
+describe("every leg between two steps of the PUBLIC catalogue joins the served legs by the catalogue's own identity", () => {
+  // The public catalogue (/public/channels `legs`) is what every dashboard surface names legs with.
+  const catalogue = funnelLegCatalogue().filter((l) => l.fromStep !== null);
+  const EMPTY: BrandStepMeasurement = { contactedRecipients: 0, evidence: ALL_STEP_EVIDENCE, reached: [] };
+
+  it("a brand with no statement and no measurement still gets a non-null rate on every catalogue leg, joinable by legKey AND by catalogue labels", () => {
+    const rates = buildBrandEffectiveRates({ brandId: "b0", funnelKeys: [], measurement: EMPTY, manual: [], medians: new Map() });
+    expect(catalogue.length).toBeGreaterThan(0);
+    for (const leg of catalogue) {
+      const byKey = rates.legs.filter((l) => l.legKey === leg.legKey);
+      expect(byKey, leg.legKey).toHaveLength(1);
+      expect(byKey[0].effectiveRatePct, leg.legKey).not.toBeNull();
+      expect(byKey[0].source, leg.legKey).not.toBeNull();
+      const byLabels = rates.legs.filter((l) => l.catalogueFromStep === leg.fromStep!.label && l.catalogueToStep === leg.toStep.label);
+      expect(byLabels, leg.legKey).toEqual(byKey);
+    }
+  });
+
+  it("a rate stated under brand-service's OLD spelling ('Form filled', 'Purchase') still counts on the catalogue leg", () => {
+    const rates = buildBrandEffectiveRates({
+      brandId: "b1",
+      funnelKeys: [],
+      measurement: EMPTY,
+      manual: [
+        { fromStep: "Website visit", toStep: "Form filled", ratePct: 16.5, stated: true },
+        { fromStep: "Website visit", toStep: "Purchase", ratePct: 2.5, stated: true },
+      ],
+      medians: new Map(),
+    });
+    const form = rates.legs.find((l) => l.legKey === "website_visit_to_form_submitted")!;
+    expect(form).toMatchObject({ fromStep: "Website visit", toStep: "Form filled", catalogueToStep: "Form submitted", effectiveRatePct: 16.5, source: "manual" });
+    const purchase = rates.legs.find((l) => l.legKey === "website_visit_to_purchase")!;
+    expect(purchase).toMatchObject({ toStep: "Purchase", catalogueToStep: "Direct purchase", effectiveRatePct: 2.5, source: "manual" });
+    for (const k of ["form_submitted_to_paid_client", "purchase_to_paid_client"]) {
+      expect(rates.legs.find((l) => l.legKey === k)?.effectiveRatePct, k).not.toBeNull();
+    }
+  });
+
+  it("the legs stay unique: one entry per leg however many spellings resolve to it", () => {
+    const rates = buildBrandEffectiveRates({ brandId: "b0", funnelKeys: [], measurement: EMPTY, manual: [], medians: new Map() });
+    const keys = rates.legs.map((l) => l.legKey);
+    expect(new Set(keys).size).toBe(keys.length);
   });
 });
 
