@@ -58,7 +58,7 @@ const DEFAULT_TTL_MS = 30_000;
  * Scoped to a campaign, except `pipeline-activity`, whose cell is keyed on the brand and is the
  * Overview's chart whichever campaign page polls it. Every other view keeps {@link DEFAULT_TTL_MS}.
  */
-const CAMPAIGN_LIVE_VIEWS = new Set(["revenue", "stats", "audience-stats", "workflow-projection-evidence"]);
+const CAMPAIGN_LIVE_VIEWS = new Set(["revenue", "stats", "audience-stats", "workflow-projection-evidence", "workflow-projection-evidence-actual"]);
 const ALWAYS_LIVE_VIEWS = new Set(["pipeline-activity"]);
 const DEFAULT_CAMPAIGN_LIVE_TTL_MS = 3_000;
 
