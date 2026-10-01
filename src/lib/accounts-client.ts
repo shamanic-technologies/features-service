@@ -19,6 +19,7 @@
  * api-registry), not a swallowed error.
  */
 import { fetchWithRetry } from "./fetch-retry.js";
+import { funnelLeg, matchFunnelLegKey } from "./funnel-legs.js";
 
 const BRAND_BATCH_CAP = 100;
 
@@ -92,8 +93,67 @@ function campaignConfig(): { url: string; apiKey: string } {
 export interface BrandSpendableBudget {
   /** Every ceiling the customer configured for this brand, in USD. */
   configuredUsd: number;
-  /** The part of it attached to a campaign that is ongoing right now, in USD. */
+  /** The part of it attached to a campaign that is ongoing right now, in USD — PROACTIVE + REACTIVE. */
   runningUsd: number;
+  /**
+   * The running part standing behind a PROACTIVE campaign (its leg is an ENTRY leg, `fromStep: null`:
+   * it starts conversations and spends its daily budget). The money a client is charged for.
+   */
+  proactiveRunningUsd: number;
+  /**
+   * The running part standing behind a REACTIVE campaign (its leg continues from a step a lead already
+   * reached, e.g. AI meeting booking on a conversation). A CAP, rarely spent — never money in play.
+   */
+  reactiveRunningUsd: number;
+}
+
+/** One ceiling entry of campaign-service's spendable-budget answer, as far as the split needs it. */
+export interface SpendableRowWire {
+  legKey?: string | null;
+  dailyBudgetCents?: number;
+  running?: boolean;
+  campaignId?: string | null;
+}
+
+/**
+ * Split the RUNNING ceilings of one (org, brand) into PROACTIVE and REACTIVE, in cents.
+ *
+ * Kind is read off THIS service's leg catalogue (`fromStep === null` ⟺ entry leg ⟺ proactive) — the
+ * same rule campaign-service's recurring-status and billing's MRR apply, and never a parse of the key.
+ * The leg is the ceiling's own, else the leg of the campaign standing behind it (a brand-grain pot or a
+ * ceiling written before legs names none). A running ceiling whose leg is still unknown is counted
+ * PROACTIVE and logged: every campaign written before legs existed was cold email (an entry leg), and
+ * counting it reactive would silently drop a paying client from the board (prod 2026-10-01: zero such).
+ */
+export function splitRunningCents(
+  pair: { orgId: string; brandId: string },
+  rows: readonly SpendableRowWire[],
+  campaignLegs: ReadonlyMap<string, string | null>,
+): { proactiveCents: number; reactiveCents: number } {
+  let proactiveCents = 0;
+  let reactiveCents = 0;
+  for (const row of rows) {
+    if (row.running !== true) continue;
+    const cents = row.dailyBudgetCents;
+    if (typeof cents !== "number") {
+      throw new Error(
+        `[features-service] campaign-service /brands/spendable-budget returned a running row with no dailyBudgetCents for ${pair.orgId}/${pair.brandId}`,
+      );
+    }
+    const rawLeg = row.legKey ?? (row.campaignId ? campaignLegs.get(row.campaignId) ?? null : null);
+    const leg = rawLeg ? funnelLeg(matchFunnelLegKey(rawLeg) ?? "") : null;
+    if (!leg) {
+      console.warn(
+        `[features-service] spendable budget ${pair.orgId}/${pair.brandId}: running ceiling of ${cents} cents names no published leg (${rawLeg ?? "none"}) — counted PROACTIVE`,
+      );
+      proactiveCents += cents;
+    } else if (leg.fromStep === null) {
+      proactiveCents += cents;
+    } else {
+      reactiveCents += cents;
+    }
+  }
+  return { proactiveCents, reactiveCents };
 }
 
 /** campaign-service caps one bulk request at 500 (org, brand) pairs. */
@@ -145,6 +205,8 @@ export async function fetchSpendableBudgets(
         brandId?: string;
         configuredDailyBudgetCents?: number;
         runningDailyBudgetCents?: number;
+        rows?: SpendableRowWire[];
+        campaigns?: Array<{ campaignId?: string; legKey?: string | null }>;
       }>;
       unavailable?: Array<{ orgId?: string; brandId?: string; reason?: string }>;
     };
@@ -168,9 +230,26 @@ export async function fetchSpendableBudgets(
           `[features-service] campaign-service /brands/spendable-budget returned non-numeric figures for ${row.orgId}/${row.brandId}`,
         );
       }
+      if (!Array.isArray(row.rows)) {
+        throw new Error(
+          `[features-service] campaign-service /brands/spendable-budget returned no ceiling rows for ${row.orgId}/${row.brandId}`,
+        );
+      }
+      const campaignLegs = new Map(
+        (row.campaigns ?? []).filter((c) => c.campaignId).map((c) => [c.campaignId!, c.legKey ?? null]),
+      );
+      const split = splitRunningCents({ orgId: row.orgId, brandId: row.brandId }, row.rows, campaignLegs);
+      // The split must add back to the producer's own running total, or a row was read wrong.
+      if (split.proactiveCents + split.reactiveCents !== running) {
+        throw new Error(
+          `[features-service] spendable budget ${row.orgId}/${row.brandId}: proactive ${split.proactiveCents} + reactive ${split.reactiveCents} cents ≠ running ${running}`,
+        );
+      }
       out.set(spendableKey(row.orgId, row.brandId), {
         configuredUsd: configured / 100,
         runningUsd: running / 100,
+        proactiveRunningUsd: split.proactiveCents / 100,
+        reactiveRunningUsd: split.reactiveCents / 100,
       });
     }
   }

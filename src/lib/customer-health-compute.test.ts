@@ -43,6 +43,8 @@ function account(over: Partial<AccountRow> & { orgId: string; brandId: string; s
     brandDomain: `${over.brandId}.com`,
     configuredDailyBudgetUsd: 50,
     runningDailyBudgetUsd: 50,
+    proactiveRunningDailyBudgetUsd: 50,
+    reactiveRunningDailyCapUsd: 0,
     orgBalanceUsd: 1000,
     orgActualBalanceUsd: 1000,
     autoTopupEnabled: false,
@@ -176,7 +178,7 @@ function makeDeps(fixtures: {
 }): CustomerHealthDeps {
   const audit: AccountsAudit = {
     rows: fixtures.accounts,
-    stats: { totalRunningDailyBudgetUsd: 0, totalConfiguredDailyBudgetUsd: 0, mrrUsd: 0, arrUsd: 0, mrrBasis: "billing_recurring", mrrUnavailableReason: null, mrrUnknownOrgIds: [], activeCount: 0, paymentDeclinedCount: 0, noPaymentMethodCount: 0, pausedCount: 0, inactiveCount: 0, totalCount: fixtures.accounts.length },
+    stats: { totalRunningDailyBudgetUsd: 0, totalConfiguredDailyBudgetUsd: 0, totalReactiveRunningDailyCapUsd: 0, mrrUsd: 0, arrUsd: 0, mrrBasis: "billing_recurring", mrrUnavailableReason: null, mrrUnknownOrgIds: [], activeCount: 0, reactiveOnlyCount: 0, paymentDeclinedCount: 0, noPaymentMethodCount: 0, pausedCount: 0, inactiveCount: 0, totalCount: fixtures.accounts.length },
     asOf: NOW.toISOString(),
   };
   const byUser: ActiveUsersByUser = {
