@@ -81,6 +81,7 @@ import { buildActiveUsersHistory, type ActiveUsersHistory } from "../lib/active-
 import { buildRevenueHistory, type RevenueHistory } from "../lib/revenue-history-compute.js";
 import { buildActiveUsersByUser, type ActiveUsersByUser } from "../lib/active-users-by-user-compute.js";
 import { apiKeyOnly } from "../middleware/auth.js";
+import type { FleetReplyRate } from "../lib/org-period-recap.js";
 import {
   createStatedAmount,
   deleteStatedAmount,
@@ -4601,6 +4602,26 @@ export function fleetLegCostsFromOutcomePrices(): Map<string, number> {
     }
   }
   return out;
+}
+
+/**
+ * The fleet's positive-reply rate per contacted lead, as the public onboarding quotes it: the conversion of
+ * the best workflow on the cold-email `start_to_conversation` leg, from the last outcome-prices build (never a
+ * request-path fleet walk). Null before the first build or when the leg is unmeasured. Kicks a warm when
+ * stale. (Read by `GET /internal/orgs/:orgId/period-recap` for a brand with no mature rate of its own.)
+ */
+export function fleetPositiveReplyRateFromOutcomePrices(): FleetReplyRate | null {
+  void warmOutcomePrices();
+  const leg = outcomePricesStore?.value.outcomes.meetingBooked.legs.find(
+    (l) => l.legKey === "start_to_conversation" && l.featureSlug === COLD_EMAIL_FEATURE_SLUG,
+  );
+  if (!leg || leg.conversionRatePct === null || !Number.isFinite(leg.conversionRatePct) || leg.conversionRatePct <= 0) return null;
+  return { ratePct: leg.conversionRatePct, basis: leg.basis ?? "flash", workflowDynastySlug: leg.workflowDynastySlug };
+}
+
+/** Test seam: install an outcome-prices payload as if a warm had built it. */
+export function __setOutcomePricesForTest(value: OutcomePricesPayload): void {
+  outcomePricesStore = { value, computedAt: Date.now() };
 }
 
 /** Test seam. */
