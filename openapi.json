@@ -3084,10 +3084,15 @@
                       "nullable": true,
                       "description": "Distinct leads that reached fromStep — the base of the rate below, stated here so a consumer renders '3 of 40' without looking it up. Same null rule as recipientsReached."
                     },
+                    "recipientsThroughLeg": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "Of recipientsReached, the leads that got onto this rung THROUGH its leg: a lead that reached this step only through ANOTHER leg into it (a meeting booked off a positive reply, read on a website-visit funnel) is not counted. Equal to recipientsReached on the first rung and on any step only one leg leads into. Same null rule."
+                    },
                     "conversionFromPreviousPct": {
                       "type": "number",
                       "nullable": true,
-                      "description": "recipientsReached ÷ fromRecipientsReached × 100. Null when either side is unmeasured, or when the base is 0 (no denominator — never a fabricated 0% or 100%). Served rather than divided in the browser: a client-side ratio drifts from this service the moment either side changes."
+                      "description": "recipientsThroughLeg ÷ fromRecipientsReached × 100 — the leg's measured rate, byte-equal to the brand's effective-rate measured.ratePct on the same population. Null when either side is unmeasured, or when the base is 0 (no denominator — never a fabricated 0% or 100%). Served rather than divided in the browser: a client-side ratio drifts from this service the moment either side changes."
                     },
                     "customerCost": {
                       "type": "object",
@@ -3139,6 +3144,7 @@
                     "ratioBasisRecipientsReached",
                     "fromStep",
                     "fromRecipientsReached",
+                    "recipientsThroughLeg",
                     "conversionFromPreviousPct",
                     "customerCost"
                   ]
@@ -9330,10 +9336,15 @@
                       "nullable": true,
                       "description": "Distinct leads that reached fromStep — the base of the rate below, stated here so a consumer renders '3 of 40' without looking it up. Same null rule as recipientsReached."
                     },
+                    "recipientsThroughLeg": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "Of recipientsReached, the leads that got onto this rung THROUGH its leg: a lead that reached this step only through ANOTHER leg into it (a meeting booked off a positive reply, read on a website-visit funnel) is not counted. Equal to recipientsReached on the first rung and on any step only one leg leads into. Same null rule."
+                    },
                     "conversionFromPreviousPct": {
                       "type": "number",
                       "nullable": true,
-                      "description": "recipientsReached ÷ fromRecipientsReached × 100. Null when either side is unmeasured, or when the base is 0 (no denominator — never a fabricated 0% or 100%). Served rather than divided in the browser: a client-side ratio drifts from this service the moment either side changes."
+                      "description": "recipientsThroughLeg ÷ fromRecipientsReached × 100 — the leg's measured rate, byte-equal to the brand's effective-rate measured.ratePct on the same population. Null when either side is unmeasured, or when the base is 0 (no denominator — never a fabricated 0% or 100%). Served rather than divided in the browser: a client-side ratio drifts from this service the moment either side changes."
                     },
                     "customerCost": {
                       "type": "object",
@@ -9385,6 +9396,7 @@
                     "ratioBasisRecipientsReached",
                     "fromStep",
                     "fromRecipientsReached",
+                    "recipientsThroughLeg",
                     "conversionFromPreviousPct",
                     "customerCost"
                   ]
@@ -10608,7 +10620,13 @@
                               },
                               "toReached": {
                                 "type": "number",
-                                "nullable": true
+                                "nullable": true,
+                                "description": "Leads that reached the TO step THROUGH this leg (a meeting booked off a positive reply is not credited to the website-visit leg)."
+                              },
+                              "toReachedThroughOtherLegs": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Leads at the TO step that came through ANOTHER leg into it, so not counted in toReached. 0 when only one leg leads into the step; null on the crm basis."
                               },
                               "ratePct": {
                                 "type": "number",
@@ -10622,6 +10640,7 @@
                               "basis",
                               "fromReached",
                               "toReached",
+                              "toReachedThroughOtherLegs",
                               "ratePct",
                               "sufficient"
                             ]
@@ -13413,10 +13432,15 @@
                       "nullable": true,
                       "description": "Distinct leads that reached fromStep — the base of the rate below, stated here so a consumer renders '3 of 40' without looking it up. Same null rule as recipientsReached."
                     },
+                    "recipientsThroughLeg": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "Of recipientsReached, the leads that got onto this rung THROUGH its leg: a lead that reached this step only through ANOTHER leg into it (a meeting booked off a positive reply, read on a website-visit funnel) is not counted. Equal to recipientsReached on the first rung and on any step only one leg leads into. Same null rule."
+                    },
                     "conversionFromPreviousPct": {
                       "type": "number",
                       "nullable": true,
-                      "description": "recipientsReached ÷ fromRecipientsReached × 100. Null when either side is unmeasured, or when the base is 0 (no denominator — never a fabricated 0% or 100%). Served rather than divided in the browser: a client-side ratio drifts from this service the moment either side changes."
+                      "description": "recipientsThroughLeg ÷ fromRecipientsReached × 100 — the leg's measured rate, byte-equal to the brand's effective-rate measured.ratePct on the same population. Null when either side is unmeasured, or when the base is 0 (no denominator — never a fabricated 0% or 100%). Served rather than divided in the browser: a client-side ratio drifts from this service the moment either side changes."
                     },
                     "customerCost": {
                       "type": "object",
@@ -13468,6 +13492,7 @@
                     "ratioBasisRecipientsReached",
                     "fromStep",
                     "fromRecipientsReached",
+                    "recipientsThroughLeg",
                     "conversionFromPreviousPct",
                     "customerCost"
                   ]
@@ -14586,12 +14611,17 @@
                           "toReached": {
                             "type": "integer",
                             "nullable": true,
-                            "description": "Distinct leads that reached the TO step. Same null rule."
+                            "description": "Distinct leads that reached the TO step THROUGH this leg: a lead at TO counts unless it got there only through ANOTHER leg into the same step (it reached that leg's FROM step and not this one — e.g. a meeting booked off a positive reply is not credited to the website visit → meeting booked leg). A lead at TO with no earlier step recorded on any leg into it still counts. On a step only one leg leads into, this is every lead at TO. Same null rule."
+                          },
+                          "toReachedThroughOtherLegs": {
+                            "type": "integer",
+                            "nullable": true,
+                            "description": "Leads at the TO step NOT counted in toReached because they reached it only through another leg into the same step. 0 on a step only one leg leads into. Null on the crm basis and whenever toReached is null."
                           },
                           "ratePct": {
                             "type": "number",
                             "nullable": true,
-                            "description": "toReached / fromReached × 100 — the brand's funnel-step conversion for this arrow, byte-equal to funnelSteps.conversionFromPreviousPct for the rung. Null when either count is null or fromReached is 0."
+                            "description": "toReached / fromReached × 100 — the share of leads at FROM that went through this leg, byte-equal to funnelSteps.conversionFromPreviousPct for the rung on the same population. A measured 0 (nobody at FROM went on to TO) is a real rate and, once sufficient, the effective one. Null when either count is null or fromReached is 0."
                           },
                           "sufficient": {
                             "type": "boolean",
@@ -14614,6 +14644,7 @@
                           "outcomesCounted",
                           "fromReached",
                           "toReached",
+                          "toReachedThroughOtherLegs",
                           "ratePct",
                           "sufficient",
                           "gap"
@@ -14755,12 +14786,17 @@
                     "toReached": {
                       "type": "integer",
                       "nullable": true,
-                      "description": "Distinct leads that reached the TO step. Same null rule."
+                      "description": "Distinct leads that reached the TO step THROUGH this leg: a lead at TO counts unless it got there only through ANOTHER leg into the same step (it reached that leg's FROM step and not this one — e.g. a meeting booked off a positive reply is not credited to the website visit → meeting booked leg). A lead at TO with no earlier step recorded on any leg into it still counts. On a step only one leg leads into, this is every lead at TO. Same null rule."
+                    },
+                    "toReachedThroughOtherLegs": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "Leads at the TO step NOT counted in toReached because they reached it only through another leg into the same step. 0 on a step only one leg leads into. Null on the crm basis and whenever toReached is null."
                     },
                     "ratePct": {
                       "type": "number",
                       "nullable": true,
-                      "description": "toReached / fromReached × 100 — the brand's funnel-step conversion for this arrow, byte-equal to funnelSteps.conversionFromPreviousPct for the rung. Null when either count is null or fromReached is 0."
+                      "description": "toReached / fromReached × 100 — the share of leads at FROM that went through this leg, byte-equal to funnelSteps.conversionFromPreviousPct for the rung on the same population. A measured 0 (nobody at FROM went on to TO) is a real rate and, once sufficient, the effective one. Null when either count is null or fromReached is 0."
                     },
                     "sufficient": {
                       "type": "boolean",
@@ -14783,6 +14819,7 @@
                     "outcomesCounted",
                     "fromReached",
                     "toReached",
+                    "toReachedThroughOtherLegs",
                     "ratePct",
                     "sufficient",
                     "gap"
