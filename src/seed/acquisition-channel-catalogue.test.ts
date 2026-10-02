@@ -26,11 +26,14 @@ import { coldEmailOutreachSlugs } from "../lib/send-forecast-compute.js";
 
 const bySlug = (slug: string) => SEED_FEATURES.find((f) => f.slug === slug);
 /**
- * THE PUBLISHED channels — a channel whose slug is RETIRED (`supersededBySlug`) is still a feature row
- * and still measured, but it is not something a stranger can read or book, so the properties below are
+ * THE PUBLISHED channels — a channel whose slug is RETIRED (`supersededBySlug`) or DEPRECATED (status
+ * other than `active`) is still a feature row and still measured, but it is not something a stranger
+ * can read or book (every published read selects `status = 'active'`), so the properties below are
  * asserted of the published set.
  */
-const channels = SEED_FEATURES.filter((f) => f.acquisitionChannel != null && f.supersededBySlug == null);
+const channels = SEED_FEATURES.filter(
+  (f) => f.acquisitionChannel != null && f.supersededBySlug == null && f.status === "active",
+);
 
 /** The slugs live campaigns, live budgets and the cost ledger already reference. They must not move. */
 const PRE_EXISTING_SLUGS = [
@@ -61,7 +64,6 @@ describe("the published acquisition-channel catalogue", () => {
     const expected = [
       // Outbound, one to one.
       "sales-cold-email-outreach",
-      "sales-crm-email-outreach",
       "feedback-request-cold-email-outreach",
       "cold-call-outreach",
       "cold-sms-outreach",
@@ -118,6 +120,12 @@ describe("the published acquisition-channel catalogue", () => {
     // The two live under the legacy `sales-` prefix keep it: renaming them would repoint live rows.
     expect(bySlug("sales-cold-email-outreach")!.slug).toBe("sales-cold-email-outreach");
     expect(bySlug("sales-crm-email-outreach")!.slug).toBe("sales-crm-email-outreach");
+  });
+
+  it("DEPRECATES CRM email outreach: the row stays (its stopped campaigns and ledger reference it), it is no longer published", () => {
+    const crm = bySlug("sales-crm-email-outreach")!;
+    expect(crm.status).toBe("deprecated");
+    expect(channels.map((c) => c.slug)).not.toContain("sales-crm-email-outreach");
   });
 
   it("no slug is duplicated and no name is reused — `features.name` is UNIQUE in the schema", () => {

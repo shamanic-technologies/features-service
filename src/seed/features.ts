@@ -287,7 +287,11 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
     icon: "contact",
     implemented: true,
     displayOrder: 11,
-    status: "active",
+    // DEPRECATED (owner 2026-10-03): no workflow is assigned to any of its legs and no campaign runs on
+    // it. The row stays because its stopped campaigns and the cost ledger reference this slug and every
+    // authenticated read of it keeps answering; every published read selects `status = 'active'`, so it
+    // leaves the public catalogue, the feature list and the sales paths.
+    status: "deprecated",
     acquisitionChannel: { family: "outbound_one_to_one", operatedBy: "platform", performedBy: "software", stepTransitions: CONVERSATION_AND_VISIT, terms: terms(800, 30, 7) },
     supersededBySlug: null,
     inputs: [
