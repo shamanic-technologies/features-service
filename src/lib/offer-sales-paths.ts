@@ -151,7 +151,15 @@ export interface SalesPathLeg {
   rateSource: SalesPathRateSource | null;
   /** The four inputs the rate was resolved from, so a reader sees the alternatives. Null on an entry leg. */
   rateInputs: {
-    measured: { basis: "our_leads" | "crm"; fromReached: number | null; toReached: number | null; ratePct: number | null; sufficient: boolean };
+    measured: {
+      basis: "our_leads" | "crm";
+      fromReached: number | null;
+      toReached: number | null;
+      /** Leads at TO that came through ANOTHER leg into the same step, so not counted in `toReached`. */
+      toReachedThroughOtherLegs: number | null;
+      ratePct: number | null;
+      sufficient: boolean;
+    };
     customerStatedPct: number | null;
     fleetMedian: { ratePct: number | null; brandCount: number };
     industryDefaultPct: number | null;
@@ -419,6 +427,7 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
                 basis: arrow.measured.basis,
                 fromReached: arrow.measured.fromReached,
                 toReached: arrow.measured.toReached,
+                toReachedThroughOtherLegs: arrow.measured.toReachedThroughOtherLegs,
                 ratePct: arrow.measured.ratePct,
                 sufficient: arrow.measured.sufficient,
               },
