@@ -32,6 +32,13 @@ const COUNTS = {
     formSubmission: 0,
     purchased: 3,
   },
+  reachedPatterns: {
+    "meetingAttended+meetingBooked+purchased+repliedPositive": 3,
+    "meetingAttended+meetingBooked+repliedPositive": 2,
+    "meetingAttended+meetingBooked": 2,
+    meetingBooked: 7,
+    repliedPositive: 18,
+  },
 };
 
 const statement = (ratePct: number) => ({

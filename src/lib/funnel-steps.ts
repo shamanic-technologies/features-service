@@ -146,6 +146,47 @@ export function leadFieldOfStep(step: string): LeadStepField | null {
   return STEP_LEAD_FIELD[normaliseStep(step)] ?? null;
 }
 
+/**
+ * WHICH LEADS WENT THROUGH A LEG, WHEN ITS TO STEP CAN BE REACHED BY SEVERAL.
+ *
+ * A step like "Meeting booked" is the TO of several legs (from a positive reply, from a website visit),
+ * so counting every lead at TO credits each leg with its siblings' outcomes: prod brand `75d7e3e8…`
+ * read website visit → meeting booked at 6 of 106 while ZERO leads who clicked booked — all 6 came
+ * from replies. A lead at TO therefore counts for leg FROM → TO unless it reached TO only through a
+ * SIBLING leg: it reached another catalogue step leading straight into TO and NOT this FROM.
+ *
+ * A lead at TO with NO recorded earlier rung on any leg into TO still counts (benefit of the doubt):
+ * producers record the later rung without the earlier one (14 meetings, 5 reply flags — #1053), and
+ * the plain intersection under-stated those legs at 21.7% against 60.9%. On a single-route TO step
+ * the rule is the count ratio, byte for byte.
+ */
+const SIBLING_FROM_FIELDS: Map<LeadStepField, Set<LeadStepField>> = (() => {
+  const out = new Map<LeadStepField, Set<LeadStepField>>();
+  for (const funnel of Object.values(SALES_FUNNELS)) {
+    for (let i = 0; i + 1 < funnel.steps.length; i++) {
+      const from = leadFieldOfStep(funnel.steps[i]);
+      const to = leadFieldOfStep(funnel.steps[i + 1]);
+      if (from === null || to === null) continue;
+      const set = out.get(to) ?? new Set<LeadStepField>();
+      set.add(from);
+      out.set(to, set);
+    }
+  }
+  return out;
+})();
+
+/** PURE: did this lead go THROUGH the leg `from → to` (see `SIBLING_FROM_FIELDS`)? */
+export function reachedThroughLeg(
+  reached: Partial<Record<LeadStepField, boolean>>,
+  from: LeadStepField,
+  to: LeadStepField,
+): boolean {
+  if (!reached[to]) return false;
+  if (reached[from]) return true;
+  for (const sibling of SIBLING_FROM_FIELDS.get(to) ?? []) if (sibling !== from && reached[sibling]) return false;
+  return true;
+}
+
 /** The `EnginePerson.signals` key each lead field is read from. The engine's own vocabulary. */
 export const LEAD_FIELD_TO_SIGNAL: Record<LeadStepField, string> = {
   clicked: "clicked",
@@ -312,8 +353,16 @@ export interface FunnelStep {
   /** Distinct leads that reached `fromStep` — the base of the rate below. Same null rule. */
   fromRecipientsReached: number | null;
   /**
-   * `recipientsReached ÷ fromRecipientsReached × 100`. Null when either side is unmeasured, or when
-   * the base is 0 (no denominator — never a fabricated 0% or 100%).
+   * Of `recipientsReached`, the leads that got here THROUGH this rung's leg (`reachedThroughLeg`): a
+   * lead that reached this step only through ANOTHER leg into it (a meeting booked off a reply, on a
+   * website-visit funnel) is not counted. Equals `recipientsReached` on the first rung and on any step
+   * one leg alone leads into. Same null rule.
+   */
+  recipientsThroughLeg: number | null;
+  /**
+   * `recipientsThroughLeg ÷ fromRecipientsReached × 100` — the measured rate of the leg, byte-equal to
+   * the brand's effective-rate `measured.ratePct` on the same population. Null when either side is
+   * unmeasured, or when the base is 0 (no denominator — never a fabricated 0% or 100%).
    */
   conversionFromPreviousPct: number | null;
   /**
@@ -426,6 +475,11 @@ export function buildFunnelSteps(
   const steps: FunnelStep[] = [];
   let fromStep = CONTACTED_LABEL;
   let fromRecipientsReached: number | null = contactedRecipients;
+  // The previous rung's lead field; null on the first rung (from "Contacted", which no other leg feeds).
+  let fromField: LeadStepField | null = null;
+  const allFields = Object.keys(LEAD_FIELD_TO_SIGNAL) as LeadStepField[];
+  const reachedOf = (p: EnginePerson): Record<LeadStepField, boolean> =>
+    Object.fromEntries(allFields.map((f) => [f, Boolean(p.signals[LEAD_FIELD_TO_SIGNAL[f]])])) as Record<LeadStepField, boolean>;
 
   for (const [i, leadField] of rungFields.entries()) {
     // A step nothing counts has no signal to read: unmeasured, like a rung whose producer degraded.
@@ -434,6 +488,11 @@ export function buildFunnelSteps(
       leadField !== null && personSignal !== null && stepMeasured(leadField, evidence)
         ? deduped.reduce((n, p) => n + (p.signals[personSignal] ? 1 : 0), 0)
         : null;
+    // Of those, the leads that came through THIS rung's leg, not through a sibling leg into the step.
+    const recipientsThroughLeg =
+      recipientsReached === null || leadField === null || fromField === null
+        ? recipientsReached
+        : deduped.reduce((n, p) => n + (reachedThroughLeg(reachedOf(p), fromField!, leadField) ? 1 : 0), 0);
 
     // The statements made on THIS rung. A leg the platform works has no producer step at all, so it
     // reads the same empty set as one nobody has been asked about yet — both are "no figure stated",
@@ -475,14 +534,16 @@ export function buildFunnelSteps(
       })(),
       fromStep,
       fromRecipientsReached,
+      recipientsThroughLeg,
       conversionFromPreviousPct:
-        recipientsReached === null || fromRecipientsReached === null || fromRecipientsReached === 0
+        recipientsThroughLeg === null || fromRecipientsReached === null || fromRecipientsReached === 0
           ? null
-          : (recipientsReached / fromRecipientsReached) * 100,
+          : (recipientsThroughLeg / fromRecipientsReached) * 100,
     });
 
     fromStep = def.steps[i];
     fromRecipientsReached = recipientsReached;
+    fromField = leadField;
   }
 
   return {

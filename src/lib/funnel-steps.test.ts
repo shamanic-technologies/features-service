@@ -100,3 +100,25 @@ describe("a step nothing in the fleet counts is an UNMEASURED rung", () => {
     }
   });
 });
+
+describe("a rung several legs lead into counts only the leads that came through ITS leg", () => {
+  // 12 clicked, nobody who clicked booked; 3 booked off a positive reply; 1 booked with no earlier rung.
+  const persons: EnginePerson[] = [
+    ...Array.from({ length: 12 }, (_, i) => person(`c${i}`, { contacted: true, clicked: true })),
+    ...Array.from({ length: 3 }, (_, i) => person(`r${i}`, { contacted: true, positiveReply: true, meeting: true })),
+    person("orphan", { contacted: true, meeting: true }),
+  ];
+
+  it("website visit → meeting booked does not borrow the reply leg's meetings", () => {
+    const [, booked] = buildFunnelSteps("sales_meetings_from_website", persons, COMMITTED_CENTS, ALL_STEP_EVIDENCE).steps;
+    // 4 people booked; 3 of them came through the reply leg. The one with no earlier rung stays.
+    expect(booked).toMatchObject({ recipientsReached: 4, recipientsThroughLeg: 1, fromRecipientsReached: 12 });
+    expect(booked.conversionFromPreviousPct).toBeCloseTo(100 / 12, 9);
+  });
+
+  it("the reply leg keeps its meetings and the first rung is untouched", () => {
+    const [reply, booked] = buildFunnelSteps("sales_meetings_from_conversation", persons, COMMITTED_CENTS, ALL_STEP_EVIDENCE).steps;
+    expect(reply).toMatchObject({ recipientsReached: 3, recipientsThroughLeg: 3 });
+    expect(booked).toMatchObject({ recipientsReached: 4, recipientsThroughLeg: 4, fromRecipientsReached: 3 });
+  });
+});

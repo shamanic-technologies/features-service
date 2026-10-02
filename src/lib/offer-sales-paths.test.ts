@@ -24,7 +24,7 @@ const arrow = (fromStep: string, toStep: string, pct: number, source: EffectiveA
   effectiveRatePct: pct,
   source,
   unresolvedReason: null,
-  measured: { basis: "our_leads", outcomesCounted: "all", fromReached: 3, toReached: 1, ratePct: 33, sufficient: false, gap: "below_learning_bar" },
+  measured: { basis: "our_leads", outcomesCounted: "all", fromReached: 3, toReached: 1, toReachedThroughOtherLegs: 0, ratePct: 33, sufficient: false, gap: "below_learning_bar" },
   manualRatePct: source === "manual" ? pct : null,
   median: { ratePct: null, brandCount: 0 },
   defaultRatePct: 10,

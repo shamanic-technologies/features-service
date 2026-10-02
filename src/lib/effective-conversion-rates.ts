@@ -29,14 +29,18 @@
  *
  * ── THE MEASURED RATE IS THE FUNNEL-STEP CONVERSION, BYTE FOR BYTE ─────────────────────────────
  *
- * `count(leads at TO) ÷ count(leads at FROM)` — exactly what `funnelSteps.conversionFromPreviousPct`
- * states for the rung, so the rate a brand is priced on and the funnel it reads on its Overview are one
- * number. NOT the intersection (leads at FROM that also reached TO): shipped that way first (v0.172.7)
- * and measured wrong in prod the same hour — brand `75d7e3e8…` has 14 booked meetings of which only 5
- * carry a positive-reply flag (bookings stated by hand or qualified without a reply classification), so
- * the intersection read reply → meeting at 21.7% against the rung's 60.9%. A producer that records the
- * later rung and misses the earlier one makes the intersection understate, silently. When TO exceeds
- * FROM the ratio is no probability: `gap: "to_exceeds_from"`, never clamped, and the next source wins.
+ * `count(leads THROUGH the leg at TO) ÷ count(leads at FROM)` — exactly what
+ * `funnelSteps.conversionFromPreviousPct` states for the rung, so the rate a brand is priced on and the
+ * funnel it reads on its Overview are one number. "Through the leg" (`reachedThroughLeg`,
+ * `lib/funnel-steps.ts`): a lead at TO counts unless it reached TO only through a SIBLING leg (it
+ * reached another step leading straight into TO and not this FROM). Without it, a TO several legs
+ * share was credited to every one of them: brand `75d7e3e8…` read website visit → meeting booked at
+ * 6 of 106 while zero leads who clicked booked (all 6 came from replies), and that path priced a paying
+ * client at $361 on a conversion that never happened. A lead at TO with NO earlier rung recorded on any
+ * leg still counts: NOT the plain intersection, shipped first (v0.172.7) and wrong the same hour — the
+ * same brand had 14 booked meetings of which only 5 carried a positive-reply flag, so the intersection
+ * read reply → meeting at 21.7% against the rung's 60.9%. When TO exceeds FROM the ratio is no
+ * probability: `gap: "to_exceeds_from"`, never clamped, and the next source wins.
  *
  * ── WHERE A LEG IS MEASURED: THE CLIENT'S CRM, OR OUR LEADS (owner rule, 2026-09-26) ────────────
  *
@@ -77,6 +81,7 @@ import { dedupPersonsByLead } from "./revenue-engine.js";
 import {
   LEAD_FIELD_TO_SIGNAL,
   leadFieldOfStep,
+  reachedThroughLeg,
   normaliseStep,
   stepMeasured,
   type LeadStepField,
@@ -131,8 +136,12 @@ export interface MeasuredArrowRate {
   outcomesCounted: MeasuredOutcomes | null;
   /** Distinct leads (or CRM contacts) that reached the FROM step. Null when that step is not counted or unreadable. */
   fromReached: number | null;
-  /** Of those, the leads that ALSO reached the TO step. Same null rule. */
+  /** Leads that reached the TO step THROUGH this leg (see the module header). Same null rule. */
   toReached: number | null;
+  /** Leads at the TO step NOT counted because they got there only through ANOTHER leg into it (a meeting
+   *  booked off a reply, on the website-visit leg). 0 on a single-route TO step; null on the CRM basis
+   *  and whenever `toReached` is null. */
+  toReachedThroughOtherLegs: number | null;
   /** `toReached ÷ fromReached × 100`. Null when either is null or `fromReached` is 0. */
   ratePct: number | null;
   /** True exactly when this measured rate is the effective one. */
@@ -328,17 +337,44 @@ export function crmMeasurementOf(reach: CrmFunnelReach | null): CrmMeasurement {
 }
 
 /**
- * The measurement reduced to what a rate reads: how many deduped leads reached each step. A measured
- * rate counts FROM and TO independently, so the per-lead rows add nothing past these counts — and the
- * counts are what the snapshot layer stores (a few dozen bytes against ~1 MB of per-lead rows).
+ * The measurement reduced to what a rate reads: how many deduped leads reached each step, and how many
+ * leads share each COMBINATION of reached steps (`reachedPatterns`, keyed by the reached fields sorted
+ * and joined with "+"; leads that reached none are left out). The combinations are what tell which leg a
+ * lead reached TO through, and they are what the snapshot layer stores (a dozen entries against ~1 MB of
+ * per-lead rows).
  */
 export interface BrandStepCounts {
   contactedRecipients: number;
   evidence: StepEvidence;
   reachedCounts: Record<LeadStepField, number>;
+  reachedPatterns: Record<string, number>;
   /** Leads that reached each step through an outcome our outreach caused. */
   ourReachedCounts?: Record<LeadStepField, number>;
+  ourReachedPatterns?: Record<string, number>;
   crm?: CrmMeasurement;
+}
+
+/** PURE: the per-combination tally of per-lead rows (see `BrandStepCounts.reachedPatterns`). */
+function tallyPatterns(rows: ReadonlyArray<Record<LeadStepField, boolean>>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const lead of rows) {
+    const key = (Object.keys(lead) as LeadStepField[]).filter((f) => lead[f]).sort().join("+");
+    if (key) out[key] = (out[key] ?? 0) + 1;
+  }
+  return out;
+}
+
+/** PURE: leads of a pattern tally at `to`, split into through the leg `from → to` and through another. */
+function throughLeg(patterns: Record<string, number>, from: LeadStepField, to: LeadStepField): { through: number; other: number } {
+  let through = 0;
+  let other = 0;
+  for (const [key, n] of Object.entries(patterns)) {
+    const reached = Object.fromEntries(key.split("+").map((f) => [f, true])) as Partial<Record<LeadStepField, boolean>>;
+    if (!reached[to]) continue;
+    if (reachedThroughLeg(reached, from, to)) through += n;
+    else other += n;
+  }
+  return { through, other };
 }
 
 /** PURE: a measurement's per-step counts. Idempotent on counts already summarised. */
@@ -354,7 +390,10 @@ export function summariseMeasurement(measurement: BrandStepMeasurement | BrandSt
     contactedRecipients: measurement.contactedRecipients,
     evidence: measurement.evidence,
     reachedCounts: tally(measurement.reached),
-    ...(measurement.ourReached ? { ourReachedCounts: tally(measurement.ourReached) } : {}),
+    reachedPatterns: tallyPatterns(measurement.reached),
+    ...(measurement.ourReached
+      ? { ourReachedCounts: tally(measurement.ourReached), ourReachedPatterns: tallyPatterns(measurement.ourReached) }
+      : {}),
     ...(measurement.crm ? { crm: measurement.crm } : {}),
   };
 }
@@ -368,20 +407,23 @@ export function measuredArrowRate(
 ): MeasuredArrowRate {
   const measurement = summariseMeasurement(input);
   const basis = { basis: "our_leads" as const, outcomesCounted };
-  if (fromField === null || toField === null) {
-    return { ...basis, fromReached: null, toReached: null, ratePct: null, sufficient: false, gap: "step_not_counted" };
-  }
+  const unmeasured = { fromReached: null, toReached: null, toReachedThroughOtherLegs: null, ratePct: null, sufficient: false };
+  if (fromField === null || toField === null) return { ...basis, ...unmeasured, gap: "step_not_counted" };
   if (!stepMeasured(fromField, measurement.evidence) || !stepMeasured(toField, measurement.evidence)) {
-    return { ...basis, fromReached: null, toReached: null, ratePct: null, sufficient: false, gap: "evidence_unreadable" };
+    return { ...basis, ...unmeasured, gap: "evidence_unreadable" };
   }
   let counts = measurement.reachedCounts;
+  let patterns = measurement.reachedPatterns;
   if (outcomesCounted === "caused_by_our_outreach") {
-    if (!measurement.ourReachedCounts) {
-      throw new Error("measuredArrowRate: an outreach-caused rate needs ourReachedCounts, and this measurement carries none");
+    if (!measurement.ourReachedCounts || !measurement.ourReachedPatterns) {
+      throw new Error("measuredArrowRate: an outreach-caused rate needs ourReachedCounts and ourReachedPatterns, and this measurement carries none");
     }
     counts = measurement.ourReachedCounts;
+    patterns = measurement.ourReachedPatterns;
   }
-  return fromCounts(basis, counts[fromField] ?? 0, counts[toField] ?? 0);
+  if (!patterns) throw new Error("measuredArrowRate: a measurement without reachedPatterns cannot tell which leg a lead came through");
+  const { through, other } = throughLeg(patterns, fromField, toField);
+  return { ...fromCounts(basis, counts[fromField] ?? 0, through), toReachedThroughOtherLegs: other };
 }
 
 /** PURE: the rate, bar and gap of two counts — one rule, whichever population they were read on. */
@@ -391,13 +433,14 @@ function fromCounts(
   toReached: number,
 ): MeasuredArrowRate {
   const ratePct = fromReached > 0 ? (toReached / fromReached) * 100 : null;
+  const counts = { fromReached, toReached, toReachedThroughOtherLegs: null, ratePct };
   // More leads at TO than at FROM: the FROM step is under-counted (a producer records the later rung
   // but not the earlier one), so the ratio is not a probability. Unmeasurable, never clamped to 100%.
   if (ratePct !== null && ratePct > 100) {
-    return { ...basis, fromReached, toReached, ratePct, sufficient: false, gap: "to_exceeds_from" };
+    return { ...basis, ...counts, sufficient: false, gap: "to_exceeds_from" };
   }
   const sufficient = fromReached >= MIN_MEASURED_FROM_REACHED;
-  return { ...basis, fromReached, toReached, ratePct, sufficient, gap: sufficient ? null : "below_learning_bar" };
+  return { ...basis, ...counts, sufficient, gap: sufficient ? null : "below_learning_bar" };
 }
 
 /** Our step wording → the CRM step that evidences it. A step absent here is one no CRM records. */
@@ -658,7 +701,7 @@ export function getBrandStepCounts(brandId: string, orgId: string): Promise<Bran
   return servedCached({
     view: "brand-conversion-step-counts",
     // `m` names the measurement rule, so a snapshot computed under a retired rule is never served.
-    scopeKey: buildScopeKey(brandId, { orgId, m: "funnel-step-crm-v1" }),
+    scopeKey: buildScopeKey(brandId, { orgId, m: "funnel-step-crm-through-leg-v2" }),
     orgId,
     compute: async () => summariseMeasurement(await measureBrandSteps(brandId, orgId, [])),
   });
