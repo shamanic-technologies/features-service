@@ -6,10 +6,12 @@ vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
 import {
   buildCustomerHealthBoard,
+  customerHealthAccountsAudit,
   AUDIENCE_NEAR_EXHAUSTED_PCT,
   type CustomerHealthDeps,
 } from "./customer-health-compute.js";
-import type { AccountsAudit, AccountRow, AccountStatus } from "./accounts-compute.js";
+import type { AccountsAudit, AccountsDeps, AccountRow, AccountStatus } from "./accounts-compute.js";
+import { spendableKey, type BrandSpendableBudget } from "./accounts-client.js";
 import type { ActiveUsersByUser, ActiveUserRow } from "./active-users-by-user-compute.js";
 import type { AudienceStatsEnvelope, AudienceStatsRow } from "./audience-stats-compute.js";
 import type { WorkflowProjectionResponse } from "../routes/workflow-projection.js";
@@ -178,7 +180,7 @@ function makeDeps(fixtures: {
 }): CustomerHealthDeps {
   const audit: AccountsAudit = {
     rows: fixtures.accounts,
-    stats: { totalRunningDailyBudgetUsd: 0, totalConfiguredDailyBudgetUsd: 0, totalReactiveRunningDailyCapUsd: 0, mrrUsd: 0, arrUsd: 0, mrrBasis: "billing_recurring", mrrUnavailableReason: null, mrrUnknownOrgIds: [], activeCount: 0, reactiveOnlyCount: 0, paymentDeclinedCount: 0, noPaymentMethodCount: 0, pausedCount: 0, inactiveCount: 0, totalCount: fixtures.accounts.length },
+    stats: { totalRunningDailyBudgetUsd: 0, totalConfiguredDailyBudgetUsd: 0, totalReactiveRunningDailyCapUsd: 0, mrrUsd: 0, arrUsd: 0, mrrBasis: "billing_recurring", mrrUnavailableReason: null, mrrUnknownOrgIds: [], activeCount: 0, reactiveOnlyCount: 0, paymentDeclinedCount: 0, noPaymentMethodCount: 0, pausedCount: 0, statusUnknownCount: 0, inactiveCount: 0, totalCount: fixtures.accounts.length },
     asOf: NOW.toISOString(),
   };
   const byUser: ActiveUsersByUser = {
@@ -612,5 +614,84 @@ describe("buildCustomerHealthBoard", () => {
     // Fleet stats still computed over ALL rows.
     expect(board.stats.totalCustomers).toBe(2);
     expect(board.stats.activeCount).toBe(2);
+  });
+});
+
+describe("buildCustomerHealthBoard — one org's unreadable billing payment-outlook (2026-10-03)", () => {
+  // billing timed out on ONE org's GET /internal/accounts/by-org/:orgId/payment-outlook (~54×/day) and the
+  // fail-loud audit 500'd the WHOLE board: every other customer vanished from the staff page and the
+  // owner's 07:00 Telegram. The board now reads the outlook fail-soft through the REAL accounts audit.
+  const memberships = [
+    { orgId: "ok1", brandId: "b-ok1" },
+    { orgId: "bad", brandId: "b-bad" },
+    { orgId: "ok2", brandId: "b-ok2" },
+  ];
+  function accountsDeps(failingOrg: string | null): AccountsDeps {
+    return {
+      featureMemberships: async () => memberships,
+      orgBalance: async (orgId) => ({ spendableUsd: orgId === "ok2" ? 5 : 900, actualUsd: orgId === "ok2" ? 5 : 900, autoTopupEnabled: false }),
+      orgIdentity: async (orgId) => ({ orgExternalId: `org_${orgId}`, ownerEmail: `${orgId}@ex.com` }),
+      paymentHold: async (orgId) => {
+        if (orgId === failingOrg) {
+          throw new Error("[features-service] billing-service /internal/accounts/by-org/:orgId/payment-outlook failed (502): upstream timeout");
+        }
+        return orgId === "ok2" ? { blockedReason: "card_declined" } : null;
+      },
+      spendableBudgets: async (pairs) => {
+        const out = new Map<string, BrandSpendableBudget>();
+        for (const p of pairs) out.set(spendableKey(p.orgId, p.brandId), { configuredUsd: 40, runningUsd: 40, proactiveRunningUsd: 40, reactiveRunningUsd: 0 });
+        return out;
+      },
+      brandsBasic: async (ids) => new Map(ids.map((id) => [id, { name: `Brand ${id}`, domain: `${id}.com` }])),
+    };
+  }
+  function boardDeps(failingOrg: string | null): CustomerHealthDeps {
+    const base = makeDeps({
+      accounts: [],
+      recencies: [recency("ok1", "2026-07-14"), recency("bad", "2026-07-13"), recency("ok2", "2026-07-10")],
+      perBrand: Object.fromEntries(
+        memberships.map((m) => [
+          m.brandId,
+          { economics: econ(100), funnels: ["website_purchases"] as SalesFunnelKey[], revenue: { actualCostUsd: 50, expectedPipelineUsd: 100, roiMultiple: 2, cacPct: 50 } },
+        ]),
+      ),
+    });
+    return {
+      ...base,
+      featureMemberships: async () => memberships.map((m) => ({ ...m, workflowSlug: "wf" })),
+      accountsAudit: (csv, now) => customerHealthAccountsAudit(csv, now, accountsDeps(failingOrg)),
+    };
+  }
+
+  it("still builds the board: every other row intact, the failing row says status unknown + why, never a guessed verdict", async () => {
+    const healthy = await buildCustomerHealthBoard(COLD_CSV, NOW, boardDeps(null));
+    const board = await buildCustomerHealthBoard(COLD_CSV, NOW, boardDeps("bad"));
+
+    expect(board.customers.map((r) => r.orgId).sort()).toEqual(["bad", "ok1", "ok2"]);
+    // Other rows are byte-identical to the board where billing answered for everyone.
+    for (const orgId of ["ok1", "ok2"]) {
+      expect(board.customers.find((r) => r.orgId === orgId)).toEqual(healthy.customers.find((r) => r.orgId === orgId));
+    }
+    expect(board.customers.find((r) => r.orgId === "ok1")!.status).toBe("active");
+    expect(board.customers.find((r) => r.orgId === "ok2")!.status).toBe("payment_declined");
+    expect(board.customers.find((r) => r.orgId === "ok1")!.statusUnknownReason).toBeNull();
+
+    const bad = board.customers.find((r) => r.orgId === "bad")!;
+    expect(healthy.customers.find((r) => r.orgId === "bad")!.status).toBe("active"); // what it reads when billing answers
+    expect(bad.status).toBe("unknown"); // not "active": billing may have blocked it
+    expect(bad.statusUnknownReason).toMatch(/^billing payment-outlook unreadable: .*payment-outlook failed \(502\)/);
+    expect(bad.paymentDeclinedReason).toBeNull();
+    expect(bad.health.badge).toBe("red"); // not KNOWN active
+    // The rest of the row is read as usual.
+    expect(bad.runningDailyBudgetUsd).toBe(40);
+    expect(bad.orgActualBalanceUsd).toBe(900);
+    expect(bad.lastActiveDay).toBe("2026-07-13");
+
+    expect(board.stats).toMatchObject({ totalCustomers: 3, activeCount: 1, paymentDeclinedCount: 1, statusUnknownCount: 1, inactiveCount: 0 });
+  });
+
+  it("the default accounts audit (staff Accounts page, send-forecast) stays fail-loud on the same failure", async () => {
+    const { buildAccountsAudit } = await import("./accounts-compute.js");
+    await expect(buildAccountsAudit(COLD_CSV, NOW, accountsDeps("bad"))).rejects.toThrow(/payment-outlook failed \(502\)/);
   });
 });

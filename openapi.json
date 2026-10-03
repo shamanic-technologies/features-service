@@ -17362,6 +17362,10 @@
               "pausedCount": {
                 "type": "integer"
               },
+              "statusUnknownCount": {
+                "type": "integer",
+                "description": "Always 0 on this endpoint (its payment-outlook read is fail-loud); the customer-health board reads it fail-soft and counts its 'unknown' rows here."
+              },
               "inactiveCount": {
                 "type": "integer"
               },
@@ -17383,6 +17387,7 @@
               "paymentDeclinedCount",
               "noPaymentMethodCount",
               "pausedCount",
+              "statusUnknownCount",
               "inactiveCount",
               "totalCount"
             ]
@@ -17471,11 +17476,17 @@
                     "active",
                     "payment_declined",
                     "no_payment_method",
+                    "unknown",
                     "reactive_only",
                     "paused",
                     "inactive"
                   ],
-                  "description": "Same composition as GET /internal/stats/accounts (payment_declined > active > reactive_only > paused > inactive; payment_declined means billing cannot charge the org, reason on paymentDeclinedReason; active needs a PROACTIVE RUNNING budget > 0 AND funded/auto-topup; reactive_only means nothing proactive runs but a reactive campaign is on; paused means money posted with nothing running)."
+                  "description": "Same composition as GET /internal/stats/accounts (payment_declined > active > reactive_only > paused > inactive; payment_declined means billing cannot charge the org, reason on paymentDeclinedReason; active needs a PROACTIVE RUNNING budget > 0 AND funded/auto-topup; reactive_only means nothing proactive runs but a reactive campaign is on; paused means money posted with nothing running). 'unknown' (this board only): billing's payment-outlook read failed for this org, so whether billing can charge it is not known and no verdict is invented; the reason rides statusUnknownReason, every other column of the row is read as usual, and the rest of the board is unaffected (one org's billing failure no longer 500s the whole board, 2026-10-03). Its health badge reads red (not KNOWN active)."
+                },
+                "statusUnknownReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Why status is 'unknown' (e.g. 'billing payment-outlook unreadable: … (502) …', capped at 300 chars); null whenever the status is known."
                 },
                 "paymentDeclinedReason": {
                   "type": "string",
@@ -17947,6 +17958,7 @@
                 "activeThisMonth",
                 "activeDays",
                 "status",
+                "statusUnknownReason",
                 "paymentDeclinedReason",
                 "configuredDailyBudgetUsd",
                 "runningDailyBudgetUsd",
@@ -17995,6 +18007,10 @@
               "pausedCount": {
                 "type": "integer"
               },
+              "statusUnknownCount": {
+                "type": "integer",
+                "description": "Rows whose status could not be read (status 'unknown': billing payment-outlook unreadable for the org). Not counted as inactive, excluded from every money total."
+              },
               "inactiveCount": {
                 "type": "integer"
               },
@@ -18015,6 +18031,7 @@
               "paymentDeclinedCount",
               "noPaymentMethodCount",
               "pausedCount",
+              "statusUnknownCount",
               "inactiveCount",
               "greenCount",
               "yellowCount",
