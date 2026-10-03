@@ -23,6 +23,7 @@ import type { DeclaredSalesFunnel } from "../lib/sales-funnels-client.js";
 import type { EffectiveEconomics } from "../lib/sales-economics-client.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { fetchLeadsForRevenue } from "../lib/leads-client.js";
+import { singleCampaignId } from "../lib/campaign-scope.js";
 import { fetchEventTimestamps } from "../lib/email-status-client.js";
 import { fetchObservedStepFacts, type ObservedStepFacts } from "../lib/observed-steps.js";
 import { fetchQualifications } from "../lib/qualifications-client.js";
@@ -71,6 +72,11 @@ export async function loadBrandPricedPopulation(
     fleetEntryStats: boolean;
     /** Which cause states are PRICED (the pipeline's default: our outreach only). */
     pricedCauses?: readonly OutcomeCause[];
+    /**
+     * The OFFER grain: only the leads served on these campaigns (the offer's, across every channel), read
+     * exactly as `/offers/:offerId/revenue` reads them. Omitted → the whole brand (byte-unchanged).
+     */
+    campaignIds?: string[];
   },
 ): Promise<{
   persons: EnginePerson[];
@@ -95,7 +101,7 @@ export async function loadBrandPricedPopulation(
     });
 
   const [persons, fleetGroups] = await Promise.all([
-    fetchLeadsForRevenue(brandId, undefined, headers),
+    fetchLeadsForRevenue(brandId, opts.campaignIds, headers),
     opts.fleetEntryStats && measuredSlugs.length > 0
       ? soft("fleet email stats", fetchPublicEmailStats(measuredSlugs.join(","), "workflowSlug"))
       : Promise.resolve(null),
@@ -104,10 +110,12 @@ export async function loadBrandPricedPopulation(
   const economics = priced.economics.economics;
 
   const emails = [...new Set(persons.map((p) => p.email).filter((e): e is string => Boolean(e)))];
+  // The same per-campaign narrowing the revenue engine applies to its two campaign-keyed overlays.
+  const campaignId = singleCampaignId(opts.campaignIds);
   const [timestamps, observed, quals, signupEmails, formEmails] = await Promise.all([
-    soft("event timestamps", fetchEventTimestamps(brandId, undefined, emails, headers)),
+    soft("event timestamps", fetchEventTimestamps(brandId, campaignId, emails, headers)),
     soft("observed step statements", fetchObservedStepFacts(brandId, pricedCauses)),
-    soft("legacy qualifications", fetchQualifications(brandId, undefined, emails, headers)),
+    soft("legacy qualifications", fetchQualifications(brandId, campaignId, emails, headers)),
     soft("signup attribution", fetchConversionEmails(brandId, "signup")),
     soft("form-submission attribution", fetchConversionEmails(brandId, "form_submission")),
   ]);

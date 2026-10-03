@@ -191,6 +191,14 @@ export function priceContactedLeads(input: {
   /** LTR, or null at cold start. */
   lifetimeRevenueUsd: number | null;
   fleet: FleetEntryCounts;
+  /**
+   * The OFFER grain: the entry rates are NOT re-measured on the narrower population — they are the
+   * brand's, copied from the brand's contacted-value routes, because those are the rates every pipeline
+   * read (`/offers/:offerId/revenue` included) prices a contacted lead with (`contactedPricingSoft`).
+   * `null` = the brand cell is unreadable or unmeasured, which the pipeline reads as "no rate": every
+   * route then reads null. Omitted → measured here on `persons` (the brand grain).
+   */
+  entryRatesFrom?: readonly ContactedEntryRoute[] | null;
   now?: Date;
 }): ContactedValueResult {
   const nowForCutoff = input.now ?? new Date();
@@ -226,11 +234,17 @@ export function priceContactedLeads(input: {
       const mature = input.persons.filter(
         (p) => Boolean(p.signals.contacted) && p.servedAt != null && servedInMatureCohort(p.servedAt, routeCutoff),
       );
-      const brand = { contacted: mature.length, reached: mature.filter((p) => p.signals[path.signal]).length };
-      const fleet = input.fleet ? (input.fleet[path.signal] ?? { contacted: 0, reached: 0 }) : null;
+      let brand = { contacted: mature.length, reached: mature.filter((p) => p.signals[path.signal]).length };
+      let fleet = input.fleet ? (input.fleet[path.signal] ?? { contacted: 0, reached: 0 }) : null;
       let entryRatePct: number | null = null;
       let entryRateSource: EntryRateSource | null = null;
-      if (brand.contacted > 0 && brand.reached >= rule.outcomesRequired) {
+      if (input.entryRatesFrom !== undefined) {
+        const from = input.entryRatesFrom?.find((r) => r.signal === path.signal) ?? null;
+        brand = from ? from.brand : { contacted: 0, reached: 0 };
+        fleet = from ? from.fleet : null;
+        entryRatePct = from?.entryRatePct ?? null;
+        entryRateSource = entryRatePct === null ? null : from!.entryRateSource;
+      } else if (brand.contacted > 0 && brand.reached >= rule.outcomesRequired) {
         entryRatePct = (brand.reached / brand.contacted) * 100;
         entryRateSource = "brand_measured";
       } else if (fleet && fleet.contacted > 0 && fleet.reached <= fleet.contacted) {
