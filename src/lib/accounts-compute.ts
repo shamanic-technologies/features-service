@@ -76,6 +76,7 @@ import {
   type BrandSpendableBudget,
 } from "./accounts-client.js";
 import { readStatedAmountsSoft } from "./stated-monthly-amounts-store.js";
+import { createSlotLimiter } from "./concurrency.js";
 
 /**
  * `no_payment_method` is billing's `charge_blocked` with blockedReason `no_chargeable_card`: the card
@@ -267,7 +268,19 @@ export interface AccountsAuditOptions {
    * timeout 500'd the whole fleet answer); the active-users count keeps the fail-loud read.
    */
   orgReadsFailSoft?: boolean;
+  /** Test seam: the pause before the soft path's single outlook retry (default `PAYMENT_HOLD_SOFT_RETRY_DELAY_MS`). */
+  paymentHoldRetryDelayMs?: number;
 }
+
+/**
+ * The soft path's guard against a TRANSIENT billing burst (2026-10-03: one board compute saw 40 of 53
+ * outlook reads time out, a minute later 40 of 40 answered). Without it, a burst that the fail-loud
+ * audit would have turned into "keep serving the last good snapshot" instead persists a board where
+ * most rows read "unknown". So: at most N outlook reads in flight, and each failed read is retried
+ * ONCE after a pause before its row is marked unknown.
+ */
+const PAYMENT_HOLD_SOFT_CONCURRENCY = 8;
+const PAYMENT_HOLD_SOFT_RETRY_DELAY_MS = 2000;
 
 /** Cap on the reason text carried on a row (billing's error body can be a long upstream page). */
 const STATUS_UNKNOWN_REASON_MAX = 300;
@@ -371,6 +384,18 @@ export async function buildAccountsAudit(
       return null;
     });
   };
+  const holdLimiter = opts.orgReadsFailSoft ? createSlotLimiter(PAYMENT_HOLD_SOFT_CONCURRENCY) : null;
+  const retryDelayMs = opts.paymentHoldRetryDelayMs ?? PAYMENT_HOLD_SOFT_RETRY_DELAY_MS;
+  const readHoldSoftOnce = (orgId: string): Promise<PaymentHold | null> => holdLimiter!.run(() => deps.paymentHold(orgId));
+  /** Soft path: at most N in flight, each failed read retried ONCE after a pause. Strict path: one plain read. */
+  const readHold = (orgId: string): Promise<PaymentHold | null> =>
+    opts.orgReadsFailSoft
+      ? readHoldSoftOnce(orgId).catch(async (first): Promise<PaymentHold | null> => {
+          console.warn(`[features-service] accounts: payment-outlook read failed for org ${orgId}, retrying once: ${(first as Error).message}`);
+          await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+          return readHoldSoftOnce(orgId);
+        })
+      : deps.paymentHold(orgId);
   const [orgInfoEntries, brandInfo] = await Promise.all([
     Promise.all(
       orgIds.map(
@@ -381,7 +406,7 @@ export async function buildAccountsAudit(
           const [balance, identity, hold] = await Promise.all([
             perOrgRead(orgId, "balance", "billing balance", deps.orgBalance(orgId)),
             perOrgRead(orgId, "identity", "client-service identity", deps.orgIdentity(orgId)),
-            perOrgRead(orgId, "payment_outlook", "billing payment-outlook", deps.paymentHold(orgId).then((h) => ({ h }))).then((r) => {
+            perOrgRead(orgId, "payment_outlook", "billing payment-outlook", readHold(orgId).then((h) => ({ h }))).then((r) => {
               if (r === null) holdRead = false;
               return r?.h ?? null;
             }),
