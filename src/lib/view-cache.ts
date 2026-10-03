@@ -10,6 +10,7 @@ import {
   viewCacheRole,
 } from "./view-refresher.js";
 import { brandIdOfRequest, factsFingerprint } from "./view-facts.js";
+import { withResponseShape } from "./response-shape.js";
 
 /**
  * Gold serving layer — stale-while-revalidate read-through cache for expensive feature views.
@@ -268,7 +269,10 @@ export function sendSnapshotJson(res: import("express").Response, body: Snapshot
   return res.send(wire.buffer);
 }
 
-async function servedCachedBody<T>({ view, scopeKey, orgId, ttlMs, maxStaleMs, compute: rawCompute }: CachedViewArgs<T>): Promise<CachedBody> {
+async function servedCachedBody<T>({ view, scopeKey: askedKey, orgId, ttlMs, maxStaleMs, compute: rawCompute }: CachedViewArgs<T>): Promise<CachedBody> {
+  // Every cell is bound to the response SHAPE of the build serving it (lib/response-shape.ts): a deploy
+  // that changes a field never serves the previous build's body, not even as a stale or family hit.
+  const scopeKey = withResponseShape(askedKey);
   // Every view compute reads leads through the live copy (lib/lead-copy.ts): these are the views a
   // customer polls, which is exactly the population the change feed exists for.
   const localCompute = async () => bodyFromValue(await withLiveLeadCopy(rawCompute));

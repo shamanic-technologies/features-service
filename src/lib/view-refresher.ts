@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { fork, type ChildProcess } from "node:child_process";
 import type { NextFunction, Request, Response } from "express";
+import { withoutResponseShape } from "./response-shape.js";
 
 /**
  * THE VIEW REFRESHER — every Gold snapshot compute runs in a SEPARATE Node process, so the process that
@@ -179,7 +180,15 @@ export function forcedRefresh(
   familyKey: string,
 ): ((value: unknown) => void) & { verifyOnly?: boolean } | null {
   const replay = replayStore.getStore();
-  if (!replay?.target || !replay.answer || replay.target.view !== view || replay.target.familyKey !== familyKey) return null;
+  // Matched across builds: a cell stored under the previous response shape is refreshed under this one.
+  if (
+    !replay?.target ||
+    !replay.answer ||
+    replay.target.view !== view ||
+    withoutResponseShape(replay.target.familyKey) !== withoutResponseShape(familyKey)
+  ) {
+    return null;
+  }
   const answer: ((value: unknown) => void) & { verifyOnly?: boolean } = replay.answer;
   answer.verifyOnly = replay.verify === true;
   replay.target = undefined; // first match only

@@ -98,6 +98,7 @@ const {
   encodeSnapshotBody,
   decodeSnapshotBody,
 } = await import("./view-cache.js");
+const { withResponseShape, responseShapeFingerprint } = await import("./response-shape.js");
 const PLATFORM = PLATFORM_SCOPE_ORG_ID;
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -414,8 +415,16 @@ describe("servedCached on a fingerprint rotation", () => {
     await flush();
     await flush();
     expect(storedRow?.body).toEqual({ pipeline: 42 });
-    expect(storedRow?.scopeKey).toBe(newKey);
-    expect(storedRow?.familyKey).toBe(familyKeyOf(newKey));
+    expect(storedRow?.scopeKey).toBe(withResponseShape(newKey));
+    expect(storedRow?.familyKey).toBe(familyKeyOf(withResponseShape(newKey)));
+  });
+
+  it("a cell's key AND family carry this build's response shape, so another build's body is never served", async () => {
+    await servedCached({ view: "brand-revenue", scopeKey: newKey, orgId: "o", compute: async () => ({ pipeline: 1 }) });
+    const shape = `_shape=${responseShapeFingerprint()}`;
+    expect(String(storedRow?.scopeKey)).toContain(shape);
+    // The rotation fallback reads the family: a family without the shape would hand back the old build's cell.
+    expect(String(storedRow?.familyKey)).toContain(shape);
   });
 
   it("decodes an encoded previous cell", async () => {
@@ -491,7 +500,7 @@ describe("servedCached with the view refresher", () => {
       expect(compute).not.toHaveBeenCalled();
       expect(storedRow).toBeUndefined(); // the refresher persisted it, in its own process
       expect(fetchCalls[0].url).toBe("http://127.0.0.1:8091/brands/b1/revenue?pricing=net");
-      expect(decodeTarget(fetchCalls[0].headers[REFRESH_HEADER])).toEqual({ view: "brand-revenue", familyKey: familyKeyOf(key) });
+      expect(decodeTarget(fetchCalls[0].headers[REFRESH_HEADER])).toEqual({ view: "brand-revenue", familyKey: familyKeyOf(withResponseShape(key)) });
       expect(fetchCalls[0].headers["x-org-id"]).toBe("o");
       expect(fetchCalls[0].headers.host).toBeUndefined();
       expect(fetchCalls[0].headers["if-none-match"]).toBeUndefined();
