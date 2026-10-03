@@ -8,6 +8,7 @@
  * ladder (`?leg=&offerId=&pricing=net`) campaign-service ranks on, invoked in-process so the best
  * workflow per leg is picked exactly the way it is picked everywhere else.
  */
+import { StoreNotComputedError } from "../lib/await-warm-store.js";
 import { Router, type Request, type Response } from "express";
 import { eq } from "drizzle-orm";
 import { apiKeyAuth, type AuthenticatedRequest } from "../middleware/auth.js";
@@ -149,13 +150,10 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
     });
 
     // The cascade's middle rung: the fleet's measured cost per outcome, from the last outcome-prices build
-    // (lazy import: that router is large and this rung is optional — an unwarmed store falls to the default).
-    let fleetPrices = new Map<string, number>();
-    try {
-      fleetPrices = (await import("./public.js")).fleetLegCostsFromOutcomePrices();
-    } catch (error) {
-      console.error(`[features-service] sales-paths: fleet leg costs unreadable, defaults apply: ${(error as Error).message}`);
-    }
+    // (lazy import: that router is large). Right after a boot the store is EMPTY for the minutes its first
+    // build takes; this read awaits that build, and fails VISIBLY (503) past the bound — never prices a
+    // measured leg at its seeded default because the process is young (2026-10-03: $5 vs $1.41).
+    const fleetPrices = await (await import("./public.js")).awaitFleetLegCostsFromOutcomePrices();
 
     return res.json(
       buildOfferSalesPaths({
@@ -174,6 +172,11 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
   } catch (error) {
     if (error instanceof OfferSalesPathNotFoundError) {
       return res.status(404).json({ error: error.message, reason: "offer_not_found" });
+    }
+    if (error instanceof StoreNotComputedError) {
+      console.error(`[features-service] sales-paths for offer ${offerId}: ${error.message}`);
+      res.setHeader("Retry-After", "60");
+      return res.status(503).json({ error: error.message, reason: "fleet_costs_not_computed_yet" });
     }
     if (error instanceof SalesFunnelsUnavailableError) {
       return res.status(502).json({ error: error.message, reason: "brand_service_unavailable" });

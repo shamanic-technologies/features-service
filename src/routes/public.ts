@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { awaitWarmStore } from "../lib/await-warm-store.js";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features, type Feature } from "../db/schema.js";
@@ -4604,6 +4605,20 @@ export function fleetLegCostsFromOutcomePrices(): Map<string, number> {
     }
   }
   return out;
+}
+
+/** How long a sales-paths read waits on the first outcome-prices build after boot (~2.5 min in prod,
+ *  2026-10-03) before failing visibly. Under Caddy's 310 s read timeout. */
+export const FLEET_LEG_COSTS_BOOT_WAIT_MS = 200_000;
+
+/**
+ * `fleetLegCostsFromOutcomePrices`, but a read that finds the store EMPTY (the boot warm window) awaits the
+ * in-flight build instead of answering "nothing measured" (which priced every leg at its seeded default).
+ * Still empty after `waitMs` → `StoreNotComputedError` (the route's 503). (`lib/await-warm-store.ts`.)
+ */
+export async function awaitFleetLegCostsFromOutcomePrices(waitMs: number = FLEET_LEG_COSTS_BOOT_WAIT_MS): Promise<Map<string, number>> {
+  await awaitWarmStore(() => outcomePricesStore?.value ?? null, warmOutcomePrices, waitMs, "fleet leg costs (outcome prices)");
+  return fleetLegCostsFromOutcomePrices();
 }
 
 /**
