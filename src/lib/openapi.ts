@@ -622,8 +622,8 @@ const spendSchema = z.object({
   totalSpentCents: z.number().int().describe("'Total spent' (COMMITTED, USD cents) = ACTUAL + PROVISIONED holds for the brand(+campaign)+feature, == Σ sources[].totalSpentCents. The reserved money the customer sees; dips when a hold releases. Reconciles with totalCpcCents by construction."),
   actualSpentCents: z.number().int().describe("Billed-only spend (USD cents), == Σ sources[].actualSpentCents. Same source as systemStats.actualCostInUsdCents / costEconomics.actualCostUsd. REPORTED ONLY — ROI/CAC and every cost-per-outcome column ride the COMMITTED totalSpentCents beside it."),
   provisionedSpentCents: z.number().int().describe("Open PROVISIONED holds only (USD cents) = totalSpentCents − actualSpentCents, == Σ sources[].provisionedSpentCents. Money reserved for scheduled follow-up sends, not yet billed."),
-  totalSpentTodayCents: z.number().int().describe("COMMITTED spend (actual + provisioned, USD cents) for runs started since 00:00 UTC today — 'Budget spent today'."),
-  actualSpentTodayCents: z.number().int().describe("ACTUAL (billed) spend (USD cents) for runs started since 00:00 UTC today."),
+  totalSpentTodayCents: z.number().int().describe("COMMITTED spend (actual + provisioned, USD cents) for runs started since 00:00 UTC today — 'Budget spent today'. On the OFFER and BRAND grains (/offers/{offerId}/revenue, /brands/{brandId}/revenue) it also counts the brand's own work no campaign carries (setting the brand up, notification emails), on every channel: what was charged for this brand today. Every other read: the scope's own runs only."),
+  actualSpentTodayCents: z.number().int().describe("ACTUAL (billed) spend (USD cents) for runs started since 00:00 UTC today. On the OFFER and BRAND grains it also counts the brand's own work no campaign carries (setting the brand up, notification emails), so it equals runs-service's actual spend for the brand since 00:00 UTC (to per-group cent rounding); an offer of a brand selling several offers shares that part with them. Every other read: the scope's own runs only."),
   provisionedSpentTodayCents: z.number().int().describe("Open PROVISIONED holds (USD cents) = totalSpentTodayCents − actualSpentTodayCents, for runs started since 00:00 UTC today."),
   sources: z.array(spendSourceSchema).describe("Per cost-name committed/actual/provisioned spend + committed share-of-total, descending — the 'top cost sources' list pre-computed (the dashboard renders verbatim instead of summing the runs breakdown in the browser)."),
   totalCpcCents: z.number().nullable().describe("COMMITTED cost per website click = totalSpentCents / clicks (clicked.total). Null (renders '-'), never a false $0.00, when there are 0 clicks OR 0 committed spend."),
@@ -1578,11 +1578,61 @@ const offerRevenueChannelGroupSchema = offerChannelSchema.extend({
   maturity: featureRevenueResponseSchema.shape.maturity,
 });
 
+
+const windowCountSeriesSchema = z.object({
+  total: z.number().int().describe("Σ daily[].count, exactly."),
+  daily: z.array(z.object({ date: z.string().describe("UTC day, YYYY-MM-DD."), count: z.number().int() })).describe("One entry per day of the window, ascending, zero-filled."),
+});
+
+const revenueWindowSchema = z.object({
+  days: z.number().int().describe("The window's length in UTC days, the last one being today (echo of ?windowDays=)."),
+  startDate: z.string().describe("First UTC day of the window, YYYY-MM-DD."),
+  endDate: z.string().describe("Last UTC day of the window (today), YYYY-MM-DD."),
+  emails: z.object({
+    sent: z.number().int().describe("EMAILS sent over the window, every step (not leads). Σ daily[].sent."),
+    delivered: z.number().int().describe("Emails delivered over the window. Σ daily[].delivered."),
+    bounced: z.number().int().describe("Emails bounced over the window, on the day each bounced. Σ daily[].bounced."),
+    deliveryRatePct: z.number().nullable().describe("delivered ÷ sent × 100 over the window. Null when nothing was sent (or the counts contradict), never 0."),
+    daily: z.array(z.object({
+      date: z.string(),
+      sent: z.number().int(),
+      delivered: z.number().int(),
+      bounced: z.number().int(),
+      deliveryRatePct: z.number().nullable().describe("That day's delivered ÷ sent × 100; null on a day nothing was sent."),
+    })).describe("One entry per day of the window, ascending, zero-filled. Each number is email-gateway's own for the day the event happened, so a day's delivered need not equal its sent − bounced."),
+  }).nullable().describe("The scope's emails, from email-gateway's per-day email stats (the same read `sequences` rides). Null when that read failed — never a zero."),
+  spend: z.object({
+    actualSpentCents: z.number().int().describe("ACTUAL (charged) spend over the window, USD cents, on the read's ?pricing= basis: the scope's campaigns PLUS the brand's own work no campaign carries (setup, notifications) — the composition of spend.actualSpentTodayCents on the same read. Σ daily[].actualSpentCents, exactly."),
+    brandLevelActualSpentCents: z.number().int().describe("The part of actualSpentCents no campaign carries (the brand's own setup work, notifications). On an offer of a brand selling several offers, every offer shows it. Σ daily[].brandLevelActualSpentCents."),
+    costPerEmailSentCents: z.number().nullable().describe("actualSpentCents ÷ emails.sent over the window (fractional cents). Null when nothing was sent, or when emails is null."),
+    daily: z.array(z.object({
+      date: z.string(),
+      actualSpentCents: z.number().int().describe("That day's actual spend (runs started that UTC day), rounded once to whole cents."),
+      brandLevelActualSpentCents: z.number().int(),
+    })).describe("One entry per day of the window, ascending, zero-filled."),
+  }).nullable().describe("Dated by runs-service's own day buckets (run start, UTC). Null when that read failed — never a zero."),
+  recipientsRepliesPositive: windowCountSeriesSchema.describe("People whose FIRST positive reply landed on a day of the window — the body's own recipientsRepliesPositive.daily, summed over the window. An undated reply sits on no day and is in no window."),
+  recipientsClicked: windowCountSeriesSchema.describe("People whose FIRST website visit landed on a day of the window — the body's own recipientsClicked.daily, summed over the window."),
+  expectedPipeline: z.object({
+    totalPipelineUsd: z.number().describe("== headline.totalPipelineUsd on the same body (the EXPECTED pipeline)."),
+    undatedPipelineUsd: z.number().describe("Pipeline in the headline whose organisation carries no event date, so it sits on no day. 0 whenever every organisation is dated, in which case the last daily point IS the headline."),
+    daily: z.array(z.object({
+      date: z.string(),
+      cumulativePipelineUsd: z.number().describe("Expected pipeline of every organisation dated on or before the end of this day (cumulative since the brand began, not since the window began)."),
+    })).describe("One entry per day of the window, ascending. Same basis as the headline (the expected pipeline, every lead to date), so the curve ends at the headline. NOT roiHistory's pipeline leg, which is the realized, mature cohort's."),
+  }).nullable().describe("Null when the headline pipeline is null (no funnel, cold start)."),
+});
+
+const revenueWindowRef = registry.register("RevenueWindow", revenueWindowSchema);
+
+const windowDaysParam = z.string().optional().describe("ONE CHOSEN WINDOW: an integer 1..90 = that many UTC days ending today (7 and 30 are what the Today page asks). Adds `window` — emails sent/delivered/bounced + delivery rate, actual spend + cost per email sent, positive replies, website visits and the expected pipeline curve — each a window total beside one value per day. Omitted → no `window` key, every other field byte-identical. Anything else is a 400 with reason 'window_days_unrecognised'.");
+
 const offerRevenueResponseSchema = featureRevenueResponseSchema
   .omit({ featureSlug: true })
   .extend({
     offerId: z.string(),
     brandId: z.string(),
+    window: revenueWindowRef.optional().describe("Present ONLY when ?windowDays= was asked. See RevenueWindow."),
     channels: z
       .array(offerRevenueChannelGroupSchema)
       .describe(
@@ -1607,6 +1657,7 @@ registry.registerPath({
     params: z.object({ offerId: z.string() }),
     query: z.object({
       brandId: z.string().describe("Brand UUID (required) — an offer belongs to a brand."),
+      windowDays: windowDaysParam,
       pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every MONEY metric. Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the org's discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when they are unavailable, never a silent fallback to gross."),
       cause: z.string().optional().describe("WHOSE WINS THIS READ PRICES — a comma-separated subset of outreach | other | unstated (any order, any case). Every outcome is COUNTED whatever this says (leads[], funnelSteps, conversion rates); this decides which outcomes carry VALUE into the pipeline revenue, the return and the cost of acquisition computed on OUR outreach. 'outreach' — ours: the customer said so, or lead-service's default rule answered it (the outcome followed our first delivered email to that person). 'other' — not ours: the customer said so, or it happened before our first email reached them. 'unstated' — undecided: undated, not matched to a lead, or on a lead we never delivered to. Omitted → 'outreach' alone, the same answer the dashboard's lead panel shows as \"Ours\". The legacy instantly qualifications are judged by the same date rule. An unrecognised word (or a list naming no state) is a 400 with reason 'cause_unrecognised', never a silent pick. The echo rides every response as `outcomeCauses.priced`."),
       leads: z.enum(["outcomes", "full"]).optional().describe("HOW MUCH OF A PERSON `leads[]` carries. Omit or 'outcomes' (the DEFAULT) serves the NARROW row (leadId + the seven outcome flags + the four realized-outcome timestamps) on the rows that REACHED something; 'full' serves every contacted lead fully hydrated — what this service served before, and what exactly one consumer (a server-side digest that NAMES each person and what they did) needs. The default moved because a body answering about MONEY was 99.6% people (10,860,781 bytes of a 10,903,573-byte prod body) and the consumer's 2MB persisted-cache cap meant every money card cold-skeletoned on every page load. Whether an outcome is attributed at all is answered separately by `attributedOutcomes`, so narrowing costs no consumer an answer. An unrecognised value is a 400, never a silent pick."),
@@ -1926,6 +1977,7 @@ const brandRevenueResponseSchema = featureRevenueResponseSchema
   .omit({ featureSlug: true })
   .extend({
     brandId: z.string(),
+    window: revenueWindowRef.optional().describe("Present ONLY when ?windowDays= was asked. See RevenueWindow."),
     channels: z
       .array(brandRevenueChannelGroupSchema)
       .describe(
@@ -1950,6 +2002,7 @@ registry.registerPath({
     headers: identityHeaders,
     params: z.object({ brandId: z.string() }),
     query: z.object({
+      windowDays: windowDaysParam,
       pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every MONEY metric. Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the org's discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when they are unavailable, never a silent fallback to gross."),
       cause: z.string().optional().describe("WHOSE WINS THIS READ PRICES — a comma-separated subset of outreach | other | unstated (any order, any case). Every outcome is COUNTED whatever this says (leads[], funnelSteps, conversion rates); this decides which outcomes carry VALUE into the pipeline revenue, the return and the cost of acquisition computed on OUR outreach. 'outreach' — ours: the customer said so, or lead-service's default rule answered it (the outcome followed our first delivered email to that person). 'other' — not ours: the customer said so, or it happened before our first email reached them. 'unstated' — undecided: undated, not matched to a lead, or on a lead we never delivered to. Omitted → 'outreach' alone, the same answer the dashboard's lead panel shows as \"Ours\". The legacy instantly qualifications are judged by the same date rule. An unrecognised word (or a list naming no state) is a 400 with reason 'cause_unrecognised', never a silent pick. The echo rides every response as `outcomeCauses.priced`."),
       leads: z.enum(["outcomes", "full"]).optional().describe("HOW MUCH OF A PERSON `leads[]` carries. Omit or 'outcomes' (the DEFAULT) serves the NARROW row (leadId + the seven outcome flags + the four realized-outcome timestamps) on the rows that REACHED something; 'full' serves every contacted lead fully hydrated — what this service served before, and what exactly one consumer (a server-side digest that NAMES each person and what they did) needs. The default moved because a body answering about MONEY was 99.6% people (10,860,781 bytes of a 10,903,573-byte prod body) and the consumer's 2MB persisted-cache cap meant every money card cold-skeletoned on every page load. Whether an outcome is attributed at all is answered separately by `attributedOutcomes`, so narrowing costs no consumer an answer. An unrecognised value is a 400, never a silent pick."),
