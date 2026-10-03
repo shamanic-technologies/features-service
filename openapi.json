@@ -26737,6 +26737,24 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Right after a restart, the fleet's measured cost per outcome (the cost cascade's middle rung) was still being built after the read waited ~200 s for it (reason: fleet_costs_not_computed_yet, Retry-After: 60). Never answered with seeded default costs in place of a measurement.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
           }
         }
       }

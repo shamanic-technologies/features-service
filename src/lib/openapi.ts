@@ -1784,6 +1784,7 @@ registry.registerPath({
     400: { description: "Missing brandId", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Offer not found or not an offer of this brand (reason: offer_not_found)", content: { "application/json": { schema: errorResponse } } },
     502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
+    503: { description: "Right after a restart, the fleet's measured cost per outcome (the cost cascade's middle rung) was still being built after the read waited ~200 s for it (reason: fleet_costs_not_computed_yet, Retry-After: 60). Never answered with seeded default costs in place of a measurement.", content: { "application/json": { schema: errorResponse } } },
   },
 });
 
