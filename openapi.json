@@ -1534,11 +1534,11 @@
               },
               "totalSpentTodayCents": {
                 "type": "integer",
-                "description": "COMMITTED spend (actual + provisioned, USD cents) for runs started since 00:00 UTC today — 'Budget spent today'."
+                "description": "COMMITTED spend (actual + provisioned, USD cents) for runs started since 00:00 UTC today — 'Budget spent today'. On the OFFER and BRAND grains (/offers/{offerId}/revenue, /brands/{brandId}/revenue) it also counts the brand's own work no campaign carries (setting the brand up, notification emails), on every channel: what was charged for this brand today. Every other read: the scope's own runs only."
               },
               "actualSpentTodayCents": {
                 "type": "integer",
-                "description": "ACTUAL (billed) spend (USD cents) for runs started since 00:00 UTC today."
+                "description": "ACTUAL (billed) spend (USD cents) for runs started since 00:00 UTC today. On the OFFER and BRAND grains it also counts the brand's own work no campaign carries (setting the brand up, notification emails), so it equals runs-service's actual spend for the brand since 00:00 UTC (to per-group cent rounding); an offer of a brand selling several offers shares that part with them. Every other read: the scope's own runs only."
               },
               "provisionedSpentTodayCents": {
                 "type": "integer",
@@ -7725,6 +7725,255 @@
           "brandProjection"
         ]
       },
+      "RevenueWindow": {
+        "type": "object",
+        "properties": {
+          "days": {
+            "type": "integer",
+            "description": "The window's length in UTC days, the last one being today (echo of ?windowDays=)."
+          },
+          "startDate": {
+            "type": "string",
+            "description": "First UTC day of the window, YYYY-MM-DD."
+          },
+          "endDate": {
+            "type": "string",
+            "description": "Last UTC day of the window (today), YYYY-MM-DD."
+          },
+          "emails": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "sent": {
+                "type": "integer",
+                "description": "EMAILS sent over the window, every step (not leads). Σ daily[].sent."
+              },
+              "delivered": {
+                "type": "integer",
+                "description": "Emails delivered over the window. Σ daily[].delivered."
+              },
+              "bounced": {
+                "type": "integer",
+                "description": "Emails bounced over the window, on the day each bounced. Σ daily[].bounced."
+              },
+              "deliveryRatePct": {
+                "type": "number",
+                "nullable": true,
+                "description": "delivered ÷ sent × 100 over the window. Null when nothing was sent (or the counts contradict), never 0."
+              },
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string"
+                    },
+                    "sent": {
+                      "type": "integer"
+                    },
+                    "delivered": {
+                      "type": "integer"
+                    },
+                    "bounced": {
+                      "type": "integer"
+                    },
+                    "deliveryRatePct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "That day's delivered ÷ sent × 100; null on a day nothing was sent."
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "sent",
+                    "delivered",
+                    "bounced",
+                    "deliveryRatePct"
+                  ]
+                },
+                "description": "One entry per day of the window, ascending, zero-filled. Each number is email-gateway's own for the day the event happened, so a day's delivered need not equal its sent − bounced."
+              }
+            },
+            "required": [
+              "sent",
+              "delivered",
+              "bounced",
+              "deliveryRatePct",
+              "daily"
+            ],
+            "description": "The scope's emails, from email-gateway's per-day email stats (the same read `sequences` rides). Null when that read failed — never a zero."
+          },
+          "spend": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "actualSpentCents": {
+                "type": "integer",
+                "description": "ACTUAL (charged) spend over the window, USD cents, on the read's ?pricing= basis: the scope's campaigns PLUS the brand's own work no campaign carries (setup, notifications) — the composition of spend.actualSpentTodayCents on the same read. Σ daily[].actualSpentCents, exactly."
+              },
+              "brandLevelActualSpentCents": {
+                "type": "integer",
+                "description": "The part of actualSpentCents no campaign carries (the brand's own setup work, notifications). On an offer of a brand selling several offers, every offer shows it. Σ daily[].brandLevelActualSpentCents."
+              },
+              "costPerEmailSentCents": {
+                "type": "number",
+                "nullable": true,
+                "description": "actualSpentCents ÷ emails.sent over the window (fractional cents). Null when nothing was sent, or when emails is null."
+              },
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string"
+                    },
+                    "actualSpentCents": {
+                      "type": "integer",
+                      "description": "That day's actual spend (runs started that UTC day), rounded once to whole cents."
+                    },
+                    "brandLevelActualSpentCents": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "actualSpentCents",
+                    "brandLevelActualSpentCents"
+                  ]
+                },
+                "description": "One entry per day of the window, ascending, zero-filled."
+              }
+            },
+            "required": [
+              "actualSpentCents",
+              "brandLevelActualSpentCents",
+              "costPerEmailSentCents",
+              "daily"
+            ],
+            "description": "Dated by runs-service's own day buckets (run start, UTC). Null when that read failed — never a zero."
+          },
+          "recipientsRepliesPositive": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer",
+                "description": "Σ daily[].count, exactly."
+              },
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "description": "UTC day, YYYY-MM-DD."
+                    },
+                    "count": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "count"
+                  ]
+                },
+                "description": "One entry per day of the window, ascending, zero-filled."
+              }
+            },
+            "required": [
+              "total",
+              "daily"
+            ],
+            "description": "People whose FIRST positive reply landed on a day of the window — the body's own recipientsRepliesPositive.daily, summed over the window. An undated reply sits on no day and is in no window."
+          },
+          "recipientsClicked": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer",
+                "description": "Σ daily[].count, exactly."
+              },
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "description": "UTC day, YYYY-MM-DD."
+                    },
+                    "count": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "count"
+                  ]
+                },
+                "description": "One entry per day of the window, ascending, zero-filled."
+              }
+            },
+            "required": [
+              "total",
+              "daily"
+            ],
+            "description": "People whose FIRST website visit landed on a day of the window — the body's own recipientsClicked.daily, summed over the window."
+          },
+          "expectedPipeline": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "totalPipelineUsd": {
+                "type": "number",
+                "description": "== headline.totalPipelineUsd on the same body (the EXPECTED pipeline)."
+              },
+              "undatedPipelineUsd": {
+                "type": "number",
+                "description": "Pipeline in the headline whose organisation carries no event date, so it sits on no day. 0 whenever every organisation is dated, in which case the last daily point IS the headline."
+              },
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string"
+                    },
+                    "cumulativePipelineUsd": {
+                      "type": "number",
+                      "description": "Expected pipeline of every organisation dated on or before the end of this day (cumulative since the brand began, not since the window began)."
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "cumulativePipelineUsd"
+                  ]
+                },
+                "description": "One entry per day of the window, ascending. Same basis as the headline (the expected pipeline, every lead to date), so the curve ends at the headline. NOT roiHistory's pipeline leg, which is the realized, mature cohort's."
+              }
+            },
+            "required": [
+              "totalPipelineUsd",
+              "undatedPipelineUsd",
+              "daily"
+            ],
+            "description": "Null when the headline pipeline is null (no funnel, cold start)."
+          }
+        },
+        "required": [
+          "days",
+          "startDate",
+          "endDate",
+          "emails",
+          "spend",
+          "recipientsRepliesPositive",
+          "recipientsClicked",
+          "expectedPipeline"
+        ]
+      },
       "OfferRevenueResponse": {
         "type": "object",
         "properties": {
@@ -7793,11 +8042,11 @@
               },
               "totalSpentTodayCents": {
                 "type": "integer",
-                "description": "COMMITTED spend (actual + provisioned, USD cents) for runs started since 00:00 UTC today — 'Budget spent today'."
+                "description": "COMMITTED spend (actual + provisioned, USD cents) for runs started since 00:00 UTC today — 'Budget spent today'. On the OFFER and BRAND grains (/offers/{offerId}/revenue, /brands/{brandId}/revenue) it also counts the brand's own work no campaign carries (setting the brand up, notification emails), on every channel: what was charged for this brand today. Every other read: the scope's own runs only."
               },
               "actualSpentTodayCents": {
                 "type": "integer",
-                "description": "ACTUAL (billed) spend (USD cents) for runs started since 00:00 UTC today."
+                "description": "ACTUAL (billed) spend (USD cents) for runs started since 00:00 UTC today. On the OFFER and BRAND grains it also counts the brand's own work no campaign carries (setting the brand up, notification emails), so it equals runs-service's actual spend for the brand since 00:00 UTC (to per-group cent rounding); an offer of a brand selling several offers shares that part with them. Every other read: the scope's own runs only."
               },
               "provisionedSpentTodayCents": {
                 "type": "integer",
@@ -9952,6 +10201,16 @@
           },
           "brandId": {
             "type": "string"
+          },
+          "window": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RevenueWindow"
+              },
+              {
+                "description": "Present ONLY when ?windowDays= was asked. See RevenueWindow."
+              }
+            ]
           },
           "channels": {
             "type": "array",
@@ -11889,11 +12148,11 @@
               },
               "totalSpentTodayCents": {
                 "type": "integer",
-                "description": "COMMITTED spend (actual + provisioned, USD cents) for runs started since 00:00 UTC today — 'Budget spent today'."
+                "description": "COMMITTED spend (actual + provisioned, USD cents) for runs started since 00:00 UTC today — 'Budget spent today'. On the OFFER and BRAND grains (/offers/{offerId}/revenue, /brands/{brandId}/revenue) it also counts the brand's own work no campaign carries (setting the brand up, notification emails), on every channel: what was charged for this brand today. Every other read: the scope's own runs only."
               },
               "actualSpentTodayCents": {
                 "type": "integer",
-                "description": "ACTUAL (billed) spend (USD cents) for runs started since 00:00 UTC today."
+                "description": "ACTUAL (billed) spend (USD cents) for runs started since 00:00 UTC today. On the OFFER and BRAND grains it also counts the brand's own work no campaign carries (setting the brand up, notification emails), so it equals runs-service's actual spend for the brand since 00:00 UTC (to per-group cent rounding); an offer of a brand selling several offers shares that part with them. Every other read: the scope's own runs only."
               },
               "provisionedSpentTodayCents": {
                 "type": "integer",
@@ -14045,6 +14304,16 @@
           },
           "brandId": {
             "type": "string"
+          },
+          "window": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RevenueWindow"
+              },
+              {
+                "description": "Present ONLY when ?windowDays= was asked. See RevenueWindow."
+              }
+            ]
           },
           "channels": {
             "type": "array",
@@ -26276,6 +26545,16 @@
           {
             "schema": {
               "type": "string",
+              "description": "ONE CHOSEN WINDOW: an integer 1..90 = that many UTC days ending today (7 and 30 are what the Today page asks). Adds `window` — emails sent/delivered/bounced + delivery rate, actual spend + cost per email sent, positive replies, website visits and the expected pipeline curve — each a window total beside one value per day. Omitted → no `window` key, every other field byte-identical. Anything else is a 400 with reason 'window_days_unrecognised'."
+            },
+            "required": false,
+            "description": "ONE CHOSEN WINDOW: an integer 1..90 = that many UTC days ending today (7 and 30 are what the Today page asks). Adds `window` — emails sent/delivered/bounced + delivery rate, actual spend + cost per email sent, positive replies, website visits and the expected pipeline curve — each a window total beside one value per day. Omitted → no `window` key, every other field byte-identical. Anything else is a 400 with reason 'window_days_unrecognised'.",
+            "name": "windowDays",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "enum": [
                 "gross",
                 "net"
@@ -27212,6 +27491,16 @@
             "required": true,
             "name": "brandId",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "ONE CHOSEN WINDOW: an integer 1..90 = that many UTC days ending today (7 and 30 are what the Today page asks). Adds `window` — emails sent/delivered/bounced + delivery rate, actual spend + cost per email sent, positive replies, website visits and the expected pipeline curve — each a window total beside one value per day. Omitted → no `window` key, every other field byte-identical. Anything else is a 400 with reason 'window_days_unrecognised'."
+            },
+            "required": false,
+            "description": "ONE CHOSEN WINDOW: an integer 1..90 = that many UTC days ending today (7 and 30 are what the Today page asks). Adds `window` — emails sent/delivered/bounced + delivery rate, actual spend + cost per email sent, positive replies, website visits and the expected pipeline curve — each a window total beside one value per day. Omitted → no `window` key, every other field byte-identical. Anything else is a 400 with reason 'window_days_unrecognised'.",
+            "name": "windowDays",
+            "in": "query"
           },
           {
             "schema": {
