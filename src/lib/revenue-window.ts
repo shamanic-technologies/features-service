@@ -16,6 +16,10 @@
  *     this brand, the same composition as `spend.actualSpentTodayCents` on the same read. The
  *     campaign-less part is also stated alone (`brandLevelActualSpentCents`), because an offer of a
  *     brand selling several offers shares it with the others.
+ *     Beside it, the COMMITTED twin on the same composition and days: `totalSpentCents` = actual +
+ *     the holds still open for runs still working (`provisionedSpentCents`), runs' `total…` field —
+ *     what the customer has committed over the window, the figure a "Spent" tile states (owner
+ *     2026-10-03). `totalCostPerEmailSentCents` divides THAT total; `costPerEmailSentCents` stays actual.
  *   - recipientsRepliesPositive / recipientsClicked — the body's OWN per-day series (people, first
  *     time each did it) summed over the window's days; an undated one sits on no day and is not in a
  *     window.
@@ -81,7 +85,18 @@ export interface RevenueWindow {
     actualSpentCents: number;
     brandLevelActualSpentCents: number;
     costPerEmailSentCents: number | null;
-    daily: Array<{ date: string; actualSpentCents: number; brandLevelActualSpentCents: number }>;
+    totalSpentCents: number;
+    provisionedSpentCents: number;
+    brandLevelTotalSpentCents: number;
+    totalCostPerEmailSentCents: number | null;
+    daily: Array<{
+      date: string;
+      actualSpentCents: number;
+      brandLevelActualSpentCents: number;
+      totalSpentCents: number;
+      provisionedSpentCents: number;
+      brandLevelTotalSpentCents: number;
+    }>;
   } | null;
   recipientsRepliesPositive: { total: number; daily: Array<{ date: string; count: number }> };
   recipientsClicked: { total: number; daily: Array<{ date: string; count: number }> };
@@ -101,7 +116,7 @@ function deliveryRatePct(sent: number, delivered: number): number | null {
 async function fetchCampaignSplitDays(
   params: URLSearchParams,
   pricing: Pricing,
-): Promise<Array<{ day: string; campaignId: string | null; cents: number }>> {
+): Promise<Array<{ day: string; campaignId: string | null; cents: number; totalCents: number }>> {
   const url = process.env.RUNS_SERVICE_URL;
   const apiKey = process.env.RUNS_SERVICE_API_KEY;
   if (!url || !apiKey) throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
@@ -118,19 +133,25 @@ async function fetchCampaignSplitDays(
   if (!Array.isArray(data.buckets)) throw new Error("runs-service costs/timeseries returned no buckets array");
   // NET never falls back to GROSS (the frozen-net contract every cost read here keeps).
   const field = pricing === "net" ? "netActualCostInUsdCents" : "actualCostInUsdCents";
+  // COMMITTED = actual + open holds (runs' `total…`), on the same basis.
+  const totalField = pricing === "net" ? "netTotalCostInUsdCents" : "totalCostInUsdCents";
+  const centsOf = (b: Record<string, unknown>, f: string) => {
+    const raw = b[f];
+    const cents = typeof raw === "string" || typeof raw === "number" ? Number(raw) : NaN;
+    if (!Number.isFinite(cents)) throw new Error(`runs-service costs/timeseries bucket missing ${f}`);
+    return cents;
+  };
   return data.buckets.map((b) => {
     if (typeof b.period !== "string") throw new Error("runs-service costs/timeseries bucket missing period");
-    const raw = b[field];
-    const cents = typeof raw === "string" || typeof raw === "number" ? Number(raw) : NaN;
-    if (!Number.isFinite(cents)) throw new Error(`runs-service costs/timeseries bucket missing ${field}`);
     const campaignId = typeof b.campaignId === "string" && b.campaignId ? b.campaignId : null;
-    return { day: b.period.slice(0, 10), campaignId, cents };
+    return { day: b.period.slice(0, 10), campaignId, cents: centsOf(b, field), totalCents: centsOf(b, totalField) };
   });
 }
 
 /**
- * The window's ACTUAL spend per day, in raw cents, in two parts: the scope's campaigns' (on its
- * channels) and the brand's campaign-less work (every channel, and none). Fail-loud.
+ * The window's spend per day, in raw cents, in two parts: the scope's campaigns' (on its channels) and
+ * the brand's campaign-less work (every channel, and none); each ACTUAL (`scoped`, `brandLevel`) and
+ * COMMITTED (`scopedTotal`, `brandLevelTotal`). Fail-loud.
  */
 export async function fetchWindowActualSpendByDay(input: {
   brandId: string;
@@ -139,7 +160,7 @@ export async function fetchWindowActualSpendByDay(input: {
   featureScope: FeatureScope;
   pricing: Pricing;
   startedAfter: string;
-}): Promise<{ scoped: Map<string, number>; brandLevel: Map<string, number> }> {
+}): Promise<WindowSpendByDay> {
   const base = () => new URLSearchParams({ orgId: input.orgId, brandId: input.brandId, startedAfter: input.startedAfter });
   const members = campaignScopeIds(input.campaignScope);
   const chunks: string[][] = [];
@@ -156,18 +177,37 @@ export async function fetchWindowActualSpendByDay(input: {
   ]);
   const add = (m: Map<string, number>, day: string, cents: number) => m.set(day, (m.get(day) ?? 0) + cents);
   const scoped = new Map<string, number>();
+  const scopedTotal = new Map<string, number>();
   // Campaign rows only: the campaign-less ones are counted ONCE, below, on every channel.
-  for (const part of scopedParts) for (const b of part) if (b.campaignId) add(scoped, b.day, b.cents);
+  for (const part of scopedParts) {
+    for (const b of part) {
+      if (!b.campaignId) continue;
+      add(scoped, b.day, b.cents);
+      add(scopedTotal, b.day, b.totalCents);
+    }
+  }
   const brandLevel = new Map<string, number>();
-  for (const b of brandWide) if (!b.campaignId) add(brandLevel, b.day, b.cents);
-  return { scoped, brandLevel };
+  const brandLevelTotal = new Map<string, number>();
+  for (const b of brandWide) {
+    if (b.campaignId) continue;
+    add(brandLevel, b.day, b.cents);
+    add(brandLevelTotal, b.day, b.totalCents);
+  }
+  return { scoped, brandLevel, scopedTotal, brandLevelTotal };
+}
+
+export interface WindowSpendByDay {
+  scoped: Map<string, number>;
+  brandLevel: Map<string, number>;
+  scopedTotal: Map<string, number>;
+  brandLevelTotal: Map<string, number>;
 }
 
 /** PURE: fold the reads and the body's own series onto the window's days. */
 export function buildRevenueWindow(input: {
   dates: string[];
   emailsByDay: Map<string, { sent: number; delivered: number; bounced: number }> | null;
-  spendByDay: { scoped: Map<string, number>; brandLevel: Map<string, number> } | null;
+  spendByDay: WindowSpendByDay | null;
   recipientsRepliesPositive: SignalSeries;
   recipientsClicked: SignalSeries;
   totalPipelineUsd: number | null;
@@ -191,20 +231,38 @@ export function buildRevenueWindow(input: {
 
   let spend: RevenueWindow["spend"] = null;
   if (input.spendByDay) {
+    const s = input.spendByDay;
     const daily = dates.map((date) => {
-      const scoped = input.spendByDay!.scoped.get(date) ?? 0;
-      const brandLevel = input.spendByDay!.brandLevel.get(date) ?? 0;
+      const scoped = s.scoped.get(date) ?? 0;
+      const brandLevel = s.brandLevel.get(date) ?? 0;
+      const scopedTotal = s.scopedTotal.get(date) ?? 0;
+      const brandLevelTotal = s.brandLevelTotal.get(date) ?? 0;
       // Rounded ONCE per day on the day's whole spend; the total is the sum of these, exactly.
       const actualSpentCents = Math.round(scoped + brandLevel);
-      return { date, actualSpentCents, brandLevelActualSpentCents: Math.round(brandLevel) };
+      const totalSpentCents = Math.round(scopedTotal + brandLevelTotal);
+      return {
+        date,
+        actualSpentCents,
+        brandLevelActualSpentCents: Math.round(brandLevel),
+        totalSpentCents,
+        // The day's open holds: committed − actual on the day's rounded figures, so the parts add up.
+        provisionedSpentCents: totalSpentCents - actualSpentCents,
+        brandLevelTotalSpentCents: Math.round(brandLevelTotal),
+      };
     });
-    const actualSpentCents = daily.reduce((s, d) => s + d.actualSpentCents, 0);
-    const brandLevelActualSpentCents = daily.reduce((s, d) => s + d.brandLevelActualSpentCents, 0);
+    const sum = (k: "actualSpentCents" | "brandLevelActualSpentCents" | "totalSpentCents" | "provisionedSpentCents" | "brandLevelTotalSpentCents") =>
+      daily.reduce((acc, d) => acc + d[k], 0);
+    const actualSpentCents = sum("actualSpentCents");
+    const totalSpentCents = sum("totalSpentCents");
     const sent = emails?.sent ?? null;
     spend = {
       actualSpentCents,
-      brandLevelActualSpentCents,
+      brandLevelActualSpentCents: sum("brandLevelActualSpentCents"),
       costPerEmailSentCents: sent ? actualSpentCents / sent : null,
+      totalSpentCents,
+      provisionedSpentCents: sum("provisionedSpentCents"),
+      brandLevelTotalSpentCents: sum("brandLevelTotalSpentCents"),
+      totalCostPerEmailSentCents: sent ? totalSpentCents / sent : null,
       daily,
     };
   }
