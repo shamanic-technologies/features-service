@@ -37,7 +37,7 @@
  * propagates → the board 500s.
  */
 import { fetchFeatureMemberships, type FeatureMembership } from "./feature-memberships-client.js";
-import { buildAccountsAudit, type AccountsAudit, type AccountRow, type AccountStatus } from "./accounts-compute.js";
+import { buildAccountsAudit, type AccountsAudit, type AccountsDeps, type AccountRow, type AccountRowStatus } from "./accounts-compute.js";
 import { buildActiveUsersByUser, type ActiveUsersByUser, type ActiveUserRow } from "./active-users-by-user-compute.js";
 import { fetchBrandSavedEconomics, BrandOwnershipError, type EffectiveEconomics } from "./sales-economics-client.js";
 import { fetchConversionCounts, type ConversionCounts } from "./conversion-counts-client.js";
@@ -192,7 +192,14 @@ export interface CustomerHealthRow {
   activeDays: string[];
 
   // ── Current brand status (same composition as the accounts audit) ───────────
-  status: AccountStatus;
+  /**
+   * "unknown" when billing's payment-outlook read failed for this org: whether billing can charge it is
+   * not known, so no verdict is invented (the reason rides `statusUnknownReason`; every other column
+   * of the row is read as usual). The rest of the board is unaffected.
+   */
+  status: AccountRowStatus;
+  /** Why `status` is "unknown" (e.g. `billing payment-outlook unreadable: … (502)`); null whenever the status is known. */
+  statusUnknownReason: string | null;
   /** billing's reason it cannot charge the org when `status` is "payment_declined" (e.g. `card_declined`) or "no_payment_method" (`no_chargeable_card`); null otherwise. */
   paymentDeclinedReason: string | null;
   /** Every ceiling this (org, brand) configured, in USD — what they set. */
@@ -254,6 +261,8 @@ export interface CustomerHealthStats {
   paymentDeclinedCount: number;
   noPaymentMethodCount: number;
   pausedCount: number;
+  /** Rows whose status could not be read (status "unknown"); not counted as inactive. */
+  statusUnknownCount: number;
   inactiveCount: number;
   greenCount: number;
   yellowCount: number;
@@ -310,9 +319,19 @@ export interface CustomerHealthDeps {
   pauseHistory: (brandId: string, orgId: string) => Promise<PauseTransition[]>;
 }
 
+/**
+ * The accounts audit as the board reads it: billing's per-org payment-outlook FAIL-SOFT. One org whose
+ * outlook read fails (billing timed out ~54×/day on 2026-10-03) gets status "unknown" + a reason on ITS
+ * row instead of 500-ing the board and erasing every other customer. Every other audit read stays
+ * fail-loud (a missing universe is a real 500). `accountsDeps` is the test seam.
+ */
+export function customerHealthAccountsAudit(csv: string, now: Date, accountsDeps?: AccountsDeps): Promise<AccountsAudit> {
+  return buildAccountsAudit(csv, now, accountsDeps, { paymentHoldFailSoft: true });
+}
+
 const REAL_DEPS: CustomerHealthDeps = {
   featureMemberships: fetchFeatureMemberships,
-  accountsAudit: buildAccountsAudit,
+  accountsAudit: (csv, now) => customerHealthAccountsAudit(csv, now),
   activeUsersByUser: buildActiveUsersByUser,
   savedEconomics: fetchBrandSavedEconomics,
   // Wave C1: the funnels the brand's campaigns READ (their legs), never a declared set.
@@ -488,12 +507,12 @@ function pickBestWorkflow(projection: WorkflowProjectionResponse): BestWorkflow 
 
 /**
  * Compose the health badge (owned thresholds):
- *   red    — not active (payment declined / paused / inactive / no budget). Value can't be assessed while campaigns are held/stopped.
+ *   red    — not active (payment declined / paused / inactive / no budget), or not KNOWN active (status "unknown"). Value can't be assessed while campaigns are held/stopped.
  *   green  — active AND ROI ≥ 1 (CAC below breakeven, known) AND audience NOT near-exhausted.
  *   yellow — active but ROI < 1 (or unknown) OR the audience is near-exhausted.
  */
 function composeHealth(
-  status: AccountStatus,
+  status: AccountRowStatus,
   hasBudget: boolean,
   roiMultiple: number | null,
   audiencePctUsed: number | null,
@@ -516,7 +535,7 @@ function composeHealth(
   };
 }
 
-const STATUS_RANK: Record<AccountStatus, number> = { active: 0, payment_declined: 1, no_payment_method: 2, reactive_only: 3, paused: 4, inactive: 5 };
+const STATUS_RANK: Record<AccountRowStatus, number> = { active: 0, payment_declined: 1, no_payment_method: 2, unknown: 3, reactive_only: 4, paused: 5, inactive: 6 };
 
 /**
  * Build the full customer-health board. Reuses the accounts audit (identity + status + budget + balance)
@@ -712,6 +731,7 @@ export async function buildCustomerHealthBoard(
       activeThisMonth: recency?.activeThisMonth ?? false,
       activeDays: recency?.activeDays ?? [],
       status: account.status,
+      statusUnknownReason: account.statusUnknownReason ?? null,
       paymentDeclinedReason: account.paymentDeclinedReason,
       configuredDailyBudgetUsd: account.configuredDailyBudgetUsd,
       runningDailyBudgetUsd: account.runningDailyBudgetUsd,
@@ -760,6 +780,7 @@ export async function buildCustomerHealthBoard(
   let pausedCount = 0;
   let paymentDeclinedCount = 0;
   let noPaymentMethodCount = 0;
+  let statusUnknownCount = 0;
   let greenCount = 0;
   let yellowCount = 0;
   let redCount = 0;
@@ -769,6 +790,7 @@ export async function buildCustomerHealthBoard(
     else if (row.status === "paused") pausedCount += 1;
     else if (row.status === "payment_declined") paymentDeclinedCount += 1;
     else if (row.status === "no_payment_method") noPaymentMethodCount += 1;
+    else if (row.status === "unknown") statusUnknownCount += 1;
     if (row.health.badge === "green") greenCount += 1;
     else if (row.health.badge === "yellow") yellowCount += 1;
     else redCount += 1;
@@ -783,7 +805,9 @@ export async function buildCustomerHealthBoard(
       paymentDeclinedCount,
       noPaymentMethodCount,
       pausedCount,
-      inactiveCount: rows.length - activeCount - reactiveOnlyCount - pausedCount - paymentDeclinedCount - noPaymentMethodCount,
+      statusUnknownCount,
+      inactiveCount:
+        rows.length - activeCount - reactiveOnlyCount - pausedCount - paymentDeclinedCount - noPaymentMethodCount - statusUnknownCount,
       greenCount,
       yellowCount,
       redCount,

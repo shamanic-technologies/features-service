@@ -357,6 +357,7 @@ describe("buildAccountsAudit", () => {
       paymentDeclinedCount: 0,
       noPaymentMethodCount: 0,
       pausedCount: 0,
+      statusUnknownCount: 0,
       inactiveCount: 0,
       totalCount: 0,
     });
