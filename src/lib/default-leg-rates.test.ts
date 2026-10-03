@@ -56,6 +56,12 @@ describe("every leg always has a conversion rate", () => {
     expect(call?.effectiveRatePct).toBe(60);
   });
 
+  it("every leg leaving website_visit defaults to the cold-email-click 0.5% (owner-stated 2026-10-03)", () => {
+    const visitLegs = Object.keys(DEFAULT_LEG_RATE_PCT).filter((k) => k.startsWith("website_visit>") && k !== "website_visit>purchase");
+    expect(visitLegs.sort()).toEqual(["website_visit>form_submitted", "website_visit>meeting_booked", "website_visit>signup"]);
+    for (const leg of visitLegs) expect(DEFAULT_LEG_RATE_PCT[leg as keyof typeof DEFAULT_LEG_RATE_PCT]).toBe(0.5);
+  });
+
   it("a stated rate still beats the default, and the median beats it too", () => {
     const rates = buildBrandEffectiveRates({
       brandId: "b1",
