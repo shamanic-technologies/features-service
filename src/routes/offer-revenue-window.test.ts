@@ -120,10 +120,11 @@ function mockFetch(): void {
     if (path.endsWith("/costs/timeseries")) {
       // c1 spent yesterday and today; the brand's campaign-less setup ran today, on no channel.
       const rows = [
-        { period: YESTERDAY, campaignId: "c1", cents: "1000.4" },
-        { period: TODAY, campaignId: "c1", cents: "2722.3" },
-        { period: TODAY, campaignId: "c9", cents: "5000" },
-        { period: TODAY, campaignId: null, cents: "584.6" },
+        // `total` = committed (actual + open holds): c1 holds 1886.2 today, the setup 10.
+        { period: YESTERDAY, campaignId: "c1", cents: "1000.4", total: "1000.4" },
+        { period: TODAY, campaignId: "c1", cents: "2722.3", total: "4608.5" },
+        { period: TODAY, campaignId: "c9", cents: "5000", total: "9000" },
+        { period: TODAY, campaignId: null, cents: "584.6", total: "594.6" },
       ].filter((r) => {
         const ids = q.get("campaignIds")?.split(",");
         if (ids && (!r.campaignId || !ids.includes(r.campaignId))) return false;
@@ -132,7 +133,7 @@ function mockFetch(): void {
       });
       return json({
         interval: "day", timezone: "UTC",
-        buckets: rows.map((r) => ({ period: r.period, campaignId: r.campaignId, actualCostInUsdCents: r.cents, netActualCostInUsdCents: r.cents, totalCostInUsdCents: r.cents, netTotalCostInUsdCents: r.cents })),
+        buckets: rows.map((r) => ({ period: r.period, campaignId: r.campaignId, actualCostInUsdCents: r.cents, netActualCostInUsdCents: r.cents, totalCostInUsdCents: r.total, netTotalCostInUsdCents: r.total })),
       });
     }
     if (path.includes("/public/costs")) return json({ groups: [] });
@@ -222,10 +223,22 @@ describe("GET /offers/:offerId/revenue — today's spend and ?windowDays=", () =
     expect(w.emails.bounced).toBe(6);
     expect(w.emails.deliveryRatePct).toBeCloseTo((115 / 120) * 100);
     // c1 yesterday 1000 + c1 today 2722 + the campaign-less 585 today (c9 is another offer's).
-    expect(w.spend.daily.at(-1)).toEqual({ date: TODAY, actualSpentCents: 3307, brandLevelActualSpentCents: 585 });
+    expect(w.spend.daily.at(-1)).toEqual({
+      date: TODAY,
+      actualSpentCents: 3307,
+      brandLevelActualSpentCents: 585,
+      totalSpentCents: 5203,
+      provisionedSpentCents: 1896,
+      brandLevelTotalSpentCents: 595,
+    });
     expect(w.spend.actualSpentCents).toBe(1000 + 3307);
     expect(w.spend.actualSpentCents).toBe(w.spend.daily.reduce((s: number, d: { actualSpentCents: number }) => s + d.actualSpentCents, 0));
     expect(w.spend.costPerEmailSentCents).toBeCloseTo(4307 / 120);
+    // The committed total (what the Spent tile states): actual + open holds, brand-level work included.
+    expect(w.spend.totalSpentCents).toBe(1000 + 5203);
+    expect(w.spend.totalSpentCents).toBe(w.spend.daily.reduce((s: number, d: { totalSpentCents: number }) => s + d.totalSpentCents, 0));
+    expect(w.spend.provisionedSpentCents).toBe(1896);
+    expect(w.spend.totalCostPerEmailSentCents).toBeCloseTo(6203 / 120);
     expect(w.recipientsRepliesPositive.total).toBe(
       w.recipientsRepliesPositive.daily.reduce((s: number, d: { count: number }) => s + d.count, 0),
     );

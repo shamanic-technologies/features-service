@@ -7821,6 +7821,23 @@
                 "nullable": true,
                 "description": "actualSpentCents ÷ emails.sent over the window (fractional cents). Null when nothing was sent, or when emails is null."
               },
+              "totalSpentCents": {
+                "type": "integer",
+                "description": "COMMITTED spend over the window, USD cents, same ?pricing= basis and composition as actualSpentCents (scope's campaigns + the brand's campaign-less work): what was charged PLUS the holds still open for runs still working (runs' total cost). The figure a \"Spent\" tile states. Σ daily[].totalSpentCents, exactly."
+              },
+              "provisionedSpentCents": {
+                "type": "integer",
+                "description": "totalSpentCents − actualSpentCents: the holds still open on runs started in the window. Σ daily[].provisionedSpentCents."
+              },
+              "brandLevelTotalSpentCents": {
+                "type": "integer",
+                "description": "The committed part no campaign carries (setup, notifications). Σ daily[].brandLevelTotalSpentCents."
+              },
+              "totalCostPerEmailSentCents": {
+                "type": "number",
+                "nullable": true,
+                "description": "totalSpentCents ÷ emails.sent over the window (fractional cents), the committed twin of costPerEmailSentCents. Null when nothing was sent, or when emails is null."
+              },
               "daily": {
                 "type": "array",
                 "items": {
@@ -7835,12 +7852,26 @@
                     },
                     "brandLevelActualSpentCents": {
                       "type": "integer"
+                    },
+                    "totalSpentCents": {
+                      "type": "integer",
+                      "description": "That day's committed spend (actual + open holds, runs started that UTC day), rounded once to whole cents."
+                    },
+                    "provisionedSpentCents": {
+                      "type": "integer",
+                      "description": "totalSpentCents − actualSpentCents for the day."
+                    },
+                    "brandLevelTotalSpentCents": {
+                      "type": "integer"
                     }
                   },
                   "required": [
                     "date",
                     "actualSpentCents",
-                    "brandLevelActualSpentCents"
+                    "brandLevelActualSpentCents",
+                    "totalSpentCents",
+                    "provisionedSpentCents",
+                    "brandLevelTotalSpentCents"
                   ]
                 },
                 "description": "One entry per day of the window, ascending, zero-filled."
@@ -7850,6 +7881,10 @@
               "actualSpentCents",
               "brandLevelActualSpentCents",
               "costPerEmailSentCents",
+              "totalSpentCents",
+              "provisionedSpentCents",
+              "brandLevelTotalSpentCents",
+              "totalCostPerEmailSentCents",
               "daily"
             ],
             "description": "Dated by runs-service's own day buckets (run start, UTC). Null when that read failed — never a zero."

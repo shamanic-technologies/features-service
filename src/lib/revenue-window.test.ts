@@ -45,6 +45,8 @@ describe("buildRevenueWindow", () => {
       spendByDay: {
         scoped: new Map([["2026-10-01", 100.4], ["2026-10-03", 2999.6], ["2026-09-01", 50000]]),
         brandLevel: new Map([["2026-10-03", 585.2]]),
+        scopedTotal: new Map([["2026-10-01", 100.4], ["2026-10-03", 4500.1], ["2026-09-01", 50000]]),
+        brandLevelTotal: new Map([["2026-10-03", 585.2], ["2026-10-02", 12.3]]),
       },
       totalPipelineUsd: 100,
       pipelineTimeSeries: [],
@@ -62,6 +64,14 @@ describe("buildRevenueWindow", () => {
     expect(w.spend!.actualSpentCents).toBe(3685);
     expect(w.spend!.brandLevelActualSpentCents).toBe(585);
     expect(w.spend!.costPerEmailSentCents).toBeCloseTo(3.685);
+    // COMMITTED twin: actual + open holds, same composition, same days.
+    expect(w.spend!.daily.map((d) => d.totalSpentCents)).toEqual([100, 12, 5085]);
+    expect(w.spend!.daily.map((d) => d.provisionedSpentCents)).toEqual([0, 12, 1500]);
+    expect(w.spend!.totalSpentCents).toBe(5197);
+    expect(w.spend!.totalSpentCents).toBe(w.spend!.daily.reduce((s, d) => s + d.totalSpentCents, 0));
+    expect(w.spend!.provisionedSpentCents).toBe(w.spend!.totalSpentCents - w.spend!.actualSpentCents);
+    expect(w.spend!.brandLevelTotalSpentCents).toBe(597);
+    expect(w.spend!.totalCostPerEmailSentCents).toBeCloseTo(5.197);
     expect(w.recipientsRepliesPositive).toEqual({
       total: 1,
       daily: [{ date: "2026-10-01", count: 0 }, { date: "2026-10-02", count: 1 }, { date: "2026-10-03", count: 0 }],
@@ -73,7 +83,7 @@ describe("buildRevenueWindow", () => {
     const w = buildRevenueWindow({
       ...base,
       emailsByDay: new Map(),
-      spendByDay: { scoped: new Map([["2026-10-03", 3100]]), brandLevel: new Map() },
+      spendByDay: { scoped: new Map([["2026-10-03", 3100]]), brandLevel: new Map(), scopedTotal: new Map([["2026-10-03", 3500]]), brandLevelTotal: new Map() },
       totalPipelineUsd: null,
       pipelineTimeSeries: [],
     });
