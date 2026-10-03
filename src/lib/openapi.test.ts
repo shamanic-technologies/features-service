@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { openApiDocument } from "../src/lib/openapi.js";
+import { openApiDocument } from "./openapi.js";
 
 describe("openApiDocument", () => {
   it("has correct metadata", () => {

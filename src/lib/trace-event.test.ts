@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { traceEvent } from "../../src/lib/trace-event.js";
+import { traceEvent } from "./trace-event.js";
 
 describe("traceEvent", () => {
   const originalEnv = process.env;
