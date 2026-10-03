@@ -8,6 +8,7 @@ import {
   measuredArrowRate,
   MIN_MEASURED_FROM_REACHED,
   resolveArrow,
+  MIN_FLEET_MEDIAN_BRANDS,
   crmMeasurementOf,
   crmArrowRate,
   type BrandStepMeasurement,
@@ -170,6 +171,23 @@ describe("resolveArrow — measured, else manual, else median, else null", () =>
   it("nothing stated, the median", () => {
     expect(resolveArrow("Website visit", "Meeting booked", thin, null, median)).toMatchObject({ effectiveRatePct: 22, source: "median" });
   });
+  it("a fleet median over FEWER than 5 brands keeps the industry default (owner rule 2026-10-03)", () => {
+    expect(MIN_FLEET_MEDIAN_BRANDS).toBe(5);
+    const four = { ratePct: 4.99, brandCount: 4 };
+    expect(resolveArrow("Website visit", "Meeting booked", thin, null, four, 1)).toMatchObject({
+      effectiveRatePct: 1,
+      source: "default",
+      median: four,
+      defaultRatePct: 1,
+    });
+  });
+  it("a fleet median over 5 brands overrides the default", () => {
+    const five = { ratePct: 4.99, brandCount: 5 };
+    expect(resolveArrow("Website visit", "Meeting booked", thin, null, five, 1)).toMatchObject({ effectiveRatePct: 4.99, source: "median" });
+  });
+  it("the brand's own statement still wins over a thin median and the default", () => {
+    expect(resolveArrow("Website visit", "Meeting booked", thin, 3, { ratePct: 4.99, brandCount: 2 }, 1)).toMatchObject({ effectiveRatePct: 3, source: "manual" });
+  });
   it("nothing at all: null with a reason, never a default", () => {
     expect(resolveArrow("Website visit", "Meeting booked", thin, null, { ratePct: null, brandCount: 0 })).toMatchObject({
       effectiveRatePct: null,
@@ -202,7 +220,7 @@ describe("pricing rests on the EFFECTIVE rate", () => {
     funnelKeys: ["sales_meetings_from_conversation"],
     measurement: MEASUREMENT,
     manual: [{ fromStep: "Meeting attended", toStep: "Paid client", ratePct: 25, stated: true }],
-    medians: new Map([["meeting_booked>meeting_attended", { ratePct: 60, brandCount: 4 }]]),
+    medians: new Map([["meeting_booked>meeting_attended", { ratePct: 60, brandCount: 5 }]]),
   });
 
   it("each arrow resolves from its own best source", () => {

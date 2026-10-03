@@ -10683,7 +10683,7 @@
                           "fleetMedian",
                           "industryDefaultPct"
                         ],
-                        "description": "Every source the rate was resolved from (measured > customer stated > fleet median > industry default)."
+                        "description": "Every source the rate was resolved from (measured > customer stated > fleet median > industry default). The fleet median is retained only when fleetMedian.brandCount is at least 5; below that the industry default is retained."
                       },
                       "workedBy": {
                         "type": "string",
@@ -14580,7 +14580,7 @@
                           "median",
                           "default"
                         ],
-                        "description": "Which source effectiveRatePct is, in precedence order: measured on the brand's own leads (≥ minMeasuredFromReached on the FROM step), else what the brand stated by hand (brand-service brand-grain store), else the cross-org median of what brands stated, else `default`: the seeded per-leg industry benchmark (defaultRatePct), never the brand's own figure. Null only for a leg outside the catalogue that nothing prices."
+                        "description": "Which source effectiveRatePct is, in precedence order: measured on the brand's own leads (≥ minMeasuredFromReached on the FROM step), else what the brand stated by hand (brand-service brand-grain store), else the cross-org median of what brands stated (used only when at least 5 brands stated the leg; below that the default is kept), else `default`: the seeded per-leg industry benchmark (defaultRatePct), never the brand's own figure. Null only for a leg outside the catalogue that nothing prices."
                       },
                       "unresolvedReason": {
                         "type": "string",
@@ -14672,7 +14672,7 @@
                           },
                           "brandCount": {
                             "type": "integer",
-                            "description": "How many brands' statements the median is taken over."
+                            "description": "How many brands' statements the median is taken over. The median becomes the effective rate only when this is at least 5."
                           }
                         },
                         "required": [
@@ -14755,7 +14755,7 @@
                     "median",
                     "default"
                   ],
-                  "description": "Which source effectiveRatePct is, in precedence order: measured on the brand's own leads (≥ minMeasuredFromReached on the FROM step), else what the brand stated by hand (brand-service brand-grain store), else the cross-org median of what brands stated, else `default`: the seeded per-leg industry benchmark (defaultRatePct), never the brand's own figure. Null only for a leg outside the catalogue that nothing prices."
+                  "description": "Which source effectiveRatePct is, in precedence order: measured on the brand's own leads (≥ minMeasuredFromReached on the FROM step), else what the brand stated by hand (brand-service brand-grain store), else the cross-org median of what brands stated (used only when at least 5 brands stated the leg; below that the default is kept), else `default`: the seeded per-leg industry benchmark (defaultRatePct), never the brand's own figure. Null only for a leg outside the catalogue that nothing prices."
                 },
                 "unresolvedReason": {
                   "type": "string",
@@ -14847,7 +14847,7 @@
                     },
                     "brandCount": {
                       "type": "integer",
-                      "description": "How many brands' statements the median is taken over."
+                      "description": "How many brands' statements the median is taken over. The median becomes the effective rate only when this is at least 5."
                     }
                   },
                   "required": [
@@ -26606,7 +26606,7 @@
     "/offers/{offerId}/sales-paths": {
       "get": {
         "summary": "Every sales path an offer can sell through, ranked by ROI, with the per-leg breakdown",
-        "description": "A SALES PATH is a chain of the legs the customer ticked for the offer (brand-service sales-path) from an ENTRY leg (from nothing) to paid_client, visiting no step twice. Formula: needed(paid_client)=1; needed(from step of leg i)=needed(to step)/(rate_i/100); legCost_i = costPerOutcome_i × needed(to step of leg i) for a leg a channel of ours works (0 for a human leg); costPerPayingClient = Σ legCost_i; roi = offer lifetime revenue ÷ costPerPayingClient. rate_i is the brand's effective leg rate (CRM-measured / measured on our leads > customer stated > fleet median > industry default). costPerOutcome_i is the NET cost per outcome of the recommended workflow of each platform channel's leg-keyed workflow-projection ladder (?leg=&offerId=&pricing=net), else the channel's measured fleet cost per outcome on the leg, else a seeded default (costSource says which); the cheapest channel is chosen. Only the managed channels (sales-cold-email-outreach, ai-meeting-booking, ai-instant-call) are candidates; every other leg is the customer's team (workedBy human, cost 0). Ranked by roi descending; a path whose roi is null (reason stated) sorts last. status not_stated / no_legs_selected / no_complete_path serve paths: [] — none is invented. Additive read.",
+        "description": "A SALES PATH is a chain of the legs the customer ticked for the offer (brand-service sales-path) from an ENTRY leg (from nothing) to paid_client, visiting no step twice. Formula: needed(paid_client)=1; needed(from step of leg i)=needed(to step)/(rate_i/100); legCost_i = costPerOutcome_i × needed(to step of leg i) for a leg a channel of ours works (0 for a human leg); costPerPayingClient = Σ legCost_i; roi = offer lifetime revenue ÷ costPerPayingClient. rate_i is the brand's effective leg rate (CRM-measured / measured on our leads > customer stated > fleet median, only when at least 5 brands stated the leg > industry default). costPerOutcome_i is the NET cost per outcome of the recommended workflow of each platform channel's leg-keyed workflow-projection ladder (?leg=&offerId=&pricing=net), else the channel's measured fleet cost per outcome on the leg, else a seeded default (costSource says which); the cheapest channel is chosen. Only the managed channels (sales-cold-email-outreach, ai-meeting-booking, ai-instant-call) are candidates; every other leg is the customer's team (workedBy human, cost 0). Ranked by roi descending; a path whose roi is null (reason stated) sorts last. status not_stated / no_legs_selected / no_complete_path serve paths: [] — none is invented. Additive read.",
         "tags": [
           "Stats"
         ],
@@ -27536,7 +27536,7 @@
     "/brands/{brandId}/conversion-rates": {
       "get": {
         "summary": "The effective conversion rate of every arrow of a brand's funnels, and where it came from",
-        "description": "Conversion rates are BRAND-grain: one rate per (brand, sales funnel, arrow). Every money figure this service states is priced on the rate resolved here, from three sources in order — MEASURED on the brand's own lead data once at least `minMeasuredFromReached` leads reached the arrow's FROM step, else the brand's MANUALLY stated rate, else the cross-org MEDIAN of stated rates. The response carries all three beside the effective one, so a consumer shows the value, its source, the measured n, the manual value and the median without computing anything. Right-censoring (a meeting booked yesterday cannot be attended yet) is accepted: a measured rate for a young brand reads slightly low.",
+        "description": "Conversion rates are BRAND-grain: one rate per (brand, sales funnel, arrow). Every money figure this service states is priced on the rate resolved here, from three sources in order — MEASURED on the brand's own lead data once at least `minMeasuredFromReached` leads reached the arrow's FROM step, else the brand's MANUALLY stated rate, else the cross-org MEDIAN of stated rates (only when at least 5 brands stated the leg), else the seeded per-leg industry DEFAULT. The response carries all of them beside the effective one, so a consumer shows the value, its source, the measured n, the manual value and the median without computing anything. Right-censoring (a meeting booked yesterday cannot be attended yet) is accepted: a measured rate for a young brand reads slightly low.",
         "tags": [
           "Stats"
         ],
