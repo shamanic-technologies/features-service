@@ -322,11 +322,17 @@ export interface CustomerHealthDeps {
 /**
  * The accounts audit as the board reads it: billing's per-org payment-outlook FAIL-SOFT. One org whose
  * outlook read fails (billing timed out ~54×/day on 2026-10-03) gets status "unknown" + a reason on ITS
- * row instead of 500-ing the board and erasing every other customer. Every other audit read stays
+ * row instead of 500-ing the board and erasing every other customer (each failed read is retried once,
+ * at most 8 in flight, so a transient billing burst does not persist a board of "unknown" rows). Every other audit read stays
  * fail-loud (a missing universe is a real 500). `accountsDeps` is the test seam.
  */
-export function customerHealthAccountsAudit(csv: string, now: Date, accountsDeps?: AccountsDeps): Promise<AccountsAudit> {
-  return buildAccountsAudit(csv, now, accountsDeps, { paymentHoldFailSoft: true });
+export function customerHealthAccountsAudit(
+  csv: string,
+  now: Date,
+  accountsDeps?: AccountsDeps,
+  paymentHoldRetryDelayMs?: number,
+): Promise<AccountsAudit> {
+  return buildAccountsAudit(csv, now, accountsDeps, { paymentHoldFailSoft: true, paymentHoldRetryDelayMs });
 }
 
 const REAL_DEPS: CustomerHealthDeps = {
