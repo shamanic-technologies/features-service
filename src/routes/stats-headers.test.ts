@@ -4,6 +4,9 @@ import request from "supertest";
 
 // Mock environment variables before importing the stats module
 vi.stubEnv("FEATURES_SERVICE_API_KEY", "test-key");
+// Exercise the live-compute path: the Gold snapshot cache would serve one test's body to the next
+// test reading the same scope key (same convention as stats.test.ts).
+vi.stubEnv("FEATURE_VIEW_CACHE_ENABLED", "false");
 vi.stubEnv("RUNS_SERVICE_URL", "http://runs-service");
 vi.stubEnv("RUNS_SERVICE_API_KEY", "runs-key");
 vi.stubEnv("EMAIL_GATEWAY_SERVICE_URL", "http://email-gateway");
@@ -16,7 +19,7 @@ vi.stubEnv("CAMPAIGN_SERVICE_URL", "http://campaign-service");
 vi.stubEnv("CAMPAIGN_SERVICE_API_KEY", "campaign-key");
 
 // Mock the database before importing the router
-vi.mock("../src/db/index.js", () => ({
+vi.mock("../db/index.js", () => ({
   db: {
     query: {
       features: {
@@ -27,8 +30,8 @@ vi.mock("../src/db/index.js", () => ({
   },
 }));
 
-import statsRoutes from "../src/routes/stats.js";
-import { db } from "../src/db/index.js";
+import statsRoutes from "./stats.js";
+import { db } from "../db/index.js";
 
 const MOCK_FEATURE = {
   id: "feat-1",

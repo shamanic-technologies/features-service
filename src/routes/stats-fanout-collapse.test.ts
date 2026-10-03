@@ -3,6 +3,9 @@ import express from "express";
 import request from "supertest";
 
 vi.stubEnv("FEATURES_SERVICE_API_KEY", "test-key");
+// Exercise the live-compute path: the Gold snapshot cache would serve one test's body to the next
+// test reading the same scope key (same convention as stats.test.ts).
+vi.stubEnv("FEATURE_VIEW_CACHE_ENABLED", "false");
 vi.stubEnv("RUNS_SERVICE_URL", "http://runs-service");
 vi.stubEnv("RUNS_SERVICE_API_KEY", "runs-key");
 vi.stubEnv("EMAIL_GATEWAY_SERVICE_URL", "http://email-gateway");
@@ -16,7 +19,7 @@ vi.stubEnv("LEAD_SERVICE_API_KEY", "lead-key");
 vi.stubEnv("CAMPAIGN_SERVICE_URL", "http://campaign-service");
 vi.stubEnv("CAMPAIGN_SERVICE_API_KEY", "campaign-key");
 
-vi.mock("../src/db/index.js", () => ({
+vi.mock("../db/index.js", () => ({
   db: {
     query: {
       features: {
@@ -27,8 +30,8 @@ vi.mock("../src/db/index.js", () => ({
   },
 }));
 
-import statsRoutes from "../src/routes/stats.js";
-import { db } from "../src/db/index.js";
+import statsRoutes from "./stats.js";
+import { db } from "../db/index.js";
 
 const FEATURE = {
   id: "feat-1",
@@ -117,7 +120,7 @@ describe("runs-service fanout collapse: features-stats endpoint", () => {
       .expect(200);
 
     const costsGets = fetchSpy.mock.calls.filter(
-      ([url, init]: [string, RequestInit | undefined]) => isCostsGet(url, init),
+      ([url, init]) => isCostsGet(url, init),
     );
     expect(costsGets.length).toBe(1);
     expect(costsGets[0][0]).toContain("featureSlugs=sales-cold-email-outreach");
@@ -134,7 +137,7 @@ describe("runs-service fanout collapse: features-stats endpoint", () => {
       .expect(200);
 
     const costsGets = fetchSpy.mock.calls.filter(
-      ([url, init]: [string, RequestInit | undefined]) => isCostsGet(url, init),
+      ([url, init]) => isCostsGet(url, init),
     );
     expect(costsGets.length).toBe(1);
     const url = costsGets[0][0] as string;
@@ -154,7 +157,7 @@ describe("runs-service fanout collapse: features-stats endpoint", () => {
       .expect(200);
 
     const pipelinePosts = fetchSpy.mock.calls.filter(
-      ([url, init]: [string, RequestInit | undefined]) => isCostsPost(url, init),
+      ([url, init]) => isCostsPost(url, init),
     );
     expect(pipelinePosts.length).toBe(1);
 
@@ -179,7 +182,7 @@ describe("runs-service fanout collapse: features-stats endpoint", () => {
       .expect(200);
 
     const runsCalls = fetchSpy.mock.calls.filter(
-      ([url]: [string]) => url.includes("/v1/stats/costs"),
+      ([url]) => url.includes("/v1/stats/costs"),
     );
     expect(runsCalls.length).toBe(2);
   });
@@ -195,7 +198,7 @@ describe("runs-service fanout collapse: features-stats endpoint", () => {
       .expect(200);
 
     const pipelinePosts = fetchSpy.mock.calls.filter(
-      ([url, init]: [string, RequestInit | undefined]) => isCostsPost(url, init),
+      ([url, init]) => isCostsPost(url, init),
     );
     expect(pipelinePosts.length).toBe(1);
     const body = JSON.parse(pipelinePosts[0][1].body as string);
@@ -214,7 +217,7 @@ describe("runs-service fanout collapse: features-stats endpoint", () => {
       .expect(200);
 
     const pipelinePosts = fetchSpy.mock.calls.filter(
-      ([url, init]: [string, RequestInit | undefined]) => isCostsPost(url, init),
+      ([url, init]) => isCostsPost(url, init),
     );
     expect(pipelinePosts.length).toBe(1);
     const headers = pipelinePosts[0][1].headers as Record<string, string>;
@@ -235,13 +238,13 @@ describe("runs-service fanout collapse: features-stats endpoint", () => {
       .expect(200);
 
     const pipelinePosts = fetchSpy.mock.calls.filter(
-      ([url, init]: [string, RequestInit | undefined]) => isCostsPost(url, init),
+      ([url, init]) => isCostsPost(url, init),
     );
     expect(pipelinePosts.length).toBe(0);
 
     // Cost GET should still be 1, pipeline GET fallback should be K (per RunFilter entries).
     const costsGets = fetchSpy.mock.calls.filter(
-      ([url, init]: [string, RequestInit | undefined]) => isCostsGet(url, init),
+      ([url, init]) => isCostsGet(url, init),
     );
     expect(costsGets.length).toBeGreaterThanOrEqual(1);
   });
@@ -297,10 +300,10 @@ describe("runs-service fanout collapse: global /stats endpoint", () => {
       .expect(200);
 
     const costsGets = fetchSpy.mock.calls.filter(
-      ([url, init]: [string, RequestInit | undefined]) => isCostsGet(url, init),
+      ([url, init]) => isCostsGet(url, init),
     );
     const pipelinePosts = fetchSpy.mock.calls.filter(
-      ([url, init]: [string, RequestInit | undefined]) => isCostsPost(url, init),
+      ([url, init]) => isCostsPost(url, init),
     );
     expect(costsGets.length).toBe(1);
     expect(pipelinePosts.length).toBe(1);

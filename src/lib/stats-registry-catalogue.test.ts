@@ -6,8 +6,8 @@ import {
   getPublicRegistry,
   validateStatsKeys,
   validateEntityTypes,
-} from "../src/lib/stats-registry.js";
-import { SEED_FEATURES } from "../src/seed/features.js";
+} from "./stats-registry.js";
+import { SEED_FEATURES } from "../seed/features.js";
 
 describe("STATS_REGISTRY", () => {
   it("contains recipient-level email stats keys", () => {
