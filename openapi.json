@@ -19150,6 +19150,27 @@
             ],
             "description": "THE SAME MONTHLY RUN-RATE, SPLIT INTO ITS TWO HONEST HALVES, AND BOTH ARE SUMS — an AGENCY half worth what a human STATED it is worth per month (POST /internal/stated-monthly-amounts), and a SELF-SERVE (SaaS) half summed over the self-serve (org, brand) pairs that were genuinely EARNING on the period's reference date — plus their total, live and over the same monthly / weekly history the committed series covers. An agency hands over cash at its own discretion and somebody then DECIDES how it is split into daily budgets across its brands, so budget × 30 answers how the money was spread, not what the customer is worth. A pair counts toward the SaaS half on a day only when ALL FOUR of these held: its org's payment had not stopped, a campaign was running, an amount was in force, and its audience was not exhausted — each read from the service that records it (billing-service, campaign-service), none inferred here. Being a SUM, that half can never come out negative, which is what the earlier 'fleet snapshot MINUS the agency's replayed budget' could and did. TWO ERAS, NEVER BLENDED SILENTLY: campaign-service's status and audience records open on the day it shipped them (see earningRecordBeginsOn), and an earlier day is qualified from that pair's own billed cold-email ACTIVITY instead — every such period carries selfServeBasis: 'approximated' so a consumer LABELS it rather than presenting it as measured. An AMOUNT is never approximated: a pair billing holds no record for contributes nothing and is counted in selfServeUnrecordedBudgetPairCount, so the under-statement is visible rather than guessed. WHICH ORGS ARE AGENCY IS DERIVED from the stated rows — an org carrying at least one stated amount — never hardcoded. ADDITIVE: committedMrr above is unchanged and still carries the undivided fleet figure. null = we could not read this (the stated-amount store or a producer was unreachable), never a zero that would say the agency is worth nothing."
           },
+          "paymentOutlookUnreadOrgs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "orgId": {
+                  "type": "string",
+                  "description": "Internal org UUID whose billing payment-outlook read failed."
+                },
+                "reason": {
+                  "type": "string",
+                  "description": "Why (billing's error, truncated), e.g. 'billing payment-outlook unreadable: … failed (502): …'."
+                }
+              },
+              "required": [
+                "orgId",
+                "reason"
+              ]
+            },
+            "description": "Orgs whose billing payment-outlook (GET /internal/accounts/by-org/:orgId/payment-outlook) could not be read for this answer (timeout, 502). The payload is still served instead of failing whole: no figure here is derived from an org's payment status (currentMrrUsd is billing's fleet recurring read, the split enumerates pairs only), so nothing is dropped from any total, but the gap is NAMED. [] on a healthy read."
+          },
           "asOf": {
             "type": "string",
             "description": "ISO timestamp the series was computed."
@@ -19165,6 +19186,7 @@
           "committedMrr",
           "netRevenueRetention",
           "mrrSplit",
+          "paymentOutlookUnreadOrgs",
           "asOf"
         ]
       },

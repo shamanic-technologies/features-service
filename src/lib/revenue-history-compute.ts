@@ -22,7 +22,7 @@
  */
 import { fetchFeatureMemberships } from "./feature-memberships-client.js";
 import { fetchBrandFirstBilledDay, fetchOrgDailySpendCents } from "./revenue-history-client.js";
-import { buildAccountsAudit } from "./accounts-compute.js";
+import { buildAccountsAudit, type AccountsAudit, type AccountsDeps } from "./accounts-compute.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { addUtcDays } from "./send-forecast-compute.js";
 import { bucketOf, enumerateBuckets, type Granularity } from "./active-users-compute.js";
@@ -140,6 +140,12 @@ export interface RevenueHistory {
    * unaffected: a split blip must not 502 a revenue read whose every other figure is correct.
    */
   mrrSplit: MrrSplit | null;
+  /**
+   * Orgs whose billing payment-outlook could not be read for this answer (timeout, 502). The payload is
+   * still served: no figure here is derived from an org's payment status, so nothing is dropped from
+   * any total, but the gap is NAMED rather than swallowed. `[]` on a healthy read.
+   */
+  paymentOutlookUnreadOrgs: PaymentOutlookUnreadOrg[];
   asOf: string;
 }
 
@@ -168,6 +174,8 @@ export interface RevenueHistoryDeps {
       runningDailyBudgetUsd: number;
       active: boolean;
     }>;
+    /** Orgs whose billing payment-outlook could not be read (see `RevenueHistory.paymentOutlookUnreadOrgs`). Absent = none. */
+    paymentOutlookUnreadOrgs?: PaymentOutlookUnreadOrg[];
   }>;
   /** Read LEGACY (running budget × 30) snapshots on/after a bound → {date, mrrUsd} oldest→newest (fail-soft → []). No longer written. */
   readCommittedSnapshots: (sinceIso: string) => Promise<Array<{ date: string; mrrUsd: number }>>;
@@ -197,33 +205,67 @@ export interface RevenueHistoryDeps {
   firstBilledDay: (orgId: string, brandId: string, coldEmailSlugsCsv: string, startedAfterIso: string) => Promise<string | null>;
 }
 
+/** One org whose billing payment-outlook read failed while assembling the revenue history. */
+export interface PaymentOutlookUnreadOrg {
+  orgId: string;
+  /** Why (billing's error, truncated), e.g. `billing payment-outlook unreadable: … failed (502): …`. */
+  reason: string;
+}
+
+/**
+ * The live fleet read behind the revenue history: billing's recurring revenue (the ONE MRR) plus the
+ * accounts audit's (org, brand) enumeration the agency / self-serve split sums over.
+ *
+ * The audit's per-org payment-outlook is read FAIL-SOFT here (2026-10-03: one org's outlook timed out
+ * at billing, the audit threw, and the whole fleet revenue answer went 500 for every staff reader). No
+ * figure in the revenue payload is derived from an org's payment STATUS (the MRR is billing's fleet
+ * read; the split reads only which pairs exist), so an unread outlook changes no number, but it is
+ * still NAMED on the wire (`paymentOutlookUnreadOrgs`), never swallowed.
+ */
+export async function readCurrentFleetStats(
+  csv: string,
+  now: Date,
+  accountsDeps?: AccountsDeps,
+  recurringRead: () => Promise<FleetRecurringRevenue> = fetchFleetRecurringRevenue,
+): Promise<Awaited<ReturnType<RevenueHistoryDeps["currentFleetStats"]>>> {
+  // The SAME billing read the accounts audit's MRR is summed from (shared in-process), so the two
+  // staff pages state one MRR.
+  const [audit, recurring] = await Promise.all([
+    buildAccountsAudit(csv, now, accountsDeps, { paymentHoldFailSoft: true }),
+    recurringRead().catch((err) => {
+      console.error("[features-service] revenue history: billing recurring revenue unavailable (soft):", err);
+      return null;
+    }),
+  ]);
+  return {
+    recurring,
+    pairs: audit.rows.map((r) => ({
+      orgId: r.orgId,
+      brandId: r.brandId,
+      // The audit already batches brand-service for its own table, so naming a brand in the
+      // self-serve breakdown costs no extra read.
+      brandName: r.brandName,
+      brandDomain: r.brandDomain,
+      runningDailyBudgetUsd: r.runningDailyBudgetUsd,
+      active: r.status === "active",
+    })),
+    paymentOutlookUnreadOrgs: paymentOutlookUnreadOrgsOf(audit),
+  };
+}
+
+/** Distinct orgs whose audit rows came back status "unknown" (outlook unreadable), sorted by orgId. Pure. */
+export function paymentOutlookUnreadOrgsOf(audit: Pick<AccountsAudit, "rows">): PaymentOutlookUnreadOrg[] {
+  const byOrg = new Map<string, string>();
+  for (const r of audit.rows) {
+    if (r.status === "unknown" && !byOrg.has(r.orgId)) byOrg.set(r.orgId, r.statusUnknownReason ?? "billing payment-outlook unreadable");
+  }
+  return [...byOrg].sort(([a], [b]) => a.localeCompare(b)).map(([orgId, reason]) => ({ orgId, reason }));
+}
+
 const REAL_DEPS: RevenueHistoryDeps = {
   featureMemberships: async (csv) => (await fetchFeatureMemberships(csv)).map((m) => ({ orgId: m.orgId })),
   orgDailySpendCents: fetchOrgDailySpendCents,
-  currentFleetStats: async (csv, now) => {
-    // The SAME billing read the accounts audit's MRR is summed from (shared in-process), so the two
-    // staff pages state one MRR.
-    const [audit, recurring] = await Promise.all([
-      buildAccountsAudit(csv, now),
-      fetchFleetRecurringRevenue().catch((err) => {
-        console.error("[features-service] revenue history: billing recurring revenue unavailable (soft):", err);
-        return null;
-      }),
-    ]);
-    return {
-      recurring,
-      pairs: audit.rows.map((r) => ({
-        orgId: r.orgId,
-        brandId: r.brandId,
-        // The audit already batches brand-service for its own table, so naming a brand in the
-        // self-serve breakdown costs no extra read.
-        brandName: r.brandName,
-        brandDomain: r.brandDomain,
-        runningDailyBudgetUsd: r.runningDailyBudgetUsd,
-        active: r.status === "active",
-      })),
-    };
-  },
+  currentFleetStats: (csv, now) => readCurrentFleetStats(csv, now),
   readCommittedSnapshots: readCommittedMrrSnapshotsSoft,
   recordRecurringSnapshot: recordRecurringMrrSnapshotSoft,
   readRecurringSnapshots: readRecurringMrrSnapshotsSoft,
@@ -311,7 +353,7 @@ export async function buildRevenueHistory(
     }),
     coldEmailSlugsCsv
       ? deps.currentFleetStats(coldEmailSlugsCsv, now)
-      : Promise.resolve({ recurring: null as FleetRecurringRevenue | null, pairs: [] }),
+      : Promise.resolve({ recurring: null as FleetRecurringRevenue | null, pairs: [], paymentOutlookUnreadOrgs: [] as PaymentOutlookUnreadOrg[] }),
   ]);
   const orgDailyCents = new Map(orgDayEntries);
   // The ONE live MRR: billing's recurring revenue summed over every org it states (known rows).
@@ -398,6 +440,7 @@ export async function buildRevenueHistory(
     // Same per-org realized-spend maps the series above sum — one revenue basis for the whole payload.
     netRevenueRetention: buildNetRevenueRetention(orgDailyCents, todayIso, { weeks: windows.weeks, months: windows.months }),
     mrrSplit,
+    paymentOutlookUnreadOrgs: fleet.paymentOutlookUnreadOrgs ?? [],
     asOf: now.toISOString(),
   };
 }

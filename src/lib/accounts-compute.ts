@@ -88,10 +88,10 @@ export type AccountStatus = "active" | "payment_declined" | "no_payment_method" 
 
 /**
  * A ROW's status: the verdict above, or "unknown" when an input the verdict needs could not be read.
- * Only produced under `paymentHoldFailSoft` (customer-health board): billing's payment-outlook read
- * failed for that org, so whether billing can charge it — the first rule of the precedence — is not
- * known, and no verdict is invented. The row then carries `statusUnknownReason`. The default audit
- * (staff Accounts page, send-forecast, revenue history, active users) stays fail-loud and never emits it.
+ * Only produced under `paymentHoldFailSoft` (customer-health board, revenue history): billing's
+ * payment-outlook read failed for that org, so whether billing can charge it — the first rule of the
+ * precedence — is not known, and no verdict is invented. The row then carries `statusUnknownReason`.
+ * The default audit (staff Accounts page, send-forecast, active users) stays fail-loud and never emits it.
  */
 export type AccountRowStatus = AccountStatus | "unknown";
 
@@ -243,9 +243,9 @@ export interface AccountsAuditOptions {
   recurringRevenue?: boolean;
   /**
    * Read billing's per-org payment-outlook FAIL-SOFT: an org whose read throws gets status "unknown" +
-   * `statusUnknownReason` (never a guessed verdict) instead of failing the whole audit. Only the
-   * customer-health board asks for it (one org's billing timeout must not erase every customer);
-   * every other consumer keeps the fail-loud read.
+   * `statusUnknownReason` (never a guessed verdict) instead of failing the whole audit. The
+   * customer-health board and the revenue history ask for it (one org's billing timeout must not erase
+   * every customer / the fleet MRR); every other consumer keeps the fail-loud read.
    */
   paymentHoldFailSoft?: boolean;
   /** Test seam: the pause before the soft path's single retry (default `PAYMENT_HOLD_SOFT_RETRY_DELAY_MS`). */
