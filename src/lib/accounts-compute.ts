@@ -85,6 +85,15 @@ import { readStatedAmountsSoft } from "./stated-monthly-amounts-store.js";
  */
 export type AccountStatus = "active" | "payment_declined" | "no_payment_method" | "reactive_only" | "paused" | "inactive";
 
+/**
+ * A ROW's status: the verdict above, or "unknown" when an input the verdict needs could not be read.
+ * Only produced under `paymentHoldFailSoft` (customer-health board): billing's payment-outlook read
+ * failed for that org, so whether billing can charge it — the first rule of the precedence — is not
+ * known, and no verdict is invented. The row then carries `statusUnknownReason`. The default audit
+ * (staff Accounts page, send-forecast, revenue history, active users) stays fail-loud and never emits it.
+ */
+export type AccountRowStatus = AccountStatus | "unknown";
+
 /** billing's blockedReason for an org with no chargeable card. */
 export const NO_CHARGEABLE_CARD = "no_chargeable_card";
 
@@ -130,7 +139,12 @@ export interface AccountRow {
   orgActualBalanceUsd: number;
   /** Whether the org has auto-topup enabled (billing has_auto_topup; false when absent). */
   autoTopupEnabled: boolean;
-  status: AccountStatus;
+  status: AccountRowStatus;
+  /**
+   * Why `status` is "unknown" (the unreadable input, e.g. `billing payment-outlook unreadable: …`).
+   * Set only under `paymentHoldFailSoft`; absent/null whenever the status is known.
+   */
+  statusUnknownReason?: string | null;
   /**
    * billing's reason it cannot charge this org (`card_declined`, `card_country_unsupported`, …) when
    * `status` is "payment_declined" or "no_payment_method"; null otherwise (and null if billing blocked without naming one).
@@ -188,6 +202,8 @@ export interface AccountsStats {
   /** Rows with no chargeable card (status no_payment_method); excluded from every money total. */
   noPaymentMethodCount: number;
   pausedCount: number;
+  /** Rows whose status could not be decided (status "unknown"; only under `paymentHoldFailSoft`). Excluded from every money total. */
+  statusUnknownCount: number;
   inactiveCount: number;
   totalCount: number;
 }
@@ -224,7 +240,17 @@ export interface AccountsAuditOptions {
    * class. The staff Accounts page and the revenue history ask for it; the active-users count does not.
    */
   recurringRevenue?: boolean;
+  /**
+   * Read billing's per-org payment-outlook FAIL-SOFT: an org whose read throws gets status "unknown" +
+   * `statusUnknownReason` (never a guessed verdict) instead of failing the whole audit. Only the
+   * customer-health board asks for it (one org's billing timeout must not erase every customer);
+   * every other consumer keeps the fail-loud read.
+   */
+  paymentHoldFailSoft?: boolean;
 }
+
+/** Cap on the reason text carried on a row (billing's error body can be a long upstream page). */
+const STATUS_UNKNOWN_REASON_MAX = 300;
 
 const REAL_DEPS: AccountsDeps = {
   featureMemberships: async (csv) => (await fetchFeatureMemberships(csv)).map((m) => ({ orgId: m.orgId, brandId: m.brandId })),
@@ -316,13 +342,24 @@ export async function buildAccountsAudit(
   const [orgInfoEntries, brandInfo] = await Promise.all([
     Promise.all(
       orgIds.map(
-        async (orgId): Promise<[string, { balance: OrgBalance; identity: OrgIdentity; hold: PaymentHold | null }]> => {
+        async (
+          orgId,
+        ): Promise<[string, { balance: OrgBalance; identity: OrgIdentity; hold: PaymentHold | null; holdUnreadable: string | null }]> => {
+          let holdUnreadable: string | null = null;
           const [balance, identity, hold] = await Promise.all([
             deps.orgBalance(orgId),
             deps.orgIdentity(orgId),
-            deps.paymentHold(orgId),
+            opts.paymentHoldFailSoft
+              ? deps.paymentHold(orgId).catch((err): null => {
+                  // Loud, per org; the row says it too (status "unknown" + reason), never a guessed verdict.
+                  const message = (err as Error).message;
+                  console.error(`[features-service] accounts: payment-outlook unreadable for org ${orgId} (status unknown): ${message}`);
+                  holdUnreadable = `billing payment-outlook unreadable: ${message}`.slice(0, STATUS_UNKNOWN_REASON_MAX);
+                  return null;
+                })
+              : deps.paymentHold(orgId),
           ]);
-          return [orgId, { balance, identity, hold }];
+          return [orgId, { balance, identity, hold, holdUnreadable }];
         },
       ),
     ),
@@ -358,14 +395,20 @@ export async function buildAccountsAudit(
         orgBalanceUsd: balance.spendableUsd,
         orgActualBalanceUsd: balance.actualUsd,
         autoTopupEnabled: balance.autoTopupEnabled,
-        status: accountStatus(
-          budget.configuredUsd,
-          budget.proactiveRunningUsd,
-          budget.reactiveRunningUsd,
-          balance.actualUsd,
-          balance.autoTopupEnabled,
-          info.hold,
-        ),
+        // An unreadable payment hold leaves the FIRST rule of the precedence undecided: the status is
+        // "unknown", never the verdict computed as if billing could charge the org.
+        status:
+          info.holdUnreadable !== null
+            ? "unknown"
+            : accountStatus(
+                budget.configuredUsd,
+                budget.proactiveRunningUsd,
+                budget.reactiveRunningUsd,
+                balance.actualUsd,
+                balance.autoTopupEnabled,
+                info.hold,
+              ),
+        ...(info.holdUnreadable !== null ? { statusUnknownReason: info.holdUnreadable } : {}),
         paymentDeclinedReason: info.hold?.blockedReason ?? null,
         revenueSide: agencyOrgIds === null ? null : agencyOrgIds.has(p.orgId) ? "agency" : "self_serve",
         revenueClass: recurringByOrg.get(p.orgId)?.revenueClass ?? null,
@@ -374,9 +417,9 @@ export async function buildAccountsAudit(
       };
   });
 
-  // Deterministic order: active → payment_declined → no_payment_method → reactive_only → paused → inactive, then running budget desc, tiebreak on the
+  // Deterministic order: active → payment_declined → no_payment_method → unknown → reactive_only → paused → inactive, then running budget desc, tiebreak on the
   // configured one (a paused row runs nothing, so its posted money is what ranks it), then brandId.
-  const statusRank: Record<AccountStatus, number> = { active: 0, payment_declined: 1, no_payment_method: 2, reactive_only: 3, paused: 4, inactive: 5 };
+  const statusRank: Record<AccountRowStatus, number> = { active: 0, payment_declined: 1, no_payment_method: 2, unknown: 3, reactive_only: 4, paused: 5, inactive: 6 };
   rows.sort((a, b) => {
     if (a.status !== b.status) return statusRank[a.status] - statusRank[b.status];
     if (a.runningDailyBudgetUsd !== b.runningDailyBudgetUsd) {
@@ -403,6 +446,7 @@ export async function buildAccountsAudit(
   let pausedCount = 0;
   let paymentDeclinedCount = 0;
   let noPaymentMethodCount = 0;
+  let statusUnknownCount = 0;
   for (const row of rows) {
     if (row.status === "active") {
       totalRunningDailyBudgetUsd += row.runningDailyBudgetUsd;
@@ -418,9 +462,12 @@ export async function buildAccountsAudit(
       paymentDeclinedCount += 1;
     } else if (row.status === "no_payment_method") {
       noPaymentMethodCount += 1;
+    } else if (row.status === "unknown") {
+      statusUnknownCount += 1;
     }
   }
-  const inactiveCount = rows.length - activeCount - reactiveOnlyCount - pausedCount - paymentDeclinedCount - noPaymentMethodCount;
+  const inactiveCount =
+    rows.length - activeCount - reactiveOnlyCount - pausedCount - paymentDeclinedCount - noPaymentMethodCount - statusUnknownCount;
   // Round the fleet totals to cents defensively (per-row budgets are already dollars-and-cents).
   totalRunningDailyBudgetUsd = Math.round(totalRunningDailyBudgetUsd * 100) / 100;
   totalConfiguredDailyBudgetUsd = Math.round(totalConfiguredDailyBudgetUsd * 100) / 100;
@@ -445,6 +492,7 @@ export async function buildAccountsAudit(
       paymentDeclinedCount,
       noPaymentMethodCount,
       pausedCount,
+      statusUnknownCount,
       inactiveCount,
       totalCount: rows.length,
     },
