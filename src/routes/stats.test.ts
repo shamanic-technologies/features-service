@@ -625,3 +625,57 @@ describe("GET /features/:featureSlug/stats — ONE COMMITTED spend basis (featur
     expect(res.body.stats.actualCostInUsdCents).toBe(1500);
   });
 });
+
+describe("systemStats.activeCampaigns — campaign-service byStatus (features-service#335)", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  function stubCampaignStats(byStatus: Record<string, number>) {
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
+      if (url.includes("campaign:3000")) {
+        return new Response(JSON.stringify({ stats: { byStatus } }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ groups: [] }), { status: 200 });
+    });
+  }
+
+  beforeEach(() => {
+    process.env.CAMPAIGN_SERVICE_URL = "http://campaign:3000";
+    process.env.CAMPAIGN_SERVICE_API_KEY = "campaign-key";
+    vi.mocked(db.query.features.findFirst).mockResolvedValue(MOCK_FEATURE as any);
+    vi.mocked(db.query.features.findMany).mockResolvedValue([MOCK_FEATURE as any]);
+  });
+
+  afterEach(() => {
+    delete process.env.CAMPAIGN_SERVICE_URL;
+    delete process.env.CAMPAIGN_SERVICE_API_KEY;
+    fetchSpy?.mockRestore();
+    vi.restoreAllMocks();
+  });
+
+  it("GET /stats: { ongoing: 3, stopped: 2 } -> activeCampaigns = 3", async () => {
+    stubCampaignStats({ ongoing: 3, stopped: 2 });
+    const res = await request(app).get("/stats").set(AUTH_HEADERS);
+    expect(res.status).toBe(200);
+    expect(res.body.systemStats.activeCampaigns).toBe(3);
+  });
+
+  it("GET /features/:slug/stats: { ongoing: 3, stopped: 2 } -> activeCampaigns = 3", async () => {
+    stubCampaignStats({ ongoing: 3, stopped: 2 });
+    const res = await request(app).get("/features/sales-cold-email-outreach/stats").set(AUTH_HEADERS);
+    expect(res.status).toBe(200);
+    expect(res.body.systemStats.activeCampaigns).toBe(3);
+  });
+
+  it("only stopped campaigns -> activeCampaigns = 0", async () => {
+    stubCampaignStats({ stopped: 5 });
+    const res = await request(app).get("/stats").set(AUTH_HEADERS);
+    expect(res.body.systemStats.activeCampaigns).toBe(0);
+  });
+
+  it("legacy { active: 4 } shape still counted", async () => {
+    stubCampaignStats({ active: 4 });
+    const res = await request(app).get("/stats").set(AUTH_HEADERS);
+    expect(res.body.systemStats.activeCampaigns).toBe(4);
+  });
+});
