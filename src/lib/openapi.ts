@@ -1715,7 +1715,7 @@ const salesPathLegSchema = z.object({
       industryDefaultPct: z.number().nullable(),
     })
     .nullable()
-    .describe("Every source the rate was resolved from (measured > customer stated > fleet median > industry default)."),
+    .describe("Every source the rate was resolved from (measured > customer stated > fleet median > industry default). The fleet median is retained only when fleetMedian.brandCount is at least 5; below that the industry default is retained."),
   workedBy: z.enum(["platform", "human"]).describe("platform: one of the channels the platform MANAGES (sales-cold-email-outreach, ai-meeting-booking, ai-instant-call) publishes the leg; human: none does (the customer's team) — rate, no cost."),
   channel: z
     .object({
@@ -1771,7 +1771,7 @@ registry.registerPath({
   description:
     "A SALES PATH is a chain of the legs the customer ticked for the offer (brand-service sales-path) from an ENTRY leg (from nothing) to paid_client, visiting no step twice. " +
     "Formula: needed(paid_client)=1; needed(from step of leg i)=needed(to step)/(rate_i/100); legCost_i = costPerOutcome_i × needed(to step of leg i) for a leg a channel of ours works (0 for a human leg); costPerPayingClient = Σ legCost_i; roi = offer lifetime revenue ÷ costPerPayingClient. " +
-    "rate_i is the brand's effective leg rate (CRM-measured / measured on our leads > customer stated > fleet median > industry default). costPerOutcome_i is the NET cost per outcome of the recommended workflow of each platform channel's leg-keyed workflow-projection ladder (?leg=&offerId=&pricing=net), else the channel's measured fleet cost per outcome on the leg, else a seeded default (costSource says which); the cheapest channel is chosen. Only the managed channels (sales-cold-email-outreach, ai-meeting-booking, ai-instant-call) are candidates; every other leg is the customer's team (workedBy human, cost 0). " +
+    "rate_i is the brand's effective leg rate (CRM-measured / measured on our leads > customer stated > fleet median, only when at least 5 brands stated the leg > industry default). costPerOutcome_i is the NET cost per outcome of the recommended workflow of each platform channel's leg-keyed workflow-projection ladder (?leg=&offerId=&pricing=net), else the channel's measured fleet cost per outcome on the leg, else a seeded default (costSource says which); the cheapest channel is chosen. Only the managed channels (sales-cold-email-outreach, ai-meeting-booking, ai-instant-call) are candidates; every other leg is the customer's team (workedBy human, cost 0). " +
     "Ranked by roi descending; a path whose roi is null (reason stated) sorts last. status not_stated / no_legs_selected / no_complete_path serve paths: [] — none is invented. Additive read.",
   tags: ["Stats"],
   request: {
@@ -2040,13 +2040,13 @@ const effectiveArrowRateSchema = z.object({
   catalogueFromStep: z.string().nullable().describe("The FROM step's label in the public catalogue (legs[].fromStep.label). Null when legKey is."),
   catalogueToStep: z.string().nullable().describe("The TO step's label in the public catalogue (legs[].toStep.label). Null when legKey is."),
   effectiveRatePct: z.number().nullable().describe("The rate every money figure (pipeline, ROI, CAC, projections) is priced on for this arrow, 0..100. Never null on a catalogue leg: the seeded per-leg default is the last source."),
-  source: z.enum(["measured", "manual", "median", "default"]).nullable().describe("Which source effectiveRatePct is, in precedence order: measured on the brand's own leads (≥ minMeasuredFromReached on the FROM step), else what the brand stated by hand (brand-service brand-grain store), else the cross-org median of what brands stated, else `default`: the seeded per-leg industry benchmark (defaultRatePct), never the brand's own figure. Null only for a leg outside the catalogue that nothing prices."),
+  source: z.enum(["measured", "manual", "median", "default"]).nullable().describe("Which source effectiveRatePct is, in precedence order: measured on the brand's own leads (≥ minMeasuredFromReached on the FROM step), else what the brand stated by hand (brand-service brand-grain store), else the cross-org median of what brands stated (used only when at least 5 brands stated the leg; below that the default is kept), else `default`: the seeded per-leg industry benchmark (defaultRatePct), never the brand's own figure. Null only for a leg outside the catalogue that nothing prices."),
   unresolvedReason: z.enum(["no_rate_available"]).nullable().describe("Null on every catalogue leg (a default always exists). Kept for readers of the older contract."),
   measured: measuredArrowRateSchema,
   manualRatePct: z.number().nullable().describe("What the brand stated by hand for this arrow, or null when it has not."),
   median: z.object({
     ratePct: z.number().nullable().describe("The cross-org MEDIAN (never a mean) of the rates brands STATED for this (funnel, arrow). Null when none did."),
-    brandCount: z.number().int().describe("How many brands' statements the median is taken over."),
+    brandCount: z.number().int().describe("How many brands' statements the median is taken over. The median becomes the effective rate only when this is at least 5."),
   }),
   defaultRatePct: z.number().nullable().describe("The seeded per-leg default (industry benchmark, 0..100], stated whether or not it is the effective source."),
 });
@@ -2076,7 +2076,7 @@ registry.registerPath({
   path: "/brands/{brandId}/conversion-rates",
   summary: "The effective conversion rate of every arrow of a brand's funnels, and where it came from",
   description:
-    "Conversion rates are BRAND-grain: one rate per (brand, sales funnel, arrow). Every money figure this service states is priced on the rate resolved here, from three sources in order — MEASURED on the brand's own lead data once at least `minMeasuredFromReached` leads reached the arrow's FROM step, else the brand's MANUALLY stated rate, else the cross-org MEDIAN of stated rates. The response carries all three beside the effective one, so a consumer shows the value, its source, the measured n, the manual value and the median without computing anything. Right-censoring (a meeting booked yesterday cannot be attended yet) is accepted: a measured rate for a young brand reads slightly low.",
+    "Conversion rates are BRAND-grain: one rate per (brand, sales funnel, arrow). Every money figure this service states is priced on the rate resolved here, from three sources in order — MEASURED on the brand's own lead data once at least `minMeasuredFromReached` leads reached the arrow's FROM step, else the brand's MANUALLY stated rate, else the cross-org MEDIAN of stated rates (only when at least 5 brands stated the leg), else the seeded per-leg industry DEFAULT. The response carries all of them beside the effective one, so a consumer shows the value, its source, the measured n, the manual value and the median without computing anything. Right-censoring (a meeting booked yesterday cannot be attended yet) is accepted: a measured rate for a young brand reads slightly low.",
   tags: ["Stats"],
   request: {
     headers: identityHeaders,

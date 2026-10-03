@@ -18,7 +18,11 @@
  *   2. MANUAL — what the brand stated by hand for the leg (brand-service `offer-economics` leg rates).
  *   3. MEDIAN — the cross-org median of what OTHER brands stated for the same leg. Stated
  *      values only: the store has no default behind it, so a brand that stated nothing contributes
- *      nothing.
+ *      nothing. It overrides the default only once at least `MIN_FLEET_MEDIAN_BRANDS` (5) brands
+ *      stated the leg (owner rule, 2026-10-03): a median of two customers' guesses is two guesses, and
+ *      it once ranked website visit → meeting booked at 4.99% (2 brands) over the 2% benchmark, which
+ *      put a path nothing measured first on an offer's Sales paths. Below the bar the default is kept
+ *      and served as `source: "default"`; the median still rides along in `median` with its brandCount.
  *
  *   4. DEFAULT — the seeded per-leg industry benchmark (`lib/default-leg-rates.ts`, owner rule
  *      2026-09-29: every leg is prefilled, none may be empty). Served as `source: "default"`, so a
@@ -109,6 +113,10 @@ import {
  * OUTCOMES of the leg's own step, 1 positive reply on the conversation leg): it stays 10 on every arrow.
  */
 export const MIN_MEASURED_FROM_REACHED = 10;
+
+/** Brands that must have STATED a leg before their median overrides the leg's industry default (owner
+ *  rule, 2026-10-03). Below it the median is still served beside the rate, never used as the rate. */
+export const MIN_FLEET_MEDIAN_BRANDS = 5;
 
 export type EffectiveRateSource = "measured" | "manual" | "median" | "default";
 
@@ -580,7 +588,7 @@ export async function getFleetArrowMedians(): Promise<FleetArrowMedians> {
 
 // ── Resolution ────────────────────────────────────────────────────────────────────────────────
 
-/** PURE: resolve one arrow from its three sources, in order. */
+/** PURE: resolve one arrow from its sources, in order (a fleet median counts only over ≥ MIN_FLEET_MEDIAN_BRANDS brands). */
 export function resolveArrow(
   fromStep: string,
   toStep: string,
@@ -597,7 +605,7 @@ export function resolveArrow(
   } else if (manualRatePct !== null) {
     effectiveRatePct = manualRatePct;
     source = "manual";
-  } else if (medianRate.ratePct !== null) {
+  } else if (medianRate.ratePct !== null && medianRate.brandCount >= MIN_FLEET_MEDIAN_BRANDS) {
     effectiveRatePct = medianRate.ratePct;
     source = "median";
   } else if (defaultRatePct !== null) {

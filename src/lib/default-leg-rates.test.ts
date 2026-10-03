@@ -62,7 +62,7 @@ describe("every leg always has a conversion rate", () => {
       funnelKeys: SALES_FUNNEL_KEYS,
       measurement: NOTHING_MEASURED,
       manual: [{ fromStep: "Positive reply", toStep: "Meeting booked", ratePct: 55, stated: true } as never],
-      medians: new Map([["meeting_booked>meeting_attended", { ratePct: 66, brandCount: 3 }]]),
+      medians: new Map([["meeting_booked>meeting_attended", { ratePct: 66, brandCount: 5 }]]),
     });
     const booked = rates.legs.find((l) => l.fromStep === "Positive reply" && l.toStep === "Meeting booked")!;
     expect(booked).toMatchObject({ effectiveRatePct: 55, source: "manual", defaultRatePct: 30 });
