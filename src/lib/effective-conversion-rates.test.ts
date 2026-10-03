@@ -188,17 +188,17 @@ describe("resolveArrow — measured, else manual, else median, else null", () =>
   });
   it("a leg leaving Website visit never takes the fleet median, even over 9 brands (owner rule 2026-10-03)", () => {
     const nine = { ratePct: 5, brandCount: 9 };
-    expect(resolveArrow("Website visit", "Signup", thin, null, nine, 1.3)).toMatchObject({
-      effectiveRatePct: 1.3,
+    expect(resolveArrow("Website visit", "Signup", thin, null, nine, 0.5)).toMatchObject({
+      effectiveRatePct: 0.5,
       source: "default",
       median: nine,
-      defaultRatePct: 1.3,
+      defaultRatePct: 0.5,
     });
     expect(fleetMedianApplies("Website visit", "Meeting booked", nine)).toBe(false);
     expect(fleetMedianApplies("Signup", "Paid client", nine)).toBe(true);
   });
   it("on a website-visit leg the brand's own statement still wins over the default", () => {
-    expect(resolveArrow("Website visit", "Signup", thin, 7, { ratePct: 5, brandCount: 9 }, 1.3)).toMatchObject({ effectiveRatePct: 7, source: "manual" });
+    expect(resolveArrow("Website visit", "Signup", thin, 7, { ratePct: 5, brandCount: 9 }, 0.5)).toMatchObject({ effectiveRatePct: 7, source: "manual" });
   });
   it("the brand's own statement still wins over a thin median and the default", () => {
     expect(resolveArrow("Website visit", "Meeting booked", thin, 3, { ratePct: 4.99, brandCount: 2 }, 1)).toMatchObject({ effectiveRatePct: 3, source: "manual" });
