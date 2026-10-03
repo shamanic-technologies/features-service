@@ -155,12 +155,17 @@ interface Options {
   fullWorkflows?: unknown | "fail";
   /** Overrides a dynasty's brand-grain positive replies (default 10 + its index). */
   brandReplies?: Record<string, number>;
+  /** Dynasties that never ran anywhere: no spend, no contact, at any grain (the explore allowance). */
+  unrun?: string[];
 }
 
 let requestedUrls: string[] = [];
 
 function mockFetch(options: Options = {}): void {
   requestedUrls = [];
+  const ran = (groups: any[]) =>
+    groups.filter((g) => !(options.unrun ?? []).some((d) => (g.key ?? g.dimensions?.workflowSlug) === `wf-${d}-v1`));
+  const json = (body: any) => jsonResponse(body?.groups ? { ...body, groups: ran(body.groups) } : body);
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
     requestedUrls.push(url);
@@ -206,7 +211,7 @@ function mockFetch(options: Options = {}): void {
   });
 }
 
-function json(body: unknown): Response {
+function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
 }
 
@@ -364,5 +369,61 @@ describe("a workflow not assigned ACTIVE is never put forward", () => {
       expect(r.modelEligibility).toBeUndefined();
     }
     expect(fetchLegAssignments).not.toHaveBeenCalled();
+  });
+});
+
+describe("COLD START: a leg with no priced workflow still names a selectable one to run", () => {
+  beforeEach(() => {
+    vi.mocked(db.query.features.findFirst).mockResolvedValue(FEATURE as any);
+    assignmentsByLeg.clear();
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  // The prod case (2026-10-03, ai-meeting-booking conversation_to_meeting_booked): the only workflow
+  // assigned active never ran, every priced one is not selectable on the leg.
+  const PROD_SHAPE = () => {
+    assign("start_to_conversation", { neon: "active", lithium: "deprecated", sodium: "deprecated", argon: "deprecated" });
+    mockFetch({ unrun: ["neon"] });
+  };
+
+  it("recommends the rank-1 SELECTABLE workflow, flagged cold_start, with no invented price", async () => {
+    PROD_SHAPE();
+    const res = await get("leg=start_to_conversation");
+    expect(res.status).toBe(200);
+    const neon = res.body.rows.filter((r: any) => r.workflow.workflowDynastySlug === "neon");
+    expect(neon.length).toBeGreaterThan(0);
+    for (const r of neon) {
+      expect(r.measured).toBe(false); // the explore allowance: no evidence anywhere
+    }
+    expect(res.body.recommendedWorkflowDynastySlug).toBe("neon");
+    expect(rowOf(res.body, "neon").rank).toBe(1);
+    expect(res.body.recommendationBasis).toBe("cold_start");
+    expect(res.body.recommendedBudgetUsd).toBeNull();
+    expect(res.body.recommendationWithheldReason).toBeUndefined();
+  });
+
+  it("never falls back to a deprecated or unassigned workflow", async () => {
+    assign("start_to_conversation", { lithium: "deprecated", sodium: "deprecated", argon: "deprecated" });
+    mockFetch({ unrun: ["neon"] });
+    const res = await get("leg=start_to_conversation");
+    expect(res.body.recommendedWorkflowDynastySlug).toBeNull();
+    expect(res.body.recommendationBasis).toBeUndefined();
+    expect(res.body.recommendationWithheldReason).toBe("no_eligible_workflow");
+  });
+
+  it("a PRICED selectable workflow still wins over a never-run one, with no cold_start flag", async () => {
+    assign("start_to_conversation", { neon: "active", lithium: "active", sodium: "active", argon: "deprecated" });
+    mockFetch({ unrun: ["neon"] });
+    const res = await get("leg=start_to_conversation");
+    expect(res.body.recommendationBasis).toBeUndefined();
+    expect(["lithium", "sodium"]).toContain(res.body.recommendedWorkflowDynastySlug);
+    expect(rowOf(res.body, res.body.recommendedWorkflowDynastySlug).resolved.costPerOutcomeUsd).toBeGreaterThan(0);
+    expect(res.body.recommendedBudgetUsd).toBeGreaterThan(0);
+  });
+
+  it("a goal-keyed read is unchanged: no cold-start flag", async () => {
+    PROD_SHAPE();
+    const res = await get("goal=meetingBooked");
+    expect(res.body.recommendationBasis).toBeUndefined();
   });
 });

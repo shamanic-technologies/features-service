@@ -6848,7 +6848,7 @@
           "recommendedWorkflowDynastySlug": {
             "type": "string",
             "nullable": true,
-            "description": "Dynasty of the MEASURED row that best answers what the caller is maximising: under `maximize=return` (the default) the LOWEST resolved.costPerOutcomeUsd, under `maximize=conversionRate` the HIGHEST resolved.conversionRatePct. The same catalogue legitimately ranks differently under the two, so the two answers may differ for one (brand, channel, leg). An unmeasured row (explore allowance) is reachable but never recommended under either. On a `?leg=` read a workflow not assigned active on the leg (`legAssignment.selectable: false`) is never recommended either. On a MISSION read (`?leg=&campaignId=` whose campaign states an offer) whose rank-1 workflow holds a mature price (offer, else brand, else fleet), it is that rank-1 workflow, so rank 1 and the recommendation never disagree. Null when none has usable data, or when no workflow is assigned active (then `recommendationWithheldReason` says so)."
+            "description": "Dynasty of the MEASURED row that best answers what the caller is maximising: under `maximize=return` (the default) the LOWEST resolved.costPerOutcomeUsd, under `maximize=conversionRate` the HIGHEST resolved.conversionRatePct. The same catalogue legitimately ranks differently under the two, so the two answers may differ for one (brand, channel, leg). An unmeasured row (explore allowance) is reachable but never recommended under either. On a `?leg=` read a workflow not assigned active on the leg (`legAssignment.selectable: false`) is never recommended either. On a MISSION read (`?leg=&campaignId=` whose campaign states an offer) whose rank-1 workflow holds a mature price (offer, else brand, else fleet), it is that rank-1 workflow, so rank 1 and the recommendation never disagree. On a `?leg=` read with no priced workflow but a selectable one, it is the rank-1 selectable workflow, flagged `recommendationBasis: \"cold_start\"`. Null when none has usable data (funnel/goal reads), or when no workflow is assigned active (then `recommendationWithheldReason` says so)."
           },
           "recommendedBudgetUsd": {
             "type": "number",
@@ -6865,6 +6865,13 @@
               "no_eligible_workflow"
             ],
             "description": "Present ⟺ a `?leg=` read has workflows but NONE is assigned active on the leg (`legAssignment`). `recommendedWorkflowDynastySlug` is then null by refusal, never a fall back to an unassigned or deprecated workflow."
+          },
+          "recommendationBasis": {
+            "type": "string",
+            "enum": [
+              "cold_start"
+            ],
+            "description": "Present ⟺ a `?leg=` read has NO priced workflow but at least one assigned active and selectable: `recommendedWorkflowDynastySlug` is then the rank-1 selectable workflow so a consumer can START the leg (the only way it ever gets evidence). Its cost fields stay null (no invented price) and `recommendedBudgetUsd` is null. Absent whenever a priced workflow is recommended; a leg with no selectable workflow still recommends nothing."
           },
           "maturity": {
             "allOf": [
@@ -24487,7 +24494,7 @@
                     "recommendedWorkflowDynastySlug": {
                       "type": "string",
                       "nullable": true,
-                      "description": "Dynasty of the MEASURED row that best answers what the caller is maximising: under `maximize=return` (the default) the LOWEST resolved.costPerOutcomeUsd, under `maximize=conversionRate` the HIGHEST resolved.conversionRatePct. The same catalogue legitimately ranks differently under the two, so the two answers may differ for one (brand, channel, leg). An unmeasured row (explore allowance) is reachable but never recommended under either. On a `?leg=` read a workflow not assigned active on the leg (`legAssignment.selectable: false`) is never recommended either. On a MISSION read (`?leg=&campaignId=` whose campaign states an offer) whose rank-1 workflow holds a mature price (offer, else brand, else fleet), it is that rank-1 workflow, so rank 1 and the recommendation never disagree. Null when none has usable data, or when no workflow is assigned active (then `recommendationWithheldReason` says so)."
+                      "description": "Dynasty of the MEASURED row that best answers what the caller is maximising: under `maximize=return` (the default) the LOWEST resolved.costPerOutcomeUsd, under `maximize=conversionRate` the HIGHEST resolved.conversionRatePct. The same catalogue legitimately ranks differently under the two, so the two answers may differ for one (brand, channel, leg). An unmeasured row (explore allowance) is reachable but never recommended under either. On a `?leg=` read a workflow not assigned active on the leg (`legAssignment.selectable: false`) is never recommended either. On a MISSION read (`?leg=&campaignId=` whose campaign states an offer) whose rank-1 workflow holds a mature price (offer, else brand, else fleet), it is that rank-1 workflow, so rank 1 and the recommendation never disagree. On a `?leg=` read with no priced workflow but a selectable one, it is the rank-1 selectable workflow, flagged `recommendationBasis: \"cold_start\"`. Null when none has usable data (funnel/goal reads), or when no workflow is assigned active (then `recommendationWithheldReason` says so)."
                     },
                     "recommendedBudgetUsd": {
                       "type": "number",
@@ -24504,6 +24511,13 @@
                         "no_eligible_workflow"
                       ],
                       "description": "Present ⟺ a `?leg=` read has workflows but NONE is assigned active on the leg (`legAssignment`). `recommendedWorkflowDynastySlug` is then null by refusal, never a fall back to an unassigned or deprecated workflow."
+                    },
+                    "recommendationBasis": {
+                      "type": "string",
+                      "enum": [
+                        "cold_start"
+                      ],
+                      "description": "Present ⟺ a `?leg=` read has NO priced workflow but at least one assigned active and selectable: `recommendedWorkflowDynastySlug` is then the rank-1 selectable workflow so a consumer can START the leg (the only way it ever gets evidence). Its cost fields stay null (no invented price) and `recommendedBudgetUsd` is null. Absent whenever a priced workflow is recommended; a leg with no selectable workflow still recommends nothing."
                     },
                     "maturity": {
                       "allOf": [

@@ -170,6 +170,15 @@ describe("priceFromLadder", () => {
     expect(priceFromLadder(200, { recommendedWorkflowDynastySlug: null, unmeasuredReason: "no_active_workflows" }).unpricedReason).toBe(
       "no_active_workflows",
     );
+    // A cold-start pick names a workflow to run, never a leg price: its explore-allowance floor is ignored.
+    expect(
+      priceFromLadder(200, {
+        recommendedWorkflowDynastySlug: "rhodium",
+        recommendationBasis: "cold_start",
+        unmeasuredReason: "no_evidence",
+        rows: [{ audienceId: null, workflow: { workflowDynastySlug: "rhodium" }, resolved: { grain: null, costPerOutcomeUsd: 3 } }],
+      }),
+    ).toEqual({ costPerOutcomeUsd: null, workflowDynastySlug: null, grain: null, unpricedReason: "no_evidence" });
   });
 });
 
