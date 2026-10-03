@@ -69,6 +69,7 @@
  * total: a row for one channel and the total above it are visibly one statement at two grains.
  */
 import { Router } from "express";
+import { computeRevenueWindow, parseWindowDays, WINDOW_DAYS_ERROR } from "../lib/revenue-window.js";
 import { FUNNEL_RETIRED_BODY, namesRetiredFunnel } from "../lib/retired-funnel-param.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { getFunnel } from "../lib/funnel-registry.js";
@@ -237,6 +238,10 @@ router.get("/offers/:offerId/revenue", apiKeyAuth, async (req, res) => {
     }
     const causeKey = causeScopeKeyPart(causes);
 
+    // ONE CHOSEN WINDOW of UTC days ending today (lib/revenue-window.ts). Omitted → no `window` key and
+    // the same cache cell → byte-identical to today.
+    const windowDays = parseWindowDays(req.query.windowDays);
+    if (windowDays === null) return res.status(400).json(WINDOW_DAYS_ERROR);
 
     const funnel = resolveOfferFunnel(offerId, channels);
 
@@ -275,6 +280,8 @@ router.get("/offers/:offerId/revenue", apiKeyAuth, async (req, res) => {
         // A read counting a different set of causes is a different answer, so it is a different cell.
         // Absent for the default set → today's keys are unmoved.
         cause: causeKey,
+        // A windowed read carries a block the plain one does not. Absent → today's keys are unmoved.
+        windowDays,
       }),
       orgId: headers.orgId,
       compute: async () => {
@@ -294,7 +301,22 @@ router.get("/offers/:offerId/revenue", apiKeyAuth, async (req, res) => {
           offerId,
           undefined,
           causes,
+          undefined,
+          undefined,
+          // Today's spend counts the brand's own campaign-less work too (what the credit was charged).
+          true,
         );
+        const window = windowDays
+          ? await computeRevenueWindow({
+              days: windowDays,
+              brandId,
+              campaignScope: campaignIds,
+              featureScope: featureSlugs,
+              pricing,
+              headers,
+              body,
+            })
+          : undefined;
         // The breakdown. LEAN on purpose (headline + costEconomics, the shape the per-offer and
         // per-workflow groups already use): a full body per channel would repeat the whole lead
         // population once per channel for figures the offer body already carries.
@@ -322,7 +344,14 @@ router.get("/offers/:offerId/revenue", apiKeyAuth, async (req, res) => {
             maturity: channelBody.maturity ?? null,
           };
         });
-        return { offerId, brandId, costBasis: "charged" as const, channels: groups, ...applyLeadDetail(body, leadDetail) };
+        return {
+          offerId,
+          brandId,
+          costBasis: "charged" as const,
+          channels: groups,
+          ...applyLeadDetail(body, leadDetail),
+          ...(window ? { window } : {}),
+        };
       },
     });
 

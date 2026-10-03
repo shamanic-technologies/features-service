@@ -30,8 +30,8 @@
  */
 import { fetchWithRetry } from "./fetch-retry.js";
 import { selectCostCents, type Pricing } from "./pricing.js";
-import { campaignFamilySet, singleCampaignId, type CampaignFilter } from "./campaign-scope.js";
-import { featureSlugsParam, type FeatureScope } from "./feature-scope.js";
+import { campaignFamilySet, campaignScopeIds, singleCampaignId, type CampaignFilter } from "./campaign-scope.js";
+import { featureSlugList, featureSlugsParam, type FeatureScope } from "./feature-scope.js";
 
 export interface SpendSource {
   /** runs-service cost name (the billable line item, e.g. "apollo people-search", "email-send-step-1"). */
@@ -62,7 +62,7 @@ export interface SpendBreakdown {
   sources: SpendSource[];
 }
 
-interface RunsCostGroup {
+export interface RunsCostGroup {
   dimensions?: Record<string, string | null>;
   /** COMMITTED = actual + provisioned holds. */
   totalCostInUsdCents: string;
@@ -159,6 +159,25 @@ function collapseFamilyGroups(
   }));
 }
 
+/**
+ * The brand's campaign-less cost groups the scope's own read did NOT already count. A campaign-scoped
+ * read (an offer) filters on its campaigns, so it holds no campaign-less row: every one is added. A
+ * brand-wide read filters on its features only, so it already holds the campaign-less rows of those
+ * features: only the other features' (and the feature-less) are added.
+ */
+export function campaignLessOutsideScope(
+  groups: RunsCostGroup[],
+  campaignScoped: boolean,
+  featureSlugs: readonly string[],
+): RunsCostGroup[] {
+  return groups.filter((g) => {
+    if (g.dimensions?.campaignId) return false;
+    if (campaignScoped) return true;
+    const slug = g.dimensions?.featureSlug ?? null;
+    return slug === null || !featureSlugs.includes(slug);
+  });
+}
+
 /** Start of the current UTC day as an ISO timestamp (for the today-spend filter). */
 function startOfUtcDay(now: Date): string {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
@@ -185,6 +204,15 @@ export async function fetchSpendBreakdown(
   // FILTER on both calls, so the per-source rows, the totals and today's spend all narrow together
   // and Σ sources still equals "Total spent" for the workflow. Omitted → byte-identical to today.
   workflowSlugs?: string,
+  // THE BRAND'S OWN WORK THAT NO CAMPAIGN CARRIES — setting the brand up (finding its audiences,
+  // reading its site), notification emails — added to TODAY's triple. Set by the offer and brand
+  // grains only: the customer reads their "spent today" there as what was taken from their credit
+  // today for this brand, and those rows are charged like any other. Without it the offer read
+  // dropped every campaign-less row (prod 2026-10-03, brand 7d9cc3d9…: $31.22 served, $37.07
+  // charged). Never on a campaign or workflow read: that work belongs to no campaign and no workflow.
+  // The lifetime triple and the source list are untouched (they feed CPC / ROI on the scope's own
+  // campaigns). Omitted → byte-identical.
+  brandLevelToday = false,
 ): Promise<SpendBreakdown> {
   const baseUrl = process.env.RUNS_SERVICE_URL;
   const apiKey = process.env.RUNS_SERVICE_API_KEY;
@@ -211,9 +239,17 @@ export async function fetchSpendBreakdown(
   if (campaignId) todayParams.set("campaignId", campaignId);
   if (workflowSlugs) todayParams.set("workflowSlugs", workflowSlugs);
 
-  const [rawSourceGroups, rawTodayGroups] = await Promise.all([
+  // The brand's campaign-less rows today, on EVERY feature (setup work often carries none), split by
+  // feature so a brand-wide read does not count twice the rows its own feature filter already holds.
+  const brandLevel = brandLevelToday && !workflowSlugs;
+  const brandLevelParams = new URLSearchParams({ groupBy: "campaignId,featureSlug", brandId, startedAfter: startOfUtcDay(now) });
+
+  const [rawSourceGroups, rawTodayGroups, brandLevelGroups] = await Promise.all([
     fetchCostGroups(baseUrl, apiKey, sourceParams, reqHeaders),
     fetchCostGroups(baseUrl, apiKey, todayParams, reqHeaders),
+    brandLevel
+      ? fetchCostGroups(baseUrl, apiKey, brandLevelParams, buildHeaders(apiKey, brandId, undefined, { ...headers, featureSlug: undefined }))
+      : Promise.resolve<RunsCostGroup[]>([]),
   ]);
 
   // A family's groups arrive split per (costName, campaignId): keep only its members and fold the
@@ -222,7 +258,15 @@ export async function fetchSpendBreakdown(
   const todayGroups = collapseFamilyGroups(rawTodayGroups, family, pricing);
 
   const all = sumGroups(sourceGroups, pricing);
-  const today = sumGroups(todayGroups, pricing);
+  const scopedToday = sumGroups(todayGroups, pricing);
+  const extraToday = sumGroups(
+    campaignLessOutsideScope(brandLevelGroups, campaignScopeIds(campaignScope).length > 0, featureSlugList(featureScope)),
+    pricing,
+  );
+  const today = {
+    totalCents: scopedToday.totalCents + extraToday.totalCents,
+    actualCents: scopedToday.actualCents + extraToday.actualCents,
+  };
 
   const sources: SpendSource[] = sourceGroups
     .map((g) => {

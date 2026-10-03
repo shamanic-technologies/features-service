@@ -1537,6 +1537,9 @@ export async function computeFeatureRevenue(
   // what every customer read draws. The staff-only actual-cost read (`lib/actual-cost-history.ts`)
   // hands a VENDOR-cost reader here and keeps only the curve; no customer path ever passes one.
   datedSpend: DatedSpendReader = fetchBrandCommittedSpendByDay,
+  // THE OFFER AND BRAND GRAINS ONLY: today's spend also counts the brand's own work no campaign
+  // carries (setup, notifications) — see `fetchSpendBreakdown`'s `brandLevelToday`. Omitted → today.
+  brandLevelSpend = false,
 ): Promise<RevenueBody> {
   // The single campaign id the campaign-SCOPED downstream reads still take: the requested campaign
   // for a single scope, `undefined` for a family (no producer accepts a campaign list). The reads
@@ -1562,7 +1565,7 @@ export async function computeFeatureRevenue(
       // Overview: fetch spend (fail-loud) + sequences (fail-soft) in parallel. Outreach activity
       // is independent of the funnel — a no-funnel feature still launches campaigns worth graphing.
       const [breakdown, sequences, counts, parents] = await Promise.all([
-        fetchSpendBreakdown(brandId, campaignScope, featureScope, headers, new Date(), pricing, workflowScope?.producerSlugs),
+        fetchSpendBreakdown(brandId, campaignScope, featureScope, headers, new Date(), pricing, workflowScope?.producerSlugs, brandLevelSpend),
         fetchSequencesSoft(brandId, campaignScope, featureScope, headers, workflowScope?.producerSlugs),
         fetchConversionCountsSoft(brandId),
         fetchSpendCostParentsSoft(brandId, offerId, featureScope, headers, campaignId, pricing, requestedFunnel),
@@ -1655,7 +1658,7 @@ export async function computeFeatureRevenue(
   const contactedPricingPromise = lens ? Promise.resolve(null) : contactedPricingSoft(brandId, headers);
   const [costResult, priced, persons, sequences, counts, conversionEmails, parents, spendByDay, plan, matureCost, maturingByDay, split, maturityScope] = await Promise.all([
     includeSpend
-      ? fetchSpendBreakdown(brandId, campaignScope, featureScope, headers, new Date(), pricing, workflowScope?.producerSlugs)
+      ? fetchSpendBreakdown(brandId, campaignScope, featureScope, headers, new Date(), pricing, workflowScope?.producerSlugs, brandLevelSpend)
       : fetchRunsCostCents(brandId, campaignScope, featureScope, headers, pricing, workflowScope?.producerSlugs),
     // Priced on the brand's DECLARED funnel, falling through to the brand-wide record for every term
     // the funnel does not state (the route resolves this once and passes it as the override).
