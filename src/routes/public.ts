@@ -3070,7 +3070,9 @@ export async function handleAccounts(res: import("express").Response): Promise<v
     const allFeatures = await db.query.features.findMany({ columns: { slug: true } });
     const coldCsv = coldEmailOutreachSlugs(allFeatures.map((f) => f.slug)).join(",");
 
-    return buildAccountsAudit(coldCsv, new Date(), undefined, { recurringRevenue: true });
+    // Per-org reads fail-SOFT (2026-10-03): one org's billing timeout degrades THAT org's row to
+    // status "unknown" and is named in `unreadOrgReads`, never a 500 of the whole staff page.
+    return buildAccountsAudit(coldCsv, new Date(), undefined, { recurringRevenue: true, orgReadsFailSoft: true });
     },
   });
   res.json(payload);

@@ -706,6 +706,25 @@ describe("revenue history — one org's unreadable billing payment-outlook (2026
     expect(partial.pairs.map((p) => p.orgId).sort()).toEqual(["bad", "ok1", "ok2"]);
     expect(partial.recurring).toEqual(healthy.recurring);
     expect(partial.pairs.find((p) => p.orgId === "bad")!.active).toBe(false); // status unknown, never guessed active
+    expect(partial.unreadOrgReads!.map((u) => `${u.orgId}:${u.read}`)).toEqual(["bad:payment_outlook"]);
+  });
+
+  it("a failed BALANCE or IDENTITY read is also served partial and named in unreadOrgReads", async () => {
+    const d = accountsDeps(null);
+    const partial = await readCurrentFleetStats(COLD, NOW, {
+      ...d,
+      orgBalance: async (orgId) => {
+        if (orgId === "ok1") throw new Error("billing balance failed (502)");
+        return d.orgBalance(orgId);
+      },
+      orgIdentity: async (orgId) => {
+        if (orgId === "ok2") throw new Error("client-service failed (503)");
+        return d.orgIdentity(orgId);
+      },
+    }, recurring);
+    expect(partial.pairs.map((p) => p.orgId).sort()).toEqual(["bad", "ok1", "ok2"]);
+    expect(partial.unreadOrgReads!.map((u) => `${u.orgId}:${u.read}`)).toEqual(["ok1:balance", "ok2:identity"]);
+    expect(partial.paymentOutlookUnreadOrgs).toEqual([]);
   });
 
   it("a TimeoutError (not just a 502) is also served partial", async () => {
@@ -738,6 +757,6 @@ describe("revenue history — one org's unreadable billing payment-outlook (2026
   });
 
   it("a healthy read carries an empty marker (additive field, shape otherwise unchanged)", async () => {
-    expect(paymentOutlookUnreadOrgsOf({ rows: [] })).toEqual([]);
+    expect(paymentOutlookUnreadOrgsOf({ unreadOrgReads: [] })).toEqual([]);
   });
 });

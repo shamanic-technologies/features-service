@@ -2684,10 +2684,11 @@ const accountRowSchema = z.object({
   runningDailyBudgetUsd: z.number().describe("The part of the configured ceiling standing behind a PROACTIVE campaign that is ONGOING right now, in USD (campaign-service joins the campaign status to billing's per-funnel rows; the leg's kind comes from this service's leg catalogue). This is the money in play, what the active verdict and every fleet total read. RE-BASED 2026-10-01 to proactive only: it used to fold in reactive caps (AI meeting booking), which read an account with its cold email stopped as running. The reactive cap is reactiveRunningDailyCapUsd."),
   proactiveRunningDailyBudgetUsd: z.number().describe("The daily budget standing behind ongoing PROACTIVE campaigns (their leg is an ENTRY leg, fromStep null on /public/channels: they START conversations, e.g. cold email, and spend the budget), in USD. Same value as runningDailyBudgetUsd, named for what it is."),
   reactiveRunningDailyCapUsd: z.number().describe("The daily CAP standing behind ongoing REACTIVE campaigns (their leg continues from a step a lead already reached, e.g. AI meeting booking on a conversation), in USD. A cap, rarely spent: never money in play, never in runningDailyBudgetUsd, the active verdict or any fleet money total."),
-  orgBalanceUsd: z.number().describe("Org SPENDABLE credit balance in USD (billing balance_cents/100; committed usage incl. provisioned holds subtracted; 0 if no funded wallet). Display only."),
-  orgActualBalanceUsd: z.number().describe("Org ACTUAL credit balance in USD (billing actual_balance_cents/100; only ACTUALIZED usage subtracted). The figure the active verdict gates on."),
-  autoTopupEnabled: z.boolean().describe("Whether the org has auto-topup enabled (billing has_auto_topup). An auto-topup org never runs dry → active regardless of momentary balance. false when absent."),
-  status: z.enum(["active", "payment_declined", "no_payment_method", "reactive_only", "paused", "inactive"]).describe("Precedence payment_declined / no_payment_method > active > paused > inactive: 'no_payment_method' iff billing cannot charge the org because it has no chargeable card (payment-outlook charge_blocked / no_chargeable_card; campaign-service stops it with stopReason no_payment_method); 'payment_declined' iff billing cannot charge it for any other reason (card declined, unusable, retries exhausted, or unsupported card country; stopReason payment_declined), whatever budget is configured or still reported running; billing's reason rides paymentDeclinedReason. Else 'active' iff runningDailyBudgetUsd>0 (PROACTIVE) && (autoTopupEnabled || orgActualBalanceUsd>runningDailyBudgetUsd); else 'reactive_only' iff runningDailyBudgetUsd==0 && reactiveRunningDailyCapUsd>0 (every proactive campaign stopped, a reactive one still on: starts no conversation, not active, not paused, excluded from every money total); else 'paused' iff configuredDailyBudgetUsd>0 (money posted, nothing running against it); else 'inactive'. There is no brand-level pause flag in this rule: that control was removed from the product and the flag lied in both directions."),
+  orgBalanceUsd: z.number().nullable().describe("Org SPENDABLE credit balance in USD (billing balance_cents/100; committed usage incl. provisioned holds subtracted; 0 if no funded wallet). Display only. null = billing's balance read failed for this org (status 'unknown', named in unreadOrgReads), never 0."),
+  orgActualBalanceUsd: z.number().nullable().describe("Org ACTUAL credit balance in USD (billing actual_balance_cents/100; only ACTUALIZED usage subtracted). The figure the active verdict gates on. null = billing's balance read failed (status 'unknown')."),
+  autoTopupEnabled: z.boolean().nullable().describe("null = billing's balance read failed. " +"Whether the org has auto-topup enabled (billing has_auto_topup). An auto-topup org never runs dry → active regardless of momentary balance. false when absent."),
+  statusUnknownReason: z.string().nullable().optional().describe("Why status is 'unknown' (billing payment-outlook and/or balance unreadable for the org, capped at 300 chars). Absent whenever the status is known."),
+  status: z.enum(["active", "payment_declined", "no_payment_method", "unknown", "reactive_only", "paused", "inactive"]).describe("'unknown' = a per-org billing read (payment-outlook or balance) failed for this org: no verdict is invented, the row is excluded from every money total and the org is named in unreadOrgReads. Otherwise: Precedence payment_declined / no_payment_method > active > paused > inactive: 'no_payment_method' iff billing cannot charge the org because it has no chargeable card (payment-outlook charge_blocked / no_chargeable_card; campaign-service stops it with stopReason no_payment_method); 'payment_declined' iff billing cannot charge it for any other reason (card declined, unusable, retries exhausted, or unsupported card country; stopReason payment_declined), whatever budget is configured or still reported running; billing's reason rides paymentDeclinedReason. Else 'active' iff runningDailyBudgetUsd>0 (PROACTIVE) && (autoTopupEnabled || orgActualBalanceUsd>runningDailyBudgetUsd); else 'reactive_only' iff runningDailyBudgetUsd==0 && reactiveRunningDailyCapUsd>0 (every proactive campaign stopped, a reactive one still on: starts no conversation, not active, not paused, excluded from every money total); else 'paused' iff configuredDailyBudgetUsd>0 (money posted, nothing running against it); else 'inactive'. There is no brand-level pause flag in this rule: that control was removed from the product and the flag lied in both directions."),
   paymentDeclinedReason: z.string().nullable().describe("billing's own reason it cannot charge this org (payment-outlook blockedReason: card_declined, card_unusable, retries_exhausted, no_chargeable_card, card_country_unsupported) when status is 'payment_declined'; null otherwise, and null if billing blocked without naming a reason."),
   revenueSide: z.enum(["agency", "self_serve"]).nullable().describe("The ORG's side of the revenue split, derived from the stated-monthly-amounts store exactly as the agency/self-serve MRR split derives it (no org id lives in code). 'agency' = the org holds at least one stated monthly amount: it pays cash up front at its own discretion, so its budget burn is an allocation of money already received, NOT revenue still to come. 'self_serve' = it holds none: it pays through the product, so its budget burn IS its recurring revenue. Same value on every brand row of one org. null = the stated-amounts store could not be read on this build (unknown, never guessed). This service has no notion of the platform's own internal org; a consumer that must exclude it does so itself. Informational: no status, total, MRR or ARR on this payload reads it."),
   revenueClass: z.string().nullable().describe("billing-service's revenue class for the ORG (recurring | one_off | none), read from GET /internal/revenue/fleet. null = billing's read was unavailable, or billing could not read this org."),
@@ -2709,13 +2710,28 @@ const accountsStatsSchema = z.object({
   paymentDeclinedCount: z.number().int().describe("Rows billing cannot charge (status payment_declined). Excluded from every running/MRR/ARR total, like paused and inactive."),
   noPaymentMethodCount: z.number().int().describe("Rows with no chargeable card (status no_payment_method). Excluded from every running/MRR/ARR total, like paused and inactive."),
   pausedCount: z.number().int(),
-  statusUnknownCount: z.number().int().describe("Always 0 on this endpoint (its payment-outlook read is fail-loud); the customer-health board reads it fail-soft and counts its 'unknown' rows here."),
+  statusUnknownCount: z.number().int().describe("Rows with status 'unknown' (a per-org billing read failed; see unreadOrgReads). Excluded from every running/MRR total and never counted as inactive. 0 on a healthy read."),
   inactiveCount: z.number().int(),
   totalCount: z.number().int(),
 });
 
+const unreadOrgReadsSchema = z
+  .array(
+    z.object({
+      orgId: z.string().describe("Internal org UUID."),
+      read: z.enum(["payment_outlook", "balance", "identity"]).describe("Which per-org read failed: billing payment-outlook, billing balance, or client-service identity."),
+      reason: z.string().describe("The error, truncated to 300 chars."),
+    }),
+  )
+  .describe(
+    "Every per-org read that failed for this answer (sorted by orgId, then read). The answer is served PARTIAL instead of 500-ing whole: " +
+      "payment_outlook / balance ⇒ that org's rows are status 'unknown' (excluded from the money totals, counted in statusUnknownCount); " +
+      "identity ⇒ its orgExternalId / ownerEmail are null, status unaffected. [] on a healthy read.",
+  );
+
 const accountsResponseSchema = z.object({
   rows: z.array(accountRowSchema),
+  unreadOrgReads: unreadOrgReadsSchema,
   stats: accountsStatsSchema,
   asOf: z.string().describe("ISO timestamp the audit was computed."),
 });
@@ -2785,9 +2801,9 @@ const customerHealthRowSchema = z.object({
   runningDailyBudgetUsd: z.number().describe("The part of it standing behind an ongoing PROACTIVE campaign, in USD — the money in play (proactive only since 2026-10-01)."),
   proactiveRunningDailyBudgetUsd: z.number().describe("The daily budget standing behind ongoing PROACTIVE campaigns (their leg is an ENTRY leg, fromStep null on /public/channels: they START conversations, e.g. cold email, and spend the budget), in USD. Same value as runningDailyBudgetUsd, named for what it is."),
   reactiveRunningDailyCapUsd: z.number().describe("The daily CAP standing behind ongoing REACTIVE campaigns (their leg continues from a step a lead already reached, e.g. AI meeting booking on a conversation), in USD. A cap, rarely spent: never money in play, never in runningDailyBudgetUsd, the active verdict or any fleet money total."),
-  orgBalanceUsd: z.number().describe("Org SPENDABLE balance in USD (display)."),
-  orgActualBalanceUsd: z.number().describe("Org ACTUAL balance in USD (the active-verdict figure)."),
-  autoTopupEnabled: z.boolean(),
+  orgBalanceUsd: z.number().nullable().describe("Org SPENDABLE balance in USD (display). null = billing's balance read failed (status 'unknown'), never 0."),
+  orgActualBalanceUsd: z.number().nullable().describe("Org ACTUAL balance in USD (the active-verdict figure). null = unreadable."),
+  autoTopupEnabled: z.boolean().nullable().describe("null = billing's balance read failed."),
   salesFunnels: z.array(salesFunnelKeyEnum).describe("The SALES FUNNELS this (org, brand) DECLARED it sells through, catalogue order. Replaces the retired optimizationGoal, which was a single NOT NULL server-defaulted column and therefore read 'website purchases' for brands that had chosen nothing. `[]` when the declaration is missing or unreadable — a producer gap surfaced, never a substituted funnel (every funnel-keyed field on the row then reads null)."),
   primarySalesFunnel: salesFunnelKeyEnum.nullable().describe("The ONE funnel the single-valued fields on this row (conversion tracker, best audience, best workflow) are computed on: the brand's first declared funnel in catalogue order. A deterministic pick over the brand's OWN declarations — not a default. null when nothing is declared."),
   conversionTracker: z.object({
@@ -2866,7 +2882,7 @@ const customerHealthStatsSchema = z.object({
   paymentDeclinedCount: z.number().int().describe("Rows billing cannot charge (status payment_declined). Excluded from every running/MRR/ARR total, like paused and inactive."),
   noPaymentMethodCount: z.number().int().describe("Rows with no chargeable card (status no_payment_method). Excluded from every running/MRR/ARR total, like paused and inactive."),
   pausedCount: z.number().int(),
-  statusUnknownCount: z.number().int().describe("Rows whose status could not be read (status 'unknown': billing payment-outlook unreadable for the org). Not counted as inactive, excluded from every money total."),
+  statusUnknownCount: z.number().int().describe("Rows whose status could not be read (status 'unknown': billing payment-outlook or balance unreadable for the org; see unreadOrgReads). Not counted as inactive, excluded from every money total."),
   inactiveCount: z.number().int(),
   greenCount: z.number().int(),
   yellowCount: z.number().int(),
@@ -2876,6 +2892,7 @@ const customerHealthStatsSchema = z.object({
 const customerHealthResponseSchema = z.object({
   customers: z.array(customerHealthRowSchema).describe("One ready-composed health row per cold-email customer (org × brand), currently-active first."),
   stats: customerHealthStatsSchema,
+  unreadOrgReads: unreadOrgReadsSchema,
   asOf: z.string().describe("ISO timestamp the board was computed."),
 });
 
@@ -3226,6 +3243,7 @@ const revenueHistoryResponseSchema = z.object({
       "— never hardcoded. ADDITIVE: committedMrr above is unchanged and still carries the undivided fleet figure. null = we could not read this (the " +
       "stated-amount store or a producer was unreachable), never a zero that would say the agency is worth nothing.",
   ),
+  unreadOrgReads: unreadOrgReadsSchema,
   paymentOutlookUnreadOrgs: z
     .array(
       z.object({
