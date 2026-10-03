@@ -149,8 +149,8 @@ export function resolveOfferFunnel(offerId: string, channels: OfferChannel[]): R
   return distinct[0] ?? null;
 }
 
-/** Shared parsing + channel resolution for all three offer reads. */
-async function resolveRequest(req: AuthenticatedRequest & { params: { offerId: string }; query: Record<string, unknown> }) {
+/** Shared parsing + channel resolution for every offer read (also the offer's deals and contacted value). */
+export async function resolveRequest(req: AuthenticatedRequest & { params: { offerId: string }; query: Record<string, unknown> }) {
   const offerId = req.params.offerId;
   const brandId = (req.query.brandId as string | undefined) ?? "";
   if (!brandId) return { ok: false as const, status: 400, error: "brandId query parameter is required" };

@@ -1,0 +1,172 @@
+/**
+ * The offer grain of deals value and contacted value: the brand reads' semantics, over ONLY the leads
+ * the offer's campaigns served — never the brand's numbers under the offer's name.
+ */
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import express from "express";
+import request from "supertest";
+
+vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
+process.env.FEATURES_SERVICE_API_KEY = "test-key";
+process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
+
+const CAMPAIGNS: Record<string, string[]> = { "offer-a": ["camp-a1", "camp-a2"], "offer-b": ["camp-b1"] };
+
+vi.mock("../lib/offer-channels.js", async (orig) => {
+  const real = await orig<typeof import("../lib/offer-channels.js")>();
+  return {
+    ...real,
+    resolveOfferChannels: vi.fn(async (offerId: string, brandId: string) => {
+      const ids = CAMPAIGNS[offerId];
+      if (!ids) throw new real.OfferHasNoChannelsError(offerId, brandId);
+      return [{ featureSlug: "sales-cold-email-outreach", campaignIds: ids }];
+    }),
+  };
+});
+vi.mock("../lib/brand-channels.js", async (orig) => {
+  const real = await orig<typeof import("../lib/brand-channels.js")>();
+  return {
+    ...real,
+    resolveBrandChannels: vi.fn(async () => [
+      { featureSlug: "sales-cold-email-outreach", campaignIds: ["camp-a1", "camp-a2", "camp-b1"] },
+    ]),
+  };
+});
+vi.mock("./revenue.js", async (orig) => ({
+  ...(await orig<typeof import("./revenue.js")>()),
+  fetchDeclaredFunnelsSoft: vi.fn(async () => []),
+}));
+vi.mock("../lib/sales-economics-client.js", async (orig) => ({
+  ...(await orig<typeof import("../lib/sales-economics-client.js")>()),
+  fetchEffectiveEconomics: vi.fn(async () => ({
+    source: "user",
+    economics: {
+      lifetimeRevenueUsd: 1000,
+      replyToMeetingPct: 40,
+      visitToMeetingPct: 5,
+      meetingToClosePct: 30,
+      visitToSignupPct: 20,
+      signupToPaidClientPct: 10,
+      visitToClosePct: 2,
+    },
+  })),
+}));
+
+const OLD = "2026-07-01T10:00:00Z";
+const RECENT = new Date(Date.now() - 2 * 86400_000).toISOString();
+type Row = { leadId: string; campaignId: string; positiveReply?: boolean; orgId?: string };
+// Brand: offer A has 1 interested + 20 contacted-only; offer B has 1 interested + 10 contacted-only.
+const ROWS: Row[] = [
+  { leadId: "int-a", campaignId: "camp-a1", positiveReply: true },
+  { leadId: "int-b", campaignId: "camp-b1", positiveReply: true },
+  ...Array.from({ length: 20 }, (_, i) => ({ leadId: `ca-${i}`, campaignId: i % 2 ? "camp-a1" : "camp-a2" })),
+  ...Array.from({ length: 10 }, (_, i) => ({ leadId: `cb-${i}`, campaignId: "camp-b1" })),
+];
+
+vi.mock("../lib/leads-client.js", async (orig) => ({
+  ...(await orig<typeof import("../lib/leads-client.js")>()),
+  fetchLeadsForRevenue: vi.fn(async (_brandId: string, scope: string | string[] | undefined) => {
+    const ids = scope === undefined ? null : new Set(typeof scope === "string" ? [scope] : scope);
+    return ROWS.filter((r) => !ids || ids.has(r.campaignId)).map((r) => ({
+      leadId: r.leadId,
+      email: `${r.leadId}@x.com`,
+      orgId: r.orgId ?? `org-${r.leadId}`,
+      campaignId: r.campaignId,
+      servedAt: OLD,
+      signals: { contacted: true, sent: true, delivered: true, ...(r.positiveReply ? { positiveReply: true } : {}) },
+      signalDates: { contacted: OLD, lastSent: RECENT },
+    }));
+  }),
+  fetchLeadIdsByStanding: vi.fn(async (_b: string, standing: string) =>
+    new Set(standing === "sales_interest" ? ["int-a", "int-b"] : []),
+  ),
+}));
+vi.mock("../lib/email-status-client.js", () => ({ fetchEventTimestamps: vi.fn(async () => null) }));
+vi.mock("../lib/observed-steps.js", () => ({ fetchObservedStepFacts: vi.fn(async () => null) }));
+vi.mock("../lib/qualifications-client.js", () => ({ fetchQualifications: vi.fn(async () => null) }));
+vi.mock("../lib/conversion-emails-client.js", async (orig) => ({
+  ...(await orig<typeof import("../lib/conversion-emails-client.js")>()),
+  fetchConversionEmails: vi.fn(async () => new Set<string>()),
+}));
+vi.mock("../lib/public-stats-clients.js", async (orig) => ({
+  ...(await orig<typeof import("../lib/public-stats-clients.js")>()),
+  fetchPublicEmailStats: vi.fn(async () => new Map([["w", { recipientsContacted: 1000, recipientsClicked: 20, recipientsRepliesPositive: 5 }]])),
+}));
+
+const offerRoutes = (await import("./offer-lead-values.js")).default;
+const dealsRoutes = (await import("./deals-value.js")).default;
+const contactedRoutes = (await import("./contacted-value.js")).default;
+const app = express();
+app.use(offerRoutes, dealsRoutes, contactedRoutes);
+const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
+const get = (path: string) => request(app).get(path).set(AUTH);
+const column = (body: { columns: Array<{ standing: string; valueUsd: number | null; leads: Array<{ leadId: string }> }> }, s: string) =>
+  body.columns.find((c) => c.standing === s)!;
+
+beforeEach(() => vi.clearAllMocks());
+
+describe("GET /offers/:offerId/deals-value", () => {
+  it("puts only the offer's own people on its board, and the two offers add up to the brand", async () => {
+    const [a, b, brand] = await Promise.all([
+      get("/offers/offer-a/deals-value?brandId=brand-1&pricing=net"),
+      get("/offers/offer-b/deals-value?brandId=brand-1&pricing=net"),
+      get("/brands/brand-1/deals-value"),
+    ]);
+    expect(a.status).toBe(200);
+    expect(a.body.offerId).toBe("offer-a");
+    expect(column(a.body, "sales_interest").leads.map((l) => l.leadId)).toEqual(["int-a"]);
+    expect(column(b.body, "sales_interest").leads.map((l) => l.leadId)).toEqual(["int-b"]);
+    expect(column(a.body, "sales_interest").valueUsd).toBeGreaterThan(0);
+    expect(column(a.body, "sales_interest").valueUsd! + column(b.body, "sales_interest").valueUsd!).toBeCloseTo(
+      column(brand.body, "sales_interest").valueUsd!,
+      6,
+    );
+  });
+
+  it("an offer no campaign sells is a named 404, never the brand's numbers", async () => {
+    const res = await get("/offers/offer-none/deals-value?brandId=brand-1");
+    expect(res.status).toBe(404);
+    expect(res.body.reason).toBe("offer_has_no_channels");
+  });
+
+  it("brandId is required, pricing is validated", async () => {
+    expect((await get("/offers/offer-a/deals-value")).status).toBe(400);
+    expect((await get("/offers/offer-a/deals-value?brandId=brand-1&pricing=x")).status).toBe(400);
+  });
+});
+
+describe("GET /offers/:offerId/contacted-value", () => {
+  it("prices only the offer's contacted leads, on the BRAND's entry rates, adding up to the brand", async () => {
+    const [a, b, brand] = await Promise.all([
+      get("/offers/offer-a/contacted-value?brandId=brand-1&pricing=net"),
+      get("/offers/offer-b/contacted-value?brandId=brand-1&pricing=net"),
+      get("/brands/brand-1/contacted-value"),
+    ]);
+    expect(a.status).toBe(200);
+    expect(a.body.population.contactedOnly).toBe(20);
+    expect(b.body.population.contactedOnly).toBe(10);
+    expect(a.body.leads.every((l: { leadId: string }) => l.leadId.startsWith("ca-"))).toBe(true);
+    expect(a.body.entryRatesFrom).toBe("brand");
+    expect(a.body.brandEntryRatesUnavailableReason).toBeNull();
+    // The brand's rates, copied (the offer's own 1 reply in 21 would read differently).
+    expect(a.body.routes).toEqual(brand.body.routes);
+    expect(a.body.perLeadExpectedValueUsd).toBeCloseTo(brand.body.perLeadExpectedValueUsd, 6);
+    expect(a.body.totalExpectedValueUsd + b.body.totalExpectedValueUsd).toBeCloseTo(brand.body.totalExpectedValueUsd, 6);
+  });
+
+  it("an offer no campaign sells is a named 404", async () => {
+    const res = await get("/offers/offer-none/contacted-value?brandId=brand-1");
+    expect(res.status).toBe(404);
+    expect(res.body.reason).toBe("offer_has_no_channels");
+  });
+
+  it("brand rates unreadable → every route null, named, exactly as the pipeline prices them (nothing)", async () => {
+    const bc = await import("../lib/brand-channels.js");
+    vi.mocked(bc.resolveBrandChannels).mockRejectedValueOnce(new Error("campaign-service down"));
+    const res = await get("/offers/offer-a/contacted-value?brandId=brand-1");
+    expect(res.status).toBe(200);
+    expect(res.body.brandEntryRatesUnavailableReason).toBe("brand_contacted_value_unreadable");
+    expect(res.body.unmeasuredReason).toBe("no_entry_rate");
+    expect(res.body.totalExpectedValueUsd).toBeNull();
+  });
+});

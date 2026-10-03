@@ -26,13 +26,19 @@ export async function computeBrandDealsValue(
   brandId: string,
   headers: DownstreamHeaders,
   pre: BrandPricingPre,
+  /**
+   * The OFFER grain: only the people served on the offer's campaigns. lead-service's standing is
+   * brand-keyed, so a column is the brand's members INTERSECTED with the offer's lead population — a
+   * person this offer never worked is not on its board. Omitted → the whole brand (byte-unchanged).
+   */
+  campaignIds?: string[],
 ): Promise<DealsValueResult> {
   // A DEALS board shows what each deal is worth to the customer, whoever caused it — so both columns
   // are priced on EVERY cause state (the engine basis `/revenue?cause=outreach,other,unstated` serves),
   // never on the pipeline's "our outreach only" default. Measured in prod 2026-09-26 (Doc Dinners): on
   // the default, 45 of 54 Interested cards read $0 because their meetings came through the CRM.
   const [population, interested, won] = await Promise.all([
-    loadBrandPricedPopulation(brandId, headers, pre, { fleetEntryStats: false, pricedCauses: ALL_OUTCOME_CAUSES }),
+    loadBrandPricedPopulation(brandId, headers, pre, { fleetEntryStats: false, pricedCauses: ALL_OUTCOME_CAUSES, campaignIds }),
     fetchLeadIdsByStanding(brandId, "sales_interest", headers),
     fetchLeadIdsByStanding(brandId, "customer", headers),
   ]);
@@ -47,11 +53,17 @@ export async function computeBrandDealsValue(
     }
   }
 
+  // At the offer grain a brand member outside the offer's population is not in the offer's column, so
+  // `unpricedLeadCount` is always 0 there (the two reads cannot be told apart from a lead-service race).
+  const held = new Set(population.persons.map((p) => p.leadId));
+  const scoped = (members: Set<string>): Set<string> =>
+    campaignIds ? new Set([...members].filter((id) => held.has(id))) : members;
+
   return priceDealsColumns({
     persons: population.persons,
     paths: population.paths,
     lifetimeRevenueUsd: population.lifetimeRevenueUsd,
-    members: { sales_interest: interested, customer: won },
+    members: { sales_interest: scoped(interested), customer: scoped(won) },
     statedWonAmountUsdByEmail,
     pricedCauses: ALL_OUTCOME_CAUSES,
   });

@@ -15239,6 +15239,393 @@
           "columns"
         ]
       },
+      "OfferDealsValueResponse": {
+        "type": "object",
+        "properties": {
+          "brandId": {
+            "type": "string"
+          },
+          "lifetimeRevenueUsd": {
+            "type": "number",
+            "nullable": true,
+            "description": "The brand's value of a client — the same LTR the pipeline is priced on."
+          },
+          "pricedCauses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The outcome causes the values are priced on: EVERY cause (`outreach`, `other`, `unstated`) — a deals board shows what a deal is worth to the customer, not our share of it. The all-cause pipeline is GET /brands/{brandId}/revenue?cause=outreach,other,unstated."
+          },
+          "columns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "standing": {
+                  "type": "string",
+                  "description": "lead-service's standing state the column shows (`sales_interest`, `customer`, `disqualified`, `opted_out`, `not_contacted`, `unresolved`, `contacted`, `engaged`)."
+                },
+                "valueUsd": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Company-level value of the column: one organisation = one client = the MAX over its members in the column, organisations summed. Null exactly when `unvaluedReason` is set — never 0 for 'no value'."
+                },
+                "unvaluedReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "no_economics",
+                    "no_client_value",
+                    "ruled_out",
+                    "opted_out",
+                    "not_placed",
+                    "standing_unresolved",
+                    "see_contacted_value",
+                    "not_a_deal_column"
+                  ],
+                  "description": "Why the column states no value. `ruled_out` / `opted_out`: nothing to win going forward. `not_placed`: never contacted. `see_contacted_value`: GET /brands/{brandId}/contacted-value values that column. `no_economics` / `no_client_value`: the brand states nothing a value could be priced on."
+                },
+                "basis": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "expected_value",
+                    "won_value"
+                  ],
+                  "description": "`expected_value` (Interested): each person at the byte-same expected value the engine prices them on, on every cause — the column is a SUBSET of the all-cause pipeline. `won_value` (Won): the amount a human stated on the sale (whoever caused it), else the brand's lifetime revenue per client."
+                },
+                "leadCount": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "organizationCount": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "unpricedLeadCount": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "People lead-service places in the column that this read's lead population did not hold yet (their card reads null)."
+                },
+                "leads": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "leadId": {
+                        "type": "string"
+                      },
+                      "valueUsd": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "valueSource": {
+                        "type": "string",
+                        "nullable": true,
+                        "enum": [
+                          "stated_amount",
+                          "lifetime_revenue"
+                        ],
+                        "description": "Won column only."
+                      },
+                      "zeroValueReason": {
+                        "type": "string",
+                        "nullable": true,
+                        "enum": [
+                          "ruled_out",
+                          "step_not_priced"
+                        ],
+                        "description": "Interested only: why the engine prices this card at exactly 0 — `ruled_out` (a human ruled it out, or it went cold), `step_not_priced` (the steps it reached are on no funnel the brand is priced on)."
+                      }
+                    },
+                    "required": [
+                      "leadId",
+                      "valueUsd"
+                    ]
+                  },
+                  "description": "One card per person in the column, ordered by lead id (valued columns only)."
+                }
+              },
+              "required": [
+                "standing",
+                "valueUsd",
+                "unvaluedReason",
+                "basis",
+                "leadCount",
+                "organizationCount",
+                "unpricedLeadCount",
+                "leads"
+              ]
+            }
+          },
+          "offerId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "brandId",
+          "lifetimeRevenueUsd",
+          "pricedCauses",
+          "columns",
+          "offerId"
+        ]
+      },
+      "OfferContactedValueResponse": {
+        "type": "object",
+        "properties": {
+          "brandId": {
+            "type": "string"
+          },
+          "lifetimeRevenueUsd": {
+            "type": "number",
+            "nullable": true,
+            "description": "The client value every figure is priced on — the same LTR the brand's pipeline uses. Null at cold start."
+          },
+          "contactedToPaidClientPct": {
+            "type": "number",
+            "nullable": true,
+            "description": "P(paid client | contacted), 0..100, for a lead no human ruled out of a route. Null exactly when `unmeasuredReason` is set."
+          },
+          "perLeadExpectedValueUsd": {
+            "type": "number",
+            "nullable": true,
+            "description": "LTR × that probability."
+          },
+          "totalExpectedValueUsd": {
+            "type": "number",
+            "nullable": true,
+            "description": "Company-level total over the brand's contacted-only leads, on the pipeline's own rule: each organisation at its most valuable member, summed over organisations. It IS what these leads add to the brand's totalPipelineUsd (and so to ROI / cost of acquisition); expired leads count 0."
+          },
+          "unmeasuredReason": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "no_economics",
+              "no_client_value",
+              "no_entry_path",
+              "no_entry_rate"
+            ]
+          },
+          "routes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "signal": {
+                  "type": "string",
+                  "description": "The engine signal of the entry route (`clicked`, `positiveReply`)."
+                },
+                "step": {
+                  "type": "string",
+                  "description": "The funnel step the route lands on."
+                },
+                "entryRatePct": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "P(this step | contacted), 0..100."
+                },
+                "entryRateSource": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "brand_measured",
+                    "fleet_measured"
+                  ],
+                  "description": "brand_measured = the brand's own mature cohort (served before `matureBefore`) once it holds `minBrandOutcomes` outcomes; else fleet_measured = every brand's pooled outreach on the same channels."
+                },
+                "brand": {
+                  "type": "object",
+                  "properties": {
+                    "contacted": {
+                      "type": "number"
+                    },
+                    "reached": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "contacted",
+                    "reached"
+                  ]
+                },
+                "fleet": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "contacted": {
+                      "type": "number"
+                    },
+                    "reached": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "contacted",
+                    "reached"
+                  ]
+                },
+                "paidClientGivenStepPct": {
+                  "type": "number",
+                  "description": "P(paid client | this step) — the pipeline engine's own ladder."
+                },
+                "valueAtStepUsd": {
+                  "type": "number",
+                  "description": "What a lead standing on this step is worth in the pipeline."
+                },
+                "maturityDays": {
+                  "type": "number",
+                  "description": "This route's leg's maturity duration (lib/maturity.ts): 21 on both cold-email entry legs."
+                },
+                "matureBefore": {
+                  "type": "string",
+                  "description": "This route's cutoff: the brand's own cohort counts leads SERVED before it."
+                },
+                "minBrandOutcomes": {
+                  "type": "number",
+                  "description": "This route's leg's outcomesRequired — the brand's own rate is used once its mature cohort holds this many outcomes of the route's step (1 positive reply; 10 website visits)."
+                }
+              },
+              "required": [
+                "signal",
+                "step",
+                "entryRatePct",
+                "entryRateSource",
+                "brand",
+                "fleet",
+                "paidClientGivenStepPct",
+                "valueAtStepUsd",
+                "maturityDays",
+                "matureBefore",
+                "minBrandOutcomes"
+              ]
+            }
+          },
+          "matureBefore": {
+            "type": "string",
+            "description": "The EARLIEST cutoff across the entry routes (each route states its own)."
+          },
+          "maturityDays": {
+            "type": "number",
+            "description": "The LONGEST duration across the entry routes (each route states its own)."
+          },
+          "expiryDays": {
+            "type": "number",
+            "description": "A contacted lead whose LAST email sent is older than this many days is worth 0. A lead not sent anything yet counts while pending, up to this many days after hand-off."
+          },
+          "lastSentOnOrAfter": {
+            "type": "string",
+            "description": "Leads whose last send is strictly before this instant have expired."
+          },
+          "minBrandOutcomes": {
+            "type": "number",
+            "description": "The LARGEST outcomesRequired across the entry routes (each route states its own)."
+          },
+          "population": {
+            "type": "object",
+            "properties": {
+              "contactedOnly": {
+                "type": "number",
+                "description": "Contacted leads with no conversion signal (no click, no reply, no meeting, no signup, no form, no sale) that did not bounce or unsubscribe."
+              },
+              "organizations": {
+                "type": "number"
+              },
+              "engaged": {
+                "type": "number",
+                "description": "Contacted leads that engaged — their value, if any, is the pipeline's."
+              },
+              "cannotConvert": {
+                "type": "number",
+                "description": "Contacted leads that bounced or unsubscribed."
+              },
+              "expired": {
+                "type": "number",
+                "description": "Contacted-only leads with no email sent in the last `expiryDays` days — valued at 0."
+              }
+            },
+            "required": [
+              "contactedOnly",
+              "organizations",
+              "engaged",
+              "cannotConvert",
+              "expired"
+            ]
+          },
+          "leads": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "leadId": {
+                  "type": "string"
+                },
+                "expectedValueUsd": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "The value this lead carries in the pipeline; 0 when expired."
+                },
+                "expired": {
+                  "type": "boolean",
+                  "description": "Last send older than `expiryDays` days (or, never sent, handed off longer ago than that)."
+                }
+              },
+              "required": [
+                "leadId",
+                "expectedValueUsd",
+                "expired"
+              ]
+            },
+            "description": "One page of contacted-only leads, ordered by lead id."
+          },
+          "nextCursor": {
+            "type": "string",
+            "nullable": true
+          },
+          "offerId": {
+            "type": "string"
+          },
+          "entryRatesFrom": {
+            "type": "string",
+            "enum": [
+              "brand"
+            ],
+            "description": "`routes[].entryRatePct` (and its `brand`/`fleet` counts) are the BRAND's contacted-value rates, never re-measured on the offer's narrower cohort: they are the rates every pipeline read, /offers/{offerId}/revenue included, prices a contacted lead on."
+          },
+          "brandEntryRatesUnavailableReason": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "brand_contacted_value_unreadable",
+              "no_economics",
+              "no_client_value",
+              "no_entry_path",
+              "no_entry_rate"
+            ],
+            "description": "Why the brand's entry rates could not be borrowed (every route then reads null and `unmeasuredReason` is `no_entry_rate`, exactly as the offer's pipeline prices these leads at nothing). Null when they were."
+          }
+        },
+        "required": [
+          "brandId",
+          "lifetimeRevenueUsd",
+          "contactedToPaidClientPct",
+          "perLeadExpectedValueUsd",
+          "totalExpectedValueUsd",
+          "unmeasuredReason",
+          "routes",
+          "matureBefore",
+          "maturityDays",
+          "expiryDays",
+          "lastSentOnOrAfter",
+          "minBrandOutcomes",
+          "population",
+          "leads",
+          "nextCursor",
+          "offerId",
+          "entryRatesFrom",
+          "brandEntryRatesUnavailableReason"
+        ]
+      },
       "BrandAudienceStatsResponse": {
         "type": "object",
         "properties": {
@@ -27361,6 +27748,376 @@
           },
           "409": {
             "description": "reason='brand_channels_price_differently'",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "A producer the figure is computed from could not be read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/offers/{offerId}/deals-value": {
+      "get": {
+        "summary": "The dollar value of each Deals-board column, for ONE offer of a brand (every channel it sells through)",
+        "description": "GET /brands/{brandId}/deals-value at the OFFER grain: same body, same semantics, same pricing. Only the people served on the offer's campaigns (across every channel) are on its board: lead-service's brand-keyed standing INTERSECTED with the offer's lead population, priced on the offer's declared funnels and LTR — the terms GET /offers/{offerId}/revenue prices on, so Interested is a SUBSET of /offers/{offerId}/revenue?cause=outreach,other,unstated's pipeline. People do not add across offers: a lead served under two offers is on both boards, so two offers' values can exceed the brand's. `unpricedLeadCount` is always 0 at this grain.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "offerId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID (required) — an offer belongs to a brand."
+            },
+            "required": true,
+            "description": "Brand UUID (required) — an offer belongs to a brand.",
+            "name": "brandId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gross",
+                "net"
+              ],
+              "description": "Accepted and validated like every offer read. No figure here is a cost, so it moves nothing."
+            },
+            "required": false,
+            "description": "Accepted and validated like every offer read. No figure here is a cost, so it moves nothing.",
+            "name": "pricing",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The offer's Deals column values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfferDealsValueResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing brandId, an invalid pricing value, or invalid paging parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No campaign of this brand sells this offer through any channel (reason: offer_has_no_channels) — never the brand's numbers under the offer's label",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The offer is sold through channels that price on different funnels (reason: offer_channels_price_differently)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "A producer the figure is computed from could not be read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/offers/{offerId}/contacted-value": {
+      "get": {
+        "summary": "What ONE offer's contacted-but-not-yet-engaged leads are worth in expectation",
+        "description": "GET /brands/{brandId}/contacted-value at the OFFER grain: same body, same paging, same expiry. The population is the leads served on the offer's campaigns (every channel); the ladder and LTR are the offer's declared funnels (the terms GET /offers/{offerId}/revenue prices on); the entry rates are the brand's (see `entryRatesFrom`). So `totalExpectedValueUsd` is exactly what these leads add to /offers/{offerId}/revenue's pipeline. A lead served under two offers counts in both.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "offerId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID (required) — an offer belongs to a brand."
+            },
+            "required": true,
+            "description": "Brand UUID (required) — an offer belongs to a brand.",
+            "name": "brandId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gross",
+                "net"
+              ],
+              "description": "Accepted and validated like every offer read. No figure here is a cost, so it moves nothing."
+            },
+            "required": false,
+            "description": "Accepted and validated like every offer read. No figure here is a cost, so it moves nothing.",
+            "name": "pricing",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Rows per page, 1..5000, default 1000."
+            },
+            "required": false,
+            "description": "Rows per page, 1..5000, default 1000.",
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "The `nextCursor` of the previous page."
+            },
+            "required": false,
+            "description": "The `nextCursor` of the previous page.",
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Comma-separated lead ids (≤1000): return only those rows. Cannot be combined with cursor."
+            },
+            "required": false,
+            "description": "Comma-separated lead ids (≤1000): return only those rows. Cannot be combined with cursor.",
+            "name": "leadIds",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The offer's contacted value",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfferContactedValueResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing brandId, an invalid pricing value, or invalid paging parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No campaign of this brand sells this offer through any channel (reason: offer_has_no_channels) — never the brand's numbers under the offer's label",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The offer is sold through channels that price on different funnels (reason: offer_channels_price_differently)",
             "content": {
               "application/json": {
                 "schema": {
