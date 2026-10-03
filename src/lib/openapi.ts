@@ -2199,6 +2199,70 @@ registry.registerPath({
   },
 });
 
+const offerGrainLeadValueQuery = {
+  brandId: z.string().describe("Brand UUID (required) — an offer belongs to a brand."),
+  pricing: z.enum(["gross", "net"]).optional().describe("Accepted and validated like every offer read. No figure here is a cost, so it moves nothing."),
+};
+const offerLeadValueErrors = {
+  400: { description: "Missing brandId, an invalid pricing value, or invalid paging parameters", content: { "application/json": { schema: errorResponse } } },
+  404: { description: "No campaign of this brand sells this offer through any channel (reason: offer_has_no_channels) — never the brand's numbers under the offer's label", content: { "application/json": { schema: errorResponse } } },
+  409: { description: "The offer is sold through channels that price on different funnels (reason: offer_channels_price_differently)", content: { "application/json": { schema: errorResponse } } },
+  502: { description: "A producer the figure is computed from could not be read", content: { "application/json": { schema: errorResponse } } },
+};
+
+const offerDealsValueResponseRef = registry.register(
+  "OfferDealsValueResponse",
+  brandDealsValueResponseSchema.extend({
+    offerId: z.string(),
+  }),
+);
+
+registry.registerPath({
+  method: "get",
+  path: "/offers/{offerId}/deals-value",
+  summary: "The dollar value of each Deals-board column, for ONE offer of a brand (every channel it sells through)",
+  description:
+    "GET /brands/{brandId}/deals-value at the OFFER grain: same body, same semantics, same pricing. Only the people served on the offer's campaigns (across every channel) are on its board: lead-service's brand-keyed standing INTERSECTED with the offer's lead population, priced on the offer's declared funnels and LTR — the terms GET /offers/{offerId}/revenue prices on, so Interested is a SUBSET of /offers/{offerId}/revenue?cause=outreach,other,unstated's pipeline. People do not add across offers: a lead served under two offers is on both boards, so two offers' values can exceed the brand's. `unpricedLeadCount` is always 0 at this grain.",
+  tags: ["Stats"],
+  request: { headers: identityHeaders, params: z.object({ offerId: z.string() }), query: z.object(offerGrainLeadValueQuery) },
+  responses: {
+    200: { description: "The offer's Deals column values", content: { "application/json": { schema: offerDealsValueResponseRef } } },
+    ...offerLeadValueErrors,
+  },
+});
+
+const offerContactedValueResponseRef = registry.register(
+  "OfferContactedValueResponse",
+  brandContactedValueResponseSchema.extend({
+    offerId: z.string(),
+    entryRatesFrom: z.literal("brand").describe("`routes[].entryRatePct` (and its `brand`/`fleet` counts) are the BRAND's contacted-value rates, never re-measured on the offer's narrower cohort: they are the rates every pipeline read, /offers/{offerId}/revenue included, prices a contacted lead on."),
+    brandEntryRatesUnavailableReason: z.enum(["brand_contacted_value_unreadable", "no_economics", "no_client_value", "no_entry_path", "no_entry_rate"]).nullable().describe("Why the brand's entry rates could not be borrowed (every route then reads null and `unmeasuredReason` is `no_entry_rate`, exactly as the offer's pipeline prices these leads at nothing). Null when they were."),
+  }),
+);
+
+registry.registerPath({
+  method: "get",
+  path: "/offers/{offerId}/contacted-value",
+  summary: "What ONE offer's contacted-but-not-yet-engaged leads are worth in expectation",
+  description:
+    "GET /brands/{brandId}/contacted-value at the OFFER grain: same body, same paging, same expiry. The population is the leads served on the offer's campaigns (every channel); the ladder and LTR are the offer's declared funnels (the terms GET /offers/{offerId}/revenue prices on); the entry rates are the brand's (see `entryRatesFrom`). So `totalExpectedValueUsd` is exactly what these leads add to /offers/{offerId}/revenue's pipeline. A lead served under two offers counts in both.",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ offerId: z.string() }),
+    query: z.object({
+      ...offerGrainLeadValueQuery,
+      limit: z.string().optional().describe("Rows per page, 1..5000, default 1000."),
+      cursor: z.string().optional().describe("The `nextCursor` of the previous page."),
+      leadIds: z.string().optional().describe("Comma-separated lead ids (≤1000): return only those rows. Cannot be combined with cursor."),
+    }),
+  },
+  responses: {
+    200: { description: "The offer's contacted value", content: { "application/json": { schema: offerContactedValueResponseRef } } },
+    ...offerLeadValueErrors,
+  },
+});
+
 const brandAudienceStatsResponseSchema = audienceStatsResponseSchema.extend({
   channels: z.array(brandChannelSchema).describe("The channels combined into every row below, ascending by slug."),
 });
