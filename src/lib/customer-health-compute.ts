@@ -37,7 +37,7 @@
  * propagates → the board 500s.
  */
 import { fetchFeatureMemberships, type FeatureMembership } from "./feature-memberships-client.js";
-import { buildAccountsAudit, type AccountsAudit, type AccountsDeps, type AccountRow, type AccountRowStatus } from "./accounts-compute.js";
+import { buildAccountsAudit, type AccountsAudit, type AccountsDeps, type AccountRow, type AccountRowStatus, type UnreadOrgRead } from "./accounts-compute.js";
 import { buildActiveUsersByUser, type ActiveUsersByUser, type ActiveUserRow } from "./active-users-by-user-compute.js";
 import { fetchBrandSavedEconomics, BrandOwnershipError, type EffectiveEconomics } from "./sales-economics-client.js";
 import { fetchConversionCounts, type ConversionCounts } from "./conversion-counts-client.js";
@@ -210,9 +210,10 @@ export interface CustomerHealthRow {
   proactiveRunningDailyBudgetUsd: number;
   /** The cap standing behind ongoing REACTIVE campaigns, in USD — rarely spent, never money in play. */
   reactiveRunningDailyCapUsd: number;
-  orgBalanceUsd: number;
-  orgActualBalanceUsd: number;
-  autoTopupEnabled: boolean;
+  /** null = billing's balance read failed for this org (status "unknown"), never 0. */
+  orgBalanceUsd: number | null;
+  orgActualBalanceUsd: number | null;
+  autoTopupEnabled: boolean | null;
 
   // ── What the brand sells through + conversion tracker ───────────────────────
   /** The SALES FUNNELS this (org, brand) DECLARED it sells through, catalogue order. `[]` when the
@@ -272,6 +273,8 @@ export interface CustomerHealthStats {
 export interface CustomerHealthBoard {
   customers: CustomerHealthRow[];
   stats: CustomerHealthStats;
+  /** Per-org reads the accounts audit could not make (outlook / balance / identity); `[]` when healthy. Same list as `/internal/stats/accounts`. */
+  unreadOrgReads: UnreadOrgRead[];
   asOf: string;
 }
 
@@ -320,13 +323,13 @@ export interface CustomerHealthDeps {
 }
 
 /**
- * The accounts audit as the board reads it: billing's per-org payment-outlook FAIL-SOFT. One org whose
- * outlook read fails (billing timed out ~54×/day on 2026-10-03) gets status "unknown" + a reason on ITS
- * row instead of 500-ing the board and erasing every other customer. Every other audit read stays
- * fail-loud (a missing universe is a real 500). `accountsDeps` is the test seam.
+ * The accounts audit as the board reads it: every per-org read (payment-outlook, balance, identity)
+ * FAIL-SOFT. One org whose outlook read fails (billing timed out ~54×/day on 2026-10-03) gets status
+ * "unknown" + a reason on ITS row instead of 500-ing the board and erasing every other customer. Fleet
+ * reads (universe, budgets) stay fail-loud (a missing universe is a real 500). `accountsDeps` is the test seam.
  */
 export function customerHealthAccountsAudit(csv: string, now: Date, accountsDeps?: AccountsDeps): Promise<AccountsAudit> {
-  return buildAccountsAudit(csv, now, accountsDeps, { paymentHoldFailSoft: true });
+  return buildAccountsAudit(csv, now, accountsDeps, { orgReadsFailSoft: true });
 }
 
 const REAL_DEPS: CustomerHealthDeps = {
@@ -812,6 +815,7 @@ export async function buildCustomerHealthBoard(
       yellowCount,
       redCount,
     },
+    unreadOrgReads: audit.unreadOrgReads ?? [],
     asOf: now.toISOString(),
   };
 }

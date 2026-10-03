@@ -554,3 +554,65 @@ describe("buildAccountsAudit — each row states the ORG's side of the revenue s
     });
   });
 });
+
+describe("buildAccountsAudit — per-org reads fail-soft under orgReadsFailSoft (2026-10-03)", () => {
+  const fixture = {
+    memberships: [
+      { orgId: "ok", brandId: "b-ok" },
+      { orgId: "bal", brandId: "b-bal" },
+      { orgId: "id", brandId: "b-id" },
+      { orgId: "both", brandId: "b-both" },
+    ],
+    balanceUsd: { ok: 900, bal: 900, id: 900, both: 900 },
+    configuredUsd: { "b-ok": 40, "b-bal": 40, "b-id": 40, "b-both": 40 },
+  };
+  function failingDeps(): AccountsDeps {
+    const base = deps(fixture);
+    return {
+      ...base,
+      orgBalance: async (orgId) => {
+        if (orgId === "bal" || orgId === "both") throw new Error("billing balance failed (502)");
+        return base.orgBalance(orgId);
+      },
+      orgIdentity: async (orgId) => {
+        if (orgId === "id") throw new Error("client-service failed (503)");
+        return base.orgIdentity(orgId);
+      },
+      paymentHold: async (orgId) => {
+        if (orgId === "both") throw Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+        return base.paymentHold(orgId);
+      },
+    };
+  }
+
+  it("strict (default) mode still throws on the same failures", async () => {
+    await expect(buildAccountsAudit(COLD, NOW, failingDeps())).rejects.toThrow();
+  });
+
+  it("serves every row; unread inputs are null, never 0; the verdict is 'unknown' with both reasons; every failure named", async () => {
+    const audit = await buildAccountsAudit(COLD, NOW, failingDeps(), { orgReadsFailSoft: true });
+    const row = (orgId: string) => audit.rows.find((r) => r.orgId === orgId)!;
+    expect(audit.rows).toHaveLength(4);
+    expect(row("ok").status).toBe("active");
+    expect(row("bal")).toMatchObject({ status: "unknown", orgBalanceUsd: null, orgActualBalanceUsd: null, autoTopupEnabled: null });
+    expect(row("id")).toMatchObject({ status: "active", orgExternalId: null, ownerEmail: null });
+    expect(row("id").statusUnknownReason).toBeUndefined();
+    expect(row("both").status).toBe("unknown");
+    expect(row("both").statusUnknownReason).toMatch(/billing balance unreadable/);
+    expect(row("both").statusUnknownReason).toMatch(/payment-outlook unreadable: .*timeout/);
+    expect(audit.unreadOrgReads.map((u) => `${u.orgId}:${u.read}`)).toEqual([
+      "bal:balance",
+      "both:balance",
+      "both:payment_outlook",
+      "id:identity",
+    ]);
+    expect(audit.stats).toMatchObject({ activeCount: 2, statusUnknownCount: 2, totalRunningDailyBudgetUsd: 80 });
+  });
+
+  it("a healthy fail-soft read is identical to the strict one plus unreadOrgReads: []", async () => {
+    const strict = await buildAccountsAudit(COLD, NOW, deps(fixture));
+    const soft = await buildAccountsAudit(COLD, NOW, deps(fixture), { orgReadsFailSoft: true });
+    expect(soft).toEqual(strict);
+    expect(soft.unreadOrgReads).toEqual([]);
+  });
+});

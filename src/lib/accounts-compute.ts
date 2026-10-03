@@ -87,10 +87,10 @@ export type AccountStatus = "active" | "payment_declined" | "no_payment_method" 
 
 /**
  * A ROW's status: the verdict above, or "unknown" when an input the verdict needs could not be read.
- * Only produced under `paymentHoldFailSoft` (customer-health board, revenue history): billing's
- * payment-outlook read failed for that org, so whether billing can charge it — the first rule of the
- * precedence — is not known, and no verdict is invented. The row then carries `statusUnknownReason`.
- * The default audit (staff Accounts page, send-forecast, active users) stays fail-loud and never emits it.
+ * Only produced under `orgReadsFailSoft` (staff Accounts page, customer-health board, revenue history):
+ * billing's payment-outlook or balance read failed for that org, so the verdict's inputs (can billing
+ * charge it, does its balance cover the running budget) are not known, and no verdict is invented. The
+ * row then carries `statusUnknownReason`. The default audit (active users) stays fail-loud and never emits it.
  */
 export type AccountRowStatus = AccountStatus | "unknown";
 
@@ -133,16 +133,16 @@ export interface AccountRow {
    * that fires only when a lead reaches its step, rarely spent. Never money in play, never in a total of it.
    */
   reactiveRunningDailyCapUsd: number;
-  /** Org SPENDABLE balance in USD (billing balance_cents/100; committed usage incl. holds subtracted). Display. */
-  orgBalanceUsd: number;
-  /** Org ACTUAL balance in USD (billing actual_balance_cents/100; only actualized usage subtracted). The active-verdict figure. */
-  orgActualBalanceUsd: number;
-  /** Whether the org has auto-topup enabled (billing has_auto_topup; false when absent). */
-  autoTopupEnabled: boolean;
+  /** Org SPENDABLE balance in USD (billing balance_cents/100; committed usage incl. holds subtracted). Display. null = billing's balance read failed (`orgReadsFailSoft` only), never 0. */
+  orgBalanceUsd: number | null;
+  /** Org ACTUAL balance in USD (billing actual_balance_cents/100; only actualized usage subtracted). The active-verdict figure. null = unreadable (see orgBalanceUsd). */
+  orgActualBalanceUsd: number | null;
+  /** Whether the org has auto-topup enabled (billing has_auto_topup; false when absent). null = billing's balance read failed. */
+  autoTopupEnabled: boolean | null;
   status: AccountRowStatus;
   /**
    * Why `status` is "unknown" (the unreadable input, e.g. `billing payment-outlook unreadable: …`).
-   * Set only under `paymentHoldFailSoft`; absent/null whenever the status is known.
+   * Set only under `orgReadsFailSoft`; absent/null whenever the status is known.
    */
   statusUnknownReason?: string | null;
   /**
@@ -202,14 +202,32 @@ export interface AccountsStats {
   /** Rows with no chargeable card (status no_payment_method); excluded from every money total. */
   noPaymentMethodCount: number;
   pausedCount: number;
-  /** Rows whose status could not be decided (status "unknown"; only under `paymentHoldFailSoft`). Excluded from every money total. */
+  /** Rows whose status could not be decided (status "unknown"; only under `orgReadsFailSoft`). Excluded from every money total; the orgs are named in `AccountsAudit.unreadOrgReads`. */
   statusUnknownCount: number;
   inactiveCount: number;
   totalCount: number;
 }
 
+/** Which per-org read failed. */
+export type OrgReadKind = "payment_outlook" | "balance" | "identity";
+
+/** One per-org read that failed under `orgReadsFailSoft` (the answer is served partial, never silently). */
+export interface UnreadOrgRead {
+  orgId: string;
+  read: OrgReadKind;
+  /** The error (truncated), e.g. `… payment-outlook failed (502): …`. */
+  reason: string;
+}
+
 export interface AccountsAudit {
   rows: AccountRow[];
+  /**
+   * Every per-org read that failed (only under `orgReadsFailSoft`; `[]` otherwise and on a healthy read).
+   * `payment_outlook` / `balance` ⇒ that org's rows are status "unknown" (excluded from the money totals,
+   * counted in `stats.statusUnknownCount`); `identity` ⇒ its `orgExternalId`/`ownerEmail` are null, status unaffected.
+   * Sorted by orgId, then read.
+   */
+  unreadOrgReads: UnreadOrgRead[];
   stats: AccountsStats;
   asOf: string;
 }
@@ -241,12 +259,14 @@ export interface AccountsAuditOptions {
    */
   recurringRevenue?: boolean;
   /**
-   * Read billing's per-org payment-outlook FAIL-SOFT: an org whose read throws gets status "unknown" +
-   * `statusUnknownReason` (never a guessed verdict) instead of failing the whole audit. The
-   * customer-health board and the revenue history ask for it (one org's billing timeout must not erase
-   * every customer / the fleet MRR); every other consumer keeps the fail-loud read.
+   * Read every PER-ORG input (billing payment-outlook, billing balance, client-service identity)
+   * FAIL-SOFT: a failed outlook or balance read makes that org's rows status "unknown" +
+   * `statusUnknownReason` (never a guessed verdict, never a 0 balance); a failed identity read leaves
+   * `orgExternalId`/`ownerEmail` null. Each failure is NAMED in `unreadOrgReads`. The staff Accounts
+   * page, the customer-health board and the revenue history ask for it (2026-10-03: one org's billing
+   * timeout 500'd the whole fleet answer); the active-users count keeps the fail-loud read.
    */
-  paymentHoldFailSoft?: boolean;
+  orgReadsFailSoft?: boolean;
 }
 
 /** Cap on the reason text carried on a row (billing's error body can be a long upstream page). */
@@ -339,27 +359,36 @@ export async function buildAccountsAudit(
   const agencyOrgIds = statedRows === null ? null : new Set(statedRows.map((r) => r.orgId));
 
   // 2. Org-level reads once per org (balance + identity + billing's payment hold); brand name/domain in one batched call.
+  const unreadOrgReads: UnreadOrgRead[] = [];
+  /** Under `orgReadsFailSoft`, a failed per-org read resolves to null and is recorded; otherwise it throws. */
+  const perOrgRead = <T>(orgId: string, read: OrgReadKind, label: string, p: Promise<T>): Promise<T | null> => {
+    if (!opts.orgReadsFailSoft) return p;
+    return p.catch((err): null => {
+      // Loud, per org; the answer says it too (`unreadOrgReads`, row status "unknown" + reason).
+      const message = (err as Error).message;
+      console.error(`[features-service] accounts: ${label} unreadable for org ${orgId}: ${message}`);
+      unreadOrgReads.push({ orgId, read, reason: `${label} unreadable: ${message}`.slice(0, STATUS_UNKNOWN_REASON_MAX) });
+      return null;
+    });
+  };
   const [orgInfoEntries, brandInfo] = await Promise.all([
     Promise.all(
       orgIds.map(
         async (
           orgId,
-        ): Promise<[string, { balance: OrgBalance; identity: OrgIdentity; hold: PaymentHold | null; holdUnreadable: string | null }]> => {
-          let holdUnreadable: string | null = null;
+        ): Promise<[string, { balance: OrgBalance | null; identity: OrgIdentity | null; hold: PaymentHold | null; unknownReason: string | null }]> => {
+          let holdRead = true;
           const [balance, identity, hold] = await Promise.all([
-            deps.orgBalance(orgId),
-            deps.orgIdentity(orgId),
-            opts.paymentHoldFailSoft
-              ? deps.paymentHold(orgId).catch((err): null => {
-                  // Loud, per org; the row says it too (status "unknown" + reason), never a guessed verdict.
-                  const message = (err as Error).message;
-                  console.error(`[features-service] accounts: payment-outlook unreadable for org ${orgId} (status unknown): ${message}`);
-                  holdUnreadable = `billing payment-outlook unreadable: ${message}`.slice(0, STATUS_UNKNOWN_REASON_MAX);
-                  return null;
-                })
-              : deps.paymentHold(orgId),
+            perOrgRead(orgId, "balance", "billing balance", deps.orgBalance(orgId)),
+            perOrgRead(orgId, "identity", "client-service identity", deps.orgIdentity(orgId)),
+            perOrgRead(orgId, "payment_outlook", "billing payment-outlook", deps.paymentHold(orgId).then((h) => ({ h }))).then((r) => {
+              if (r === null) holdRead = false;
+              return r?.h ?? null;
+            }),
           ]);
-          return [orgId, { balance, identity, hold, holdUnreadable }];
+          const reasons = unreadOrgReads.filter((u) => u.orgId === orgId && u.read !== "identity").map((u) => u.reason);
+          const unknownReason = !holdRead || balance === null ? reasons.join("; ").slice(0, STATUS_UNKNOWN_REASON_MAX) : null;
+          return [orgId, { balance, identity, hold, unknownReason }];
         },
       ),
     ),
@@ -379,12 +408,13 @@ export async function buildAccountsAudit(
       }
       const brand = brandInfo.get(p.brandId);
       const { balance } = info;
+      const unknown = info.unknownReason !== null || balance === null;
       // Neither budget carries the usage discount — a ceiling is a config value, not a charge. The
       // ACTIVE verdict gates on the RUNNING figure vs the actual balance.
       return {
         orgId: p.orgId,
-        orgExternalId: info.identity.orgExternalId,
-        ownerEmail: info.identity.ownerEmail,
+        orgExternalId: info.identity?.orgExternalId ?? null,
+        ownerEmail: info.identity?.ownerEmail ?? null,
         brandId: p.brandId,
         brandName: brand?.name ?? null,
         brandDomain: brand?.domain ?? null,
@@ -392,13 +422,13 @@ export async function buildAccountsAudit(
         runningDailyBudgetUsd: budget.proactiveRunningUsd,
         proactiveRunningDailyBudgetUsd: budget.proactiveRunningUsd,
         reactiveRunningDailyCapUsd: budget.reactiveRunningUsd,
-        orgBalanceUsd: balance.spendableUsd,
-        orgActualBalanceUsd: balance.actualUsd,
-        autoTopupEnabled: balance.autoTopupEnabled,
-        // An unreadable payment hold leaves the FIRST rule of the precedence undecided: the status is
-        // "unknown", never the verdict computed as if billing could charge the org.
+        orgBalanceUsd: balance?.spendableUsd ?? null,
+        orgActualBalanceUsd: balance?.actualUsd ?? null,
+        autoTopupEnabled: balance?.autoTopupEnabled ?? null,
+        // An unreadable payment hold or balance leaves the verdict undecided: the status is "unknown",
+        // never the verdict computed as if billing could charge the org or its balance were 0.
         status:
-          info.holdUnreadable !== null
+          unknown || balance === null
             ? "unknown"
             : accountStatus(
                 budget.configuredUsd,
@@ -408,7 +438,7 @@ export async function buildAccountsAudit(
                 balance.autoTopupEnabled,
                 info.hold,
               ),
-        ...(info.holdUnreadable !== null ? { statusUnknownReason: info.holdUnreadable } : {}),
+        ...(unknown ? { statusUnknownReason: info.unknownReason ?? "billing balance unreadable" } : {}),
         paymentDeclinedReason: info.hold?.blockedReason ?? null,
         revenueSide: agencyOrgIds === null ? null : agencyOrgIds.has(p.orgId) ? "agency" : "self_serve",
         revenueClass: recurringByOrg.get(p.orgId)?.revenueClass ?? null,
@@ -476,8 +506,10 @@ export async function buildAccountsAudit(
   // 5. MRR / ARR — billing's recurring figure for the fleet, summed on its own decimal text. The
   //    running budget above is configuration in play, not revenue, and is no longer multiplied into MRR.
   const mrr = recurring ? sumRecurringMrr(recurring) : null;
+  unreadOrgReads.sort((a, b) => a.orgId.localeCompare(b.orgId) || a.read.localeCompare(b.read));
   return {
     rows,
+    unreadOrgReads,
     stats: {
       totalRunningDailyBudgetUsd,
       totalConfiguredDailyBudgetUsd,
