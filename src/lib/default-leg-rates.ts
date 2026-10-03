@@ -36,15 +36,15 @@ export const DEFAULT_LEG_RATE_PCT: Readonly<Partial<Record<LegPair, number>>> = 
   // Close rate of a held sales meeting.
   "meeting_attended>paid_client": 20,
   // Website traffic. Every website visit we produce is a CLICK IN A COLD EMAIL, never a motivated inbound
-  // visitor, so the benchmark is the email channel's, not a site-wide average (~2-3%). Source: First Page
-  // Sage, "B2B SaaS Funnel Conversion Benchmarks" (2025-06-11,
-  // https://firstpagesage.com/seo-blog/b2b-saas-funnel-conversion-benchmarks-fc/): EMAIL visitor-to-lead
-  // 1.3%. A signup and a submitted form ARE a lead (the loosest conversion), so they take 1.3% as is; a
-  // booked meeting is a stricter step than a lead (that report then has 43% lead→MQL, 46% MQL→SQL), so it
-  // sits below it, at 1%. The old 2% described the inbound visitor and ranked a visit→meeting path first.
-  "website_visit>meeting_booked": 1,
-  "website_visit>signup": 1.3,
-  "website_visit>form_submitted": 1.3,
+  // visitor, so the benchmark is not a site-wide average (~2-3%). Value: 0.5%, owner-stated 2026-10-03
+  // (distribute.you fleet experience: a cold-email clicker signs up, fills a form or books a meeting at
+  // about 0.5%). Upper reference: First Page Sage, "B2B SaaS Funnel Conversion Benchmarks" (2025-06-11,
+  // https://firstpagesage.com/seo-blog/b2b-saas-funnel-conversion-benchmarks-fc/), EMAIL visitor-to-lead
+  // 1.3%, the loosest conversion across all email (warm lists included), so a cold click sits below it.
+  // The old 2% described the inbound visitor and ranked a visit→meeting path first.
+  "website_visit>meeting_booked": 0.5,
+  "website_visit>signup": 0.5,
+  "website_visit>form_submitted": 0.5,
   "website_visit>purchase": 2,
   // A signup or a submitted form that becomes a paying client.
   "signup>paid_client": 10,
