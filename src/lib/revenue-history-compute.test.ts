@@ -4,7 +4,15 @@ import { describe, it, expect, vi } from "vitest";
 // Stub it so this pure-logic suite needs no DB connection (all reads are injected).
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
-import { buildRevenueHistory, bucketizeRevenue, type RevenueHistoryDeps } from "./revenue-history-compute.js";
+import {
+  buildRevenueHistory,
+  bucketizeRevenue,
+  paymentOutlookUnreadOrgsOf,
+  readCurrentFleetStats,
+  type RevenueHistoryDeps,
+} from "./revenue-history-compute.js";
+import type { AccountsDeps } from "./accounts-compute.js";
+import { spendableKey, type BrandSpendableBudget } from "./accounts-client.js";
 import type { FleetRecurringRevenue } from "./recurring-revenue-client.js";
 import { enumerateBuckets } from "./active-users-compute.js";
 
@@ -642,5 +650,94 @@ describe("buildRevenueHistory — the agency / self-serve split", () => {
     expect(aug.selfServeMrrUsd).toBe(102 * 30);
     expect(aug.selfServeMrrUsd!).toBeGreaterThan(0);
     expect(aug.selfServeUnmeasurableReason).toBeNull();
+  });
+});
+
+describe("revenue history — one org's unreadable billing payment-outlook (2026-10-03)", () => {
+  // billing timed out on ONE org's GET /internal/accounts/by-org/:orgId/payment-outlook (realized-burn read of
+  // runs costs, 10 s) while the daily brief ran several fleet reads in parallel; the fail-loud accounts audit
+  // threw and GET /internal/stats/revenue went 500: one slow org erased the whole fleet MRR/ARR answer.
+  const memberships = [
+    { orgId: "ok1", brandId: "b-ok1" },
+    { orgId: "bad", brandId: "b-bad" },
+    { orgId: "ok2", brandId: "b-ok2" },
+  ];
+  function accountsDeps(failingOrg: string | null, error?: Error): AccountsDeps {
+    return {
+      featureMemberships: async () => memberships,
+      orgBalance: async () => ({ spendableUsd: 900, actualUsd: 900, autoTopupEnabled: false }),
+      orgIdentity: async (orgId) => ({ orgExternalId: `org_${orgId}`, ownerEmail: `${orgId}@ex.com` }),
+      paymentHold: async (orgId) => {
+        if (orgId === failingOrg) {
+          throw error ?? new Error("[features-service] billing-service /internal/accounts/by-org/:orgId/payment-outlook failed (502): TimeoutError");
+        }
+        return null;
+      },
+      spendableBudgets: async (pairs) => {
+        const out = new Map<string, BrandSpendableBudget>();
+        for (const p of pairs) out.set(spendableKey(p.orgId, p.brandId), { configuredUsd: 40, runningUsd: 40, proactiveRunningUsd: 40, reactiveRunningUsd: 0 });
+        return out;
+      },
+      brandsBasic: async (ids) => new Map(ids.map((id) => [id, { name: `Brand ${id}`, domain: `${id}.com` }])),
+    };
+  }
+  const recurring = async (): Promise<FleetRecurringRevenue> => ({
+    asOf: NOW.toISOString(),
+    orgs: ["ok1", "bad", "ok2"].map((orgId) => ({
+      orgId,
+      paymentMode: "postpaid",
+      revenueClass: "recurring",
+      classReason: "postpaid_chargeable_card",
+      mrrCents: "120000",
+      unknownReason: null,
+    })),
+    unreadableOrgIds: [],
+  });
+
+  it("the live fleet read is still served: every pair kept, the unread org NAMED with billing's reason", async () => {
+    const healthy = await readCurrentFleetStats(COLD, NOW, accountsDeps(null), recurring);
+    const partial = await readCurrentFleetStats(COLD, NOW, accountsDeps("bad"), recurring);
+
+    expect(healthy.paymentOutlookUnreadOrgs).toEqual([]);
+    expect(partial.paymentOutlookUnreadOrgs).toHaveLength(1);
+    expect(partial.paymentOutlookUnreadOrgs![0].orgId).toBe("bad");
+    expect(partial.paymentOutlookUnreadOrgs![0].reason).toMatch(/^billing payment-outlook unreadable: .*payment-outlook failed \(502\)/);
+    // No org is dropped from the enumeration the split sums over, and billing's MRR read is untouched.
+    expect(partial.pairs.map((p) => p.orgId).sort()).toEqual(["bad", "ok1", "ok2"]);
+    expect(partial.recurring).toEqual(healthy.recurring);
+    expect(partial.pairs.find((p) => p.orgId === "bad")!.active).toBe(false); // status unknown, never guessed active
+  });
+
+  it("a TimeoutError (not just a 502) is also served partial", async () => {
+    const timeout = Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+    const partial = await readCurrentFleetStats(COLD, NOW, accountsDeps("ok2", timeout), recurring);
+    expect(partial.paymentOutlookUnreadOrgs!.map((o) => o.orgId)).toEqual(["ok2"]);
+    expect(partial.paymentOutlookUnreadOrgs![0].reason).toMatch(/timeout/);
+  });
+
+  it("buildRevenueHistory serves the other orgs' figures + the marker; MRR is the full billing figure", async () => {
+    const history = await buildRevenueHistory(COLD, NOW, { days: 2, weeks: 1, months: 1 }, {
+      featureMemberships: async () => memberships.map(({ orgId }) => ({ orgId })),
+      orgDailySpendCents: async (orgId) => new Map([["2026-07-15", orgId === "ok1" ? 1000 : 500]]),
+      currentFleetStats: (csv, now) => readCurrentFleetStats(csv, now, accountsDeps("bad"), recurring),
+      readCommittedSnapshots: async () => [],
+      recordRecurringSnapshot: async () => {},
+      readRecurringSnapshots: async () => new Map(),
+      readStatedAmounts: async () => [],
+      budgetByDay: async () => ({ recordBeginsAt: null, byDay: new Map() }),
+      currentDailyBudget: async () => null,
+      paymentStopped: async () => ({ recordBeginsOn: null, periods: [] }),
+      fleetCampaigns: async () => [],
+      campaignEarningOnDay: async () => [],
+      brandSpendByDay: async () => new Map(),
+      firstBilledDay: async () => null,
+    });
+    expect(history.currentMrrUsd).toBe(3600); // 3 × $1,200: nobody dropped
+    expect(history.totalRevenueUsd).toBe(20); // 1000 + 500 + 500 cents
+    expect(history.paymentOutlookUnreadOrgs.map((o) => o.orgId)).toEqual(["bad"]);
+  });
+
+  it("a healthy read carries an empty marker (additive field, shape otherwise unchanged)", async () => {
+    expect(paymentOutlookUnreadOrgsOf({ rows: [] })).toEqual([]);
   });
 });

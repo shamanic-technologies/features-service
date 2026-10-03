@@ -3226,6 +3226,18 @@ const revenueHistoryResponseSchema = z.object({
       "— never hardcoded. ADDITIVE: committedMrr above is unchanged and still carries the undivided fleet figure. null = we could not read this (the " +
       "stated-amount store or a producer was unreachable), never a zero that would say the agency is worth nothing.",
   ),
+  paymentOutlookUnreadOrgs: z
+    .array(
+      z.object({
+        orgId: z.string().describe("Internal org UUID whose billing payment-outlook read failed."),
+        reason: z.string().describe("Why (billing's error, truncated), e.g. 'billing payment-outlook unreadable: … failed (502): …'."),
+      }),
+    )
+    .describe(
+      "Orgs whose billing payment-outlook (GET /internal/accounts/by-org/:orgId/payment-outlook) could not be read for this answer (timeout, 502). " +
+        "The payload is still served instead of failing whole: no figure here is derived from an org's payment status (currentMrrUsd is billing's " +
+        "fleet recurring read, the split enumerates pairs only), so nothing is dropped from any total, but the gap is NAMED. [] on a healthy read.",
+    ),
   asOf: z.string().describe("ISO timestamp the series was computed."),
 });
 
