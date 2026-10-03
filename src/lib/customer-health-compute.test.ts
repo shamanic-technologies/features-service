@@ -659,7 +659,7 @@ describe("buildCustomerHealthBoard — one org's unreadable billing payment-outl
     return {
       ...base,
       featureMemberships: async () => memberships.map((m) => ({ ...m, workflowSlug: "wf" })),
-      accountsAudit: (csv, now) => customerHealthAccountsAudit(csv, now, accountsDeps(failingOrg)),
+      accountsAudit: (csv, now) => customerHealthAccountsAudit(csv, now, accountsDeps(failingOrg), 0),
     };
   }
 
@@ -688,6 +688,50 @@ describe("buildCustomerHealthBoard — one org's unreadable billing payment-outl
     expect(bad.lastActiveDay).toBe("2026-07-13");
 
     expect(board.stats).toMatchObject({ totalCustomers: 3, activeCount: 1, paymentDeclinedCount: 1, statusUnknownCount: 1, inactiveCount: 0 });
+  });
+
+  it("a TRANSIENT outlook failure is retried once and reads its real status (a billing burst must not persist 'unknown')", async () => {
+    const calls = new Map<string, number>();
+    const base = accountsDeps(null);
+    const flaky: AccountsDeps = {
+      ...base,
+      paymentHold: async (orgId) => {
+        const n = (calls.get(orgId) ?? 0) + 1;
+        calls.set(orgId, n);
+        if (n === 1) throw new Error("payment-outlook failed (502): timeout");
+        return base.paymentHold(orgId);
+      },
+    };
+    const audit = await customerHealthAccountsAudit(COLD_CSV, NOW, flaky, 0);
+    expect(Object.fromEntries(audit.rows.map((r) => [r.orgId, r.status]))).toEqual({ ok1: "active", bad: "active", ok2: "payment_declined" });
+    expect(audit.rows.every((r) => r.statusUnknownReason === undefined)).toBe(true);
+    expect([...calls.values()]).toEqual([2, 2, 2]);
+  });
+
+  it("a PERSISTENT failure is tried exactly twice, and outlook reads never exceed 8 in flight", async () => {
+    const many = Array.from({ length: 30 }, (_, i) => ({ orgId: `o${i}`, brandId: `b${i}` }));
+    let inFlight = 0;
+    let peak = 0;
+    const calls = new Map<string, number>();
+    const base = accountsDeps(null);
+    const wide: AccountsDeps = {
+      ...base,
+      featureMemberships: async () => many,
+      paymentHold: async (orgId) => {
+        calls.set(orgId, (calls.get(orgId) ?? 0) + 1);
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 2));
+        inFlight -= 1;
+        if (orgId === "o7") throw new Error("payment-outlook failed (502): timeout");
+        return null;
+      },
+    };
+    const audit = await customerHealthAccountsAudit(COLD_CSV, NOW, wide, 0);
+    expect(peak).toBeLessThanOrEqual(8);
+    expect(calls.get("o7")).toBe(2);
+    expect(calls.get("o0")).toBe(1);
+    expect(audit.rows.filter((r) => r.status === "unknown").map((r) => r.orgId)).toEqual(["o7"]);
   });
 
   it("the default accounts audit (staff Accounts page, send-forecast) stays fail-loud on the same failure", async () => {
