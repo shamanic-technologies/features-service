@@ -23,6 +23,10 @@
  *      it once ranked website visit → meeting booked at 4.99% (2 brands) over the 2% benchmark, which
  *      put a path nothing measured first on an offer's Sales paths. Below the bar the default is kept
  *      and served as `source: "default"`; the median still rides along in `median` with its brandCount.
+ *      A leg leaving `website_visit` NEVER takes the median, however many brands stated it (owner rule,
+ *      2026-10-03): every visit we produce is a cold-email click, and another customer's stated visit
+ *      rate describes THEIR inbound traffic. Those legs go measured > the brand's own statement > the
+ *      cold-click default (`lib/default-leg-rates.ts`); the median is still served as an input.
  *
  *   4. DEFAULT — the seeded per-leg industry benchmark (`lib/default-leg-rates.ts`, owner rule
  *      2026-09-29: every leg is prefilled, none may be empty). Served as `source: "default"`, so a
@@ -117,6 +121,17 @@ export const MIN_MEASURED_FROM_REACHED = 10;
 /** Brands that must have STATED a leg before their median overrides the leg's industry default (owner
  *  rule, 2026-10-03). Below it the median is still served beside the rate, never used as the rate. */
 export const MIN_FLEET_MEDIAN_BRANDS = 5;
+
+/** The step whose OUTGOING legs never take the fleet median (owner rule, 2026-10-03): the visits we
+ *  produce are cold-email clicks, other customers state rates for their own inbound visitors. */
+export const FLEET_MEDIAN_EXCLUDED_FROM_STEP: ChannelStepKey = "website_visit";
+
+/** PURE: whether the fleet median may stand in for this leg's rate (≥ 5 brands, not a website-visit leg). */
+export function fleetMedianApplies(fromStep: string, toStep: string, medianRate: { ratePct: number | null; brandCount: number }): boolean {
+  if (medianRate.ratePct === null || medianRate.brandCount < MIN_FLEET_MEDIAN_BRANDS) return false;
+  const [from] = legPairKey(fromStep, toStep).split(">");
+  return from !== FLEET_MEDIAN_EXCLUDED_FROM_STEP;
+}
 
 export type EffectiveRateSource = "measured" | "manual" | "median" | "default";
 
@@ -588,7 +603,7 @@ export async function getFleetArrowMedians(): Promise<FleetArrowMedians> {
 
 // ── Resolution ────────────────────────────────────────────────────────────────────────────────
 
-/** PURE: resolve one arrow from its sources, in order (a fleet median counts only over ≥ MIN_FLEET_MEDIAN_BRANDS brands). */
+/** PURE: resolve one arrow from its sources, in order (a fleet median counts only over ≥ MIN_FLEET_MEDIAN_BRANDS brands, never on a website-visit leg). */
 export function resolveArrow(
   fromStep: string,
   toStep: string,
@@ -605,7 +620,7 @@ export function resolveArrow(
   } else if (manualRatePct !== null) {
     effectiveRatePct = manualRatePct;
     source = "manual";
-  } else if (medianRate.ratePct !== null && medianRate.brandCount >= MIN_FLEET_MEDIAN_BRANDS) {
+  } else if (medianRate.ratePct !== null && fleetMedianApplies(fromStep, toStep, medianRate)) {
     effectiveRatePct = medianRate.ratePct;
     source = "median";
   } else if (defaultRatePct !== null) {

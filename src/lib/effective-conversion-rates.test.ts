@@ -9,6 +9,7 @@ import {
   MIN_MEASURED_FROM_REACHED,
   resolveArrow,
   MIN_FLEET_MEDIAN_BRANDS,
+  fleetMedianApplies,
   crmMeasurementOf,
   crmArrowRate,
   type BrandStepMeasurement,
@@ -169,21 +170,35 @@ describe("resolveArrow — measured, else manual, else median, else null", () =>
     expect(resolveArrow("Website visit", "Meeting booked", thin, 5, median)).toMatchObject({ effectiveRatePct: 5, source: "manual" });
   });
   it("nothing stated, the median", () => {
-    expect(resolveArrow("Website visit", "Meeting booked", thin, null, median)).toMatchObject({ effectiveRatePct: 22, source: "median" });
+    expect(resolveArrow("Meeting booked", "Meeting attended", thin, null, median)).toMatchObject({ effectiveRatePct: 22, source: "median" });
   });
   it("a fleet median over FEWER than 5 brands keeps the industry default (owner rule 2026-10-03)", () => {
     expect(MIN_FLEET_MEDIAN_BRANDS).toBe(5);
-    const four = { ratePct: 4.99, brandCount: 4 };
-    expect(resolveArrow("Website visit", "Meeting booked", thin, null, four, 1)).toMatchObject({
-      effectiveRatePct: 1,
+    const four = { ratePct: 40, brandCount: 4 };
+    expect(resolveArrow("Meeting booked", "Meeting attended", thin, null, four, 75)).toMatchObject({
+      effectiveRatePct: 75,
       source: "default",
       median: four,
-      defaultRatePct: 1,
+      defaultRatePct: 75,
     });
   });
   it("a fleet median over 5 brands overrides the default", () => {
-    const five = { ratePct: 4.99, brandCount: 5 };
-    expect(resolveArrow("Website visit", "Meeting booked", thin, null, five, 1)).toMatchObject({ effectiveRatePct: 4.99, source: "median" });
+    const five = { ratePct: 40, brandCount: 5 };
+    expect(resolveArrow("Meeting booked", "Meeting attended", thin, null, five, 75)).toMatchObject({ effectiveRatePct: 40, source: "median" });
+  });
+  it("a leg leaving Website visit never takes the fleet median, even over 9 brands (owner rule 2026-10-03)", () => {
+    const nine = { ratePct: 5, brandCount: 9 };
+    expect(resolveArrow("Website visit", "Signup", thin, null, nine, 1.3)).toMatchObject({
+      effectiveRatePct: 1.3,
+      source: "default",
+      median: nine,
+      defaultRatePct: 1.3,
+    });
+    expect(fleetMedianApplies("Website visit", "Meeting booked", nine)).toBe(false);
+    expect(fleetMedianApplies("Signup", "Paid client", nine)).toBe(true);
+  });
+  it("on a website-visit leg the brand's own statement still wins over the default", () => {
+    expect(resolveArrow("Website visit", "Signup", thin, 7, { ratePct: 5, brandCount: 9 }, 1.3)).toMatchObject({ effectiveRatePct: 7, source: "manual" });
   });
   it("the brand's own statement still wins over a thin median and the default", () => {
     expect(resolveArrow("Website visit", "Meeting booked", thin, 3, { ratePct: 4.99, brandCount: 2 }, 1)).toMatchObject({ effectiveRatePct: 3, source: "manual" });
