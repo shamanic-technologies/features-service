@@ -3,6 +3,9 @@ import express from "express";
 import request from "supertest";
 
 vi.stubEnv("FEATURES_SERVICE_API_KEY", "test-key");
+// Exercise the live-compute path: the Gold snapshot cache would serve one test's body to the next
+// test reading the same scope key (same convention as stats.test.ts).
+vi.stubEnv("FEATURE_VIEW_CACHE_ENABLED", "false");
 vi.stubEnv("RUNS_SERVICE_URL", "http://runs-service");
 vi.stubEnv("RUNS_SERVICE_API_KEY", "runs-key");
 vi.stubEnv("EMAIL_GATEWAY_SERVICE_URL", "http://email-gateway");
@@ -20,7 +23,7 @@ vi.stubEnv("JOURNALISTS_QUOTES_SERVICE_API_KEY", "jq-key");
 vi.stubEnv("AI_VISIBILITY_SERVICE_URL", "http://ai-visibility-service");
 vi.stubEnv("AI_VISIBILITY_SERVICE_API_KEY", "av-key");
 
-vi.mock("../src/db/index.js", () => ({
+vi.mock("../db/index.js", () => ({
   db: {
     query: {
       features: {
@@ -31,8 +34,8 @@ vi.mock("../src/db/index.js", () => ({
   },
 }));
 
-import statsRoutes from "../src/routes/stats.js";
-import { db } from "../src/db/index.js";
+import statsRoutes from "./stats.js";
+import { db } from "../db/index.js";
 
 const QUOTES_FEATURE = {
   id: "feat-1",
@@ -42,7 +45,8 @@ const QUOTES_FEATURE = {
   forkedFrom: null,
   upgradedTo: null,
   inputs: [],
-  outputs: [],
+  // The fan-out is scoped to the stats keys a feature declares (#289): declare the quote keys.
+  outputs: ["quoteRequestsFound", "quotePitchesSubmitted", "quotesSelected", "quotesPublished", "quotesNotSelected"].map((key, i) => ({ key, displayOrder: i + 1 })),
   charts: [],
   entityTypes: [],
   workflows: [],
@@ -56,7 +60,8 @@ const VISIBILITY_FEATURE = {
   forkedFrom: null,
   upgradedTo: null,
   inputs: [],
-  outputs: [],
+  // The fan-out is scoped to the stats keys a feature declares (#289): declare the visibility keys.
+  outputs: ["visibilityScore", "brandMentionRate", "shareOfVoice", "citationRate", "netSentiment", "avgPosition"].map((key, i) => ({ key, displayOrder: i + 1 })),
   charts: [],
   entityTypes: [],
   workflows: [],
@@ -119,7 +124,7 @@ describe("stats fan-out: journalists-quotes-service", () => {
       .expect(200);
 
     const calls = fetchSpy.mock.calls.filter(
-      ([url]: [string]) => url.includes("journalists-quotes-service/orgs/quote-requests/stats"),
+      ([url]) => url.includes("journalists-quotes-service/orgs/quote-requests/stats"),
     );
     expect(calls.length).toBe(1);
     const url = new URL(calls[0][0]);
@@ -136,7 +141,7 @@ describe("stats fan-out: journalists-quotes-service", () => {
       .expect(200);
 
     const calls = fetchSpy.mock.calls.filter(
-      ([url]: [string]) => url.includes("journalists-quotes-service/orgs/quote-requests/stats"),
+      ([url]) => url.includes("journalists-quotes-service/orgs/quote-requests/stats"),
     );
     expect(calls.length).toBe(0);
   });
@@ -171,7 +176,7 @@ describe("stats fan-out: journalists-quotes-service", () => {
       .expect(200);
 
     const calls = fetchSpy.mock.calls.filter(
-      ([url]: [string]) => url.includes("journalists-quotes-service/orgs/quote-requests/stats"),
+      ([url]) => url.includes("journalists-quotes-service/orgs/quote-requests/stats"),
     );
     expect(calls.length).toBe(1);
     const init = calls[0][1] as { headers: Record<string, string> };
@@ -238,7 +243,7 @@ describe("stats fan-out: ai-visibility-score-service", () => {
       .expect(200);
 
     const calls = fetchSpy.mock.calls.filter(
-      ([url]: [string]) => url.includes("ai-visibility-service/orgs/visibility-score-runs"),
+      ([url]) => url.includes("ai-visibility-service/orgs/visibility-score-runs"),
     );
     expect(calls.length).toBe(1);
     const url = new URL(calls[0][0]);
@@ -258,12 +263,14 @@ describe("stats fan-out: ai-visibility-score-service", () => {
       .expect(200);
 
     const lookup = fetchSpy.mock.calls.filter(
-      ([url]: [string]) => url.includes("campaign-service/campaigns/camp-uuid-1"),
+      ([url]) => url.includes("campaign-service/campaigns/camp-uuid-1"),
     );
-    expect(lookup.length).toBe(1);
+    // The campaign-identity resolution (e68eda18) looks the campaign up too; in prod the two reads
+    // share one HTTP call (fetchWithRetry's DOWNSTREAM_READ_SHARE_MS, switched off in the suite).
+    expect(lookup.length).toBeGreaterThanOrEqual(1);
 
     const visibility = fetchSpy.mock.calls.filter(
-      ([url]: [string]) => url.includes("ai-visibility-service/orgs/visibility-score-runs"),
+      ([url]) => url.includes("ai-visibility-service/orgs/visibility-score-runs"),
     );
     expect(visibility.length).toBe(1);
     expect(new URL(visibility[0][0]).searchParams.get("brandId")).toBe("brand-from-campaign");
@@ -279,7 +286,7 @@ describe("stats fan-out: ai-visibility-score-service", () => {
       .expect(200);
 
     const calls = fetchSpy.mock.calls.filter(
-      ([url]: [string]) => url.includes("ai-visibility-service/orgs/visibility-score-runs"),
+      ([url]) => url.includes("ai-visibility-service/orgs/visibility-score-runs"),
     );
     expect(calls.length).toBe(0);
   });

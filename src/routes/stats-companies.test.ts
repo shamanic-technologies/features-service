@@ -3,6 +3,9 @@ import express from "express";
 import request from "supertest";
 
 vi.stubEnv("FEATURES_SERVICE_API_KEY", "test-key");
+// Exercise the live-compute path: the Gold snapshot cache would serve one test's body to the next
+// test reading the same scope key (same convention as stats.test.ts).
+vi.stubEnv("FEATURE_VIEW_CACHE_ENABLED", "false");
 vi.stubEnv("RUNS_SERVICE_URL", "http://runs-service");
 vi.stubEnv("RUNS_SERVICE_API_KEY", "runs-key");
 vi.stubEnv("EMAIL_GATEWAY_SERVICE_URL", "http://email-gateway");
@@ -16,7 +19,7 @@ vi.stubEnv("LEAD_SERVICE_API_KEY", "lead-key");
 vi.stubEnv("CAMPAIGN_SERVICE_URL", "http://campaign-service");
 vi.stubEnv("CAMPAIGN_SERVICE_API_KEY", "campaign-key");
 
-vi.mock("../src/db/index.js", () => ({
+vi.mock("../db/index.js", () => ({
   db: {
     query: {
       features: {
@@ -27,10 +30,10 @@ vi.mock("../src/db/index.js", () => ({
   },
 }));
 
-import statsRoutes from "../src/routes/stats.js";
-import { db } from "../src/db/index.js";
-import { SEED_FEATURES } from "../src/seed/features.js";
-import { STATS_REGISTRY, VALID_STATS_KEYS } from "../src/lib/stats-registry.js";
+import statsRoutes from "./stats.js";
+import { db } from "../db/index.js";
+import { SEED_FEATURES } from "../seed/features.js";
+import { STATS_REGISTRY, VALID_STATS_KEYS } from "../lib/stats-registry.js";
 
 const SALES_FEATURE = {
   id: "feat-sales",

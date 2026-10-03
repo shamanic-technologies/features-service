@@ -3,6 +3,9 @@ import express from "express";
 import request from "supertest";
 
 vi.stubEnv("FEATURES_SERVICE_API_KEY", "test-key");
+// Exercise the live-compute path: the Gold snapshot cache would serve one test's body to the next
+// test reading the same scope key (same convention as stats.test.ts).
+vi.stubEnv("FEATURE_VIEW_CACHE_ENABLED", "false");
 vi.stubEnv("RUNS_SERVICE_URL", "http://runs-service");
 vi.stubEnv("RUNS_SERVICE_API_KEY", "runs-key");
 vi.stubEnv("EMAIL_GATEWAY_SERVICE_URL", "http://email-gateway");
@@ -16,7 +19,7 @@ vi.stubEnv("LEAD_SERVICE_API_KEY", "lead-key");
 vi.stubEnv("CAMPAIGN_SERVICE_URL", "http://campaign-service");
 vi.stubEnv("CAMPAIGN_SERVICE_API_KEY", "campaign-key");
 
-vi.mock("../src/db/index.js", () => ({
+vi.mock("../db/index.js", () => ({
   db: {
     query: {
       features: {
@@ -27,8 +30,8 @@ vi.mock("../src/db/index.js", () => ({
   },
 }));
 
-import statsRoutes from "../src/routes/stats.js";
-import { db } from "../src/db/index.js";
+import statsRoutes from "./stats.js";
+import { db } from "../db/index.js";
 
 const SALES_FEATURE = {
   id: "feat-1",
@@ -182,7 +185,7 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
       .expect(200);
 
     const leadCalls = fetchSpy.mock.calls.filter(
-      ([url]: [string]) => url.includes("lead-service/orgs/stats"),
+      ([url]) => url.includes("lead-service/orgs/stats"),
     );
     expect(leadCalls.length).toBeGreaterThan(0);
   });
@@ -200,7 +203,7 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
       .expect(200);
 
     const pipelineCalls = fetchSpy.mock.calls.filter(
-      ([url, init]: [string, RequestInit | undefined]) => isCostsPost(url, init),
+      ([url, init]) => isCostsPost(url, init),
     );
     expect(pipelineCalls.length).toBe(1);
     const body = JSON.parse(pipelineCalls[0][1].body as string);
@@ -295,7 +298,7 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
       .expect(200);
 
     const journalistsCalls = fetchSpy.mock.calls.filter(
-      ([url]: [string]) => url.includes("journalists-service/orgs/stats"),
+      ([url]) => url.includes("journalists-service/orgs/stats"),
     );
     expect(journalistsCalls.length).toBe(1);
     const calledUrl = journalistsCalls[0][0] as string;
@@ -386,7 +389,7 @@ describe("Bug fix: campaignId filter forwarded to runs-service", () => {
       .expect(200);
 
     const costsCalls = fetchSpy.mock.calls.filter(
-      ([url]: [string]) => url.includes("/v1/stats/costs"),
+      ([url]) => url.includes("/v1/stats/costs"),
     );
     expect(costsCalls.length).toBeGreaterThan(0);
     for (const [url, init] of costsCalls as Array<[string, RequestInit | undefined]>) {
@@ -412,7 +415,7 @@ describe("Bug fix: campaignId filter forwarded to runs-service", () => {
 
     // lead-service /stats should receive campaignId
     const leadCalls = fetchSpy.mock.calls.filter(
-      ([url]: [string]) => url.includes("lead-service/orgs/stats"),
+      ([url]) => url.includes("lead-service/orgs/stats"),
     );
     expect(leadCalls.length).toBeGreaterThan(0);
     for (const [url] of leadCalls) {
@@ -421,7 +424,7 @@ describe("Bug fix: campaignId filter forwarded to runs-service", () => {
 
     // Pipeline POST should also carry campaignId in its body
     const pipelinePosts = fetchSpy.mock.calls.filter(
-      ([url, init]: [string, RequestInit | undefined]) =>
+      ([url, init]) =>
         url.endsWith("/v1/stats/costs") &&
         !!init && (init.method ?? "GET").toString().toUpperCase() === "POST",
     );
@@ -474,7 +477,7 @@ describe("Bug fix: pipeline stats aggregate to __total__ when no groupBy", () =>
           ok: true,
           json: () => Promise.resolve({
             groups: [
-              { dimensions: { workflowSlug: "sales-email-cold-outreach-herald" }, runCount: 3, totalCostInUsdCents: "100", minStartedAt: null, maxStartedAt: null },
+              { dimensions: { workflowSlug: "sales-email-cold-outreach-herald" }, runCount: 3, totalCostInUsdCents: "100", actualCostInUsdCents: "100", minStartedAt: null, maxStartedAt: null },
             ],
           }),
         });
@@ -522,8 +525,8 @@ describe("Bug fix: pipeline stats aggregate to __total__ when no groupBy", () =>
           ok: true,
           json: () => Promise.resolve({
             groups: [
-              { dimensions: { workflowSlug: "wf-a" }, runCount: 10, totalCostInUsdCents: "200", minStartedAt: "2026-01-01T00:00:00Z", maxStartedAt: "2026-02-01T00:00:00Z" },
-              { dimensions: { workflowSlug: "wf-b" }, runCount: 20, totalCostInUsdCents: "300", minStartedAt: "2026-01-15T00:00:00Z", maxStartedAt: "2026-03-01T00:00:00Z" },
+              { dimensions: { workflowSlug: "wf-a" }, runCount: 10, totalCostInUsdCents: "200", actualCostInUsdCents: "200", minStartedAt: "2026-01-01T00:00:00Z", maxStartedAt: "2026-02-01T00:00:00Z" },
+              { dimensions: { workflowSlug: "wf-b" }, runCount: 20, totalCostInUsdCents: "300", actualCostInUsdCents: "300", minStartedAt: "2026-01-15T00:00:00Z", maxStartedAt: "2026-03-01T00:00:00Z" },
             ],
           }),
         });
@@ -752,6 +755,7 @@ describe("firstRunAt / lastRunAt in systemStats", () => {
             groups: [{
               dimensions: {},
               totalCostInUsdCents: "1500",
+              actualCostInUsdCents: "1500",
               runCount: 3,
               minStartedAt: "2026-01-10T08:00:00.000Z",
               maxStartedAt: "2026-03-25T14:30:00.000Z",
@@ -793,6 +797,7 @@ describe("firstRunAt / lastRunAt in systemStats", () => {
             groups: [{
               dimensions: {},
               totalCostInUsdCents: "500",
+              actualCostInUsdCents: "500",
               runCount: 1,
               minStartedAt: null,
               maxStartedAt: null,

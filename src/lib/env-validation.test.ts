@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { validateRequiredEnv, REQUIRED_ENV } from "../src/lib/env.js";
+import { validateRequiredEnv, REQUIRED_ENV } from "./env.js";
 
 describe("validateRequiredEnv", () => {
   const saved: Record<string, string | undefined> = {};
