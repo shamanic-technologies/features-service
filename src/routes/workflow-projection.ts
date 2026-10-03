@@ -610,6 +610,12 @@ export interface WorkflowProjectionResponse {
    * back to an unassigned or deprecated workflow.
    */
   recommendationWithheldReason?: "no_eligible_workflow";
+  /**
+   * Present ⟺ a leg-keyed read has NO priced workflow but at least one selectable one: the
+   * recommendation is then the rank-1 selectable workflow, named so the leg can start, and its cost
+   * fields stay null (never an invented price). Absent on every priced recommendation.
+   */
+  recommendationBasis?: "cold_start";
   /** Present ⟺ the caller named a `?leg=`: the leg's maturity rule and whether it was applied. */
   maturity?: ProjectionMaturity;
 }
@@ -2838,12 +2844,36 @@ export function projectFromEvidence(input: {
       const best = bestByDynasty.get(slug);
       return best && best.metric != null ? best.row : null;
     })();
-    const recommended: ProjectionRow | null =
+    const pricedRecommendation: ProjectionRow | null =
       missionHeadRow ?? (head && !headExcluded && head[1].metric != null ? head[1].row : null);
+    // ── COLD START: a leg whose selectable workflows have no price yet still names one to run ──────
+    //
+    // Without it a consumer that launches "the recommended workflow" cannot start the leg at all, and
+    // the leg never gets the evidence that would price it (prod 2026-10-03: conversation_to_meeting_booked
+    // had rhodium assigned active, no evidence, no recommendation, so every onboarding launch failed).
+    // Only on a leg read, only when no priced workflow exists: the rank-1 selectable, non-retired
+    // dynasty (rank already puts measured-unrankable before never-run, slug ties). Its cost fields stay
+    // null and `recommendationBasis: "cold_start"` says so; `recommendedBudgetUsd` stays null.
+    const coldStartRow: ProjectionRow | null =
+      legTerms && !pricedRecommendation
+        ? (() => {
+            for (const slug of missionOrder ?? orderedDynasties.map(([s]) => s)) {
+              if (excludedTier(slug) === 1) continue;
+              const row =
+                rows.find((r) => r.audienceId === null && r.workflow.workflowDynastySlug === slug) ??
+                bestByDynasty.get(slug)!.row;
+              if (row.retired) continue;
+              return row;
+            }
+            return null;
+          })()
+        : null;
+    const recommended: ProjectionRow | null = pricedRecommendation ?? coldStartRow;
     // The budget still answers "what does a month of this cost", whichever way the pick was made — it is
     // priced off the RECOMMENDED row's own cost per outcome, so it describes the workflow that was
     // actually chosen rather than the one the other objective would have chosen.
-    const recommendedCost = recommended?.resolved.costPerOutcomeUsd ?? null;
+    // A cold-start pick has no price (its row may carry the explore allowance, a floor, never a price).
+    const recommendedCost = pricedRecommendation?.resolved.costPerOutcomeUsd ?? null;
 
     return {
       featureSlug,
@@ -2858,6 +2888,7 @@ export function projectFromEvidence(input: {
       measured: unmeasuredReason === null,
       ...(unmeasuredReason ? { unmeasuredReason } : {}),
       ...(headExcluded ? { recommendationWithheldReason: "no_eligible_workflow" as const } : {}),
+      ...(coldStartRow ? { recommendationBasis: "cold_start" as const } : {}),
       ...(legKey && rule
         ? {
             maturity: {

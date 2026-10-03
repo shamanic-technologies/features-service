@@ -41,6 +41,7 @@ interface LadderBody {
   reason?: string;
   unmeasuredReason?: string;
   recommendationWithheldReason?: string;
+  recommendationBasis?: string;
 }
 
 /** Run the customer `workflow-projection` handler in-process and capture its answer. */
@@ -79,7 +80,9 @@ export function priceFromLadder(status: number, body: LadderBody): LegChannelPri
   if (status !== 200) {
     return { costPerOutcomeUsd: null, workflowDynastySlug: null, grain: null, unpricedReason: body.reason ?? `ladder_${status}` };
   }
-  const slug = body.recommendedWorkflowDynastySlug ?? null;
+  // A cold-start pick names a workflow to RUN, not a price: the leg stays priced from the fleet /
+  // default rungs exactly as before (its row's explore allowance is a floor, never a leg price).
+  const slug = body.recommendationBasis === "cold_start" ? null : (body.recommendedWorkflowDynastySlug ?? null);
   if (!slug) {
     return {
       costPerOutcomeUsd: null,
