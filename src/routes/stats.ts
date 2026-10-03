@@ -996,7 +996,10 @@ async function fetchActiveCampaigns(orgId: string, filters: Record<string, strin
     const response = await fetchWithRetry(`${campaignUrl}/stats?${params}`, { headers: buildDownstreamHeaders(campaignKey, orgId, identity) });
     if (!response.ok) { console.error(`[features-service] campaign-service /stats failed: ${response.status}`); return 0; }
     const data = await response.json() as { stats: { byStatus: Record<string, number> } };
-    return data.stats.byStatus?.active ?? data.stats.byStatus?.running ?? 0;
+    // campaign-service emits "ongoing" / "stopped" (its schema.ts status enum);
+    // "active" / "running" kept as fallbacks for older shapes.
+    const byStatus = data.stats.byStatus;
+    return byStatus?.ongoing ?? byStatus?.active ?? byStatus?.running ?? 0;
   } catch (error) {
     console.error(`[features-service] campaign-service /stats network error:`, (error as Error).message);
     return 0;
