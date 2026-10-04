@@ -24,7 +24,6 @@ import {
   buildOfferSalesPaths,
   enumerateSalesPaths,
   legChannelsForScope,
-  legKeysForScope,
   MANAGED_CHANNEL_SLUGS,
   priceKey,
   type LegChannelPrice,
@@ -145,7 +144,7 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
     // no workflow to rank (it prices on the fleet's spend, else its benchmark, in the pure build).
     const pairs = new Map<string, { legKey: string; slug: string }>();
     const ticked = salesPath.stated ? (salesPath.legKeys ?? []) : [];
-    for (const chain of enumerateSalesPaths(legKeysForScope(scope, ticked))) {
+    for (const chain of enumerateSalesPaths(ticked)) {
       for (const legKey of chain) {
         for (const c of legChannelsForScope(channels, legKey, scope)) {
           if (MANAGED_CHANNEL_SLUGS.has(c.slug)) pairs.set(priceKey(legKey, c.slug), { legKey, slug: c.slug });

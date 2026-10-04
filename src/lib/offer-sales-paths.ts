@@ -55,11 +55,11 @@
  *   So a managed leg never yields `leg_cost_unavailable` merely because no workflow is active or
  *   eligible; `costSource` states which rung priced it.
  *
- * ── `?scope=catalogue`: THE WHOLE COMBINATORY (owner 2026-10-04) ──────────────────────────────
+ * ── `?scope=catalogue`: THE TICKED CHAINS × EVERY SHORTLISTED CHANNEL (owner 2026-10-04) ──────────
  *
  *   The default read (`scope: "ticked"`, above) is what campaign-service funds and onboarding launches
- *   first, and it is unchanged. `scope: "catalogue"` lists EVERY chain the leg catalogue allows (ticked or
- *   not; each row and leg says `ticked`) × one channel of the owner's SHORTLIST per leg that channel
+ *   first, and it is unchanged. `scope: "catalogue"` walks the SAME chains (the legs the offer ticked,
+ *   same statuses when there are none) × one channel of the owner's SHORTLIST per leg that channel
  *   publishes (`SALES_PATH_CATALOGUE_CHANNEL_SLUGS`, `lib/sales-path-cost-benchmarks.ts`). Per leg,
  *   `channel.managed` says whether we run that channel today. A managed channel prices exactly as above; a
  *   channel we do not run prices on the fleet's real spend when there is some, else on its sourced market
@@ -70,9 +70,9 @@
  *
  *   Rows are ordered by ROI descending, full stop (owner 2026-10-04; withdraws the benchmark tier of
  *   #1328): `pricedOnBenchmark` still says which rows rest on a market benchmark, it no longer moves
- *   them. A null ROI sorts last. The self-serve CHECKOUT legs (`website_visit_to_purchase`) are a property of the offer, not a channel
- *   choice: the catalogue lists them only when the offer ticked that leg (a high-ticket offer that sells
- *   through meetings has no checkout; a 2% generic purchase rate on ad clicks read 57x for one).
+ *   them. A null ROI sorts last. An unticked leg is never listed (owner 2026-10-04, "filter on the legs
+ *   we selected"; withdraws #1325's "whole catalogue, ticked or not" and with it #1328's checkout-leg
+ *   special case): every row and leg is `ticked: true`.
  *
  *   `combinationKey` suffixes `@<slug>` only on a leg a PLATFORM channel works, so a leg the customer's
  *   team works keys bare in both scopes: the same combination keeps the same key and NAME in both reads.
@@ -87,7 +87,6 @@ import type { ChannelStepDefWire } from "./channel-catalogue.js";
 import { CHANNEL_STEPS } from "./acquisition-channels.js";
 import { funnelLeg } from "./funnel-legs.js";
 import { legPairKey, type EffectiveArrowRate } from "./effective-conversion-rates.js";
-import { FUNNEL_LEG_KEYS } from "./funnel-legs.js";
 import {
   SALES_PATH_CATALOGUE_CHANNEL_SLUGS,
   SALES_PATH_COST_BENCHMARKS,
@@ -404,15 +403,6 @@ export function legChannelsForScope(
   return channels.filter((c) => shortlist.has(c.slug) && c.legKeys.includes(legKey));
 }
 
-/** Legs an offer either has or does not (a self-serve checkout): the catalogue lists them only when ticked. */
-export const OFFER_PROPERTY_LEG_KEYS: ReadonlySet<string> = new Set(["website_visit_to_purchase"]);
-
-/** PURE: the legs a scope enumerates chains over. */
-export function legKeysForScope(scope: SalesPathScope, ticked: readonly string[]): string[] {
-  if (scope === "ticked") return [...ticked];
-  return FUNNEL_LEG_KEYS.filter((k) => !OFFER_PROPERTY_LEG_KEYS.has(k) || ticked.includes(k));
-}
-
 /** PURE: the cost cascade for one (leg, channel) — workflow > fleet measured > default. */
 export function resolveLegChannelCost(
   price: LegChannelPrice | undefined,
@@ -439,14 +429,12 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
     pricing: "net" as const,
   };
   const scope = input.scope ?? "ticked";
-  if (scope === "ticked") {
-    if (!input.stated) return { ...base, scope, status: "not_stated", paths: [] };
-    if (selected.length - unknownLegKeys.length === 0) return { ...base, scope, status: "no_legs_selected", paths: [] };
-  }
+  // Both scopes walk the ticked legs only; the catalogue widens the CHANNELS per leg, never the legs.
+  if (!input.stated) return { ...base, scope, status: "not_stated", paths: [] };
+  if (selected.length - unknownLegKeys.length === 0) return { ...base, scope, status: "no_legs_selected", paths: [] };
 
-  const chains = enumerateSalesPaths(legKeysForScope(scope, input.stated ? selected : []));
+  const chains = enumerateSalesPaths(selected);
   if (chains.length === 0) return { ...base, scope, status: "no_complete_path", paths: [] };
-  const tickedLegs = new Set(input.stated ? selected : []);
   const shortlist = input.catalogueChannelSlugs ?? SALES_PATH_CATALOGUE_CHANNEL_SLUGS;
   const benchmarks = input.benchmarks ?? SALES_PATH_COST_BENCHMARKS;
 
@@ -562,7 +550,7 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
         }
         return {
           legKey: d.legKey,
-          ticked: scope === "ticked" || tickedLegs.has(d.legKey),
+          ticked: true,
           fromStep: d.fromStep ? stepWire(d.fromStep.key) : null,
           toStep: stepWire(d.toStep.key),
           conversionRatePct: arrow?.effectiveRatePct ?? null,
