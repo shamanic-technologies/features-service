@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRevenueWindow, parseWindowDays, windowDates } from "./revenue-window.js";
+import { buildRevenueWindow, firstActivityDate, inceptionDates, parseWindowDays, windowDates } from "./revenue-window.js";
 import { campaignLessOutsideScope, type RunsCostGroup } from "./spend-client.js";
 
 const series = (daily: Array<{ date: string; count: number }>, undatedCount = 0) => ({
@@ -13,6 +13,8 @@ describe("parseWindowDays", () => {
     expect(parseWindowDays(undefined)).toBeUndefined();
     expect(parseWindowDays("7")).toBe(7);
     expect(parseWindowDays("30")).toBe(30);
+    expect(parseWindowDays("all")).toBe("all");
+    expect(parseWindowDays("ALL")).toBeNull();
     expect(parseWindowDays("0")).toBeNull();
     expect(parseWindowDays("91")).toBeNull();
     expect(parseWindowDays("7d")).toBeNull();
@@ -23,6 +25,25 @@ describe("parseWindowDays", () => {
 describe("windowDates", () => {
   it("is N UTC days ascending, ending today", () => {
     expect(windowDates(new Date("2026-10-03T15:00:00Z"), 3)).toEqual(["2026-10-01", "2026-10-02", "2026-10-03"]);
+  });
+});
+
+describe("since inception", () => {
+  const now = new Date("2026-10-03T15:00:00Z");
+  it("inceptionDates runs from the first day to today; just today when nothing is dated", () => {
+    expect(inceptionDates(now, "2026-09-30")).toEqual(["2026-09-30", "2026-10-01", "2026-10-02", "2026-10-03"]);
+    expect(inceptionDates(now, null)).toEqual(["2026-10-03"]);
+    expect(inceptionDates(now, "2026-10-09")).toEqual(["2026-10-03"]);
+    expect(inceptionDates(now, "2026-01-01")).toHaveLength(276);
+  });
+  it("firstActivityDate is the earliest non-zero day across every source", () => {
+    expect(firstActivityDate({
+      emailsByDay: new Map([["2026-03-01", { sent: 0, delivered: 0, bounced: 0 }], ["2026-04-02", { sent: 1, delivered: 1, bounced: 0 }]]),
+      spendByDay: { scoped: new Map(), brandLevel: new Map([["2026-02-10", 12]]), scopedTotal: new Map(), brandLevelTotal: new Map([["2026-02-10", 12]]) },
+      series: [series([{ date: "2026-05-01", count: 1 }])],
+      pipelineTimeSeries: [],
+    })).toBe("2026-02-10");
+    expect(firstActivityDate({ emailsByDay: null, spendByDay: null, series: [], pipelineTimeSeries: [] })).toBeNull();
   });
 });
 
