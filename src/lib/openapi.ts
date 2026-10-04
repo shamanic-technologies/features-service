@@ -2707,6 +2707,8 @@ const orgPeriodRecapResponseRef = registry.register(
     budgetIncrease: z.object({
       amountUsd: z.number(),
       basis: z.literal("linear_at_current_results").describe("amountUsd more buys amountUsd/spendUsd more of the same volume at the same results; no diminishing or improving returns are claimed."),
+      expectedAdditionalRecipientsEnrolled: z.number().int().nullable().describe("How many more recipients (decision-makers) amountUsd lines up at current results: amountUsd x outbound.recipientsEnrolled / spendUsd, rounded to whole people. Same lead grain as recipientsEnrolled (lined up, not necessarily emailed yet). Null with expectedAdditionalRecipientsEnrolledNullReason when nothing was lined up or nothing was spent; independent of reply rate and economics."),
+      expectedAdditionalRecipientsEnrolledNullReason: recapNullReason.nullable(),
       expectedAdditionalPositiveReplies: z.number().nullable(),
       expectedAdditionalRevenueUsd: z.number().nullable().describe("amountUsd x roiMultiple."),
       revenueMultiple: z.number().nullable().describe("(spendUsd + amountUsd) / spendUsd: the revenue multiple versus this window at current results."),
