@@ -37,7 +37,9 @@
  *   - SPEND = the org's whole COMMITTED spend in the window on the NET basis (runs-service dated
  *     `netTotalCostInUsdCents`, every brand, setup included) — what the month's credit was consumed by.
  *   - +$100 is LINEAR AT CURRENT RESULTS: $100 more buys `100 / spend` more of the same volume, so it returns
- *     `100 × roi` more revenue. Nothing about diminishing or improving returns is claimed.
+ *     `100 × roi` more revenue and lines up `100 × enrolled / spend` more recipients
+ *     (`expectedAdditionalRecipientsEnrolled`, whole people; needs no rate or economics, so it has its own
+ *     null reason). Nothing about diminishing or improving returns is claimed.
  *   - UNKNOWN IS NULL WITH A REASON, NEVER 0. A zero is served only where it is TRUE (nothing sent in the
  *     window ⇒ 0 emails, 0 expected replies).
  */
@@ -148,6 +150,9 @@ export interface OrgPeriodRecap {
   budgetIncrease: {
     amountUsd: number;
     basis: "linear_at_current_results";
+    /** amountUsd × recipientsEnrolled ÷ spend, whole recipients: how many more leads the amount lines up. */
+    expectedAdditionalRecipientsEnrolled: number | null;
+    expectedAdditionalRecipientsEnrolledNullReason: RecapNullReason | null;
     expectedAdditionalPositiveReplies: number | null;
     expectedAdditionalRevenueUsd: number | null;
     /** (window spend + amount) ÷ window spend: the revenue multiple vs this window at current results. */
@@ -367,6 +372,9 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
   }
 
   const canProject = roiMultiple !== null && expectedReplies !== null;
+  // Volume needs no rate and no economics: only something lined up and a spend that lined it up.
+  const recipientsReason: RecapNullReason | null =
+    recipientsContacted === 0 ? "nothing_sent" : spendUsd <= 0 ? "no_spend_in_window" : null;
   return {
     orgId: input.orgId,
     window: { from: input.from, to: input.to, grain: "utc_day", days: days.size },
@@ -398,6 +406,8 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
     budgetIncrease: {
       amountUsd: BUDGET_INCREASE_USD,
       basis: "linear_at_current_results",
+      expectedAdditionalRecipientsEnrolled: recipientsReason ? null : Math.round((BUDGET_INCREASE_USD * recipientsContacted) / spendUsd),
+      expectedAdditionalRecipientsEnrolledNullReason: recipientsReason,
       expectedAdditionalPositiveReplies: canProject ? round((BUDGET_INCREASE_USD * expectedReplies!) / spendUsd, 2) : null,
       expectedAdditionalRevenueUsd: canProject ? round(BUDGET_INCREASE_USD * roiMultiple!, 2) : null,
       revenueMultiple: canProject ? round((spendUsd + BUDGET_INCREASE_USD) / spendUsd, 2) : null,

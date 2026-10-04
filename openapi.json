@@ -17325,6 +17325,24 @@
                 ],
                 "description": "amountUsd more buys amountUsd/spendUsd more of the same volume at the same results; no diminishing or improving returns are claimed."
               },
+              "expectedAdditionalRecipientsEnrolled": {
+                "type": "integer",
+                "nullable": true,
+                "description": "How many more recipients (decision-makers) amountUsd lines up at current results: amountUsd x outbound.recipientsEnrolled / spendUsd, rounded to whole people. Same lead grain as recipientsEnrolled (lined up, not necessarily emailed yet). Null with expectedAdditionalRecipientsEnrolledNullReason when nothing was lined up or nothing was spent; independent of reply rate and economics."
+              },
+              "expectedAdditionalRecipientsEnrolledNullReason": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "nothing_sent",
+                  "reply_rate_unavailable",
+                  "economics_missing",
+                  "no_spend_in_window",
+                  "lifetime_revenue_differs_across_brands",
+                  "lifetime_revenue_differs_across_offers"
+                ],
+                "description": "Why the figure beside it is null. nothing_sent = no email went out in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue / reply-to-paid rate; no_spend_in_window = the org spent nothing in the window; lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer."
+              },
               "expectedAdditionalPositiveReplies": {
                 "type": "number",
                 "nullable": true
@@ -17356,6 +17374,8 @@
             "required": [
               "amountUsd",
               "basis",
+              "expectedAdditionalRecipientsEnrolled",
+              "expectedAdditionalRecipientsEnrolledNullReason",
               "expectedAdditionalPositiveReplies",
               "expectedAdditionalRevenueUsd",
               "revenueMultiple",
