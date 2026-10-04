@@ -1628,11 +1628,13 @@ const revenueWindowSchema = z.object({
       cumulativePipelineUsd: z.number().describe("Expected pipeline of every organisation dated on or before the end of this day (cumulative since the brand began, not since the window began)."),
     })).describe("One entry per day of the window, ascending. Same basis as the headline (the expected pipeline, every lead to date), so the curve ends at the headline. NOT roiHistory's pipeline leg, which is the realized, mature cohort's."),
   }).nullable().describe("Null when the headline pipeline is null (no funnel, cold start)."),
+  queuedEmails: z.number().int().nullable().describe("EMAILS (every step of a sequence, the same grain as emails.sent/delivered/bounced) of the scope's campaigns that are scheduled and not yet sent RIGHT NOW, read from the sender's own queue (email-gateway broadcast emailStats.queued, relayed from instantly-service; live sequences only: a paused, stopped, completed, replied, bounced or unsubscribed sequence's steps are not queued). A current SNAPSHOT, not a window figure: the same value whatever ?windowDays= asks, and it sits on no day. 0 = nothing waiting (measured). Null with queuedEmailsUnavailableReason when it could not be read, never 0."),
+  queuedEmailsUnavailableReason: z.enum(["sender_queue_unreadable", "stats_unreadable"]).nullable().describe("Why queuedEmails is null; null whenever queuedEmails is a number. sender_queue_unreadable = the sending service said it could not read its queue; stats_unreadable = the email-gateway read failed or did not carry the count."),
 });
 
 const revenueWindowRef = registry.register("RevenueWindow", revenueWindowSchema);
 
-const windowDaysParam = z.string().optional().describe("ONE CHOSEN WINDOW: an integer 1..90 = that many UTC days ending today (7 and 30 are what the Today page asks). Adds `window` — emails sent/delivered/bounced + delivery rate, actual spend + cost per email sent, positive replies, website visits and the expected pipeline curve — each a window total beside one value per day. Omitted → no `window` key, every other field byte-identical. Anything else is a 400 with reason 'window_days_unrecognised'.");
+const windowDaysParam = z.string().optional().describe("ONE CHOSEN WINDOW: an integer 1..90 = that many UTC days ending today (7 and 30 are what the Today page asks). Adds `window` — emails sent/delivered/bounced + delivery rate, emails queued right now (snapshot), actual spend + cost per email sent, positive replies, website visits and the expected pipeline curve — each a window total beside one value per day. Omitted → no `window` key, every other field byte-identical. Anything else is a 400 with reason 'window_days_unrecognised'.");
 
 const offerRevenueResponseSchema = featureRevenueResponseSchema
   .omit({ featureSlug: true })
