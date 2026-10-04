@@ -35,7 +35,7 @@ export const SALES_PATH_CATALOGUE_CHANNEL_SLUGS: ReadonlySet<string> = new Set([
   "google-ads",
   "linkedin-ads",
   "meta-ads",
-  "seo-content",
+  // seo-content: off the shortlist "for now" (owner 2026-10-04); its benchmark ($164/lead, First Page Sage) is in git history.
   // Middle / closing
   "ai-meeting-booking",
   "ai-instant-call",
@@ -57,7 +57,6 @@ const WORDSTREAM_META = "WordStream, Facebook Ads Benchmarks 2025 (https://www.w
 const METADATA_META = "Metadata.io, Meta Ads for B2B, $57.6M of 2025 spend (https://metadata.io/resources/blog/fb-ad-strategies)";
 const OVERLOOP_LINKEDIN = "Overloop, LinkedIn Outreach Benchmarks (https://overloop.com/blog/linkedin-outreach-benchmarks)";
 const SALESHIVE_CALLS = "SalesHive, Cold Calling Benchmarks for B2B Sales Teams (https://saleshive.com/blog/b2b-sales-cold-calling-benchmarks-teams-2025)";
-const FPS_SEO = "First Page Sage, B2B SaaS organic & SEO median cost per lead $164";
 
 export const SALES_PATH_COST_BENCHMARKS: ReadonlyMap<string, SalesPathCostBenchmark> = new Map([
   // ── Google Ads: B2B & business services ──
@@ -74,10 +73,6 @@ export const SALES_PATH_COST_BENCHMARKS: ReadonlyMap<string, SalesPathCostBenchm
   ["start_to_website_visit|meta-ads", { costPerOutcomeUsd: 1.92, source: `Lead campaigns, average cost per click $1.92 (traffic-campaign clicks at $0.70 are not counted: they rarely convert). ${WORDSTREAM_META}` }],
   ["start_to_form_submitted|meta-ads", { costPerOutcomeUsd: 166, source: `B2B cost per lead on Facebook cold audiences, $166. ${METADATA_META}` }],
   ["start_to_meeting_booked|meta-ads", { costPerOutcomeUsd: 664, source: `Derived: B2B Facebook cost per lead $166 ÷ 25% of B2B leads booking a meeting (assumption). ${METADATA_META}` }],
-
-  // ── SEO content: the published cost per lead, spread over visits at our own visit → form rate (0.5%),
-  //    so a path reading visits back to leads lands on the published $164 ──
-  ["start_to_website_visit|seo-content", { costPerOutcomeUsd: 0.82, source: `Derived: ${FPS_SEO} × 0.5% (our visit → form benchmark), so one lead still costs $164.` }],
 
   // ── Cold LinkedIn outreach: one sender's tools over what one sender produces ──
   ["start_to_conversation|cold-linkedin-outreach", { costPerOutcomeUsd: 30, source: `Derived: ~$180/month of tools per sender (Sales Navigator + a sending tool) over 440 requests × 28% accepted × 10.4% reply × 48% positive = ~6 positive replies, rounded up. ${OVERLOOP_LINKEDIN}` }],

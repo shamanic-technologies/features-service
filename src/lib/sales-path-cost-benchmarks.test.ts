@@ -110,21 +110,19 @@ describe("?scope=catalogue", () => {
         if (l.fromStep) expect(l.conversionRatePct).not.toBeNull();
       }
     }
-    // Rows on our own evidence first, then benchmark rows; each tier by ROI.
-    const firstBench = body.paths.findIndex((p) => p.pricedOnBenchmark);
-    expect(firstBench).toBeGreaterThan(0);
-    expect(body.paths.slice(firstBench).every((p) => p.pricedOnBenchmark)).toBe(true);
+    // ROI descending, full stop: a benchmark row is flagged, never moved (owner 2026-10-04).
     for (let i = 1; i < body.paths.length; i++) {
-      if (i === firstBench) continue;
       expect(body.paths[i - 1].roi!).toBeGreaterThanOrEqual(body.paths[i].roi!);
     }
   });
 
   it("enters through every shortlisted entry channel, never through an agency or unlisted one", () => {
     const entries = new Set(body.paths.map((p) => p.entryChannelSlug));
-    for (const s of ["sales-cold-email-outreach", "cold-linkedin-outreach", "cold-call-outreach", "google-ads", "linkedin-ads", "meta-ads", "seo-content"]) {
+    for (const s of ["sales-cold-email-outreach", "cold-linkedin-outreach", "cold-call-outreach", "google-ads", "linkedin-ads", "meta-ads"]) {
       expect(entries.has(s), s).toBe(true);
     }
+    expect(SALES_PATH_CATALOGUE_CHANNEL_SLUGS.has("seo-content")).toBe(false);
+    expect(body.paths.some((p) => p.legs.some((l) => l.channel?.slug === "seo-content"))).toBe(false);
     for (const p of body.paths) {
       for (const l of p.legs) if (l.channel) expect(SALES_PATH_CATALOGUE_CHANNEL_SLUGS.has(l.channel.slug!)).toBe(true);
     }
@@ -178,10 +176,14 @@ describe("?scope=catalogue", () => {
     }
   });
 
-  it("never lets a benchmark-priced row out-rank a row on our own evidence", () => {
+  it("ranks a benchmark-priced row by its ROI like any other (the flag never moves it)", () => {
     const bench = body.paths.filter((p) => p.pricedOnBenchmark);
     const own = body.paths.filter((p) => !p.pricedOnBenchmark);
-    expect(Math.max(...own.map((p) => p.rank))).toBeLessThan(Math.min(...bench.map((p) => p.rank)));
+    expect(bench.length).toBeGreaterThan(0);
+    expect(own.length).toBeGreaterThan(0);
+    const bestBench = bench.reduce((a, b) => (a.roi! >= b.roi! ? a : b));
+    const outranked = own.filter((p) => p.roi! < bestBench.roi!);
+    for (const p of outranked) expect(bestBench.rank).toBeLessThan(p.rank);
   });
 
   it("lists the self-serve checkout leg only when the offer ticked it", () => {

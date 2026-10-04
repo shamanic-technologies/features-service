@@ -68,10 +68,9 @@
  *   human leg of the default read, so one combination reads ONE price in both scopes. A leg no shortlisted
  *   channel publishes (a visitor signing up, a booking call turned into a meeting) has no channel.
  *
- *   A DEFAULT PRICES, NEVER CHOOSES (the leg-rate rule, applied to costs): a row with any
- *   benchmark-priced leg (`pricedOnBenchmark`) ranks after every row priced on our own evidence, so a
- *   stack of market benchmarks never out-ranks a path we measured; each tier is ordered by ROI. And the
- *   self-serve CHECKOUT legs (`website_visit_to_purchase`) are a property of the offer, not a channel
+ *   Rows are ordered by ROI descending, full stop (owner 2026-10-04; withdraws the benchmark tier of
+ *   #1328): `pricedOnBenchmark` still says which rows rest on a market benchmark, it no longer moves
+ *   them. A null ROI sorts last. The self-serve CHECKOUT legs (`website_visit_to_purchase`) are a property of the offer, not a channel
  *   choice: the catalogue lists them only when the offer ticked that leg (a high-ticket offer that sells
  *   through meetings has no checkout; a 2% generic purchase rate on ad clicks read 57x for one).
  *
@@ -264,7 +263,7 @@ export interface SalesPath {
   entryChannelSlug: string | null;
   /** Whether the customer ticked EVERY leg of the chain (always true in the ticked scope). */
   ticked: boolean;
-  /** A leg rests on a market benchmark: the row ranks after every row priced on our own evidence. */
+  /** A leg rests on a market benchmark. Informational: the order is ROI alone. */
   pricedOnBenchmark: boolean;
   legs: SalesPathLeg[];
   /** Share of entry outcomes that become a paying client: Π rate(Li)/100 over the non-entry legs, in %. */
@@ -632,7 +631,6 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
   const tie = (a: Omit<SalesPath, "rank">, b: Omit<SalesPath, "rank">) =>
     a.pathKey.localeCompare(b.pathKey) || a.combinationKey.localeCompare(b.combinationKey);
   paths.sort((a, b) => {
-    if (a.pricedOnBenchmark !== b.pricedOnBenchmark) return a.pricedOnBenchmark ? 1 : -1;
     if (a.roi !== null && b.roi !== null) return b.roi - a.roi || tie(a, b);
     if (a.roi !== null) return -1;
     if (b.roi !== null) return 1;
