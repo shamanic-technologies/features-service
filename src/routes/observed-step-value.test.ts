@@ -344,8 +344,9 @@ describe("a lead is worth what a human observed, not what we forecast", () => {
         }),
       ],
     });
-    // 1000 × orP(visitToClose 2%, visitToMeeting 5% × meetingToClose 30%) = 34.7 — the click alone.
-    expect(await pipeline()).toBeCloseTo(34.7, 3);
+    // 1000 × the self-serve chain visit → signup → paid (20% × 10% = 2%) = 20 — the click alone, on the
+    // website_purchases path only: no meeting route, which this brand's paths do not walk (2026-10-04).
+    expect(await pipeline()).toBeCloseTo(20, 3);
   });
 
   it("a step nobody ruled out changes nothing — an empty disqualification set is the state today", async () => {

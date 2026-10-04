@@ -435,7 +435,7 @@ describe("a campaign is priced on the funnels ITS OWN leg is read through, not t
     return { ...replyLead(campaignId, leadId), replied: false, replyClassification: null, clicked: true };
   }
 
-  it("each campaign prices its own funnel's legs, and the brand prices the first declared one", async () => {
+  it("each campaign prices its own funnel's legs, and the brand prices every declared one on its own terms", async () => {
     const fixture = {
       campaigns: TWO_FUNNELS,
       costByCampaign: { conv: 1000, web: 1000 },
@@ -449,21 +449,22 @@ describe("a campaign is priced on the funnels ITS OWN leg is read through, not t
     expect(conv.status).toBe(200);
     expect(conv.body.headline.totalPipelineUsd).toBe(875);
 
-    // The website-purchase campaign: its visit is a leg, priced on ITS declared visit→paid 4% (the
-    // meeting terms fall through to the brand-wide record): 2500 × orP(0.04, 0.05 × 0.30) = 136. Had it
-    // been priced on the brand's FIRST declared funnel, a click would have bought nothing at all.
+    // The website-purchase campaign: its visit is a leg, priced on ITS declared visit→paid 4% and on
+    // nothing else: 2500 × 0.04 = 100. The meeting route is not one of its paths, so the brand-wide
+    // record's meeting terms no longer leak into the click (owner 2026-10-04; was orP(0.04, 0.05 × 0.30)
+    // = 136). Had it been priced on the brand's FIRST declared funnel, a click would have bought nothing.
     mockFetch(fixture);
     const web = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&campaignId=web").set(AUTH);
     expect(web.status).toBe(200);
-    expect(web.body.headline.totalPipelineUsd).toBeCloseTo(136, 6);
+    expect(web.body.headline.totalPipelineUsd).toBeCloseTo(100, 6);
 
-    // The BRAND-scoped read is priced on every declared funnel's legs — both leads count — with the
-    // FIRST declared funnel's terms, exactly as before: the click now runs the conversation funnel's
-    // 70% meeting→paid over the brand-wide 2% self-serve, 2500 × orP(0.02, 0.05 × 0.70) = 135.75.
+    // The BRAND-scoped read is priced on every declared funnel's legs, each on ITS OWN terms (2026-10-04;
+    // was: every funnel on the FIRST one's terms, which priced the click at the conversation funnel's
+    // 70% meeting→paid, 135.75): the reply 875, the click 100.
     mockFetch(fixture);
     const brand = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(brand.status).toBe(200);
-    expect(brand.body.headline.totalPipelineUsd).toBeCloseTo(875 + 135.75, 6);
+    expect(brand.body.headline.totalPipelineUsd).toBeCloseTo(875 + 100, 6);
   });
 
   it("an explicit `?funnel=` is REFUSED — the parameter is retired, the campaign's own leg decides", async () => {

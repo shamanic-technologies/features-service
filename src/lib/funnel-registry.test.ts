@@ -131,9 +131,11 @@ describe("restrictPathsToDeclaredLegs — only a declared funnel's legs carry va
       pricedFunnelKeys: ["sales_from_website"],
     });
     expect(website.map((p) => p.tag)).toEqual(["visit", "closeWin"]);
-    // `sales_from_website`'s own leg is brand-service's `visitToClosePct` (2% here) — the DIRECT
-    // self-serve close — not the composed click route the other website funnels price on (3.35%).
-    expect(website[0]!.expectedRevenueUsd).toBeCloseTo(20, 6);
+    // `sales_from_website`'s own leg is the DIRECT visit → paid rate, `visitToPaidClientPct` (6% here) —
+    // the key its visit → paid arrow is stated under (`statedLegRates`) — never `visitToClosePct` (2%,
+    // website_purchases' close through a signup) nor the composed click route (3.35%). (2026-10-04)
+    expect(website[0]!.expectedRevenueUsd).toBeCloseTo(60, 6);
+    expect(website[0]!.expectedRevenueUsd).not.toBeCloseTo(20, 1);
     expect(website[0]!.expectedRevenueUsd).not.toBeCloseTo(34.7, 1);
   });
 
@@ -156,9 +158,13 @@ describe("restrictPathsToDeclaredLegs — only a declared funnel's legs carry va
     });
     expect(undeclared.map((p) => p.tag)).toEqual(["closeWin"]);
 
-    // `visitToClosePct` IS stated, so the website one keeps its visit — an absence, not a blanket rule.
+    // Same for the website one: no direct visit → paid rate, no visit rung...
+    expect(
+      getFunnel("sales-cold-email-outreach")!.resolvePaths({ economics: ECONOMICS, pricedFunnelKeys: ["sales_from_website"] }).map((p) => p.tag),
+    ).toEqual(["closeWin"]);
+    // ...and once it IS stated, the visit is kept — an absence, not a blanket rule.
     const declared = getFunnel("sales-cold-email-outreach")!.resolvePaths({
-      economics: ECONOMICS,
+      economics: { ...ECONOMICS, visitToPaidClientPct: 6 },
       pricedFunnelKeys: ["sales_from_website"],
     });
     expect(declared.map((p) => p.tag)).toEqual(["visit", "closeWin"]);
