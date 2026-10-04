@@ -253,6 +253,7 @@ describe("building the public catalogue", () => {
         to: expect.objectContaining({ key: "paid_client" }),
         // Crew names are retired: every leg publishes null.
         crewName: null,
+        campaignName: null,
         reactive: true,
         minimumMonthlyBudgetCents: 0,
       },

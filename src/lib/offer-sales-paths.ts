@@ -228,6 +228,10 @@ export interface SalesPathLeg {
     workflowDynastySlug: string | null;
     grain: string | null;
     costSource: SalesPathCostSource | null;
+    /** The CAMPAIGN's name (this channel × this leg), the same one `GET /public/channels` serves on the
+     *  channel's `stepTransitions[].campaignName` (`lib/sales-path-names.ts`). Null on a channel that is
+     *  not `salesPathEligible`, and on the PURE build's output. */
+    campaignName: string | null;
     choice: SalesPathChannelChoice;
     candidates: SalesPathChannelCandidate[];
   } | null;
@@ -548,6 +552,7 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
             workflowDynastySlug: picked.workflowDynastySlug,
             grain: picked.grain,
             costSource: picked.costSource,
+            campaignName: null,
             choice: lc.chosen === null || lc.chosen.slug === picked.slug ? lc.choice : "alternative_channel",
             candidates: lc.candidates,
           };
@@ -643,14 +648,30 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
   return { ...base, scope, status: "ok", paths: paths.map((p, i) => ({ rank: i + 1, ...p })) };
 }
 
-/** PURE: the body with every row's name from `names` (keyed on `combinationKey`). Throws on a row left unnamed. */
-export function withSalesPathNames(body: OfferSalesPathsBody, names: ReadonlyMap<string, string>): OfferSalesPathsBody {
+/** PURE: the body with every row's name from `names` (keyed on `combinationKey`), and every leg's campaign
+ *  name from `campaignNames` (keyed `campaignNameKeyOf(channel slug, leg key)`; absent = not eligible = null).
+ *  Throws on a row left unnamed. */
+export function withSalesPathNames(
+  body: OfferSalesPathsBody,
+  names: ReadonlyMap<string, string>,
+  campaignNames: ReadonlyMap<string, string>,
+): OfferSalesPathsBody {
   return {
     ...body,
     paths: body.paths.map((p) => {
       const name = names.get(p.combinationKey);
       if (!name) throw new Error(`sales path combination ${p.combinationKey} has no name`);
-      return { ...p, name };
+      const legs = p.legs.map((l) =>
+        l.channel?.slug
+          ? { ...l, channel: { ...l.channel, campaignName: campaignNames.get(campaignNameKeyOf(l.channel.slug, l.legKey)) ?? null } }
+          : l,
+      );
+      return { ...p, name, legs };
     }),
   };
+}
+
+/** The key a CAMPAIGN (channel × leg) name is stored under in `sales_path_combination_names`: its own namespace, which no combination key can spell (re-exported by `lib/sales-path-names.ts`). */
+export function campaignNameKeyOf(channelSlug: string, legKey: string): string {
+  return `campaign:${channelSlug}|${legKey}`;
 }

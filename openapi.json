@@ -11095,6 +11095,11 @@
                               "benchmark"
                             ]
                           },
+                          "campaignName": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The CAMPAIGN's name: this channel on this leg (owner 2026-10-04). One curated English word, shared across every client, never changed nor reused, and never equal to a sales path name (paths[].name). The same word GET /public/channels serves on the channel's stepTransitions[].campaignName. Null when the channel is not salesPathEligible."
+                          },
                           "choice": {
                             "type": "string",
                             "enum": [
@@ -11203,6 +11208,7 @@
                           "workflowDynastySlug",
                           "grain",
                           "costSource",
+                          "campaignName",
                           "choice",
                           "candidates"
                         ],
@@ -20500,7 +20506,12 @@
                 },
                 "crewName": {
                   "nullable": true,
-                  "description": "RETIRED 2026-10-04: always null. Crew names (Herald, Scout, Pilot, …) no longer name a (channel, leg); the poetic names now name sales path COMBINATIONS (`GET /offers/{offerId}/sales-paths` `paths[].name`). Name a leg's worker by the channel's `name`. Kept as null so no reader breaks."
+                  "description": "RETIRED 2026-10-04: always null. Crew names (Herald, Scout, Pilot, …) no longer name a (channel, leg); the poetic names now name sales path COMBINATIONS (`GET /offers/{offerId}/sales-paths` `paths[].name`). Superseded by campaignName. Kept as null so no reader breaks."
+                },
+                "campaignName": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The CAMPAIGN's name: this channel on this leg (owner 2026-10-04; the offer's Sales path page lists its campaigns, each with a name and a face). One curated English word from the same pool as the sales path names, shared across every client, written once and never changed nor reused, and never equal to any sales path name (`GET /offers/{offerId}/sales-paths` `paths[].name`). Set on every leg of a salesPathEligible channel; null otherwise. The same word rides each sales path leg as `legs[].channel.campaignName`."
                 },
                 "reactive": {
                   "type": "boolean",
@@ -20516,6 +20527,7 @@
                 "from",
                 "to",
                 "crewName",
+                "campaignName",
                 "reactive",
                 "minimumMonthlyBudgetCents"
               ]

@@ -72,10 +72,13 @@ export interface ChannelStepTransitionWire {
   legKey: string;
   from: ChannelStepDefWire | null;
   to: ChannelStepDefWire;
-  /** RETIRED 2026-10-04 (owner): always null. The poetic names now name SALES PATH COMBINATIONS
-   *  (`lib/sales-path-names.ts`); a consumer names a leg's worker by the channel's `name`. Kept on the
-   *  wire as null so no strict reader breaks. */
+  /** RETIRED 2026-10-04 (owner): always null. Superseded by `campaignName`. Kept on the wire as null so
+   *  no strict reader breaks. */
   crewName: null;
+  /** The CAMPAIGN's name (this channel × this leg), shared across every client and stable forever, from
+   *  the same pool as the sales path names and never equal to one (`lib/sales-path-names.ts`). Set on every
+   *  leg of a `salesPathEligible` channel; null otherwise, and on the PURE build's output. */
+  campaignName: string | null;
   /** True when the leg moves a lead out of a step it already reached (`from` set); false on an entry leg. */
   reactive: boolean;
   /** The minimum monthly budget a customer commits to this (channel × leg) item, whole cents (`lib/channel-leg-minimums.ts`). */
@@ -271,6 +274,7 @@ export function buildChannelCatalogue(rows: readonly CatalogueFeatureRow[]): Pub
         from: t.from == null ? null : stepWire(t.from),
         to: stepWire(t.to),
         crewName: null,
+        campaignName: null,
         reactive: t.from != null,
         minimumMonthlyBudgetCents: channelLegMinimumMonthlyCents({ slug: row.slug, operatedBy: channel.operatedBy }, t.from != null),
       })),
