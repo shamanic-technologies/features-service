@@ -1585,9 +1585,8 @@ const windowCountSeriesSchema = z.object({
 });
 
 const revenueWindowSchema = z.object({
-  days: z.number().int().describe("The window's length in UTC days, the last one being today (echo of ?windowDays=; on ?windowDays=all, the number of days from startDate to today)."),
-  sinceInception: z.boolean().describe("true on ?windowDays=all: the window runs from the scope's FIRST dated activity (first email, spend, reply, visit or pipeline day) to today, and the spend read has no lower bound, so every total is the scope's whole life. false on a 1..90 window."),
-  startDate: z.string().describe("First UTC day of the window, YYYY-MM-DD (on ?windowDays=all, the scope's first dated activity; today when nothing is dated yet)."),
+  days: z.number().int().describe("The window's length in UTC days, the last one being today (echo of ?windowDays=)."),
+  startDate: z.string().describe("First UTC day of the window, YYYY-MM-DD."),
   endDate: z.string().describe("Last UTC day of the window (today), YYYY-MM-DD."),
   emails: z.object({
     sent: z.number().int().describe("EMAILS sent over the window, every step (not leads). Σ daily[].sent."),
@@ -1633,7 +1632,7 @@ const revenueWindowSchema = z.object({
 
 const revenueWindowRef = registry.register("RevenueWindow", revenueWindowSchema);
 
-const windowDaysParam = z.string().optional().describe("ONE CHOSEN WINDOW: an integer 1..90 = that many UTC days ending today, or `all` = SINCE INCEPTION (every UTC day from the scope's first dated activity to today, same block, same composition, spend with no lower bound so setup work is in). Adds `window` — emails sent/delivered/bounced + delivery rate, actual spend + cost per email sent, positive replies, website visits and the expected pipeline curve — each a window total beside one value per day. Omitted → no `window` key, every other field byte-identical. Anything else is a 400 with reason 'window_days_unrecognised'.");
+const windowDaysParam = z.string().optional().describe("ONE CHOSEN WINDOW: an integer 1..90 = that many UTC days ending today (7 and 30 are what the Today page asks). Adds `window` — emails sent/delivered/bounced + delivery rate, actual spend + cost per email sent, positive replies, website visits and the expected pipeline curve — each a window total beside one value per day. Omitted → no `window` key, every other field byte-identical. Anything else is a 400 with reason 'window_days_unrecognised'.");
 
 const offerRevenueResponseSchema = featureRevenueResponseSchema
   .omit({ featureSlug: true })
@@ -2644,8 +2643,8 @@ registry.registerPath({
 
 // ── GET /internal/orgs/{orgId}/period-recap (lib/org-period-recap.ts) ──
 const recapNullReason = z
-  .enum(["nothing_sent", "reply_rate_unavailable", "economics_missing", "no_spend_in_window", "lifetime_revenue_differs_across_brands", "lifetime_revenue_differs_across_offers"])
-  .describe("Why the figure beside it is null. nothing_sent = no email went out in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue / reply-to-paid rate; no_spend_in_window = the org spent nothing in the window; lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer.");
+  .enum(["nothing_sent", "reply_rate_unavailable", "economics_missing", "no_spend_in_window", "return_learning", "return_unavailable", "return_differs_across_scopes", "lifetime_revenue_differs_across_brands", "lifetime_revenue_differs_across_offers"])
+  .describe("Why the figure beside it is null. nothing_sent = nothing was lined up or sent in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue; no_spend_in_window = the org spent nothing in the window (per-window-dollar figures only); return_learning = the offer is not mature and its to-date return is not above 1x (the dashboard reads Learning); return_unavailable = no return is served for a scope that sent (no pair, no offer with campaigns, brand no longer held; the dashboard reads -); return_differs_across_scopes = the offers/brands that sent are shown different returns, so no one figure is true (see expectedReturn.returnScopes); lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer.");
 const recapLtrSource = z
   .enum(["offer_stated", "brand_economics"])
   .describe("Where the lifetime revenue per client was read. offer_stated = the value the customer stated on their offer (brand-service offer-economics, every offer of the brand agreeing); brand_economics = no offer states one, so the brand's effective economics (see economicsSource: user or cross-brand-average).");
@@ -2664,14 +2663,23 @@ const recapBrandSchema = z.object({
     outcomesRequired: z.number().int(),
   }).describe("The brand's own mature cohort (contacted on days before cutoffDate) the rate is read from when it qualifies."),
   expectedPositiveReplies: z.number().nullable(),
-  replyToPaidClientPct: z.number().nullable().describe("P(paid client | positive reply) from the brand's effective economics (replyToPaidClientPct, else replyToMeeting x meetingToClose)."),
   lifetimeRevenuePerClientUsd: z.number().nullable(),
   lifetimeRevenueSource: recapLtrSource.nullable(),
   lifetimeRevenueOfferId: z.string().nullable().describe("The offer whose stated lifetime revenue is used, when the brand sells exactly one."),
   lifetimeRevenueStatedAt: z.string().nullable().describe("When the customer stated it (brand-service), when lifetimeRevenueOfferId is set."),
   economicsSource: z.enum(["user", "cross-brand-average"]).nullable(),
-  expectedPaidClients: z.number().nullable(),
-  expectedRevenueUsd: z.number().nullable(),
+  nullReason: recapNullReason.nullable(),
+});
+const recapReturnScopeSchema = z.object({
+  brandId: z.string(),
+  offerId: z.string().nullable().describe("null = the brand's return could not be read at all (brand no longer held, or no offer of it has campaigns)."),
+  roiMultiple: z.number().nullable().describe("The return the dashboard shows for this offer (servedReturnOf over costEconomics.maturity of /offers/{offerId}/revenue?pricing=net)."),
+  half: z.enum(["mature", "flash"]).nullable(),
+  isMature: z.boolean().nullable(),
+  flashRoiMultiple: z.number().nullable(),
+  matureRoiMultiple: z.number().nullable(),
+  pipelineUsd: z.number().nullable().describe("The offer's headline.totalPipelineUsd (the dashboard's pipeline)."),
+  committedCostUsd: z.number().nullable().describe("The offer's costEconomics.committedCostUsd."),
   nullReason: recapNullReason.nullable(),
 });
 const orgPeriodRecapResponseRef = registry.register(
@@ -2695,10 +2703,12 @@ const orgPeriodRecapResponseRef = registry.register(
     expectedPositiveRepliesNullReason: recapNullReason.nullable(),
     spendUsd: z.number().describe("The org's whole COMMITTED spend in the window, NET basis (every brand, setup included)."),
     expectedReturn: z.object({
-      basis: z.literal("positive_replies").describe("Only the positive-reply route is priced; website visits are not, so this under-states rather than over-states."),
-      expectedPaidClients: z.number().nullable(),
-      expectedRevenueUsd: z.number().nullable(),
-      roiMultiple: z.number().nullable().describe("expectedRevenueUsd / spendUsd."),
+      basis: z.literal("served_return").describe("The return is the one the dashboard shows for the offer(s) that sent in the window, read from the same served figure, never recomputed over the window."),
+      expectedRevenueUsd: z.number().nullable().describe("roiMultiple x spendUsd."),
+      expectedPaidClients: z.number().nullable().describe("expectedRevenueUsd / lifetimeRevenuePerClientUsd."),
+      roiMultiple: z.number().nullable().describe("EXACTLY the return the dashboard shows (Today page 'Return') for the offer that contacted people in the window: /offers/{offerId}/revenue?brandId=&pricing=net costEconomics.maturity, mature half; a not-mature offer shows its to-date (flash) half when above 1x, else null return_learning. Not rounded. Every scope that sent must show the same value, else null return_differs_across_scopes."),
+      returnHalf: z.enum(["mature", "flash"]).nullable().describe("Which half of the served pair roiMultiple is."),
+      returnScopes: z.array(recapReturnScopeSchema).describe("Provenance: one row per offer (with campaigns) of each brand that contacted people in the window."),
       lifetimeRevenuePerClientUsd: z.number().nullable().describe("The lifetime revenue per client the ROI and budgetIncrease are based on, when every brand that sent shares one: the customer's STATED offer lifetime revenue when stated, else the brand's effective economics (lifetimeRevenueSource)."),
       lifetimeRevenueSource: recapLtrSource.nullable(),
       lifetimeRevenueNullReason: recapNullReason.nullable(),
@@ -2706,12 +2716,12 @@ const orgPeriodRecapResponseRef = registry.register(
     }),
     budgetIncrease: z.object({
       amountUsd: z.number(),
-      basis: z.literal("linear_at_current_results").describe("amountUsd more buys amountUsd/spendUsd more of the same volume at the same results; no diminishing or improving returns are claimed."),
+      basis: z.literal("linear_at_served_return").describe("amountUsd more returns amountUsd x expectedReturn.roiMultiple; no diminishing or improving returns are claimed."),
       expectedAdditionalRecipientsEnrolled: z.number().int().nullable().describe("How many more recipients (decision-makers) amountUsd lines up at current results: amountUsd x outbound.recipientsEnrolled / spendUsd, rounded to whole people. Same lead grain as recipientsEnrolled (lined up, not necessarily emailed yet). Null with expectedAdditionalRecipientsEnrolledNullReason when nothing was lined up or nothing was spent; independent of reply rate and economics."),
       expectedAdditionalRecipientsEnrolledNullReason: recapNullReason.nullable(),
       expectedAdditionalPositiveReplies: z.number().nullable(),
-      expectedAdditionalRevenueUsd: z.number().nullable().describe("amountUsd x roiMultiple."),
-      revenueMultiple: z.number().nullable().describe("(spendUsd + amountUsd) / spendUsd: the revenue multiple versus this window at current results."),
+      expectedAdditionalRevenueUsd: z.number().nullable().describe("amountUsd x expectedReturn.roiMultiple (the dashboard's return), rounded to the cent."),
+      revenueMultiple: z.number().nullable().describe("(spendUsd + amountUsd) / spendUsd: revenue at the same served return scales with spend. Null when roiMultiple is null or nothing was spent in the window."),
       nullReason: recapNullReason.nullable(),
     }),
     brands: z.array(recapBrandSchema).describe("Every brand the org ever broadcast for, ascending brandId. Counts add up to the top-level figures."),
@@ -2728,7 +2738,7 @@ registry.registerPath({
   path: "/internal/orgs/{orgId}/period-recap",
   summary: "One org's outbound over a window and what it is expected to return (internal, api-key)",
   description:
-    "Ready-to-display figures for ONE org over ONE window of whole UTC days (both bounds inclusive), across every brand it broadcasts for: emails sent, delivery rate, EXPECTED positive replies for that volume, EXPECTED return multiple on the window's net committed spend with the lifetime revenue per client it rests on, and the expected gain of $100 more at current results. " +
+    "Ready-to-display figures for ONE org over ONE window of whole UTC days (both bounds inclusive), across every brand it broadcasts for: emails sent, delivery rate, EXPECTED positive replies for that volume, the RETURN multiple the dashboard shows for the offer(s) that sent (same served figure, never recomputed over the window) with the lifetime revenue per client beside it, and the expected gain of $100 more at that return. " +
     "Built for billing-service's subscription email: billing owns the moment and the send, every figure is computed here from the producers the dashboard reads. Expected replies use the brand's own MATURE positive-reply rate when it has one, else the fleet rate the public onboarding quotes, and say which (rateSource). " +
     "Unknown is null with a reason, never 0; a 0 is served only where it is true (nothing sent). Service-to-service: x-api-key only, the org in the path, no user identity. Not cached.",
   tags: ["Internal"],

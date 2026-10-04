@@ -13,17 +13,60 @@ import {
   defaultRecapDeps,
   isCalendarDay,
   windowDays,
+  type OfferReturnRead,
   type RecapDeps,
 } from "../lib/org-period-recap.js";
+import { DEFAULT_PRICED_CAUSES } from "../lib/outcome-cause.js";
+import { OfferHasNoChannelsError } from "../lib/offer-channels.js";
 import { fleetPositiveReplyRateFromOutcomePrices } from "./public.js";
+import { offerRevenueJson } from "./offer-economics.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-let deps: RecapDeps = defaultRecapDeps(fleetPositiveReplyRateFromOutcomePrices);
+const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+
+/**
+ * The offer's return EXACTLY as the dashboard's Today page reads it: `/offers/:offerId/revenue?brandId=&pricing=net`
+ * with every other parameter at its default, through the route's own `offerRevenueJson` (same Gold cell,
+ * keyed on the org, never the user). null = the offer has no campaign, so no page shows it a return.
+ */
+export async function readOfferReturn(orgId: string, brandId: string, offerId: string): Promise<OfferReturnRead | null> {
+  let json: string;
+  try {
+    json = (
+      await offerRevenueJson({
+        offerId,
+        brandId,
+        pricing: "net",
+        identity: { orgId },
+        leadDetail: "outcomes",
+        causes: DEFAULT_PRICED_CAUSES,
+        windowDays: undefined,
+      })
+    ).json;
+  } catch (error) {
+    if (error instanceof OfferHasNoChannelsError) return null;
+    throw error;
+  }
+  const body = JSON.parse(json) as {
+    headline?: { totalPipelineUsd?: unknown };
+    costEconomics?: { committedCostUsd?: unknown; maturity?: OfferReturnRead["pair"] };
+  };
+  if (!body.costEconomics) throw new Error(`offer ${offerId} revenue body carries no costEconomics`);
+  return {
+    offerId,
+    pair: body.costEconomics.maturity ?? null,
+    pipelineUsd: num(body.headline?.totalPipelineUsd),
+    committedCostUsd: num(body.costEconomics.committedCostUsd),
+  };
+}
+
+const defaults = () => defaultRecapDeps(fleetPositiveReplyRateFromOutcomePrices, readOfferReturn);
+let deps: RecapDeps = defaults();
 
 /** Test seam. */
 export function __setRecapDepsForTest(next: Partial<RecapDeps> | null): void {
-  deps = next ? { ...defaultRecapDeps(fleetPositiveReplyRateFromOutcomePrices), ...next } : defaultRecapDeps(fleetPositiveReplyRateFromOutcomePrices);
+  deps = next ? { ...defaults(), ...next } : defaults();
 }
 
 const router = Router();
