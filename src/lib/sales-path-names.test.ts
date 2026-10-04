@@ -27,7 +27,7 @@ vi.mock("../db/index.js", () => {
 });
 
 import { nextUnusedNames, SALES_PATH_NAME_POOL, salesPathNamesFor, SalesPathNamePoolExhaustedError } from "./sales-path-names.js";
-import { combinationKeyOf, enumerateSalesPaths, MANAGED_CHANNEL_SLUGS, platformChannelsForLeg } from "./offer-sales-paths.js";
+import { combinationKeyOf, enumerateSalesPaths, legChannelsForScope } from "./offer-sales-paths.js";
 import { FUNNEL_LEGS } from "./funnel-legs.js";
 import { buildChannelCatalogue } from "./channel-catalogue.js";
 import { SEED_FEATURES } from "../seed/features.js";
@@ -47,12 +47,24 @@ describe("the name pool", () => {
       trigger: c.trigger,
       legKeys: c.stepTransitions.map((t) => t.legKey),
     }));
-    const chains = enumerateSalesPaths(FUNNEL_LEGS.map((l) => l.legKey));
-    const combinations = chains.reduce(
-      (n, chain) => n + chain.reduce((m, leg) => m * Math.max(1, platformChannelsForLeg(channels, leg, MANAGED_CHANNEL_SLUGS).length), 1),
-      0,
-    );
-    expect(combinations).toBeGreaterThan(0);
+    // Every combination BOTH scopes can list (the default managed read over every leg it could be ticked
+    // on, and the catalogue read over the shortlist), counted once by key.
+    const keys = new Set<string>();
+    for (const scope of ["ticked", "catalogue"] as const) {
+      for (const chain of enumerateSalesPaths(FUNNEL_LEGS.map((l) => l.legKey))) {
+        const options = chain.map((leg) => {
+          const offered = legChannelsForScope(channels, leg, scope);
+          return offered.length === 0 ? [leg] : offered.map((c) => (c.operatedBy === "platform" ? `${leg}@${c.slug}` : leg));
+        });
+        const walk = (i: number, acc: string[]): void => {
+          if (i === options.length) return void keys.add(acc.join("+"));
+          for (const o of options[i]) walk(i + 1, [...acc, o]);
+        };
+        walk(0, []);
+      }
+    }
+    const combinations = keys.size;
+    expect(combinations).toBeGreaterThan(40);
     expect(SALES_PATH_NAME_POOL.length).toBeGreaterThanOrEqual(2 * combinations);
   });
 
