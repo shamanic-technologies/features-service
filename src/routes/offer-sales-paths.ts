@@ -18,9 +18,10 @@ import { buildChannelCatalogue } from "../lib/channel-catalogue.js";
 import { fetchBrandLegEconomics } from "../lib/brand-leg-economics-client.js";
 import { getBrandEffectiveRates } from "../lib/effective-conversion-rates.js";
 import { SalesFunnelsUnavailableError } from "../lib/sales-funnels-client.js";
-import { fetchOfferSalesPath, OfferSalesPathNotFoundError } from "../lib/offer-sales-path-client.js";
+import { fetchOfferChannels, fetchOfferSalesPath, OfferSalesPathNotFoundError } from "../lib/offer-sales-path-client.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
 import {
+  acceptedCatalogueChannels,
   buildOfferSalesPaths,
   enumerateSalesPaths,
   legChannelsForScope,
@@ -119,10 +120,13 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
   const identity = { orgId: req.orgId, userId: req.userId, runId: req.runId };
 
   try {
-    const [salesPath, legEconomics] = await Promise.all([
+    const [salesPath, legEconomics, offerChannels] = await Promise.all([
       fetchOfferSalesPath(offerId),
       fetchBrandLegEconomics(brandId, req.orgId),
+      scope === "catalogue" ? fetchOfferChannels(offerId) : Promise.resolve(null),
     ]);
+    // The catalogue lists only the channels the offer accepts (never stated = the three we run).
+    const catalogueChannelSlugs = offerChannels ? acceptedCatalogueChannels(offerChannels) : undefined;
     const offer = legEconomics.offers.find((o) => o.offerId === offerId);
     if (!offer) {
       return res.status(404).json({ error: `offer ${offerId} is not an offer of brand ${brandId}`, reason: "offer_not_found" });
@@ -146,7 +150,7 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
     const ticked = salesPath.stated ? (salesPath.legKeys ?? []) : [];
     for (const chain of enumerateSalesPaths(ticked)) {
       for (const legKey of chain) {
-        for (const c of legChannelsForScope(channels, legKey, scope)) {
+        for (const c of legChannelsForScope(channels, legKey, scope, MANAGED_CHANNEL_SLUGS, catalogueChannelSlugs)) {
           if (MANAGED_CHANNEL_SLUGS.has(c.slug)) pairs.set(priceKey(legKey, c.slug), { legKey, slug: c.slug });
         }
       }
@@ -180,6 +184,7 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
       prices,
       fleetPrices,
       scope,
+      catalogueChannelSlugs,
     });
     // Every row's name, shared across clients and stable forever: assigned on first sight, in rank order.
     const names = await salesPathNamesFor(body.paths.map((p) => p.combinationKey));
