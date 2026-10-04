@@ -13,7 +13,7 @@ vi.mock("../lib/env.js", () => ({ validateRequiredEnv: vi.fn(), REQUIRED_ENV: []
 process.env.FEATURES_SERVICE_API_KEY = "test-key";
 const { default: app } = await import("../index.js");
 const { __setRecapDepsForTest } = await import("./org-period-recap.js");
-const { buildOrgPeriodRecap, windowDays, isCalendarDay } = await import("../lib/org-period-recap.js");
+const { buildOrgPeriodRecap, windowDays, isCalendarDay, windowOutcomeCount } = await import("../lib/org-period-recap.js");
 
 const ORG = "22222222-2222-4222-8222-222222222222";
 const BRAND = "11111111-1111-4111-8111-111111111111";
@@ -329,6 +329,64 @@ describe("GET /internal/orgs/:orgId/period-recap", () => {
   it("a producer failure is a 502, never a guessed figure", async () => {
     setDeps({ brandDays: async () => { throw new Error("email-gateway down"); } });
     expect((await get()).status).toBe(502);
+  });
+});
+
+describe("actualOutcomes: what HAPPENED in the window, on the dashboard's dated series (billing's informational email)", () => {
+  const series = (daily: Array<[string, number]>, undatedCount = 0) => ({
+    total: daily.reduce((n, [, c]) => n + c, 0) + undatedCount,
+    daily: daily.map(([date, count]) => ({ date, count })),
+    undatedCount,
+  });
+  type Series = ReturnType<typeof series>;
+  const withOutcomes = (replies: Series | null, meetings: Series | null, offerId = OFFER) => ({
+    ...offerReturn(NOT_MATURE, offerId),
+    outcomeSeries: { positiveReplies: replies, meetingsBooked: meetings },
+  });
+
+  it("sums the served dated series over the window's days only", async () => {
+    setDeps({
+      offerReturn: async () =>
+        withOutcomes(series([["2026-08-01", 5], ["2026-09-20", 2], ["2026-10-14", 1], ["2026-10-15", 9]]), series([["2026-09-25", 1]])),
+    });
+    const res = await get();
+    expect(res.status).toBe(200);
+    expect(res.body.actualOutcomes).toEqual({
+      basis: "dashboard_dated_series",
+      positiveReplies: 3, // 09-20 + 10-14 (both bounds inclusive), never 08-01 nor 10-15
+      positiveRepliesNullReason: null,
+      meetingsBooked: 1,
+      meetingsBookedNullReason: null,
+    });
+  });
+
+  it("counts a brand that sent NOTHING in the window (a reply lands on an earlier send); its return is not a scope", async () => {
+    const QUIET = "44444444-4444-4444-8444-444444444444";
+    setDeps({
+      brandIds: async () => [BRAND, QUIET],
+      brandDays: async (_o, brandId) => (brandId === BRAND ? [day("2026-09-20", 200, 100)] : [day("2026-08-01", 50, 50)]),
+      offerReturn: async (_o, brandId) =>
+        brandId === BRAND ? withOutcomes(series([]), series([])) : withOutcomes(series([["2026-09-30", 2]]), series([["2026-10-02", 1]]), "o-quiet"),
+    });
+    const res = await get();
+    expect(res.body.actualOutcomes).toMatchObject({ positiveReplies: 2, meetingsBooked: 1 });
+    expect(res.body.expectedReturn.returnScopes.map((s: { brandId: string }) => s.brandId)).toEqual([BRAND]);
+  });
+
+  it("an unreadable series is null outcomes_unavailable, an undated outcome null undated_outcomes — never 0", async () => {
+    setDeps({ offerReturn: async () => withOutcomes(null, series([["2026-09-25", 1]], 1)) });
+    const res = await get();
+    expect(res.body.actualOutcomes).toMatchObject({
+      positiveReplies: null,
+      positiveRepliesNullReason: "outcomes_unavailable",
+      meetingsBooked: null,
+      meetingsBookedNullReason: "undated_outcomes",
+    });
+  });
+
+  it("nothing happened is a measured 0", () => {
+    expect(windowOutcomeCount([series([["2026-08-01", 4]])], new Set(["2026-09-20"]))).toEqual({ count: 0, nullReason: null });
+    expect(windowOutcomeCount([], new Set(["2026-09-20"]))).toEqual({ count: 0, nullReason: null });
   });
 });
 
