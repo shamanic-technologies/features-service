@@ -1754,8 +1754,11 @@ const salesPathCandidateSchema = z.object({
   slug: z.string(),
   name: z.string(),
   trigger: z.enum(["daily_budget", "step_reached"]),
-  costPerOutcomeUsd: z.number().nullable().describe("The cost the cascade resolved: recommended workflow > measured fleet cost > seeded default."),
-  costSource: z.enum(["workflow", "fleet_measured", "default"]).nullable().describe("Which rung of the cost cascade priced the candidate. Null when unpriced."),
+  managed: z.boolean().describe("True when the platform runs this channel today (sales-cold-email-outreach, ai-meeting-booking, ai-instant-call)."),
+  operatedBy: z.enum(["platform", "customer"]).describe("customer: the customer's own team works the leg (your-team-* channels)."),
+  costPerOutcomeUsd: z.number().nullable().describe("The cost the cascade resolved. A managed channel: recommended workflow > measured fleet cost > seeded default. A channel we do not run (scope=catalogue): measured fleet cost > sourced market benchmark."),
+  costSource: z.enum(["workflow", "fleet_measured", "default", "benchmark"]).nullable().describe("Which rung of the cost cascade priced the candidate (benchmark: a sourced market benchmark, see costBenchmarkSource). Null when unpriced."),
+  costBenchmarkSource: z.string().nullable().describe("When costSource is benchmark: the benchmark's cited source and derivation, in words. Null otherwise."),
   workflowDynastySlug: z.string().nullable(),
   grain: z.string().nullable().describe("Grain the price rests on: crossOrg (fleet benchmark), brand, offer."),
   unpricedReason: z.string().nullable().describe("Null when priced by any rung; else why this channel states no price for the leg."),
@@ -1763,6 +1766,7 @@ const salesPathCandidateSchema = z.object({
 });
 const salesPathLegSchema = z.object({
   legKey: z.string(),
+  ticked: z.boolean().describe("Whether the customer ticked this leg on the offer (always true with scope=ticked)."),
   fromStep: salesPathStepSchema.nullable().describe("Null on the ENTRY leg (from nothing)."),
   toStep: salesPathStepSchema,
   conversionRatePct: z.number().nullable().describe("The rate RETAINED for the leg (0..100). Null on the entry leg."),
@@ -1776,34 +1780,38 @@ const salesPathLegSchema = z.object({
     })
     .nullable()
     .describe("Every source the rate was resolved from (measured > customer stated > fleet median > industry default). The fleet median is retained only when fleetMedian.brandCount is at least 5; below that the industry default is retained. A leg leaving website_visit never takes the fleet median (every visit we produce is a cold-email click; other customers' stated visit rates describe their own inbound traffic): it reads measured > customer stated > industry default (cold-click benchmark), with the median served as an input only."),
-  workedBy: z.enum(["platform", "human"]).describe("platform: one of the channels the platform MANAGES (sales-cold-email-outreach, ai-meeting-booking, ai-instant-call) publishes the leg; human: none does (the customer's team) — rate, no cost."),
+  workedBy: z.enum(["platform", "human"]).describe("platform: a platform channel works the leg in this combination (scope=ticked: only the MANAGED channels sales-cold-email-outreach, ai-meeting-booking, ai-instant-call; scope=catalogue: any shortlisted platform channel, see channel.managed). human: the customer's team — a your-team-* channel (scope=catalogue, priced on the team's time) or no channel at all (rate, no cost)."),
   channel: z
     .object({
       slug: z.string().nullable(),
       name: z.string().nullable(),
       trigger: z.enum(["daily_budget", "step_reached"]).nullable(),
+      managed: z.boolean().describe("True when the platform runs this channel today."),
+      operatedBy: z.enum(["platform", "customer"]),
+      costBenchmarkSource: z.string().nullable().describe("When costSource is benchmark: the cited source and derivation."),
       workflowDynastySlug: z.string().nullable(),
       grain: z.string().nullable(),
-      costSource: z.enum(["workflow", "fleet_measured", "default"]).nullable(),
+      costSource: z.enum(["workflow", "fleet_measured", "default", "benchmark"]).nullable(),
       choice: z.enum(["only_priced_channel", "cheapest_cost_per_outcome", "no_priced_channel", "alternative_channel"]).describe("only_priced_channel / cheapest_cost_per_outcome: this row's channel is the leg's cheapest. alternative_channel: this row runs the leg on another candidate (costlier or unpriced); another row runs the cheapest. no_priced_channel: no candidate could price the leg."),
       candidates: z.array(salesPathCandidateSchema),
     })
     .nullable()
-    .describe("Present on a platform leg: the channel THIS combination runs it on (one row per candidate channel), with every candidate listed."),
+    .describe("The channel THIS combination works the leg on (one row per candidate channel), with every candidate listed. Null when no candidate channel publishes the leg."),
   outcomesNeededPerPayingClient: z.number().nullable(),
   costPerOutcomeUsd: z.number().nullable(),
-  costSource: z.enum(["workflow", "fleet_measured", "default"]).nullable().describe("Which rung of the cost cascade priced the leg: workflow > fleet_measured > default. Null on a human leg."),
+  costSource: z.enum(["workflow", "fleet_measured", "default", "benchmark"]).nullable().describe("Which rung of the cost cascade priced the leg: workflow > fleet_measured > default (managed channel), fleet_measured > benchmark (a channel we do not run). Null on a leg with no channel."),
   costPerPayingClientUsd: z.number().nullable().describe("costPerOutcomeUsd × outcomesNeededPerPayingClient. Null on a human leg or when unpriced."),
 });
 const salesPathSchema = z.object({
   rank: z.number(),
-  combinationKey: z.string().describe("The row's UNIQUE identity within the response (key rows on it): the legs in order joined by `+`, each leg a managed channel works suffixed `@<channel slug>`, e.g. `start_to_conversation@sales-cold-email-outreach+conversation_to_paid_client`. The same combination has the same key for every brand and org."),
+  combinationKey: z.string().describe("The row's UNIQUE identity within the response (key rows on it): the legs in order joined by `+`, each leg a PLATFORM channel works suffixed `@<channel slug>` (a leg the customer's team works keys bare, so a combination keys the same in both scopes), e.g. `start_to_conversation@sales-cold-email-outreach+conversation_to_paid_client`. The same combination has the same key for every brand and org."),
   name: z.string().describe("The combination's name: one English word (e.g. Victory, Sol), the SAME for every client, brand and org, given once on first sight and never changed nor reused."),
   pathKey: z.string().describe("The CHAIN of legs (legKeys joined by `+`), shared by every combination of that chain. Not unique: key rows on combinationKey."),
   legKeys: z.array(z.string()),
   steps: z.array(salesPathStepSchema),
   entryLegKey: z.string(),
   entryChannelSlug: z.string().nullable().describe("This combination's channel on the entry leg — what a budget behind this row buys. Null when the entry leg is human."),
+  ticked: z.boolean().describe("Whether the customer ticked EVERY leg of the chain (always true with scope=ticked)."),
   legs: z.array(salesPathLegSchema),
   entryToPayingClientPct: z.number().nullable(),
   lifetimeRevenueUsd: z.number().nullable(),
@@ -1817,6 +1825,7 @@ const offerSalesPathsResponseRef = registry.register(
     offerId: z.string(),
     brandId: z.string(),
     status: z.enum(["ok", "not_stated", "no_legs_selected", "no_complete_path"]),
+    scope: z.enum(["ticked", "catalogue"]).describe("Which combinatory is listed (echo of ?scope=)."),
     statedAt: z.string().nullable(),
     selectedLegKeys: z.array(z.string()),
     unknownLegKeys: z.array(z.string()),
@@ -1834,16 +1843,20 @@ registry.registerPath({
     "A SALES PATH is a chain of the legs the customer ticked for the offer (brand-service sales-path) from an ENTRY leg (from nothing) to paid_client, visiting no step twice. " +
     "Formula: needed(paid_client)=1; needed(from step of leg i)=needed(to step)/(rate_i/100); legCost_i = costPerOutcome_i × needed(to step of leg i) for a leg a channel of ours works (0 for a human leg); costPerPayingClient = Σ legCost_i; roi = offer lifetime revenue ÷ costPerPayingClient. " +
     "rate_i is the brand's effective leg rate (CRM-measured / measured on our leads > customer stated > fleet median, only when at least 5 brands stated the leg and never on a leg leaving website_visit > industry default). costPerOutcome_i is the NET cost per outcome of the recommended workflow of each platform channel's leg-keyed workflow-projection ladder (?leg=&offerId=&pricing=net), else the channel's measured fleet cost per outcome on the leg, else a seeded default (costSource says which); every candidate channel of a leg forms its OWN row (one row per COMBINATION of a chain × one managed channel per platform leg), each ranked on its own; channel.choice says whether the row's channel is the leg's cheapest. Every row has a unique combinationKey and a shared, permanent name. Only the managed channels (sales-cold-email-outreach, ai-meeting-booking, ai-instant-call) are candidates; every other leg is the customer's team (workedBy human, cost 0). " +
-    "Ranked by roi descending; a path whose roi is null (reason stated) sorts last. status not_stated / no_legs_selected / no_complete_path serve paths: [] — none is invented. Additive read.",
+    "Ranked by roi descending; a path whose roi is null (reason stated) sorts last. status not_stated / no_legs_selected / no_complete_path serve paths: [] — none is invented. Additive read. " +
+    "?scope=catalogue (owner 2026-10-04) lists the WHOLE combinatory instead: every chain the leg catalogue allows, ticked or not (row/leg `ticked` says which), × one channel of the owner's shortlist per leg it publishes (entry: sales-cold-email-outreach, cold-linkedin-outreach, cold-call-outreach, google-ads, linkedin-ads, meta-ads, seo-content; middle/closing: ai-meeting-booking, ai-instant-call, your-team-meeting-booking, your-team-meeting-attendance, your-team-closing-calls, your-team-signup-conversion; no agency channel). channel.managed says whether we run it today. A channel we do not run prices on the fleet's measured cost, else a sourced market benchmark (costSource benchmark, costBenchmarkSource cites it); the customer's team is priced on its time. Statuses not_stated / no_legs_selected do not apply. The default (scope=ticked) is unchanged and is what campaign-service funds.",
   tags: ["Stats"],
   request: {
     headers: identityHeaders,
     params: z.object({ offerId: z.string() }),
-    query: z.object({ brandId: z.string().describe("Brand UUID (required).") }),
+    query: z.object({
+      brandId: z.string().describe("Brand UUID (required)."),
+      scope: z.enum(["ticked", "catalogue"]).optional().describe("ticked (default): the offer's ticked legs × the managed channels. catalogue: every catalogue chain × the owner's channel shortlist, benchmark-priced where unmeasured."),
+    }),
   },
   responses: {
     200: { description: "The offer's sales paths", content: { "application/json": { schema: offerSalesPathsResponseRef } } },
-    400: { description: "Missing brandId", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "Missing brandId, or scope not ticked/catalogue (reason: scope_unrecognised)", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Offer not found or not an offer of this brand (reason: offer_not_found)", content: { "application/json": { schema: errorResponse } } },
     502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
     503: { description: "Right after a restart, the fleet's measured cost per outcome (the cost cascade's middle rung) was still being built after the read waited ~200 s for it (reason: fleet_costs_not_computed_yet, Retry-After: 60). Never answered with seeded default costs in place of a measurement.", content: { "application/json": { schema: errorResponse } } },

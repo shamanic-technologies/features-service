@@ -55,6 +55,22 @@
  *   So a managed leg never yields `leg_cost_unavailable` merely because no workflow is active or
  *   eligible; `costSource` states which rung priced it.
  *
+ * ── `?scope=catalogue`: THE WHOLE COMBINATORY (owner 2026-10-04) ──────────────────────────────
+ *
+ *   The default read (`scope: "ticked"`, above) is what campaign-service funds and onboarding launches
+ *   first, and it is unchanged. `scope: "catalogue"` lists EVERY chain the leg catalogue allows (ticked or
+ *   not; each row and leg says `ticked`) × one channel of the owner's SHORTLIST per leg that channel
+ *   publishes (`SALES_PATH_CATALOGUE_CHANNEL_SLUGS`, `lib/sales-path-cost-benchmarks.ts`). Per leg,
+ *   `channel.managed` says whether we run that channel today. A managed channel prices exactly as above; a
+ *   channel we do not run prices on the fleet's real spend when there is some, else on its sourced market
+ *   BENCHMARK (`costSource: "benchmark"`, `costBenchmarkSource` cites it). The customer's own team
+ *   (`your-team-*`, `operatedBy: customer`) is priced on its time, so it never reads as free beside a
+ *   channel of ours. A leg no shortlisted channel publishes (a visitor signing up, a booking call turned
+ *   into a meeting) stays `human` with no channel and no cost, exactly as in the default read.
+ *
+ *   `combinationKey` suffixes `@<slug>` only on a leg a PLATFORM channel works, so a leg the customer's
+ *   team works keys bare in both scopes: the same combination keeps the same key and NAME in both reads.
+ *
  * ── NULLS ARE REASONS, NEVER ZEROS ────────────────────────────────────────────────────────────
  *
  * A path with a platform leg no channel could price, a leg converting at 0%, or an offer with no lifetime
@@ -65,6 +81,12 @@ import type { ChannelStepDefWire } from "./channel-catalogue.js";
 import { CHANNEL_STEPS } from "./acquisition-channels.js";
 import { funnelLeg } from "./funnel-legs.js";
 import { legPairKey, type EffectiveArrowRate } from "./effective-conversion-rates.js";
+import { FUNNEL_LEG_KEYS } from "./funnel-legs.js";
+import {
+  SALES_PATH_CATALOGUE_CHANNEL_SLUGS,
+  SALES_PATH_COST_BENCHMARKS,
+  type SalesPathCostBenchmark,
+} from "./sales-path-cost-benchmarks.js";
 
 /** Where the rate retained for a leg came from, in the customer's terms. */
 export type SalesPathRateSource =
@@ -107,7 +129,10 @@ export const DEFAULT_COST_PER_OUTCOME_USD: ReadonlyMap<string, number> = new Map
 ]);
 
 /** Which rung of the cost cascade priced a candidate. */
-export type SalesPathCostSource = "workflow" | "fleet_measured" | "default";
+export type SalesPathCostSource = "workflow" | "fleet_measured" | "default" | "benchmark";
+
+/** Which combinatory a read lists: the offer's ticked legs × managed channels (default), or the whole catalogue × the shortlist. */
+export type SalesPathScope = "ticked" | "catalogue";
 
 export interface SalesPathChannelInput {
   slug: string;
@@ -131,6 +156,10 @@ export interface SalesPathChannelCandidate {
   slug: string;
   name: string;
   trigger: "daily_budget" | "step_reached";
+  /** True when the platform runs this channel today (`MANAGED_CHANNEL_SLUGS`). */
+  managed: boolean;
+  /** `customer`: the customer's own team works the leg (`your-team-*`). */
+  operatedBy: "platform" | "customer";
   /** The cost the cascade resolved (workflow > fleet measured > default). Null only when nothing priced it. */
   costPerOutcomeUsd: number | null;
   /** Which rung priced it. Null when unpriced. */
@@ -141,6 +170,8 @@ export interface SalesPathChannelCandidate {
   unpricedReason: string | null;
   /** Why the WORKFLOW rung did not price it (the ladder's reason), even when a later rung did. Null when it did. */
   workflowUnpricedReason: string | null;
+  /** The cited source of the market benchmark, when `costSource` is `benchmark`. Null otherwise. */
+  costBenchmarkSource: string | null;
 }
 
 export type SalesPathChannelChoice =
@@ -155,6 +186,8 @@ export type SalesPathChannelChoice =
 
 export interface SalesPathLeg {
   legKey: string;
+  /** Whether the customer ticked this leg on the offer. */
+  ticked: boolean;
   fromStep: ChannelStepDefWire | null;
   toStep: ChannelStepDefWire;
   /** Null on an entry leg (from nothing). */
@@ -175,13 +208,17 @@ export interface SalesPathLeg {
     fleetMedian: { ratePct: number | null; brandCount: number };
     industryDefaultPct: number | null;
   } | null;
-  /** `platform`: one of the MANAGED channels publishes this leg. `human`: none does (the customer's team). */
+  /** `platform`: a platform channel works this leg in this combination. `human`: the customer's team does
+   *  (a `your-team-*` channel in the catalogue scope, or no channel at all). */
   workedBy: "platform" | "human";
-  /** Present on a platform leg: the channel we would run it on, and why. */
+  /** The channel THIS combination works the leg on, and why. Null when no candidate channel publishes the leg. */
   channel: {
     slug: string | null;
     name: string | null;
     trigger: "daily_budget" | "step_reached" | null;
+    managed: boolean;
+    operatedBy: "platform" | "customer";
+    costBenchmarkSource: string | null;
     workflowDynastySlug: string | null;
     grain: string | null;
     costSource: SalesPathCostSource | null;
@@ -218,6 +255,8 @@ export interface SalesPath {
   entryLegKey: string;
   /** The combination's channel on the entry leg (what a budget behind this row buys). Null on a human entry leg. */
   entryChannelSlug: string | null;
+  /** Whether the customer ticked EVERY leg of the chain (always true in the ticked scope). */
+  ticked: boolean;
   legs: SalesPathLeg[];
   /** Share of entry outcomes that become a paying client: Π rate(Li)/100 over the non-entry legs, in %. */
   entryToPayingClientPct: number | null;
@@ -233,6 +272,7 @@ export interface OfferSalesPathsBody {
   offerId: string;
   brandId: string;
   status: OfferSalesPathsStatus;
+  scope: SalesPathScope;
   statedAt: string | null;
   selectedLegKeys: string[];
   /** Ticked keys naming no leg of the catalogue — ignored, stated so they are not silently dropped. */
@@ -312,12 +352,19 @@ export interface BuildOfferSalesPathsInput {
   managedChannelSlugs?: ReadonlySet<string>;
   /** The last rung of the cost cascade (default `DEFAULT_COST_PER_OUTCOME_USD`). */
   defaultCosts?: ReadonlyMap<string, number>;
+  /** Which combinatory to list (default `ticked`). */
+  scope?: SalesPathScope;
+  /** The catalogue scope's channel shortlist (default `SALES_PATH_CATALOGUE_CHANNEL_SLUGS`). */
+  catalogueChannelSlugs?: ReadonlySet<string>;
+  /** The catalogue scope's last cost rung for a channel we do not run (default `SALES_PATH_COST_BENCHMARKS`). */
+  benchmarks?: ReadonlyMap<string, SalesPathCostBenchmark>;
 }
 
 export const priceKey = (legKey: string, slug: string): string => `${legKey}|${slug}`;
 
 /** PURE: a combination's identity — the legs in order, each leg a managed channel works `@<channel slug>`. */
 export function combinationKeyOf(legs: ReadonlyArray<{ legKey: string; channelSlug: string | null }>): string {
+  // Callers pass `channelSlug` only for a PLATFORM channel: a leg the customer's team works keys bare.
   return legs.map((l) => (l.channelSlug ? `${l.legKey}@${l.channelSlug}` : l.legKey)).join("+");
 }
 
@@ -336,6 +383,23 @@ export function platformChannelsForLeg(
 }
 
 const usable = (v: number | null | undefined): v is number => typeof v === "number" && Number.isFinite(v) && v > 0;
+
+/** PURE: the candidate channels of a leg in a scope — managed platform channels (ticked), or the shortlist (catalogue). */
+export function legChannelsForScope(
+  channels: readonly SalesPathChannelInput[],
+  legKey: string,
+  scope: SalesPathScope,
+  managed: ReadonlySet<string> = MANAGED_CHANNEL_SLUGS,
+  shortlist: ReadonlySet<string> = SALES_PATH_CATALOGUE_CHANNEL_SLUGS,
+): SalesPathChannelInput[] {
+  if (scope === "ticked") return platformChannelsForLeg(channels, legKey, managed);
+  return channels.filter((c) => shortlist.has(c.slug) && c.legKeys.includes(legKey));
+}
+
+/** PURE: the legs a scope enumerates chains over. */
+export function legKeysForScope(scope: SalesPathScope, ticked: readonly string[]): string[] {
+  return scope === "catalogue" ? [...FUNNEL_LEG_KEYS] : [...ticked];
+}
 
 /** PURE: the cost cascade for one (leg, channel) — workflow > fleet measured > default. */
 export function resolveLegChannelCost(
@@ -362,11 +426,17 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
     lifetimeRevenueUsd: input.lifetimeRevenueUsd,
     pricing: "net" as const,
   };
-  if (!input.stated) return { ...base, status: "not_stated", paths: [] };
-  if (selected.length - unknownLegKeys.length === 0) return { ...base, status: "no_legs_selected", paths: [] };
+  const scope = input.scope ?? "ticked";
+  if (scope === "ticked") {
+    if (!input.stated) return { ...base, scope, status: "not_stated", paths: [] };
+    if (selected.length - unknownLegKeys.length === 0) return { ...base, scope, status: "no_legs_selected", paths: [] };
+  }
 
-  const chains = enumerateSalesPaths(selected);
-  if (chains.length === 0) return { ...base, status: "no_complete_path", paths: [] };
+  const chains = enumerateSalesPaths(legKeysForScope(scope, selected));
+  if (chains.length === 0) return { ...base, scope, status: "no_complete_path", paths: [] };
+  const tickedLegs = new Set(input.stated ? selected : []);
+  const shortlist = input.catalogueChannelSlugs ?? SALES_PATH_CATALOGUE_CHANNEL_SLUGS;
+  const benchmarks = input.benchmarks ?? SALES_PATH_COST_BENCHMARKS;
 
   const arrows = new Map(input.rates.map((a) => [legPairKey(a.fromStep, a.toStep), a]));
   const managed = input.managedChannelSlugs ?? MANAGED_CHANNEL_SLUGS;
@@ -395,25 +465,43 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
       }
     }
 
-    // Per leg: every managed channel's candidate (priced by the cascade), and the cheapest of them.
+    // Per leg: every candidate channel (priced by the cascade), and the cheapest of them.
     const legCandidates = defs.map((d) => {
-      const platform = platformChannelsForLeg(input.channels, d.legKey, managed);
-      if (platform.length === 0) return null;
-      const candidates: SalesPathChannelCandidate[] = platform.map((c) => {
+      const offered = legChannelsForScope(input.channels, d.legKey, scope, managed, shortlist);
+      if (offered.length === 0) return null;
+      const candidates: SalesPathChannelCandidate[] = offered.map((c) => {
         const key = priceKey(d.legKey, c.slug);
         const p = input.prices.get(key);
-        const resolved = resolveLegChannelCost(p, fleetPrices.get(key), defaultCosts.get(key));
+        const isManaged = managed.has(c.slug);
+        const benchmark = isManaged ? undefined : benchmarks.get(key);
+        // A channel we run: workflow > fleet > seeded default. One we do not: fleet > market benchmark.
+        const resolved = isManaged
+          ? resolveLegChannelCost(p, fleetPrices.get(key), defaultCosts.get(key))
+          : usable(fleetPrices.get(key))
+            ? { costPerOutcomeUsd: fleetPrices.get(key)!, costSource: "fleet_measured" as const }
+            : usable(benchmark?.costPerOutcomeUsd)
+              ? { costPerOutcomeUsd: benchmark!.costPerOutcomeUsd, costSource: "benchmark" as const }
+              : { costPerOutcomeUsd: null, costSource: null };
         const workflowPriced = resolved.costSource === "workflow";
-        const workflowUnpricedReason = workflowPriced ? null : (p ? (p.unpricedReason ?? "recommended_workflow_unpriced") : "not_priced");
+        const workflowUnpricedReason = workflowPriced
+          ? null
+          : !isManaged
+            ? "channel_not_managed"
+            : p
+              ? (p.unpricedReason ?? "recommended_workflow_unpriced")
+              : "not_priced";
         return {
           slug: c.slug,
           name: c.name,
           trigger: c.trigger,
+          managed: isManaged,
+          operatedBy: c.operatedBy,
+          costBenchmarkSource: resolved.costSource === "benchmark" ? benchmark!.source : null,
           costPerOutcomeUsd: resolved.costPerOutcomeUsd,
           costSource: resolved.costSource,
           workflowDynastySlug: workflowPriced ? (p?.workflowDynastySlug ?? null) : null,
           grain: workflowPriced ? (p?.grain ?? null) : resolved.costSource === "fleet_measured" ? "crossOrg" : null,
-          unpricedReason: resolved.costSource === null ? workflowUnpricedReason : null,
+          unpricedReason: resolved.costSource === null ? (isManaged ? workflowUnpricedReason : "no_benchmark") : null,
           workflowUnpricedReason,
         };
       });
@@ -424,7 +512,7 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
     const picks = cartesian(legCandidates.map((lc) => (lc ? lc.candidates : [null])));
     return picks.map((pick): Omit<SalesPath, "rank"> => {
       let costUnavailable = false;
-      let anyPlatform = false;
+      let anyCosted = false;
       let total = 0;
       const legs: SalesPathLeg[] = defs.map((d, i) => {
         const arrow = legRates[i];
@@ -434,11 +522,14 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
         let costPerOutcomeUsd: number | null = null;
         let costPerPayingClientUsd: number | null = null;
         if (lc && picked) {
-          anyPlatform = true;
+          anyCosted = true;
           channel = {
             slug: picked.slug,
             name: picked.name,
             trigger: picked.trigger,
+            managed: picked.managed,
+            operatedBy: picked.operatedBy,
+            costBenchmarkSource: picked.costBenchmarkSource,
             workflowDynastySlug: picked.workflowDynastySlug,
             grain: picked.grain,
             costSource: picked.costSource,
@@ -454,6 +545,7 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
         }
         return {
           legKey: d.legKey,
+          ticked: scope === "ticked" || tickedLegs.has(d.legKey),
           fromStep: d.fromStep ? stepWire(d.fromStep.key) : null,
           toStep: stepWire(d.toStep.key),
           conversionRatePct: arrow?.effectiveRatePct ?? null,
@@ -473,7 +565,7 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
                 industryDefaultPct: arrow.defaultRatePct,
               }
             : null,
-          workedBy: lc ? "platform" : "human",
+          workedBy: picked && picked.operatedBy === "platform" ? "platform" : "human",
           channel,
           outcomesNeededPerPayingClient: needed[i],
           costPerOutcomeUsd,
@@ -491,20 +583,23 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
       let roiUnavailableReason: SalesPathRoiUnavailableReason | null = null;
       if (zeroRate) roiUnavailableReason = "zero_conversion_rate";
       else if (costUnavailable) roiUnavailableReason = "leg_cost_unavailable";
-      else if (!anyPlatform || total <= 0) roiUnavailableReason = "no_platform_cost";
+      else if (!anyCosted || total <= 0) roiUnavailableReason = "no_platform_cost";
       else if (ltr === null) roiUnavailableReason = "no_lifetime_revenue";
-      const costPerPayingClientUsd = zeroRate || costUnavailable || !anyPlatform ? null : total;
+      const costPerPayingClientUsd = zeroRate || costUnavailable || !anyCosted ? null : total;
       const roi = roiUnavailableReason === null ? ltr! / total : null;
 
       const steps = [stepWire(defs[0].toStep.key), ...defs.slice(1).map((d) => stepWire(d.toStep.key))];
       return {
-        combinationKey: combinationKeyOf(legs.map((l) => ({ legKey: l.legKey, channelSlug: l.channel?.slug ?? null }))),
+        combinationKey: combinationKeyOf(
+          legs.map((l) => ({ legKey: l.legKey, channelSlug: l.channel?.operatedBy === "platform" ? l.channel.slug : null })),
+        ),
         name: null,
         pathKey: legKeys.join("+"),
         legKeys,
         steps,
         entryLegKey: legKeys[0],
         entryChannelSlug: legs[0].channel?.slug ?? null,
+        ticked: legs.every((l) => l.ticked),
         legs,
         entryToPayingClientPct,
         lifetimeRevenueUsd: ltr,
@@ -526,7 +621,7 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
     return ca - cb || tie(a, b);
   });
 
-  return { ...base, status: "ok", paths: paths.map((p, i) => ({ rank: i + 1, ...p })) };
+  return { ...base, scope, status: "ok", paths: paths.map((p, i) => ({ rank: i + 1, ...p })) };
 }
 
 /** PURE: the body with every row's name from `names` (keyed on `combinationKey`). Throws on a row left unnamed. */
