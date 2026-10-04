@@ -45,8 +45,9 @@
  *     `netTotalCostInUsdCents`, every brand, setup included) — what the month's credit was consumed by.
  *   - +$100 is LINEAR AT THE SERVED RETURN: `expectedAdditionalRevenueUsd` = 100 × roiMultiple exactly;
  *     `expectedAdditionalPositiveReplies` = 100 ÷ window spend × expected replies; `revenueMultiple` =
- *     (window spend + 100) ÷ window spend (revenue at the same return scales with spend). Nothing about
- *     diminishing or improving returns is claimed.
+ *     (window spend + 100) ÷ window spend (revenue at the same return scales with spend);
+ *     `expectedAdditionalRecipientsEnrolled` = 100 × enrolled ÷ spend, whole people (needs no rate or economics,
+ *     so it has its own null reason). Nothing about diminishing or improving returns is claimed.
  *   - UNKNOWN IS NULL WITH A REASON, NEVER 0. A zero is served only where it is TRUE (nothing sent in the
  *     window ⇒ 0 emails, 0 expected replies).
  */
@@ -194,6 +195,9 @@ export interface OrgPeriodRecap {
   budgetIncrease: {
     amountUsd: number;
     basis: "linear_at_served_return";
+    /** amountUsd × recipientsEnrolled ÷ spend, whole recipients: how many more leads the amount lines up. */
+    expectedAdditionalRecipientsEnrolled: number | null;
+    expectedAdditionalRecipientsEnrolledNullReason: RecapNullReason | null;
     expectedAdditionalPositiveReplies: number | null;
     /** `amountUsd × expectedReturn.roiMultiple`. */
     expectedAdditionalRevenueUsd: number | null;
@@ -431,6 +435,9 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
       ? null
       : expectedRevenueUsd / lifetimeRevenuePerClientUsd;
   const hasSpend = spendUsd > 0;
+  // Volume needs no rate and no economics: only something lined up and a spend that lined it up.
+  const recipientsReason: RecapNullReason | null =
+    recipientsContacted === 0 ? "nothing_sent" : spendUsd <= 0 ? "no_spend_in_window" : null;
   return {
     orgId: input.orgId,
     window: { from: input.from, to: input.to, grain: "utc_day", days: days.size },
@@ -464,6 +471,8 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
     budgetIncrease: {
       amountUsd: BUDGET_INCREASE_USD,
       basis: "linear_at_served_return",
+      expectedAdditionalRecipientsEnrolled: recipientsReason ? null : Math.round((BUDGET_INCREASE_USD * recipientsContacted) / spendUsd),
+      expectedAdditionalRecipientsEnrolledNullReason: recipientsReason,
       expectedAdditionalPositiveReplies:
         expectedReplies !== null && hasSpend ? round((BUDGET_INCREASE_USD * expectedReplies) / spendUsd, 2) : null,
       expectedAdditionalRevenueUsd: roiMultiple === null ? null : round(BUDGET_INCREASE_USD * roiMultiple, 2),

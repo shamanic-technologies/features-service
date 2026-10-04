@@ -2717,6 +2717,8 @@ const orgPeriodRecapResponseRef = registry.register(
     budgetIncrease: z.object({
       amountUsd: z.number(),
       basis: z.literal("linear_at_served_return").describe("amountUsd more returns amountUsd x expectedReturn.roiMultiple; no diminishing or improving returns are claimed."),
+      expectedAdditionalRecipientsEnrolled: z.number().int().nullable().describe("How many more recipients (decision-makers) amountUsd lines up at current results: amountUsd x outbound.recipientsEnrolled / spendUsd, rounded to whole people. Same lead grain as recipientsEnrolled (lined up, not necessarily emailed yet). Null with expectedAdditionalRecipientsEnrolledNullReason when nothing was lined up or nothing was spent; independent of reply rate and economics."),
+      expectedAdditionalRecipientsEnrolledNullReason: recapNullReason.nullable(),
       expectedAdditionalPositiveReplies: z.number().nullable(),
       expectedAdditionalRevenueUsd: z.number().nullable().describe("amountUsd x expectedReturn.roiMultiple (the dashboard's return), rounded to the cent."),
       revenueMultiple: z.number().nullable().describe("(spendUsd + amountUsd) / spendUsd: revenue at the same served return scales with spend. Null when roiMultiple is null or nothing was spent in the window."),

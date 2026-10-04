@@ -69,7 +69,7 @@
  * total: a row for one channel and the total above it are visibly one statement at two grains.
  */
 import { Router } from "express";
-import { computeRevenueWindow, parseWindowDays, WINDOW_DAYS_ERROR } from "../lib/revenue-window.js";
+import { computeRevenueWindow, parseWindowDays, WINDOW_DAYS_ERROR, type WindowDays } from "../lib/revenue-window.js";
 import { FUNNEL_RETIRED_BODY, namesRetiredFunnel } from "../lib/retired-funnel-param.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { getFunnel } from "../lib/funnel-registry.js";
@@ -262,7 +262,7 @@ export interface OfferRevenueArgs {
   identity: { orgId: string; userId?: string; runId?: string };
   leadDetail: NonNullable<ReturnType<typeof parseLeadDetail>>;
   causes: NonNullable<ReturnType<typeof parseOutcomeCauses>>;
-  windowDays: number | undefined;
+  windowDays: WindowDays | undefined;
 }
 
 /**

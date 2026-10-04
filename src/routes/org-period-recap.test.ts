@@ -115,6 +115,8 @@ describe("GET /internal/orgs/:orgId/period-recap", () => {
       basis: "linear_at_served_return",
       expectedAdditionalRevenueUsd: 433.16, // 100 × the served return
       expectedAdditionalPositiveReplies: 3.03,
+      expectedAdditionalRecipientsEnrolled: 202, // 200 enrolled on $99 → $100 more lines up 202.02
+      expectedAdditionalRecipientsEnrolledNullReason: null,
       revenueMultiple: 2.01,
       nullReason: null,
     });
@@ -181,7 +183,12 @@ describe("GET /internal/orgs/:orgId/period-recap", () => {
     });
     expect(res.body.expectedPositiveReplies).toBe(0);
     expect(res.body.expectedReturn).toMatchObject({ roiMultiple: null, expectedRevenueUsd: null, nullReason: "nothing_sent", lifetimeRevenueNullReason: "nothing_sent", returnScopes: [] });
-    expect(res.body.budgetIncrease).toMatchObject({ expectedAdditionalRevenueUsd: null, nullReason: "nothing_sent" });
+    expect(res.body.budgetIncrease).toMatchObject({
+      expectedAdditionalRevenueUsd: null,
+      nullReason: "nothing_sent",
+      expectedAdditionalRecipientsEnrolled: null,
+      expectedAdditionalRecipientsEnrolledNullReason: "nothing_sent",
+    });
   });
 
   it("no mature rate and no fleet benchmark yet → null + reply_rate_unavailable, never 0", async () => {
@@ -273,6 +280,20 @@ describe("GET /internal/orgs/:orgId/period-recap", () => {
     expect(res.body.brands[0]).toMatchObject({ recipientsContacted: 302, recipientsEmailed: 0 });
   });
 
+  it("+$100 states how many more recipients it lines up, linear at current results (Legistai: 302 on $98.97 → 305)", async () => {
+    setDeps({
+      brandDays: async () => [day("2026-10-03", 0, 173), day("2026-10-04", 0, 129)],
+      spendByDay: async () => new Map([["2026-10-03", 50], ["2026-10-04", 48.97]]),
+    });
+    const res = await get("from=2026-10-03&to=2026-10-04");
+    expect(res.body.spendUsd).toBe(98.97);
+    // 100 × 302 / 98.97 = 305.14 → 305 whole recipients.
+    expect(res.body.budgetIncrease).toMatchObject({
+      expectedAdditionalRecipientsEnrolled: 305,
+      expectedAdditionalRecipientsEnrolledNullReason: null,
+    });
+  });
+
   it("emails out → sendStatus emails_sent with the emailed lead count", async () => {
     const res = await get();
     expect(res.body.outbound).toMatchObject({ sendStatus: "emails_sent", recipientsEnrolled: 200, recipientsEmailed: 200 });
@@ -291,6 +312,8 @@ describe("GET /internal/orgs/:orgId/period-recap", () => {
       expectedAdditionalRevenueUsd: 433.16,
       revenueMultiple: null,
       expectedAdditionalPositiveReplies: null,
+      expectedAdditionalRecipientsEnrolled: null,
+      expectedAdditionalRecipientsEnrolledNullReason: "no_spend_in_window",
       nullReason: "no_spend_in_window",
     });
   });

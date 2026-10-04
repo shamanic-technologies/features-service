@@ -17425,6 +17425,27 @@
                 ],
                 "description": "amountUsd more returns amountUsd x expectedReturn.roiMultiple; no diminishing or improving returns are claimed."
               },
+              "expectedAdditionalRecipientsEnrolled": {
+                "type": "integer",
+                "nullable": true,
+                "description": "How many more recipients (decision-makers) amountUsd lines up at current results: amountUsd x outbound.recipientsEnrolled / spendUsd, rounded to whole people. Same lead grain as recipientsEnrolled (lined up, not necessarily emailed yet). Null with expectedAdditionalRecipientsEnrolledNullReason when nothing was lined up or nothing was spent; independent of reply rate and economics."
+              },
+              "expectedAdditionalRecipientsEnrolledNullReason": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "nothing_sent",
+                  "reply_rate_unavailable",
+                  "economics_missing",
+                  "no_spend_in_window",
+                  "return_learning",
+                  "return_unavailable",
+                  "return_differs_across_scopes",
+                  "lifetime_revenue_differs_across_brands",
+                  "lifetime_revenue_differs_across_offers"
+                ],
+                "description": "Why the figure beside it is null. nothing_sent = nothing was lined up or sent in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue; no_spend_in_window = the org spent nothing in the window (per-window-dollar figures only); return_learning = the offer is not mature and its to-date return is not above 1x (the dashboard reads Learning); return_unavailable = no return is served for a scope that sent (no pair, no offer with campaigns, brand no longer held; the dashboard reads -); return_differs_across_scopes = the offers/brands that sent are shown different returns, so no one figure is true (see expectedReturn.returnScopes); lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer."
+              },
               "expectedAdditionalPositiveReplies": {
                 "type": "number",
                 "nullable": true
@@ -17459,6 +17480,8 @@
             "required": [
               "amountUsd",
               "basis",
+              "expectedAdditionalRecipientsEnrolled",
+              "expectedAdditionalRecipientsEnrolledNullReason",
               "expectedAdditionalPositiveReplies",
               "expectedAdditionalRevenueUsd",
               "revenueMultiple",
