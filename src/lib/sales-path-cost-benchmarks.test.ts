@@ -91,15 +91,21 @@ describe("the catalogue shortlist", () => {
   });
 });
 
-describe("?scope=catalogue", () => {
-  const body = build();
+/** The prod offer's ticked legs (Victory's offer, 2026-10-04): a conversation chain and a website chain. */
+const TICKED_BOTH_ENTRIES = [
+  "start_to_website_visit", "website_visit_to_meeting_booked", "meeting_booked_to_meeting_attended", "website_visit_to_signup",
+  "signup_to_paid_client", "start_to_conversation", "conversation_to_meeting_booked", "meeting_attended_to_paid_client",
+];
 
-  it("lists every catalogue chain × shortlisted channel, each row unique, every row priced", () => {
+describe("?scope=catalogue", () => {
+  const body = build({ legKeys: TICKED_BOTH_ENTRIES });
+
+  it("lists the ticked chains × shortlisted channels, each row unique, every row priced", () => {
     expect(body.scope).toBe("catalogue");
     expect(body.status).toBe("ok");
     const keys = body.paths.map((p) => p.combinationKey);
     expect(new Set(keys).size).toBe(keys.length);
-    expect(body.paths.length).toBeGreaterThanOrEqual(30);
+    expect(body.paths.length).toBeGreaterThanOrEqual(10);
     for (const p of body.paths) {
       expect(p.roi, p.combinationKey).not.toBeNull();
       for (const l of p.legs) {
@@ -126,7 +132,7 @@ describe("?scope=catalogue", () => {
     for (const p of body.paths) {
       for (const l of p.legs) if (l.channel) expect(SALES_PATH_CATALOGUE_CHANNEL_SLUGS.has(l.channel.slug!)).toBe(true);
     }
-    expect(body.paths.some((p) => p.legs.some((l) => l.channel?.slug === "ai-instant-call"))).toBe(true);
+    expect(body.paths.some((p) => p.legs.some((l) => l.channel?.slug === "ai-meeting-booking"))).toBe(true);
     expect(body.paths.some((p) => p.legs.some((l) => l.channel?.slug === "your-team-closing-calls"))).toBe(true);
   });
 
@@ -142,31 +148,34 @@ describe("?scope=catalogue", () => {
     expect(team.channel!).toMatchObject({ operatedBy: "customer", managed: false });
   });
 
-  it("flags the chains the offer ticked, and keys a ticked row exactly as the default read does", () => {
-    const ticked = body.paths.filter((p) => p.ticked);
-    expect(ticked.length).toBeGreaterThan(0);
-    expect(body.paths.some((p) => !p.ticked)).toBe(true);
-    const defaultRead = build({ scope: "ticked" });
+  it("lists only the legs the offer ticked, and keys a default-read row exactly as the default read does", () => {
+    for (const p of body.paths) {
+      expect(p.ticked).toBe(true);
+      for (const l of p.legs) {
+        expect(l.ticked).toBe(true);
+        expect(TICKED_BOTH_ENTRIES).toContain(l.legKey);
+      }
+    }
+    const defaultRead = build({ scope: "ticked", legKeys: TICKED_BOTH_ENTRIES });
     expect(defaultRead.scope).toBe("ticked");
     const catalogueKeys = new Set(body.paths.map((p) => p.combinationKey));
     for (const p of defaultRead.paths) expect(catalogueKeys.has(p.combinationKey), p.combinationKey).toBe(true);
   });
 
   it("prefers the fleet's real spend over a benchmark", () => {
-    const b = build({ fleetPrices: new Map([[priceKey("start_to_website_visit", "google-ads"), 3]]) });
+    const b = build({ legKeys: TICKED_BOTH_ENTRIES, fleetPrices: new Map([[priceKey("start_to_website_visit", "google-ads"), 3]]) });
     const leg = b.paths.find((p) => p.combinationKey.startsWith("start_to_website_visit@google-ads"))!.legs[0];
     expect(leg).toMatchObject({ costPerOutcomeUsd: 3, costSource: "fleet_measured" });
   });
 
-  it("serves the combinatory even when the offer ticked nothing", () => {
-    const b = build({ stated: false, legKeys: null });
-    expect(b.status).toBe("ok");
-    expect(b.paths.length).toBe(body.paths.length);
-    expect(b.paths.every((p) => !p.ticked)).toBe(true);
+  it("invents no row when the offer ticked nothing: the default read's status", () => {
+    expect(build({ stated: false, legKeys: null })).toMatchObject({ status: "not_stated", paths: [] });
+    expect(build({ legKeys: [] })).toMatchObject({ status: "no_legs_selected", paths: [] });
+    expect(build({ legKeys: ["start_to_conversation"] })).toMatchObject({ status: "no_complete_path", paths: [] });
   });
 
   it("prices one combination ONCE whatever the scope (the customer's team costs nothing in both)", () => {
-    const d = build({ scope: "ticked" });
+    const d = build({ scope: "ticked", legKeys: TICKED_BOTH_ENTRIES });
     const byKey = new Map(body.paths.map((p) => [p.combinationKey, p]));
     expect(d.paths.length).toBeGreaterThan(0);
     for (const p of d.paths) {
