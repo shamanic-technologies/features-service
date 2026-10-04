@@ -25,19 +25,28 @@
  *     `outcomesRequired` positive replies); otherwise the FLEET rate the public onboarding quotes
  *     (`/public/stats/outcome-prices`, the best workflow's conversion on `start_to_conversation`). A brand a
  *     few days old is the NORMAL case: it is priced on the fleet rate and says so (`rateSource`).
- *   - EXPECTED REVENUE = expected replies × P(paid client | positive reply) × lifetime revenue per client.
- *     P from the brand's EFFECTIVE economics (brand-service `sales-economics-effective`): `replyToPaidClientPct`
- *     when served, else `replyToMeetingPct × meetingToClosePct`. LIFETIME REVENUE is the one the customer
- *     STATED ON THEIR OFFER (brand-service `offer-economics`, the value every wave-C1 read prices on), never a
- *     brand/cross-brand average when one is stated: every offer of the brand states it and they agree →
- *     `offer_stated`; no offer states one → the brand's effective economics (`brand_economics`, its `source`
- *     rides `economicsSource`); offers disagree or only some state one → null +
- *     `lifetime_revenue_differs_across_offers` (sends are not split per offer here). Only the reply route is priced (`basis: "positive_replies"`): website visits are
- *     not, so the figure under-states rather than over-states.
+ *   - THE RETURN IS THE DASHBOARD'S, READ NEVER RE-DERIVED (features-service#TBD, 2026-10-04: Legistai's email
+ *     said 5.9x while its Today page said 4.3x). `expectedReturn.roiMultiple` = the return the customer is
+ *     shown for the scope that sent: `/offers/:offerId/revenue?pricing=net` (the Today page's read, the SAME
+ *     Gold cell via `offerRevenueJson`) → `costEconomics.maturity` → `servedReturnOf` (`lib/served-return.ts`:
+ *     mature half; not mature → to-date half when > 1x, else null `return_learning`). Every offer with
+ *     channels of every brand that contacted someone in the window is a scope; they must state ONE value,
+ *     else null + `return_differs_across_scopes` (never a blend, never a pick). `returnScopes` names each.
+ *     The window's own reply-route valuation was a second formula for "return" and is gone: it divided the
+ *     window's lined-up leads by a window spend most of whose send cost was not incurred yet, so it ran high.
+ *   - The rest of the return block is that one multiple restated, so nothing in it can disagree with it:
+ *     `expectedRevenueUsd` = roi × window spend, `expectedPaidClients` = that ÷ lifetime revenue per client.
+ *   - LIFETIME REVENUE per client (`lifetimeRevenuePerClientUsd`, shown beside the return) is the one the
+ *     customer STATED ON THEIR OFFER (brand-service `offer-economics`), never a brand/cross-brand average when
+ *     one is stated: every offer states it and they agree → `offer_stated`; none does → the brand's effective
+ *     economics (`brand_economics`, its `source` rides `economicsSource`); offers disagree or only some state
+ *     one → null + `lifetime_revenue_differs_across_offers`.
  *   - SPEND = the org's whole COMMITTED spend in the window on the NET basis (runs-service dated
  *     `netTotalCostInUsdCents`, every brand, setup included) — what the month's credit was consumed by.
- *   - +$100 is LINEAR AT CURRENT RESULTS: $100 more buys `100 / spend` more of the same volume, so it returns
- *     `100 × roi` more revenue. Nothing about diminishing or improving returns is claimed.
+ *   - +$100 is LINEAR AT THE SERVED RETURN: `expectedAdditionalRevenueUsd` = 100 × roiMultiple exactly;
+ *     `expectedAdditionalPositiveReplies` = 100 ÷ window spend × expected replies; `revenueMultiple` =
+ *     (window spend + 100) ÷ window spend (revenue at the same return scales with spend). Nothing about
+ *     diminishing or improving returns is claimed.
  *   - UNKNOWN IS NULL WITH A REASON, NEVER 0. A zero is served only where it is TRUE (nothing sent in the
  *     window ⇒ 0 emails, 0 expected replies).
  */
@@ -45,6 +54,8 @@ import { fetchWithRetry } from "./fetch-retry.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { legMaturity, maturityCutoffIso } from "./maturity.js";
 import { BrandOwnershipError, fetchEffectiveEconomics, type EffectiveEconomics } from "./sales-economics-client.js";
+import type { MaturityPair } from "./maturity.js";
+import { servedReturnOf, type ServedReturnHalf } from "./served-return.js";
 
 export const POSITIVE_REPLY_LEG_KEY = "start_to_conversation";
 export const BUDGET_INCREASE_USD = 100;
@@ -79,8 +90,14 @@ export type RecapNullReason =
   | "reply_rate_unavailable"
   /** A brand that sent in the window has no economics (no lifetime revenue, no reply → paid rate). */
   | "economics_missing"
-  /** The org spent nothing in the window: a return multiple has no denominator. */
+  /** The org spent nothing in the window: a per-dollar projection has no denominator. */
   | "no_spend_in_window"
+  /** The scope is not mature and its to-date return is not above 1x: the dashboard reads Learning. */
+  | "return_learning"
+  /** No return is served for the scope (no pair, no offer with campaigns, brand not held): the dashboard reads —. */
+  | "return_unavailable"
+  /** The scopes that sent in the window are shown different returns: no one figure is true. */
+  | "return_differs_across_scopes"
   /** Brands that sent in the window are valued at different lifetime revenues: no one figure is true. */
   | "lifetime_revenue_differs_across_brands"
   /** The brand's offers state different lifetime revenues (or only some state one): no one figure is true. */
@@ -103,15 +120,37 @@ export interface RecapBrand {
   /** The brand's own mature cohort the rate was (or would have been) read from. */
   matureCohort: { cutoffDate: string; recipientsContacted: number; recipientsRepliesPositive: number; outcomesRequired: number };
   expectedPositiveReplies: number | null;
-  replyToPaidClientPct: number | null;
   lifetimeRevenuePerClientUsd: number | null;
   lifetimeRevenueSource: LifetimeRevenueSource | null;
   /** The offer whose stated lifetime revenue is used (a one-offer brand), else null. */
   lifetimeRevenueOfferId: string | null;
   lifetimeRevenueStatedAt: string | null;
   economicsSource: EffectiveEconomics["source"];
-  expectedPaidClients: number | null;
-  expectedRevenueUsd: number | null;
+  nullReason: RecapNullReason | null;
+}
+
+/** One offer's served return, as `/offers/:offerId/revenue?pricing=net` serves it (the dashboard's read). */
+export interface OfferReturnRead {
+  offerId: string;
+  /** `costEconomics.maturity` (null = no pair served). */
+  pair: MaturityPair<{ roiMultiple: number | null }> | null;
+  /** `headline.totalPipelineUsd` and `costEconomics.committedCostUsd`: what the flash return divides. */
+  pipelineUsd: number | null;
+  committedCostUsd: number | null;
+}
+
+/** A scope whose served return the recap states (provenance). */
+export interface RecapReturnScope {
+  brandId: string;
+  /** null = the brand's return could not be read at all (brand not held / no offer with campaigns). */
+  offerId: string | null;
+  roiMultiple: number | null;
+  half: ServedReturnHalf | null;
+  isMature: boolean | null;
+  flashRoiMultiple: number | null;
+  matureRoiMultiple: number | null;
+  pipelineUsd: number | null;
+  committedCostUsd: number | null;
   nullReason: RecapNullReason | null;
 }
 
@@ -136,10 +175,17 @@ export interface OrgPeriodRecap {
   expectedPositiveRepliesNullReason: RecapNullReason | null;
   spendUsd: number;
   expectedReturn: {
-    basis: "positive_replies";
-    expectedPaidClients: number | null;
+    /** The dashboard's served return for the scope that sent (rule in the header). */
+    basis: "served_return";
+    /** `roiMultiple × spendUsd`. */
     expectedRevenueUsd: number | null;
+    /** `expectedRevenueUsd ÷ lifetimeRevenuePerClientUsd`. */
+    expectedPaidClients: number | null;
+    /** EXACTLY the served figure (not rounded), so it compares to the dashboard's to the last digit. */
     roiMultiple: number | null;
+    /** Which half of the served pair it is (`mature`, or `flash` for a not-mature scope above 1x). */
+    returnHalf: ServedReturnHalf | null;
+    returnScopes: RecapReturnScope[];
     lifetimeRevenuePerClientUsd: number | null;
     lifetimeRevenueSource: LifetimeRevenueSource | null;
     lifetimeRevenueNullReason: RecapNullReason | null;
@@ -147,10 +193,11 @@ export interface OrgPeriodRecap {
   };
   budgetIncrease: {
     amountUsd: number;
-    basis: "linear_at_current_results";
+    basis: "linear_at_served_return";
     expectedAdditionalPositiveReplies: number | null;
+    /** `amountUsd × expectedReturn.roiMultiple`. */
     expectedAdditionalRevenueUsd: number | null;
-    /** (window spend + amount) ÷ window spend: the revenue multiple vs this window at current results. */
+    /** (window spend + amount) ÷ window spend: revenue at the same served return scales with spend. */
     revenueMultiple: number | null;
     nullReason: RecapNullReason | null;
   };
@@ -180,18 +227,6 @@ export function isCalendarDay(value: unknown): value is string {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const d = new Date(`${value}T00:00:00.000Z`);
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
-}
-
-/** PURE. P(paid client | positive reply) as a fraction, from effective economics; null when unstated. */
-export function replyToPaidFraction(econ: EffectiveEconomics["economics"]): number | null {
-  if (!econ) return null;
-  if (typeof econ.replyToPaidClientPct === "number" && Number.isFinite(econ.replyToPaidClientPct)) {
-    return econ.replyToPaidClientPct / 100;
-  }
-  if (Number.isFinite(econ.replyToMeetingPct) && Number.isFinite(econ.meetingToClosePct)) {
-    return (econ.replyToMeetingPct / 100) * (econ.meetingToClosePct / 100);
-  }
-  return null;
 }
 
 /** An offer of the brand, as brand-service states it. */
@@ -231,10 +266,49 @@ export interface RecapInputs {
   to: string;
   now: Date;
   /** `offers: null` = the org no longer holds the brand (no statements to read). */
-  brands: Array<{ brandId: string; days: RecapDay[]; economics: EffectiveEconomics; offers: RecapOffer[] | null }>;
+  /** `returns: null` = the brand's served return could not be read; `[]` = no offer of it has campaigns. */
+  brands: Array<{
+    brandId: string;
+    days: RecapDay[];
+    economics: EffectiveEconomics;
+    offers: RecapOffer[] | null;
+    returns: OfferReturnRead[] | null;
+  }>;
   /** The org's net committed spend per UTC day (absent day = 0). */
   spendByDay: Map<string, number>;
   fleetRate: FleetReplyRate | null;
+}
+
+/** PURE. The served returns of one brand that sent, as provenance rows (rule in the header). */
+export function brandReturnScopes(brandId: string, returns: OfferReturnRead[] | null): RecapReturnScope[] {
+  const unreadable = (): RecapReturnScope => ({
+    brandId,
+    offerId: null,
+    roiMultiple: null,
+    half: null,
+    isMature: null,
+    flashRoiMultiple: null,
+    matureRoiMultiple: null,
+    pipelineUsd: null,
+    committedCostUsd: null,
+    nullReason: "return_unavailable",
+  });
+  if (returns === null || returns.length === 0) return [unreadable()];
+  return returns.map((r) => {
+    const shown = servedReturnOf(r.pair);
+    return {
+      brandId,
+      offerId: r.offerId,
+      roiMultiple: shown.roiMultiple,
+      half: shown.half,
+      isMature: r.pair?.isMature ?? null,
+      flashRoiMultiple: r.pair?.flash?.roiMultiple ?? null,
+      matureRoiMultiple: r.pair?.mature?.roiMultiple ?? null,
+      pipelineUsd: r.pipelineUsd,
+      committedCostUsd: r.committedCostUsd,
+      nullReason: shown.nullReason,
+    };
+  });
 }
 
 /** PURE. The whole recap from already-read inputs. */
@@ -244,7 +318,7 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
   const cutoffDate = maturityCutoffIso(rule.durationDays, input.now).slice(0, 10);
 
   const brands = input.brands
-    .map(({ brandId, days: series, economics, offers }) => {
+    .map(({ brandId, days: series, economics, offers, returns }) => {
       let emailsSent = 0;
       let recipientsEmailed = 0;
       let emailsDelivered = 0;
@@ -275,23 +349,7 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
         nullReason = "reply_rate_unavailable";
       } else expectedPositiveReplies = (recipientsContacted * ratePct) / 100;
 
-      const p = replyToPaidFraction(economics.economics);
       const lifetime = resolveRecapLifetimeRevenue(offers, economics);
-      const ltr = lifetime.usd;
-      let expectedPaidClients: number | null = null;
-      let expectedRevenueUsd: number | null = null;
-      if (expectedPositiveReplies !== null) {
-        if (p === null || ltr === null) {
-          if (recipientsContacted > 0) nullReason = ltr === null ? lifetime.nullReason ?? "economics_missing" : "economics_missing";
-          else {
-            expectedPaidClients = 0;
-            expectedRevenueUsd = 0;
-          }
-        } else {
-          expectedPaidClients = expectedPositiveReplies * p;
-          expectedRevenueUsd = expectedPaidClients * ltr;
-        }
-      }
       return {
         brandId,
         emailsSent,
@@ -307,19 +365,15 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
           outcomesRequired: rule.outcomesRequired,
         },
         expectedPositiveReplies: expectedPositiveReplies === null ? null : round(expectedPositiveReplies, 2),
-        replyToPaidClientPct: p === null ? null : round(p * 100, 4),
-        lifetimeRevenuePerClientUsd: ltr,
+        lifetimeRevenuePerClientUsd: lifetime.usd,
         lifetimeRevenueSource: lifetime.source,
         lifetimeRevenueOfferId: lifetime.offerId,
         lifetimeRevenueStatedAt: lifetime.statedAt,
         _ltrNullReason: lifetime.nullReason,
         economicsSource: economics.source,
-        expectedPaidClients: expectedPaidClients === null ? null : round(expectedPaidClients, 4),
-        expectedRevenueUsd: expectedRevenueUsd === null ? null : round(expectedRevenueUsd, 2),
         nullReason,
         _rawReplies: expectedPositiveReplies,
-        _rawRevenue: expectedRevenueUsd,
-        _rawPaid: expectedPaidClients,
+        _returns: returns,
       };
     })
     .sort((a, b) => (a.brandId < b.brandId ? -1 : 1));
@@ -334,21 +388,26 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
 
   // Org totals: the first unknown brand that SENT makes the total unknown (a partial sum would understate).
   const senders = brands.filter((b) => b.recipientsContacted > 0);
-  const firstReason = (pick: (b: (typeof brands)[number]) => number | null): RecapNullReason | null => {
-    const unknown = senders.find((b) => pick(b) === null);
-    return unknown ? unknown.nullReason ?? "reply_rate_unavailable" : null;
-  };
-
-  const repliesReason = firstReason((b) => b._rawReplies);
+  const unknownReplies = senders.find((b) => b._rawReplies === null);
+  const repliesReason: RecapNullReason | null = unknownReplies ? unknownReplies.nullReason ?? "reply_rate_unavailable" : null;
   const expectedReplies = repliesReason ? null : brands.reduce((s, b) => s + (b._rawReplies ?? 0), 0);
 
-  let returnReason: RecapNullReason | null = recipientsContacted === 0 ? "nothing_sent" : firstReason((b) => b._rawRevenue);
-  const expectedRevenueUsd = returnReason ? null : brands.reduce((s, b) => s + (b._rawRevenue ?? 0), 0);
-  const expectedPaidClients = returnReason ? null : brands.reduce((s, b) => s + (b._rawPaid ?? 0), 0);
+  // THE RETURN: the one the dashboard shows for every scope that sent, or null with the reason.
+  const returnScopes = senders.flatMap((b) => brandReturnScopes(b.brandId, b._returns));
+  let returnReason: RecapNullReason | null = null;
   let roiMultiple: number | null = null;
-  if (!returnReason) {
-    if (spendUsd <= 0) returnReason = "no_spend_in_window";
-    else roiMultiple = expectedRevenueUsd! / spendUsd;
+  let returnHalf: ServedReturnHalf | null = null;
+  if (senders.length === 0) returnReason = "nothing_sent";
+  else {
+    const unshown = returnScopes.find((s) => s.roiMultiple === null);
+    const values = new Set(returnScopes.map((s) => s.roiMultiple));
+    if (unshown) returnReason = unshown.nullReason ?? "return_unavailable";
+    else if (values.size > 1) returnReason = "return_differs_across_scopes";
+    else {
+      roiMultiple = returnScopes[0].roiMultiple;
+      const halves = new Set(returnScopes.map((s) => s.half));
+      returnHalf = halves.size === 1 ? returnScopes[0].half : null;
+    }
   }
 
   const ltrs = new Set(senders.map((b) => b.lifetimeRevenuePerClientUsd));
@@ -366,7 +425,12 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
     lifetimeRevenueSource = sources.size === 1 ? [...sources][0] : null;
   }
 
-  const canProject = roiMultiple !== null && expectedReplies !== null;
+  const expectedRevenueUsd = roiMultiple === null ? null : roiMultiple * spendUsd;
+  const expectedPaidClients =
+    expectedRevenueUsd === null || lifetimeRevenuePerClientUsd === null || lifetimeRevenuePerClientUsd <= 0
+      ? null
+      : expectedRevenueUsd / lifetimeRevenuePerClientUsd;
+  const hasSpend = spendUsd > 0;
   return {
     orgId: input.orgId,
     window: { from: input.from, to: input.to, grain: "utc_day", days: days.size },
@@ -386,10 +450,12 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
     expectedPositiveRepliesNullReason: repliesReason,
     spendUsd: round(spendUsd, 2),
     expectedReturn: {
-      basis: "positive_replies",
-      expectedPaidClients: expectedPaidClients === null ? null : round(expectedPaidClients, 4),
+      basis: "served_return",
       expectedRevenueUsd: expectedRevenueUsd === null ? null : round(expectedRevenueUsd, 2),
-      roiMultiple: roiMultiple === null ? null : round(roiMultiple, 2),
+      expectedPaidClients: expectedPaidClients === null ? null : round(expectedPaidClients, 4),
+      roiMultiple,
+      returnHalf,
+      returnScopes,
       lifetimeRevenuePerClientUsd,
       lifetimeRevenueSource,
       lifetimeRevenueNullReason,
@@ -397,13 +463,14 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
     },
     budgetIncrease: {
       amountUsd: BUDGET_INCREASE_USD,
-      basis: "linear_at_current_results",
-      expectedAdditionalPositiveReplies: canProject ? round((BUDGET_INCREASE_USD * expectedReplies!) / spendUsd, 2) : null,
-      expectedAdditionalRevenueUsd: canProject ? round(BUDGET_INCREASE_USD * roiMultiple!, 2) : null,
-      revenueMultiple: canProject ? round((spendUsd + BUDGET_INCREASE_USD) / spendUsd, 2) : null,
-      nullReason: canProject ? null : returnReason ?? repliesReason,
+      basis: "linear_at_served_return",
+      expectedAdditionalPositiveReplies:
+        expectedReplies !== null && hasSpend ? round((BUDGET_INCREASE_USD * expectedReplies) / spendUsd, 2) : null,
+      expectedAdditionalRevenueUsd: roiMultiple === null ? null : round(BUDGET_INCREASE_USD * roiMultiple, 2),
+      revenueMultiple: roiMultiple !== null && hasSpend ? round((spendUsd + BUDGET_INCREASE_USD) / spendUsd, 2) : null,
+      nullReason: returnReason ?? (hasSpend ? repliesReason : "no_spend_in_window"),
     },
-    brands: brands.map(({ _rawReplies: _a, _rawRevenue: _b, _rawPaid: _c, _ltrNullReason: _d, ...rest }): RecapBrand => rest),
+    brands: brands.map(({ _rawReplies: _a, _returns: _b, _ltrNullReason: _d, ...rest }): RecapBrand => rest),
     fleetPositiveReplyRate: input.fleetRate,
   };
 }
@@ -523,11 +590,19 @@ export interface RecapDeps {
   /** The brand's offers with their STATED lifetime revenue, for this org; null = the org no longer holds the brand. */
   offers: (orgId: string, brandId: string) => Promise<RecapOffer[] | null>;
   spendByDay: (orgId: string) => Promise<Map<string, number>>;
+  /**
+   * The offer's served return as `/offers/:offerId/revenue?pricing=net` serves it (the dashboard's read);
+   * null = the offer has no campaign (no channel), so no page shows it a return.
+   */
+  offerReturn: (orgId: string, brandId: string, offerId: string) => Promise<OfferReturnRead | null>;
   fleetRate: () => FleetReplyRate | null;
   now: () => Date;
 }
 
-export const defaultRecapDeps = (fleetRate: () => FleetReplyRate | null): RecapDeps => ({
+export const defaultRecapDeps = (
+  fleetRate: () => FleetReplyRate | null,
+  offerReturn: RecapDeps["offerReturn"],
+): RecapDeps => ({
   brandIds: fetchOrgBroadcastBrandIds,
   brandDays: fetchBrandBroadcastDays,
   economics: async (orgId, brandId) => {
@@ -541,6 +616,7 @@ export const defaultRecapDeps = (fleetRate: () => FleetReplyRate | null): RecapD
   },
   offers: fetchBrandOffersForRecap,
   spendByDay: fetchOrgNetSpendByDay,
+  offerReturn,
   fleetRate,
   now: () => new Date(),
 });
@@ -548,13 +624,22 @@ export const defaultRecapDeps = (fleetRate: () => FleetReplyRate | null): RecapD
 /** Read everything and build the recap. FAIL-LOUD: any producer failure throws (the route 502s). */
 export async function computeOrgPeriodRecap(orgId: string, from: string, to: string, deps: RecapDeps): Promise<OrgPeriodRecap> {
   const [brandIds, spendByDay] = await Promise.all([deps.brandIds(orgId), deps.spendByDay(orgId)]);
+  const window = new Set(windowDays(from, to));
   const brands = await mapWithConcurrency(brandIds, 4, async (brandId) => {
     const [days, economics, offers] = await Promise.all([
       deps.brandDays(orgId, brandId),
       deps.economics(orgId, brandId),
       deps.offers(orgId, brandId),
     ]);
-    return { brandId, days, economics, offers };
+    // The served return is read only for a brand that contacted someone in the window (the scopes the
+    // recap states); a brand the org no longer holds has no offers to read it on (null).
+    const sent = days.some((d) => window.has(d.date) && d.recipientsContacted > 0);
+    const returns = !sent || offers === null
+      ? null
+      : (await Promise.all(offers.map((o) => deps.offerReturn(orgId, brandId, o.offerId)))).filter(
+          (r): r is OfferReturnRead => r !== null,
+        );
+    return { brandId, days, economics, offers, returns };
   });
   return buildOrgPeriodRecap({ orgId, from, to, now: deps.now(), brands, spendByDay, fleetRate: deps.fleetRate() });
 }
