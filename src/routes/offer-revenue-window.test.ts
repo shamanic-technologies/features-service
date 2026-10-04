@@ -6,7 +6,9 @@
  *     2026-10-03, brand 7d9cc3d9…: $31.22 served while runs held $37.07 for the brand;
  *   - every window total is the sum of its own daily values;
  *   - the expected pipeline curve ends at the headline;
- *   - an unrecognised windowDays is a 400.
+ *   - an unrecognised windowDays is a 400;
+ *   - `windowDays=all` is the same block since the scope's first activity (older than 90 days here),
+ *     spend read with no lower bound, every total still the sum of its daily values.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
@@ -94,6 +96,8 @@ function replyLead(campaignId: string, leadId: string): Record<string, unknown> 
 
 const TODAY = new Date().toISOString().slice(0, 10);
 const YESTERDAY = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+/** The brand's first day: older than the widest bounded window (90 days). */
+const INCEPTION = new Date(Date.now() - 199 * 86_400_000).toISOString().slice(0, 10);
 const CAMPAIGNS: Record<string, { offerId: string; featureSlug: string }> = {
   c1: { offerId: OFFER, featureSlug: PITCH },
   c9: { offerId: "offer-b", featureSlug: PITCH },
@@ -125,7 +129,12 @@ function mockFetch(): void {
         { period: TODAY, campaignId: "c1", cents: "2722.3", total: "4608.5" },
         { period: TODAY, campaignId: "c9", cents: "5000", total: "9000" },
         { period: TODAY, campaignId: null, cents: "584.6", total: "594.6" },
+        // The brand's setup, 199 days ago: only a read with no lower bound sees it.
+        { period: INCEPTION, campaignId: null, cents: "250", total: "250" },
+        { period: INCEPTION, campaignId: "c1", cents: "40", total: "40" },
       ].filter((r) => {
+        const after = q.get("startedAfter");
+        if (after && r.period < after.slice(0, 10)) return false;
         const ids = q.get("campaignIds")?.split(",");
         if (ids && (!r.campaignId || !ids.includes(r.campaignId))) return false;
         if (q.get("featureSlugs") && !r.campaignId) return false;
@@ -173,6 +182,7 @@ function mockFetch(): void {
     if (path.endsWith("/orgs/stats")) {
       if (q.get("groupBy") === "day") {
         return json({ groups: [
+          { key: INCEPTION, broadcast: { recipientStats: { contacted: 4 }, emailStats: { sent: 7, delivered: 6, bounced: 1 } } },
           { key: YESTERDAY, broadcast: { recipientStats: { contacted: 10 }, emailStats: { sent: 100, delivered: 95, bounced: 5 } } },
           { key: TODAY, broadcast: { recipientStats: { contacted: 3 }, emailStats: { sent: 20, delivered: 20, bounced: 1 } } },
         ] });
@@ -243,6 +253,33 @@ describe("GET /offers/:offerId/revenue — today's spend and ?windowDays=", () =
       w.recipientsRepliesPositive.daily.reduce((s: number, d: { count: number }) => s + d.count, 0),
     );
     expect(w.expectedPipeline.totalPipelineUsd).toBe(body.headline.totalPipelineUsd);
+  });
+
+  it("windowDays=all runs from the first activity to today; every total is the sum of its daily values", async () => {
+    const { body } = await read("&windowDays=all");
+    const w = body.window;
+    expect(w.sinceInception).toBe(true);
+    expect(w.startDate).toBe(INCEPTION);
+    expect(w.endDate).toBe(TODAY);
+    expect(w.days).toBe(200);
+    expect(w.emails.daily).toHaveLength(200);
+    expect(w.spend.daily).toHaveLength(200);
+    expect(w.emails.sent).toBe(127);
+    expect(w.emails.sent).toBe(w.emails.daily.reduce((s: number, d: { sent: number }) => s + d.sent, 0));
+    // Everything ever committed for the offer: c1's 40 + 1000 + 4608.5 and the brand's setup 250 + 594.6.
+    expect(w.spend.totalSpentCents).toBe(40 + 1000 + 5203 + 250);
+    expect(w.spend.totalSpentCents).toBe(w.spend.daily.reduce((s: number, d: { totalSpentCents: number }) => s + d.totalSpentCents, 0));
+    expect(w.spend.actualSpentCents).toBe(w.spend.daily.reduce((s: number, d: { actualSpentCents: number }) => s + d.actualSpentCents, 0));
+    expect(w.spend.brandLevelTotalSpentCents).toBe(250 + 595);
+    expect(w.recipientsRepliesPositive.total).toBe(
+      w.recipientsRepliesPositive.daily.reduce((s: number, d: { count: number }) => s + d.count, 0),
+    );
+
+    const bounded = (await read("&windowDays=90")).body.window;
+    expect(bounded.sinceInception).toBe(false);
+    expect(bounded.emails.sent).toBe(120);
+    expect(w.emails.sent).toBeGreaterThanOrEqual(bounded.emails.sent);
+    expect(bounded.spend.totalSpentCents).toBe(1000 + 5203);
   });
 
   it("an unrecognised windowDays is a 400", async () => {

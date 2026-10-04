@@ -1585,8 +1585,9 @@ const windowCountSeriesSchema = z.object({
 });
 
 const revenueWindowSchema = z.object({
-  days: z.number().int().describe("The window's length in UTC days, the last one being today (echo of ?windowDays=)."),
-  startDate: z.string().describe("First UTC day of the window, YYYY-MM-DD."),
+  days: z.number().int().describe("The window's length in UTC days, the last one being today (echo of ?windowDays=; on ?windowDays=all, the number of days from startDate to today)."),
+  sinceInception: z.boolean().describe("true on ?windowDays=all: the window runs from the scope's FIRST dated activity (first email, spend, reply, visit or pipeline day) to today, and the spend read has no lower bound, so every total is the scope's whole life. false on a 1..90 window."),
+  startDate: z.string().describe("First UTC day of the window, YYYY-MM-DD (on ?windowDays=all, the scope's first dated activity; today when nothing is dated yet)."),
   endDate: z.string().describe("Last UTC day of the window (today), YYYY-MM-DD."),
   emails: z.object({
     sent: z.number().int().describe("EMAILS sent over the window, every step (not leads). Σ daily[].sent."),
@@ -1632,7 +1633,7 @@ const revenueWindowSchema = z.object({
 
 const revenueWindowRef = registry.register("RevenueWindow", revenueWindowSchema);
 
-const windowDaysParam = z.string().optional().describe("ONE CHOSEN WINDOW: an integer 1..90 = that many UTC days ending today (7 and 30 are what the Today page asks). Adds `window` — emails sent/delivered/bounced + delivery rate, actual spend + cost per email sent, positive replies, website visits and the expected pipeline curve — each a window total beside one value per day. Omitted → no `window` key, every other field byte-identical. Anything else is a 400 with reason 'window_days_unrecognised'.");
+const windowDaysParam = z.string().optional().describe("ONE CHOSEN WINDOW: an integer 1..90 = that many UTC days ending today, or `all` = SINCE INCEPTION (every UTC day from the scope's first dated activity to today, same block, same composition, spend with no lower bound so setup work is in). Adds `window` — emails sent/delivered/bounced + delivery rate, actual spend + cost per email sent, positive replies, website visits and the expected pipeline curve — each a window total beside one value per day. Omitted → no `window` key, every other field byte-identical. Anything else is a 400 with reason 'window_days_unrecognised'.");
 
 const offerRevenueResponseSchema = featureRevenueResponseSchema
   .omit({ featureSlug: true })
