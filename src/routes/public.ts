@@ -161,6 +161,7 @@ import {
   writeFleetFunnelReturnSnapshotSoft,
 } from "../lib/fleet-funnel-return-store.js";
 import type { SalesFunnelKey } from "../lib/sales-funnels.js";
+import { withCampaignNames } from "../lib/sales-path-names.js";
 
 const router = Router();
 
@@ -3328,7 +3329,7 @@ export async function handlePublicChannels(res: import("express").Response): Pro
     windows: LIFETIME_AGGREGATE_WINDOWS,
     label: "acquisition-channel catalogue",
     compute: async () => ({
-      channels: await loadPublishedChannels(),
+      channels: await withCampaignNames(await loadPublishedChannels()),
       funnels: salesFunnelCatalogue(),
       legs: funnelLegCatalogue(),
       steps: channelStepCatalogue(),

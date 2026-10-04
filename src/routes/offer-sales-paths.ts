@@ -32,7 +32,7 @@ import {
   type SalesPathScope,
   withSalesPathNames,
 } from "../lib/offer-sales-paths.js";
-import { salesPathNamesFor, SalesPathNamePoolExhaustedError } from "../lib/sales-path-names.js";
+import { campaignNamesOf, salesPathNamesFor, SalesPathNamePoolExhaustedError, withCampaignNames } from "../lib/sales-path-names.js";
 import { handleWorkflowProjection } from "./workflow-projection.js";
 
 const router = Router();
@@ -136,7 +136,9 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
       getBrandEffectiveRates(brandId, req.orgId, legEconomics),
       db.query.features.findMany({ where: eq(features.status, "active") }),
     ]);
-    const channels: SalesPathChannelInput[] = buildChannelCatalogue(rows).map((c) => ({
+    // Every sales-path campaign named first, in catalogue order (the same names `/public/channels` serves).
+    const published = await withCampaignNames(buildChannelCatalogue(rows));
+    const channels: SalesPathChannelInput[] = published.map((c) => ({
       slug: c.slug,
       name: c.name,
       operatedBy: c.operatedBy,
@@ -188,7 +190,7 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
     });
     // Every row's name, shared across clients and stable forever: assigned on first sight, in rank order.
     const names = await salesPathNamesFor(body.paths.map((p) => p.combinationKey));
-    return res.json(withSalesPathNames(body, names));
+    return res.json(withSalesPathNames(body, names, campaignNamesOf(published)));
   } catch (error) {
     if (error instanceof OfferSalesPathNotFoundError) {
       return res.status(404).json({ error: error.message, reason: "offer_not_found" });
