@@ -379,3 +379,15 @@ export const workflowLegAssignmentChanges = pgTable("workflow_leg_assignment_cha
   decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
   note: text("note"),
 });
+
+/**
+ * The NAME of every sales path combination ever shown (`lib/sales-path-names.ts`): one poetic word,
+ * shared across every client, written once and never updated or deleted — a name never moves to
+ * another combination and is never given twice.
+ */
+export const salesPathCombinationNames = pgTable("sales_path_combination_names", {
+  /** `combinationKeyOf` (`lib/offer-sales-paths.ts`): the legs in order, each managed leg `@<channel slug>`. */
+  combinationKey: text("combination_key").primaryKey(),
+  name: text("name").notNull().unique(),
+  assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(),
+});

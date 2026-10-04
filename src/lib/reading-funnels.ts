@@ -177,6 +177,20 @@ export function offerLegKeys(
   return [...new Set(partition.groups.map((g) => g.legKey))].sort();
 }
 
+/**
+ * PURE: the ONE offer a brand-scoped read of a several-offer brand stands for — the only offer whose
+ * campaigns perform a leg — or null when that is not a single offer (two offers with campaigns, or a
+ * campaign stating no offer). Every other offer has no campaign, hence no lead and no pipeline, so
+ * pricing the brand on this offer IS the sum of its offers (owner 2026-10-04, Olive: four offers, one
+ * running campaign, its brand read fell back to brand-service's cross-brand average).
+ */
+export function soleOfferWithCampaigns(rows: readonly CampaignIdentityRow[], offers: readonly BrandOfferEconomics[]): string | null {
+  const unstated = rows.filter((r) => !r.offerId).map((r) => ({ ...r, offerId: "__no_offer__" }));
+  if (unstated.length > 0 && offerLegKeys(unstated, "__no_offer__").length > 0) return null;
+  const withCampaigns = offers.filter((o) => offerLegKeys(rows, o.offerId).length > 0);
+  return withCampaigns.length === 1 ? withCampaigns[0].offerId : null;
+}
+
 /** Resolve the offer a read prices on. */
 export function resolvePricedOffer(offers: readonly BrandOfferEconomics[], offerId: string | null | undefined, brandId: string): BrandOfferEconomics {
   if (offerId) {
@@ -282,19 +296,28 @@ export async function fetchPricingFunnels(
   opts: PricingFunnelsOptions = {},
 ): Promise<DeclaredSalesFunnel[]> {
   const legEconomics = opts.legEconomics ?? (await fetchBrandLegEconomics(brandId, orgId));
-  const offer = resolvePricedOffer(legEconomics.offers, offerId, brandId);
-
-  const soleOffer = legEconomics.offers.length === 1;
-  let legKeys: readonly string[] = opts.legKeys ?? [];
-  if (!opts.legKeys) {
-    let rows: readonly CampaignIdentityRow[];
+  const readRows = async (): Promise<readonly CampaignIdentityRow[]> => {
     try {
-      rows = opts.rows ?? (await fetchBrandCampaignRows(brandId, undefined, { orgId }));
+      return opts.rows ?? (await fetchBrandCampaignRows(brandId, undefined, { orgId }));
     } catch (error) {
       // The legs come from the campaigns → their read is the answer, fail loud.
       throw new SalesFunnelsUnavailableError(`the campaigns of brand ${brandId} could not be read: ${(error as Error).message}`);
     }
-    legKeys = offerLegKeys(rows, offer.offerId, soleOffer);
+  };
+  // A brand-scoped read of a several-offer brand whose campaigns all sell ONE offer is that offer's read
+  // (`soleOfferWithCampaigns`); a leg-keyed read keeps refusing (it names its own legs, not campaigns).
+  let rows: readonly CampaignIdentityRow[] | null = null;
+  let pricedOfferId = offerId;
+  if (!offerId && !opts.legKeys && legEconomics.offers.length > 1) {
+    rows = await readRows();
+    pricedOfferId = soleOfferWithCampaigns(rows, legEconomics.offers);
+  }
+  const offer = resolvePricedOffer(legEconomics.offers, pricedOfferId, brandId);
+
+  const soleOffer = legEconomics.offers.length === 1;
+  let legKeys: readonly string[] = opts.legKeys ?? [];
+  if (!opts.legKeys) {
+    legKeys = offerLegKeys(rows ?? (await readRows()), offer.offerId, soleOffer);
   }
 
   let effective: BrandEffectiveRates | null = null;

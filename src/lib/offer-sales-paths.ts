@@ -26,7 +26,16 @@
  *   on: for every platform channel publishing the leg, the RECOMMENDED workflow of that channel's
  *   leg-keyed `workflow-projection` ladder for this brand and offer (`?leg=&offerId=&pricing=net`, the
  *   exact read campaign-service ranks on), read off its brand-level row (`resolved.costPerOutcomeUsd`).
- *   The channel chosen is the one with the lowest such cost.
+ *
+ * ── ONE ROW PER COMBINATION (owner 2026-10-04) ────────────────────────────────────────────────
+ *
+ *   A row is a COMBINATION: a chain of ticked legs × ONE managed channel per leg a managed channel can
+ *   work (human legs stay human). Every combination is priced and ranked on its own with the formula
+ *   above, so the same chain on another entry channel competes as its own row — adding a managed channel
+ *   to a leg grows the rows by construction. `pathKey` stays the CHAIN (shared by its combinations);
+ *   `combinationKey` (`combinationKeyOf`) is the row's unique identity and the key of its NAME
+ *   (`lib/sales-path-names.ts`: one poetic word, shared across clients, stable forever). Per leg,
+ *   `channel` is the combination's channel; `channel.choice` says whether it is the leg's cheapest.
  *
  * ── WHICH CHANNELS COUNT: ONLY THE THREE WE MANAGE (owner 2026-09-29) ────────────────────────
  *
@@ -140,7 +149,9 @@ export type SalesPathChannelChoice =
   /** The cheapest of several platform channels that priced the leg. */
   | "cheapest_cost_per_outcome"
   /** A platform channel publishes the leg but none could price it. */
-  | "no_priced_channel";
+  | "no_priced_channel"
+  /** This combination runs the leg on a channel other than the cheapest priced one (another row runs the cheapest). */
+  | "alternative_channel";
 
 export interface SalesPathLeg {
   legKey: string;
@@ -195,11 +206,17 @@ export type SalesPathRoiUnavailableReason =
 
 export interface SalesPath {
   rank: number;
+  /** The row's unique identity: the legs in order, each managed leg `@<channel slug>` (`combinationKeyOf`). */
+  combinationKey: string;
+  /** The combination's name, shared across every client and stable forever (`lib/sales-path-names.ts`).
+   *  Null only on the PURE build's output; the route names every row before serving it. */
+  name: string | null;
+  /** The CHAIN of legs, shared by every combination of it. */
   pathKey: string;
   legKeys: string[];
   steps: ChannelStepDefWire[];
   entryLegKey: string;
-  /** The channel chosen for the entry leg (what a budget behind this path buys). Null when none is priced. */
+  /** The combination's channel on the entry leg (what a budget behind this row buys). Null on a human entry leg. */
   entryChannelSlug: string | null;
   legs: SalesPathLeg[];
   /** Share of entry outcomes that become a paying client: Π rate(Li)/100 over the non-entry legs, in %. */
@@ -299,6 +316,16 @@ export interface BuildOfferSalesPathsInput {
 
 export const priceKey = (legKey: string, slug: string): string => `${legKey}|${slug}`;
 
+/** PURE: a combination's identity — the legs in order, each leg a managed channel works `@<channel slug>`. */
+export function combinationKeyOf(legs: ReadonlyArray<{ legKey: string; channelSlug: string | null }>): string {
+  return legs.map((l) => (l.channelSlug ? `${l.legKey}@${l.channelSlug}` : l.legKey)).join("+");
+}
+
+/** PURE: every pick of one option per position (the cartesian product), first position slowest. */
+function cartesian<T>(options: ReadonlyArray<readonly T[]>): T[][] {
+  return options.reduce<T[][]>((acc, opts) => acc.flatMap((prefix) => opts.map((o) => [...prefix, o])), [[]]);
+}
+
 /** PURE: the MANAGED platform channels publishing each leg — the (leg, channel) pairs the route must price. */
 export function platformChannelsForLeg(
   channels: readonly SalesPathChannelInput[],
@@ -347,7 +374,7 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
   const defaultCosts = input.defaultCosts ?? DEFAULT_COST_PER_OUTCOME_USD;
   const ltr = input.lifetimeRevenueUsd;
 
-  const paths = chains.map((legKeys): Omit<SalesPath, "rank"> => {
+  const paths = chains.flatMap((legKeys): Array<Omit<SalesPath, "rank">> => {
     const defs = legKeys.map((k) => funnelLeg(k)!);
     // Walk backward from the paying client: outcomes needed at each leg's step.
     const needed: Array<number | null> = new Array(defs.length).fill(null);
@@ -368,121 +395,148 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
       }
     }
 
-    let costUnavailable = false;
-    let anyPlatform = false;
-    let total = 0;
-    const legs: SalesPathLeg[] = defs.map((d, i) => {
-      const arrow = legRates[i];
+    // Per leg: every managed channel's candidate (priced by the cascade), and the cheapest of them.
+    const legCandidates = defs.map((d) => {
       const platform = platformChannelsForLeg(input.channels, d.legKey, managed);
-      let channel: SalesPathLeg["channel"] = null;
-      let costPerOutcomeUsd: number | null = null;
-      let costPerPayingClientUsd: number | null = null;
-      if (platform.length > 0) {
-        anyPlatform = true;
-        const candidates: SalesPathChannelCandidate[] = platform.map((c) => {
-          const key = priceKey(d.legKey, c.slug);
-          const p = input.prices.get(key);
-          const resolved = resolveLegChannelCost(p, fleetPrices.get(key), defaultCosts.get(key));
-          const workflowPriced = resolved.costSource === "workflow";
-          const workflowUnpricedReason = workflowPriced ? null : (p ? (p.unpricedReason ?? "recommended_workflow_unpriced") : "not_priced");
-          return {
-            slug: c.slug,
-            name: c.name,
-            trigger: c.trigger,
-            costPerOutcomeUsd: resolved.costPerOutcomeUsd,
-            costSource: resolved.costSource,
-            workflowDynastySlug: workflowPriced ? (p?.workflowDynastySlug ?? null) : null,
-            grain: workflowPriced ? (p?.grain ?? null) : resolved.costSource === "fleet_measured" ? "crossOrg" : null,
-            unpricedReason: resolved.costSource === null ? workflowUnpricedReason : null,
-            workflowUnpricedReason,
-          };
-        });
-        const { chosen, choice } = chooseLegChannel(candidates);
-        channel = {
-          slug: chosen?.slug ?? null,
-          name: chosen?.name ?? null,
-          trigger: chosen?.trigger ?? null,
-          workflowDynastySlug: chosen?.workflowDynastySlug ?? null,
-          grain: chosen?.grain ?? null,
-          costSource: chosen?.costSource ?? null,
-          choice,
-          candidates,
+      if (platform.length === 0) return null;
+      const candidates: SalesPathChannelCandidate[] = platform.map((c) => {
+        const key = priceKey(d.legKey, c.slug);
+        const p = input.prices.get(key);
+        const resolved = resolveLegChannelCost(p, fleetPrices.get(key), defaultCosts.get(key));
+        const workflowPriced = resolved.costSource === "workflow";
+        const workflowUnpricedReason = workflowPriced ? null : (p ? (p.unpricedReason ?? "recommended_workflow_unpriced") : "not_priced");
+        return {
+          slug: c.slug,
+          name: c.name,
+          trigger: c.trigger,
+          costPerOutcomeUsd: resolved.costPerOutcomeUsd,
+          costSource: resolved.costSource,
+          workflowDynastySlug: workflowPriced ? (p?.workflowDynastySlug ?? null) : null,
+          grain: workflowPriced ? (p?.grain ?? null) : resolved.costSource === "fleet_measured" ? "crossOrg" : null,
+          unpricedReason: resolved.costSource === null ? workflowUnpricedReason : null,
+          workflowUnpricedReason,
         };
-        costPerOutcomeUsd = chosen?.costPerOutcomeUsd ?? null;
-        if (costPerOutcomeUsd === null) costUnavailable = true;
-        else if (needed[i] !== null) {
-          costPerPayingClientUsd = costPerOutcomeUsd * needed[i]!;
-          total += costPerPayingClientUsd;
-        }
-      }
-      return {
-        legKey: d.legKey,
-        fromStep: d.fromStep ? stepWire(d.fromStep.key) : null,
-        toStep: stepWire(d.toStep.key),
-        conversionRatePct: arrow?.effectiveRatePct ?? null,
-        rateSource: arrow ? rateSourceOf(arrow) : null,
-        rateInputs: arrow
-          ? {
-              measured: {
-                basis: arrow.measured.basis,
-                fromReached: arrow.measured.fromReached,
-                toReached: arrow.measured.toReached,
-                toReachedThroughOtherLegs: arrow.measured.toReachedThroughOtherLegs,
-                ratePct: arrow.measured.ratePct,
-                sufficient: arrow.measured.sufficient,
-              },
-              customerStatedPct: arrow.manualRatePct,
-              fleetMedian: arrow.median,
-              industryDefaultPct: arrow.defaultRatePct,
-            }
-          : null,
-        workedBy: platform.length > 0 ? "platform" : "human",
-        channel,
-        outcomesNeededPerPayingClient: needed[i],
-        costPerOutcomeUsd,
-        costSource: channel?.costSource ?? null,
-        costPerPayingClientUsd,
-      };
+      });
+      return { candidates, ...chooseLegChannel(candidates) };
     });
 
-    let entryToPayingClientPct: number | null = 100;
-    for (let i = 1; i < legs.length; i++) {
-      const r = legs[i].conversionRatePct;
-      entryToPayingClientPct = r === null || entryToPayingClientPct === null ? null : (entryToPayingClientPct * r) / 100;
-    }
+    // One combination per pick of a candidate on every platform leg (a human leg has the one option: null).
+    const picks = cartesian(legCandidates.map((lc) => (lc ? lc.candidates : [null])));
+    return picks.map((pick): Omit<SalesPath, "rank"> => {
+      let costUnavailable = false;
+      let anyPlatform = false;
+      let total = 0;
+      const legs: SalesPathLeg[] = defs.map((d, i) => {
+        const arrow = legRates[i];
+        const lc = legCandidates[i];
+        const picked = pick[i];
+        let channel: SalesPathLeg["channel"] = null;
+        let costPerOutcomeUsd: number | null = null;
+        let costPerPayingClientUsd: number | null = null;
+        if (lc && picked) {
+          anyPlatform = true;
+          channel = {
+            slug: picked.slug,
+            name: picked.name,
+            trigger: picked.trigger,
+            workflowDynastySlug: picked.workflowDynastySlug,
+            grain: picked.grain,
+            costSource: picked.costSource,
+            choice: lc.chosen === null || lc.chosen.slug === picked.slug ? lc.choice : "alternative_channel",
+            candidates: lc.candidates,
+          };
+          costPerOutcomeUsd = picked.costPerOutcomeUsd;
+          if (costPerOutcomeUsd === null) costUnavailable = true;
+          else if (needed[i] !== null) {
+            costPerPayingClientUsd = costPerOutcomeUsd * needed[i]!;
+            total += costPerPayingClientUsd;
+          }
+        }
+        return {
+          legKey: d.legKey,
+          fromStep: d.fromStep ? stepWire(d.fromStep.key) : null,
+          toStep: stepWire(d.toStep.key),
+          conversionRatePct: arrow?.effectiveRatePct ?? null,
+          rateSource: arrow ? rateSourceOf(arrow) : null,
+          rateInputs: arrow
+            ? {
+                measured: {
+                  basis: arrow.measured.basis,
+                  fromReached: arrow.measured.fromReached,
+                  toReached: arrow.measured.toReached,
+                  toReachedThroughOtherLegs: arrow.measured.toReachedThroughOtherLegs,
+                  ratePct: arrow.measured.ratePct,
+                  sufficient: arrow.measured.sufficient,
+                },
+                customerStatedPct: arrow.manualRatePct,
+                fleetMedian: arrow.median,
+                industryDefaultPct: arrow.defaultRatePct,
+              }
+            : null,
+          workedBy: lc ? "platform" : "human",
+          channel,
+          outcomesNeededPerPayingClient: needed[i],
+          costPerOutcomeUsd,
+          costSource: channel?.costSource ?? null,
+          costPerPayingClientUsd,
+        };
+      });
 
-    let roiUnavailableReason: SalesPathRoiUnavailableReason | null = null;
-    if (zeroRate) roiUnavailableReason = "zero_conversion_rate";
-    else if (costUnavailable) roiUnavailableReason = "leg_cost_unavailable";
-    else if (!anyPlatform || total <= 0) roiUnavailableReason = "no_platform_cost";
-    else if (ltr === null) roiUnavailableReason = "no_lifetime_revenue";
-    const costPerPayingClientUsd = zeroRate || costUnavailable || !anyPlatform ? null : total;
-    const roi = roiUnavailableReason === null ? ltr! / total : null;
+      let entryToPayingClientPct: number | null = 100;
+      for (let i = 1; i < legs.length; i++) {
+        const r = legs[i].conversionRatePct;
+        entryToPayingClientPct = r === null || entryToPayingClientPct === null ? null : (entryToPayingClientPct * r) / 100;
+      }
 
-    const steps = [stepWire(defs[0].toStep.key), ...defs.slice(1).map((d) => stepWire(d.toStep.key))];
-    return {
-      pathKey: legKeys.join("+"),
-      legKeys,
-      steps,
-      entryLegKey: legKeys[0],
-      entryChannelSlug: legs[0].channel?.slug ?? null,
-      legs,
-      entryToPayingClientPct,
-      lifetimeRevenueUsd: ltr,
-      costPerPayingClientUsd,
-      roi,
-      roiUnavailableReason,
-    };
+      let roiUnavailableReason: SalesPathRoiUnavailableReason | null = null;
+      if (zeroRate) roiUnavailableReason = "zero_conversion_rate";
+      else if (costUnavailable) roiUnavailableReason = "leg_cost_unavailable";
+      else if (!anyPlatform || total <= 0) roiUnavailableReason = "no_platform_cost";
+      else if (ltr === null) roiUnavailableReason = "no_lifetime_revenue";
+      const costPerPayingClientUsd = zeroRate || costUnavailable || !anyPlatform ? null : total;
+      const roi = roiUnavailableReason === null ? ltr! / total : null;
+
+      const steps = [stepWire(defs[0].toStep.key), ...defs.slice(1).map((d) => stepWire(d.toStep.key))];
+      return {
+        combinationKey: combinationKeyOf(legs.map((l) => ({ legKey: l.legKey, channelSlug: l.channel?.slug ?? null }))),
+        name: null,
+        pathKey: legKeys.join("+"),
+        legKeys,
+        steps,
+        entryLegKey: legKeys[0],
+        entryChannelSlug: legs[0].channel?.slug ?? null,
+        legs,
+        entryToPayingClientPct,
+        lifetimeRevenueUsd: ltr,
+        costPerPayingClientUsd,
+        roi,
+        roiUnavailableReason,
+      };
+    });
   });
 
+  const tie = (a: Omit<SalesPath, "rank">, b: Omit<SalesPath, "rank">) =>
+    a.pathKey.localeCompare(b.pathKey) || a.combinationKey.localeCompare(b.combinationKey);
   paths.sort((a, b) => {
-    if (a.roi !== null && b.roi !== null) return b.roi - a.roi || a.pathKey.localeCompare(b.pathKey);
+    if (a.roi !== null && b.roi !== null) return b.roi - a.roi || tie(a, b);
     if (a.roi !== null) return -1;
     if (b.roi !== null) return 1;
     const ca = a.costPerPayingClientUsd ?? Infinity;
     const cb = b.costPerPayingClientUsd ?? Infinity;
-    return ca - cb || a.pathKey.localeCompare(b.pathKey);
+    return ca - cb || tie(a, b);
   });
 
   return { ...base, status: "ok", paths: paths.map((p, i) => ({ rank: i + 1, ...p })) };
+}
+
+/** PURE: the body with every row's name from `names` (keyed on `combinationKey`). Throws on a row left unnamed. */
+export function withSalesPathNames(body: OfferSalesPathsBody, names: ReadonlyMap<string, string>): OfferSalesPathsBody {
+  return {
+    ...body,
+    paths: body.paths.map((p) => {
+      const name = names.get(p.combinationKey);
+      if (!name) throw new Error(`sales path combination ${p.combinationKey} has no name`);
+      return { ...p, name };
+    }),
+  };
 }

@@ -152,13 +152,15 @@ function funnelsFor(offerId: string | null): Record<string, unknown> {
 
 /** Every declared-funnel URL the request touched, so the request SHAPE can be asserted. */
 let funnelReads: string[] = [];
+/** The brand's campaigns as campaign-service serves them; a test may add one. */
+let campaignRows: Record<string, unknown>[] = CAMPAIGN_ROWS;
 
 function mockFetch(): ReturnType<typeof vi.spyOn> {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = urlOf(input);
     const params = new URL(url, "http://x").searchParams;
 
-    if (url.includes("campaign:3000/campaigns")) return json({ campaigns: CAMPAIGN_ROWS });
+    if (url.includes("campaign:3000/campaigns")) return json({ campaigns: campaignRows });
 
     // Wave C1: brand-service's offer-economics — the brand's leg rates and EVERY offer's lifetime
     // revenue. No offer is named on the wire any more: the pricing read resolves it locally, and a
@@ -219,6 +221,7 @@ let fetchSpy: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   vi.clearAllMocks();
   funnelReads = [];
+  campaignRows = CAMPAIGN_ROWS;
   (db.query.features.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(FEATURE);
   fetchSpy = mockFetch();
 });
@@ -252,6 +255,12 @@ describe("a campaign names the offer its declared funnels are read under", () =>
 
 describe("a brand-scoped read of a several-offer brand degrades, it never 502s", () => {
   it("answers audience-stats at BRAND grain 200 with a named reason and the offers listed", async () => {
+    // BOTH offers run a campaign: the brand read cannot stand for one of them (with only the sales-led
+    // campaign it IS the sales-led read, `soleOfferWithCampaigns`, owner 2026-10-04).
+    campaignRows = [
+      ...CAMPAIGN_ROWS,
+      { ...CAMPAIGN_ROWS[0], id: "11111111-1111-4111-8111-111111111111", offerId: OFFER_PRODUCT_LED, status: "stopped" },
+    ];
     const res = await get(`/features/${FEATURE.slug}/audience-stats?brandId=${MULTI_BRAND}`);
     expect(res.status).toBe(200);
     expect(res.body.declaredFunnelsUnresolved).toEqual({
