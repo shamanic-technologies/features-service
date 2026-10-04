@@ -16,6 +16,13 @@
  *    runs under one transaction-scoped advisory lock, so two concurrent reads cannot hand one word to two
  *    combinations nor two words to one.
  *
+ * A CAMPAIGN — one (channel × leg) a sales path can contain — is named from the SAME table and pool
+ * (owner 2026-10-04, the offer's Sales path page lists its campaigns with a name and a face each). Its key
+ * lives in its own namespace (`campaignNameKeyOf`: `campaign:<channel slug>|<leg key>`), which no
+ * combination key can spell (those are leg keys joined by `+`, `@slug` per managed leg), and the name is
+ * UNIQUE across the whole table, so a campaign and a path never share a name — not even a one-leg path
+ * on the same channel.
+ *
  * The pool is curated: English, one word, optimistic (success, height, glory, abundance, joy). Its size is
  * guarded against every combination the catalogue can form (`offer-sales-paths.test.ts`); an exhausted
  * pool throws `SalesPathNamePoolExhaustedError` — loud, never a reused or invented name.
@@ -23,6 +30,8 @@
 import { inArray, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { salesPathCombinationNames } from "../db/schema.js";
+import type { ChannelStepTransitionWire, PublicChannel } from "./channel-catalogue.js";
+import { campaignNameKeyOf } from "./offer-sales-paths.js";
 
 /** Append-only in spirit: add words at the END; a word already given stays given whatever happens here. */
 export const SALES_PATH_NAME_POOL: readonly string[] = [
@@ -102,4 +111,35 @@ export async function salesPathNamesFor(keysInRankOrder: readonly string[]): Pro
     console.log(`[features-service] sales-path names: named ${missing.map((k, i) => `${words[i]}=${k}`).join(", ")}`);
     return named;
   });
+}
+
+/** The key a CAMPAIGN's name is stored under: its own namespace, never a combination key. */
+export { campaignNameKeyOf };
+
+/**
+ * The published channels with every SALES-PATH-ELIGIBLE (channel × leg) campaign named, assigned on first
+ * sight in catalogue order (channel display order, then the channel's own leg order). A channel that can
+ * appear in no sales path keeps `campaignName: null`. Fail-loud like `salesPathNamesFor`.
+ */
+/** The name of every named campaign of `channels` (the output of `withCampaignNames`), keyed `campaignNameKeyOf`. */
+export function campaignNamesOf(channels: readonly PublicChannel[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const c of channels) for (const t of c.stepTransitions) if (t.campaignName) out.set(campaignNameKeyOf(c.slug, t.legKey), t.campaignName);
+  return out;
+}
+
+export async function withCampaignNames(channels: readonly PublicChannel[]): Promise<PublicChannel[]> {
+  const keys = channels
+    .filter((c) => c.salesPathEligible)
+    .flatMap((c) => c.stepTransitions.map((t) => campaignNameKeyOf(c.slug, t.legKey)));
+  const names = await salesPathNamesFor(keys);
+  return channels.map((c) => ({
+    ...c,
+    stepTransitions: c.stepTransitions.map((t): ChannelStepTransitionWire => {
+      if (!c.salesPathEligible) return t;
+      const campaignName = names.get(campaignNameKeyOf(c.slug, t.legKey));
+      if (!campaignName) throw new Error(`campaign ${c.slug} × ${t.legKey} has no name`);
+      return { ...t, campaignName };
+    }),
+  }));
 }

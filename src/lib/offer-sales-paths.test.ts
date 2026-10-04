@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 import {
   buildOfferSalesPaths,
+  campaignNameKeyOf,
+  combinationKeyOf,
   DEFAULT_COST_PER_OUTCOME_USD,
   enumerateSalesPaths,
   MANAGED_CHANNEL_SLUGS,
@@ -176,11 +178,31 @@ describe("buildOfferSalesPaths", () => {
   it("names every row from the shared name map, and refuses to serve a row left unnamed", () => {
     const body = buildOfferSalesPaths({ ...base, legKeys: ["start_to_conversation", "conversation_to_paid_client"] });
     const names = new Map(body.paths.map((p, i) => [p.combinationKey, ["Victory", "Sol"][i]]));
-    expect(withSalesPathNames(body, names).paths.map((p) => [p.rank, p.name])).toEqual([
+    expect(withSalesPathNames(body, names, new Map()).paths.map((p) => [p.rank, p.name])).toEqual([
       [1, "Victory"],
       [2, "Sol"],
     ]);
-    expect(() => withSalesPathNames(body, new Map([[body.paths[0].combinationKey, "Victory"]]))).toThrow(/has no name/);
+    expect(() => withSalesPathNames(body, new Map([[body.paths[0].combinationKey, "Victory"]]), new Map())).toThrow(/has no name/);
+  });
+
+  it("names each leg's campaign (channel × leg) from the campaign map; a channel not in it reads null", () => {
+    const body = buildOfferSalesPaths({ ...base, legKeys: ["start_to_conversation", "conversation_to_paid_client"] });
+    expect(body.paths[0].legs[0].channel!.campaignName).toBeNull(); // the pure build names nothing
+    const names = new Map(body.paths.map((p, i) => [p.combinationKey, ["Victory", "Sol"][i]]));
+    const entry = body.paths[0].legs[0];
+    const campaigns = new Map([[campaignNameKeyOf(entry.channel!.slug!, entry.legKey), "Nova"]]);
+    const named = withSalesPathNames(body, names, campaigns);
+    expect(named.paths[0].legs[0].channel!.campaignName).toBe("Nova");
+    for (const p of named.paths) for (const l of p.legs) {
+      if (l.channel && !(l.channel.slug === entry.channel!.slug && l.legKey === entry.legKey)) expect(l.channel.campaignName).toBeNull();
+    }
+  });
+
+  it("keys a campaign in its own namespace, never equal to any combination key", () => {
+    expect(campaignNameKeyOf("meta-ads", "start_to_form_submitted")).toBe("campaign:meta-ads|start_to_form_submitted");
+    expect(campaignNameKeyOf("meta-ads", "start_to_form_submitted")).not.toBe(
+      combinationKeyOf([{ legKey: "start_to_form_submitted", channelSlug: "meta-ads" }]),
+    );
   });
 
   it("never prices an unpriced platform leg as free, and states no ROI without a lifetime revenue", () => {

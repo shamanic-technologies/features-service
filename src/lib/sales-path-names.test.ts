@@ -26,7 +26,14 @@ vi.mock("../db/index.js", () => {
   return { db: { ...tx, transaction: async (fn: (t: typeof tx) => unknown) => fn(tx) }, sql: {} };
 });
 
-import { nextUnusedNames, SALES_PATH_NAME_POOL, salesPathNamesFor, SalesPathNamePoolExhaustedError } from "./sales-path-names.js";
+import {
+  campaignNamesOf,
+  nextUnusedNames,
+  SALES_PATH_NAME_POOL,
+  salesPathNamesFor,
+  SalesPathNamePoolExhaustedError,
+  withCampaignNames,
+} from "./sales-path-names.js";
 import { combinationKeyOf, enumerateSalesPaths, legChannelsForScope } from "./offer-sales-paths.js";
 import { FUNNEL_LEGS } from "./funnel-legs.js";
 import { buildChannelCatalogue } from "./channel-catalogue.js";
@@ -65,7 +72,12 @@ describe("the name pool", () => {
     }
     const combinations = keys.size;
     expect(combinations).toBeGreaterThan(30); // 39 since seo-content left the shortlist (2026-10-04)
-    expect(SALES_PATH_NAME_POOL.length).toBeGreaterThanOrEqual(2 * combinations);
+    // Campaigns (every eligible channel × leg) draw from the same pool.
+    const campaigns = buildChannelCatalogue(SEED_FEATURES)
+      .filter((c) => c.salesPathEligible)
+      .reduce((n, c) => n + c.stepTransitions.length, 0);
+    expect(campaigns).toBeGreaterThan(10);
+    expect(SALES_PATH_NAME_POOL.length).toBeGreaterThanOrEqual(2 * (combinations + campaigns));
   });
 
   it("hands out the first unused words in pool order, and fails loud when short", () => {
@@ -96,5 +108,37 @@ describe("salesPathNamesFor — shared, stable forever, never reused", () => {
     store.rows = [{ combinationKey: "retired-combination", name: "Victory" }];
     const names = await salesPathNamesFor([k1]);
     expect(names.get(k1)).toBe("Sol");
+  });
+});
+
+describe("withCampaignNames — every sales-path campaign (channel × leg) named, never a path's name", () => {
+  beforeEach(() => {
+    store.rows = [];
+  });
+
+  it("names every leg of every eligible channel in catalogue order, leaves the rest null, and is stable", async () => {
+    // A one-leg path on meta-ads was named first: its campaign on the same (channel, leg) gets another word.
+    const onePath = combinationKeyOf([{ legKey: "start_to_form_submitted", channelSlug: "meta-ads" }]);
+    await salesPathNamesFor([onePath]);
+    const catalogue = buildChannelCatalogue(SEED_FEATURES);
+    const named = await withCampaignNames(catalogue);
+    const eligible = named.filter((c) => c.salesPathEligible);
+    expect(eligible.length).toBeGreaterThan(0);
+    for (const c of named) {
+      for (const t of c.stepTransitions) {
+        if (c.salesPathEligible) expect(t.campaignName).toMatch(/^[A-Z][a-z]+$/);
+        else expect(t.campaignName).toBeNull();
+      }
+    }
+    const names = campaignNamesOf(named);
+    expect(names.size).toBe(eligible.reduce((n, c) => n + c.stepTransitions.length, 0));
+    // First eligible campaign in catalogue order took the first word left after the path's.
+    expect(eligible[0].stepTransitions[0].campaignName).toBe("Sol");
+    expect([...names.values()]).not.toContain("Victory");
+    expect(new Set(store.rows.map((r) => r.name)).size).toBe(store.rows.length);
+    // A re-read writes nothing and returns the same names.
+    const before = store.rows.length;
+    expect(campaignNamesOf(await withCampaignNames(catalogue))).toEqual(names);
+    expect(store.rows).toHaveLength(before);
   });
 });
