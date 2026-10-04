@@ -11,6 +11,12 @@
  *     `emailsSent` / `emailsDelivered` on the EMAIL grain (every step of every sequence), and
  *     `recipientsContacted` on the lead grain (the Outreach card's per-day series). The window is whole UTC
  *     days, both bounds inclusive.
+ *   - CONTACTED IS NOT SENT. email-gateway's `contacted` counts a lead PUSHED INTO THE SENDING QUEUE (dated on
+ *     the push); its `sent` counts a lead that got at least one email (dated on the send event). A brand whose
+ *     mailboxes have not dispatched yet reads 302 contacted / 0 sent (Legistai, 2026-10-03). So the outbound
+ *     block states both and a verdict: `recipientsEnrolled` (= `recipientsContacted`, lined up),
+ *     `recipientsEmailed` (got ≥1 email in the window), `sendStatus` (`emails_sent` | `lined_up_not_sent` |
+ *     `nothing_sent`). The two clocks differ, so no "queued = enrolled − emailed" subtraction is served.
  *   - DELIVERY RATE = delivered ÷ sent emails in the window. It is the WINDOW twin of the dashboard's
  *     whole-history `outcomes.sending.deliveryRatePct` (which is lead-grain): never relabel one as the other.
  *   - EXPECTED POSITIVE REPLIES = the window's contacted leads × a positive-reply rate per contacted lead.
@@ -19,10 +25,14 @@
  *     `outcomesRequired` positive replies); otherwise the FLEET rate the public onboarding quotes
  *     (`/public/stats/outcome-prices`, the best workflow's conversion on `start_to_conversation`). A brand a
  *     few days old is the NORMAL case: it is priced on the fleet rate and says so (`rateSource`).
- *   - EXPECTED REVENUE = expected replies × P(paid client | positive reply) × lifetime revenue per client,
- *     both from the brand's EFFECTIVE economics (brand-service `sales-economics-effective`, the set every
- *     revenue read prices on). P = `replyToPaidClientPct` when served, else `replyToMeetingPct ×
- *     meetingToClosePct`. Only the reply route is priced (`basis: "positive_replies"`): website visits are
+ *   - EXPECTED REVENUE = expected replies × P(paid client | positive reply) × lifetime revenue per client.
+ *     P from the brand's EFFECTIVE economics (brand-service `sales-economics-effective`): `replyToPaidClientPct`
+ *     when served, else `replyToMeetingPct × meetingToClosePct`. LIFETIME REVENUE is the one the customer
+ *     STATED ON THEIR OFFER (brand-service `offer-economics`, the value every wave-C1 read prices on), never a
+ *     brand/cross-brand average when one is stated: every offer of the brand states it and they agree →
+ *     `offer_stated`; no offer states one → the brand's effective economics (`brand_economics`, its `source`
+ *     rides `economicsSource`); offers disagree or only some state one → null +
+ *     `lifetime_revenue_differs_across_offers` (sends are not split per offer here). Only the reply route is priced (`basis: "positive_replies"`): website visits are
  *     not, so the figure under-states rather than over-states.
  *   - SPEND = the org's whole COMMITTED spend in the window on the NET basis (runs-service dated
  *     `netTotalCostInUsdCents`, every brand, setup included) — what the month's credit was consumed by.
@@ -46,7 +56,10 @@ export interface RecapDay {
   date: string;
   emailsSent: number;
   emailsDelivered: number;
+  /** Leads pushed into the sending queue that day (NOT necessarily emailed). */
   recipientsContacted: number;
+  /** Leads that got at least one email that day. */
+  recipientsEmailed: number;
   recipientsRepliesPositive: number;
 }
 
@@ -69,13 +82,22 @@ export type RecapNullReason =
   /** The org spent nothing in the window: a return multiple has no denominator. */
   | "no_spend_in_window"
   /** Brands that sent in the window are valued at different lifetime revenues: no one figure is true. */
-  | "lifetime_revenue_differs_across_brands";
+  | "lifetime_revenue_differs_across_brands"
+  /** The brand's offers state different lifetime revenues (or only some state one): no one figure is true. */
+  | "lifetime_revenue_differs_across_offers";
+
+/** Where a brand's lifetime revenue per client was read. */
+export type LifetimeRevenueSource = "offer_stated" | "brand_economics";
+
+/** Window sending verdict: did anything actually go out, or is it only lined up in the sending queue? */
+export type SendStatus = "emails_sent" | "lined_up_not_sent" | "nothing_sent";
 
 export interface RecapBrand {
   brandId: string;
   emailsSent: number;
   emailsDelivered: number;
   recipientsContacted: number;
+  recipientsEmailed: number;
   positiveReplyRatePct: number | null;
   rateSource: ReplyRateSource | null;
   /** The brand's own mature cohort the rate was (or would have been) read from. */
@@ -83,6 +105,10 @@ export interface RecapBrand {
   expectedPositiveReplies: number | null;
   replyToPaidClientPct: number | null;
   lifetimeRevenuePerClientUsd: number | null;
+  lifetimeRevenueSource: LifetimeRevenueSource | null;
+  /** The offer whose stated lifetime revenue is used (a one-offer brand), else null. */
+  lifetimeRevenueOfferId: string | null;
+  lifetimeRevenueStatedAt: string | null;
   economicsSource: EffectiveEconomics["source"];
   expectedPaidClients: number | null;
   expectedRevenueUsd: number | null;
@@ -97,7 +123,12 @@ export interface OrgPeriodRecap {
   outbound: {
     emailsSent: number;
     emailsDelivered: number;
+    /** Leads pushed into the sending queue in the window. Same number as `recipientsEnrolled`; NOT "emailed". */
     recipientsContacted: number;
+    recipientsEnrolled: number;
+    /** Leads that got at least one email in the window. */
+    recipientsEmailed: number;
+    sendStatus: SendStatus;
     deliveryRatePct: number | null;
     deliveryRateNullReason: RecapNullReason | null;
   };
@@ -110,6 +141,7 @@ export interface OrgPeriodRecap {
     expectedRevenueUsd: number | null;
     roiMultiple: number | null;
     lifetimeRevenuePerClientUsd: number | null;
+    lifetimeRevenueSource: LifetimeRevenueSource | null;
     lifetimeRevenueNullReason: RecapNullReason | null;
     nullReason: RecapNullReason | null;
   };
@@ -162,12 +194,44 @@ export function replyToPaidFraction(econ: EffectiveEconomics["economics"]): numb
   return null;
 }
 
+/** An offer of the brand, as brand-service states it. */
+export interface RecapOffer {
+  offerId: string;
+  lifetimeRevenueUsd: number | null;
+  lifetimeRevenueStatedAt: string | null;
+}
+
+/** PURE. The lifetime revenue a brand's sends are valued at (rule in the header). */
+export function resolveRecapLifetimeRevenue(
+  offers: readonly RecapOffer[] | null,
+  economics: EffectiveEconomics,
+): { usd: number | null; source: LifetimeRevenueSource | null; offerId: string | null; statedAt: string | null; nullReason: RecapNullReason | null } {
+  const stated = (offers ?? []).filter((o) => o.lifetimeRevenueUsd !== null);
+  if (stated.length === 0) {
+    const ltr = economics.economics && Number.isFinite(economics.economics.lifetimeRevenueUsd) ? economics.economics.lifetimeRevenueUsd : null;
+    return { usd: ltr, source: ltr === null ? null : "brand_economics", offerId: null, statedAt: null, nullReason: ltr === null ? "economics_missing" : null };
+  }
+  const values = new Set(stated.map((o) => o.lifetimeRevenueUsd));
+  if (stated.length !== offers!.length || values.size > 1) {
+    return { usd: null, source: null, offerId: null, statedAt: null, nullReason: "lifetime_revenue_differs_across_offers" };
+  }
+  const only = stated.length === 1 ? stated[0] : null;
+  return {
+    usd: stated[0].lifetimeRevenueUsd,
+    source: "offer_stated",
+    offerId: only?.offerId ?? null,
+    statedAt: only?.lifetimeRevenueStatedAt ?? null,
+    nullReason: null,
+  };
+}
+
 export interface RecapInputs {
   orgId: string;
   from: string;
   to: string;
   now: Date;
-  brands: Array<{ brandId: string; days: RecapDay[]; economics: EffectiveEconomics }>;
+  /** `offers: null` = the org no longer holds the brand (no statements to read). */
+  brands: Array<{ brandId: string; days: RecapDay[]; economics: EffectiveEconomics; offers: RecapOffer[] | null }>;
   /** The org's net committed spend per UTC day (absent day = 0). */
   spendByDay: Map<string, number>;
   fleetRate: FleetReplyRate | null;
@@ -180,8 +244,9 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
   const cutoffDate = maturityCutoffIso(rule.durationDays, input.now).slice(0, 10);
 
   const brands = input.brands
-    .map(({ brandId, days: series, economics }) => {
+    .map(({ brandId, days: series, economics, offers }) => {
       let emailsSent = 0;
+      let recipientsEmailed = 0;
       let emailsDelivered = 0;
       let recipientsContacted = 0;
       let matureContacted = 0;
@@ -191,6 +256,7 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
           emailsSent += d.emailsSent;
           emailsDelivered += d.emailsDelivered;
           recipientsContacted += d.recipientsContacted;
+          recipientsEmailed += d.recipientsEmailed;
         }
         if (d.date < cutoffDate) {
           matureContacted += d.recipientsContacted;
@@ -210,14 +276,13 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
       } else expectedPositiveReplies = (recipientsContacted * ratePct) / 100;
 
       const p = replyToPaidFraction(economics.economics);
-      const ltr = economics.economics && Number.isFinite(economics.economics.lifetimeRevenueUsd)
-        ? economics.economics.lifetimeRevenueUsd
-        : null;
+      const lifetime = resolveRecapLifetimeRevenue(offers, economics);
+      const ltr = lifetime.usd;
       let expectedPaidClients: number | null = null;
       let expectedRevenueUsd: number | null = null;
       if (expectedPositiveReplies !== null) {
         if (p === null || ltr === null) {
-          if (recipientsContacted > 0) nullReason = "economics_missing";
+          if (recipientsContacted > 0) nullReason = ltr === null ? lifetime.nullReason ?? "economics_missing" : "economics_missing";
           else {
             expectedPaidClients = 0;
             expectedRevenueUsd = 0;
@@ -232,6 +297,7 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
         emailsSent,
         emailsDelivered,
         recipientsContacted,
+        recipientsEmailed,
         positiveReplyRatePct: ratePct === null ? null : round(ratePct, 4),
         rateSource,
         matureCohort: {
@@ -243,6 +309,10 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
         expectedPositiveReplies: expectedPositiveReplies === null ? null : round(expectedPositiveReplies, 2),
         replyToPaidClientPct: p === null ? null : round(p * 100, 4),
         lifetimeRevenuePerClientUsd: ltr,
+        lifetimeRevenueSource: lifetime.source,
+        lifetimeRevenueOfferId: lifetime.offerId,
+        lifetimeRevenueStatedAt: lifetime.statedAt,
+        _ltrNullReason: lifetime.nullReason,
         economicsSource: economics.source,
         expectedPaidClients: expectedPaidClients === null ? null : round(expectedPaidClients, 4),
         expectedRevenueUsd: expectedRevenueUsd === null ? null : round(expectedRevenueUsd, 2),
@@ -257,6 +327,8 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
   const emailsSent = brands.reduce((s, b) => s + b.emailsSent, 0);
   const emailsDelivered = brands.reduce((s, b) => s + b.emailsDelivered, 0);
   const recipientsContacted = brands.reduce((s, b) => s + b.recipientsContacted, 0);
+  const recipientsEmailed = brands.reduce((s, b) => s + b.recipientsEmailed, 0);
+  const sendStatus: SendStatus = emailsSent > 0 ? "emails_sent" : recipientsContacted > 0 ? "lined_up_not_sent" : "nothing_sent";
   let spendUsd = 0;
   for (const [day, usd] of input.spendByDay) if (days.has(day)) spendUsd += usd;
 
@@ -281,11 +353,18 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
 
   const ltrs = new Set(senders.map((b) => b.lifetimeRevenuePerClientUsd));
   let lifetimeRevenuePerClientUsd: number | null = null;
+  let lifetimeRevenueSource: LifetimeRevenueSource | null = null;
   let lifetimeRevenueNullReason: RecapNullReason | null = null;
+  const unvalued = senders.find((b) => b.lifetimeRevenuePerClientUsd === null);
   if (senders.length === 0) lifetimeRevenueNullReason = "nothing_sent";
-  else if (ltrs.has(null)) lifetimeRevenueNullReason = "economics_missing";
+  else if (unvalued) lifetimeRevenueNullReason = unvalued._ltrNullReason ?? "economics_missing";
   else if (ltrs.size > 1) lifetimeRevenueNullReason = "lifetime_revenue_differs_across_brands";
-  else lifetimeRevenuePerClientUsd = [...ltrs][0];
+  else {
+    lifetimeRevenuePerClientUsd = [...ltrs][0];
+    const sources = new Set(senders.map((b) => b.lifetimeRevenueSource));
+    // Same value read from different places (one brand stated, another averaged): no one provenance is true.
+    lifetimeRevenueSource = sources.size === 1 ? [...sources][0] : null;
+  }
 
   const canProject = roiMultiple !== null && expectedReplies !== null;
   return {
@@ -297,6 +376,9 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
       emailsSent,
       emailsDelivered,
       recipientsContacted,
+      recipientsEnrolled: recipientsContacted,
+      recipientsEmailed,
+      sendStatus,
       deliveryRatePct: emailsSent > 0 ? round((100 * emailsDelivered) / emailsSent, 2) : null,
       deliveryRateNullReason: emailsSent > 0 ? null : "nothing_sent",
     },
@@ -309,6 +391,7 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
       expectedRevenueUsd: expectedRevenueUsd === null ? null : round(expectedRevenueUsd, 2),
       roiMultiple: roiMultiple === null ? null : round(roiMultiple, 2),
       lifetimeRevenuePerClientUsd,
+      lifetimeRevenueSource,
       lifetimeRevenueNullReason,
       nullReason: returnReason,
     },
@@ -320,7 +403,7 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
       revenueMultiple: canProject ? round((spendUsd + BUDGET_INCREASE_USD) / spendUsd, 2) : null,
       nullReason: canProject ? null : returnReason ?? repliesReason,
     },
-    brands: brands.map(({ _rawReplies: _a, _rawRevenue: _b, _rawPaid: _c, ...rest }): RecapBrand => rest),
+    brands: brands.map(({ _rawReplies: _a, _rawRevenue: _b, _rawPaid: _c, _ltrNullReason: _d, ...rest }): RecapBrand => rest),
     fleetPositiveReplyRate: input.fleetRate,
   };
 }
@@ -338,7 +421,7 @@ type StatsGroup = {
   key?: unknown;
   broadcast?: {
     emailStats?: { sent?: unknown; delivered?: unknown };
-    recipientStats?: { contacted?: unknown; repliesPositive?: unknown };
+    recipientStats?: { contacted?: unknown; sent?: unknown; repliesPositive?: unknown };
   };
 };
 
@@ -377,6 +460,7 @@ export async function fetchBrandBroadcastDays(orgId: string, brandId: string): P
       emailsSent: num(e.sent ?? 0, "emailStats.sent"),
       emailsDelivered: num(e.delivered ?? 0, "emailStats.delivered"),
       recipientsContacted: num(r.contacted ?? 0, "recipientStats.contacted"),
+      recipientsEmailed: num(r.sent ?? 0, "recipientStats.sent"),
       recipientsRepliesPositive: num(r.repliesPositive ?? 0, "recipientStats.repliesPositive"),
     };
   });
@@ -406,10 +490,38 @@ export async function fetchOrgNetSpendByDay(orgId: string): Promise<Map<string, 
   return byDay;
 }
 
+/**
+ * The brand's offers with their stated lifetime revenue (brand-service `GET /internal/brands/:id/offer-economics`,
+ * the read every wave-C1 surface prices on; `lifetimeRevenueStatedAt` is read straight off the same body).
+ * FAIL-LOUD: a recap that cannot read what the customer stated 502s rather than value sends on an average.
+ * 403/404 = the org no longer holds the brand (same refusal as `BrandOwnershipError`): null, its sends still count.
+ */
+export async function fetchBrandOffersForRecap(orgId: string, brandId: string): Promise<RecapOffer[] | null> {
+  const url = process.env.BRAND_SERVICE_URL;
+  const apiKey = process.env.BRAND_SERVICE_API_KEY;
+  if (!url || !apiKey) throw new Error("BRAND_SERVICE_URL or BRAND_SERVICE_API_KEY not configured");
+  const res = await fetchWithRetry(`${url}/internal/brands/${brandId}/offer-economics`, {
+    headers: { "x-api-key": apiKey, "x-org-id": orgId },
+  });
+  if (res.status === 403 || res.status === 404) return null;
+  if (!res.ok) throw new Error(`brand-service offer-economics failed (${res.status}): ${await res.text()}`);
+  const data = (await res.json()) as { offers?: unknown };
+  if (!Array.isArray(data.offers)) throw new Error("brand-service offer-economics returned no offers array");
+  return (data.offers as Array<Record<string, unknown>>)
+    .filter((o) => typeof o?.offerId === "string" && o.offerId !== "")
+    .map((o) => ({
+      offerId: o.offerId as string,
+      lifetimeRevenueUsd: typeof o.lifetimeRevenueUsd === "number" && Number.isFinite(o.lifetimeRevenueUsd) ? o.lifetimeRevenueUsd : null,
+      lifetimeRevenueStatedAt: typeof o.lifetimeRevenueStatedAt === "string" ? o.lifetimeRevenueStatedAt : null,
+    }));
+}
+
 export interface RecapDeps {
   brandIds: (orgId: string) => Promise<string[]>;
   brandDays: (orgId: string, brandId: string) => Promise<RecapDay[]>;
   economics: (orgId: string, brandId: string) => Promise<EffectiveEconomics>;
+  /** The brand's offers with their STATED lifetime revenue, for this org; null = the org no longer holds the brand. */
+  offers: (orgId: string, brandId: string) => Promise<RecapOffer[] | null>;
   spendByDay: (orgId: string) => Promise<Map<string, number>>;
   fleetRate: () => FleetReplyRate | null;
   now: () => Date;
@@ -427,6 +539,7 @@ export const defaultRecapDeps = (fleetRate: () => FleetReplyRate | null): RecapD
       throw error;
     }
   },
+  offers: fetchBrandOffersForRecap,
   spendByDay: fetchOrgNetSpendByDay,
   fleetRate,
   now: () => new Date(),
@@ -436,8 +549,12 @@ export const defaultRecapDeps = (fleetRate: () => FleetReplyRate | null): RecapD
 export async function computeOrgPeriodRecap(orgId: string, from: string, to: string, deps: RecapDeps): Promise<OrgPeriodRecap> {
   const [brandIds, spendByDay] = await Promise.all([deps.brandIds(orgId), deps.spendByDay(orgId)]);
   const brands = await mapWithConcurrency(brandIds, 4, async (brandId) => {
-    const [days, economics] = await Promise.all([deps.brandDays(orgId, brandId), deps.economics(orgId, brandId)]);
-    return { brandId, days, economics };
+    const [days, economics, offers] = await Promise.all([
+      deps.brandDays(orgId, brandId),
+      deps.economics(orgId, brandId),
+      deps.offers(orgId, brandId),
+    ]);
+    return { brandId, days, economics, offers };
   });
   return buildOrgPeriodRecap({ orgId, from, to, now: deps.now(), brands, spendByDay, fleetRate: deps.fleetRate() });
 }
