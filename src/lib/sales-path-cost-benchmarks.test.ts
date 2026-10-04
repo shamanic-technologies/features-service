@@ -74,7 +74,7 @@ describe("the catalogue shortlist", () => {
   it("has a sourced benchmark for every (leg, channel we do not run) the shortlist publishes", () => {
     for (const legKey of FUNNEL_LEG_KEYS) {
       for (const c of legChannelsForScope(CATALOGUE, legKey, "catalogue")) {
-        if (MANAGED_CHANNEL_SLUGS.has(c.slug)) continue;
+        if (MANAGED_CHANNEL_SLUGS.has(c.slug) || c.operatedBy === "customer") continue;
         const b = SALES_PATH_COST_BENCHMARKS.get(priceKey(legKey, c.slug));
         expect(b, `${legKey}|${c.slug}`).toBeDefined();
         expect(b!.costPerOutcomeUsd).toBeGreaterThan(0);
@@ -99,19 +99,25 @@ describe("?scope=catalogue", () => {
     expect(body.status).toBe("ok");
     const keys = body.paths.map((p) => p.combinationKey);
     expect(new Set(keys).size).toBe(keys.length);
-    expect(body.paths.length).toBeGreaterThanOrEqual(40);
+    expect(body.paths.length).toBeGreaterThanOrEqual(30);
     for (const p of body.paths) {
       expect(p.roi, p.combinationKey).not.toBeNull();
       for (const l of p.legs) {
-        if (l.channel) {
+        if (l.channel && l.channel.operatedBy === "platform") {
           expect(l.costPerOutcomeUsd, `${p.combinationKey} ${l.legKey}`).not.toBeNull();
           expect(l.costSource).not.toBeNull();
         }
         if (l.fromStep) expect(l.conversionRatePct).not.toBeNull();
       }
     }
-    // Ranked by ROI.
-    for (let i = 1; i < body.paths.length; i++) expect(body.paths[i - 1].roi!).toBeGreaterThanOrEqual(body.paths[i].roi!);
+    // Rows on our own evidence first, then benchmark rows; each tier by ROI.
+    const firstBench = body.paths.findIndex((p) => p.pricedOnBenchmark);
+    expect(firstBench).toBeGreaterThan(0);
+    expect(body.paths.slice(firstBench).every((p) => p.pricedOnBenchmark)).toBe(true);
+    for (let i = 1; i < body.paths.length; i++) {
+      if (i === firstBench) continue;
+      expect(body.paths[i - 1].roi!).toBeGreaterThanOrEqual(body.paths[i].roi!);
+    }
   });
 
   it("enters through every shortlisted entry channel, never through an agency or unlisted one", () => {
@@ -134,8 +140,8 @@ describe("?scope=catalogue", () => {
     const email = body.paths.find((p) => p.entryChannelSlug === "sales-cold-email-outreach")!;
     expect(email.legs[0].channel).toMatchObject({ managed: true, costSource: "default", costBenchmarkSource: null });
     const team = body.paths.flatMap((p) => p.legs).find((l) => l.channel?.slug === "your-team-closing-calls")!;
-    expect(team).toMatchObject({ workedBy: "human", costSource: "benchmark" });
-    expect(team.channel!.operatedBy).toBe("customer");
+    expect(team).toMatchObject({ workedBy: "human", costSource: null, costPerOutcomeUsd: null, costPerPayingClientUsd: null });
+    expect(team.channel!).toMatchObject({ operatedBy: "customer", managed: false });
   });
 
   it("flags the chains the offer ticked, and keys a ticked row exactly as the default read does", () => {
@@ -159,6 +165,29 @@ describe("?scope=catalogue", () => {
     expect(b.status).toBe("ok");
     expect(b.paths.length).toBe(body.paths.length);
     expect(b.paths.every((p) => !p.ticked)).toBe(true);
+  });
+
+  it("prices one combination ONCE whatever the scope (the customer's team costs nothing in both)", () => {
+    const d = build({ scope: "ticked" });
+    const byKey = new Map(body.paths.map((p) => [p.combinationKey, p]));
+    expect(d.paths.length).toBeGreaterThan(0);
+    for (const p of d.paths) {
+      const c = byKey.get(p.combinationKey)!;
+      expect(c.costPerPayingClientUsd! - p.costPerPayingClientUsd!).toBe(0);
+      expect(c.roi! - p.roi!).toBe(0);
+    }
+  });
+
+  it("never lets a benchmark-priced row out-rank a row on our own evidence", () => {
+    const bench = body.paths.filter((p) => p.pricedOnBenchmark);
+    const own = body.paths.filter((p) => !p.pricedOnBenchmark);
+    expect(Math.max(...own.map((p) => p.rank))).toBeLessThan(Math.min(...bench.map((p) => p.rank)));
+  });
+
+  it("lists the self-serve checkout leg only when the offer ticked it", () => {
+    expect(body.paths.some((p) => p.legKeys.includes("website_visit_to_purchase"))).toBe(false);
+    const withCheckout = build({ legKeys: ["start_to_website_visit", "website_visit_to_purchase", "purchase_to_paid_client"] });
+    expect(withCheckout.paths.some((p) => p.legKeys.includes("website_visit_to_purchase"))).toBe(true);
   });
 
   it("leaves the default read's population alone: managed channels only", () => {
