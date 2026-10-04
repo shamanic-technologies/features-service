@@ -138,6 +138,30 @@ describe("fetchPricingFunnels — the brand's leg rates and the OFFER's lifetime
     await expect(fetchPricingFunnels("b1", "org-1", null, { rates: "stated" })).rejects.toBeInstanceOf(SeveralOffersDeclaredError);
   });
 
+  it("a several-offer brand whose campaigns all sell ONE offer: the brand read IS that offer's read (owner 2026-10-04, Olive)", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as { url: string }).url;
+      const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+      if (url.includes("/offer-economics")) return json(OFFER_ECONOMICS);
+      if (url.includes("campaign:3000/campaigns")) return json({ campaigns: [CAMPAIGNS[1]] });
+      return json({});
+    });
+    const brand = await fetchPricingFunnels("b1", "org-1", null, { rates: "stated" });
+    expect(brand.map((f) => f.funnelKey)).toEqual(["sales_meetings_from_conversation"]);
+    expect(brand[0].lifetimeRevenueUsd).toBe(4000);
+  });
+
+  it("a campaign stating NO offer beside them keeps the refusal — nobody knows which offer it sells", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as { url: string }).url;
+      const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+      if (url.includes("/offer-economics")) return json(OFFER_ECONOMICS);
+      if (url.includes("campaign:3000/campaigns")) return json({ campaigns: [CAMPAIGNS[1], { ...CAMPAIGNS[0], offerId: null }] });
+      return json({});
+    });
+    await expect(fetchPricingFunnels("b1", "org-1", null, { rates: "stated" })).rejects.toBeInstanceOf(SeveralOffersDeclaredError);
+  });
+
   it("a scope whose campaigns perform no leg reads NO funnel — never a substituted one", async () => {
     mock();
     expect(await fetchPricingFunnels("b1", "org-1", "offer-self", { rates: "stated", legKeys: [] })).toEqual([]);
