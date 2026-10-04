@@ -152,6 +152,20 @@ describe("buildRevenueWindow", () => {
   });
 });
 
+describe("buildRevenueWindow — queuedEmails (snapshot)", () => {
+  const base = { dates: ["2026-10-03"], emailsByDay: null, spendByDay: null, recipientsRepliesPositive: series([]), recipientsClicked: series([]), totalPipelineUsd: null, pipelineTimeSeries: [] };
+
+  it("serves the sender's count, a measured 0 included, with no reason", () => {
+    expect(buildRevenueWindow({ ...base, queuedEmails: { queued: 2505 } })).toMatchObject({ queuedEmails: 2505, queuedEmailsUnavailableReason: null });
+    expect(buildRevenueWindow({ ...base, queuedEmails: { queued: 0 } })).toMatchObject({ queuedEmails: 0, queuedEmailsUnavailableReason: null });
+  });
+
+  it("is null with a reason when unknown, never 0", () => {
+    expect(buildRevenueWindow({ ...base, queuedEmails: { queued: null } })).toMatchObject({ queuedEmails: null, queuedEmailsUnavailableReason: "sender_queue_unreadable" });
+    expect(buildRevenueWindow({ ...base, queuedEmails: null })).toMatchObject({ queuedEmails: null, queuedEmailsUnavailableReason: "stats_unreadable" });
+  });
+});
+
 describe("campaignLessOutsideScope (today's brand-level spend)", () => {
   const g = (campaignId: string | null, featureSlug: string | null, cents: string): RunsCostGroup => ({
     dimensions: { campaignId, featureSlug },

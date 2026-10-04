@@ -29,6 +29,10 @@
  *   - recipientsRepliesPositive / recipientsClicked — the body's OWN per-day series (people, first
  *     time each did it) summed over the window's days; an undated one sits on no day and is not in a
  *     window.
+ *   - queuedEmails — EMAILS (every step) scheduled and not yet sent RIGHT NOW over the scope's campaigns
+ *     and channels: email-gateway's `broadcast.emailStats.queued`, relayed from the sender's own queue
+ *     (live sequences only). A SNAPSHOT, not a window figure: the same number whatever ?windowDays=.
+ *     Null with `queuedEmailsUnavailableReason`, never a zero standing for unknown.
  *   - expectedPipeline — the body's headline pipeline, DATED: the engine's own cumulative series
  *     (each organisation steps in at its most advanced dated event), read at the end of each day. Same
  *     basis as `headline.totalPipelineUsd` (the expected pipeline, flash), so its last point IS the
@@ -45,7 +49,7 @@ import { isVendorPricing, type Pricing } from "./pricing.js";
 import type { CampaignFilter } from "./campaign-scope.js";
 import { campaignScopeIds } from "./campaign-scope.js";
 import { featureSlugsParam, type FeatureScope } from "./feature-scope.js";
-import { fetchBroadcastEmailsByDay } from "./sequences-client.js";
+import { fetchBroadcastEmailsByDay, fetchBroadcastQueuedEmails } from "./sequences-client.js";
 import { RUNS_CAMPAIGN_IDS_PER_REQUEST } from "./brand-spend-by-day-client.js";
 import type { SignalSeries, TimeSeriesPoint } from "./revenue-engine.js";
 
@@ -143,7 +147,19 @@ export interface RevenueWindow {
     undatedPipelineUsd: number;
     daily: Array<{ date: string; cumulativePipelineUsd: number }>;
   } | null;
+  /** Emails queued and not yet sent RIGHT NOW (snapshot, no day). Null with `queuedEmailsUnavailableReason`, never 0 for unknown. */
+  queuedEmails: number | null;
+  queuedEmailsUnavailableReason: QueuedEmailsUnavailableReason | null;
 }
+
+/**
+ * Why `queuedEmails` is null. `sender_queue_unreadable` = the sending service said it could not read
+ * its own queue; `stats_unreadable` = the email-gateway read failed or did not carry the count.
+ */
+export type QueuedEmailsUnavailableReason = "sender_queue_unreadable" | "stats_unreadable";
+
+/** What the queued-emails read returned: a count (null = the sender could not read its queue), or a failed read. */
+export type QueuedEmailsRead = { queued: number | null } | null;
 
 function deliveryRatePct(sent: number, delivered: number): number | null {
   if (sent <= 0 || delivered > sent) return null;
@@ -256,6 +272,7 @@ export function buildRevenueWindow(input: {
   totalPipelineUsd: number | null;
   pipelineTimeSeries: TimeSeriesPoint[];
   sinceInception?: boolean;
+  queuedEmails?: QueuedEmailsRead;
 }): RevenueWindow {
   const { dates } = input;
   const startDate = dates[0];
@@ -346,6 +363,12 @@ export function buildRevenueWindow(input: {
     recipientsRepliesPositive: inWindow(input.recipientsRepliesPositive),
     recipientsClicked: inWindow(input.recipientsClicked),
     expectedPipeline,
+    queuedEmails: input.queuedEmails?.queued ?? null,
+    queuedEmailsUnavailableReason: !input.queuedEmails
+      ? "stats_unreadable"
+      : input.queuedEmails.queued === null
+        ? "sender_queue_unreadable"
+        : null,
   };
 }
 
@@ -369,7 +392,7 @@ export async function computeRevenueWindow(input: {
   const sinceInception = input.days === "all";
   const boundedDates = sinceInception ? null : windowDates(now, input.days as number);
   const startedAfter = boundedDates ? `${boundedDates[0]}T00:00:00.000Z` : undefined;
-  const [emailsByDay, spendByDay] = await Promise.all([
+  const [emailsByDay, spendByDay, queuedEmails] = await Promise.all([
     fetchBroadcastEmailsByDay(input.brandId, input.campaignScope, input.featureScope, input.headers).catch((err: Error) => {
       console.error(`[features-service] window emails unreadable for brand ${input.brandId} (window.emails null): ${err.message}`);
       return null;
@@ -385,6 +408,16 @@ export async function computeRevenueWindow(input: {
       console.error(`[features-service] window spend unreadable for brand ${input.brandId} (window.spend null): ${err.message}`);
       return null;
     }),
+    fetchBroadcastQueuedEmails(input.brandId, input.campaignScope, input.featureScope, input.headers).then(
+      (queued): QueuedEmailsRead => {
+        if (queued === null) console.error(`[features-service] window queued emails: sender could not read its queue for brand ${input.brandId} (window.queuedEmails null)`);
+        return { queued };
+      },
+      (err: Error): QueuedEmailsRead => {
+        console.error(`[features-service] window queued emails unreadable for brand ${input.brandId} (window.queuedEmails null): ${err.message}`);
+        return null;
+      },
+    ),
   ]);
   const dates =
     boundedDates ??
@@ -406,5 +439,6 @@ export async function computeRevenueWindow(input: {
     recipientsClicked: input.body.recipientsClicked,
     totalPipelineUsd: input.body.headline.totalPipelineUsd,
     pipelineTimeSeries: input.body.timeSeries,
+    queuedEmails,
   });
 }
