@@ -48,6 +48,13 @@
  *     (window spend + 100) ÷ window spend (revenue at the same return scales with spend);
  *     `expectedAdditionalRecipientsEnrolled` = 100 × enrolled ÷ spend, whole people (needs no rate or economics,
  *     so it has its own null reason). Nothing about diminishing or improving returns is claimed.
+ *   - ACTUAL OUTCOMES (`actualOutcomes`, 2026-10-04, for billing's informational monthly email): the
+ *     positive replies and meetings booked that HAPPENED in the window, read off the SAME dated series the
+ *     dashboard draws (`recipientsRepliesPositive` / `meetingsBooked` on `/offers/:offerId/revenue`, dated on
+ *     the outcome itself, the read `expectedReturn` already makes) and summed over the window's days, for every
+ *     offer with campaigns of every brand the org holds (a reply can land in the window on an earlier send).
+ *     A series that could not be read → null `outcomes_unavailable`; one holding an UNDATED outcome → null
+ *     `undated_outcomes` (it may fall in the window or not). Never a recount here.
  *   - UNKNOWN IS NULL WITH A REASON, NEVER 0. A zero is served only where it is TRUE (nothing sent in the
  *     window ⇒ 0 emails, 0 expected replies).
  */
@@ -102,7 +109,11 @@ export type RecapNullReason =
   /** Brands that sent in the window are valued at different lifetime revenues: no one figure is true. */
   | "lifetime_revenue_differs_across_brands"
   /** The brand's offers state different lifetime revenues (or only some state one): no one figure is true. */
-  | "lifetime_revenue_differs_across_offers";
+  | "lifetime_revenue_differs_across_offers"
+  /** An offer's dated outcome series could not be read: a sum missing it would understate. */
+  | "outcomes_unavailable"
+  /** An offer holds an outcome with no date: nobody knows whether it falls in the window. */
+  | "undated_outcomes";
 
 /** Where a brand's lifetime revenue per client was read. */
 export type LifetimeRevenueSource = "offer_stated" | "brand_economics";
@@ -138,6 +149,29 @@ export interface OfferReturnRead {
   /** `headline.totalPipelineUsd` and `costEconomics.committedCostUsd`: what the flash return divides. */
   pipelineUsd: number | null;
   committedCostUsd: number | null;
+  /** The dashboard's dated outcome series on the same body (absent/null = not served: unknown, never 0). */
+  outcomeSeries?: { positiveReplies: OutcomeSeries | null; meetingsBooked: OutcomeSeries | null };
+}
+
+/** One dated outcome series as the revenue body serves it (`buildSignalSeries`). */
+export interface OutcomeSeries {
+  total: number;
+  daily: Array<{ date: string; count: number }>;
+  undatedCount: number;
+}
+
+/** PURE. One outcome summed over the window across every scope read, or null with the reason (rule in the header). */
+export function windowOutcomeCount(
+  series: ReadonlyArray<OutcomeSeries | null | undefined>,
+  days: ReadonlySet<string>,
+): { count: number | null; nullReason: RecapNullReason | null } {
+  let count = 0;
+  for (const s of series) {
+    if (!s) return { count: null, nullReason: "outcomes_unavailable" };
+    if (s.undatedCount > 0) return { count: null, nullReason: "undated_outcomes" };
+    for (const d of s.daily) if (days.has(d.date)) count += d.count;
+  }
+  return { count, nullReason: null };
 }
 
 /** A scope whose served return the recap states (provenance). */
@@ -174,6 +208,14 @@ export interface OrgPeriodRecap {
   };
   expectedPositiveReplies: number | null;
   expectedPositiveRepliesNullReason: RecapNullReason | null;
+  /** What HAPPENED in the window, on the dashboard's own dated series (rule in the header). */
+  actualOutcomes: {
+    basis: "dashboard_dated_series";
+    positiveReplies: number | null;
+    positiveRepliesNullReason: RecapNullReason | null;
+    meetingsBooked: number | null;
+    meetingsBookedNullReason: RecapNullReason | null;
+  };
   spendUsd: number;
   expectedReturn: {
     /** The dashboard's served return for the scope that sent (rule in the header). */
@@ -429,6 +471,11 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
     lifetimeRevenueSource = sources.size === 1 ? [...sources][0] : null;
   }
 
+  // What happened: every offer read of every brand the org holds (a brand it no longer holds is shown nowhere).
+  const outcomeScopes = brands.flatMap((b) => b._returns ?? []);
+  const replies = windowOutcomeCount(outcomeScopes.map((r) => r.outcomeSeries?.positiveReplies), days);
+  const meetings = windowOutcomeCount(outcomeScopes.map((r) => r.outcomeSeries?.meetingsBooked), days);
+
   const expectedRevenueUsd = roiMultiple === null ? null : roiMultiple * spendUsd;
   const expectedPaidClients =
     expectedRevenueUsd === null || lifetimeRevenuePerClientUsd === null || lifetimeRevenuePerClientUsd <= 0
@@ -455,6 +502,13 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
     },
     expectedPositiveReplies: expectedReplies === null ? null : round(expectedReplies, 2),
     expectedPositiveRepliesNullReason: repliesReason,
+    actualOutcomes: {
+      basis: "dashboard_dated_series",
+      positiveReplies: replies.count,
+      positiveRepliesNullReason: replies.nullReason,
+      meetingsBooked: meetings.count,
+      meetingsBookedNullReason: meetings.nullReason,
+    },
     spendUsd: round(spendUsd, 2),
     expectedReturn: {
       basis: "served_return",
@@ -633,17 +687,16 @@ export const defaultRecapDeps = (
 /** Read everything and build the recap. FAIL-LOUD: any producer failure throws (the route 502s). */
 export async function computeOrgPeriodRecap(orgId: string, from: string, to: string, deps: RecapDeps): Promise<OrgPeriodRecap> {
   const [brandIds, spendByDay] = await Promise.all([deps.brandIds(orgId), deps.spendByDay(orgId)]);
-  const window = new Set(windowDays(from, to));
   const brands = await mapWithConcurrency(brandIds, 4, async (brandId) => {
     const [days, economics, offers] = await Promise.all([
       deps.brandDays(orgId, brandId),
       deps.economics(orgId, brandId),
       deps.offers(orgId, brandId),
     ]);
-    // The served return is read only for a brand that contacted someone in the window (the scopes the
-    // recap states); a brand the org no longer holds has no offers to read it on (null).
-    const sent = days.some((d) => window.has(d.date) && d.recipientsContacted > 0);
-    const returns = !sent || offers === null
+    // Every offer of every brand the org holds is read: the RETURN only states the brands that contacted
+    // someone in the window (`senders`), the ACTUAL OUTCOMES count every brand (a reply can land in the
+    // window on an earlier send). A brand the org no longer holds has no offers to read it on (null).
+    const returns = offers === null
       ? null
       : (await Promise.all(offers.map((o) => deps.offerReturn(orgId, brandId, o.offerId)))).filter(
           (r): r is OfferReturnRead => r !== null,

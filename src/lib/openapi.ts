@@ -1785,11 +1785,11 @@ const salesPathLegSchema = z.object({
       workflowDynastySlug: z.string().nullable(),
       grain: z.string().nullable(),
       costSource: z.enum(["workflow", "fleet_measured", "default"]).nullable(),
-      choice: z.enum(["only_priced_channel", "cheapest_cost_per_outcome", "no_priced_channel"]),
+      choice: z.enum(["only_priced_channel", "cheapest_cost_per_outcome", "no_priced_channel", "alternative_channel"]).describe("only_priced_channel / cheapest_cost_per_outcome: this row's channel is the leg's cheapest. alternative_channel: this row runs the leg on another candidate (costlier or unpriced); another row runs the cheapest. no_priced_channel: no candidate could price the leg."),
       candidates: z.array(salesPathCandidateSchema),
     })
     .nullable()
-    .describe("Present on a platform leg: the channel we would run it on (lowest cost per outcome) and why."),
+    .describe("Present on a platform leg: the channel THIS combination runs it on (one row per candidate channel), with every candidate listed."),
   outcomesNeededPerPayingClient: z.number().nullable(),
   costPerOutcomeUsd: z.number().nullable(),
   costSource: z.enum(["workflow", "fleet_measured", "default"]).nullable().describe("Which rung of the cost cascade priced the leg: workflow > fleet_measured > default. Null on a human leg."),
@@ -1797,11 +1797,13 @@ const salesPathLegSchema = z.object({
 });
 const salesPathSchema = z.object({
   rank: z.number(),
-  pathKey: z.string(),
+  combinationKey: z.string().describe("The row's UNIQUE identity within the response (key rows on it): the legs in order joined by `+`, each leg a managed channel works suffixed `@<channel slug>`, e.g. `start_to_conversation@sales-cold-email-outreach+conversation_to_paid_client`. The same combination has the same key for every brand and org."),
+  name: z.string().describe("The combination's name: one English word (e.g. Victory, Sol), the SAME for every client, brand and org, given once on first sight and never changed nor reused."),
+  pathKey: z.string().describe("The CHAIN of legs (legKeys joined by `+`), shared by every combination of that chain. Not unique: key rows on combinationKey."),
   legKeys: z.array(z.string()),
   steps: z.array(salesPathStepSchema),
   entryLegKey: z.string(),
-  entryChannelSlug: z.string().nullable().describe("The channel chosen for the entry leg — what a budget behind this path buys."),
+  entryChannelSlug: z.string().nullable().describe("This combination's channel on the entry leg — what a budget behind this row buys. Null when the entry leg is human."),
   legs: z.array(salesPathLegSchema),
   entryToPayingClientPct: z.number().nullable(),
   lifetimeRevenueUsd: z.number().nullable(),
@@ -1831,7 +1833,7 @@ registry.registerPath({
   description:
     "A SALES PATH is a chain of the legs the customer ticked for the offer (brand-service sales-path) from an ENTRY leg (from nothing) to paid_client, visiting no step twice. " +
     "Formula: needed(paid_client)=1; needed(from step of leg i)=needed(to step)/(rate_i/100); legCost_i = costPerOutcome_i × needed(to step of leg i) for a leg a channel of ours works (0 for a human leg); costPerPayingClient = Σ legCost_i; roi = offer lifetime revenue ÷ costPerPayingClient. " +
-    "rate_i is the brand's effective leg rate (CRM-measured / measured on our leads > customer stated > fleet median, only when at least 5 brands stated the leg and never on a leg leaving website_visit > industry default). costPerOutcome_i is the NET cost per outcome of the recommended workflow of each platform channel's leg-keyed workflow-projection ladder (?leg=&offerId=&pricing=net), else the channel's measured fleet cost per outcome on the leg, else a seeded default (costSource says which); the cheapest channel is chosen. Only the managed channels (sales-cold-email-outreach, ai-meeting-booking, ai-instant-call) are candidates; every other leg is the customer's team (workedBy human, cost 0). " +
+    "rate_i is the brand's effective leg rate (CRM-measured / measured on our leads > customer stated > fleet median, only when at least 5 brands stated the leg and never on a leg leaving website_visit > industry default). costPerOutcome_i is the NET cost per outcome of the recommended workflow of each platform channel's leg-keyed workflow-projection ladder (?leg=&offerId=&pricing=net), else the channel's measured fleet cost per outcome on the leg, else a seeded default (costSource says which); every candidate channel of a leg forms its OWN row (one row per COMBINATION of a chain × one managed channel per platform leg), each ranked on its own; channel.choice says whether the row's channel is the leg's cheapest. Every row has a unique combinationKey and a shared, permanent name. Only the managed channels (sales-cold-email-outreach, ai-meeting-booking, ai-instant-call) are candidates; every other leg is the customer's team (workedBy human, cost 0). " +
     "Ranked by roi descending; a path whose roi is null (reason stated) sorts last. status not_stated / no_legs_selected / no_complete_path serve paths: [] — none is invented. Additive read.",
   tags: ["Stats"],
   request: {
@@ -2645,8 +2647,8 @@ registry.registerPath({
 
 // ── GET /internal/orgs/{orgId}/period-recap (lib/org-period-recap.ts) ──
 const recapNullReason = z
-  .enum(["nothing_sent", "reply_rate_unavailable", "economics_missing", "no_spend_in_window", "return_learning", "return_unavailable", "return_differs_across_scopes", "lifetime_revenue_differs_across_brands", "lifetime_revenue_differs_across_offers"])
-  .describe("Why the figure beside it is null. nothing_sent = nothing was lined up or sent in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue; no_spend_in_window = the org spent nothing in the window (per-window-dollar figures only); return_learning = the offer is not mature and its to-date return is not above 1x (the dashboard reads Learning); return_unavailable = no return is served for a scope that sent (no pair, no offer with campaigns, brand no longer held; the dashboard reads -); return_differs_across_scopes = the offers/brands that sent are shown different returns, so no one figure is true (see expectedReturn.returnScopes); lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer.");
+  .enum(["nothing_sent", "reply_rate_unavailable", "economics_missing", "no_spend_in_window", "return_learning", "return_unavailable", "return_differs_across_scopes", "lifetime_revenue_differs_across_brands", "lifetime_revenue_differs_across_offers", "outcomes_unavailable", "undated_outcomes"])
+  .describe("Why the figure beside it is null. nothing_sent = nothing was lined up or sent in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue; no_spend_in_window = the org spent nothing in the window (per-window-dollar figures only); return_learning = the offer is not mature and its to-date return is not above 1x (the dashboard reads Learning); return_unavailable = no return is served for a scope that sent (no pair, no offer with campaigns, brand no longer held; the dashboard reads -); return_differs_across_scopes = the offers/brands that sent are shown different returns, so no one figure is true (see expectedReturn.returnScopes); lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer; outcomes_unavailable = an offer's dated outcome series could not be read (a sum missing it would understate); undated_outcomes = an offer holds an outcome with no date, so nobody knows whether it falls in the window.");
 const recapLtrSource = z
   .enum(["offer_stated", "brand_economics"])
   .describe("Where the lifetime revenue per client was read. offer_stated = the value the customer stated on their offer (brand-service offer-economics, every offer of the brand agreeing); brand_economics = no offer states one, so the brand's effective economics (see economicsSource: user or cross-brand-average).");
@@ -2703,6 +2705,13 @@ const orgPeriodRecapResponseRef = registry.register(
     }),
     expectedPositiveReplies: z.number().nullable().describe("Sum over brands of recipientsContacted x positiveReplyRatePct. 0 when nothing was contacted (true); null when a brand that sent has no rate."),
     expectedPositiveRepliesNullReason: recapNullReason.nullable(),
+    actualOutcomes: z.object({
+      basis: z.literal("dashboard_dated_series").describe("Read off the dated series the dashboard draws (recipientsRepliesPositive / meetingsBooked on /offers/{offerId}/revenue, dated on the outcome itself), summed over the window's UTC days, across every offer with campaigns of every brand the org holds. Never recounted."),
+      positiveReplies: z.number().int().nullable().describe("Positive replies RECEIVED in the window (people, deduped per offer). 0 is measured. Null with positiveRepliesNullReason when unknown."),
+      positiveRepliesNullReason: recapNullReason.nullable(),
+      meetingsBooked: z.number().int().nullable().describe("Meetings booked in the window, dated on the booking. 0 is measured. Null with meetingsBookedNullReason when unknown."),
+      meetingsBookedNullReason: recapNullReason.nullable(),
+    }).describe("What HAPPENED in the window (not a forecast): the twin of expectedPositiveReplies, on the dashboard's basis."),
     spendUsd: z.number().describe("The org's whole COMMITTED spend in the window, NET basis (every brand, setup included)."),
     expectedReturn: z.object({
       basis: z.literal("served_return").describe("The return is the one the dashboard shows for the offer(s) that sent in the window, read from the same served figure, never recomputed over the window."),
@@ -4189,7 +4198,7 @@ const channelStepTransitionSchema = z.object({
   legKey: z.string().describe("The ONE canonical identifier of the LEG this leg is (e.g. `start_to_conversation`, `meeting_booked_to_meeting_attended`) — minted and owned by features-service, and the value the fleet keys a campaign and a budget on. Performance is measured per LEG; a sales funnel is a way of READING legs, because one leg belongs to several funnels at once. Name a leg with this alone: the two steps ride BESIDE it as `from`/`to`, so a consumer READS them and NEVER splits the string. A leg that STARTS a funnel carries an ordinary identifier like every other — `from: null` is the special case in the data, never in the vocabulary."),
   from: channelStepSchema.nullable().describe("The step this channel takes a lead OUT of. NULL is 'from nothing' — the lead was not on the funnel at all until this channel produced its first step, which is the SPECIAL case rather than the rule."),
   to: channelStepSchema.describe("The step this channel moves the lead TO."),
-  crewName: z.string().nullable().describe("The teammate name the product gives the crew performing this leg (e.g. `Herald` for cold email landing on a positive reply, `Scout` for its website-visit leg, `Pilot` for AI meeting booking). A (channel, landing step) pair may carry its own name; otherwise the channel has one name for all its legs. NULL when nobody named it — never invented; a consumer falls back to the channel's `name`. Colours and glyphs are a consumer concern."),
+  crewName: z.null().describe("RETIRED 2026-10-04: always null. Crew names (Herald, Scout, Pilot, …) no longer name a (channel, leg); the poetic names now name sales path COMBINATIONS (`GET /offers/{offerId}/sales-paths` `paths[].name`). Name a leg's worker by the channel's `name`. Kept as null so no reader breaks."),
 });
 
 const publicChannelSchema = registry.register(
