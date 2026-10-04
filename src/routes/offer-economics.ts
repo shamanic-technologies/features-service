@@ -69,7 +69,7 @@
  * total: a row for one channel and the total above it are visibly one statement at two grains.
  */
 import { Router } from "express";
-import { computeRevenueWindow, parseWindowDays, WINDOW_DAYS_ERROR } from "../lib/revenue-window.js";
+import { computeRevenueWindow, parseWindowDays, WINDOW_DAYS_ERROR, type WindowDays } from "../lib/revenue-window.js";
 import { FUNNEL_RETIRED_BODY, namesRetiredFunnel } from "../lib/retired-funnel-param.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { getFunnel } from "../lib/funnel-registry.js";
@@ -84,7 +84,7 @@ import { computeAudienceStats, type ComputeResult } from "../lib/audience-stats-
 import { computeOfferPipelineActivity } from "./pipeline-activity.js";
 import { fetchEffectiveEconomics, economicsFingerprint } from "../lib/sales-economics-client.js";
 import { withInteractiveReads } from "../lib/lead-copy.js";
-import { servedCached, servedCachedJson, sendSnapshotJson, buildScopeKey } from "../lib/view-cache.js";
+import { servedCached, servedCachedJson, sendSnapshotJson, buildScopeKey, type SnapshotJson } from "../lib/view-cache.js";
 import { applyLeadDetail, parseLeadDetail, LEAD_DETAIL_VALUES } from "../lib/lead-detail.js";
 import {
   OUTCOME_CAUSES,
@@ -204,21 +204,11 @@ router.get("/offers/:offerId/revenue", apiKeyAuth, async (req, res) => {
     if (namesRetiredFunnel(req.query as Record<string, unknown>)) {
       return res.status(400).json(FUNNEL_RETIRED_BODY);
     }
-    // The two brand-scoped pricing reads do not depend on the offer's channels, so they run in PARALLEL
-    // with that read, not after it. Used only when a channel prices on a funnel (as before); a rejection
-    // is rethrown where it is awaited.
     const auth = req as AuthenticatedRequest;
-    const speculativeBrandId = (req.query.brandId as string | undefined) ?? "";
-    const speculative = speculativeBrandId
-      ? {
-          declared: withInteractiveReads(() => fetchDeclaredFunnelsSoft(speculativeBrandId, auth.orgId, req.params.offerId)),
-          economics: fetchEffectiveEconomics(speculativeBrandId, { orgId: auth.orgId, userId: auth.userId, runId: auth.runId }),
-        }
-      : null;
-    speculative?.economics.catch(() => {}); // awaited below only when a funnel prices; never unhandled
-    const resolved = await resolveRequest(req as never);
-    if (!resolved.ok) return res.status(resolved.status).json({ error: resolved.error });
-    const { offerId, brandId, pricing, headers, channels, campaignIds, featureSlugs } = resolved;
+    const brandId = (req.query.brandId as string | undefined) ?? "";
+    if (!brandId) return res.status(400).json({ error: "brandId query parameter is required" });
+    const pricing = parsePricing(req.query.pricing);
+    if (pricing === null) return res.status(400).json({ error: "pricing must be one of: gross, net" });
 
     // HOW MUCH OF A PERSON this body carries — omitted → `outcomes`, the twelve fields a browser reads
     // on the rows that reached something. `full` is the hydrated array. See lib/lead-detail.ts.
@@ -236,125 +226,21 @@ router.get("/offers/:offerId/revenue", apiKeyAuth, async (req, res) => {
         reason: "cause_unrecognised",
       });
     }
-    const causeKey = causeScopeKeyPart(causes);
 
     // ONE CHOSEN WINDOW of UTC days ending today (lib/revenue-window.ts). Omitted → no `window` key and
     // the same cache cell → byte-identical to today.
     const windowDays = parseWindowDays(req.query.windowDays);
     if (windowDays === null) return res.status(400).json(WINDOW_DAYS_ERROR);
 
-    const funnel = resolveOfferFunnel(offerId, channels);
-
-    // Economics are BRAND-scoped (an offer states no rates of its own — brand-service owns those), so
-    // they are read ONCE here and shared by the offer body and every channel group: N channels cost
-    // one brand-service call, and the fingerprint rides the cache key so an economics write lands on a
-    // different cell instead of replaying the pre-write answer.
-    const [declaredFunnels, brandEconomics] = funnel
-      ? await Promise.all([
-          // THIS offer's declared funnels — its own lifetime revenue and its own rates. The offer grain
-          // is the one read that genuinely knows which proposition it is pricing, so it is the one that
-          // names it; every brand-scoped read keeps resolving the sole offer as before.
-          speculative!.declared,
-          speculative!.economics,
-        ])
-      : [[], null];
-    const brandPriced: FunnelPricedEconomics | undefined = brandEconomics
-      ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics)
-      : undefined;
-    const econ = brandPriced ? economicsFingerprint(brandPriced.economics) : undefined;
-    const decl = funnel ? declaredFunnels.map((f) => f.funnelKey).sort().join("+") || "none" : undefined;
-
-    const payload = await servedCachedJson({
-      view: "offer-revenue",
-      // Keyed on the offer, never on a feature — and on the CHANNEL SET too, because a newly funded
-      // channel changes every figure while none of the other key parts moves.
-      scopeKey: buildScopeKey(offerId, {
-        orgId: headers.orgId,
-        brandId,
-        channels: featureSlugs.join("+"),
-        decl,
-        pricing,
-        econ,
-        // Two different answers ⇒ two cells, which also keeps the stored snapshot narrow.
-        leads: leadDetail,
-        // A read counting a different set of causes is a different answer, so it is a different cell.
-        // Absent for the default set → today's keys are unmoved.
-        cause: causeKey,
-        // A windowed read carries a block the plain one does not. Absent → today's keys are unmoved.
-        windowDays,
-      }),
-      orgId: headers.orgId,
-      compute: async () => {
-        // ONE engine pass over the offer's whole evidence set — see the additive/non-additive note in
-        // this file's header for why this is a single pass rather than N results combined.
-        const body = await computeFeatureRevenue(
-          featureSlugs,
-          brandId,
-          campaignIds,
-          funnel,
-          headers,
-          undefined,
-          brandPriced,
-          true,
-          pricing,
-          undefined,
-          offerId,
-          undefined,
-          causes,
-          undefined,
-          undefined,
-          // Today's spend counts the brand's own campaign-less work too (what the credit was charged).
-          true,
-        );
-        const window = windowDays
-          ? await computeRevenueWindow({
-              days: windowDays,
-              brandId,
-              campaignScope: campaignIds,
-              featureScope: featureSlugs,
-              pricing,
-              headers,
-              body,
-            })
-          : undefined;
-        // The breakdown. LEAN on purpose (headline + costEconomics, the shape the per-offer and
-        // per-workflow groups already use): a full body per channel would repeat the whole lead
-        // population once per channel for figures the offer body already carries.
-        const groups = await mapWithConcurrency(channels, 4, async (channel) => {
-          const channelBody = await computeFeatureRevenue(
-            channel.featureSlug,
-            brandId,
-            channel.campaignIds,
-            getFunnel(channel.featureSlug),
-            headers,
-            undefined,
-            brandPriced,
-            false,
-            pricing,
-            undefined,
-            offerId,
-            undefined,
-            causes,
-          );
-          return {
-            featureSlug: channel.featureSlug,
-            campaignIds: channel.campaignIds,
-            headline: channelBody.headline,
-            costEconomics: channelBody.costEconomics,
-            maturity: channelBody.maturity ?? null,
-          };
-        });
-        return {
-          offerId,
-          brandId,
-          costBasis: "charged" as const,
-          channels: groups,
-          ...applyLeadDetail(body, leadDetail),
-          ...(window ? { window } : {}),
-        };
-      },
+    const payload = await offerRevenueJson({
+      offerId: String(req.params.offerId),
+      brandId,
+      pricing,
+      identity: { orgId: auth.orgId, userId: auth.userId, runId: auth.runId },
+      leadDetail,
+      causes,
+      windowDays,
     });
-
     sendSnapshotJson(res, payload);
   } catch (error) {
     if (error instanceof OfferHasNoChannelsError) {
@@ -367,6 +253,163 @@ router.get("/offers/:offerId/revenue", apiKeyAuth, async (req, res) => {
     res.status(502).json({ error: "Failed to compute offer revenue" });
   }
 });
+
+/** What `/offers/:offerId/revenue` was asked, already validated. */
+export interface OfferRevenueArgs {
+  offerId: string;
+  brandId: string;
+  pricing: NonNullable<ReturnType<typeof parsePricing>>;
+  identity: { orgId: string; userId?: string; runId?: string };
+  leadDetail: NonNullable<ReturnType<typeof parseLeadDetail>>;
+  causes: NonNullable<ReturnType<typeof parseOutcomeCauses>>;
+  windowDays: WindowDays | undefined;
+}
+
+/**
+ * THE offer revenue body, as the exact JSON text `/offers/:offerId/revenue` serves — the route AND every
+ * in-process reader that must state the same figure (the org period recap's return,
+ * `lib/org-period-recap.ts`) go through here, so they read ONE Gold cell (the key holds the org, never
+ * the user or the run) and can never disagree. Throws `OfferHasNoChannelsError` /
+ * `OfferChannelsPriceDifferentlyError`; any other failure propagates.
+ */
+export async function offerRevenueJson(args: OfferRevenueArgs): Promise<SnapshotJson> {
+  const { offerId, brandId, pricing, identity, leadDetail, causes, windowDays } = args;
+  // The two brand-scoped pricing reads do not depend on the offer's channels, so they run in PARALLEL
+  // with that read, not after it. Used only when a channel prices on a funnel (as before); a rejection
+  // is rethrown where it is awaited.
+  const speculative = {
+    declared: withInteractiveReads(() => fetchDeclaredFunnelsSoft(brandId, identity.orgId, offerId)),
+    economics: fetchEffectiveEconomics(brandId, { orgId: identity.orgId, userId: identity.userId, runId: identity.runId }),
+  };
+  speculative.economics.catch(() => {}); // awaited below only when a funnel prices; never unhandled
+  speculative.declared.catch(() => {});
+  const headers: DownstreamHeaders = {
+    orgId: identity.orgId,
+    userId: identity.userId,
+    runId: identity.runId,
+    // Deliberately NOT the request's own `x-feature-slug`: this read is about several channels, and
+    // attributing it to one of them would name a channel the caller did not ask about.
+    featureSlug: undefined,
+  };
+  // Org alone, shared 30s and re-read behind the answer — the same campaign list the pricing-funnel
+  // read asks for (lib/lead-copy.ts withInteractiveReads).
+  const channels = await withInteractiveReads(() => resolveOfferChannels(offerId, brandId, { orgId: identity.orgId }));
+  const campaignIds = offerCampaignIds(channels);
+  const featureSlugs = offerFeatureSlugs(channels);
+  const causeKey = causeScopeKeyPart(causes);
+
+  const funnel = resolveOfferFunnel(offerId, channels);
+
+  // Economics are BRAND-scoped (an offer states no rates of its own — brand-service owns those), so
+  // they are read ONCE here and shared by the offer body and every channel group: N channels cost
+  // one brand-service call, and the fingerprint rides the cache key so an economics write lands on a
+  // different cell instead of replaying the pre-write answer.
+  const [declaredFunnels, brandEconomics] = funnel
+    ? await Promise.all([
+        // THIS offer's declared funnels — its own lifetime revenue and its own rates. The offer grain
+        // is the one read that genuinely knows which proposition it is pricing, so it is the one that
+        // names it; every brand-scoped read keeps resolving the sole offer as before.
+        speculative.declared,
+        speculative.economics,
+      ])
+    : [[], null];
+  const brandPriced: FunnelPricedEconomics | undefined = brandEconomics
+    ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics)
+    : undefined;
+  const econ = brandPriced ? economicsFingerprint(brandPriced.economics) : undefined;
+  const decl = funnel ? declaredFunnels.map((f) => f.funnelKey).sort().join("+") || "none" : undefined;
+
+  return servedCachedJson({
+    view: "offer-revenue",
+    // Keyed on the offer, never on a feature — and on the CHANNEL SET too, because a newly funded
+    // channel changes every figure while none of the other key parts moves.
+    scopeKey: buildScopeKey(offerId, {
+      orgId: headers.orgId,
+      brandId,
+      channels: featureSlugs.join("+"),
+      decl,
+      pricing,
+      econ,
+      // Two different answers ⇒ two cells, which also keeps the stored snapshot narrow.
+      leads: leadDetail,
+      // A read counting a different set of causes is a different answer, so it is a different cell.
+      // Absent for the default set → today's keys are unmoved.
+      cause: causeKey,
+      // A windowed read carries a block the plain one does not. Absent → today's keys are unmoved.
+      windowDays,
+    }),
+    orgId: headers.orgId,
+    compute: async () => {
+      // ONE engine pass over the offer's whole evidence set — see the additive/non-additive note in
+      // this file's header for why this is a single pass rather than N results combined.
+      const body = await computeFeatureRevenue(
+        featureSlugs,
+        brandId,
+        campaignIds,
+        funnel,
+        headers,
+        undefined,
+        brandPriced,
+        true,
+        pricing,
+        undefined,
+        offerId,
+        undefined,
+        causes,
+        undefined,
+        undefined,
+        // Today's spend counts the brand's own campaign-less work too (what the credit was charged).
+        true,
+      );
+      const window = windowDays
+        ? await computeRevenueWindow({
+            days: windowDays,
+            brandId,
+            campaignScope: campaignIds,
+            featureScope: featureSlugs,
+            pricing,
+            headers,
+            body,
+          })
+        : undefined;
+      // The breakdown. LEAN on purpose (headline + costEconomics, the shape the per-offer and
+      // per-workflow groups already use): a full body per channel would repeat the whole lead
+      // population once per channel for figures the offer body already carries.
+      const groups = await mapWithConcurrency(channels, 4, async (channel) => {
+        const channelBody = await computeFeatureRevenue(
+          channel.featureSlug,
+          brandId,
+          channel.campaignIds,
+          getFunnel(channel.featureSlug),
+          headers,
+          undefined,
+          brandPriced,
+          false,
+          pricing,
+          undefined,
+          offerId,
+          undefined,
+          causes,
+        );
+        return {
+          featureSlug: channel.featureSlug,
+          campaignIds: channel.campaignIds,
+          headline: channelBody.headline,
+          costEconomics: channelBody.costEconomics,
+          maturity: channelBody.maturity ?? null,
+        };
+      });
+      return {
+        offerId,
+        brandId,
+        costBasis: "charged" as const,
+        channels: groups,
+        ...applyLeadDetail(body, leadDetail),
+        ...(window ? { window } : {}),
+      };
+    },
+  });
+}
 
 // ── GET /offers/:offerId/audience-stats ──────────────────────────────────────
 //
