@@ -106,12 +106,9 @@ export type SalesPathRateSource =
   /** The seeded industry benchmark for the leg. */
   | "industry_default";
 
-/** The ONLY channels the platform manages today. A leg nothing here publishes is the customer's team. */
-export const MANAGED_CHANNEL_SLUGS: ReadonlySet<string> = new Set([
-  "sales-cold-email-outreach",
-  "ai-meeting-booking",
-  "ai-instant-call",
-]);
+/** The ONLY channels the platform manages today (defined beside the per-item minimums it decides). */
+export { MANAGED_CHANNEL_SLUGS } from "./channel-leg-minimums.js";
+import { MANAGED_CHANNEL_SLUGS, channelLegMinimumMonthlyCents } from "./channel-leg-minimums.js";
 
 /**
  * The LAST rung of the cost cascade: a conservative cost per outcome for every (managed channel, leg),
@@ -193,6 +190,10 @@ export interface SalesPathLeg {
   legKey: string;
   /** Whether the customer ticked this leg on the offer. */
   ticked: boolean;
+  /** True when the leg moves a lead out of a step it already reached; false on an entry leg (proactive). */
+  reactive: boolean;
+  /** The minimum monthly budget of this (channel × leg) item, whole cents (`lib/channel-leg-minimums.ts`). Null when no channel works the leg. */
+  minimumMonthlyBudgetCents: number | null;
   fromStep: ChannelStepDefWire | null;
   toStep: ChannelStepDefWire;
   /** Null on an entry leg (from nothing). */
@@ -391,6 +392,16 @@ export function platformChannelsForLeg(
 
 const usable = (v: number | null | undefined): v is number => typeof v === "number" && Number.isFinite(v) && v > 0;
 
+/** PURE: the catalogue scope's channel list for ONE offer: the shortlist ∩ the channels the offer accepts
+ *  (brand-service offer channels), or the channels we run when the offer never stated any (owner 2026-10-04). */
+export function acceptedCatalogueChannels(
+  offerChannels: { stated: boolean; channelSlugs: string[] | null },
+  shortlist: ReadonlySet<string> = SALES_PATH_CATALOGUE_CHANNEL_SLUGS,
+): ReadonlySet<string> {
+  const accepted = offerChannels.stated ? new Set(offerChannels.channelSlugs ?? []) : MANAGED_CHANNEL_SLUGS;
+  return new Set([...shortlist].filter((s) => accepted.has(s)));
+}
+
 /** PURE: the candidate channels of a leg in a scope — managed platform channels (ticked), or the shortlist (catalogue). */
 export function legChannelsForScope(
   channels: readonly SalesPathChannelInput[],
@@ -551,6 +562,8 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
         return {
           legKey: d.legKey,
           ticked: true,
+          reactive: d.fromStep !== null,
+          minimumMonthlyBudgetCents: picked ? channelLegMinimumMonthlyCents(picked, d.fromStep !== null) : null,
           fromStep: d.fromStep ? stepWire(d.fromStep.key) : null,
           toStep: stepWire(d.toStep.key),
           conversionRatePct: arrow?.effectiveRatePct ?? null,

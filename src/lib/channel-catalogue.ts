@@ -34,6 +34,8 @@ import {
   type AcquisitionChannel,
 } from "./acquisition-channels.js";
 import { legKeyFor, FUNNEL_LEGS, type FunnelLegDef } from "./funnel-legs.js";
+import { SALES_PATH_CATALOGUE_CHANNEL_SLUGS } from "./sales-path-cost-benchmarks.js";
+import { MANAGED_CHANNEL_SLUGS, channelLegMinimumMonthlyCents } from "./channel-leg-minimums.js";
 import { legMaturity, type LegMaturity } from "./maturity.js";
 import { SALES_FUNNELS, SALES_FUNNEL_KEYS, type SalesFunnelKey } from "./sales-funnels.js";
 import { composeMinimumCommitment, minimumCommitmentDaysFor, type ComposedMinimumCommitment } from "./funnel-commercial-terms.js";
@@ -74,6 +76,10 @@ export interface ChannelStepTransitionWire {
    *  (`lib/sales-path-names.ts`); a consumer names a leg's worker by the channel's `name`. Kept on the
    *  wire as null so no strict reader breaks. */
   crewName: null;
+  /** True when the leg moves a lead out of a step it already reached (`from` set); false on an entry leg. */
+  reactive: boolean;
+  /** The minimum monthly budget a customer commits to this (channel × leg) item, whole cents (`lib/channel-leg-minimums.ts`). */
+  minimumMonthlyBudgetCents: number;
 }
 
 export interface PublicChannel {
@@ -89,6 +95,10 @@ export interface PublicChannel {
    *  converse does not hold: a platform-run channel can carry a zero day-rate too, so read this field
    *  for who is on it and never infer it from the price. */
   operatedBy: ChannelOperator;
+  /** True when the platform runs this channel today (`MANAGED_CHANNEL_SLUGS`). */
+  managed: boolean;
+  /** True when the channel can appear in a sales path (`SALES_PATH_CATALOGUE_CHANNEL_SLUGS`). */
+  salesPathEligible: boolean;
   /** WHAT does the leg's work: `software` (a machine end to end) or `person` (somebody by hand — the
    *  customer's team, a specialist of ours, a caller). Orthogonal to `operatedBy`: our agency channels
    *  are `platform` + `person`, our AI channel is `platform` + `software`. */
@@ -251,6 +261,8 @@ export function buildChannelCatalogue(rows: readonly CatalogueFeatureRow[]): Pub
       displayOrder: row.displayOrder,
       family: channel.family,
       operatedBy: channel.operatedBy,
+      managed: MANAGED_CHANNEL_SLUGS.has(row.slug),
+      salesPathEligible: SALES_PATH_CATALOGUE_CHANNEL_SLUGS.has(row.slug),
       performedBy: channel.performedBy,
       trigger: channel.trigger ?? "daily_budget",
       terms: channel.terms,
@@ -259,6 +271,8 @@ export function buildChannelCatalogue(rows: readonly CatalogueFeatureRow[]): Pub
         from: t.from == null ? null : stepWire(t.from),
         to: stepWire(t.to),
         crewName: null,
+        reactive: t.from != null,
+        minimumMonthlyBudgetCents: channelLegMinimumMonthlyCents({ slug: row.slug, operatedBy: channel.operatedBy }, t.from != null),
       })),
       producibleSteps: producibleStepsOf(channel.stepTransitions).map(stepWire),
       salesFunnels: sellableFunnelsFor(channel.stepTransitions).map((key) => ({
@@ -278,7 +292,7 @@ export function buildChannelCatalogue(rows: readonly CatalogueFeatureRow[]): Pub
 export type PublishedLegMaturity = Omit<LegMaturity, "legKey">;
 
 /** One leg of the published vocabulary, carrying its maturity rule. */
-export type PublicFunnelLeg = FunnelLegDef & { maturity: PublishedLegMaturity };
+export type PublicFunnelLeg = FunnelLegDef & { reactive: boolean; maturity: PublishedLegMaturity };
 
 /** The LEG vocabulary itself, published beside the channels so a consumer never has to hardcode it
  *  and never has to derive a leg from a pair of steps. Every leg of every declared funnel, each
@@ -289,7 +303,7 @@ export type PublicFunnelLeg = FunnelLegDef & { maturity: PublishedLegMaturity };
 export function funnelLegCatalogue(): PublicFunnelLeg[] {
   return FUNNEL_LEGS.map((a) => {
     const { legKey: _legKey, ...maturity } = legMaturity(a.legKey);
-    return { ...a, funnelKeys: [...a.funnelKeys], maturity };
+    return { ...a, funnelKeys: [...a.funnelKeys], reactive: a.fromStep !== null, maturity };
   });
 }
 

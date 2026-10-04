@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 import {
+  acceptedCatalogueChannels,
   buildOfferSalesPaths,
   enumerateSalesPaths,
   legChannelsForScope,
@@ -209,5 +210,32 @@ describe("?scope=catalogue", () => {
 
   it("enumerates over the whole leg catalogue", () => {
     expect(enumerateSalesPaths(FUNNEL_LEG_KEYS).length).toBeGreaterThan(5);
+  });
+});
+
+describe("the channels an offer accepts (brand-service offer channels, owner 2026-10-04)", () => {
+  it("never stated = the three we run; stated = the shortlist ∩ what the offer accepts", () => {
+    expect([...acceptedCatalogueChannels({ stated: false, channelSlugs: null })].sort()).toEqual([...MANAGED_CHANNEL_SLUGS].sort());
+    expect([...acceptedCatalogueChannels({ stated: true, channelSlugs: ["meta-ads", "seo-content", "agency-x"] })]).toEqual(["meta-ads"]);
+    expect(acceptedCatalogueChannels({ stated: true, channelSlugs: [] }).size).toBe(0);
+  });
+
+  it("filters the catalogue rows on them: never stated reads the default read's rows at the same prices", () => {
+    const legKeys = TICKED_BOTH_ENTRIES;
+    const unstated = build({ legKeys, catalogueChannelSlugs: acceptedCatalogueChannels({ stated: false, channelSlugs: null }) });
+    const d = build({ scope: "ticked", legKeys });
+    expect(unstated.paths.map((p) => p.combinationKey).sort()).toEqual(d.paths.map((p) => p.combinationKey).sort());
+    const withMeta = build({ legKeys, catalogueChannelSlugs: acceptedCatalogueChannels({ stated: true, channelSlugs: ["sales-cold-email-outreach", "meta-ads"] }) });
+    const used = new Set(withMeta.paths.flatMap((p) => p.legs.map((l) => l.channel?.slug).filter(Boolean)));
+    expect([...used].sort()).toEqual(["meta-ads", "sales-cold-email-outreach"]);
+  });
+
+  it("states per leg whether it is reactive and the item's minimum", () => {
+    const b = build({ legKeys: TICKED_BOTH_ENTRIES });
+    const email = b.paths.find((p) => p.entryChannelSlug === "sales-cold-email-outreach")!;
+    expect(email.legs[0]).toMatchObject({ reactive: false, minimumMonthlyBudgetCents: 9_900 });
+    const meta = b.paths.find((p) => p.entryChannelSlug === "meta-ads")!;
+    expect(meta.legs[0]).toMatchObject({ reactive: false, minimumMonthlyBudgetCents: 150_000 });
+    for (const p of b.paths) for (const l of p.legs.slice(1)) expect(l.reactive).toBe(true);
   });
 });
