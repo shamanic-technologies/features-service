@@ -509,8 +509,10 @@ const FUNNEL_LADDERS: Record<SalesFunnelKey, (e: SalesEconomics) => LadderRung[]
   ],
   // The buyer lands and PAYS, with nothing in between, so the visit is priced on the DIRECT visit→paid
   // rate alone. `clickCloseViaMeeting` would add the meeting route, which this funnel does not contain.
+  // That rate is `visitToPaidClientPct` — the key this funnel's own visit → paid arrow is stated under
+  // (`statedLegRates`); `visitToClosePct` is the SELF-SERVE close through a signup (website_purchases).
   sales_from_website: (e) => [
-    { tag: "visit", signal: "clicked", pClose: declaredRate(e.visitToClosePct), engagementRoute: true },
+    { tag: "visit", signal: "clicked", pClose: declaredRate(e.visitToPaidClientPct), engagementRoute: true },
     CLOSE_WIN,
   ],
   // An ad DELIVERS the booked meeting, so this funnel has no engagement route at all: neither a counted

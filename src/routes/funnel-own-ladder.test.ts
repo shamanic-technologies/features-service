@@ -298,10 +298,10 @@ describe("REGRESSION — the other three funnel keys are unchanged, to the cent"
     vi.restoreAllMocks();
   });
 
-  it("website_purchases keeps the meeting route in its visit, even when its signup chain equals the brand-wide close rate", async () => {
-    // The prod shape for 100 brands: visit→signup 5% × signup→paid 10% = 0.5% = the brand-wide
-    // visitToClosePct, already folded in. Re-deriving the visit from that chain would DROP the meeting
-    // route those brands genuinely sell through — so the visit stays orP(v2c, v2m·m2c).
+  it("website_purchases alone prices its visit on ITS chain (signup), never a meeting route it does not walk (owner 2026-10-04)", async () => {
+    // Supersedes "website_purchases keeps the meeting route": the Sales funnel page walks visit → signup
+    // → paid for this funnel and nothing else, so the pipeline does too. The meeting route is priced only
+    // when the meeting funnel is itself one of the paths (then the two combine, orP).
     mockFetch({
       economics: ECONOMICS,
       leads: visitors(VISIT_COUNT),
@@ -317,10 +317,9 @@ describe("REGRESSION — the other three funnel keys are unchanged, to the cent"
     });
     const res = await read();
     expect(res.status).toBe(200);
-    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(VISIT_COUNT * BRAND_WIDE_VISIT_USD, 5);
-    // NOT the signup chain alone (47 × 30 × 0.005 = $7.05), which is what dropping the route would give.
-    expect(res.body.headline.totalPipelineUsd).not.toBeCloseTo(VISIT_COUNT * 30 * 0.005, 2);
-    expect(res.body.leads[0].expectedRevenueUsd).toBeCloseTo(BRAND_WIDE_VISIT_USD, 5);
+    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(VISIT_COUNT * 30 * 0.005, 5);
+    expect(res.body.headline.totalPipelineUsd).not.toBeCloseTo(VISIT_COUNT * BRAND_WIDE_VISIT_USD, 2);
+    expect(res.body.leads[0].expectedRevenueUsd).toBeCloseTo(30 * 0.005, 5);
   });
 
   it("sales_meetings_from_website keeps its visit on the identical expression", async () => {

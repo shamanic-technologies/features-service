@@ -450,10 +450,21 @@ export function priceOnDeclaredFunnel(
   // never said it sells through would be the same fiction the defaulted goal produced.
   const named = requestedFunnel && declaredKeys.includes(requestedFunnel) ? requestedFunnel : null;
   const pricedFunnelKeys = named ? [named] : declaredKeys;
-  const funnelKey = named ?? primaryDeclaredFunnel(declaredKeys);
-  if (!funnelKey || !effective.economics) return { economics: effective, pricedFunnelKeys };
-  const merged = mergeFunnelEconomics(effective.economics, declaredEconomicsForFunnel(declared, funnelKey));
-  return { economics: merged ? { ...effective, economics: merged } : effective, pricedFunnelKeys };
+  if (pricedFunnelKeys.length === 0 || !effective.economics) return { economics: effective, pricedFunnelKeys };
+  // EVERY priced funnel's own terms, not only the primary one's (owner 2026-10-04, Legistai: the reply
+  // rung of the conversation funnel was priced on brand-service's cross-brand AVERAGE because only the
+  // primary funnel's terms were merged, so the Today return read 4.33x where the Sales funnel page,
+  // walking the same paths on the effective leg rates, read ≤ 2.8x). Each funnel's terms come from the
+  // same per-leg effective rates, so two funnels never disagree on a field they share.
+  let merged: SalesEconomics = effective.economics;
+  for (const key of pricedFunnelKeys) merged = mergeFunnelEconomics(merged, declaredEconomicsForFunnel(declared, key)) ?? merged;
+  // A click is priced inside one shared expression, orP(visit → close, visit → meeting × meeting → close)
+  // (`clickCloseViaMeeting`). A route of it the priced paths do NOT walk is worth nothing here: otherwise
+  // the brand-wide record's value for a path the customer never ticked (brand-service's average) would
+  // leak into the click of the one they did.
+  if (!pricedFunnelKeys.includes("website_purchases")) merged = { ...merged, visitToClosePct: 0 };
+  if (!pricedFunnelKeys.includes("sales_meetings_from_website")) merged = { ...merged, visitToMeetingPct: 0 };
+  return { economics: { ...effective, economics: merged }, pricedFunnelKeys };
 }
 
 /** The request-path composition of the two above, for callers that hold no declaration of their own. */
