@@ -25,7 +25,7 @@
  *     `outcomesRequired` positive replies); otherwise the FLEET rate the public onboarding quotes
  *     (`/public/stats/outcome-prices`, the best workflow's conversion on `start_to_conversation`). A brand a
  *     few days old is the NORMAL case: it is priced on the fleet rate and says so (`rateSource`).
- *   - THE RETURN IS THE DASHBOARD'S, READ NEVER RE-DERIVED (features-service#TBD, 2026-10-04: Legistai's email
+ *   - THE RETURN IS THE DASHBOARD'S, READ NEVER RE-DERIVED (2026-10-04: Legistai's email
  *     said 5.9x while its Today page said 4.3x). `expectedReturn.roiMultiple` = the return the customer is
  *     shown for the scope that sent: `/offers/:offerId/revenue?pricing=net` (the Today page's read, the SAME
  *     Gold cell via `offerRevenueJson`) → `costEconomics.maturity` → `servedReturnOf` (`lib/served-return.ts`:
