@@ -2643,13 +2643,17 @@ registry.registerPath({
 
 // ── GET /internal/orgs/{orgId}/period-recap (lib/org-period-recap.ts) ──
 const recapNullReason = z
-  .enum(["nothing_sent", "reply_rate_unavailable", "economics_missing", "no_spend_in_window", "lifetime_revenue_differs_across_brands"])
-  .describe("Why the figure beside it is null. nothing_sent = no email went out in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue / reply-to-paid rate; no_spend_in_window = the org spent nothing in the window; lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]).");
+  .enum(["nothing_sent", "reply_rate_unavailable", "economics_missing", "no_spend_in_window", "lifetime_revenue_differs_across_brands", "lifetime_revenue_differs_across_offers"])
+  .describe("Why the figure beside it is null. nothing_sent = no email went out in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue / reply-to-paid rate; no_spend_in_window = the org spent nothing in the window; lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer.");
+const recapLtrSource = z
+  .enum(["offer_stated", "brand_economics"])
+  .describe("Where the lifetime revenue per client was read. offer_stated = the value the customer stated on their offer (brand-service offer-economics, every offer of the brand agreeing); brand_economics = no offer states one, so the brand's effective economics (see economicsSource: user or cross-brand-average).");
 const recapBrandSchema = z.object({
   brandId: z.string(),
   emailsSent: z.number().int(),
   emailsDelivered: z.number().int(),
-  recipientsContacted: z.number().int(),
+  recipientsContacted: z.number().int().describe("Leads pushed into the sending queue in the window (not necessarily emailed yet)."),
+  recipientsEmailed: z.number().int().describe("Leads that got at least one email in the window."),
   positiveReplyRatePct: z.number().nullable().describe("Positive replies per 100 contacted leads used for the expectation."),
   rateSource: z.enum(["brand_mature", "fleet"]).nullable().describe("brand_mature = the brand's own leads contacted before the start_to_conversation maturity cutoff, holding at least outcomesRequired positive replies; fleet = the public onboarding's fleet rate (best workflow on start_to_conversation). A brand a few days old is priced on the fleet rate."),
   matureCohort: z.object({
@@ -2661,6 +2665,9 @@ const recapBrandSchema = z.object({
   expectedPositiveReplies: z.number().nullable(),
   replyToPaidClientPct: z.number().nullable().describe("P(paid client | positive reply) from the brand's effective economics (replyToPaidClientPct, else replyToMeeting x meetingToClose)."),
   lifetimeRevenuePerClientUsd: z.number().nullable(),
+  lifetimeRevenueSource: recapLtrSource.nullable(),
+  lifetimeRevenueOfferId: z.string().nullable().describe("The offer whose stated lifetime revenue is used, when the brand sells exactly one."),
+  lifetimeRevenueStatedAt: z.string().nullable().describe("When the customer stated it (brand-service), when lifetimeRevenueOfferId is set."),
   economicsSource: z.enum(["user", "cross-brand-average"]).nullable(),
   expectedPaidClients: z.number().nullable(),
   expectedRevenueUsd: z.number().nullable(),
@@ -2676,7 +2683,10 @@ const orgPeriodRecapResponseRef = registry.register(
     outbound: z.object({
       emailsSent: z.number().int().describe("Emails sent in the window, every step of every sequence (email-gateway emailStats.sent per UTC day, summed). 0 is measured."),
       emailsDelivered: z.number().int(),
-      recipientsContacted: z.number().int().describe("Leads contacted in the window: the per-day series behind the dashboard's Outreach card, summed over the window."),
+      recipientsContacted: z.number().int().describe("Leads PUSHED INTO THE SENDING QUEUE in the window (dated on the push): the per-day series behind the dashboard's Outreach card, summed. NOT a count of people emailed: see recipientsEmailed and sendStatus. Equal to recipientsEnrolled."),
+      recipientsEnrolled: z.number().int().describe("Same number as recipientsContacted, named for what it is: leads lined up in the sending queue in the window."),
+      recipientsEmailed: z.number().int().describe("Leads that got at least one email in the window (email-gateway recipientStats.sent, dated on the send event). Not subtractable from recipientsEnrolled: the two are dated on different clocks."),
+      sendStatus: z.enum(["emails_sent", "lined_up_not_sent", "nothing_sent"]).describe("emails_sent = at least one email went out in the window; lined_up_not_sent = leads were queued but no email went out yet; nothing_sent = nothing queued and nothing sent."),
       deliveryRatePct: z.number().nullable().describe("100 x emailsDelivered / emailsSent in the window. The WINDOW twin of the dashboard's whole-history outcomes.sending.deliveryRatePct (lead grain); never relabel one as the other."),
       deliveryRateNullReason: recapNullReason.nullable(),
     }),
@@ -2688,7 +2698,8 @@ const orgPeriodRecapResponseRef = registry.register(
       expectedPaidClients: z.number().nullable(),
       expectedRevenueUsd: z.number().nullable(),
       roiMultiple: z.number().nullable().describe("expectedRevenueUsd / spendUsd."),
-      lifetimeRevenuePerClientUsd: z.number().nullable().describe("The lifetime revenue per client the ROI is based on (brand effective economics), when every brand that sent shares one."),
+      lifetimeRevenuePerClientUsd: z.number().nullable().describe("The lifetime revenue per client the ROI and budgetIncrease are based on, when every brand that sent shares one: the customer's STATED offer lifetime revenue when stated, else the brand's effective economics (lifetimeRevenueSource)."),
+      lifetimeRevenueSource: recapLtrSource.nullable(),
       lifetimeRevenueNullReason: recapNullReason.nullable(),
       nullReason: recapNullReason.nullable(),
     }),

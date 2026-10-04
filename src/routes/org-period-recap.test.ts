@@ -33,12 +33,19 @@ const ECON = {
 };
 const FLEET = { ratePct: 1.5, basis: "mature" as const, workflowDynastySlug: "wf-a" };
 
-const day = (date: string, sent: number, contacted: number, positive = 0) => ({
+const day = (date: string, sent: number, contacted: number, positive = 0, emailed = sent > 0 ? contacted : 0) => ({
   date,
   emailsSent: sent,
   emailsDelivered: Math.round(sent * 0.95),
   recipientsContacted: contacted,
+  recipientsEmailed: emailed,
   recipientsRepliesPositive: positive,
+});
+const OFFER = "33333333-3333-4333-8333-333333333333";
+const offer = (lifetimeRevenueUsd: number | null, offerId = OFFER) => ({
+  offerId,
+  lifetimeRevenueUsd,
+  lifetimeRevenueStatedAt: lifetimeRevenueUsd === null ? null : "2026-09-01 08:16:15.704+00",
 });
 
 function setDeps(over: Parameters<typeof __setRecapDepsForTest>[0]) {
@@ -46,6 +53,7 @@ function setDeps(over: Parameters<typeof __setRecapDepsForTest>[0]) {
     brandIds: async () => [BRAND],
     brandDays: async () => [day("2026-09-20", 200, 100), day("2026-09-21", 200, 100)],
     economics: async () => ECON,
+    offers: async () => [offer(null)],
     spendByDay: async () => new Map([["2026-09-20", 50], ["2026-09-21", 49], ["2026-08-01", 1000]]),
     fleetRate: () => FLEET,
     now: () => NOW,
@@ -99,7 +107,10 @@ describe("GET /internal/orgs/:orgId/period-recap", () => {
     setDeps({ brandIds: async () => [], spendByDay: async () => new Map() });
     const res = await get();
     expect(res.status).toBe(200);
-    expect(res.body.outbound).toEqual({ emailsSent: 0, emailsDelivered: 0, recipientsContacted: 0, deliveryRatePct: null, deliveryRateNullReason: "nothing_sent" });
+    expect(res.body.outbound).toEqual({
+      emailsSent: 0, emailsDelivered: 0, recipientsContacted: 0, recipientsEnrolled: 0, recipientsEmailed: 0,
+      sendStatus: "nothing_sent", deliveryRatePct: null, deliveryRateNullReason: "nothing_sent",
+    });
     expect(res.body.expectedPositiveReplies).toBe(0);
     expect(res.body.expectedReturn).toMatchObject({ roiMultiple: null, expectedRevenueUsd: null, nullReason: "nothing_sent", lifetimeRevenueNullReason: "nothing_sent" });
     expect(res.body.budgetIncrease).toMatchObject({ expectedAdditionalRevenueUsd: null, nullReason: "nothing_sent" });
@@ -119,6 +130,80 @@ describe("GET /internal/orgs/:orgId/period-recap", () => {
     const res = await get();
     expect(res.body.expectedPositiveReplies).toBe(3);
     expect(res.body.expectedReturn).toMatchObject({ roiMultiple: null, nullReason: "economics_missing", lifetimeRevenueNullReason: "economics_missing" });
+  });
+
+  it("the customer's STATED offer lifetime revenue wins over the brand's averaged economics (Legistai, 2026-10-04)", async () => {
+    // Brand effective economics say $2,500 (cross-brand-average); the customer stated $2,100 on the offer.
+    setDeps({
+      economics: async () => ({ ...ECON, source: "cross-brand-average" as const }),
+      offers: async () => [offer(2100)],
+    });
+    const res = await get();
+    // 3 replies × 20% × $2,100 = $1,260 over $99.
+    expect(res.body.expectedReturn).toMatchObject({
+      lifetimeRevenuePerClientUsd: 2100,
+      lifetimeRevenueSource: "offer_stated",
+      expectedRevenueUsd: 1260,
+      roiMultiple: 12.73,
+    });
+    expect(res.body.budgetIncrease.expectedAdditionalRevenueUsd).toBe(1272.73);
+    expect(res.body.brands[0]).toMatchObject({
+      lifetimeRevenuePerClientUsd: 2100,
+      lifetimeRevenueSource: "offer_stated",
+      lifetimeRevenueOfferId: OFFER,
+      lifetimeRevenueStatedAt: "2026-09-01 08:16:15.704+00",
+      economicsSource: "cross-brand-average",
+    });
+  });
+
+  it("no offer states a lifetime revenue → the brand's economics, said so", async () => {
+    const res = await get();
+    expect(res.body.expectedReturn).toMatchObject({ lifetimeRevenuePerClientUsd: 2500, lifetimeRevenueSource: "brand_economics" });
+    expect(res.body.brands[0].lifetimeRevenueOfferId).toBeNull();
+  });
+
+  it("offers stating different lifetime revenues → null + lifetime_revenue_differs_across_offers, never an average", async () => {
+    setDeps({ offers: async () => [offer(2100), offer(900, "44444444-4444-4444-8444-444444444444")] });
+    const res = await get();
+    expect(res.body.expectedReturn).toMatchObject({
+      lifetimeRevenuePerClientUsd: null,
+      lifetimeRevenueNullReason: "lifetime_revenue_differs_across_offers",
+      roiMultiple: null,
+      nullReason: "lifetime_revenue_differs_across_offers",
+    });
+    expect(res.body.expectedPositiveReplies).toBe(3);
+  });
+
+  it("a brand the org no longer holds (offers null) still counts its sends, valued on its economics", async () => {
+    setDeps({ offers: async () => null });
+    const res = await get();
+    expect(res.body.expectedReturn).toMatchObject({ lifetimeRevenuePerClientUsd: 2500, lifetimeRevenueSource: "brand_economics" });
+  });
+
+  it("leads lined up but no email out yet → sendStatus lined_up_not_sent, never 'sent' (Legistai: 302 contacted / 0 sent)", async () => {
+    setDeps({ brandDays: async () => [day("2026-10-03", 0, 173), day("2026-10-04", 0, 129)] });
+    const res = await get("from=2026-10-03&to=2026-10-04");
+    expect(res.body.outbound).toEqual({
+      emailsSent: 0,
+      emailsDelivered: 0,
+      recipientsContacted: 302,
+      recipientsEnrolled: 302,
+      recipientsEmailed: 0,
+      sendStatus: "lined_up_not_sent",
+      deliveryRatePct: null,
+      deliveryRateNullReason: "nothing_sent",
+    });
+    expect(res.body.brands[0]).toMatchObject({ recipientsContacted: 302, recipientsEmailed: 0 });
+  });
+
+  it("emails out → sendStatus emails_sent with the emailed lead count", async () => {
+    const res = await get();
+    expect(res.body.outbound).toMatchObject({ sendStatus: "emails_sent", recipientsEnrolled: 200, recipientsEmailed: 200 });
+  });
+
+  it("an unreadable offer statement is a 502, never an averaged value", async () => {
+    setDeps({ offers: async () => { throw new Error("brand-service down"); } });
+    expect((await get()).status).toBe(502);
   });
 
   it("sends but no spend in the window → no_spend_in_window", async () => {
@@ -155,8 +240,8 @@ describe("org-period-recap pure helpers", () => {
       to: "2026-10-14",
       now: NOW,
       brands: [
-        { brandId: "a", days: [day("2026-09-20", 10, 100)], economics: ECON },
-        { brandId: "b", days: [day("2026-09-20", 10, 100)], economics: { ...ECON, economics: { ...ECON.economics, lifetimeRevenueUsd: 1000 } } },
+        { brandId: "a", days: [day("2026-09-20", 10, 100)], economics: ECON, offers: [offer(null)] },
+        { brandId: "b", days: [day("2026-09-20", 10, 100)], economics: ECON, offers: [offer(1000)] },
       ],
       spendByDay: new Map([["2026-09-20", 100]]),
       fleetRate: FLEET,
