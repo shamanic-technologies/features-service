@@ -20,10 +20,10 @@
  * derived figure says what it was derived from. They price a leg only when neither a workflow nor the
  * fleet's real spend does (`costSource: "benchmark"`).
  *
- * The customer's own team ("your-team-*") is priced on its TIME, so a path run by the customer's team
- * does not read as free beside one we run:
- *   SDR $31/h = SalesHive's fully loaded SDR at $250/day (8 h);
- *   AE  $75/h = a $150k fully loaded account executive over 2,000 h a year.
+ * The customer's own team ("your-team-*") has NO benchmark: its legs carry a rate and cost nothing to
+ * us, exactly as in the default read, so one combination reads ONE price in both scopes (requester
+ * melbourne-v13, 2026-10-04: Victory read $770 ticked vs $1,560 catalogue). Pricing the team's time is
+ * an open owner decision, and would move both scopes at once.
  */
 
 /** The owner's shortlist (2026-10-04), slugs as served by `GET /public/channels`. No agency-* channel on purpose. */
@@ -54,6 +54,7 @@ export interface SalesPathCostBenchmark {
 const WORDSTREAM_GOOGLE = "WordStream, Google Ads Benchmarks 2025/2026 (https://www.wordstream.com/blog/2026-google-ads-benchmarks)";
 const METADATA_LINKEDIN = "Metadata.io, What LinkedIn Ads Cost in 2025, 138 B2B advertisers (https://metadata.io/resources/blog/what-linkedin-ads-cost)";
 const WORDSTREAM_META = "WordStream, Facebook Ads Benchmarks 2025 (https://www.wordstream.com/blog/facebook-ads-benchmarks-2025)";
+const METADATA_META = "Metadata.io, Meta Ads for B2B, $57.6M of 2025 spend (https://metadata.io/resources/blog/fb-ad-strategies)";
 const OVERLOOP_LINKEDIN = "Overloop, LinkedIn Outreach Benchmarks (https://overloop.com/blog/linkedin-outreach-benchmarks)";
 const SALESHIVE_CALLS = "SalesHive, Cold Calling Benchmarks for B2B Sales Teams (https://saleshive.com/blog/b2b-sales-cold-calling-benchmarks-teams-2025)";
 const FPS_SEO = "First Page Sage, B2B SaaS organic & SEO median cost per lead $164";
@@ -69,9 +70,10 @@ export const SALES_PATH_COST_BENCHMARKS: ReadonlyMap<string, SalesPathCostBenchm
   ["start_to_meeting_booked|linkedin-ads", { costPerOutcomeUsd: 808, source: `Derived: LinkedIn cost per lead $202 ÷ 25% of B2B leads booking a meeting (assumption). ${METADATA_LINKEDIN}` }],
 
   // ── Meta Ads ──
-  ["start_to_website_visit|meta-ads", { costPerOutcomeUsd: 0.7, source: `Traffic campaigns, business services cost per click $0.70. ${WORDSTREAM_META}` }],
-  ["start_to_form_submitted|meta-ads", { costPerOutcomeUsd: 27.66, source: `Lead campaigns, average cost per lead $27.66. ${WORDSTREAM_META}` }],
-  ["start_to_meeting_booked|meta-ads", { costPerOutcomeUsd: 110.64, source: `Derived: Meta cost per lead $27.66 ÷ 25% of B2B leads booking a meeting (assumption). ${WORDSTREAM_META}` }],
+  // A LEAD-objective click, never a traffic-campaign one ($0.70 buys junk clicks), and the B2B cold-audience lead.
+  ["start_to_website_visit|meta-ads", { costPerOutcomeUsd: 1.92, source: `Lead campaigns, average cost per click $1.92 (traffic-campaign clicks at $0.70 are not counted: they rarely convert). ${WORDSTREAM_META}` }],
+  ["start_to_form_submitted|meta-ads", { costPerOutcomeUsd: 166, source: `B2B cost per lead on Facebook cold audiences, $166. ${METADATA_META}` }],
+  ["start_to_meeting_booked|meta-ads", { costPerOutcomeUsd: 664, source: `Derived: B2B Facebook cost per lead $166 ÷ 25% of B2B leads booking a meeting (assumption). ${METADATA_META}` }],
 
   // ── SEO content: the published cost per lead, spread over visits at our own visit → form rate (0.5%),
   //    so a path reading visits back to leads lands on the published $164 ──
@@ -84,11 +86,4 @@ export const SALES_PATH_COST_BENCHMARKS: ReadonlyMap<string, SalesPathCostBenchm
   // ── Cold calls: a fully loaded in-house SDR ──
   ["start_to_conversation|cold-call-outreach", { costPerOutcomeUsd: 250, source: `Derived: in-house SDR cost per booked meeting $821 (low end of $821-1,150) × 30% (our positive conversation → meeting benchmark), rounded up. ${SALESHIVE_CALLS}` }],
 
-  // ── The customer's own team, priced on its time (SDR $31/h, AE $75/h, see above) ──
-  ["conversation_to_meeting_booked|your-team-meeting-booking", { costPerOutcomeUsd: 16, source: `Derived: 30 min of SDR time per meeting booked off a reply at $31/h. ${SALESHIVE_CALLS}` }],
-  ["website_visit_to_meeting_booked|your-team-meeting-booking", { costPerOutcomeUsd: 8, source: `Derived: 15 min of SDR time to qualify and confirm a meeting a visitor booked, at $31/h. ${SALESHIVE_CALLS}` }],
-  ["meeting_booked_to_meeting_attended|your-team-meeting-attendance", { costPerOutcomeUsd: 10, source: `Derived: 15 min of SDR reminders per booked meeting at $31/h, over a 75% show-up rate. ${SALESHIVE_CALLS}` }],
-  ["meeting_attended_to_paid_client|your-team-closing-calls", { costPerOutcomeUsd: 750, source: "Derived: 2 h of account executive time per held meeting (call + follow-up) at $75/h ($150k fully loaded over 2,000 h), over a 20% close rate." }],
-  ["signup_to_paid_client|your-team-signup-conversion", { costPerOutcomeUsd: 155, source: `Derived: 30 min of SDR follow-up per signup at $31/h, over a 10% signup → paid rate. ${SALESHIVE_CALLS}` }],
-  ["form_submitted_to_paid_client|your-team-signup-conversion", { costPerOutcomeUsd: 155, source: `Derived: 30 min of SDR follow-up per form at $31/h, over a 10% form → paid rate. ${SALESHIVE_CALLS}` }],
 ]);
