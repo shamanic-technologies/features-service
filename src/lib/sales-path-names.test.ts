@@ -64,7 +64,7 @@ describe("the name pool", () => {
       }
     }
     const combinations = keys.size;
-    expect(combinations).toBeGreaterThan(40);
+    expect(combinations).toBeGreaterThan(30); // 39 since seo-content left the shortlist (2026-10-04)
     expect(SALES_PATH_NAME_POOL.length).toBeGreaterThanOrEqual(2 * combinations);
   });
 
