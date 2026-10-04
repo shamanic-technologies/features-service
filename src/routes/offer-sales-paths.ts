@@ -23,10 +23,13 @@ import { mapWithConcurrency } from "../lib/concurrency.js";
 import {
   buildOfferSalesPaths,
   enumerateSalesPaths,
-  platformChannelsForLeg,
+  legChannelsForScope,
+  legKeysForScope,
+  MANAGED_CHANNEL_SLUGS,
   priceKey,
   type LegChannelPrice,
   type SalesPathChannelInput,
+  type SalesPathScope,
   withSalesPathNames,
 } from "../lib/offer-sales-paths.js";
 import { salesPathNamesFor, SalesPathNamePoolExhaustedError } from "../lib/sales-path-names.js";
@@ -109,6 +112,11 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
   const offerId = req.params.offerId as string;
   const brandId = ((req.query.brandId as string | undefined) ?? "").trim();
   if (!brandId) return res.status(400).json({ error: "brandId query parameter is required" });
+  const rawScope = ((req.query.scope as string | undefined) ?? "").trim();
+  if (rawScope !== "" && rawScope !== "ticked" && rawScope !== "catalogue") {
+    return res.status(400).json({ error: `scope must be ticked or catalogue, got ${rawScope}`, reason: "scope_unrecognised" });
+  }
+  const scope: SalesPathScope = rawScope === "catalogue" ? "catalogue" : "ticked";
   const identity = { orgId: req.orgId, userId: req.userId, runId: req.runId };
 
   try {
@@ -133,11 +141,15 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
       legKeys: c.stepTransitions.map((t) => t.legKey),
     }));
 
-    // Only the (leg, channel) pairs a complete path needs are priced.
+    // Only the (leg, MANAGED channel) pairs a complete path needs run a ladder: a channel we do not run has
+    // no workflow to rank (it prices on the fleet's spend, else its benchmark, in the pure build).
     const pairs = new Map<string, { legKey: string; slug: string }>();
-    for (const chain of enumerateSalesPaths(salesPath.legKeys ?? [])) {
+    const ticked = salesPath.stated ? (salesPath.legKeys ?? []) : [];
+    for (const chain of enumerateSalesPaths(legKeysForScope(scope, ticked))) {
       for (const legKey of chain) {
-        for (const c of platformChannelsForLeg(channels, legKey)) pairs.set(priceKey(legKey, c.slug), { legKey, slug: c.slug });
+        for (const c of legChannelsForScope(channels, legKey, scope)) {
+          if (MANAGED_CHANNEL_SLUGS.has(c.slug)) pairs.set(priceKey(legKey, c.slug), { legKey, slug: c.slug });
+        }
       }
     }
     const prices = new Map<string, LegChannelPrice>();
@@ -168,6 +180,7 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
       channels,
       prices,
       fleetPrices,
+      scope,
     });
     // Every row's name, shared across clients and stable forever: assigned on first sight, in rank order.
     const names = await salesPathNamesFor(body.paths.map((p) => p.combinationKey));
