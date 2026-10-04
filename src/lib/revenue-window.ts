@@ -6,6 +6,12 @@
  * Served on the offer and brand revenue reads as `window`, ONLY when `?windowDays=` is asked: an
  * unwindowed read is byte-unchanged (no key, same cache cell).
  *
+ * `?windowDays=all` = SINCE INCEPTION (owner 2026-10-03: the Today row states the brand's whole life,
+ * no 7/30 switch): the same block, same parts, same composition, over every UTC day from the scope's
+ * FIRST dated activity (first email day, first spend day, first reply/visit, first pipeline point) to
+ * today. The spend read carries no lower bound, so `spend.totalSpentCents` is everything the brand has
+ * committed (setup included); `sinceInception: true` says which kind of window it is.
+ *
  * WHAT EACH PART COUNTS, AND WHERE IT IS READ:
  *   - emails — EMAILS (every step), not leads: email-gateway's per-day `emailStats` on the same day
  *     read the `sequences` series rides (`fetchBroadcastEmailsByDay`), the scope's campaigns and
@@ -46,16 +52,20 @@ import type { SignalSeries, TimeSeriesPoint } from "./revenue-engine.js";
 export const WINDOW_DAYS_MIN = 1;
 export const WINDOW_DAYS_MAX = 90;
 
-/** `?windowDays=`: absent → undefined (no window); an integer 1..90 → it; anything else → null (400). */
-export function parseWindowDays(raw: unknown): number | undefined | null {
+/** The asked window: N days ending today, or `"all"` = since the scope's first activity. */
+export type WindowDays = number | "all";
+
+/** `?windowDays=`: absent → undefined (no window); an integer 1..90 → it; `all` → since inception; anything else → null (400). */
+export function parseWindowDays(raw: unknown): WindowDays | undefined | null {
   if (raw === undefined) return undefined;
+  if (raw === "all") return "all";
   if (typeof raw !== "string" || !/^\d+$/.test(raw)) return null;
   const n = Number(raw);
   return n >= WINDOW_DAYS_MIN && n <= WINDOW_DAYS_MAX ? n : null;
 }
 
 export const WINDOW_DAYS_ERROR = {
-  error: `windowDays must be an integer from ${WINDOW_DAYS_MIN} to ${WINDOW_DAYS_MAX}`,
+  error: `windowDays must be an integer from ${WINDOW_DAYS_MIN} to ${WINDOW_DAYS_MAX}, or all`,
   reason: "window_days_unrecognised",
 } as const;
 
@@ -65,6 +75,33 @@ export function windowDates(now: Date, days: number): string[] {
   const out: string[] = [];
   for (let i = days - 1; i >= 0; i--) out.push(new Date(today - i * 86_400_000).toISOString().slice(0, 10));
   return out;
+}
+
+/** Every UTC day from `first` (YYYY-MM-DD) to today, ascending; just today when `first` is later or absent. */
+export function inceptionDates(now: Date, first: string | null): string[] {
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const start = first ? Date.parse(`${first}T00:00:00.000Z`) : NaN;
+  const days = Number.isFinite(start) && start < today ? Math.round((today - start) / 86_400_000) + 1 : 1;
+  return windowDates(now, days);
+}
+
+/** The earliest dated activity across the window's sources (null = none dated). */
+export function firstActivityDate(input: {
+  emailsByDay: Map<string, { sent: number; delivered: number; bounced: number }> | null;
+  spendByDay: WindowSpendByDay | null;
+  series: SignalSeries[];
+  pipelineTimeSeries: TimeSeriesPoint[];
+}): string | null {
+  const days: string[] = [];
+  if (input.emailsByDay) for (const [d, c] of input.emailsByDay) if (c.sent || c.delivered || c.bounced) days.push(d);
+  if (input.spendByDay) {
+    const s = input.spendByDay;
+    for (const m of [s.scoped, s.brandLevel, s.scopedTotal, s.brandLevelTotal]) for (const [d, c] of m) if (c) days.push(d);
+  }
+  for (const series of input.series) for (const p of series.daily) if (p.count) days.push(p.date);
+  for (const p of input.pipelineTimeSeries) days.push(p.date);
+  const valid = days.map((d) => d.slice(0, 10)).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
+  return valid.length ? valid.reduce((a, b) => (b < a ? b : a)) : null;
 }
 
 export interface WindowEmailDay {
@@ -78,6 +115,7 @@ export interface WindowEmailDay {
 
 export interface RevenueWindow {
   days: number;
+  sinceInception: boolean;
   startDate: string;
   endDate: string;
   emails: (Omit<WindowEmailDay, "date"> & { daily: WindowEmailDay[] }) | null;
@@ -159,9 +197,14 @@ export async function fetchWindowActualSpendByDay(input: {
   campaignScope: CampaignFilter;
   featureScope: FeatureScope;
   pricing: Pricing;
-  startedAfter: string;
+  /** Absent = no lower bound (since inception). */
+  startedAfter?: string;
 }): Promise<WindowSpendByDay> {
-  const base = () => new URLSearchParams({ orgId: input.orgId, brandId: input.brandId, startedAfter: input.startedAfter });
+  const base = () => {
+    const p = new URLSearchParams({ orgId: input.orgId, brandId: input.brandId });
+    if (input.startedAfter) p.set("startedAfter", input.startedAfter);
+    return p;
+  };
   const members = campaignScopeIds(input.campaignScope);
   const chunks: string[][] = [];
   for (let i = 0; i < members.length; i += RUNS_CAMPAIGN_IDS_PER_REQUEST) chunks.push(members.slice(i, i + RUNS_CAMPAIGN_IDS_PER_REQUEST));
@@ -212,6 +255,7 @@ export function buildRevenueWindow(input: {
   recipientsClicked: SignalSeries;
   totalPipelineUsd: number | null;
   pipelineTimeSeries: TimeSeriesPoint[];
+  sinceInception?: boolean;
 }): RevenueWindow {
   const { dates } = input;
   const startDate = dates[0];
@@ -294,6 +338,7 @@ export function buildRevenueWindow(input: {
 
   return {
     days: dates.length,
+    sinceInception: input.sinceInception ?? false,
     startDate,
     endDate,
     emails,
@@ -306,7 +351,7 @@ export function buildRevenueWindow(input: {
 
 /** The window for a computed revenue body: reads the two producers (each fail-soft), then folds. */
 export async function computeRevenueWindow(input: {
-  days: number;
+  days: WindowDays;
   brandId: string;
   campaignScope: CampaignFilter;
   featureScope: FeatureScope;
@@ -320,8 +365,10 @@ export async function computeRevenueWindow(input: {
   };
   now?: Date;
 }): Promise<RevenueWindow> {
-  const dates = windowDates(input.now ?? new Date(), input.days);
-  const startedAfter = `${dates[0]}T00:00:00.000Z`;
+  const now = input.now ?? new Date();
+  const sinceInception = input.days === "all";
+  const boundedDates = sinceInception ? null : windowDates(now, input.days as number);
+  const startedAfter = boundedDates ? `${boundedDates[0]}T00:00:00.000Z` : undefined;
   const [emailsByDay, spendByDay] = await Promise.all([
     fetchBroadcastEmailsByDay(input.brandId, input.campaignScope, input.featureScope, input.headers).catch((err: Error) => {
       console.error(`[features-service] window emails unreadable for brand ${input.brandId} (window.emails null): ${err.message}`);
@@ -339,8 +386,20 @@ export async function computeRevenueWindow(input: {
       return null;
     }),
   ]);
+  const dates =
+    boundedDates ??
+    inceptionDates(
+      now,
+      firstActivityDate({
+        emailsByDay,
+        spendByDay,
+        series: [input.body.recipientsRepliesPositive, input.body.recipientsClicked],
+        pipelineTimeSeries: input.body.timeSeries,
+      }),
+    );
   return buildRevenueWindow({
     dates,
+    sinceInception,
     emailsByDay,
     spendByDay,
     recipientsRepliesPositive: input.body.recipientsRepliesPositive,
