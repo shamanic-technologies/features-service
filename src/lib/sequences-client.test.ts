@@ -3,7 +3,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 process.env.EMAIL_GATEWAY_SERVICE_URL = "http://email:3000";
 process.env.EMAIL_GATEWAY_SERVICE_API_KEY = "email-key";
 
-const { fetchSequencesByDay } = await import("./sequences-client.js");
+const { fetchSequencesByDay, fetchBroadcastQueuedEmails } = await import("./sequences-client.js");
 
 const HEADERS = { orgId: "org-1", userId: "u1", runId: "r1" };
 
@@ -78,5 +78,58 @@ describe("fetchSequencesByDay", () => {
       async () => new Response(JSON.stringify({}), { status: 200, headers: { "Content-Type": "application/json" } }),
     );
     await expect(fetchSequencesByDay("brand-1", undefined, "f", HEADERS)).rejects.toThrow(/no groups array/);
+  });
+});
+
+describe("fetchBroadcastQueuedEmails", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const respond = (byUrl: (url: URL) => unknown) => {
+    const seen: URL[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url);
+      seen.push(url);
+      return new Response(JSON.stringify(byUrl(url)), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    return seen;
+  };
+  const body = (queued: unknown) => ({ broadcast: { emailStats: { sent: 10, delivered: 9, bounced: 1, queued } } });
+
+  it("reads the non-grouped broadcast emailStats.queued over the scope", async () => {
+    const seen = respond(() => body(2505));
+    expect(await fetchBroadcastQueuedEmails("brand-1", "camp-9", "sales-cold-email-outreach", HEADERS)).toBe(2505);
+    expect(seen).toHaveLength(1);
+    const q = seen[0].searchParams;
+    expect(seen[0].pathname).toBe("/orgs/stats");
+    expect(q.get("type")).toBe("broadcast");
+    expect(q.get("groupBy")).toBeNull();
+    expect(q.get("brandId")).toBe("brand-1");
+    expect(q.get("featureSlugs")).toBe("sales-cold-email-outreach");
+    expect(q.get("campaignId")).toBe("camp-9");
+  });
+
+  it("a measured empty queue is 0", async () => {
+    respond(() => body(0));
+    expect(await fetchBroadcastQueuedEmails("brand-1", undefined, "sales-cold-email-outreach", HEADERS)).toBe(0);
+  });
+
+  it("sums channels and a family in one campaignIds request per channel", async () => {
+    const seen = respond((url) => body(url.searchParams.get("featureSlugs") === "a" ? 3 : 4));
+    expect(await fetchBroadcastQueuedEmails("brand-1", ["c1", "c2"], ["a", "b"], HEADERS)).toBe(7);
+    expect(seen).toHaveLength(2);
+    expect(seen.every((u) => u.searchParams.get("campaignIds") === "c1,c2")).toBe(true);
+  });
+
+  it("one part the sender could not read nulls the sum (never counted as 0)", async () => {
+    respond((url) => body(url.searchParams.get("featureSlugs") === "a" ? 3 : null));
+    expect(await fetchBroadcastQueuedEmails("brand-1", undefined, ["a", "b"], HEADERS)).toBeNull();
+  });
+
+  it("throws when the gateway does not carry the count, or fails", async () => {
+    respond(() => ({ broadcast: { emailStats: { sent: 1 } } }));
+    await expect(fetchBroadcastQueuedEmails("brand-1", undefined, "a", HEADERS)).rejects.toThrow(/emailStats.queued/);
+    vi.restoreAllMocks();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("nope", { status: 404 }));
+    await expect(fetchBroadcastQueuedEmails("brand-1", undefined, "a", HEADERS)).rejects.toThrow(/404/);
   });
 });

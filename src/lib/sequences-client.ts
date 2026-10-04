@@ -198,3 +198,71 @@ export async function fetchBroadcastEmailsByDay(
     return { sent: num(stats?.sent, "sent"), delivered: num(stats?.delivered, "delivered"), bounced: num(stats?.bounced, "bounced") };
   });
 }
+
+/**
+ * EMAILS QUEUED RIGHT NOW over the scope: email-gateway's non-grouped `GET /orgs/stats?type=broadcast`
+ * `broadcast.emailStats.queued`, relayed from instantly-service (v0.83.7): every step of a live
+ * sequence scheduled and not yet sent, the same email grain as `emailStats.sent`. A SNAPSHOT, so it
+ * carries no day. Read from the sender's own queue, never derived as sequences × steps − sent.
+ *
+ * `null` = the producer said it could not read its queue (a 0 is a MEASURED empty queue). Several
+ * channels or family chunks are summed exactly (a queued step carries one campaign and one feature);
+ * one null part nulls the sum. Throws when the read fails or the field is absent (the gateway does
+ * not relay it): the caller degrades to null with a reason.
+ */
+export async function fetchBroadcastQueuedEmails(
+  brandId: string,
+  campaignScope: CampaignFilter,
+  featureScope: FeatureScope,
+  headers: { orgId: string; userId?: string; runId?: string },
+): Promise<number | null> {
+  const slugs = featureSlugList(featureScope);
+  const family = campaignFamilySet(campaignScope);
+  const campaignId = singleCampaignId(campaignScope);
+  const campaignParams: Array<Record<string, string>> = family
+    ? campaignFamilyStatsParams([...family])
+    : [campaignId ? { campaignId } : {}];
+  const parts = await mapWithConcurrency(
+    slugs.flatMap((slug) => campaignParams.map((scope) => ({ slug, scope }))),
+    6,
+    ({ slug, scope }) => fetchQueuedOnce(brandId, slug, scope, headers),
+  );
+  if (parts.some((p) => p === null)) return null;
+  return (parts as number[]).reduce((s, p) => s + p, 0);
+}
+
+async function fetchQueuedOnce(
+  brandId: string,
+  featureSlug: string,
+  campaignScope: Record<string, string>,
+  headers: { orgId: string; userId?: string; runId?: string },
+): Promise<number | null> {
+  const url = process.env.EMAIL_GATEWAY_SERVICE_URL;
+  const apiKey = process.env.EMAIL_GATEWAY_SERVICE_API_KEY;
+  if (!url || !apiKey) {
+    throw new Error("EMAIL_GATEWAY_SERVICE_URL or EMAIL_GATEWAY_SERVICE_API_KEY not configured");
+  }
+  const params = new URLSearchParams({ type: "broadcast", brandId, featureSlugs: featureSlug, ...campaignScope });
+  const reqHeaders: Record<string, string> = {
+    "x-api-key": apiKey,
+    "x-org-id": headers.orgId,
+    "x-brand-id": brandId,
+    "x-feature-slug": featureSlug,
+  };
+  if (headers.userId) reqHeaders["x-user-id"] = headers.userId;
+  if (headers.runId) reqHeaders["x-run-id"] = headers.runId;
+  if (campaignScope.campaignId) reqHeaders["x-campaign-id"] = campaignScope.campaignId;
+
+  const response = await fetchWithRetry(`${url}/orgs/stats?${params}`, { headers: reqHeaders });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`email-gateway /orgs/stats broadcast (queued) failed (${response.status}): ${text}`);
+  }
+  const data = (await response.json()) as { broadcast?: { emailStats?: { queued?: unknown } } };
+  const queued = data.broadcast?.emailStats?.queued;
+  if (queued === null) return null;
+  if (typeof queued !== "number" || !Number.isFinite(queued)) {
+    throw new Error("email-gateway /orgs/stats broadcast returned no emailStats.queued");
+  }
+  return queued;
+}

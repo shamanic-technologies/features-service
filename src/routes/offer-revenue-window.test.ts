@@ -187,6 +187,12 @@ function mockFetch(): void {
           { key: TODAY, broadcast: { recipientStats: { contacted: 3 }, emailStats: { sent: 20, delivered: 20, bounced: 1 } } },
         ] });
       }
+      if (q.get("type") === "broadcast" && !q.get("groupBy")) {
+        // The sender's queue right now: 42 steps waiting on the offer's campaign c1, 900 on c9 (another offer).
+        const ids = (q.get("campaignIds") ?? q.get("campaignId") ?? "").split(",");
+        const queued = (ids.includes("c1") ? 42 : 0) + (ids.includes("c9") ? 900 : 0);
+        return json({ groups: [], broadcast: { emailStats: { sent: 0, delivered: 0, bounced: 0, queued } } });
+      }
       return json({ groups: [] });
     }
     return json({});
@@ -280,6 +286,14 @@ describe("GET /offers/:offerId/revenue — today's spend and ?windowDays=", () =
     expect(bounded.emails.sent).toBe(120);
     expect(w.emails.sent).toBeGreaterThanOrEqual(bounded.emails.sent);
     expect(bounded.spend.totalSpentCents).toBe(1000 + 5203);
+  });
+
+  it("serves the offer's emails queued right now: a snapshot, the same whatever the window", async () => {
+    const all = (await read("&windowDays=all")).body.window;
+    const week = (await read("&windowDays=7")).body.window;
+    expect(all.queuedEmails).toBe(42);
+    expect(all.queuedEmailsUnavailableReason).toBeNull();
+    expect(week.queuedEmails).toBe(42);
   });
 
   it("an unrecognised windowDays is a 400", async () => {
