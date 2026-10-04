@@ -17161,7 +17161,24 @@
               },
               "recipientsContacted": {
                 "type": "integer",
-                "description": "Leads contacted in the window: the per-day series behind the dashboard's Outreach card, summed over the window."
+                "description": "Leads PUSHED INTO THE SENDING QUEUE in the window (dated on the push): the per-day series behind the dashboard's Outreach card, summed. NOT a count of people emailed: see recipientsEmailed and sendStatus. Equal to recipientsEnrolled."
+              },
+              "recipientsEnrolled": {
+                "type": "integer",
+                "description": "Same number as recipientsContacted, named for what it is: leads lined up in the sending queue in the window."
+              },
+              "recipientsEmailed": {
+                "type": "integer",
+                "description": "Leads that got at least one email in the window (email-gateway recipientStats.sent, dated on the send event). Not subtractable from recipientsEnrolled: the two are dated on different clocks."
+              },
+              "sendStatus": {
+                "type": "string",
+                "enum": [
+                  "emails_sent",
+                  "lined_up_not_sent",
+                  "nothing_sent"
+                ],
+                "description": "emails_sent = at least one email went out in the window; lined_up_not_sent = leads were queued but no email went out yet; nothing_sent = nothing queued and nothing sent."
               },
               "deliveryRatePct": {
                 "type": "number",
@@ -17176,15 +17193,19 @@
                   "reply_rate_unavailable",
                   "economics_missing",
                   "no_spend_in_window",
-                  "lifetime_revenue_differs_across_brands"
+                  "lifetime_revenue_differs_across_brands",
+                  "lifetime_revenue_differs_across_offers"
                 ],
-                "description": "Why the figure beside it is null. nothing_sent = no email went out in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue / reply-to-paid rate; no_spend_in_window = the org spent nothing in the window; lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[])."
+                "description": "Why the figure beside it is null. nothing_sent = no email went out in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue / reply-to-paid rate; no_spend_in_window = the org spent nothing in the window; lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer."
               }
             },
             "required": [
               "emailsSent",
               "emailsDelivered",
               "recipientsContacted",
+              "recipientsEnrolled",
+              "recipientsEmailed",
+              "sendStatus",
               "deliveryRatePct",
               "deliveryRateNullReason"
             ]
@@ -17202,9 +17223,10 @@
               "reply_rate_unavailable",
               "economics_missing",
               "no_spend_in_window",
-              "lifetime_revenue_differs_across_brands"
+              "lifetime_revenue_differs_across_brands",
+              "lifetime_revenue_differs_across_offers"
             ],
-            "description": "Why the figure beside it is null. nothing_sent = no email went out in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue / reply-to-paid rate; no_spend_in_window = the org spent nothing in the window; lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[])."
+            "description": "Why the figure beside it is null. nothing_sent = no email went out in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue / reply-to-paid rate; no_spend_in_window = the org spent nothing in the window; lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer."
           },
           "spendUsd": {
             "type": "number",
@@ -17236,7 +17258,16 @@
               "lifetimeRevenuePerClientUsd": {
                 "type": "number",
                 "nullable": true,
-                "description": "The lifetime revenue per client the ROI is based on (brand effective economics), when every brand that sent shares one."
+                "description": "The lifetime revenue per client the ROI and budgetIncrease are based on, when every brand that sent shares one: the customer's STATED offer lifetime revenue when stated, else the brand's effective economics (lifetimeRevenueSource)."
+              },
+              "lifetimeRevenueSource": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "offer_stated",
+                  "brand_economics"
+                ],
+                "description": "Where the lifetime revenue per client was read. offer_stated = the value the customer stated on their offer (brand-service offer-economics, every offer of the brand agreeing); brand_economics = no offer states one, so the brand's effective economics (see economicsSource: user or cross-brand-average)."
               },
               "lifetimeRevenueNullReason": {
                 "type": "string",
@@ -17246,9 +17277,10 @@
                   "reply_rate_unavailable",
                   "economics_missing",
                   "no_spend_in_window",
-                  "lifetime_revenue_differs_across_brands"
+                  "lifetime_revenue_differs_across_brands",
+                  "lifetime_revenue_differs_across_offers"
                 ],
-                "description": "Why the figure beside it is null. nothing_sent = no email went out in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue / reply-to-paid rate; no_spend_in_window = the org spent nothing in the window; lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[])."
+                "description": "Why the figure beside it is null. nothing_sent = no email went out in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue / reply-to-paid rate; no_spend_in_window = the org spent nothing in the window; lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer."
               },
               "nullReason": {
                 "type": "string",
@@ -17258,9 +17290,10 @@
                   "reply_rate_unavailable",
                   "economics_missing",
                   "no_spend_in_window",
-                  "lifetime_revenue_differs_across_brands"
+                  "lifetime_revenue_differs_across_brands",
+                  "lifetime_revenue_differs_across_offers"
                 ],
-                "description": "Why the figure beside it is null. nothing_sent = no email went out in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue / reply-to-paid rate; no_spend_in_window = the org spent nothing in the window; lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[])."
+                "description": "Why the figure beside it is null. nothing_sent = no email went out in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue / reply-to-paid rate; no_spend_in_window = the org spent nothing in the window; lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer."
               }
             },
             "required": [
@@ -17269,6 +17302,7 @@
               "expectedRevenueUsd",
               "roiMultiple",
               "lifetimeRevenuePerClientUsd",
+              "lifetimeRevenueSource",
               "lifetimeRevenueNullReason",
               "nullReason"
             ]
@@ -17308,9 +17342,10 @@
                   "reply_rate_unavailable",
                   "economics_missing",
                   "no_spend_in_window",
-                  "lifetime_revenue_differs_across_brands"
+                  "lifetime_revenue_differs_across_brands",
+                  "lifetime_revenue_differs_across_offers"
                 ],
-                "description": "Why the figure beside it is null. nothing_sent = no email went out in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue / reply-to-paid rate; no_spend_in_window = the org spent nothing in the window; lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[])."
+                "description": "Why the figure beside it is null. nothing_sent = no email went out in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue / reply-to-paid rate; no_spend_in_window = the org spent nothing in the window; lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer."
               }
             },
             "required": [
@@ -17337,7 +17372,12 @@
                   "type": "integer"
                 },
                 "recipientsContacted": {
-                  "type": "integer"
+                  "type": "integer",
+                  "description": "Leads pushed into the sending queue in the window (not necessarily emailed yet)."
+                },
+                "recipientsEmailed": {
+                  "type": "integer",
+                  "description": "Leads that got at least one email in the window."
                 },
                 "positiveReplyRatePct": {
                   "type": "number",
@@ -17390,6 +17430,25 @@
                   "type": "number",
                   "nullable": true
                 },
+                "lifetimeRevenueSource": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "offer_stated",
+                    "brand_economics"
+                  ],
+                  "description": "Where the lifetime revenue per client was read. offer_stated = the value the customer stated on their offer (brand-service offer-economics, every offer of the brand agreeing); brand_economics = no offer states one, so the brand's effective economics (see economicsSource: user or cross-brand-average)."
+                },
+                "lifetimeRevenueOfferId": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The offer whose stated lifetime revenue is used, when the brand sells exactly one."
+                },
+                "lifetimeRevenueStatedAt": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "When the customer stated it (brand-service), when lifetimeRevenueOfferId is set."
+                },
                 "economicsSource": {
                   "type": "string",
                   "nullable": true,
@@ -17414,9 +17473,10 @@
                     "reply_rate_unavailable",
                     "economics_missing",
                     "no_spend_in_window",
-                    "lifetime_revenue_differs_across_brands"
+                    "lifetime_revenue_differs_across_brands",
+                    "lifetime_revenue_differs_across_offers"
                   ],
-                  "description": "Why the figure beside it is null. nothing_sent = no email went out in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue / reply-to-paid rate; no_spend_in_window = the org spent nothing in the window; lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[])."
+                  "description": "Why the figure beside it is null. nothing_sent = no email went out in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue / reply-to-paid rate; no_spend_in_window = the org spent nothing in the window; lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer."
                 }
               },
               "required": [
@@ -17424,12 +17484,16 @@
                 "emailsSent",
                 "emailsDelivered",
                 "recipientsContacted",
+                "recipientsEmailed",
                 "positiveReplyRatePct",
                 "rateSource",
                 "matureCohort",
                 "expectedPositiveReplies",
                 "replyToPaidClientPct",
                 "lifetimeRevenuePerClientUsd",
+                "lifetimeRevenueSource",
+                "lifetimeRevenueOfferId",
+                "lifetimeRevenueStatedAt",
                 "economicsSource",
                 "expectedPaidClients",
                 "expectedRevenueUsd",
