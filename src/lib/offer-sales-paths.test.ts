@@ -11,6 +11,7 @@ import {
   resolveLegChannelCost,
   type LegChannelPrice,
   type SalesPathChannelInput,
+  withSalesPathNames,
 } from "./offer-sales-paths.js";
 import type { EffectiveArrowRate } from "./effective-conversion-rates.js";
 import { priceFromLadder } from "../routes/offer-sales-paths.js";
@@ -116,7 +117,8 @@ describe("buildOfferSalesPaths", () => {
       ],
     });
     expect(body.status).toBe("ok");
-    expect(body.paths).toHaveLength(3);
+    // 3 chains; the two conversation chains run on either cold-email channel → 2 + 2 + 1 combinations.
+    expect(body.paths).toHaveLength(5);
     const rois = body.paths.map((p) => p.roi!);
     expect([...rois].sort((a, b) => b - a)).toEqual(rois);
     for (const p of body.paths) {
@@ -125,7 +127,7 @@ describe("buildOfferSalesPaths", () => {
       expect(p.roi).toBeCloseTo(2000 / sum, 9);
     }
     // Meeting path: needed attended = 4, booked = 5, replies = 10 → 10 × $10 + 5 × $4 = $120.
-    const meeting = body.paths.find((p) => p.legKeys.length === 4)!;
+    const meeting = body.paths.find((p) => p.legKeys.length === 4 && p.entryChannelSlug === "cold-email-2")!;
     expect(meeting.costPerPayingClientUsd).toBeCloseTo(120, 9);
     expect(meeting.entryChannelSlug).toBe("cold-email-2");
     expect(meeting.legs[0].channel!.choice).toBe("cheapest_cost_per_outcome");
@@ -137,6 +139,48 @@ describe("buildOfferSalesPaths", () => {
     // Direct close: 20 replies × $10 = $200. Signup path: 50 visits × $1 = $50 → best.
     expect(body.paths[0].pathKey).toBe("start_to_website_visit+website_visit_to_signup+signup_to_paid_client");
     expect(body.paths[0].roi).toBeCloseTo(40, 9);
+  });
+
+  it("one row per combination: each candidate channel ranked on its own, uniquely keyed, the leg's channel stated", () => {
+    const body = buildOfferSalesPaths({
+      ...base,
+      legKeys: ["start_to_conversation", "conversation_to_meeting_booked", "meeting_booked_to_meeting_attended", "meeting_attended_to_paid_client"],
+    });
+    expect(body.paths.map((p) => [p.rank, p.combinationKey, p.costPerPayingClientUsd])).toEqual([
+      [
+        1,
+        "start_to_conversation@cold-email-2+conversation_to_meeting_booked@pilot+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client",
+        120,
+      ],
+      // Same chain, the costlier entry channel: 10 replies × $20 + 5 bookings × $4 = $220.
+      [
+        2,
+        "start_to_conversation@cold-email+conversation_to_meeting_booked@pilot+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client",
+        220,
+      ],
+    ]);
+    // Both rows share the CHAIN, never the identity; the name is the route's (null out of the pure build).
+    expect(new Set(body.paths.map((p) => p.pathKey)).size).toBe(1);
+    expect(body.paths.every((p) => p.name === null)).toBe(true);
+    const [best, alt] = body.paths;
+    expect(best.entryChannelSlug).toBe("cold-email-2");
+    expect(best.legs[0].channel!.choice).toBe("cheapest_cost_per_outcome");
+    expect(alt.entryChannelSlug).toBe("cold-email");
+    expect(alt.legs[0].channel!).toMatchObject({ slug: "cold-email", choice: "alternative_channel" });
+    expect(alt.legs[0].channel!.candidates.map((c) => c.slug)).toEqual(["cold-email", "cold-email-2"]);
+    expect(alt.legs[1].channel!).toMatchObject({ slug: "pilot", choice: "only_priced_channel" });
+    expect(alt.legs[2].channel).toBeNull();
+    expect(alt.roi).toBeCloseTo(2000 / 220, 9);
+  });
+
+  it("names every row from the shared name map, and refuses to serve a row left unnamed", () => {
+    const body = buildOfferSalesPaths({ ...base, legKeys: ["start_to_conversation", "conversation_to_paid_client"] });
+    const names = new Map(body.paths.map((p, i) => [p.combinationKey, ["Victory", "Sol"][i]]));
+    expect(withSalesPathNames(body, names).paths.map((p) => [p.rank, p.name])).toEqual([
+      [1, "Victory"],
+      [2, "Sol"],
+    ]);
+    expect(() => withSalesPathNames(body, new Map([[body.paths[0].combinationKey, "Victory"]]))).toThrow(/has no name/);
   });
 
   it("never prices an unpriced platform leg as free, and states no ROI without a lifetime revenue", () => {
