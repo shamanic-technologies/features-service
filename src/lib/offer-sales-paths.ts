@@ -64,9 +64,16 @@
  *   `channel.managed` says whether we run that channel today. A managed channel prices exactly as above; a
  *   channel we do not run prices on the fleet's real spend when there is some, else on its sourced market
  *   BENCHMARK (`costSource: "benchmark"`, `costBenchmarkSource` cites it). The customer's own team
- *   (`your-team-*`, `operatedBy: customer`) is priced on its time, so it never reads as free beside a
- *   channel of ours. A leg no shortlisted channel publishes (a visitor signing up, a booking call turned
- *   into a meeting) stays `human` with no channel and no cost, exactly as in the default read.
+ *   (`your-team-*`, `operatedBy: customer`) is named on its leg and costs nothing to us, exactly like a
+ *   human leg of the default read, so one combination reads ONE price in both scopes. A leg no shortlisted
+ *   channel publishes (a visitor signing up, a booking call turned into a meeting) has no channel.
+ *
+ *   A DEFAULT PRICES, NEVER CHOOSES (the leg-rate rule, applied to costs): a row with any
+ *   benchmark-priced leg (`pricedOnBenchmark`) ranks after every row priced on our own evidence, so a
+ *   stack of market benchmarks never out-ranks a path we measured; each tier is ordered by ROI. And the
+ *   self-serve CHECKOUT legs (`website_visit_to_purchase`) are a property of the offer, not a channel
+ *   choice: the catalogue lists them only when the offer ticked that leg (a high-ticket offer that sells
+ *   through meetings has no checkout; a 2% generic purchase rate on ad clicks read 57x for one).
  *
  *   `combinationKey` suffixes `@<slug>` only on a leg a PLATFORM channel works, so a leg the customer's
  *   team works keys bare in both scopes: the same combination keeps the same key and NAME in both reads.
@@ -257,6 +264,8 @@ export interface SalesPath {
   entryChannelSlug: string | null;
   /** Whether the customer ticked EVERY leg of the chain (always true in the ticked scope). */
   ticked: boolean;
+  /** A leg rests on a market benchmark: the row ranks after every row priced on our own evidence. */
+  pricedOnBenchmark: boolean;
   legs: SalesPathLeg[];
   /** Share of entry outcomes that become a paying client: Π rate(Li)/100 over the non-entry legs, in %. */
   entryToPayingClientPct: number | null;
@@ -396,9 +405,13 @@ export function legChannelsForScope(
   return channels.filter((c) => shortlist.has(c.slug) && c.legKeys.includes(legKey));
 }
 
+/** Legs an offer either has or does not (a self-serve checkout): the catalogue lists them only when ticked. */
+export const OFFER_PROPERTY_LEG_KEYS: ReadonlySet<string> = new Set(["website_visit_to_purchase"]);
+
 /** PURE: the legs a scope enumerates chains over. */
 export function legKeysForScope(scope: SalesPathScope, ticked: readonly string[]): string[] {
-  return scope === "catalogue" ? [...FUNNEL_LEG_KEYS] : [...ticked];
+  if (scope === "ticked") return [...ticked];
+  return FUNNEL_LEG_KEYS.filter((k) => !OFFER_PROPERTY_LEG_KEYS.has(k) || ticked.includes(k));
 }
 
 /** PURE: the cost cascade for one (leg, channel) — workflow > fleet measured > default. */
@@ -432,7 +445,7 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
     if (selected.length - unknownLegKeys.length === 0) return { ...base, scope, status: "no_legs_selected", paths: [] };
   }
 
-  const chains = enumerateSalesPaths(legKeysForScope(scope, selected));
+  const chains = enumerateSalesPaths(legKeysForScope(scope, input.stated ? selected : []));
   if (chains.length === 0) return { ...base, scope, status: "no_complete_path", paths: [] };
   const tickedLegs = new Set(input.stated ? selected : []);
   const shortlist = input.catalogueChannelSlugs ?? SALES_PATH_CATALOGUE_CHANNEL_SLUGS;
@@ -473,9 +486,12 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
         const key = priceKey(d.legKey, c.slug);
         const p = input.prices.get(key);
         const isManaged = managed.has(c.slug);
-        const benchmark = isManaged ? undefined : benchmarks.get(key);
+        const isTeam = c.operatedBy === "customer";
+        const benchmark = isManaged || isTeam ? undefined : benchmarks.get(key);
         // A channel we run: workflow > fleet > seeded default. One we do not: fleet > market benchmark.
-        const resolved = isManaged
+        const resolved = isTeam
+          ? { costPerOutcomeUsd: null, costSource: null }
+          : isManaged
           ? resolveLegChannelCost(p, fleetPrices.get(key), defaultCosts.get(key))
           : usable(fleetPrices.get(key))
             ? { costPerOutcomeUsd: fleetPrices.get(key)!, costSource: "fleet_measured" as const }
@@ -501,7 +517,7 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
           costSource: resolved.costSource,
           workflowDynastySlug: workflowPriced ? (p?.workflowDynastySlug ?? null) : null,
           grain: workflowPriced ? (p?.grain ?? null) : resolved.costSource === "fleet_measured" ? "crossOrg" : null,
-          unpricedReason: resolved.costSource === null ? (isManaged ? workflowUnpricedReason : "no_benchmark") : null,
+          unpricedReason: isTeam ? null : resolved.costSource === null ? (isManaged ? workflowUnpricedReason : "no_benchmark") : null,
           workflowUnpricedReason,
         };
       });
@@ -522,7 +538,8 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
         let costPerOutcomeUsd: number | null = null;
         let costPerPayingClientUsd: number | null = null;
         if (lc && picked) {
-          anyCosted = true;
+          const team = picked.operatedBy === "customer";
+          if (!team) anyCosted = true;
           channel = {
             slug: picked.slug,
             name: picked.name,
@@ -537,8 +554,9 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
             candidates: lc.candidates,
           };
           costPerOutcomeUsd = picked.costPerOutcomeUsd;
-          if (costPerOutcomeUsd === null) costUnavailable = true;
-          else if (needed[i] !== null) {
+          if (costPerOutcomeUsd === null) {
+            if (!team) costUnavailable = true;
+          } else if (needed[i] !== null) {
             costPerPayingClientUsd = costPerOutcomeUsd * needed[i]!;
             total += costPerPayingClientUsd;
           }
@@ -600,6 +618,7 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
         entryLegKey: legKeys[0],
         entryChannelSlug: legs[0].channel?.slug ?? null,
         ticked: legs.every((l) => l.ticked),
+        pricedOnBenchmark: legs.some((l) => l.costSource === "benchmark"),
         legs,
         entryToPayingClientPct,
         lifetimeRevenueUsd: ltr,
@@ -613,6 +632,7 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
   const tie = (a: Omit<SalesPath, "rank">, b: Omit<SalesPath, "rank">) =>
     a.pathKey.localeCompare(b.pathKey) || a.combinationKey.localeCompare(b.combinationKey);
   paths.sort((a, b) => {
+    if (a.pricedOnBenchmark !== b.pricedOnBenchmark) return a.pricedOnBenchmark ? 1 : -1;
     if (a.roi !== null && b.roi !== null) return b.roi - a.roi || tie(a, b);
     if (a.roi !== null) return -1;
     if (b.roi !== null) return 1;
