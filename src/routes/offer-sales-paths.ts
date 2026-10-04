@@ -27,7 +27,9 @@ import {
   priceKey,
   type LegChannelPrice,
   type SalesPathChannelInput,
+  withSalesPathNames,
 } from "../lib/offer-sales-paths.js";
+import { salesPathNamesFor, SalesPathNamePoolExhaustedError } from "../lib/sales-path-names.js";
 import { handleWorkflowProjection } from "./workflow-projection.js";
 
 const router = Router();
@@ -155,20 +157,21 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
     // measured leg at its seeded default because the process is young (2026-10-03: $5 vs $1.41).
     const fleetPrices = await (await import("./public.js")).awaitFleetLegCostsFromOutcomePrices();
 
-    return res.json(
-      buildOfferSalesPaths({
-        offerId,
-        brandId,
-        stated: salesPath.stated,
-        statedAt: salesPath.statedAt,
-        legKeys: salesPath.legKeys,
-        lifetimeRevenueUsd: offer.lifetimeRevenueUsd,
-        rates: rates.legs,
-        channels,
-        prices,
-        fleetPrices,
-      }),
-    );
+    const body = buildOfferSalesPaths({
+      offerId,
+      brandId,
+      stated: salesPath.stated,
+      statedAt: salesPath.statedAt,
+      legKeys: salesPath.legKeys,
+      lifetimeRevenueUsd: offer.lifetimeRevenueUsd,
+      rates: rates.legs,
+      channels,
+      prices,
+      fleetPrices,
+    });
+    // Every row's name, shared across clients and stable forever: assigned on first sight, in rank order.
+    const names = await salesPathNamesFor(body.paths.map((p) => p.combinationKey));
+    return res.json(withSalesPathNames(body, names));
   } catch (error) {
     if (error instanceof OfferSalesPathNotFoundError) {
       return res.status(404).json({ error: error.message, reason: "offer_not_found" });
@@ -177,6 +180,10 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
       console.error(`[features-service] sales-paths for offer ${offerId}: ${error.message}`);
       res.setHeader("Retry-After", "60");
       return res.status(503).json({ error: error.message, reason: "fleet_costs_not_computed_yet" });
+    }
+    if (error instanceof SalesPathNamePoolExhaustedError) {
+      console.error(`[features-service] sales-paths for offer ${offerId}: ${error.message}`);
+      return res.status(502).json({ error: error.message, reason: "sales_path_name_pool_exhausted" });
     }
     if (error instanceof SalesFunnelsUnavailableError) {
       return res.status(502).json({ error: error.message, reason: "brand_service_unavailable" });

@@ -1,0 +1,105 @@
+/**
+ * THE NAME OF A SALES PATH COMBINATION — "Victory is our best path for you", "Sol is second".
+ *
+ * Owner decision 2026-10-04 (supersedes the per-(channel, leg) crew names Herald/Scout/Pilot/…, retired
+ * from `/public/channels`). A COMBINATION is a chain of legs to `paid_client` with ONE managed channel on
+ * every leg a channel of ours works (`combinationKeyOf`, `lib/offer-sales-paths.ts`). Its name is:
+ *
+ *  - SHARED: keyed on the combination alone, never on a brand, org or offer — the same combination reads
+ *    the same name for every client;
+ *  - STABLE FOREVER: written once to `sales_path_combination_names` and never updated or deleted, so a
+ *    name never moves to another combination and is never given twice (UNIQUE on the name). Nothing is
+ *    derived from a slug, and nothing is recomputed per request: reordering or growing the pool below
+ *    changes only which word the NEXT new combination receives;
+ *  - ASSIGNED ON FIRST SIGHT: a combination nobody named yet takes the first unused word of the pool, in
+ *    the order the read ranked it (the best new combination gets the earlier word). The whole assignment
+ *    runs under one transaction-scoped advisory lock, so two concurrent reads cannot hand one word to two
+ *    combinations nor two words to one.
+ *
+ * The pool is curated: English, one word, optimistic (success, height, glory, abundance, joy). Its size is
+ * guarded against every combination the catalogue can form (`offer-sales-paths.test.ts`); an exhausted
+ * pool throws `SalesPathNamePoolExhaustedError` — loud, never a reused or invented name.
+ */
+import { inArray, sql } from "drizzle-orm";
+import { db } from "../db/index.js";
+import { salesPathCombinationNames } from "../db/schema.js";
+
+/** Append-only in spirit: add words at the END; a word already given stays given whatever happens here. */
+export const SALES_PATH_NAME_POOL: readonly string[] = [
+  "Victory", "Sol", "Herald", "Epiphany", "Triumph", "Zenith", "Summit", "Glory",
+  "Aurora", "Bounty", "Jubilee", "Radiance", "Apex", "Laurel", "Harvest", "Eureka",
+  "Halo", "Crown", "Pinnacle", "Ascent", "Bliss", "Splendor", "Fortune", "Valor",
+  "Anthem", "Beacon", "Comet", "Dawn", "Elation", "Encore", "Euphoria", "Fanfare",
+  "Flourish", "Gala", "Gleam", "Golden", "Grace", "Honor", "Horizon", "Jackpot",
+  "Joy", "Jubilation", "Lumen", "Luster", "Majesty", "Marvel", "Meridian", "Miracle",
+  "Nova", "Oasis", "Opulence", "Ovation", "Paragon", "Plenty", "Prism", "Prodigy",
+  "Rapture", "Regal", "Rise", "Rhapsody", "Riches", "Soar", "Solstice", "Sovereign",
+  "Sparkle", "Spire", "Starlight", "Sterling", "Sunrise", "Sunburst", "Supernova", "Thrive",
+  "Tiara", "Titan", "Torch", "Treasure", "Trophy", "Upswing", "Utopia", "Vanguard",
+  "Verve", "Vista", "Wonder", "Zeal", "Zest", "Abundance", "Acclaim", "Accolade",
+  "Ardor", "Aspire", "Bonanza", "Brilliance", "Cascade", "Celebration", "Champion", "Cheer",
+  "Clarion", "Crescendo", "Delight", "Destiny", "Diadem", "Dynamo", "Eden", "Elevate",
+  "Elysium", "Emblem", "Empyrean", "Exalt", "Excelsior", "Fiesta", "Flair", "Fervor",
+  "Gem", "Genesis", "Gilded", "Glimmer", "Glow", "Gusto", "Harmony", "Heyday",
+  "Hurrah", "Icon", "Ignite", "Jewel", "Kudos", "Legend", "Lodestar", "Magnum",
+  "Mirth", "Momentum", "Monarch", "Noble", "Olympus", "Panache", "Paradise", "Pearl",
+  "Phoenix", "Plaudit", "Polaris", "Premier", "Prestige", "Promise", "Providence", "Rainbow",
+  "Renown", "Revel", "Ruby", "Saga", "Sapphire", "Serenade", "Shine", "Skyward",
+  "Sonnet", "Spark", "Stellar", "Sublime", "Success", "Sunbeam", "Surge", "Talisman",
+  "Tribute", "Uplift", "Vantage", "Verdant", "Victor", "Vivid", "Windfall", "Wish",
+  "Amber", "Aria", "Bravo", "Cadence", "Cosmos", "Dazzle", "Echelon", "Ember",
+  "Emerald", "Fable", "Festival", "Luminary", "Gallant", "Garland", "Glee", "Grandeur",
+  "Hallmark", "Heaven", "Hero", "Idyll", "Jasmine", "Kindle", "Lyric", "Medal",
+  "Merit", "Nectar", "Opal", "Orbit", "Peak", "Pride", "Quasar", "Radiant",
+  "Rally", "Reign", "Resound", "Sunlit", "Topaz", "Unity", "Velvet", "Zephyr",
+];
+
+export class SalesPathNamePoolExhaustedError extends Error {
+  constructor(public readonly missing: number) {
+    super(`sales path name pool exhausted: ${missing} new combination(s) need a name and every word of SALES_PATH_NAME_POOL is given — add words at the end of the pool`);
+    this.name = "SalesPathNamePoolExhaustedError";
+  }
+}
+
+/** PURE: the next `count` words of `pool`, in pool order, that `used` does not hold. Throws when short. */
+export function nextUnusedNames(pool: readonly string[], used: ReadonlySet<string>, count: number): string[] {
+  const free = pool.filter((w) => !used.has(w));
+  if (free.length < count) throw new SalesPathNamePoolExhaustedError(count - free.length);
+  return free.slice(0, count);
+}
+
+/** Lock id of the assignment (any constant; scoped to this one table's writes). */
+const NAME_ASSIGNMENT_LOCK = 784_530_071;
+
+/**
+ * The name of every combination in `keysInRankOrder`, assigning the unnamed ones on first sight.
+ * Fail-loud: a DB error or an exhausted pool throws (the route answers 502); never an invented name.
+ */
+export async function salesPathNamesFor(keysInRankOrder: readonly string[]): Promise<Map<string, string>> {
+  const keys = [...new Set(keysInRankOrder)];
+  if (keys.length === 0) return new Map();
+  const read = async (q: Pick<typeof db, "select">) =>
+    new Map(
+      (
+        await q
+          .select({ key: salesPathCombinationNames.combinationKey, name: salesPathCombinationNames.name })
+          .from(salesPathCombinationNames)
+          .where(inArray(salesPathCombinationNames.combinationKey, keys))
+      ).map((r) => [r.key, r.name]),
+    );
+  const known = await read(db);
+  if (keys.every((k) => known.has(k))) return known;
+
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(${NAME_ASSIGNMENT_LOCK})`);
+    const named = await read(tx);
+    const missing = keys.filter((k) => !named.has(k));
+    if (missing.length === 0) return named;
+    const used = new Set((await tx.select({ name: salesPathCombinationNames.name }).from(salesPathCombinationNames)).map((r) => r.name));
+    const words = nextUnusedNames(SALES_PATH_NAME_POOL, used, missing.length);
+    await tx.insert(salesPathCombinationNames).values(missing.map((combinationKey, i) => ({ combinationKey, name: words[i] })));
+    missing.forEach((k, i) => named.set(k, words[i]));
+    console.log(`[features-service] sales-path names: named ${missing.map((k, i) => `${words[i]}=${k}`).join(", ")}`);
+    return named;
+  });
+}

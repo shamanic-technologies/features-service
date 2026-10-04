@@ -1783,11 +1783,11 @@ const salesPathLegSchema = z.object({
       workflowDynastySlug: z.string().nullable(),
       grain: z.string().nullable(),
       costSource: z.enum(["workflow", "fleet_measured", "default"]).nullable(),
-      choice: z.enum(["only_priced_channel", "cheapest_cost_per_outcome", "no_priced_channel"]),
+      choice: z.enum(["only_priced_channel", "cheapest_cost_per_outcome", "no_priced_channel", "alternative_channel"]).describe("only_priced_channel / cheapest_cost_per_outcome: this row's channel is the leg's cheapest. alternative_channel: this row runs the leg on another candidate (costlier or unpriced); another row runs the cheapest. no_priced_channel: no candidate could price the leg."),
       candidates: z.array(salesPathCandidateSchema),
     })
     .nullable()
-    .describe("Present on a platform leg: the channel we would run it on (lowest cost per outcome) and why."),
+    .describe("Present on a platform leg: the channel THIS combination runs it on (one row per candidate channel), with every candidate listed."),
   outcomesNeededPerPayingClient: z.number().nullable(),
   costPerOutcomeUsd: z.number().nullable(),
   costSource: z.enum(["workflow", "fleet_measured", "default"]).nullable().describe("Which rung of the cost cascade priced the leg: workflow > fleet_measured > default. Null on a human leg."),
@@ -1795,11 +1795,13 @@ const salesPathLegSchema = z.object({
 });
 const salesPathSchema = z.object({
   rank: z.number(),
-  pathKey: z.string(),
+  combinationKey: z.string().describe("The row's UNIQUE identity within the response (key rows on it): the legs in order joined by `+`, each leg a managed channel works suffixed `@<channel slug>`, e.g. `start_to_conversation@sales-cold-email-outreach+conversation_to_paid_client`. The same combination has the same key for every brand and org."),
+  name: z.string().describe("The combination's name: one English word (e.g. Victory, Sol), the SAME for every client, brand and org, given once on first sight and never changed nor reused."),
+  pathKey: z.string().describe("The CHAIN of legs (legKeys joined by `+`), shared by every combination of that chain. Not unique: key rows on combinationKey."),
   legKeys: z.array(z.string()),
   steps: z.array(salesPathStepSchema),
   entryLegKey: z.string(),
-  entryChannelSlug: z.string().nullable().describe("The channel chosen for the entry leg — what a budget behind this path buys."),
+  entryChannelSlug: z.string().nullable().describe("This combination's channel on the entry leg — what a budget behind this row buys. Null when the entry leg is human."),
   legs: z.array(salesPathLegSchema),
   entryToPayingClientPct: z.number().nullable(),
   lifetimeRevenueUsd: z.number().nullable(),
@@ -1829,7 +1831,7 @@ registry.registerPath({
   description:
     "A SALES PATH is a chain of the legs the customer ticked for the offer (brand-service sales-path) from an ENTRY leg (from nothing) to paid_client, visiting no step twice. " +
     "Formula: needed(paid_client)=1; needed(from step of leg i)=needed(to step)/(rate_i/100); legCost_i = costPerOutcome_i × needed(to step of leg i) for a leg a channel of ours works (0 for a human leg); costPerPayingClient = Σ legCost_i; roi = offer lifetime revenue ÷ costPerPayingClient. " +
-    "rate_i is the brand's effective leg rate (CRM-measured / measured on our leads > customer stated > fleet median, only when at least 5 brands stated the leg and never on a leg leaving website_visit > industry default). costPerOutcome_i is the NET cost per outcome of the recommended workflow of each platform channel's leg-keyed workflow-projection ladder (?leg=&offerId=&pricing=net), else the channel's measured fleet cost per outcome on the leg, else a seeded default (costSource says which); the cheapest channel is chosen. Only the managed channels (sales-cold-email-outreach, ai-meeting-booking, ai-instant-call) are candidates; every other leg is the customer's team (workedBy human, cost 0). " +
+    "rate_i is the brand's effective leg rate (CRM-measured / measured on our leads > customer stated > fleet median, only when at least 5 brands stated the leg and never on a leg leaving website_visit > industry default). costPerOutcome_i is the NET cost per outcome of the recommended workflow of each platform channel's leg-keyed workflow-projection ladder (?leg=&offerId=&pricing=net), else the channel's measured fleet cost per outcome on the leg, else a seeded default (costSource says which); every candidate channel of a leg forms its OWN row (one row per COMBINATION of a chain × one managed channel per platform leg), each ranked on its own; channel.choice says whether the row's channel is the leg's cheapest. Every row has a unique combinationKey and a shared, permanent name. Only the managed channels (sales-cold-email-outreach, ai-meeting-booking, ai-instant-call) are candidates; every other leg is the customer's team (workedBy human, cost 0). " +
     "Ranked by roi descending; a path whose roi is null (reason stated) sorts last. status not_stated / no_legs_selected / no_complete_path serve paths: [] — none is invented. Additive read.",
   tags: ["Stats"],
   request: {
@@ -4187,7 +4189,7 @@ const channelStepTransitionSchema = z.object({
   legKey: z.string().describe("The ONE canonical identifier of the LEG this leg is (e.g. `start_to_conversation`, `meeting_booked_to_meeting_attended`) — minted and owned by features-service, and the value the fleet keys a campaign and a budget on. Performance is measured per LEG; a sales funnel is a way of READING legs, because one leg belongs to several funnels at once. Name a leg with this alone: the two steps ride BESIDE it as `from`/`to`, so a consumer READS them and NEVER splits the string. A leg that STARTS a funnel carries an ordinary identifier like every other — `from: null` is the special case in the data, never in the vocabulary."),
   from: channelStepSchema.nullable().describe("The step this channel takes a lead OUT of. NULL is 'from nothing' — the lead was not on the funnel at all until this channel produced its first step, which is the SPECIAL case rather than the rule."),
   to: channelStepSchema.describe("The step this channel moves the lead TO."),
-  crewName: z.string().nullable().describe("The teammate name the product gives the crew performing this leg (e.g. `Herald` for cold email landing on a positive reply, `Scout` for its website-visit leg, `Pilot` for AI meeting booking). A (channel, landing step) pair may carry its own name; otherwise the channel has one name for all its legs. NULL when nobody named it — never invented; a consumer falls back to the channel's `name`. Colours and glyphs are a consumer concern."),
+  crewName: z.null().describe("RETIRED 2026-10-04: always null. Crew names (Herald, Scout, Pilot, …) no longer name a (channel, leg); the poetic names now name sales path COMBINATIONS (`GET /offers/{offerId}/sales-paths` `paths[].name`). Name a leg's worker by the channel's `name`. Kept as null so no reader breaks."),
 });
 
 const publicChannelSchema = registry.register(
