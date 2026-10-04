@@ -14,6 +14,7 @@ import {
   isCalendarDay,
   windowDays,
   type OfferReturnRead,
+  type OutcomeSeries,
   type RecapDeps,
 } from "../lib/org-period-recap.js";
 import { DEFAULT_PRICED_CAUSES } from "../lib/outcome-cause.js";
@@ -24,6 +25,22 @@ import { offerRevenueJson } from "./offer-economics.js";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+
+/** A served `{total, daily, undatedCount}` series, or null when the body does not carry a well-formed one. */
+function outcomeSeriesOf(v: unknown): OutcomeSeries | null {
+  if (!v || typeof v !== "object") return null;
+  const s = v as { total?: unknown; daily?: unknown; undatedCount?: unknown };
+  const total = num(s.total);
+  const undatedCount = num(s.undatedCount);
+  if (total === null || undatedCount === null || !Array.isArray(s.daily)) return null;
+  const daily: OutcomeSeries["daily"] = [];
+  for (const d of s.daily as Array<{ date?: unknown; count?: unknown }>) {
+    const count = num(d?.count);
+    if (typeof d?.date !== "string" || count === null) return null;
+    daily.push({ date: d.date, count });
+  }
+  return { total, daily, undatedCount };
+}
 
 /**
  * The offer's return EXACTLY as the dashboard's Today page reads it: `/offers/:offerId/revenue?brandId=&pricing=net`
@@ -51,6 +68,8 @@ export async function readOfferReturn(orgId: string, brandId: string, offerId: s
   const body = JSON.parse(json) as {
     headline?: { totalPipelineUsd?: unknown };
     costEconomics?: { committedCostUsd?: unknown; maturity?: OfferReturnRead["pair"] };
+    recipientsRepliesPositive?: unknown;
+    meetingsBooked?: unknown;
   };
   if (!body.costEconomics) throw new Error(`offer ${offerId} revenue body carries no costEconomics`);
   return {
@@ -58,6 +77,11 @@ export async function readOfferReturn(orgId: string, brandId: string, offerId: s
     pair: body.costEconomics.maturity ?? null,
     pipelineUsd: num(body.headline?.totalPipelineUsd),
     committedCostUsd: num(body.costEconomics.committedCostUsd),
+    // The SAME dated series the dashboard draws, from the same body: never recounted here.
+    outcomeSeries: {
+      positiveReplies: outcomeSeriesOf(body.recipientsRepliesPositive),
+      meetingsBooked: outcomeSeriesOf(body.meetingsBooked),
+    },
   };
 }
 

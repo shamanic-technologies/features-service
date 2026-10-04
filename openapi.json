@@ -17210,9 +17210,11 @@
                   "return_unavailable",
                   "return_differs_across_scopes",
                   "lifetime_revenue_differs_across_brands",
-                  "lifetime_revenue_differs_across_offers"
+                  "lifetime_revenue_differs_across_offers",
+                  "outcomes_unavailable",
+                  "undated_outcomes"
                 ],
-                "description": "Why the figure beside it is null. nothing_sent = nothing was lined up or sent in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue; no_spend_in_window = the org spent nothing in the window (per-window-dollar figures only); return_learning = the offer is not mature and its to-date return is not above 1x (the dashboard reads Learning); return_unavailable = no return is served for a scope that sent (no pair, no offer with campaigns, brand no longer held; the dashboard reads -); return_differs_across_scopes = the offers/brands that sent are shown different returns, so no one figure is true (see expectedReturn.returnScopes); lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer."
+                "description": "Why the figure beside it is null. nothing_sent = nothing was lined up or sent in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue; no_spend_in_window = the org spent nothing in the window (per-window-dollar figures only); return_learning = the offer is not mature and its to-date return is not above 1x (the dashboard reads Learning); return_unavailable = no return is served for a scope that sent (no pair, no offer with campaigns, brand no longer held; the dashboard reads -); return_differs_across_scopes = the offers/brands that sent are shown different returns, so no one figure is true (see expectedReturn.returnScopes); lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer; outcomes_unavailable = an offer's dated outcome series could not be read (a sum missing it would understate); undated_outcomes = an offer holds an outcome with no date, so nobody knows whether it falls in the window."
               }
             },
             "required": [
@@ -17243,9 +17245,77 @@
               "return_unavailable",
               "return_differs_across_scopes",
               "lifetime_revenue_differs_across_brands",
-              "lifetime_revenue_differs_across_offers"
+              "lifetime_revenue_differs_across_offers",
+              "outcomes_unavailable",
+              "undated_outcomes"
             ],
-            "description": "Why the figure beside it is null. nothing_sent = nothing was lined up or sent in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue; no_spend_in_window = the org spent nothing in the window (per-window-dollar figures only); return_learning = the offer is not mature and its to-date return is not above 1x (the dashboard reads Learning); return_unavailable = no return is served for a scope that sent (no pair, no offer with campaigns, brand no longer held; the dashboard reads -); return_differs_across_scopes = the offers/brands that sent are shown different returns, so no one figure is true (see expectedReturn.returnScopes); lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer."
+            "description": "Why the figure beside it is null. nothing_sent = nothing was lined up or sent in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue; no_spend_in_window = the org spent nothing in the window (per-window-dollar figures only); return_learning = the offer is not mature and its to-date return is not above 1x (the dashboard reads Learning); return_unavailable = no return is served for a scope that sent (no pair, no offer with campaigns, brand no longer held; the dashboard reads -); return_differs_across_scopes = the offers/brands that sent are shown different returns, so no one figure is true (see expectedReturn.returnScopes); lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer; outcomes_unavailable = an offer's dated outcome series could not be read (a sum missing it would understate); undated_outcomes = an offer holds an outcome with no date, so nobody knows whether it falls in the window."
+          },
+          "actualOutcomes": {
+            "type": "object",
+            "properties": {
+              "basis": {
+                "type": "string",
+                "enum": [
+                  "dashboard_dated_series"
+                ],
+                "description": "Read off the dated series the dashboard draws (recipientsRepliesPositive / meetingsBooked on /offers/{offerId}/revenue, dated on the outcome itself), summed over the window's UTC days, across every offer with campaigns of every brand the org holds. Never recounted."
+              },
+              "positiveReplies": {
+                "type": "integer",
+                "nullable": true,
+                "description": "Positive replies RECEIVED in the window (people, deduped per offer). 0 is measured. Null with positiveRepliesNullReason when unknown."
+              },
+              "positiveRepliesNullReason": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "nothing_sent",
+                  "reply_rate_unavailable",
+                  "economics_missing",
+                  "no_spend_in_window",
+                  "return_learning",
+                  "return_unavailable",
+                  "return_differs_across_scopes",
+                  "lifetime_revenue_differs_across_brands",
+                  "lifetime_revenue_differs_across_offers",
+                  "outcomes_unavailable",
+                  "undated_outcomes"
+                ],
+                "description": "Why the figure beside it is null. nothing_sent = nothing was lined up or sent in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue; no_spend_in_window = the org spent nothing in the window (per-window-dollar figures only); return_learning = the offer is not mature and its to-date return is not above 1x (the dashboard reads Learning); return_unavailable = no return is served for a scope that sent (no pair, no offer with campaigns, brand no longer held; the dashboard reads -); return_differs_across_scopes = the offers/brands that sent are shown different returns, so no one figure is true (see expectedReturn.returnScopes); lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer; outcomes_unavailable = an offer's dated outcome series could not be read (a sum missing it would understate); undated_outcomes = an offer holds an outcome with no date, so nobody knows whether it falls in the window."
+              },
+              "meetingsBooked": {
+                "type": "integer",
+                "nullable": true,
+                "description": "Meetings booked in the window, dated on the booking. 0 is measured. Null with meetingsBookedNullReason when unknown."
+              },
+              "meetingsBookedNullReason": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "nothing_sent",
+                  "reply_rate_unavailable",
+                  "economics_missing",
+                  "no_spend_in_window",
+                  "return_learning",
+                  "return_unavailable",
+                  "return_differs_across_scopes",
+                  "lifetime_revenue_differs_across_brands",
+                  "lifetime_revenue_differs_across_offers",
+                  "outcomes_unavailable",
+                  "undated_outcomes"
+                ],
+                "description": "Why the figure beside it is null. nothing_sent = nothing was lined up or sent in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue; no_spend_in_window = the org spent nothing in the window (per-window-dollar figures only); return_learning = the offer is not mature and its to-date return is not above 1x (the dashboard reads Learning); return_unavailable = no return is served for a scope that sent (no pair, no offer with campaigns, brand no longer held; the dashboard reads -); return_differs_across_scopes = the offers/brands that sent are shown different returns, so no one figure is true (see expectedReturn.returnScopes); lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer; outcomes_unavailable = an offer's dated outcome series could not be read (a sum missing it would understate); undated_outcomes = an offer holds an outcome with no date, so nobody knows whether it falls in the window."
+              }
+            },
+            "required": [
+              "basis",
+              "positiveReplies",
+              "positiveRepliesNullReason",
+              "meetingsBooked",
+              "meetingsBookedNullReason"
+            ],
+            "description": "What HAPPENED in the window (not a forecast): the twin of expectedPositiveReplies, on the dashboard's basis."
           },
           "spendUsd": {
             "type": "number",
@@ -17345,9 +17415,11 @@
                         "return_unavailable",
                         "return_differs_across_scopes",
                         "lifetime_revenue_differs_across_brands",
-                        "lifetime_revenue_differs_across_offers"
+                        "lifetime_revenue_differs_across_offers",
+                        "outcomes_unavailable",
+                        "undated_outcomes"
                       ],
-                      "description": "Why the figure beside it is null. nothing_sent = nothing was lined up or sent in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue; no_spend_in_window = the org spent nothing in the window (per-window-dollar figures only); return_learning = the offer is not mature and its to-date return is not above 1x (the dashboard reads Learning); return_unavailable = no return is served for a scope that sent (no pair, no offer with campaigns, brand no longer held; the dashboard reads -); return_differs_across_scopes = the offers/brands that sent are shown different returns, so no one figure is true (see expectedReturn.returnScopes); lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer."
+                      "description": "Why the figure beside it is null. nothing_sent = nothing was lined up or sent in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue; no_spend_in_window = the org spent nothing in the window (per-window-dollar figures only); return_learning = the offer is not mature and its to-date return is not above 1x (the dashboard reads Learning); return_unavailable = no return is served for a scope that sent (no pair, no offer with campaigns, brand no longer held; the dashboard reads -); return_differs_across_scopes = the offers/brands that sent are shown different returns, so no one figure is true (see expectedReturn.returnScopes); lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer; outcomes_unavailable = an offer's dated outcome series could not be read (a sum missing it would understate); undated_outcomes = an offer holds an outcome with no date, so nobody knows whether it falls in the window."
                     }
                   },
                   "required": [
@@ -17391,9 +17463,11 @@
                   "return_unavailable",
                   "return_differs_across_scopes",
                   "lifetime_revenue_differs_across_brands",
-                  "lifetime_revenue_differs_across_offers"
+                  "lifetime_revenue_differs_across_offers",
+                  "outcomes_unavailable",
+                  "undated_outcomes"
                 ],
-                "description": "Why the figure beside it is null. nothing_sent = nothing was lined up or sent in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue; no_spend_in_window = the org spent nothing in the window (per-window-dollar figures only); return_learning = the offer is not mature and its to-date return is not above 1x (the dashboard reads Learning); return_unavailable = no return is served for a scope that sent (no pair, no offer with campaigns, brand no longer held; the dashboard reads -); return_differs_across_scopes = the offers/brands that sent are shown different returns, so no one figure is true (see expectedReturn.returnScopes); lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer."
+                "description": "Why the figure beside it is null. nothing_sent = nothing was lined up or sent in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue; no_spend_in_window = the org spent nothing in the window (per-window-dollar figures only); return_learning = the offer is not mature and its to-date return is not above 1x (the dashboard reads Learning); return_unavailable = no return is served for a scope that sent (no pair, no offer with campaigns, brand no longer held; the dashboard reads -); return_differs_across_scopes = the offers/brands that sent are shown different returns, so no one figure is true (see expectedReturn.returnScopes); lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer; outcomes_unavailable = an offer's dated outcome series could not be read (a sum missing it would understate); undated_outcomes = an offer holds an outcome with no date, so nobody knows whether it falls in the window."
               },
               "nullReason": {
                 "type": "string",
@@ -17407,9 +17481,11 @@
                   "return_unavailable",
                   "return_differs_across_scopes",
                   "lifetime_revenue_differs_across_brands",
-                  "lifetime_revenue_differs_across_offers"
+                  "lifetime_revenue_differs_across_offers",
+                  "outcomes_unavailable",
+                  "undated_outcomes"
                 ],
-                "description": "Why the figure beside it is null. nothing_sent = nothing was lined up or sent in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue; no_spend_in_window = the org spent nothing in the window (per-window-dollar figures only); return_learning = the offer is not mature and its to-date return is not above 1x (the dashboard reads Learning); return_unavailable = no return is served for a scope that sent (no pair, no offer with campaigns, brand no longer held; the dashboard reads -); return_differs_across_scopes = the offers/brands that sent are shown different returns, so no one figure is true (see expectedReturn.returnScopes); lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer."
+                "description": "Why the figure beside it is null. nothing_sent = nothing was lined up or sent in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue; no_spend_in_window = the org spent nothing in the window (per-window-dollar figures only); return_learning = the offer is not mature and its to-date return is not above 1x (the dashboard reads Learning); return_unavailable = no return is served for a scope that sent (no pair, no offer with campaigns, brand no longer held; the dashboard reads -); return_differs_across_scopes = the offers/brands that sent are shown different returns, so no one figure is true (see expectedReturn.returnScopes); lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer; outcomes_unavailable = an offer's dated outcome series could not be read (a sum missing it would understate); undated_outcomes = an offer holds an outcome with no date, so nobody knows whether it falls in the window."
               }
             },
             "required": [
@@ -17455,9 +17531,11 @@
                   "return_unavailable",
                   "return_differs_across_scopes",
                   "lifetime_revenue_differs_across_brands",
-                  "lifetime_revenue_differs_across_offers"
+                  "lifetime_revenue_differs_across_offers",
+                  "outcomes_unavailable",
+                  "undated_outcomes"
                 ],
-                "description": "Why the figure beside it is null. nothing_sent = nothing was lined up or sent in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue; no_spend_in_window = the org spent nothing in the window (per-window-dollar figures only); return_learning = the offer is not mature and its to-date return is not above 1x (the dashboard reads Learning); return_unavailable = no return is served for a scope that sent (no pair, no offer with campaigns, brand no longer held; the dashboard reads -); return_differs_across_scopes = the offers/brands that sent are shown different returns, so no one figure is true (see expectedReturn.returnScopes); lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer."
+                "description": "Why the figure beside it is null. nothing_sent = nothing was lined up or sent in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue; no_spend_in_window = the org spent nothing in the window (per-window-dollar figures only); return_learning = the offer is not mature and its to-date return is not above 1x (the dashboard reads Learning); return_unavailable = no return is served for a scope that sent (no pair, no offer with campaigns, brand no longer held; the dashboard reads -); return_differs_across_scopes = the offers/brands that sent are shown different returns, so no one figure is true (see expectedReturn.returnScopes); lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer; outcomes_unavailable = an offer's dated outcome series could not be read (a sum missing it would understate); undated_outcomes = an offer holds an outcome with no date, so nobody knows whether it falls in the window."
               },
               "expectedAdditionalPositiveReplies": {
                 "type": "number",
@@ -17485,9 +17563,11 @@
                   "return_unavailable",
                   "return_differs_across_scopes",
                   "lifetime_revenue_differs_across_brands",
-                  "lifetime_revenue_differs_across_offers"
+                  "lifetime_revenue_differs_across_offers",
+                  "outcomes_unavailable",
+                  "undated_outcomes"
                 ],
-                "description": "Why the figure beside it is null. nothing_sent = nothing was lined up or sent in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue; no_spend_in_window = the org spent nothing in the window (per-window-dollar figures only); return_learning = the offer is not mature and its to-date return is not above 1x (the dashboard reads Learning); return_unavailable = no return is served for a scope that sent (no pair, no offer with campaigns, brand no longer held; the dashboard reads -); return_differs_across_scopes = the offers/brands that sent are shown different returns, so no one figure is true (see expectedReturn.returnScopes); lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer."
+                "description": "Why the figure beside it is null. nothing_sent = nothing was lined up or sent in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue; no_spend_in_window = the org spent nothing in the window (per-window-dollar figures only); return_learning = the offer is not mature and its to-date return is not above 1x (the dashboard reads Learning); return_unavailable = no return is served for a scope that sent (no pair, no offer with campaigns, brand no longer held; the dashboard reads -); return_differs_across_scopes = the offers/brands that sent are shown different returns, so no one figure is true (see expectedReturn.returnScopes); lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer; outcomes_unavailable = an offer's dated outcome series could not be read (a sum missing it would understate); undated_outcomes = an offer holds an outcome with no date, so nobody knows whether it falls in the window."
               }
             },
             "required": [
@@ -17608,9 +17688,11 @@
                     "return_unavailable",
                     "return_differs_across_scopes",
                     "lifetime_revenue_differs_across_brands",
-                    "lifetime_revenue_differs_across_offers"
+                    "lifetime_revenue_differs_across_offers",
+                    "outcomes_unavailable",
+                    "undated_outcomes"
                   ],
-                  "description": "Why the figure beside it is null. nothing_sent = nothing was lined up or sent in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue; no_spend_in_window = the org spent nothing in the window (per-window-dollar figures only); return_learning = the offer is not mature and its to-date return is not above 1x (the dashboard reads Learning); return_unavailable = no return is served for a scope that sent (no pair, no offer with campaigns, brand no longer held; the dashboard reads -); return_differs_across_scopes = the offers/brands that sent are shown different returns, so no one figure is true (see expectedReturn.returnScopes); lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer."
+                  "description": "Why the figure beside it is null. nothing_sent = nothing was lined up or sent in the window; reply_rate_unavailable = the brand has no mature positive-reply rate of its own and the fleet benchmark is not computed yet; economics_missing = a brand that sent has no lifetime revenue; no_spend_in_window = the org spent nothing in the window (per-window-dollar figures only); return_learning = the offer is not mature and its to-date return is not above 1x (the dashboard reads Learning); return_unavailable = no return is served for a scope that sent (no pair, no offer with campaigns, brand no longer held; the dashboard reads -); return_differs_across_scopes = the offers/brands that sent are shown different returns, so no one figure is true (see expectedReturn.returnScopes); lifetime_revenue_differs_across_brands = the brands that sent are valued differently, so no single figure is true (see brands[]); lifetime_revenue_differs_across_offers = the brand's offers state different lifetime revenues (or only some state one) and sends are not split per offer; outcomes_unavailable = an offer's dated outcome series could not be read (a sum missing it would understate); undated_outcomes = an offer holds an outcome with no date, so nobody knows whether it falls in the window."
                 }
               },
               "required": [
@@ -17668,6 +17750,7 @@
           "outbound",
           "expectedPositiveReplies",
           "expectedPositiveRepliesNullReason",
+          "actualOutcomes",
           "spendUsd",
           "expectedReturn",
           "budgetIncrease",
