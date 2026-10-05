@@ -163,7 +163,7 @@ router.get("/offers/:offerId/contacted-value", apiKeyAuth, async (req, res) => {
         channels: featureSlugs.join("+"),
         campaigns: campaignSetKey(campaignIds),
         ...keyParts,
-        m: "contacted-value-v2",
+        m: "contacted-value-v3",
       }),
       orgId: headers.orgId,
       compute: () => computeOfferContactedValue(brandId, headers, pre, campaignIds),

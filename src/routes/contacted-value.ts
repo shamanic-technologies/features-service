@@ -15,6 +15,7 @@
 import { Router } from "express";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { restrictPathsToDeclaredLegs } from "../lib/funnel-registry.js";
+import { matchFunnelLegKey } from "../lib/funnel-legs.js";
 import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel, type DownstreamHeaders } from "./revenue.js";
 import { distinctChannelFunnels } from "./offer-economics.js";
 import { fetchEffectiveEconomics, economicsFingerprint } from "../lib/sales-economics-client.js";
@@ -186,13 +187,18 @@ async function priceContactedGroups(
   );
 
   // One ladder per (channel, offer, leg) actually needed.
+  const campaignLegOf = (row: { legKey?: string | null } | undefined) =>
+    row?.legKey ? (matchFunnelLegKey(row.legKey) ?? row.legKey) : null;
   const ladderKey = (featureSlug: string, offerId: string | null, legKey: string) => `${featureSlug}|${offerId ?? ""}|${legKey}`;
   const needed = new Map<string, { featureSlug: string; offerId: string | null; legKey: string }>();
   for (const g of groups) {
     const row = campaignById.get(g.campaignId);
     const featureSlug = row?.featureSlug ?? null;
     if (!featureSlug || !dynastyOf.get(featureSlug)) continue;
+    // A campaign's spend buys its OWN leg's outcome only (a leg's outcome is its toStep): a reply campaign
+    // is never priced on the website-visit ladder, where its workflows hold no price, only an explore floor.
     for (const { legKey } of legs) {
+      if (legKey !== campaignLegOf(row)) continue;
       needed.set(ladderKey(featureSlug, row?.offerId ?? null, legKey), { featureSlug, offerId: row?.offerId ?? null, legKey });
     }
   }
@@ -227,6 +233,7 @@ async function priceContactedGroups(
       if (!row) prices[signal] = { costPerOutcomeUsd: null, unpricedReason: "campaign_unknown" };
       else if (!featureSlug) prices[signal] = { costPerOutcomeUsd: null, unpricedReason: "campaign_states_no_channel" };
       else if (!workflowDynastySlug) prices[signal] = { costPerOutcomeUsd: null, unpricedReason: "workflow_catalogue_unreadable" };
+      else if (legKey !== campaignLegOf(row)) prices[signal] = { costPerOutcomeUsd: null, unpricedReason: "not_the_campaigns_leg" };
       else {
         const ladder = ladders.get(ladderKey(featureSlug, offerId, legKey));
         prices[signal] = ladder
@@ -321,7 +328,7 @@ export async function getBrandContactedValue(brandId: string, headers: Downstrea
       channels: brandFeatureSlugs(channels).join("+"),
       decl: declared.map((f) => f.funnelKey).sort().join("+") || "none",
       econ: economicsFingerprint(priced.economics),
-      m: "contacted-value-v4",
+      m: "contacted-value-v5",
     }),
     orgId: headers.orgId,
     compute: () => computeBrandContactedValue(brandId, { orgId: headers.orgId, userId: headers.userId, runId: headers.runId }, { channels, declared, effective }),

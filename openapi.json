@@ -16169,7 +16169,7 @@
                       "unpricedReason": {
                         "type": "string",
                         "nullable": true,
-                        "description": "Why this group has no rate on this route (e.g. `workflow_not_on_ladder`, `workflow_unpriced`, `no_spend_recorded`, `campaign_unknown`, a ladder refusal reason, `ladder_failed`). Never a fallback number."
+                        "description": "Why this group has no rate on this route (e.g. `not_the_campaigns_leg` — a campaign's spend buys its own leg's outcome only —, `workflow_unmeasured_on_leg` — no evidence on the leg, an explore allowance is not a price —, `workflow_not_on_ladder`, `workflow_unpriced`, `no_spend_recorded`, `campaign_unknown`, a ladder refusal reason, `ladder_failed`). Never a fallback number."
                       },
                       "entryRatePct": {
                         "type": "number",
@@ -16689,7 +16689,7 @@
                       "unpricedReason": {
                         "type": "string",
                         "nullable": true,
-                        "description": "Why this group has no rate on this route (e.g. `workflow_not_on_ladder`, `workflow_unpriced`, `no_spend_recorded`, `campaign_unknown`, a ladder refusal reason, `ladder_failed`). Never a fallback number."
+                        "description": "Why this group has no rate on this route (e.g. `not_the_campaigns_leg` — a campaign's spend buys its own leg's outcome only —, `workflow_unmeasured_on_leg` — no evidence on the leg, an explore allowance is not a price —, `workflow_not_on_ladder`, `workflow_unpriced`, `no_spend_recorded`, `campaign_unknown`, a ladder refusal reason, `ladder_failed`). Never a fallback number."
                       },
                       "entryRatePct": {
                         "type": "number",
