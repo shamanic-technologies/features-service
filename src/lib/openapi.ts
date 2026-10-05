@@ -2367,7 +2367,7 @@ const brandContactedValueResponseSchema = z.object({
       signal: z.string(),
       legKey: z.string(),
       costPerOutcomeUsd: z.number().nullable().describe("The leg-keyed workflow-projection ladder's `resolved.costPerOutcomeUsd` (?leg=&offerId=&pricing=net, the brand row of this dynasty) — what /offers/{offerId}/sales-paths reads. Null with `unpricedReason`."),
-      unpricedReason: z.string().nullable().describe("Why this group has no rate on this route (e.g. `workflow_not_on_ladder`, `workflow_unpriced`, `no_spend_recorded`, `campaign_unknown`, a ladder refusal reason, `ladder_failed`). Never a fallback number."),
+      unpricedReason: z.string().nullable().describe("Why this group has no rate on this route (e.g. `not_the_campaigns_leg` — a campaign's spend buys its own leg's outcome only —, `workflow_unmeasured_on_leg` — no evidence on the leg, an explore allowance is not a price —, `workflow_not_on_ladder`, `workflow_unpriced`, `no_spend_recorded`, `campaign_unknown`, a ladder refusal reason, `ladder_failed`). Never a fallback number."),
       entryRatePct: z.number().nullable().describe("P(this step | contacted, group), 0..100 = min(100, 100 × costPerContactUsd ÷ costPerOutcomeUsd)."),
       expectedOutcomes: z.number().nullable().describe("contacted × P = spend ÷ cost per outcome (when not capped)."),
     })),

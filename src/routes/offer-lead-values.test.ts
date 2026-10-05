@@ -91,6 +91,12 @@ vi.mock("../lib/conversion-emails-client.js", async (orig) => ({
 }));
 // Contacted-value pricing inputs: every campaign spent $0.50 per contacted person on workflow wf-1
 // (dynasty wf), whose ladder prices a visit at $25 and a positive reply at $100 → P = 2% / 0.5%.
+// Each campaign is bought for ONE leg, and its spend buys that leg's outcome only.
+const CAMPAIGN_LEG: Record<string, string> = {
+  "camp-a1": "start_to_conversation",
+  "camp-a2": "start_to_website_visit",
+  "camp-b1": "start_to_conversation",
+};
 const CONTACTED_PER_CAMPAIGN: Record<string, number> = { "camp-a1": 11, "camp-a2": 10, "camp-b1": 11 };
 vi.mock("../lib/public-stats-clients.js", async (orig) => ({
   ...(await orig<typeof import("../lib/public-stats-clients.js")>()),
@@ -99,7 +105,9 @@ vi.mock("../lib/public-stats-clients.js", async (orig) => ({
 vi.mock("../lib/campaign-identity-client.js", async (orig) => ({
   ...(await orig<typeof import("../lib/campaign-identity-client.js")>()),
   fetchBrandCampaignRows: vi.fn(async () =>
-    Object.entries(CAMPAIGNS).flatMap(([offerId, ids]) => ids.map((id) => ({ id, offerId, featureSlug: "sales-cold-email-outreach" }))),
+    Object.entries(CAMPAIGNS).flatMap(([offerId, ids]) =>
+      ids.map((id) => ({ id, offerId, featureSlug: "sales-cold-email-outreach", legKey: CAMPAIGN_LEG[id] })),
+    ),
   ),
 }));
 vi.mock("../lib/runs-cost-client.js", async (orig) => ({
@@ -185,9 +193,14 @@ describe("GET /offers/:offerId/contacted-value", () => {
     expect(a.body.workflows).toEqual(
       brand.body.workflows.filter((w: { campaignId: string }) => w.campaignId !== "camp-b1"),
     );
-    expect(brand.body.workflows[0].routes.map((r: { entryRatePct: number }) => r.entryRatePct)).toEqual([2, 0.5]);
+    // A campaign's spend buys its OWN leg's outcome only: the reply campaign prices no click, the
+    // website-visit campaign prices no reply (owner 2026-10-05; a leg's outcome is its toStep).
+    type W = { campaignId: string; routes: Array<{ signal: string; entryRatePct: number | null; unpricedReason: string | null }> };
+    const rates = (campaignId: string) =>
+      (brand.body.workflows as W[]).find((w) => w.campaignId === campaignId)!.routes.map((r) => [r.signal, r.entryRatePct, r.unpricedReason]);
+    expect(rates("camp-a1")).toEqual([["clicked", null, "not_the_campaigns_leg"], ["positiveReply", 0.5, null]]);
+    expect(rates("camp-a2")).toEqual([["clicked", 2, null], ["positiveReply", null, "not_the_campaigns_leg"]]);
     expect(brand.body.unmeasuredReason).toBeNull();
-    expect(a.body.perLeadExpectedValueUsd).toBeCloseTo(brand.body.perLeadExpectedValueUsd, 6);
     expect(a.body.totalExpectedValueUsd + b.body.totalExpectedValueUsd).toBeCloseTo(brand.body.totalExpectedValueUsd, 6);
   });
 

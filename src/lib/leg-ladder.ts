@@ -14,6 +14,8 @@ export interface LadderBody {
   rows?: Array<{
     audienceId: string | null;
     workflow: { workflowDynastySlug: string };
+    /** False = the workflow has no evidence on this leg: its figure is an explore allowance, never a price. */
+    measured?: boolean;
     resolved: { grain: string | null; costPerOutcomeUsd: number | null };
   }>;
   reason?: string;
@@ -66,6 +68,7 @@ export function dynastyPriceFromLadder(
   if (status !== 200) return { costPerOutcomeUsd: null, unpricedReason: body.reason ?? `ladder_${status}` };
   const row = (body.rows ?? []).find((r) => r.audienceId === null && r.workflow.workflowDynastySlug === workflowDynastySlug);
   if (!row) return { costPerOutcomeUsd: null, unpricedReason: "workflow_not_on_ladder" };
+  if (row.measured === false) return { costPerOutcomeUsd: null, unpricedReason: "workflow_unmeasured_on_leg" };
   const cost = row.resolved.costPerOutcomeUsd;
   return cost === null ? { costPerOutcomeUsd: null, unpricedReason: "workflow_unpriced" } : { costPerOutcomeUsd: cost, unpricedReason: null };
 }
