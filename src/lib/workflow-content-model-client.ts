@@ -93,6 +93,10 @@ export async function fetchWorkflowContentModelsSoft(
   featureSlug: string,
   identity: Identity,
 ): Promise<Map<string, string | null> | null> {
+  // workflow-service's catalogue read needs a user and a run. A ladder run on behalf of an identity
+  // that carries neither (a fleet warm pricing contacted leads, `routes/contacted-value.ts`) states no
+  // model alias, the same display-only null as a failed read, without logging a refusal we caused.
+  if (!identity.userId || !identity.runId) return null;
   try {
     return await fetchWorkflowContentModels(featureSlug, identity);
   } catch (error) {
