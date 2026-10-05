@@ -16053,20 +16053,15 @@
             "nullable": true,
             "description": "The client value every figure is priced on — the same LTR the brand's pipeline uses. Null at cold start."
           },
-          "contactedToPaidClientPct": {
-            "type": "number",
-            "nullable": true,
-            "description": "P(paid client | contacted), 0..100, for a lead no human ruled out of a route. Null exactly when `unmeasuredReason` is set."
-          },
           "perLeadExpectedValueUsd": {
             "type": "number",
             "nullable": true,
-            "description": "LTR × that probability."
+            "description": "Mean expected value over the PRICED (their group has a rate), non-expired contacted-only leads. Null when `unmeasuredReason` is set or no such lead exists."
           },
           "totalExpectedValueUsd": {
             "type": "number",
             "nullable": true,
-            "description": "Company-level total over the brand's contacted-only leads, on the pipeline's own rule: each organisation at its most valuable member, summed over organisations. It IS what these leads add to the brand's totalPipelineUsd (and so to ROI / cost of acquisition); expired leads count 0."
+            "description": "Company-level total over the brand's contacted-only leads, on the pipeline's own rule: each organisation at its most valuable member, summed over organisations. It IS what these leads add to the brand's totalPipelineUsd (and so to ROI / cost of acquisition); expired and unpriced leads count 0."
           },
           "unmeasuredReason": {
             "type": "string",
@@ -16076,7 +16071,8 @@
               "no_client_value",
               "no_entry_path",
               "no_entry_rate"
-            ]
+            ],
+            "description": "no_entry_rate = no (campaign × workflow) group has a priced rate on any entry route."
           },
           "routes": {
             "type": "array",
@@ -16091,50 +16087,9 @@
                   "type": "string",
                   "description": "The funnel step the route lands on."
                 },
-                "entryRatePct": {
-                  "type": "number",
-                  "nullable": true,
-                  "description": "P(this step | contacted), 0..100."
-                },
-                "entryRateSource": {
+                "legKey": {
                   "type": "string",
-                  "nullable": true,
-                  "enum": [
-                    "brand_measured",
-                    "fleet_measured"
-                  ],
-                  "description": "brand_measured = the brand's own mature cohort (served before `matureBefore`) once it holds `minBrandOutcomes` outcomes; else fleet_measured = every brand's pooled outreach on the same channels."
-                },
-                "brand": {
-                  "type": "object",
-                  "properties": {
-                    "contacted": {
-                      "type": "number"
-                    },
-                    "reached": {
-                      "type": "number"
-                    }
-                  },
-                  "required": [
-                    "contacted",
-                    "reached"
-                  ]
-                },
-                "fleet": {
-                  "type": "object",
-                  "nullable": true,
-                  "properties": {
-                    "contacted": {
-                      "type": "number"
-                    },
-                    "reached": {
-                      "type": "number"
-                    }
-                  },
-                  "required": [
-                    "contacted",
-                    "reached"
-                  ]
+                  "description": "The leg the route IS (`start_to_website_visit`, `start_to_conversation`): the workflow-projection ladder that prices it."
                 },
                 "paidClientGivenStepPct": {
                   "type": "number",
@@ -16143,42 +16098,114 @@
                 "valueAtStepUsd": {
                   "type": "number",
                   "description": "What a lead standing on this step is worth in the pipeline."
-                },
-                "maturityDays": {
-                  "type": "number",
-                  "description": "This route's leg's maturity duration (lib/maturity.ts): 21 on both cold-email entry legs."
-                },
-                "matureBefore": {
-                  "type": "string",
-                  "description": "This route's cutoff: the brand's own cohort counts leads SERVED before it."
-                },
-                "minBrandOutcomes": {
-                  "type": "number",
-                  "description": "This route's leg's outcomesRequired — the brand's own rate is used once its mature cohort holds this many outcomes of the route's step (1 positive reply; 10 website visits)."
                 }
               },
               "required": [
                 "signal",
                 "step",
-                "entryRatePct",
-                "entryRateSource",
-                "brand",
-                "fleet",
+                "legKey",
                 "paidClientGivenStepPct",
-                "valueAtStepUsd",
-                "maturityDays",
-                "matureBefore",
-                "minBrandOutcomes"
+                "valueAtStepUsd"
               ]
             }
           },
-          "matureBefore": {
-            "type": "string",
-            "description": "The EARLIEST cutoff across the entry routes (each route states its own)."
-          },
-          "maturityDays": {
-            "type": "number",
-            "description": "The LONGEST duration across the entry routes (each route states its own)."
+          "workflows": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "campaignId": {
+                  "type": "string"
+                },
+                "offerId": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The campaign's offer (the ladder's `offerId`); null when it states none."
+                },
+                "featureSlug": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The campaign's channel (the ladder's feature); null when campaign-service does not list the campaign."
+                },
+                "workflowSlug": {
+                  "type": "string",
+                  "description": "The versioned workflow lead-service froze on the serve."
+                },
+                "workflowDynastySlug": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Its dynasty — the ladder row priced; null when the catalogue could not be read."
+                },
+                "contacted": {
+                  "type": "number",
+                  "description": "Contacted persons of the group (deduped; engaged, bounced and unsubscribed included: the spend bought them all)."
+                },
+                "committedSpentUsd": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Committed (billed + open holds) NET spend runs recorded on (campaign, workflow); null when it recorded none."
+                },
+                "costPerContactUsd": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "committedSpentUsd ÷ contacted."
+                },
+                "routes": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "signal": {
+                        "type": "string"
+                      },
+                      "legKey": {
+                        "type": "string"
+                      },
+                      "costPerOutcomeUsd": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "The leg-keyed workflow-projection ladder's `resolved.costPerOutcomeUsd` (?leg=&offerId=&pricing=net, the brand row of this dynasty) — what /offers/{offerId}/sales-paths reads. Null with `unpricedReason`."
+                      },
+                      "unpricedReason": {
+                        "type": "string",
+                        "nullable": true,
+                        "description": "Why this group has no rate on this route (e.g. `workflow_not_on_ladder`, `workflow_unpriced`, `no_spend_recorded`, `campaign_unknown`, a ladder refusal reason, `ladder_failed`). Never a fallback number."
+                      },
+                      "entryRatePct": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "P(this step | contacted, group), 0..100 = min(100, 100 × costPerContactUsd ÷ costPerOutcomeUsd)."
+                      },
+                      "expectedOutcomes": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "contacted × P = spend ÷ cost per outcome (when not capped)."
+                      }
+                    },
+                    "required": [
+                      "signal",
+                      "legKey",
+                      "costPerOutcomeUsd",
+                      "unpricedReason",
+                      "entryRatePct",
+                      "expectedOutcomes"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "campaignId",
+                "offerId",
+                "featureSlug",
+                "workflowSlug",
+                "workflowDynastySlug",
+                "contacted",
+                "committedSpentUsd",
+                "costPerContactUsd",
+                "routes"
+              ]
+            },
+            "description": "One row per (campaign × workflow) group of contacted persons: the rate each of its contacted-only leads is priced on. A campaign 100% on one workflow reproduces its sales path's ROI: total ÷ spend = value at step ÷ cost per outcome."
           },
           "expiryDays": {
             "type": "number",
@@ -16187,10 +16214,6 @@
           "lastSentOnOrAfter": {
             "type": "string",
             "description": "Leads whose last send is strictly before this instant have expired."
-          },
-          "minBrandOutcomes": {
-            "type": "number",
-            "description": "The LARGEST outcomesRequired across the entry routes (each route states its own)."
           },
           "population": {
             "type": "object",
@@ -16213,6 +16236,14 @@
               "expired": {
                 "type": "number",
                 "description": "Contacted-only leads with no email sent in the last `expiryDays` days — valued at 0."
+              },
+              "unattributed": {
+                "type": "number",
+                "description": "Contacted-only leads served under no campaign or no workflow: no group, no value."
+              },
+              "unpriced": {
+                "type": "number",
+                "description": "Contacted-only leads whose group has no priced route: no value."
               }
             },
             "required": [
@@ -16220,7 +16251,9 @@
               "organizations",
               "engaged",
               "cannotConvert",
-              "expired"
+              "expired",
+              "unattributed",
+              "unpriced"
             ]
           },
           "leads": {
@@ -16234,7 +16267,7 @@
                 "expectedValueUsd": {
                   "type": "number",
                   "nullable": true,
-                  "description": "The value this lead carries in the pipeline; 0 when expired."
+                  "description": "The value this lead carries in the pipeline; 0 when expired; null when `unmeasuredReason` is set or its group has no priced route (unattributed / unpriced: the pipeline counts it 0)."
                 },
                 "expired": {
                   "type": "boolean",
@@ -16257,16 +16290,13 @@
         "required": [
           "brandId",
           "lifetimeRevenueUsd",
-          "contactedToPaidClientPct",
           "perLeadExpectedValueUsd",
           "totalExpectedValueUsd",
           "unmeasuredReason",
           "routes",
-          "matureBefore",
-          "maturityDays",
+          "workflows",
           "expiryDays",
           "lastSentOnOrAfter",
-          "minBrandOutcomes",
           "population",
           "leads",
           "nextCursor"
@@ -16543,20 +16573,15 @@
             "nullable": true,
             "description": "The client value every figure is priced on — the same LTR the brand's pipeline uses. Null at cold start."
           },
-          "contactedToPaidClientPct": {
-            "type": "number",
-            "nullable": true,
-            "description": "P(paid client | contacted), 0..100, for a lead no human ruled out of a route. Null exactly when `unmeasuredReason` is set."
-          },
           "perLeadExpectedValueUsd": {
             "type": "number",
             "nullable": true,
-            "description": "LTR × that probability."
+            "description": "Mean expected value over the PRICED (their group has a rate), non-expired contacted-only leads. Null when `unmeasuredReason` is set or no such lead exists."
           },
           "totalExpectedValueUsd": {
             "type": "number",
             "nullable": true,
-            "description": "Company-level total over the brand's contacted-only leads, on the pipeline's own rule: each organisation at its most valuable member, summed over organisations. It IS what these leads add to the brand's totalPipelineUsd (and so to ROI / cost of acquisition); expired leads count 0."
+            "description": "Company-level total over the brand's contacted-only leads, on the pipeline's own rule: each organisation at its most valuable member, summed over organisations. It IS what these leads add to the brand's totalPipelineUsd (and so to ROI / cost of acquisition); expired and unpriced leads count 0."
           },
           "unmeasuredReason": {
             "type": "string",
@@ -16566,7 +16591,8 @@
               "no_client_value",
               "no_entry_path",
               "no_entry_rate"
-            ]
+            ],
+            "description": "no_entry_rate = no (campaign × workflow) group has a priced rate on any entry route."
           },
           "routes": {
             "type": "array",
@@ -16581,50 +16607,9 @@
                   "type": "string",
                   "description": "The funnel step the route lands on."
                 },
-                "entryRatePct": {
-                  "type": "number",
-                  "nullable": true,
-                  "description": "P(this step | contacted), 0..100."
-                },
-                "entryRateSource": {
+                "legKey": {
                   "type": "string",
-                  "nullable": true,
-                  "enum": [
-                    "brand_measured",
-                    "fleet_measured"
-                  ],
-                  "description": "brand_measured = the brand's own mature cohort (served before `matureBefore`) once it holds `minBrandOutcomes` outcomes; else fleet_measured = every brand's pooled outreach on the same channels."
-                },
-                "brand": {
-                  "type": "object",
-                  "properties": {
-                    "contacted": {
-                      "type": "number"
-                    },
-                    "reached": {
-                      "type": "number"
-                    }
-                  },
-                  "required": [
-                    "contacted",
-                    "reached"
-                  ]
-                },
-                "fleet": {
-                  "type": "object",
-                  "nullable": true,
-                  "properties": {
-                    "contacted": {
-                      "type": "number"
-                    },
-                    "reached": {
-                      "type": "number"
-                    }
-                  },
-                  "required": [
-                    "contacted",
-                    "reached"
-                  ]
+                  "description": "The leg the route IS (`start_to_website_visit`, `start_to_conversation`): the workflow-projection ladder that prices it."
                 },
                 "paidClientGivenStepPct": {
                   "type": "number",
@@ -16633,42 +16618,114 @@
                 "valueAtStepUsd": {
                   "type": "number",
                   "description": "What a lead standing on this step is worth in the pipeline."
-                },
-                "maturityDays": {
-                  "type": "number",
-                  "description": "This route's leg's maturity duration (lib/maturity.ts): 21 on both cold-email entry legs."
-                },
-                "matureBefore": {
-                  "type": "string",
-                  "description": "This route's cutoff: the brand's own cohort counts leads SERVED before it."
-                },
-                "minBrandOutcomes": {
-                  "type": "number",
-                  "description": "This route's leg's outcomesRequired — the brand's own rate is used once its mature cohort holds this many outcomes of the route's step (1 positive reply; 10 website visits)."
                 }
               },
               "required": [
                 "signal",
                 "step",
-                "entryRatePct",
-                "entryRateSource",
-                "brand",
-                "fleet",
+                "legKey",
                 "paidClientGivenStepPct",
-                "valueAtStepUsd",
-                "maturityDays",
-                "matureBefore",
-                "minBrandOutcomes"
+                "valueAtStepUsd"
               ]
             }
           },
-          "matureBefore": {
-            "type": "string",
-            "description": "The EARLIEST cutoff across the entry routes (each route states its own)."
-          },
-          "maturityDays": {
-            "type": "number",
-            "description": "The LONGEST duration across the entry routes (each route states its own)."
+          "workflows": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "campaignId": {
+                  "type": "string"
+                },
+                "offerId": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The campaign's offer (the ladder's `offerId`); null when it states none."
+                },
+                "featureSlug": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The campaign's channel (the ladder's feature); null when campaign-service does not list the campaign."
+                },
+                "workflowSlug": {
+                  "type": "string",
+                  "description": "The versioned workflow lead-service froze on the serve."
+                },
+                "workflowDynastySlug": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Its dynasty — the ladder row priced; null when the catalogue could not be read."
+                },
+                "contacted": {
+                  "type": "number",
+                  "description": "Contacted persons of the group (deduped; engaged, bounced and unsubscribed included: the spend bought them all)."
+                },
+                "committedSpentUsd": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Committed (billed + open holds) NET spend runs recorded on (campaign, workflow); null when it recorded none."
+                },
+                "costPerContactUsd": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "committedSpentUsd ÷ contacted."
+                },
+                "routes": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "signal": {
+                        "type": "string"
+                      },
+                      "legKey": {
+                        "type": "string"
+                      },
+                      "costPerOutcomeUsd": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "The leg-keyed workflow-projection ladder's `resolved.costPerOutcomeUsd` (?leg=&offerId=&pricing=net, the brand row of this dynasty) — what /offers/{offerId}/sales-paths reads. Null with `unpricedReason`."
+                      },
+                      "unpricedReason": {
+                        "type": "string",
+                        "nullable": true,
+                        "description": "Why this group has no rate on this route (e.g. `workflow_not_on_ladder`, `workflow_unpriced`, `no_spend_recorded`, `campaign_unknown`, a ladder refusal reason, `ladder_failed`). Never a fallback number."
+                      },
+                      "entryRatePct": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "P(this step | contacted, group), 0..100 = min(100, 100 × costPerContactUsd ÷ costPerOutcomeUsd)."
+                      },
+                      "expectedOutcomes": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "contacted × P = spend ÷ cost per outcome (when not capped)."
+                      }
+                    },
+                    "required": [
+                      "signal",
+                      "legKey",
+                      "costPerOutcomeUsd",
+                      "unpricedReason",
+                      "entryRatePct",
+                      "expectedOutcomes"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "campaignId",
+                "offerId",
+                "featureSlug",
+                "workflowSlug",
+                "workflowDynastySlug",
+                "contacted",
+                "committedSpentUsd",
+                "costPerContactUsd",
+                "routes"
+              ]
+            },
+            "description": "One row per (campaign × workflow) group of contacted persons: the rate each of its contacted-only leads is priced on. A campaign 100% on one workflow reproduces its sales path's ROI: total ÷ spend = value at step ÷ cost per outcome."
           },
           "expiryDays": {
             "type": "number",
@@ -16677,10 +16734,6 @@
           "lastSentOnOrAfter": {
             "type": "string",
             "description": "Leads whose last send is strictly before this instant have expired."
-          },
-          "minBrandOutcomes": {
-            "type": "number",
-            "description": "The LARGEST outcomesRequired across the entry routes (each route states its own)."
           },
           "population": {
             "type": "object",
@@ -16703,6 +16756,14 @@
               "expired": {
                 "type": "number",
                 "description": "Contacted-only leads with no email sent in the last `expiryDays` days — valued at 0."
+              },
+              "unattributed": {
+                "type": "number",
+                "description": "Contacted-only leads served under no campaign or no workflow: no group, no value."
+              },
+              "unpriced": {
+                "type": "number",
+                "description": "Contacted-only leads whose group has no priced route: no value."
               }
             },
             "required": [
@@ -16710,7 +16771,9 @@
               "organizations",
               "engaged",
               "cannotConvert",
-              "expired"
+              "expired",
+              "unattributed",
+              "unpriced"
             ]
           },
           "leads": {
@@ -16724,7 +16787,7 @@
                 "expectedValueUsd": {
                   "type": "number",
                   "nullable": true,
-                  "description": "The value this lead carries in the pipeline; 0 when expired."
+                  "description": "The value this lead carries in the pipeline; 0 when expired; null when `unmeasuredReason` is set or its group has no priced route (unattributed / unpriced: the pipeline counts it 0)."
                 },
                 "expired": {
                   "type": "boolean",
@@ -16751,7 +16814,7 @@
             "enum": [
               "brand"
             ],
-            "description": "`routes[].entryRatePct` (and its `brand`/`fleet` counts) are the BRAND's contacted-value rates, never re-measured on the offer's narrower cohort: they are the rates every pipeline read, /offers/{offerId}/revenue included, prices a contacted lead on."
+            "description": "`workflows[]` are the BRAND cell's (campaign × workflow) rows, borrowed as is for the groups the offer's leads belong to: a group is one campaign, so its rate is the one every pipeline read, /offers/{offerId}/revenue included, prices those leads on."
           },
           "brandEntryRatesUnavailableReason": {
             "type": "string",
@@ -16763,22 +16826,19 @@
               "no_entry_path",
               "no_entry_rate"
             ],
-            "description": "Why the brand's entry rates could not be borrowed (every route then reads null and `unmeasuredReason` is `no_entry_rate`, exactly as the offer's pipeline prices these leads at nothing). Null when they were."
+            "description": "Why the brand's entry rates could not be borrowed (`workflows` is then empty and `unmeasuredReason` is `no_entry_rate`, exactly as the offer's pipeline prices these leads at nothing). Null when they were."
           }
         },
         "required": [
           "brandId",
           "lifetimeRevenueUsd",
-          "contactedToPaidClientPct",
           "perLeadExpectedValueUsd",
           "totalExpectedValueUsd",
           "unmeasuredReason",
           "routes",
-          "matureBefore",
-          "maturityDays",
+          "workflows",
           "expiryDays",
           "lastSentOnOrAfter",
-          "minBrandOutcomes",
           "population",
           "leads",
           "nextCursor",
@@ -29529,7 +29589,7 @@
     "/brands/{brandId}/contacted-value": {
       "get": {
         "summary": "What a brand's contacted-but-not-yet-engaged leads are worth in expectation",
-        "description": "The SAME value these leads carry in the brand's pipeline (and so its ROI / cost of acquisition), at every grain, until 30 days after the last email SENT to the lead. value = LTR × P(paid client | contacted), where P combines the brand's entry routes (click, positive reply) as independent shots at one close: P(route | contacted) × P(paid client | route). P(paid client | route) and the LTR are the byte-same ladder and value the brand's pipeline prices an engaged lead on, so a lead that engages moves onto the pipeline at the price this read forecast through. Paged: `limit`/`cursor`, or `leadIds` to price exactly the cards on screen; the summary rides every page.",
+        "description": "The SAME value these leads carry in the brand's pipeline (and so its ROI / cost of acquisition), at every grain, until 30 days after the last email SENT to the lead. value = the brand's entry routes (click, positive reply) combined as independent shots at one close: P(route | contacted, group) × value at the route's step. Per (campaign × workflow) group of contacted persons, P = min(1, (committed spend ÷ contacted) ÷ the serving workflow's cost per outcome on the route's leg), the price the leg-keyed workflow-projection ladder serves (what /offers/{offerId}/sales-paths reads): expected outcomes = dollars ÷ the price of one. The value at the step and the LTR are the byte-same ladder and value the brand's pipeline prices an engaged lead on, so a lead that engages moves onto the pipeline at the price this read forecast through. Paged: `limit`/`cursor`, or `leadIds` to price exactly the cards on screen; the summary rides every page.",
         "tags": [
           "Stats"
         ],

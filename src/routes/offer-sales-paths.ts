@@ -9,7 +9,7 @@
  * workflow per leg is picked exactly the way it is picked everywhere else.
  */
 import { StoreNotComputedError } from "../lib/await-warm-store.js";
-import { Router, type Request, type Response } from "express";
+import { Router } from "express";
 import { eq } from "drizzle-orm";
 import { apiKeyAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import { db } from "../db/index.js";
@@ -34,53 +34,9 @@ import {
   withSalesPathNames,
 } from "../lib/offer-sales-paths.js";
 import { campaignNamesOf, salesPathNamesFor, SalesPathNamePoolExhaustedError, withCampaignNames } from "../lib/sales-path-names.js";
-import { handleWorkflowProjection } from "./workflow-projection.js";
+import { runLadder, type LadderBody } from "../lib/leg-ladder.js";
 
 const router = Router();
-
-interface LadderBody {
-  recommendedWorkflowDynastySlug?: string | null;
-  rows?: Array<{
-    audienceId: string | null;
-    workflow: { workflowDynastySlug: string };
-    resolved: { grain: string | null; costPerOutcomeUsd: number | null };
-  }>;
-  reason?: string;
-  unmeasuredReason?: string;
-  recommendationWithheldReason?: string;
-  recommendationBasis?: string;
-}
-
-/** Run the customer `workflow-projection` handler in-process and capture its answer. */
-function runLadder(
-  identity: { orgId: string; userId: string; runId: string },
-  featureSlug: string,
-  query: Record<string, string>,
-): Promise<{ status: number; body: LadderBody }> {
-  return new Promise((resolve, reject) => {
-    const req = {
-      params: { featureSlug },
-      query,
-      headers: {},
-      orgId: identity.orgId,
-      userId: identity.userId,
-      runId: identity.runId,
-      featureSlug,
-    } as unknown as Request;
-    let status = 200;
-    const res = {
-      status(code: number) {
-        status = code;
-        return res;
-      },
-      json(body: LadderBody) {
-        resolve({ status, body });
-        return res;
-      },
-    } as unknown as Response;
-    handleWorkflowProjection(req, res, "billed").catch(reject);
-  });
-}
 
 /** PURE: what one channel's leg-keyed ladder says the leg costs, read off the recommended workflow's brand row. */
 export function priceFromLadder(status: number, body: LadderBody): LegChannelPrice {
