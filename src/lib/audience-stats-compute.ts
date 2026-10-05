@@ -1,5 +1,6 @@
 import type { Request } from "express";
 import { fetchPricingFunnels } from "./reading-funnels.js";
+import { economicsFromTerms, offerTermsEconomics } from "./offer-priced-economics.js";
 import { FUNNEL_RETIRED_BODY, namesRetiredFunnel } from "./retired-funnel-param.js";
 import { campaignFamilyStatsParams } from "./email-gateway-family.js";
 import { eq } from "drizzle-orm";
@@ -724,14 +725,14 @@ async function projectDeclaredFunnels(
   const priced: PricedFunnel[] = rankable.map((funnel) => ({
     funnelKey: funnel.funnelKey,
     name: funnel.name,
-    // Each funnel on its OWN terms — the funnel's declared economics merged over the brand's effective
-    // set, and its own channel (`meetingChannel` inside `projectBrandParents`), which is the whole
-    // difference between a meeting bought with a reply and one bought with a click.
+    // Each funnel on its OWN terms — the funnel's effective leg rates and the offer's lifetime revenue,
+    // nothing brand-wide underneath — and its own channel (`meetingChannel` inside `projectBrandParents`),
+    // which is the whole difference between a meeting bought with a reply and one bought with a click.
     parents: projectBrandParents(
       evidence,
       SALES_FUNNEL_GOAL_ECHO[funnel.funnelKey],
       funnel.funnelKey,
-      funnel.economics,
+      economicsFromTerms(funnel.economics, [funnel.funnelKey]).economics,
     ),
   }));
 
@@ -1098,6 +1099,23 @@ async function fetchAudienceMembership(
  * `computeAudienceStats` calls this too, so there is ONE definition of "valid" — the lib stays
  * independently correct for its other caller (customer-health), and the route cannot drift from it.
  */
+/**
+ * The offer's terms a GOAL-keyed read prices on: every pricing funnel of the scope merged
+ * (`offerTermsEconomics`). SOFT: unreadable / several offers / nothing priced → null with a loud log, so
+ * the projected columns degrade to each audience's own spend (never brand-wide, never an average).
+ */
+async function goalPricingEconomics(brandId: string, orgId: string, offerId: string | null | undefined) {
+  try {
+    const declared = await fetchPricingFunnels(brandId, orgId, offerId);
+    const priced = offerTermsEconomics(declared, declared.map((f) => f.funnelKey));
+    if (!priced.economics) console.warn(`[features-service] audience-stats goal read for brand ${brandId}: no economics (${priced.unpricedReason})`);
+    return priced.economics;
+  } catch (error) {
+    console.warn(`[features-service] audience-stats goal read for brand ${brandId}: offer terms unreadable (no economics): ${(error as Error).message}`);
+    return null;
+  }
+}
+
 export function validateAudienceStatsQuery(req: Request):
   | { ok: true; brandId: string; goal: Goal | null; statuses: AudienceStatus[]; limit?: number }
   | { ok: false; status: number; error: string; reason?: string } {
@@ -1287,6 +1305,10 @@ export async function computeAudienceStats(
               identity,
               pricing,
               audienceIds,
+              undefined,
+              // A goal-keyed read prices the goal on the offer's terms over the funnels the scope walks;
+              // none (or unreadable) → no economics → each audience floors on its own spend.
+              await goalPricingEconomics(brandId, orgId, scopeOfferId),
             ).then((parents) => ({ parents, priced: null, coverage: undefined }) as DeclaredFunnelProjection);
       return { ...projection, featureSlug: slug };
       // Never empty: `scopeSlugs` always holds at least the channel the read is about, and every entry

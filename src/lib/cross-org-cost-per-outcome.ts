@@ -21,11 +21,7 @@ import {
   type SalesEconomics,
 } from "./funnel-registry.js";
 import { fetchFeatureMemberships } from "./feature-memberships-client.js";
-import {
-  fetchEffectiveEconomics,
-  fetchBrandSavedEconomics,
-  BrandOwnershipError,
-} from "./sales-economics-client.js";
+import { offerTermsEconomics } from "./offer-priced-economics.js";
 import { fetchFleetSpendByDay, fetchPublicEmailStats } from "./public-stats-clients.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { SalesFunnelsUnavailableError, type DeclaredSalesFunnel } from "./sales-funnels-client.js";
@@ -537,18 +533,18 @@ export function isGoalAgnosticObjective(objective: Goal): boolean {
   return GOAL_AGNOSTIC_OBJECTIVES.includes(objective);
 }
 
-/** One feature brand's DECLARED SALES FUNNELS + saved economics + its dated spend / outcome evidence
+/** One feature brand's READING FUNNELS + their offer-terms economics + its dated spend / outcome evidence
  * (cross-org). No goal: a brand is placed in a bucket by what it declared it sells through. */
 export interface BucketedBrand {
   brandId: string;
   /** The funnels this brand declared it sells through. Never empty — a brand with no declaration is
    * omitted from the dataset entirely rather than carried with a substituted funnel. */
   funnels: SalesFunnelKey[];
+  /** The brand's reading funnels priced on their own terms (stated leg rates, the offer's lifetime revenue). */
   economics: SalesEconomics;
   /**
-   * What this brand STATED on its declared funnels — per funnel and collapsed — and nothing else. The
-   * brand-wide `economics` above carries brand-service's NOT NULL server defaults, so every FLEET
-   * aggregate reads this instead (`medianFleetEconomics`). See `lib/stated-economics.ts`.
+   * What this brand STATED on its declared funnels — per funnel and collapsed — and nothing else. Every
+   * FLEET aggregate reads this (`medianFleetEconomics`). See `lib/stated-economics.ts`.
    */
   stated: BrandStatedEconomics;
   /** Dated fleet spend for THIS brand (USD per UTC day). */
@@ -766,17 +762,18 @@ export function buildCostPerOutcomeDistribution(params: {
 
 /**
  * Fetch the funnel-bucketed per-brand dataset for a feature (cross-org): enumerate the feature's distinct
- * brands, read each brand's saved economics + the SALES FUNNELS it declared it sells through, and fetch
+ * brands, read the reading funnels of each brand's offers (their terms price the brand), and fetch
  * each brand's dated spend (runs) + dated clicks / positive replies (email-gateway). One fetch per brand,
  * run concurrently. Feature-level (objective-independent) so the trend + lifetime surfaces can share ONE
  * cached dataset. Fails loud on any transport / non-OK error (essential input, not optional enrichment).
  *
- * A brand is OMITTED — never carried on a substituted funnel — when it has no saved economics, or when its
- * declaration cannot be read or is EMPTY (`SalesFunnelsUnavailableError`, logged loud). That is the same
+ * A brand is OMITTED — never carried on a substituted funnel — when its funnels price to no economics
+ * (no stated lifetime revenue), or when its statements cannot be read or price no funnel
+ * (`SalesFunnelsUnavailableError`, logged loud). That is the same
  * treatment the retired goal read gave a brand with no goal, and it is the only honest one: a brand that
  * has not said what it sells through cannot be placed in a bucket, and placing it anyway is exactly the
- * fiction the defaulted goal column produced. A stale membership (`BrandOwnershipError`) is likewise
- * skipped, like every other fleet sweep here.
+ * fiction the defaulted goal column produced. A stale membership reads the claiming org's (empty)
+ * statements, so it prices no funnel and is likewise omitted.
  *
  * WHICH ORG'S CONFIGURATION — a brand id is shared by every org that claims the same domain, so the
  * declared funnels + economics belong to an (org, brand) pair and brand-service will not guess for a
@@ -803,16 +800,7 @@ export async function fetchFunnelBucketDataset(featureSlug: string): Promise<Buc
     [...brandToOrg.entries()],
     FUNNEL_BUCKET_BRAND_CONCURRENCY,
     async ([brandId, orgId]): Promise<BucketedBrand | null> => {
-      const [{ economics }, declared] = await Promise.all([
-        fetchBrandSavedEconomics(brandId, orgId).catch((error): { economics: null } => {
-          if (error instanceof BrandOwnershipError) {
-            console.log(
-              `[features-service] funnel-bucket dataset: skipping stale feature membership brand ${brandId} (org ${orgId}): ${error.message}`,
-            );
-            return { economics: null };
-          }
-          throw error;
-        }),
+      const [declared] = await Promise.all([
         // EVERY offer's reading funnels (wave C1: its campaigns' legs, stated leg rates, the offer's own
         // lifetime revenue) — a several-offer brand is read offer by offer rather than dropped.
         fetchBrandStatedFunnels(brandId, orgId).catch((error): { reading: DeclaredSalesFunnel[]; stated: DeclaredSalesFunnel[] } => {
@@ -830,6 +818,9 @@ export async function fetchFunnelBucketDataset(featureSlug: string): Promise<Buc
       const funnels = [...new Set(declared.reading.map((f) => f.funnelKey))].sort(
         (a, b) => salesFunnelIndex(a) - salesFunnelIndex(b),
       );
+      // Priced on the reading funnels' own terms only (owner 2026-10-05: no brand-level economics). No
+      // stated lifetime revenue → no economics → omitted, never an average.
+      const economics = offerTermsEconomics(declared.reading, funnels).economics;
       if (!economics || funnels.length === 0) return null;
       const stated = brandStatedEconomics(declared.stated);
 

@@ -53,9 +53,9 @@
 import { funnelStepKeys, CHANNEL_STEPS, CHANNEL_STEP_KEYS, type AcquisitionChannel, type ChannelStepKey } from "./acquisition-channels.js";
 import type { CampaignIdentityRow } from "./campaign-identity.js";
 import { observedCostPerOutcome } from "./cost-engine.js";
-import { declaredEconomicsForFunnel, mergeFunnelEconomics } from "./declared-funnels.js";
+import { offerTermsEconomics } from "./offer-priced-economics.js";
 import { funnelLeg, matchFunnelLegKey } from "./funnel-legs.js";
-import { getFunnel, type SalesEconomics } from "./funnel-registry.js";
+import { getFunnel } from "./funnel-registry.js";
 import { LEAD_FIELD_TO_SIGNAL, stepMeasured, type LeadStepField, type StepEvidence } from "./funnel-steps.js";
 import { dedupPersonsByLead, type EnginePerson } from "./revenue-engine.js";
 import { isMatureCount, legCutoffIso, maturityPair, scopeIsMature, servedInMatureCohort, type MaturityPair } from "./maturity.js";
@@ -163,20 +163,17 @@ export interface StepValue {
 }
 
 /**
- * PURE: the value of standing on each step — BEST PATH (max) over the offer's declared funnels that
- * contain it, each priced on its OWN declared terms merged over the brand's effective economics (the
- * merge every funnel-narrowed read uses). Absent from the map ⇒ no declared funnel prices that step.
+ * PURE: the value of standing on each step — BEST PATH (max) over the offer's funnels that contain it,
+ * each priced on its OWN offer terms (`offerTermsEconomics`: its effective leg rates, the offer's stated
+ * lifetime revenue; nothing brand-wide). Absent from the map ⇒ no funnel prices that step (a funnel
+ * whose offer states no lifetime revenue prices none).
  */
-export function stepValues(
-  declared: readonly DeclaredSalesFunnel[],
-  brandEconomics: SalesEconomics | null,
-): Map<ChannelStepKey, StepValue> {
+export function stepValues(declared: readonly DeclaredSalesFunnel[]): Map<ChannelStepKey, StepValue> {
   const out = new Map<ChannelStepKey, StepValue>();
-  if (!brandEconomics) return out;
   const engine = getFunnel("sales-cold-email-outreach");
   if (!engine) throw new Error("[features-service] the sales funnel engine is not registered");
   for (const funnel of declared) {
-    const economics = mergeFunnelEconomics(brandEconomics, declaredEconomicsForFunnel([...declared], funnel.funnelKey));
+    const economics = offerTermsEconomics(declared, [funnel.funnelKey]).economics;
     if (!economics) continue;
     const paths = engine.resolvePaths({ economics, pricedFunnelKeys: [funnel.funnelKey] });
     for (const step of new Set(funnelStepKeys(funnel.funnelKey))) {

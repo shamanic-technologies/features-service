@@ -28,10 +28,15 @@ import type { SalesFunnelKey } from "./sales-funnels.js";
  *    and prices nothing for a brand that declared only the conversation funnel.
  *
  * Sales is wired first. press / hiring / investors plug in here with their own funnel once
- * their economics exist (brand-service will generalise sales-economics → feature-economics).
+ * their economics exist (priced on the offer's terms, as sales is).
  */
 
-/** Sales conversion economics — brand-service GET /orgs/brands/{brandId}/sales-economics. */
+/**
+ * Sales conversion economics — the record the engines price on, built from the OFFER's terms only
+ * (`lib/offer-priced-economics.ts`: the offer's stated lifetime revenue, the priced funnels' effective
+ * leg rates; a rate no priced funnel states is 0). Never read from brand-service's retired brand-level
+ * sales economics (owner 2026-10-05).
+ */
 export interface SalesEconomics {
   lifetimeRevenueUsd: number;
   replyToMeetingPct: number;
@@ -55,9 +60,8 @@ export interface SalesEconomics {
    */
   meetingAttendedToPaidClientPct?: number;
   /**
-   * SINGLE-STEP rates for the `website_visits` / `positive_replies` optimization goals — brand-service
-   * serves both on the sales-economics + effective (gold) layers (always present there once the brand
-   * has economics). Optional here because the LEGACY multi-step goals never read them and older
+   * SINGLE-STEP rates for the `website_visits` / `positive_replies` optimization goals — present when a
+   * priced funnel states the leg (`statedLegRates`). Optional here because the LEGACY multi-step goals never read them and older
    * fixtures / cold-start bodies omit them; a single-step goal that finds one ABSENT fails loud at
    * compute time (singleStepRatePct) rather than silently substituting zero.
    */
@@ -65,8 +69,7 @@ export interface SalesEconomics {
   replyToPaidClientPct?: number;
   /**
    * TWO-STEP self-serve rates for the `form_submissions` optimization goal (website visit → form
-   * submission → paid client) — brand-service serves both on the sales-economics + effective layers
-   * once the brand has economics. Optional here for the same reason as the single-step rates: the
+   * submission → paid client) — present when the form-magnet funnel is priced and states them. Optional here for the same reason as the single-step rates: the
    * legacy goals never read them and cold-start bodies omit them; the form_submissions goal fails loud
    * at compute time (formSubmissionRatesDecimal) when a rate is genuinely absent.
    */
@@ -87,10 +90,7 @@ export interface FunnelInputs {
   pricedFunnelKeys?: readonly SalesFunnelKey[];
 }
 
-export type EconomicsSource = "sales-economics" | "cross-brand-average";
-
 export interface FunnelDefinition {
-  economicsSource: EconomicsSource;
   /** Signals the funnel reads off each lead (the milestones it tags + the legs it scores). */
   signals: string[];
   /**
@@ -322,9 +322,9 @@ export function combinedSaleProbability(v2pc: number, r2pc: number, clicked: boo
  * Read the SINGLE-STEP paid-client rate (0..100) a single-step goal needs off a brand's economics —
  * `visitToPaidClientPct` for `websiteVisit`, `replyToPaidClientPct` for `positiveReply`.
  *
- * FAIL LOUD when the field is genuinely absent on the wire (undefined / non-finite): brand-service
- * OWNS these fields on its sales-economics + effective layers and must serve them; a single-step goal
- * that cannot find its rate is a producer gap, not a zero to substitute (a `0` rate IS valid and
+ * FAIL LOUD when the field is genuinely absent (undefined / non-finite). The offer-terms record always
+ * carries both (`lib/offer-priced-economics.ts`: 0 when no direct funnel walks them), so an absent one
+ * is a construction gap, not a zero to substitute (a `0` rate IS valid and
  * passes through — it gates the downstream cost to null, never a false $0). Returns the decimal 0..1.
  */
 export function singleStepRateDecimal(economics: SalesEconomics, goal: "websiteVisit" | "positiveReply"): number {
@@ -332,7 +332,7 @@ export function singleStepRateDecimal(economics: SalesEconomics, goal: "websiteV
   const pctValue = economics[field];
   if (typeof pctValue !== "number" || !Number.isFinite(pctValue)) {
     throw new Error(
-      `brand economics is missing ${field} (required for the ${goal} single-step goal) — brand-service must serve it on the sales-economics / effective layer`,
+      `brand economics is missing ${field} (required for the ${goal} single-step goal) — the offer's priced funnels must state it`,
     );
   }
   return pct(pctValue);
@@ -342,9 +342,9 @@ export function singleStepRateDecimal(economics: SalesEconomics, goal: "websiteV
  * Read the TWO-STEP form-submission rates (0..100) the `form_submissions` goal needs off a brand's
  * economics — `visitToFormSubmissionPct` (visit→form) + `formSubmissionToPaidClientPct` (form→paid).
  *
- * FAIL LOUD when either field is genuinely absent (undefined / non-finite): brand-service OWNS both on
- * its sales-economics + effective layers and must serve them; a form_submissions goal that cannot find
- * its rates is a producer gap, not a zero to substitute (a `0` rate IS valid and passes through — it
+ * FAIL LOUD when either field is genuinely absent (undefined / non-finite): they are present only when a
+ * priced form-magnet funnel states them; a form_submissions goal on an offer that walks no form route
+ * is a request gap, not a zero to substitute (a `0` rate IS valid and passes through — it
  * gates the downstream cost to null, never a false $0). Returns the decimals 0..1.
  */
 export function formSubmissionRatesDecimal(economics: SalesEconomics): { v2fs: number; fs2pc: number } {
@@ -352,7 +352,7 @@ export function formSubmissionRatesDecimal(economics: SalesEconomics): { v2fs: n
     const pctValue = economics[field];
     if (typeof pctValue !== "number" || !Number.isFinite(pctValue)) {
       throw new Error(
-        `brand economics is missing ${field} (required for the form_submissions goal) — brand-service must serve it on the sales-economics / effective layer`,
+        `brand economics is missing ${field} (required for the form_submissions goal) — the offer's priced funnels must state it`,
       );
     }
     return pct(pctValue);
@@ -532,24 +532,10 @@ const FUNNEL_LADDERS: Record<SalesFunnelKey, (e: SalesEconomics) => LadderRung[]
   lead_forms_from_ads: () => [CLOSE_WIN],
 };
 
-/**
- * The ladder a brand with NO readable declaration is priced on — today's behaviour, unchanged.
- *
- * We do not know which funnel such a brand sells, and inventing one to price against would be the same
- * fiction the defaulted goal produced. So it keeps every conversion leg it has always had, on the
- * expression it has always had. It simply earns nothing from a delivery, which is a step of no funnel
- * for anybody.
- */
-const undeclaredLadder = (e: SalesEconomics): LadderRung[] => [
-  { tag: "visit", signal: "clicked", pClose: clickCloseViaMeeting(e), engagementRoute: true },
-  { tag: "reply", signal: "positiveReply", pClose: pct(e.replyToMeetingPct) * bookedClose(e), engagementRoute: true },
-  { tag: "meeting", signal: "meeting", pClose: bookedClose(e) },
-  { tag: "meetingAttended", signal: "meetingAttended", pClose: attendedClose(e) },
-  CLOSE_WIN,
-];
+/** The order every ladder rung is emitted in: the two engagement routes, then the positions, up to the sale. */
+const CANONICAL_SIGNAL_ORDER: readonly string[] = ["clicked", "positiveReply", "formSubmission", "signup", "meeting", "meetingAttended", "closeWin"];
 
 const salesFunnel: FunnelDefinition = {
-  economicsSource: "sales-economics",
   signals: [
     "contacted",
     "sent",
@@ -566,7 +552,9 @@ const salesFunnel: FunnelDefinition = {
   resolvePaths: ({ economics: e, pricedFunnelKeys }) => {
     const ltr = e.lifetimeRevenueUsd;
     const keys = pricedFunnelKeys ?? [];
-    const ladders = keys.length > 0 ? keys.map((key) => FUNNEL_LADDERS[key](e)) : [undeclaredLadder(e)];
+    // No priced funnel ⇒ no ladder: a read walking no path prices nothing (its economics are null
+    // upstream, `lib/offer-priced-economics.ts`), never a route-agnostic stand-in.
+    const ladders = keys.map((key) => FUNNEL_LADDERS[key](e));
 
     // MAX per signal across the funnels being priced: a lead converts through whichever of them pays
     // best. With one funnel this is that funnel's ladder verbatim; with several it can never read below
@@ -587,7 +575,14 @@ const salesFunnel: FunnelDefinition = {
     // (mutually exclusive, and each one a fact rather than a forecast) → left to MAX, and they
     // EXTINGUISH the routes: those routes were forecasting exactly the thing that has now happened.
     // Monotonic EV up the funnel: the rung below is always worth less than the rung above it.
-    return [...bySignal.values()].map((rung) => ({
+    // Emitted in ONE canonical funnel order (the engine ranks a lead's "most advanced" stage by path
+    // position): a one-funnel read keeps its own chain's order, and a several-funnel read can no longer
+    // rank a website visit above a positive reply because the website funnel's ladder was merged second.
+    const order = (signal: string): number => {
+      const i = CANONICAL_SIGNAL_ORDER.indexOf(signal);
+      return i === -1 ? CANONICAL_SIGNAL_ORDER.length : i;
+    };
+    return [...bySignal.values()].sort((a, b) => order(a.signal) - order(b.signal)).map((rung) => ({
       tag: rung.tag,
       signal: rung.signal,
       expectedRevenueUsd: ltr * rung.pClose!,

@@ -20,7 +20,8 @@ import type { SalesFunnelKey } from "./sales-funnels.js";
 import type { ConversionCounts } from "./conversion-counts-client.js";
 import type { BudgetChangeEntry, PauseTransition } from "./history-clients.js";
 import type { DashboardReturnSignal } from "./posthog-client.js";
-import { BrandOwnershipError } from "./sales-economics-client.js";
+import { BrandOwnershipError } from "./brand-ownership.js";
+import type { FunnelPricedEconomics } from "./offer-pricing.js";
 
 const NOW = new Date("2026-07-15T12:00:00.000Z");
 const COLD_CSV = "cold-a";
@@ -154,6 +155,17 @@ function wfRow(slug: string, name: string | null, cost: number | null, grain: "c
   };
 }
 
+/** The priced read a fixture stands for: the offer's terms on the funnels walked, null with its reason. */
+function pricedOf(economics: SalesEconomics | null, funnels: SalesFunnelKey[]): FunnelPricedEconomics {
+  return {
+    economics: {
+      economics,
+      unpricedReason: economics ? null : funnels.length === 0 ? "no_priced_funnel" : "lifetime_revenue_not_stated",
+    },
+    pricedFunnelKeys: funnels,
+  };
+}
+
 /** Deps builder keyed per-brand from simple fixtures. */
 function makeDeps(fixtures: {
   accounts: AccountRow[];
@@ -197,15 +209,10 @@ function makeDeps(fixtures: {
     featureMemberships: async () => memberships,
     accountsAudit: async () => audit,
     activeUsersByUser: async () => byUser,
-    savedEconomics: async (brandId) => {
+    pricedEconomics: async (brandId) => {
       const f = fixtures.perBrand[brandId];
       if (f?.throwOwnership) throw new BrandOwnershipError(brandId, "org", "stale membership");
-      return { economics: f?.economics ?? null };
-    },
-    declaredFunnels: async (brandId) => {
-      const f = fixtures.perBrand[brandId];
-      if (f?.throwOwnership) throw new BrandOwnershipError(brandId, "org", "stale membership");
-      return f?.funnels ?? [];
+      return pricedOf(f?.economics ?? null, f?.funnels ?? []);
     },
     conversionCounts: async (brandId) =>
       fixtures.perBrand[brandId]?.counts ?? { signup: 0, meeting_booked: 0, form_submission: 0, sale: 0 },
@@ -414,7 +421,7 @@ describe("buildCustomerHealthBoard", () => {
     expect(board.stats).toMatchObject({ totalCustomers: 4, activeCount: 2, pausedCount: 1, inactiveCount: 1, yellowCount: 2, redCount: 2, greenCount: 0 });
   });
 
-  it("no own economics → all economics-derived fields null (never an averaged ROI); revenue engine not called", async () => {
+  it("no priced economics (the offer states no lifetime revenue) → all economics-derived fields null (never an averaged ROI); revenue engine not called", async () => {
     let revenueCalled = false;
     const deps = makeDeps({
       accounts: [account({ orgId: "f", brandId: "bf", status: "active" })],
@@ -442,7 +449,7 @@ describe("buildCustomerHealthBoard", () => {
     expect(row.health.badge).toBe("yellow");
   });
 
-  it("asks brand-service for the ROW'S OWN org's economics — a brand id is shared across every org claiming the domain", async () => {
+  it("prices each row on its OWN org's offer terms — a brand id is shared across every org claiming the domain", async () => {
     // Two customers on the SAME brand id: distinct orgs claiming one domain. Each row's goal must come
     // from that row's own org, so the read has to be told which one — never resolved from the brand.
     const seen: Array<[string, string]> = [];
@@ -456,12 +463,10 @@ describe("buildCustomerHealthBoard", () => {
     });
     const wrapped: CustomerHealthDeps = {
       ...deps,
-      savedEconomics: async (brandId, orgId) => {
+      pricedEconomics: async (brandId, orgId) => {
         seen.push([brandId, orgId]);
-        return { economics: null };
+        return pricedOf(null, orgId === "org-A" ? ["sales_meetings_from_conversation"] : ["website_purchases"]);
       },
-      declaredFunnels: async (_brandId, orgId) =>
-        orgId === "org-A" ? ["sales_meetings_from_conversation"] : ["website_purchases"],
     };
     const board = await buildCustomerHealthBoard(COLD_CSV, NOW, wrapped);
 
@@ -598,9 +603,9 @@ describe("buildCustomerHealthBoard", () => {
     // transient retries exhausted, or a downstream 5xx. Must NOT reject the whole board.
     const wrapped: CustomerHealthDeps = {
       ...deps,
-      brandRevenue: async (f, brandId, orgId, e, funnels) => {
+      brandRevenue: async (f, brandId, orgId, priced) => {
         if (brandId === "bm") throw new Error("downstream revenue 503");
-        return deps.brandRevenue(f, brandId, orgId, e, funnels);
+        return deps.brandRevenue(f, brandId, orgId, priced);
       },
     };
     const board = await buildCustomerHealthBoard(COLD_CSV, NOW, wrapped);

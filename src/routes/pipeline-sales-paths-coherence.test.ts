@@ -24,21 +24,9 @@ const EFFECTIVE: Record<string, number> = {
 };
 const LTR = 2100;
 
-// brand-service's cross-brand average — the numbers the pipeline must NO LONGER read.
-const CROSS_BRAND_AVERAGE = {
-  economics: {
-    lifetimeRevenueUsd: 9999,
-    replyToMeetingPct: 50,
-    visitToMeetingPct: 5,
-    meetingToClosePct: 44.7,
-    visitToSignupPct: 21.1,
-    signupToPaidClientPct: 18.1,
-    visitToClosePct: 3.83,
-    replyToPaidClientPct: 22.35,
-    visitToPaidClientPct: 3.83,
-  },
-  source: "cross-brand-average" as const,
-};
+// brand-service's cross-brand average lifetime revenue — a number the pipeline can no longer read at
+// all (owner 2026-10-05: the brand-wide record is no pricing input; there is no argument to pass it).
+const CROSS_BRAND_AVERAGE_LTR = 9999;
 
 const declaredOn = (keys: SalesFunnelKey[]) =>
   buildPricingFunnels({
@@ -51,7 +39,7 @@ const declaredOn = (keys: SalesFunnelKey[]) =>
   });
 
 const rungs = (keys: SalesFunnelKey[]) => {
-  const priced = priceOnDeclaredFunnel(declaredOn(keys), CROSS_BRAND_AVERAGE);
+  const priced = priceOnDeclaredFunnel(declaredOn(keys));
   const paths = getFunnel("sales-cold-email-outreach")!.resolvePaths({
     economics: priced.economics.economics!,
     pricedFunnelKeys: priced.pricedFunnelKeys,
@@ -74,8 +62,9 @@ describe("one offer, one set of rates: the pipeline prices each rung on the Sale
   });
 
   it("the offer's lifetime revenue prices the rungs, never the brand-wide record's", () => {
-    const priced = priceOnDeclaredFunnel(declaredOn(["sales_meetings_from_conversation"]), CROSS_BRAND_AVERAGE);
+    const priced = priceOnDeclaredFunnel(declaredOn(["sales_meetings_from_conversation"]));
     expect(priced.economics.economics!.lifetimeRevenueUsd).toBe(LTR);
+    expect(priced.economics.economics!.lifetimeRevenueUsd).not.toBe(CROSS_BRAND_AVERAGE_LTR);
   });
 
   it("a website route the offer does not walk adds nothing to a click (no brand-wide average leaks in)", () => {
@@ -85,8 +74,9 @@ describe("one offer, one set of rates: the pipeline prices each rung on the Sale
     expect(rungs(["sales_meetings_from_conversation"]).clicked ?? 0).toBe(0);
   });
 
-  it("no priced funnel → the brand-wide record, unchanged (the degraded read)", () => {
-    const priced = priceOnDeclaredFunnel([], CROSS_BRAND_AVERAGE);
-    expect(priced.economics).toBe(CROSS_BRAND_AVERAGE);
+  it("no priced funnel → null economics with its reason, never the brand-wide record (the degraded read)", () => {
+    const priced = priceOnDeclaredFunnel([]);
+    expect(priced.economics).toEqual({ economics: null, unpricedReason: "no_priced_funnel" });
+    expect(priced.pricedFunnelKeys).toEqual([]);
   });
 });

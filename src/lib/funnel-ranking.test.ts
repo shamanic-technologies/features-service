@@ -81,11 +81,16 @@ const ECONOMICS = {
 
 type FunnelKey = (typeof SALES_FUNNEL_KEYS)[number];
 
-/** One declared funnel to rank, named the way brand-service names it. */
-const f = (funnelKey: FunnelKey, over: { name?: string; economics?: Record<string, number> } = {}) => ({
+/**
+ * One declared funnel to rank, named the way brand-service names it. Each funnel is priced on ITS OWN
+ * offer terms and nothing brand-wide underneath (owner 2026-10-05), so every funnel carries the terms
+ * by default; `economics` overrides fields of them, and `economics: null` is a funnel whose terms could
+ * not be priced at all.
+ */
+const f = (funnelKey: FunnelKey, over: { name?: string; economics?: Record<string, number> | null } = {}) => ({
   funnelKey,
   name: over.name ?? funnelKey,
-  economics: over.economics ?? null,
+  economics: over.economics === null ? null : { ...ECONOMICS, ...(over.economics ?? {}) },
 });
 
 const CONVERSATION = "sales_meetings_from_conversation" as const;
@@ -93,16 +98,11 @@ const WEBSITE_MEETING = "sales_meetings_from_website" as const;
 const PURCHASES = "website_purchases" as const;
 const FORM = "form_magnet" as const;
 
-const run = (
-  funnels: ReturnType<typeof f>[],
-  over: Partial<Evidence> = {},
-  economics: unknown = ECONOMICS,
-) =>
+const run = (funnels: ReturnType<typeof f>[], over: Partial<Evidence> = {}) =>
   rankDeclaredFunnels({
     featureSlug: "sales-cold-email-outreach",
     funnels: funnels as never,
     evidence: evidence(over),
-    economics: economics as never,
   });
 
 const entry = (res: ReturnType<typeof run>, funnelKey: string) =>
@@ -199,7 +199,7 @@ describe("rankDeclaredFunnels — which declared funnel returns the most per dol
 
   it("each funnel's own economics decide it: a per-funnel lifetime revenue can flip the head", () => {
     const res = run([
-      // The brand states this funnel sells a $100k contract; the meeting funnel keeps the $1000 base.
+      // The brand states this funnel sells a $100k contract; the meeting funnel keeps its own $1000.
       f(PURCHASES, { economics: { lifetimeRevenueUsd: 100_000 } }),
       f(CONVERSATION),
     ]);
@@ -207,8 +207,9 @@ describe("rankDeclaredFunnels — which declared funnel returns the most per dol
     expect(res.recommendation?.funnelKey).toBe(PURCHASES);
     expect(res.recommendation?.returnPerDollar).toBeCloseTo(200, 6); // 100000 / 500
     expect(res.recommendation?.workflow.workflowDynastySlug).toBe("dyn-a");
+    // Both are priced on their own terms: there is no brand-wide record left for either to fall back on.
     expect(entry(res, PURCHASES).usesFunnelEconomics).toBe(true);
-    expect(entry(res, CONVERSATION).usesFunnelEconomics).toBe(false);
+    expect(entry(res, CONVERSATION).usesFunnelEconomics).toBe(true);
     expect(entry(res, CONVERSATION).returnPerDollar).toBeCloseTo(12, 6);
   });
 
@@ -271,11 +272,21 @@ describe("rankDeclaredFunnels — which declared funnel returns the most per dol
   });
 
   it("no economics → every funnel is unrankable for that reason (never a fabricated return)", () => {
-    const res = run([f(PURCHASES), f(CONVERSATION)], {}, null);
+    const res = run([f(PURCHASES, { economics: null }), f(CONVERSATION, { economics: null })]);
 
     expect(res.arbitration.status).toBe("unrankable");
     expect(res.arbitration.reason).toBe("no_rankable_funnel");
     expect(res.ranking.map((r) => r.unrankableReason)).toEqual(["no_economics", "no_economics"]);
+    expect(res.economics).toBeNull();
+    expect(res.ranking.every((r) => r.usesFunnelEconomics === false)).toBe(true);
+  });
+
+  it("an offer stating no lifetime revenue is unrankable — never priced on an average or a default", () => {
+    const { lifetimeRevenueUsd: _ltr, ...noLtr } = ECONOMICS;
+    const res = run([{ funnelKey: CONVERSATION, name: CONVERSATION, economics: noLtr } as unknown as ReturnType<typeof f>]);
+
+    expect(res.ranking[0].unrankableReason).toBe("no_economics");
+    expect(res.recommendation).toBeNull();
     expect(res.economics).toBeNull();
   });
 
@@ -333,7 +344,7 @@ describe("rankDeclaredFunnels — which declared funnel returns the most per dol
 
   it("ranks on HISTORY alone — it takes no funding input and offers no way to pass one", () => {
     // Being unfunded is a decision the customer just made, not a reason to hide how a funnel
-    // performed. The signature carries funnels + evidence + economics and nothing else, so there is
+    // performed. The signature carries funnels (with their own terms) + evidence and nothing else, so there is
     // no place a budget or a funded-flag could enter this computation.
     const res = run([f(PURCHASES), f(CONVERSATION)]);
     expect(res.ranking).toHaveLength(2);

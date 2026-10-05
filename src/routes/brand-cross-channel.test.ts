@@ -50,6 +50,7 @@ process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
+const { declaredFromEconomics, offerEconomicsFromDeclared } = await import("../lib/leg-economics-fixture.js");
 
 const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
 const PITCH = "sales-cold-email-outreach";
@@ -62,7 +63,9 @@ const FEATURE_ROW = (slug: string) => ({
   createdAt: new Date(), updatedAt: new Date(),
 });
 
-/** A positively-replying lead is worth LTR x replyToMeeting x meetingToClose = 1000 x .4 x .3 = 120. */
+/** A positively-replying lead is worth LTR x replyToMeeting x meetingToClose = 1000 x .4 x .3 = 120.
+ * Served as the OFFER's terms (brand-service offer-economics, `declaredFromEconomics`); the campaigns
+ * perform the conversation leg, so the conversation meeting funnel is the one priced. */
 const ECONOMICS = {
   lifetimeRevenueUsd: 1000,
   replyToMeetingPct: 40,
@@ -144,6 +147,7 @@ function mockFetch(fixture: Fixture): void {
             brandId: BRAND,
             featureSlug: row.featureSlug,
             funnelKey: "sales_meetings_from_conversation",
+            legKey: "start_to_conversation",
             acquisitionChannel: row.featureSlug,
             offerId: null,
             status: "ongoing",
@@ -178,10 +182,12 @@ function mockFetch(fixture: Fixture): void {
       return json({ groups });
     }
 
-    if (path.includes("/sales-economics-effective")) {
+    // The ownership check (`assertBrandHeld`): brand-service refuses a brand the caller does not hold.
+    if (path.endsWith("/leg-rates")) {
       if (fixture.foreignBrand) return new Response(JSON.stringify({ error: "Brand does not belong to the caller's org" }), { status: 403 });
-      return json({ economics: ECONOMICS, source: "user" });
+      return json({});
     }
+    if (path.endsWith("/offer-economics")) return json(offerEconomicsFromDeclared(declaredFromEconomics(ECONOMICS)));
 
     if (path.endsWith("/orgs/leads")) {
       const only = q.get("campaignId");

@@ -9,7 +9,6 @@ import {
 import type { AcquisitionChannel } from "./acquisition-channels.js";
 import type { CampaignIdentityRow } from "./campaign-identity.js";
 import type { EnginePerson } from "./revenue-engine.js";
-import type { SalesEconomics } from "./funnel-registry.js";
 import { ALL_STEP_EVIDENCE } from "./funnel-steps.js";
 import type { DeclaredSalesFunnel } from "./sales-funnels-client.js";
 
@@ -113,20 +112,16 @@ describe("buildOfferLegPartition", () => {
 });
 
 describe("stepValues", () => {
-  const econ: SalesEconomics = {
-    lifetimeRevenueUsd: 1000,
-    replyToMeetingPct: 50,
-    visitToMeetingPct: 10,
-    meetingToClosePct: 20,
-    visitToSignupPct: 5,
-    signupToPaidClientPct: 10,
-    visitToClosePct: 1,
-  };
-  const declared = (funnelKey: DeclaredSalesFunnel["funnelKey"], lifetimeRevenueUsd: number | null): DeclaredSalesFunnel => ({
+  // Each funnel is priced on its OWN stated terms (owner 2026-10-05: no brand-wide record underneath).
+  const declared = (
+    funnelKey: DeclaredSalesFunnel["funnelKey"],
+    lifetimeRevenueUsd: number | null,
+    rates: Record<string, number | null> = {},
+  ): DeclaredSalesFunnel => ({
     funnelKey,
     name: funnelKey,
     steps: [],
-    rates: {},
+    rates,
     lifetimeRevenueUsd,
     destinationUrl: null,
     bookingUrl: null,
@@ -134,18 +129,18 @@ describe("stepValues", () => {
   });
 
   it("prices a step on the BEST declared funnel containing it (max), each on its own lifetime revenue", () => {
-    const values = stepValues(
-      [declared("sales_meetings_from_conversation", 1000), declared("sales_from_conversation", 5000)],
-      { ...econ, replyToPaidClientPct: 4 },
-    );
+    const values = stepValues([
+      declared("sales_meetings_from_conversation", 1000, { replyToMeetingPct: 50, meetingToClosePct: 20 }),
+      declared("sales_from_conversation", 5000, { replyToPaidClientPct: 4 }),
+    ]);
     // conversation funnel: reply → 50% × 20% × $1,000 = $100; direct reply funnel: 4% × $5,000 = $200.
     expect(values.get("conversation")).toEqual({ valuePerOutcomeUsd: 200, basisFunnelKey: "sales_from_conversation" });
     expect(values.get("meeting_booked")?.valuePerOutcomeUsd).toBeCloseTo(200); // 20% × $1,000
     expect(values.has("website_visit")).toBe(false); // no declared funnel contains it
   });
 
-  it("no economics ⇒ no value, never 0", () => {
-    expect(stepValues([declared("sales_meetings_from_conversation", 1000)], null).size).toBe(0);
+  it("no economics ⇒ no value, never 0: an offer stating no lifetime revenue prices nothing", () => {
+    expect(stepValues([declared("sales_meetings_from_conversation", null, { replyToMeetingPct: 50, meetingToClosePct: 20 })]).size).toBe(0);
   });
 });
 

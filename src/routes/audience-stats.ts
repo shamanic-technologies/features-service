@@ -3,7 +3,7 @@ import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { computeAudienceStats, validateAudienceStatsQuery, type ComputeResult } from "../lib/audience-stats-compute.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { parsePricing } from "../lib/pricing.js";
-import { fetchEffectiveEconomics, economicsFingerprint } from "../lib/sales-economics-client.js";
+import { fetchFunnelPricedEconomics, pricedFingerprint } from "./revenue.js";
 import { SalesFunnelsUnavailableError, SeveralOffersDeclaredError } from "../lib/sales-funnels-client.js";
 import { fetchReadingFunnelKeys } from "../lib/reading-funnels.js";
 import { resolveOfferCampaignIds, OfferHasNoCampaignsError } from "../lib/offer-scope.js";
@@ -98,18 +98,15 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
     // every brand selling one thing, so a single-offer brand is byte-unchanged.
     const scopeOfferId = offerId ?? identity?.offerId ?? null;
 
-    // The derived cost columns (cost per form submission / signup / sale) project through the brand's
-    // economics via `fetchBrandProjectedParents`, so the body goes stale the moment the economics change.
-    // Folding the fingerprint into the cache key makes an economics write land on a different cell, which
-    // forces a fresh compute instead of replaying a pre-write snapshot until the hard-stale cap. Read here
-    // for the KEY only; the compute does its own read on a miss (one extra brand-service call on the miss
-    // path, not worth threading an override down through fetchBrandProjectedParents).
+    // The derived cost columns (cost per form submission / signup / sale) project through the OFFER's
+    // terms (its lifetime revenue, the priced funnels' effective leg rates), so the body goes stale the
+    // moment they change. Folding the fingerprint of the economics actually priced into the cache key
+    // makes a terms write land on a different cell instead of replaying a pre-write snapshot. Read here
+    // for the KEY only; the compute does its own read on a miss.
     //
-    // Fail-soft, via a real try/catch rather than a trailing `.catch()`: `fetchEffectiveEconomics`
-    // validates its env and can throw SYNCHRONOUSLY before its first await, which a funneled `.catch()`
-    // would not see. This read feeds a cache KEY, not the response, so its failure must not change the
-    // endpoint's HTTP semantics — degrade to "no fingerprint in the key" and let the compute (which reads
-    // economics fail-loud) decide the status.
+    // Fail-soft, via a real try/catch: this read feeds a cache KEY, not the response, so its failure must
+    // not change the endpoint's HTTP semantics — degrade to "no fingerprint in the key" and let the
+    // compute decide the status.
     // THE BRAND-LEVEL read's body is priced on the scope's READING FUNNELS (its campaigns' legs), which is not a query parameter —
     // so a brand that adds or drops a funnel would keep being served the previous set's answer (with a
     // `funnelCoverage` naming funnels it no longer sells through) until the hard-stale cap. Folding the
@@ -133,9 +130,7 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
 
     let econ: string | undefined;
     try {
-      econ = economicsFingerprint(
-        await fetchEffectiveEconomics(validated.brandId, { orgId, userId, runId, featureSlug }),
-      );
+      econ = pricedFingerprint(await fetchFunnelPricedEconomics(validated.brandId, orgId, undefined, scopeOfferId));
     } catch (err) {
       console.warn(
         `[features-service] audience-stats economics fingerprint unavailable (keying without it): ${(err as Error).message}`,

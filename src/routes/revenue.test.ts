@@ -36,7 +36,7 @@ process.env.FEATURE_VIEW_CACHE_ENABLED = "false"; // exercise the pure live-comp
 
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
-const { offerEconomicsFromDeclared, legCampaignRows } = await import("../lib/leg-economics-fixture.js");
+const { offerEconomicsFromDeclared, legCampaignRows, declaredFromEconomics } = await import("../lib/leg-economics-fixture.js");
 
 const AUTH = {
   "x-api-key": "test-key",
@@ -142,15 +142,18 @@ function outcomeRows(quals: Qualifications, event: string): unknown[] {
 }
 
 /** Route fetch mock keyed by URL substring. effective economics (saved set + cross-brand average) + leads + status timestamps + manual quals + platform stats + cost overridable. */
-function mockFetch(opts: { economics?: unknown; economicsAverage?: unknown; leads?: unknown[]; timestamps?: Timestamps; quals?: Qualifications; legacyQuals?: Qualifications; qualRowsRaw?: unknown[]; outcomeRowsRaw?: unknown[]; deadByStep?: Record<string, string[]>; platformStats?: unknown; costCents?: number; sequencesGroups?: Array<{ key: string; contacted: number }>; sequencesFail?: boolean; conversionCounts?: { signup: number; meeting_booked: number; form_submission: number; sale: number }; conversionCountsFail?: boolean; conversionEmails?: { signup?: string[]; form_submission?: string[] }; conversionEmailsFail?: boolean; salesFunnels?: unknown[]; spendByDay?: Array<{ period: string; actualCents: number }>; spendByDayFail?: boolean } = {}): void {
+function mockFetch(opts: { economics?: unknown; leads?: unknown[]; timestamps?: Timestamps; quals?: Qualifications; legacyQuals?: Qualifications; qualRowsRaw?: unknown[]; outcomeRowsRaw?: unknown[]; deadByStep?: Record<string, string[]>; platformStats?: unknown; costCents?: number; sequencesGroups?: Array<{ key: string; contacted: number }>; sequencesFail?: boolean; conversionCounts?: { signup: number; meeting_booked: number; form_submission: number; sale: number }; conversionCountsFail?: boolean; conversionEmails?: { signup?: string[]; form_submission?: string[] }; conversionEmailsFail?: boolean; salesFunnels?: unknown[]; spendByDay?: Array<{ period: string; actualCents: number }>; spendByDayFail?: boolean } = {}): void {
+  // The offer's terms are the ONLY pricing input (owner 2026-10-05): a test handing `economics` hands
+  // the funnels that state exactly those terms (`declaredFromEconomics`), never a brand-wide record.
+  const funnels = opts.salesFunnels ?? (opts.economics ? declaredFromEconomics(opts.economics as Record<string, unknown>) : undefined);
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
     // Wave C1: the brand's campaigns perform the ENTRY legs of the funnels it sells (none maturing:
     // the fixtures' rows are the only campaigns and carry no runs, lib/roi-maturity.ts).
-    if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: opts.salesFunnels ? legCampaignRows(opts.salesFunnels as any[]) : [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: funnels ? legCampaignRows(funnels as any[]) : [] }), { status: 200, headers: { "Content-Type": "application/json" } });
     if (url.includes("/offer-economics")) {
-      if (!opts.salesFunnels) return new Response("no statements", { status: 404, headers: { "Content-Type": "application/json" } });
-      return new Response(JSON.stringify(offerEconomicsFromDeclared(opts.salesFunnels as any[])), { status: 200, headers: { "Content-Type": "application/json" } });
+      if (!funnels) return new Response("no statements", { status: 404, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify(offerEconomicsFromDeclared(funnels as any[])), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     // lead-service GET /internal/brands/:brandId/converted-lead-emails?event=<type> — per-lead SIGNUP /
     // FORM-SUBMISSION attribution email sets (#476). Match BEFORE /conversion-counts (distinct path) and
@@ -218,18 +221,6 @@ function mockFetch(opts: { economics?: unknown; economicsAverage?: unknown; lead
       }
       return new Response(JSON.stringify({ funnels: opts.salesFunnels }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
-    // brand-service /orgs/brands/:brandId/sales-economics-effective — ONE call returning
-    // { economics, source }. Synthesize from fixtures: a saved set → "user"; else the cross-brand
-    // average → "cross-brand-average"; else cold start → { economics: null, source: null }.
-    if (url.includes("/sales-economics-effective")) {
-      const effective =
-        opts.economics != null
-          ? { economics: opts.economics, source: "user" }
-          : opts.economicsAverage != null
-            ? { economics: opts.economicsAverage, source: "cross-brand-average" }
-            : { economics: null, source: null };
-      return new Response(JSON.stringify(effective), { status: 200, headers: { "Content-Type": "application/json" } });
-    }
     if (url.includes("/public/stats")) {
       return new Response(JSON.stringify(opts.platformStats ?? PLATFORM_STATS), { status: 200, headers: { "Content-Type": "application/json" } });
     }
@@ -278,22 +269,22 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.status).toBe(404);
   });
 
-  it("null pipeline when feature has no funnel wired (economicsSource null)", async () => {
+  it("null pipeline when feature has no funnel wired (unpricedReason no_funnel_wired)", async () => {
     vi.mocked(db.query.features.findFirst).mockResolvedValue({ ...SALES_FEATURE, slug: "pr-cold-email-outreach" } as any);
     mockFetch();
     const res = await request(app).get("/features/pr-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBeNull();
-    expect(res.body.headline.economicsSource).toBeNull();
+    expect(res.body.headline.unpricedReason).toBe("no_funnel_wired");
     expect(res.body.organizations).toEqual([]);
   });
 
-  it("null pipeline when brand has no saved economics AND no cross-brand average (cold start)", async () => {
-    mockFetch({ economics: null }); // no saved + no average → effective { economics: null, source: null }
+  it("null pipeline, reason no_priced_funnel, when the brand states no offer terms (cold start)", async () => {
+    mockFetch({ economics: null }); // no offer statements → no priced funnel → null economics
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBeNull();
-    expect(res.body.headline.economicsSource).toBeNull();
+    expect(res.body.headline.unpricedReason).toBe("no_priced_funnel");
     expect(res.body.leads).toEqual([]);
   });
 
@@ -320,7 +311,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.status).toBe(200);
     // o1: visit EV 34.7, o2: reply EV 120 → total 154.7
     expect(res.body.headline.totalPipelineUsd).toBeCloseTo(154.7, 5);
-    expect(res.body.headline.economicsSource).toBe("sales-economics"); // brand's own saved set
+    expect(res.body.headline.unpricedReason).toBeNull(); // priced on the offer's terms — brand's own saved set
     expect(res.body.organizations).toHaveLength(2);
     expect(res.body.leads).toHaveLength(2);
     expect(res.body.organizations[0].expectedRevenueUsd).toBe(120); // reply org first (furthest stage), EV desc
@@ -505,20 +496,21 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.formSubmissions).toEqual({ total: 0, daily: [], undatedCount: 0 });
   });
 
-  it("cross-brand-average fallback — no saved economics but average exists → computed + tagged estimate", async () => {
-    // brand-service returns the cross-brand average (source "cross-brand-average") → same math as the
-    // happy path, now tagged provenance so the dashboard can badge it estimated.
+  it("an offer stating NO lifetime revenue reads a NULL pipeline with its reason — never an average (owner 2026-10-05)", async () => {
+    // The rates are stated, the lifetime revenue is not: brand-service's retired cross-brand average used
+    // to price this brand; now nothing does, and the read says why.
     mockFetch({
-      economics: null,
-      economicsAverage: ECONOMICS,
+      salesFunnels: declaredFromEconomics({ ...ECONOMICS, lifetimeRevenueUsd: null }),
       leads: HAPPY_LEADS,
       timestamps: { "click@x.com": { firstClickedAt: daysAgo(13) }, "reply@y.com": { firstRepliedAt: daysAgo(5) } },
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(154.7, 5); // visit 34.7 + reply 120, computed on the average
-    expect(res.body.headline.economicsSource).toBe("cross-brand-average");
-    expect(res.body.leads).toHaveLength(2);
+    expect(res.body.headline.totalPipelineUsd).toBeNull();
+    expect(res.body.headline.unpricedReason).toBe("lifetime_revenue_not_stated");
+    expect(res.body.costEconomics.roiMultiple).toBeNull();
+    // The volume half is still a real, measured answer.
+    expect(res.body.outcomes).not.toBeNull();
   });
 
   it("one lead with BOTH click + positive reply → combined route EV (independent-probability SUM)", async () => {
@@ -601,7 +593,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBe(0);
-    expect(res.body.outcomes.recipientsContacted).toBe(2);
+    expect(res.body.outcomes).not.toBeNull();
     expect(res.body.outcomes.recipientsConvertible).toBe(1);
     expect(res.body.outcomes.recipientsUnsubscribed).toBe(1);
     expect(res.body.outcomes.recipientsBounced).toBe(0);
@@ -648,7 +640,7 @@ describe("GET /features/:featureSlug/revenue", () => {
       expect(lead.expectedRevenueUsd).toBeCloseTo(200, 6); // (20/100)·1000
     }
     expect(res.body.headline.totalPipelineUsd).toBeCloseTo(400, 6); // 2 leads × 200
-    expect(res.body.headline.economicsSource).toBe("sales-economics");
+    expect(res.body.headline.unpricedReason).toBeNull();
     expect(res.body.organizations).toEqual([]);
     expect(res.body.timeSeries).toEqual([]);
     expect(res.body.events).toEqual([]);
@@ -697,13 +689,20 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(byId.lc.conversionProbabilityPct).toBeCloseTo(3.47, 6); // same as website_purchase
   });
 
-  // SINGLE-STEP lenses: EV per lead = one paid-client rate × LTR (no multi-step composition).
+  // SINGLE-STEP lenses: EV per lead = one paid-client rate × LTR (no multi-step composition). The two
+  // single-step rates are the DIRECT funnels' own legs, so the offer walks those funnels too.
   const SINGLE_STEP_ECON = { ...ECONOMICS, visitToPaidClientPct: 5, replyToPaidClientPct: 20 };
+  const SINGLE_STEP_FUNNELS = [
+    ...declaredFromEconomics(SINGLE_STEP_ECON),
+    // Its chain is visit → purchase → paid client; the visit → paid rate is the product (100% × 5%).
+    { funnelKey: "sales_from_website", rates: { visitToPurchasePct: 100, purchaseToPaidClientPct: 5 }, lifetimeRevenueUsd: 1000 },
+    { funnelKey: "sales_from_conversation", rates: { replyToPaidClientPct: 20 }, lifetimeRevenueUsd: 1000 },
+  ];
 
   it("lens=sales (COMBINED) — per-lead sale probability = probabilistic OR of visit→paid & reply→paid; OR < sum & ≤ 1×LTR", async () => {
     // v2pc=5%, r2pc=20%. Per-LEAD probability combines the two paths as an OR (a lead converts at most
     // once) — NOT the population additive SUM (that's the projection surface, funnel-registry test).
-    mockFetch({ economics: SINGLE_STEP_ECON, leads: LENS_LEADS });
+    mockFetch({ salesFunnels: SINGLE_STEP_FUNNELS, leads: LENS_LEADS });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&lens=sales").set(AUTH);
     expect(res.status).toBe(200);
     const byId = Object.fromEntries(res.body.leads.map((l: any) => [l.leadId, l]));
@@ -728,7 +727,7 @@ describe("GET /features/:featureSlug/revenue", () => {
   });
 
   it("lens=website_visits — clicked leads; prob == visitToPaidClient; revenue == (rate/100)·LTR (single step)", async () => {
-    mockFetch({ economics: SINGLE_STEP_ECON, leads: LENS_LEADS });
+    mockFetch({ salesFunnels: SINGLE_STEP_FUNNELS, leads: LENS_LEADS });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&lens=website_visits").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.leads.map((l: any) => l.leadId).sort()).toEqual(["lb", "lc"]); // clicked leads
@@ -745,7 +744,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     // per-lead date must stay null (contract: null unless positive-classified) — same as the boolean.
     const negLead = leadRow({ leadId: "lneg", email: "neg@x.com", clicked: true, replied: true, replyClassification: "negative", lead: { firstName: "Neg", lastName: "X", photoUrl: null, organization: { id: "on", name: "OrgN", logoUrl: null } } });
     mockFetch({
-      economics: SINGLE_STEP_ECON,
+      salesFunnels: SINGLE_STEP_FUNNELS,
       leads: [negLead, ...LENS_LEADS],
       timestamps: { "neg@x.com": { firstContactedAt: "2026-06-20T09:00:00.000Z", firstClickedAt: "2026-06-20T10:00:00.000Z", firstRepliedAt: "2026-06-21T09:00:00.000Z" } },
     });
@@ -758,7 +757,7 @@ describe("GET /features/:featureSlug/revenue", () => {
   });
 
   it("lens=positive_replies — reply leads; prob == replyToPaidClient; revenue == (rate/100)·LTR (single step)", async () => {
-    mockFetch({ economics: SINGLE_STEP_ECON, leads: LENS_LEADS });
+    mockFetch({ salesFunnels: SINGLE_STEP_FUNNELS, leads: LENS_LEADS });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&lens=positive_replies").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.leads.map((l: any) => l.leadId).sort()).toEqual(["lb", "lr"]); // reply leads
@@ -770,23 +769,26 @@ describe("GET /features/:featureSlug/revenue", () => {
   });
 
   it("camelCase lens spelling (positiveReply) is accepted", async () => {
-    mockFetch({ economics: SINGLE_STEP_ECON, leads: LENS_LEADS });
+    mockFetch({ salesFunnels: SINGLE_STEP_FUNNELS, leads: LENS_LEADS });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&lens=positiveReply").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.leads.every((l: any) => l.conversionProbabilityPct === 20)).toBe(true);
   });
 
-  it("single-step lens with the rate field ABSENT → fail loud (502), not NaN / zero", async () => {
-    mockFetch({ economics: ECONOMICS, leads: LENS_LEADS }); // no visitToPaidClientPct on the wire
+  it("single-step lens on an offer that walks no DIRECT funnel → its rate is 0, every lead worth 0 (never a 502, never an average)", async () => {
+    mockFetch({ economics: ECONOMICS, leads: LENS_LEADS }); // no sales_from_website funnel → visit → paid is not walked
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&lens=website_visits").set(AUTH);
-    expect(res.status).toBe(502);
+    expect(res.status).toBe(200);
+    for (const lead of res.body.leads) expect(lead.conversionProbabilityPct).toBe(0);
+    expect(res.body.headline.totalPipelineUsd).toBe(0);
   });
 
   it("a brand brand-service refuses for this org (403) is a named 404 about the request, never a 502", async () => {
     mockFetch({ economics: ECONOMICS, leads: [] });
     const impl = vi.mocked(globalThis.fetch).getMockImplementation()!;
     vi.mocked(globalThis.fetch).mockImplementation(async (input, init) =>
-      String(typeof input === "string" ? input : (input as URL).toString()).includes("/sales-economics-effective")
+      // The ownership check (lib/brand-ownership.ts): brand-service's org-scoped leg-rates read.
+      String(typeof input === "string" ? input : (input as URL).toString()).includes("/leg-rates")
         ? new Response(JSON.stringify({ error: "Brand does not belong to the caller's org" }), { status: 403 })
         : impl(input, init),
     );
@@ -872,9 +874,9 @@ describe("GET /features/:featureSlug/revenue", () => {
   it("degrades to dateless (still 200, pipeline correct) when email-gateway /orgs/status fails", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : (input as any).url;
-      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
+      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: legCampaignRows(declaredFromEconomics(ECONOMICS)) }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       if (url.includes("/stats/costs")) return new Response(costGroups(0), { status: 200 });
-      if (url.includes("/sales-economics-effective")) return new Response(JSON.stringify({ economics: ECONOMICS, source: "user" }), { status: 200 });
+      if (url.includes("/offer-economics")) return new Response(JSON.stringify(offerEconomicsFromDeclared(declaredFromEconomics(ECONOMICS))), { status: 200 });
       if (url.includes("/orgs/leads")) return new Response(JSON.stringify({ leads: HAPPY_LEADS }), { status: 200 });
       if (url.includes("/orgs/status")) return new Response("boom", { status: 502 });
       return new Response("{}", { status: 200 });
@@ -890,9 +892,9 @@ describe("GET /features/:featureSlug/revenue", () => {
   it("502 when lead-service fails", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : (input as any).url;
-      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
+      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: legCampaignRows(declaredFromEconomics(ECONOMICS)) }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       if (url.includes("/stats/costs")) return new Response(costGroups(0), { status: 200 });
-      if (url.includes("/sales-economics-effective")) return new Response(JSON.stringify({ economics: ECONOMICS, source: "user" }), { status: 200 });
+      if (url.includes("/offer-economics")) return new Response(JSON.stringify(offerEconomicsFromDeclared(declaredFromEconomics(ECONOMICS))), { status: 200 });
       if (url.includes("/orgs/leads")) return new Response("boom", { status: 500 });
       return new Response("{}", { status: 200 });
     });
@@ -904,9 +906,9 @@ describe("GET /features/:featureSlug/revenue", () => {
     let leadsUrl: string | undefined;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
-      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
+      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: legCampaignRows(declaredFromEconomics(ECONOMICS)) }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       if (url.includes("/stats/costs")) return new Response(costGroups(0), { status: 200 });
-      if (url.includes("/sales-economics-effective")) return new Response(JSON.stringify({ economics: ECONOMICS, source: "user" }), { status: 200 });
+      if (url.includes("/offer-economics")) return new Response(JSON.stringify(offerEconomicsFromDeclared(declaredFromEconomics(ECONOMICS))), { status: 200 });
       if (url.includes("/orgs/leads")) {
         leadsUrl = url;
         return new Response(JSON.stringify({ leads: HAPPY_LEADS }), { status: 200 });
@@ -965,9 +967,9 @@ describe("GET /features/:featureSlug/revenue", () => {
   it("502 (fail-loud) when runs-service /v1/stats/costs fails", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : (input as any).url;
-      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
+      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: legCampaignRows(declaredFromEconomics(ECONOMICS)) }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       if (url.includes("/stats/costs")) return new Response("boom", { status: 500 });
-      if (url.includes("/sales-economics-effective")) return new Response(JSON.stringify({ economics: ECONOMICS, source: "user" }), { status: 200 });
+      if (url.includes("/offer-economics")) return new Response(JSON.stringify(offerEconomicsFromDeclared(declaredFromEconomics(ECONOMICS))), { status: 200 });
       if (url.includes("/orgs/leads")) return new Response(JSON.stringify({ leads: HAPPY_LEADS }), { status: 200 });
       return new Response("{}", { status: 200 });
     });
@@ -1004,14 +1006,11 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.leads[0].tags).toEqual(["reply"]);
   });
 
-  // ── the pipeline EV prices on the brand's DECLARED sales funnel ───────────
+  // ── the pipeline EV prices on the OFFER's terms, and nothing else ───────────
   //
-  // A brand-level conversion rate no longer carries meaning — rates exist PER FUNNEL, and the
-  // brand-wide record survives only as the fallthrough for a brand that declared none. The spend
-  // block's cost columns and both sibling surfaces already price this way; the EV did not, so one
-  // brand + one funnel + one moment printed two prices. Same precedence, same merge, one price.
-  //
-  // Brand-wide ECONOMICS: replyToMeeting 40% × meetingToClose 30% = 12% → a reply is worth $120.
+  // Rates exist PER FUNNEL (each leg's effective rate) and the lifetime revenue is the OFFER's; the
+  // brand-level sales economics are no input at all (owner 2026-10-05). A term no priced funnel states
+  // is 0, never a brand-wide value.
 
   const declaredFunnel = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
     funnelKey: "sales_meetings_from_conversation",
@@ -1019,7 +1018,8 @@ describe("GET /features/:featureSlug/revenue", () => {
     name: "Meetings from conversations",
     steps: ["Positive reply", "Meeting booked", "Meeting attended", "Paid client"],
     rates: {},
-    lifetimeRevenueUsd: null,
+    // The offer's stated lifetime revenue — the ONLY one a read prices on.
+    lifetimeRevenueUsd: 1000,
     destinationUrl: null,
     bookingUrl: null,
     updatedAt: "2026-08-01T00:00:00Z",
@@ -1029,7 +1029,7 @@ describe("GET /features/:featureSlug/revenue", () => {
   const REPLY_ONLY = () =>
     leadRow({ leadId: "lr", email: "reply@x.com", replied: true, replyClassification: "positive", lead: { firstName: "Re", lastName: "Ply", photoUrl: null, organization: { id: "or", name: "OrgR", logoUrl: null } } });
 
-  it("prices each reply on the DECLARED funnel's own terms, not the brand-wide row", async () => {
+  it("prices each reply on the funnel's own terms, nothing brand-wide underneath", async () => {
     mockFetch({
       economics: ECONOMICS,
       leads: [REPLY_ONLY()],
@@ -1039,20 +1039,20 @@ describe("GET /features/:featureSlug/revenue", () => {
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.headline.totalPipelineUsd).toBe(350); // 1000 × 0.35 — NOT the brand-wide $120
+    expect(res.body.headline.totalPipelineUsd).toBe(350); // 1000 × 0.35
   });
 
-  it("falls through to the brand-wide record for a term the funnel does not state", async () => {
+  it("a term no priced funnel states is 0 — never a brand-wide fallthrough (owner 2026-10-05)", async () => {
     mockFetch({
       economics: ECONOMICS,
       leads: [REPLY_ONLY()],
       timestamps: { "reply@x.com": { firstRepliedAt: daysAgo(30) } },
-      // Only the reply→meeting leg is declared; meeting→close falls through to the brand-wide 30%.
+      // Only the reply→meeting leg is stated; meeting→close is not, and no brand-wide 30% stands in.
       salesFunnels: [declaredFunnel({ rates: { replyToMeetingPct: 50 } })],
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.headline.totalPipelineUsd).toBe(150); // 1000 × 0.50 × 0.30 — never 0, never half a funnel
+    expect(res.body.headline.totalPipelineUsd).toBe(0); // 1000 × 0.50 × 0 — the unstated close is not walked
   });
 
   it("composes the meeting funnel: a declared show-up rate is NOT a free 100%", async () => {
@@ -1107,48 +1107,40 @@ describe("GET /features/:featureSlug/revenue", () => {
       leadRow({ leadId: "lr", email: "reply@x.com", replied: true, replyClassification: "positive", lead: { firstName: "Re", lastName: "Ply", photoUrl: null, organization: { id: "or", name: "OrgR", logoUrl: null } } }),
       leadRow({ leadId: "lc", email: "click@x.com", clicked: true, lead: { firstName: "Cl", lastName: "Ick", photoUrl: null, organization: { id: "oc", name: "OrgC", logoUrl: null } } }),
     ];
-    // Declares ONLY the conversation funnel: the reply is a leg, the website visit is not.
-    mockFetch({ economics: ECONOMICS, leads: CLICK_AND_REPLY, salesFunnels: [declaredFunnel({ rates: {} })] });
+    const CONVERSATION = declaredFunnel({ rates: { replyToMeetingPct: 40, meetingToClosePct: 30 } });
+    const WEBSITE = declaredFunnel({ funnelKey: "website_purchases", name: "Website purchases", steps: ["Website visit", "Signup", "Paid client"], rates: { visitToSignupPct: 20, signupToPaidClientPct: 10 } });
+    // Walks ONLY the conversation funnel: the reply is a leg, the website visit is not.
+    mockFetch({ leads: CLICK_AND_REPLY, salesFunnels: [CONVERSATION] });
     const conversation = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(conversation.status).toBe(200);
-    expect(conversation.body.headline.totalPipelineUsd).toBe(120); // the reply alone, brand-wide 12%
+    expect(conversation.body.headline.totalPipelineUsd).toBe(120); // the reply alone, 40% × 30%
     expect(conversation.body.organizations.map((o: any) => o.orgId)).toEqual(["or"]);
 
     // Declares ONLY a website funnel: now the visit is a leg and the reply is not.
-    mockFetch({
-      economics: ECONOMICS,
-      leads: CLICK_AND_REPLY,
-      salesFunnels: [declaredFunnel({ funnelKey: "website_purchases", name: "Website purchases", steps: ["Website visit", "Signup", "Paid client"], rates: {} })],
-    });
+    mockFetch({ leads: CLICK_AND_REPLY, salesFunnels: [WEBSITE] });
     const website = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(website.status).toBe(200);
-    expect(website.body.headline.totalPipelineUsd).toBeCloseTo(34.7, 5); // the click alone
+    // The click alone, on ITS chain (20% × 10%): the meeting route is not walked by this funnel.
+    expect(website.body.headline.totalPipelineUsd).toBeCloseTo(20, 5);
     expect(website.body.organizations.map((o: any) => o.orgId)).toEqual(["oc"]);
 
     // Declares BOTH: a brand that declared several funnels is priced on ALL of their legs.
-    mockFetch({
-      economics: ECONOMICS,
-      leads: CLICK_AND_REPLY,
-      salesFunnels: [
-        declaredFunnel({ rates: {} }),
-        declaredFunnel({ funnelKey: "website_purchases", name: "Website purchases", steps: ["Website visit", "Signup", "Paid client"], rates: {} }),
-      ],
-    });
+    mockFetch({ leads: CLICK_AND_REPLY, salesFunnels: [CONVERSATION, WEBSITE] });
     const both = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(both.status).toBe(200);
-    expect(both.body.headline.totalPipelineUsd).toBeCloseTo(154.7, 5); // 120 + 34.7, two distinct orgs
+    expect(both.body.headline.totalPipelineUsd).toBeCloseTo(140, 5); // 120 + 20, two distinct orgs
   });
 
-  it("a brand that declared NO funnel is priced exactly as before (brand-wide record)", async () => {
+  it("a brand stating NO offer terms reads a NULL pipeline with its reason — no brand-wide record prices it", async () => {
     mockFetch({
-      economics: ECONOMICS,
       leads: [REPLY_ONLY()],
       timestamps: { "reply@x.com": { firstRepliedAt: daysAgo(30) } },
-      // no salesFunnels → brand-service 404s, the shape a brand with no declaration produces
+      // no salesFunnels → brand-service states no offer economics
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
-    expect(res.body.headline.totalPipelineUsd).toBe(120); // the brand-wide 12%
+    expect(res.body.headline.totalPipelineUsd).toBeNull();
+    expect(res.body.headline.unpricedReason).toBe("no_priced_funnel");
   });
 
   // ── post-engagement stages + close-win (manual-qualification enrichment) ───
@@ -1221,9 +1213,9 @@ describe("GET /features/:featureSlug/revenue", () => {
   it("degrades (still 200, pipeline correct) when the observed step statements fail", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : (input as any).url;
-      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
+      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: legCampaignRows(declaredFromEconomics(ECONOMICS)) }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       if (url.includes("/stats/costs")) return new Response(costGroups(0), { status: 200 });
-      if (url.includes("/sales-economics-effective")) return new Response(JSON.stringify({ economics: ECONOMICS, source: "user" }), { status: 200 });
+      if (url.includes("/offer-economics")) return new Response(JSON.stringify(offerEconomicsFromDeclared(declaredFromEconomics(ECONOMICS))), { status: 200 });
       if (url.includes("/public/stats")) return new Response(JSON.stringify(PLATFORM_STATS), { status: 200 });
       if (url.includes("/converted-leads")) return new Response("boom", { status: 502 });
       if (url.includes("/orgs/leads")) return new Response(JSON.stringify({ leads: HAPPY_LEADS }), { status: 200 });
@@ -1273,14 +1265,14 @@ describe("GET /features/:featureSlug/revenue", () => {
     // Committed 10000c (= 6000 billed + 4000 holds). lead-service serves real counts: 4 signups, 2 meetings.
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
-      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
+      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: legCampaignRows(declaredFromEconomics(ECONOMICS)) }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "Content-Type": "application/json" } });
       if (url.includes("/conversion-counts")) return json({ counts: { signup: 4, meeting_booked: 2, form_submission: 7, sale: 1 } });
       if (url.includes("/stats/costs")) {
         if (url.includes("startedAfter")) return json({ groups: [{ dimensions: {}, totalCostInUsdCents: "0", actualCostInUsdCents: "0", runCount: 0 }] });
         return json({ groups: [{ dimensions: { costName: "email-send-step-1" }, totalCostInUsdCents: "10000", actualCostInUsdCents: "6000", runCount: 0 }] });
       }
-      if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
+      if (url.includes("/offer-economics")) return json(offerEconomicsFromDeclared(declaredFromEconomics(ECONOMICS)));
       if (url.includes("/public/stats")) return json(PLATFORM_STATS);
       if (url.includes("/orgs/leads")) return json({ leads: HAPPY_LEADS });
       if (url.includes("/converted-leads")) return json({ event: "", outcomes: [] });
@@ -1372,13 +1364,13 @@ describe("GET /features/:featureSlug/revenue", () => {
     // billed; provisioned… the holds. ROI/CAC ride ACTUAL only.
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
-      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
+      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: legCampaignRows(declaredFromEconomics(ECONOMICS)) }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "Content-Type": "application/json" } });
       if (url.includes("/stats/costs")) {
         if (url.includes("startedAfter")) return json({ groups: [{ dimensions: {}, totalCostInUsdCents: "3000", actualCostInUsdCents: "2000", runCount: 0 }] });
         return json({ groups: [{ dimensions: { costName: "email-send-step-1" }, totalCostInUsdCents: "10000", actualCostInUsdCents: "6000", runCount: 0 }] });
       }
-      if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
+      if (url.includes("/offer-economics")) return json(offerEconomicsFromDeclared(declaredFromEconomics(ECONOMICS)));
       if (url.includes("/public/stats")) return json(PLATFORM_STATS);
       if (url.includes("/orgs/leads")) return json({ leads: HAPPY_LEADS });
       if (url.includes("/converted-leads")) return json({ event: "", outcomes: [] });
@@ -1430,7 +1422,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     // Distinct cost-name groups for the source breakdown; the today call (startedAfter set) returns a subset.
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
-      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
+      if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: legCampaignRows(declaredFromEconomics(ECONOMICS)) }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
       const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "Content-Type": "application/json" } });
       if (url.includes("/stats/costs")) {
         if (url.includes("startedAfter")) {
@@ -1442,7 +1434,7 @@ describe("GET /features/:featureSlug/revenue", () => {
           { dimensions: { costName: "zero-line" }, totalCostInUsdCents: "0", actualCostInUsdCents: "0", runCount: 0, minStartedAt: null, maxStartedAt: null },
         ] });
       }
-      if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
+      if (url.includes("/offer-economics")) return json(offerEconomicsFromDeclared(declaredFromEconomics(ECONOMICS)));
       if (url.includes("/public/stats")) return json(PLATFORM_STATS);
       if (url.includes("/orgs/leads")) return json({ leads: HAPPY_LEADS });
       if (url.includes("/converted-leads")) return json({ event: "", outcomes: [] });
@@ -1501,7 +1493,7 @@ describe("GET /features/:featureSlug/revenue", () => {
         await allInFlight; // sequential code deadlocks here; parallel code sails through
       }
       if (url.includes("/stats/costs")) return new Response(costGroups(0), { status: 200, headers: { "Content-Type": "application/json" } });
-      if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
+      if (url.includes("/offer-economics")) return json(offerEconomicsFromDeclared(declaredFromEconomics(ECONOMICS)));
       if (url.includes("/public/stats")) return json(PLATFORM_STATS);
       if (url.includes("/orgs/leads")) return json({ leads: HAPPY_LEADS });
       if (url.includes("/converted-leads")) return json({ event: "", outcomes: [] });
@@ -1526,10 +1518,12 @@ type CampaignFixture = { costCents?: number; leads?: unknown[]; timestamps?: Tim
  * returns one group per campaign; every other call is keyed by the x-campaign-id header so the
  * standalone ?campaignId= call and the grouped sub-computation hit byte-identical downstream data.
  */
-function mockFetchGrouped(opts: { economics?: unknown; economicsAverage?: unknown; platformStats?: unknown; campaigns: Record<string, CampaignFixture> }): void {
+function mockFetchGrouped(opts: { economics?: unknown; platformStats?: unknown; campaigns: Record<string, CampaignFixture> }): void {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
-    if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: [] }), { status: 200, headers: { "Content-Type": "application/json" } }); // campaign legs: none maturing (lib/roi-maturity.ts)
+    // The offer's terms are the ONLY pricing input: the campaigns perform the entry legs of the funnels
+    // stating them (none maturing: no runs, lib/roi-maturity.ts).
+    if (url.includes("/campaigns?")) return new Response(JSON.stringify({ campaigns: opts.economics ? legCampaignRows(declaredFromEconomics(opts.economics as Record<string, unknown>)) : [] }), { status: 200, headers: { "Content-Type": "application/json" } });
     const cid = (init?.headers as Record<string, string> | undefined)?.["x-campaign-id"];
 
     if (url.includes("/stats/costs")) {
@@ -1543,14 +1537,9 @@ function mockFetchGrouped(opts: { economics?: unknown; economicsAverage?: unknow
       // Per-campaign cost: groupBy=workflowSlug + x-campaign-id → single group with that campaign's cost.
       return new Response(costGroups(cid ? (opts.campaigns[cid]?.costCents ?? 0) : 0), { status: 200, headers: { "Content-Type": "application/json" } });
     }
-    if (url.includes("/sales-economics-effective")) {
-      const effective =
-        opts.economics != null
-          ? { economics: opts.economics, source: "user" }
-          : opts.economicsAverage != null
-            ? { economics: opts.economicsAverage, source: "cross-brand-average" }
-            : { economics: null, source: null };
-      return new Response(JSON.stringify(effective), { status: 200, headers: { "Content-Type": "application/json" } });
+    if (url.includes("/offer-economics")) {
+      if (!opts.economics) return new Response("no statements", { status: 404, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify(offerEconomicsFromDeclared(declaredFromEconomics(opts.economics as Record<string, unknown>))), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     if (url.includes("/public/stats")) {
       return new Response(JSON.stringify(opts.platformStats ?? PLATFORM_STATS), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -1666,13 +1655,15 @@ describe("GET /features/:featureSlug/revenue?groupBy=campaignId", () => {
     expect(res.status).toBe(200);
     expect(res.body.groups).toHaveLength(3);
 
-    // brand-service economics are brand-scoped (identical across campaigns) → fetched once and
-    // shared, not once-per-campaign. Pre-#perf this was 3 calls (one per group).
-    const econCalls = vi.mocked(globalThis.fetch).mock.calls.filter(([input]) => {
+    // The pricing is brand-scoped (identical across campaigns) → resolved ONCE by the route and handed to
+    // every group as its override, never once-per-campaign. The ownership check rides beside that one
+    // read, plus once per group's contacted-value cell (a Gold cell in prod; the cache is off here) — a
+    // group pricing itself would add its own on top.
+    const heldCalls = vi.mocked(globalThis.fetch).mock.calls.filter(([input]) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
-      return url.includes("/sales-economics-effective");
+      return url.includes("/leg-rates");
     });
-    expect(econCalls.length).toBe(1);
+    expect(heldCalls.length).toBe(1 + res.body.groups.length);
   });
 
   it("unknown groupBy value falls back to the ungrouped overview response (no groupBy/groups keys)", async () => {

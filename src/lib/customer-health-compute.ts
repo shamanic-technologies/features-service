@@ -26,9 +26,9 @@
  *       cacPct      = spend / pipeline × 100     (= CAC / LTR × 100, by construction — pipeline = conversions × LTR)
  *   - currentCacUsd = (cacPct / 100) × ltrUsd     (the realized cost to acquire one paying customer)
  *   So GREEN's "ROI ≥ 1" ⟺ "CAC ≤ breakeven CAC" ⟺ "%CAC ≤ 100%" — one condition, three views, always coherent.
- *   These are surfaced ONLY when the brand has its OWN saved economics (source="user"); with no own economics
- *   the pipeline would fall back to a cross-brand AVERAGE (an estimate, not the brand's truth), so all
- *   economics-derived fields are explicit null instead — never an averaged ROI dressed as the brand's own.
+ *   Priced exactly as /revenue prices the brand: on the OFFER's terms (its stated lifetime revenue, the
+ *   reading funnels' effective leg rates — `lib/offer-priced-economics.ts`). No priced funnel or no stated
+ *   lifetime revenue → every economics-derived field is explicit null, never an average.
  *
  * FAIL LOUD. No fabricated defaults, no silent fallback. Missing-by-design signals are explicit null (see
  * `notTrackedYet`). A stale feature-membership whose brand the forwarded org does not actually own
@@ -39,7 +39,7 @@
 import { fetchFeatureMemberships, type FeatureMembership } from "./feature-memberships-client.js";
 import { buildAccountsAudit, type AccountsAudit, type AccountsDeps, type AccountRow, type AccountRowStatus, type UnreadOrgRead } from "./accounts-compute.js";
 import { buildActiveUsersByUser, type ActiveUsersByUser, type ActiveUserRow } from "./active-users-by-user-compute.js";
-import { fetchBrandSavedEconomics, BrandOwnershipError, type EffectiveEconomics } from "./sales-economics-client.js";
+import { BrandOwnershipError, assertBrandHeld } from "./brand-ownership.js";
 import { fetchConversionCounts, type ConversionCounts } from "./conversion-counts-client.js";
 import { fetchDashboardReturnsByOrg, type DashboardReturnSignal } from "./posthog-client.js";
 import {
@@ -55,9 +55,9 @@ import { getFunnel, type SalesEconomics } from "./funnel-registry.js";
 import type { Goal } from "./goals.js";
 import { SALES_FUNNEL_GOAL_ECHO, type SalesFunnelKey } from "./sales-funnels.js";
 import { primaryDeclaredFunnel } from "./brand-funnels.js";
-import { fetchReadingFunnelKeys } from "./reading-funnels.js";
 import type { Request } from "express";
 import { computeFeatureRevenue, type DownstreamHeaders } from "../routes/revenue.js";
+import { fetchFunnelPricedEconomics, type FunnelPricedEconomics } from "./offer-pricing.js";
 import {
   computeWorkflowProjection,
   funnelToProjectionInputs,
@@ -73,12 +73,12 @@ export const AUDIENCE_NEAR_EXHAUSTED_PCT = 80;
 
 export type HealthBadge = "green" | "yellow" | "red";
 
-/** The economics slice of a row, computed from the revenue engine (own-economics only). */
+/** The economics slice of a row, computed from the revenue engine (priced economics only). */
 interface CurrentEconomics {
   /** COMMITTED acquisition spend in USD — the single basis roiMultiple/cacPct/currentCacUsd ride. */
   committedSpendUsd: number | null;
   /** Billed-only acquisition spend, USD. TRANSITIONAL — reported for the staff console's migration,
-   * divided by nowhere. null when not computed (no own economics). */
+   * divided by nowhere. null when not computed (no priced economics). */
   realizedSpendUsd: number | null;
   /** Expected pipeline in USD (revenue engine EV total). null when incomputable. */
   expectedPipelineUsd: number | null;
@@ -227,13 +227,13 @@ export interface CustomerHealthRow {
   conversionTracker: ConversionTracker;
 
   // ── Economics ────────────────────────────────────────────────────────────────
-  /** Breakeven CAC (dollars) = the max acquisition cost before unprofitable = brand LTR. null with no own economics. */
+  /** Breakeven CAC (dollars) = the max acquisition cost before unprofitable = brand LTR. null with no priced economics. */
   breakevenCacUsd: number | null;
   /** Lifetime revenue per customer (LTR / LTV), USD. Same value as breakevenCacUsd; named for clarity. */
   ltrUsd: number | null;
-  /** Full conversion economics (all rates + LTR) — the brand's OWN saved set, or null. Passthrough. */
+  /** Full conversion economics (all rates + LTR) — the offer's terms /revenue prices on, or null. Passthrough. */
   economics: SalesEconomics | null;
-  /** CAC / ROI / %CAC from COMMITTED spend + measured outcomes (own-economics only). */
+  /** CAC / ROI / %CAC from COMMITTED spend + measured outcomes (priced economics only). */
   currentEconomics: CurrentEconomics;
 
   // ── Audiences ──────────────────────────────────────────────────────────────
@@ -294,20 +294,15 @@ export interface CustomerHealthDeps {
   featureMemberships: (csv: string) => Promise<FeatureMembership[]>;
   accountsAudit: (csv: string, now: Date) => Promise<AccountsAudit>;
   activeUsersByUser: (csv: string, now: Date) => Promise<ActiveUsersByUser>;
-  /** A (org, brand) pair's own saved economics. The org is part of the question — a brand id is shared
-   * by every org claiming the same domain — so it is passed, never resolved downstream. NO GOAL: what a
-   * brand sells through is its declared funnel set (`declaredFunnels`), not a defaulted column. */
-  savedEconomics: (brandId: string, orgId: string) => Promise<{ economics: SalesEconomics | null }>;
-  /** The SALES FUNNELS this (org, brand) declared it sells through, catalogue order. Fail-loud; the
-   * builder wraps it soft (an unreadable / empty declaration → `[]`, and every funnel-keyed field on the
-   * row then reads null rather than being computed on a substituted funnel). */
-  declaredFunnels: (brandId: string, orgId: string) => Promise<SalesFunnelKey[]>;
+  /** A (org, brand) pair's pricing, read exactly as /revenue reads it: the funnels its campaigns walk
+   * (`pricedFunnelKeys`, catalogue order) and the OFFER's terms on them (`economics`, null with a reason
+   * when nothing is priced). The org is part of the question — a brand id is shared by every org
+   * claiming the same domain. Soft on an unreadable statement (`[]` + null economics); a stale
+   * membership (`BrandOwnershipError`) throws. */
+  pricedEconomics: (brandId: string, orgId: string) => Promise<FunnelPricedEconomics>;
   conversionCounts: (brandId: string) => Promise<ConversionCounts>;
-  /** Realized ROI/spend for one (org, brand) via the revenue engine. Called ONLY with own economics
-   * present. `declaredFunnels` names the funnels whose LEGS carry expected value — a signal that is not
-   * a step of one of them is not pipeline. `[]` (an unreadable declaration) prices every conversion
-   * leg, the same degrade the Overview takes. */
-  brandRevenue: (featureSlug: string, brandId: string, orgId: string, economics: SalesEconomics, declaredFunnels: SalesFunnelKey[]) => Promise<BrandRevenueResult>;
+  /** Realized ROI/spend for one (org, brand) via the revenue engine. Called ONLY with priced economics. */
+  brandRevenue: (featureSlug: string, brandId: string, orgId: string, priced: FunnelPricedEconomics) => Promise<BrandRevenueResult>;
   /** Ranked audience evidence for one (org, brand, sales funnel). null when the feature is unknown (404). */
   audienceStats: (featureSlug: string, brandId: string, orgId: string, funnel: SalesFunnelKey) => Promise<AudienceStatsEnvelope | null>;
   /** Each ACTIVE audience's pool (size + still servable) for one (org, brand), from human-service. Fail-soft: null when unreadable. */
@@ -343,22 +338,19 @@ const REAL_DEPS: CustomerHealthDeps = {
   featureMemberships: fetchFeatureMemberships,
   accountsAudit: (csv, now) => customerHealthAccountsAudit(csv, now),
   activeUsersByUser: buildActiveUsersByUser,
-  savedEconomics: fetchBrandSavedEconomics,
-  // Wave C1: the funnels the brand's campaigns READ (their legs), never a declared set.
-  declaredFunnels: fetchReadingFunnelKeys,
+  // The funnels the brand's campaigns READ (their legs) and the offer's terms on them — /revenue's own read.
+  // The ownership check rides beside it: a stale membership throws `BrandOwnershipError` (row skipped).
+  pricedEconomics: async (brandId, orgId) =>
+    (await Promise.all([fetchFunnelPricedEconomics(brandId, orgId, undefined), assertBrandHeld(brandId, { orgId })]))[0],
   conversionCounts: fetchConversionCounts,
   dashboardReturns: fetchDashboardReturnsByOrg,
   budgetHistory: fetchBudgetChangeHistory,
   pauseHistory: fetchPauseHistory,
-  brandRevenue: async (featureSlug, brandId, orgId, economics, declaredFunnels) => {
+  brandRevenue: async (featureSlug, brandId, orgId, priced) => {
     const funnel = getFunnel(featureSlug);
     const headers: DownstreamHeaders = { orgId, featureSlug };
-    // own economics present → source "user" (the engine skips its own effective fetch + never averages).
-    const economicsOverride: EffectiveEconomics = { economics, source: "user" };
-    const body = await computeFeatureRevenue(featureSlug, brandId, undefined, funnel, headers, undefined, {
-      economics: economicsOverride,
-      pricedFunnelKeys: declaredFunnels,
-    });
+    // The pricing already read for the row rides as the override, so the engine reads it once.
+    const body = await computeFeatureRevenue(featureSlug, brandId, undefined, funnel, headers, undefined, priced);
     return {
       committedCostUsd: body.costEconomics.committedCostUsd,
       actualCostUsd: body.costEconomics.actualCostUsd,
@@ -635,23 +627,17 @@ export async function buildCustomerHealthBoard(
     let ownershipSkipped = false;
 
     try {
-      // Light reads first: this (org, brand) pair's own economics, the funnels it DECLARED it sells
-      // through, and observed conversion counts. The declared set is wrapped soft: a brand whose
-      // declaration is missing or unreadable is still LISTED on the board (status, budget, balance,
+      // Light reads first: this (org, brand) pair's pricing (the funnels its campaigns walk + the offer's
+      // terms on them, soft: an unreadable statement is `[]` + null economics) and observed conversion
+      // counts. A brand with nothing priced is still LISTED on the board (status, budget, balance,
       // recency all stand) with every funnel-keyed field null — the gap is surfaced, never filled.
-      const [saved, funnels, counts] = await Promise.all([
-        deps.savedEconomics(account.brandId, account.orgId),
-        deps.declaredFunnels(account.brandId, account.orgId).catch((error): SalesFunnelKey[] => {
-          console.warn(
-            `[features-service] customer-health declared-funnels soft-degrade (org=${account.orgId} brand=${account.brandId}): ${(error as Error).message}`,
-          );
-          return [];
-        }),
+      const [priced, counts] = await Promise.all([
+        deps.pricedEconomics(account.brandId, account.orgId),
         deps.conversionCounts(account.brandId),
       ]);
-      economics = saved.economics;
-      declaredFunnels = funnels;
-      primaryFunnel = primaryDeclaredFunnel(funnels);
+      economics = priced.economics.economics;
+      declaredFunnels = priced.pricedFunnelKeys;
+      primaryFunnel = primaryDeclaredFunnel(declaredFunnels);
       conversionCounts = counts;
 
       if (featureSlug) {
@@ -660,8 +646,8 @@ export async function buildCustomerHealthBoard(
         const funnelForAudience: SalesFunnelKey = primaryFunnel ?? "sales_meetings_from_website";
         const [audienceRes, revenueRes, workflowRes] = await Promise.all([
           deps.audienceStats(featureSlug, account.brandId, account.orgId, funnelForAudience),
-          // Realized ROI only with the brand's OWN economics (else pipeline would be a cross-brand average).
-          economics ? deps.brandRevenue(featureSlug, account.brandId, account.orgId, economics, declaredFunnels) : Promise.resolve<BrandRevenueResult | null>(null),
+          // Realized ROI only with priced economics (the offer's terms) — never an average.
+          economics ? deps.brandRevenue(featureSlug, account.brandId, account.orgId, priced) : Promise.resolve<BrandRevenueResult | null>(null),
           // Best workflow needs a funnel the brand actually declared — it selects which outcome's cost is
           // being minimised, and the two meeting funnels do not have the same answer.
           primaryFunnel ? deps.workflowProjection(featureSlug, account.brandId, account.orgId, primaryFunnel) : Promise.resolve<WorkflowProjectionResponse | null>(null),

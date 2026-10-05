@@ -7,7 +7,8 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
-import { fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
+import { economicsFromTerms } from "../lib/offer-priced-economics.js";
+import { fetchFunnelPricedEconomics } from "../lib/offer-pricing.js";
 import { projectOutcomeCosts, singleStepRateDecimal, formSubmissionRatesDecimal, orP, type ProjectionEconomics, type SalesEconomics } from "../lib/funnel-registry.js";
 import { projectedCostPerOutcome } from "../lib/cost-engine.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
@@ -21,7 +22,7 @@ import {
   SeveralOffersDeclaredError,
   OfferNotOfBrandError,
 } from "../lib/sales-funnels-client.js";
-import { declaredEconomicsForFunnel, declaredFunnelsToRank, mergeFunnelEconomics } from "../lib/declared-funnels.js";
+import { declaredEconomicsForFunnel, declaredFunnelsToRank } from "../lib/declared-funnels.js";
 import {
   FUNNEL_LEG_KEYS,
   funnelLeg,
@@ -1354,8 +1355,8 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
     // opt-in param, and without re-running the fan-out. See "economics is never cached" below.
     const identity: Identity = { orgId, userId, runId, featureSlug: headerFeatureSlug };
 
-    // The basis funnel's own terms, merged over the brand's effective economics. Set only on a LEG
-    // read (priced through one of the funnels the brand's leads walk); the goal path takes no extra read.
+    // The basis funnel's own offer terms (its effective leg rates, the offer's lifetime revenue). Set only
+    // on a LEG read (priced through one of the funnels the brand's leads walk).
     let funnelEconomics: Partial<SalesEconomics> | null = null;
     // THE CAMPAIGN'S IDENTITY, resolved BEFORE the declared-funnel read below — it is what names the
     // OFFER that read is priced on. A campaign as a customer knows it is (org, brand, sales funnel,
@@ -1503,11 +1504,15 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
           return { billed, vendor, unpriced };
         },
       });
-    const [evidenceSet, effective, triggerRuns, contentModels, legAssignments, audienceAvailability] = await Promise.all([
+    const [evidenceSet, goalEconomics, triggerRuns, contentModels, legAssignments, audienceAvailability] = await Promise.all([
       costBasis === "actual"
         ? actualEvidence()
         : evidenceOn(pricing).then((billed) => ({ billed, vendor: null, unpriced: null })),
-      fetchEffectiveEconomics(brandId, identity),
+      // A GOAL-keyed read prices on the offer's terms over every funnel the scope walks; a LEG read
+      // prices on its basis funnel's own terms below, so it reads nothing here.
+      legKey
+        ? Promise.resolve(null)
+        : fetchFunnelPricedEconomics(brandId, orgId, undefined, scopeOfferId).then((priced) => priced.economics.economics),
       campaignScopeIds && picksLimit > 0
         ? fetchCampaignTriggerRunsSoft(campaignScopeIds, { orgId, userId, runId, brandId }, picksLimit)
         : Promise.resolve(null),
@@ -1536,7 +1541,6 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
         featureSlug,
         funnels: declaredFunnelsToRank(declaredFunnels).filter((f) => legCandidates.includes(f.funnelKey)),
         evidence,
-        economics: effective.economics,
         // The leg is priced through the funnel that is best AT WHAT THE CALLER ASKED FOR. Ranking the
         // basis funnel on return while ranking the workflows on conversion rate would make one body
         // answer two questions at once, which is the contradiction this parameter exists to remove.
@@ -1571,7 +1575,13 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
     // WHICH rates walk the observed signal forward to that step; it no longer decides which step is
     // being bought. Resolved here, once the basis funnel and the brand's merged economics are known.
     let legTerms: LegOutcomeTerms | null = null;
-    const mergedEconomics = mergeFunnelEconomics(effective.economics, funnelEconomics);
+    // Offer terms only (owner 2026-10-05): the leg's basis funnel on a leg read, every priced funnel on a
+    // goal read. Null (no stated lifetime revenue / nothing priced) → rows with no projected figure.
+    const mergedEconomics = legKey
+      ? legBasisFunnelKey
+        ? economicsFromTerms(funnelEconomics, [legBasisFunnelKey]).economics
+        : null
+      : goalEconomics;
     if (legKey && legBasisFunnelKey && mergedEconomics) {
       legTerms = legTermsForFunnel(legKey, legBasisFunnelKey, mergedEconomics);
     }
@@ -1659,7 +1669,6 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
           featureSlug,
           funnels: declaredFunnelsToRank(declaredFunnels).filter((f) => f.funnelKey === legBasisFunnelKey),
           evidence: vendorEvidence,
-          economics: effective.economics,
           maximize,
           legKey,
         });
@@ -2001,9 +2010,10 @@ export async function computeWorkflowProjection(input: {
   pricing: Pricing;
 }): Promise<WorkflowProjectionResponse> {
   const { featureSlug, brandId, objective, goal, singleStepGoal, formSubmissionGoal, identity, pricing } = input;
-  const [evidence, effective] = await Promise.all([
+  const [evidence, priced] = await Promise.all([
     fetchWorkflowProjectionEvidence({ featureSlug, brandId, identity, pricing }),
-    fetchEffectiveEconomics(brandId, identity),
+    // The offer's terms on the funnels the brand walks, narrowed to the named funnel when there is one.
+    fetchFunnelPricedEconomics(brandId, identity.orgId, input.funnelKey),
   ]);
   return projectFromEvidence({
     featureSlug,
@@ -2014,14 +2024,14 @@ export async function computeWorkflowProjection(input: {
     meetingChannel: input.meetingChannel ?? null,
     ...(input.funnelKey ? { funnelKey: input.funnelKey } : {}),
     evidence,
-    economics: effective.economics,
+    economics: priced.economics.economics,
   });
 }
 
 /**
  * The PURE, economics-DEPENDENT half: derive the goal's 3-grain projection from already-fetched
  * evidence + the brand's economics. No IO, so it runs on EVERY request against LIVE economics — that is
- * what makes a read straight after a sales-economics write reflect the new `lifetimeRevenueUsd` (and
+ * what makes a read straight after an offer-terms write reflect the new `lifetimeRevenueUsd` (and
  * therefore the new `roiMultiple` / `cacPct`) without a cache-bypass param and without re-fanning out.
  * NEVER cache this output keyed on the evidence inputs alone; economics is not one of them.
  */

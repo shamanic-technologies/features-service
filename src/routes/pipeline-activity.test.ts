@@ -31,12 +31,15 @@ process.env.HUMAN_SERVICE_URL = "http://human:3000";
 process.env.HUMAN_SERVICE_API_KEY = "human-key";
 process.env.LEAD_SERVICE_URL = "http://lead:3000";
 process.env.LEAD_SERVICE_API_KEY = "lead-key";
+process.env.CAMPAIGN_SERVICE_URL = "http://campaign:3000";
+process.env.CAMPAIGN_SERVICE_API_KEY = "campaign-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
 process.env.NODE_ENV = "test";
 
 const { db } = await import("../db/index.js");
 const { fetchWithRetry } = await import("../lib/fetch-retry.js");
 const app = (await import("../index.js")).default;
+const { offerEconomicsFromDeclared, legCampaignRows, declaredFromEconomics } = await import("../lib/leg-economics-fixture.js");
 
 const AUTH = {
   "x-api-key": "test-key",
@@ -177,9 +180,16 @@ function mockFetch(opts: {
       }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
 
-    if (url.includes("/sales-economics-effective")) {
-      const economics = "economics" in opts ? opts.economics : ECONOMICS;
-      return new Response(JSON.stringify({ economics, source: economics ? "user" : null }), { status: 200, headers: { "Content-Type": "application/json" } });
+    // The offer's terms are the ONLY pricing input (owner 2026-10-05): `economics` names the terms the
+    // brand's funnels state (`declaredFromEconomics`); `economics: null` = the brand sells nothing priced.
+    const economics = "economics" in opts ? opts.economics : ECONOMICS;
+    const funnels = economics ? declaredFromEconomics(economics as Record<string, unknown>) : null;
+    if (url.includes("/campaigns?")) {
+      return new Response(JSON.stringify({ campaigns: funnels ? legCampaignRows(funnels) : [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("/offer-economics")) {
+      if (!funnels) return new Response("no statements", { status: 404, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify(offerEconomicsFromDeclared(funnels)), { status: 200, headers: { "Content-Type": "application/json" } });
     }
 
     // human-service: audience members (check BEFORE the audiences list — superstring path).
@@ -413,7 +423,7 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
     vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
     // Same brand as the happy path, but the effective economics now carries the visit→form rate (15%).
     mockFetch({
-      economics: { ...ECONOMICS, visitToFormSubmissionPct: 15 },
+      economics: { ...ECONOMICS, visitToFormSubmissionPct: 15, formSubmissionToPaidClientPct: 10 },
       dailyStats: [{ key: "2026-06-17", broadcast: { recipientStats: { contacted: 2, sent: 2, opened: 1, clicked: 1 } } }],
     });
 
@@ -437,7 +447,7 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
     // A form brand (25% rate) with 5 clicks today: the OLD code fabricated actual = 5 × 0.25 = 1.25 ("1").
     // With 0 real tracked conversions the observed .actual must be 0.
     mockFetch({
-      economics: { ...ECONOMICS, visitToFormSubmissionPct: 25 },
+      economics: { ...ECONOMICS, visitToFormSubmissionPct: 25, formSubmissionToPaidClientPct: 10 },
       dailyStats: [{ key: "2026-06-17", broadcast: { recipientStats: { contacted: 20, sent: 20, opened: 10, clicked: 5 } } }],
       conversionByDay: EMPTY_CONVERSION_BY_DAY,
     });
@@ -460,7 +470,7 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
     // Only 1 click today, but 3 real tracked signups + 2 form submissions today → .actual is the REAL count,
     // proving it is NOT derived from clicks (clicks × any rate could never yield 3).
     mockFetch({
-      economics: { ...ECONOMICS, visitToFormSubmissionPct: 15 },
+      economics: { ...ECONOMICS, visitToFormSubmissionPct: 15, formSubmissionToPaidClientPct: 10 },
       dailyStats: [{ key: "2026-06-17", broadcast: { recipientStats: { contacted: 2, sent: 2, opened: 1, clicked: 1 } } }],
       conversionByDay: {
         byDay: {
@@ -495,7 +505,7 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-17T14:30:00.000Z"));
     mockFetch({
-      economics: { ...ECONOMICS, visitToFormSubmissionPct: 15 },
+      economics: { ...ECONOMICS, visitToFormSubmissionPct: 15, formSubmissionToPaidClientPct: 10 },
       dailyStats: [{ key: "2026-06-17", broadcast: { recipientStats: { contacted: 2, sent: 2, opened: 1, clicked: 1 } } }],
       conversionByDayStatus: 500, // lead-service down → soft-degrade to absent
     });
@@ -533,7 +543,12 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
     expect(res.body.days[0].metrics.outreach).toEqual({ actual: 1, expected: 15 });
     expect(res.body.days[1].metrics.outreach).toEqual({ actual: null, expected: 15 });
     expect(res.body.summary.dailyBudgetUsd).toBe(75);
-    expect(vi.mocked(fetchWithRetry).mock.calls.some(([input]) => String(input).includes("/campaigns?"))).toBe(false);
+    // The brand's campaign rows ARE read now — for the LEGS the offer's terms are priced on (owner
+    // 2026-10-05) — and every one of them is STOPPED (`legCampaignRows`), yet the expected volume is the
+    // budget's: a campaign's status never gates the forecast.
+    const campaignReads = vi.mocked(fetchWithRetry).mock.calls.map(([input]) => String(input)).filter((u) => u.includes("/campaigns?"));
+    expect(campaignReads.length).toBeGreaterThan(0);
+    for (const u of campaignReads) expect(new URL(u).searchParams.get("brandId")).toBe("brand-1");
   });
 
   it("falls back to selected workflow rates when no audience has click outcomes", async () => {

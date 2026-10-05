@@ -84,7 +84,7 @@ vi.mock("../lib/workflow-revenue.js", async (importOriginal) => ({
 
 const app = (await import("../index.js")).default;
 const { __resetPublicRevenueCache, __resetPublicCostProjectionCache, __resetPublicStatsCache, __resetSendForecastCache, __resetCostPerOutcomeTrendCache, __resetWorkflowCostPerOutcomeCache, __resetBestModelCostPerOutcomeTrendCache, __awaitWorkflowRecentWarm, __expireWorkflowPayloadCacheForTest, __withTimeoutForTest, __mapWithConcurrencyForTest, __resetCostPerOutcomeLifetimeCache, __resetCostPerOutcomeDistributionCache, __resetFunnelBucketDatasetCache, __expireFunnelBucketFreshCacheForTest, __awaitFunnelBucketRefresh, __resetWorkflowReturnHistoryCache } = await import("./public.js");
-const { BrandOwnershipError } = await import("../lib/sales-economics-client.js");
+const { BrandOwnershipError } = await import("../lib/brand-ownership.js");
 const { isSendingDay } = await import("../lib/send-forecast-compute.js");
 const { projectOutcomeCosts } = await import("../lib/funnel-registry.js");
 
@@ -1197,9 +1197,7 @@ describe("GET /public/stats/best-model-cost-per-outcome-trend", () => {
           { key: "wf-dear", broadcast: { recipientStats: { contacted: 200, sent: 200, delivered: 200, opened: 100, clicked: 0, bounced: 0, repliesPositive: 10, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 } } },
         ] });
       }
-      if (/\/orgs\/brands\/[^/]+\/sales-economics-effective/.test(url)) {
-        return mkJson({ economics: ECON_FULL, source: "user" });
-      }
+      if (/\/orgs\/brands\/[^/]+\/leg-rates/.test(url)) return mkJson({}); // ownership check: held
       return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
     });
 
@@ -1245,9 +1243,7 @@ describe("GET /public/stats/best-model-cost-per-outcome-trend", () => {
         if (groupBy === "day") return mkJson({ groups: [{ key: today, broadcast: { recipientStats: { clicked: 100, repliesPositive: 0 } } }] });
         return mkJson({ groups: [{ key: "wf-1", broadcast: { recipientStats: { contacted: 200, sent: 200, delivered: 200, opened: 100, clicked: 100, bounced: 0, repliesPositive: 5, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 } } }] });
       }
-      if (/\/orgs\/brands\/[^/]+\/sales-economics-effective/.test(url)) {
-        return mkJson({ economics: ECON_FULL, source: "user" });
-      }
+      if (/\/orgs\/brands\/[^/]+\/leg-rates/.test(url)) return mkJson({}); // ownership check: held
       return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
     });
 
@@ -1283,9 +1279,7 @@ describe("GET /public/stats/best-model-cost-per-outcome-trend", () => {
         // Zero positive replies fleet-wide → no observed positiveReply outcome → no best model.
         return mkJson({ groups: [{ key: "wf-1", broadcast: { recipientStats: { contacted: 200, sent: 200, delivered: 200, opened: 100, clicked: 100, bounced: 0, repliesPositive: 0, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 } } }] });
       }
-      if (/\/orgs\/brands\/[^/]+\/sales-economics-effective/.test(url)) {
-        return mkJson({ economics: ECON_FULL, source: "user" });
-      }
+      if (/\/orgs\/brands\/[^/]+\/leg-rates/.test(url)) return mkJson({}); // ownership check: held
       return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
     });
 
@@ -1357,9 +1351,7 @@ describe("GET /public/stats/workflow-cost-per-outcome", () => {
         // Lifetime by workflowSlug: 100 clicks → lifetime CPC = $200 / 100 = $2.
         return mkJson({ groups: [{ key: "wf-1", broadcast: { recipientStats: { contacted: 100, sent: 100, delivered: 100, opened: 50, clicked: 100, bounced: 0, repliesPositive: 5, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 } } }] });
       }
-      if (/\/orgs\/brands\/[^/]+\/sales-economics-effective/.test(url)) {
-        return mkJson({ economics: ECON_FULL, source: "user" });
-      }
+      if (/\/orgs\/brands\/[^/]+\/leg-rates/.test(url)) return mkJson({}); // ownership check: held
       return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
     });
 
@@ -1412,9 +1404,7 @@ describe("GET /public/stats/workflow-cost-per-outcome", () => {
         if (groupBy === "day") return mkJson({ groups: [] });
         return mkJson({ groups: [{ key: "wf-1", broadcast: { recipientStats: { contacted: 100, sent: 100, delivered: 100, opened: 50, clicked: 100, bounced: 0, repliesPositive: 5, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 } } }] });
       }
-      if (/\/orgs\/brands\/[^/]+\/sales-economics-effective/.test(url)) {
-        return mkJson({ economics: ECON_FULL, source: "user" });
-      }
+      if (/\/orgs\/brands\/[^/]+\/leg-rates/.test(url)) return mkJson({}); // ownership check: held
       return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
     });
 
@@ -1478,9 +1468,7 @@ describe("GET /public/stats/workflow-cost-per-outcome", () => {
           { key: "wf-2", broadcast: { recipientStats: { contacted: 100, sent: 100, delivered: 100, opened: 50, clicked: 100, bounced: 0, repliesPositive: 5, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 } } },
         ] });
       }
-      if (/\/orgs\/brands\/[^/]+\/sales-economics-effective/.test(url)) {
-        return mkJson({ economics: ECON_FULL, source: "user" });
-      }
+      if (/\/orgs\/brands\/[^/]+\/leg-rates/.test(url)) return mkJson({}); // ownership check: held
       return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
     });
 
@@ -1525,9 +1513,7 @@ describe("GET /public/stats/workflow-cost-per-outcome", () => {
         if (groupBy === "day") return mkJson({ groups: [{ key: today, broadcast: { recipientStats: { clicked: 10, repliesPositive: 0 } } }] });
         return mkJson({ groups: [{ key: "wf-1", broadcast: { recipientStats: { contacted: 100, sent: 100, delivered: 100, opened: 50, clicked: 100, bounced: 0, repliesPositive: 5, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 } } }] });
       }
-      if (/\/orgs\/brands\/[^/]+\/sales-economics-effective/.test(url)) {
-        return mkJson({ economics: ECON_FULL, source: "user" });
-      }
+      if (/\/orgs\/brands\/[^/]+\/leg-rates/.test(url)) return mkJson({}); // ownership check: held
       return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
     });
 
@@ -1640,7 +1626,7 @@ function legCampaignsBody(brandId: string, funnelKeys: readonly string[]) {
 
 /**
  * The per-brand STATEMENT reads every fleet cost surface makes through the shared funnel-bucket dataset:
- * the internal saved economics, the declared sales funnels (which carry what the brand STATED — the fleet
+ * the org-scoped ownership check (`/leg-rates`), the declared sales funnels (which carry what the brand STATED — the fleet
  * figures read those, never the brand-wide record), and the brand-filtered dated spend / outcomes. Each
  * brand states `econFor(brandId)` on one conversation funnel; null = declared nothing, "403" = stale.
  */
@@ -1662,11 +1648,11 @@ function statedBrandRoute(
     const econ = econFor(brandId);
     return json(legCampaignsBody(brandId, econ === null || econ === "403" ? [] : ["sales_meetings_from_conversation"]));
   }
-  const saved = url.match(/http:\/\/brand:3000\/internal\/brands\/([^/?]+)\/sales-economics/);
-  if (saved) {
-    const econ = econFor(saved[1]);
-    if (econ === "403") return json({ error: "Brand does not belong to org" }, 403);
-    return json({ salesEconomics: econ });
+  // The ownership check (`assertBrandHeld`): "403" = a stale membership, anything else is held.
+  const held = url.match(/http:\/\/brand:3000\/orgs\/brands\/([^/?]+)\/leg-rates/);
+  if (held) {
+    if (econFor(held[1]) === "403") return json({ error: "Brand does not belong to org" }, 403);
+    return json({});
   }
   const brandFiltered = new URL(url).searchParams.has("brandId");
   if (brandFiltered && url.startsWith("http://runs:3000/v1/stats/public/costs/timeseries")) return json({ buckets: [] });
@@ -1708,18 +1694,6 @@ function mockCostProjectionFetch(opts: {
     if (url.startsWith("http://email:3000/public/stats")) {
       return new Response(JSON.stringify({ groups: emailGroups }), { status: 200, headers: { "content-type": "application/json" } });
     }
-    const econMatch = url.match(/http:\/\/brand:3000\/orgs\/brands\/([^/]+)\/sales-economics-effective/);
-    if (econMatch) {
-      const brandId = econMatch[1];
-      const econ = opts.economicsByBrand[brandId];
-      if (econ === "403") {
-        return new Response(JSON.stringify({ error: "Brand does not belong to org" }), { status: 403 });
-      }
-      if (econ == null) {
-        return new Response(JSON.stringify({ economics: null, source: null }), { status: 200, headers: { "content-type": "application/json" } });
-      }
-      return new Response(JSON.stringify({ economics: econ, source: "user" }), { status: 200, headers: { "content-type": "application/json" } });
-    }
     return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
   });
   return spy as unknown as ReturnType<typeof vi.fn>;
@@ -1738,8 +1712,8 @@ interface MockBrandData {
   dayOutcomes: Array<{ key: string; clicked: number; repliesPositive: number }>;
 }
 
-/** Mocks the funnel-bucketed data path: memberships, per-brand saved economics (brand-service INTERNAL
- * sales-economics) + declared sales funnels (brand-service INTERNAL sales-funnels), per-brand dated spend
+/** Mocks the funnel-bucketed data path: memberships, per-brand offer terms + leg statements (brand-service
+ * INTERNAL offer-economics) + the campaigns' legs (campaign-service), per-brand dated spend
  * (runs timeseries, brandId-filtered) + per-brand dated outcomes (email day stats, brandId-filtered).
  * Both the trend + lifetime surfaces read this. */
 function mockBucketedFetch(opts: {
@@ -1766,13 +1740,8 @@ function mockBucketedFetch(opts: {
       const brandId = new URL(url).searchParams.get("brandId") ?? "";
       return new Response(JSON.stringify(legCampaignsBody(brandId, opts.brands[brandId]?.funnels ?? [])), { status: 200, headers: { "content-type": "application/json" } });
     }
-    const savedMatch = url.match(/http:\/\/brand:3000\/internal\/brands\/([^/]+)\/sales-economics/);
-    if (savedMatch) {
-      const b = opts.brands[savedMatch[1]];
-      if (!b || b.funnels == null) {
-        return new Response(JSON.stringify({ salesEconomics: null }), { status: 200, headers: { "content-type": "application/json" } });
-      }
-      return new Response(JSON.stringify({ salesEconomics: b.econ }), { status: 200, headers: { "content-type": "application/json" } });
+    if (/http:\/\/brand:3000\/orgs\/brands\/[^/]+\/leg-rates/.test(url)) {
+      return new Response(JSON.stringify({}), { status: 200, headers: { "content-type": "application/json" } }); // ownership check: held
     }
     if (url.startsWith("http://runs:3000/v1/stats/public/costs/timeseries")) {
       const b = brandOf(url) ? opts.brands[brandOf(url)!] : undefined;
@@ -2334,7 +2303,7 @@ describe("GET /public/stats/workflow-return-history", () => {
         ] });
       }
       if (url.startsWith("http://email:3000/public/stats")) return mkJson({ groups: [] });
-      if (/\/orgs\/brands\/[^/]+\/sales-economics-effective/.test(url)) return mkJson({ economics: ECON_FULL, source: "user" });
+      if (/\/orgs\/brands\/[^/]+\/leg-rates/.test(url)) return mkJson({}); // ownership check: held
       const stated = statedBrandRoute(url, () => ECON_FULL as Record<string, number>);
       if (stated) return stated;
       return mkJson({ error: "Not found" }, 404);

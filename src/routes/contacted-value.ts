@@ -16,12 +16,11 @@ import { Router } from "express";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { restrictPathsToDeclaredLegs } from "../lib/funnel-registry.js";
 import { matchFunnelLegKey } from "../lib/funnel-legs.js";
-import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel, type DownstreamHeaders } from "./revenue.js";
+import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel, pricedFingerprint, type DownstreamHeaders } from "./revenue.js";
 import { distinctChannelFunnels } from "./offer-economics.js";
-import { fetchEffectiveEconomics, economicsFingerprint } from "../lib/sales-economics-client.js";
+import { assertBrandHeld } from "../lib/brand-ownership.js";
 import { resolveBrandChannels, brandFeatureSlugs, BrandHasNoChannelsError, type BrandChannel } from "../lib/brand-channels.js";
 import type { DeclaredSalesFunnel } from "../lib/sales-funnels-client.js";
-import type { EffectiveEconomics } from "../lib/sales-economics-client.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { fetchLeadsForRevenue } from "../lib/leads-client.js";
 import { singleCampaignId } from "../lib/campaign-scope.js";
@@ -63,8 +62,8 @@ export const CONTACTED_VALUE_MAX_LEAD_IDS = 1000;
 /** The brand-scoped reads a route makes to key its cache — handed down, never read twice. */
 export interface BrandPricingPre {
   channels: BrandChannel[];
+  /** The funnels the brand walks, each carrying the offer's terms — the ONLY pricing input. */
   declared: DeclaredSalesFunnel[];
-  effective: EffectiveEconomics;
 }
 
 /**
@@ -93,7 +92,7 @@ export async function loadBrandPricedPopulation(
   /** The step statements, per canonical email (null when unreadable). */
   observed: ObservedStepFacts | null;
 }> {
-  const { channels, declared, effective } = pre;
+  const { channels, declared } = pre;
   const pricedCauses = opts.pricedCauses ?? DEFAULT_PRICED_CAUSES;
   const funnels = distinctChannelFunnels(channels);
   if (funnels.length > 1) throw new BrandPricesDifferentlyError(brandId);
@@ -106,7 +105,7 @@ export async function loadBrandPricedPopulation(
     });
 
   const persons = await fetchLeadsForRevenue(brandId, opts.campaignIds, headers);
-  const priced = priceOnDeclaredFunnel(declared, effective);
+  const priced = priceOnDeclaredFunnel(declared);
   const economics = priced.economics.economics;
 
   const emails = [...new Set(persons.map((p) => p.email).filter((e): e is string => Boolean(e)))];
@@ -313,25 +312,22 @@ export function pageContactedValue(result: ContactedValueResult, page: PageQuery
  * off two different entry rates.
  */
 export async function getBrandContactedValue(brandId: string, headers: DownstreamHeaders): Promise<ContactedValueResult> {
-  // Keyed on what moves the figure without a query parameter moving: the channel set, the declared
-  // funnels and the economics (an economics write lands on a new cell, never replays the old price).
+  // Keyed on what moves the figure without a query parameter moving: the channel set, the funnels and
+  // the offer terms they price on (a terms write lands on a new cell, never replays the old price).
   const channels = await resolveBrandChannels(brandId, headers);
-  const [declared, effective] = await Promise.all([
-    fetchDeclaredFunnelsSoft(brandId, headers.orgId),
-    fetchEffectiveEconomics(brandId, headers),
-  ]);
-  const priced = priceOnDeclaredFunnel(declared, effective);
+  const [declared] = await Promise.all([fetchDeclaredFunnelsSoft(brandId, headers.orgId), assertBrandHeld(brandId, headers)]);
+  const priced = priceOnDeclaredFunnel(declared);
   return servedCached({
     view: "brand-contacted-value",
     scopeKey: buildScopeKey(brandId, {
       orgId: headers.orgId,
       channels: brandFeatureSlugs(channels).join("+"),
       decl: declared.map((f) => f.funnelKey).sort().join("+") || "none",
-      econ: economicsFingerprint(priced.economics),
-      m: "contacted-value-v5",
+      econ: pricedFingerprint(priced),
+      m: "contacted-value-v6",
     }),
     orgId: headers.orgId,
-    compute: () => computeBrandContactedValue(brandId, { orgId: headers.orgId, userId: headers.userId, runId: headers.runId }, { channels, declared, effective }),
+    compute: () => computeBrandContactedValue(brandId, { orgId: headers.orgId, userId: headers.userId, runId: headers.runId }, { channels, declared }),
   });
 }
 

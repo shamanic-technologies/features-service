@@ -18,6 +18,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
+import { declaredFromEconomics, offerEconomicsFromDeclared } from "../lib/leg-economics-fixture.js";
 
 vi.mock("../db/index.js", () => ({
   db: { query: { features: { findFirst: vi.fn(), findMany: vi.fn() } } },
@@ -170,7 +171,9 @@ function mockFetch(fixture: Fixture): void {
       return json({ brandId: "b1", legKey: VISIT_LEG, dailyBudgetCents: cents, updatedAt: null, funnels: [], channels: [], offers: [], legs: [] });
     }
     if (url.includes("/sales-funnels")) return new Response("not found", { status: 404 });
-    if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
+    // The offer's terms are the ONLY pricing input (owner 2026-10-05): the funnels stating exactly
+    // `ECONOMICS`, walked by whichever legs the fixture's campaigns perform.
+    if (url.includes("/offer-economics")) return json(offerEconomicsFromDeclared(declaredFromEconomics(ECONOMICS)));
 
     if (url.includes("/orgs/stats")) {
       // The learning read's own per-campaign counts — one bucket per campaign that sent.
@@ -395,19 +398,25 @@ describe("the countdown a browser could not compute", () => {
     expect(phase.campaigns[0].outcomesObserved).toBe(4);
   });
 
-  it("reads a scope with no campaigns as unmeasured, never as gathering", async () => {
+  it("a scope with no campaigns walks no funnel: no verdict at all (cold start), never 'gathering'", async () => {
+    // Owner 2026-10-05: the offer's terms are the only pricing input, and a scope whose campaigns
+    // perform no leg walks no path — economics null (`no_priced_funnel`), so the body takes the
+    // cold-start path, which carries no learning verdict (it holds no rate ladder to walk a leg).
     mockFetch({ campaigns: [], outcomesByCampaign: {}, cells: {} });
-    const phase = await learningPhase("brandId=b1");
-    expect(phase.status).toBe("unmeasured");
-    expect(phase.unmeasuredReason).toBe("no_campaigns");
-    expect(phase.campaigns).toEqual([]);
+    const res = await request(app).get(`/features/${SALES}/revenue?brandId=b1`).set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.headline.unpricedReason).toBe("no_priced_funnel");
+    expect(res.body.learningPhase).toBeNull();
   });
 
   it("names the missing ingredient rather than 502-ing the page", async () => {
+    // campaign-service down: the legs the scope walks cannot be read, so the read is priced on NULL
+    // economics (`no_priced_funnel`) — a 200 with no verdict, never a 502 and never a guessed one.
     mockFetch({ ...LIVE_ONLY, campaignsDown: true });
-    const down = await learningPhase();
-    expect(down.status).toBe("unmeasured");
-    expect(down.unmeasuredReason).toBe("campaigns_unreadable");
+    const res = await request(app).get(`/features/${SALES}/revenue?brandId=b1&campaignId=c-live`).set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.headline.unpricedReason).toBe("no_priced_funnel");
+    expect(res.body.learningPhase).toBeNull();
 
     mockFetch({ ...LIVE_ONLY, billingDown: true });
     const noCeiling = await learningPhase();

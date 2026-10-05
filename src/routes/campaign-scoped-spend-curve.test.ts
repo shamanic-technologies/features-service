@@ -18,6 +18,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
+import { declaredFromEconomics, offerEconomicsFromDeclared } from "../lib/leg-economics-fixture.js";
 
 vi.mock("../db/index.js", () => ({
   db: { query: { features: { findFirst: vi.fn(), findMany: vi.fn() } } },
@@ -191,7 +192,9 @@ function mockFetch(): { timeseriesCampaignIds: Array<string | null>; timeseriesF
       return json({ brandId: "b1", legKey: VISIT_LEG, dailyBudgetCents: "5000", updatedAt: null, funnels: [], channels: [], offers: [], legs: [] });
     }
     if (url.includes("/sales-funnels")) return new Response("not found", { status: 404 });
-    if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
+    // The offer's terms are the ONLY pricing input (owner 2026-10-05): the funnels stating exactly
+    // `ECONOMICS` (`declaredFromEconomics`), walked by the legs the scope's campaigns perform.
+    if (url.includes("/offer-economics")) return json(offerEconomicsFromDeclared(declaredFromEconomics(ECONOMICS)));
 
     // THE DATED SPEND LEG. runs takes ONE campaign: a family is read member by member, and a scope
     // that names none legitimately reads the whole brand.

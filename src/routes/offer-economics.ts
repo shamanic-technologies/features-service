@@ -76,13 +76,15 @@ import { getFunnel } from "../lib/funnel-registry.js";
 import {
   computeFeatureRevenue,
   fetchDeclaredFunnelsSoft,
+  fetchFunnelPricedEconomics,
   priceOnDeclaredFunnel,
+  pricedFingerprint,
   type DownstreamHeaders,
   type FunnelPricedEconomics,
 } from "./revenue.js";
 import { computeAudienceStats, type ComputeResult } from "../lib/audience-stats-compute.js";
 import { computeOfferPipelineActivity } from "./pipeline-activity.js";
-import { fetchEffectiveEconomics, economicsFingerprint } from "../lib/sales-economics-client.js";
+import { assertBrandHeld } from "../lib/brand-ownership.js";
 import { withInteractiveReads } from "../lib/lead-copy.js";
 import { servedCached, servedCachedJson, sendSnapshotJson, buildScopeKey, type SnapshotJson } from "../lib/view-cache.js";
 import { applyLeadDetail, parseLeadDetail, LEAD_DETAIL_VALUES } from "../lib/lead-detail.js";
@@ -279,9 +281,9 @@ export async function offerRevenueJson(args: OfferRevenueArgs): Promise<Snapshot
   // is rethrown where it is awaited.
   const speculative = {
     declared: withInteractiveReads(() => fetchDeclaredFunnelsSoft(brandId, identity.orgId, offerId)),
-    economics: fetchEffectiveEconomics(brandId, { orgId: identity.orgId, userId: identity.userId, runId: identity.runId }),
+    held: assertBrandHeld(brandId, { orgId: identity.orgId, userId: identity.userId, runId: identity.runId }),
   };
-  speculative.economics.catch(() => {}); // awaited below only when a funnel prices; never unhandled
+  speculative.held.catch(() => {}); // awaited below only when a funnel prices; never unhandled
   speculative.declared.catch(() => {});
   const headers: DownstreamHeaders = {
     orgId: identity.orgId,
@@ -300,23 +302,13 @@ export async function offerRevenueJson(args: OfferRevenueArgs): Promise<Snapshot
 
   const funnel = resolveOfferFunnel(offerId, channels);
 
-  // Economics are BRAND-scoped (an offer states no rates of its own — brand-service owns those), so
-  // they are read ONCE here and shared by the offer body and every channel group: N channels cost
-  // one brand-service call, and the fingerprint rides the cache key so an economics write lands on a
-  // different cell instead of replaying the pre-write answer.
-  const [declaredFunnels, brandEconomics] = funnel
-    ? await Promise.all([
-        // THIS offer's declared funnels — its own lifetime revenue and its own rates. The offer grain
-        // is the one read that genuinely knows which proposition it is pricing, so it is the one that
-        // names it; every brand-scoped read keeps resolving the sole offer as before.
-        speculative.declared,
-        speculative.economics,
-      ])
-    : [[], null];
-  const brandPriced: FunnelPricedEconomics | undefined = brandEconomics
-    ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics)
-    : undefined;
-  const econ = brandPriced ? economicsFingerprint(brandPriced.economics) : undefined;
+  // THIS offer's terms (its stated lifetime revenue, the effective leg rates of the funnels it walks) are
+  // read ONCE here and shared by the offer body and every channel group, and their fingerprint rides
+  // the cache key so a terms write lands on a different cell instead of replaying the pre-write answer.
+  // The offer grain is the one read that genuinely knows which proposition it is pricing, so it names it.
+  const [declaredFunnels] = funnel ? await Promise.all([speculative.declared, speculative.held]) : [[]];
+  const brandPriced: FunnelPricedEconomics | undefined = funnel ? priceOnDeclaredFunnel(declaredFunnels) : undefined;
+  const econ = brandPriced ? pricedFingerprint(brandPriced) : undefined;
   const decl = funnel ? declaredFunnels.map((f) => f.funnelKey).sort().join("+") || "none" : undefined;
 
   return servedCachedJson({
@@ -434,10 +426,10 @@ router.get("/offers/:offerId/audience-stats", apiKeyAuth, async (req, res) => {
 
     let econ: string | undefined;
     try {
-      econ = economicsFingerprint(await fetchEffectiveEconomics(brandId, headers));
+      econ = pricedFingerprint(await fetchFunnelPricedEconomics(brandId, headers.orgId, undefined, offerId));
     } catch (err) {
-      // Feeds the KEY, not the response — degrading to "no fingerprint" keeps the compute (which reads
-      // economics fail-loud) the one that decides this request's status.
+      // Feeds the KEY, not the response — degrading to "no fingerprint" keeps the compute the one that
+      // decides this request's status.
       console.warn(`[features-service] offer audience-stats economics fingerprint unavailable: ${(err as Error).message}`);
     }
 

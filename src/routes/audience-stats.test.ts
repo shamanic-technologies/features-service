@@ -32,6 +32,8 @@ process.env.BRAND_SERVICE_URL = "http://brand:3000";
 process.env.BRAND_SERVICE_API_KEY = "brand-key";
 process.env.HUMAN_SERVICE_URL = "http://human:3000";
 process.env.HUMAN_SERVICE_API_KEY = "human-key";
+process.env.CAMPAIGN_SERVICE_URL = "http://campaign:3000";
+process.env.CAMPAIGN_SERVICE_API_KEY = "campaign-key";
 process.env.LEAD_SERVICE_URL = "http://lead:3000";
 process.env.LEAD_SERVICE_API_KEY = "lead-key";
 process.env.BILLING_SERVICE_URL = "http://billing:3000";
@@ -41,6 +43,7 @@ process.env.NODE_ENV = "test";
 
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
+const { offerEconomicsFromDeclared, legCampaignRows, declaredFromEconomics } = await import("../lib/leg-economics-fixture.js");
 
 const AUTH = {
   "x-api-key": "test-key",
@@ -104,7 +107,8 @@ function json(body: unknown): Response {
   return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
 }
 
-// Brand effective economics (fetchEffectiveEconomics) driving the fleet-backed projected floor parents.
+// The OFFER's terms driving the fleet-backed projected floor parents (owner 2026-10-05: the only
+// pricing input). Served as the funnels that state exactly these rates (`FLEET_FUNNELS`).
 const FLEET_ECON = {
   lifetimeRevenueUsd: 1000,
   replyToMeetingPct: 30,
@@ -112,7 +116,9 @@ const FLEET_ECON = {
   meetingToClosePct: 50,
   visitToSignupPct: 20,
   signupToPaidClientPct: 40,
-  visitToClosePct: 10,
+  // The self-serve close IS visit → signup × signup → paid on the offer's legs (20% × 40%): a separate
+  // figure no leg can state, so the record carries the one its legs imply.
+  visitToClosePct: 8,
   visitToPaidClientPct: 20,
   replyToPaidClientPct: 50,
   visitToFormSubmissionPct: 40,
@@ -142,6 +148,24 @@ const FLEET_WORKFLOWS: Array<Record<string, unknown>> = [
   },
 ];
 
+/**
+ * The funnels stating FLEET_ECON: the three it walks via `declaredFromEconomics` (+ the form magnet), and
+ * the two direct funnels stating its single-step rates (visit → paid on `sales_from_website` is
+ * visit → direct purchase × purchase → paid, so the whole rate rides the first arrow).
+ */
+const FLEET_FUNNELS = (): unknown[] => [
+  ...declaredFromEconomics(FLEET_ECON),
+  {
+    funnelKey: "sales_from_website",
+    arrows: [
+      { fromStep: "Website visit", toStep: "Direct purchase", ratePct: FLEET_ECON.visitToPaidClientPct },
+      { fromStep: "Direct purchase", toStep: "Paid client", ratePct: 100 },
+    ],
+    lifetimeRevenueUsd: FLEET_ECON.lifetimeRevenueUsd,
+  },
+  { funnelKey: "sales_from_conversation", rates: { replyToPaidClientPct: FLEET_ECON.replyToPaidClientPct }, lifetimeRevenueUsd: FLEET_ECON.lifetimeRevenueUsd },
+];
+
 /** Override the fleet fixture for one test (best-workflow parent cases). */
 let fleetOverride: { workflows?: unknown[]; costs?: unknown[]; email?: unknown[] } | null = null;
 
@@ -163,9 +187,8 @@ function fleetEconResponse(url: string): Response | null {
       ],
     });
   }
-  if (url.includes("brand:3000/orgs/brands/brand-1/sales-economics-effective")) {
-    return json({ economics: FLEET_ECON, source: "user" });
-  }
+  if (url.includes("campaign:3000/campaigns?")) return json({ campaigns: legCampaignRows(FLEET_FUNNELS()) });
+  if (url.includes("brand:3000/internal/brands/brand-1/offer-economics")) return json(offerEconomicsFromDeclared(FLEET_FUNNELS()));
   return null;
 }
 
@@ -1274,9 +1297,9 @@ describe("GET /features/:featureSlug/audience-stats", () => {
   it("the goal's best workflow wins even when another workflow has cheaper clicks", async () => {
     // wf-cheap  $200 / 100 clicks /   0 replies → click $2.00, no reply channel
     // wf-closer $400 / 100 clicks / 200 replies → click $4.00, reply $2.00
-    // FLEET_ECON: pCloseClick = orP(0.10, 0.20·0.50) = 0.19, pCloseReply = 0.30·0.50 = 0.15.
-    //   wf-cheap  closes/budget = 0.19/2                = 0.095  → $10.53 per purchase
-    //   wf-closer closes/budget = 0.19/4 + 0.15/2       = 0.1225 → $8.16 per purchase  ← wins the goal
+    // FLEET_ECON: pCloseClick = orP(0.08, 0.20·0.50) = 0.172, pCloseReply = 0.30·0.50 = 0.15.
+    //   wf-cheap  closes/budget = 0.172/2               = 0.086  → $11.63 per purchase
+    //   wf-closer closes/budget = 0.172/4 + 0.15/2      = 0.118  → $8.47 per purchase  ← wins the goal
     // So the website-purchase goal rides wf-closer, and the click column reads ITS $4.00.
     fleetOverride = {
       workflows: [fleetWorkflow("wf-cheap"), fleetWorkflow("wf-closer")],
@@ -1292,7 +1315,7 @@ describe("GET /features/:featureSlug/audience-stats", () => {
     expect(res.status).toBe(200);
     const row = res.body.audiences[0];
     expect(row.metrics.cpcCents).toBe(400); // wf-closer's click cost, NOT wf-cheap's cheaper 200
-    expect(row.metrics.cpsaleCents).toBeCloseTo(100 / 0.1225, 6); // $8.16 per purchase, in cents
+    expect(row.metrics.cpsaleCents).toBeCloseTo(100 / 0.118, 6); // $8.47 per purchase, in cents
   });
 
   // ── Optional campaign scope (?campaignId=) ──────────────────────────────────

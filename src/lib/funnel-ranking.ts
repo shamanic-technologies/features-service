@@ -51,6 +51,7 @@
  * follow in the producer's own order. Never by map iteration order.
  */
 
+import { economicsFromTerms } from "./offer-priced-economics.js";
 import {
   funnelToProjectionInputs,
   legTermsForFunnel,
@@ -70,7 +71,7 @@ import { salesFunnelIndex, type SalesFunnelKey } from "./sales-funnels.js";
 
 /** Why a declared funnel could not be ranked. Never a substituted value — the reason IS the answer. */
 export type UnrankableReason =
-  /** The brand has no effective economics for this funnel (cold start) — nothing to normalise through. */
+  /** The funnel prices to no economics (its offer states no lifetime revenue) — nothing to normalise through. */
   | "no_economics"
   /** No workflow has a usable cost of this funnel's outcome (no brand-level row with a positive cost). */
   | "no_workflow_evidence"
@@ -119,7 +120,7 @@ export interface RankedFunnel {
   /** Provenance label of the best row's resolved pick (audience > brand > crossOrg benchmark). */
   grain: GrainName | null;
   workflow: RankedWorkflow | null;
-  /** True when this funnel's own declared terms refined the brand's effective economics for it. */
+  /** True when this funnel carries terms of its own (always, since the offer's terms are the only input). */
   usesFunnelEconomics: boolean;
 }
 
@@ -189,15 +190,6 @@ export interface GoalArbitrationResponse {
   recommendedBudgetUsd: number | null;
 }
 
-/** Per-funnel economics override merged OVER the brand's effective set (only stated fields win). */
-function mergeEconomics(
-  base: SalesEconomics | null,
-  override: Partial<SalesEconomics> | null,
-): SalesEconomics | null {
-  if (!base) return null;
-  if (!override) return base;
-  return { ...base, ...override };
-}
 
 const isPositiveFinite = (n: number | null | undefined): n is number =>
   typeof n === "number" && Number.isFinite(n) && n > 0;
@@ -220,7 +212,6 @@ function scoreFunnel(input: {
   featureSlug: string;
   funnel: RankableFunnel;
   evidence: WorkflowProjectionEvidence;
-  economics: SalesEconomics | null;
   maximize: Maximize;
   /** The leg a leg-keyed read names: each candidate is then projected on the leg's OWN terms (and its
    *  maturity rule), exactly as the rows of the answer are. Absent ⟹ the funnel's goal, as before. */
@@ -232,7 +223,9 @@ function scoreFunnel(input: {
   // replyUsd / replyToMeetingPct, the website one on clickUsd / visitToMeetingPct.
   const { objective, goalEcho, singleStepGoal, formSubmissionGoal, meetingChannel } =
     funnelToProjectionInputs(funnel.funnelKey);
-  const economics = mergeEconomics(input.economics, funnel.economics);
+  // The funnel on its OWN offer terms (effective leg rates, the offer's lifetime revenue) — nothing
+  // brand-wide underneath (owner 2026-10-05). No stated lifetime revenue → no economics → unrankable.
+  const economics = economicsFromTerms(funnel.economics, [funnel.funnelKey]).economics;
   const legTerms = input.legKey && economics ? legTermsForFunnel(input.legKey, funnel.funnelKey, economics) : null;
   const projection = projectFromEvidence({
     featureSlug,
@@ -357,17 +350,16 @@ export function rankDeclaredFunnels(input: {
   featureSlug: string;
   funnels: RankableFunnel[];
   evidence: WorkflowProjectionEvidence;
-  economics: SalesEconomics | null;
   /** What the caller is maximising. Absent ⟺ `return` — the ordering this has always produced. */
   maximize?: Maximize;
   /** A leg-keyed read's leg: every candidate is projected on the leg's own terms and maturity rule. */
   legKey?: string | null;
 }): GoalArbitrationResponse {
-  const { featureSlug, funnels, evidence, economics } = input;
+  const { featureSlug, funnels, evidence } = input;
   const maximize = input.maximize ?? DEFAULT_MAXIMIZE;
 
   const scored = funnels.map((funnel) =>
-    scoreFunnel({ featureSlug, funnel, evidence, economics, maximize, legKey: input.legKey ?? null }),
+    scoreFunnel({ featureSlug, funnel, evidence, maximize, legKey: input.legKey ?? null }),
   );
 
   // Rankable funnels first, best-on-the-asked-for-figure down: return per dollar, or conversion rate.
