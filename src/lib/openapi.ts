@@ -1928,6 +1928,139 @@ registry.registerPath({
   },
 });
 
+const investedMoneySchema = z.object({
+  billedUsd: z.number().describe("Committed (actual) cost at list price, before the org's usage discount, USD."),
+  netUsd: z.number().describe("What the org pays for those rows: runs-service's frozen net (after the org's usage discount), USD."),
+  vendorUsd: z.number().nullable().describe("What those cost rows cost us from the vendor, before markup, USD. NULL when any row of the figure has no known vendor cost (see unpricedBilledUsd), never the billed figure."),
+  unpricedBilledUsd: z.number().describe("Billed amount of the rows whose vendor cost is unknown, USD; 0 when vendorUsd is known."),
+});
+const sourcingAudienceSchema = z.object({
+  audienceId: z.string().describe("human-service audience id (the audience the serve was made from / the list was built for)."),
+  invested: investedMoneySchema.describe("serves + listBuild."),
+  serves: investedMoneySchema.describe("Subtree cost of the brand's lead-serve runs made from this audience."),
+  listBuild: investedMoneySchema.describe("apollo-service audience-companies spend (company lists) of this audience."),
+  notOnAPerson: investedMoneySchema.describe("Serve spend of runs that handed out no person we hold (every candidate screened out, failed reveal): in `serves`, on no person."),
+  serveCount: z.number().int(),
+  personCount: z.number().int().describe("Distinct people acquired by a serve made from this audience."),
+  companyCount: z.number().int().describe("Distinct company domains of those people."),
+});
+const sourcingPersonSchema = z.object({
+  leadId: z.string().describe("lead-service lead id."),
+  apolloPersonId: z.string().nullable().describe("Provider person id: the JOIN KEY onto human-service's person rows."),
+  email: z.string().nullable(),
+  firstName: z.string().nullable(),
+  lastName: z.string().nullable(),
+  companyName: z.string().nullable(),
+  companyDomain: z.string().nullable().describe("Bare lowercased domain; the company join key. Null when unknown."),
+  audienceIds: z.array(z.string()).describe("Audiences the serves acquiring this person were made from."),
+  serveCount: z.number().int().describe("Serve runs that handed this person out (one per campaign that served them)."),
+  invested: investedMoneySchema.describe("Sum of those serve runs' subtree cost: what acquiring this person cost."),
+});
+const sourcingCompanySchema = z.object({
+  companyDomain: z.string().describe("Bare lowercased domain: the JOIN KEY onto human-service's company rows."),
+  companyName: z.string().nullable(),
+  personCount: z.number().int(),
+  audienceIds: z.array(z.string()),
+  invested: investedMoneySchema.describe("Sum over its people."),
+});
+const sourcingInvestmentResponseRef = registry.register(
+  "SourcingInvestmentResponse",
+  z.object({
+    brandId: z.string(),
+    definition: z.object({
+      basis: z.literal("actual"),
+      counted: z.array(z.string()),
+      notCounted: z.array(z.string()),
+    }),
+    total: investedMoneySchema.describe("Every sourcing cost of the brand since inception = serves + listBuild = Σ audiences[].invested + withoutAudience, exactly."),
+    serves: investedMoneySchema,
+    listBuild: investedMoneySchema,
+    notOnAPerson: investedMoneySchema.describe("Serve spend no person carries: total.serves − Σ people[].invested."),
+    withoutAudience: investedMoneySchema.describe("Sourcing spend carrying no audience: in total, in no audience row."),
+    peopleWithoutCompanyDomain: z.object({ personCount: z.number().int(), invested: investedMoneySchema }).describe("People with no known company domain: in people, in no company row."),
+    serveCount: z.number().int(),
+    servesWithoutPerson: z.number().int(),
+    personCount: z.number().int(),
+    companyCount: z.number().int(),
+    audiences: z.array(sourcingAudienceSchema).describe("One row per audience with sourcing spend, billed desc."),
+  }),
+);
+const sourcingPeopleResponseRef = registry.register(
+  "SourcingInvestmentPeopleResponse",
+  z.object({
+    brandId: z.string(),
+    total: z.number().int().describe("People matching the request (before paging)."),
+    limit: z.number().int(),
+    offset: z.number().int(),
+    people: z.array(sourcingPersonSchema).describe("Billed desc, then leadId."),
+  }),
+);
+const sourcingCompaniesResponseRef = registry.register(
+  "SourcingInvestmentCompaniesResponse",
+  z.object({
+    brandId: z.string(),
+    total: z.number().int(),
+    limit: z.number().int(),
+    offset: z.number().int(),
+    companies: z.array(sourcingCompanySchema).describe("Billed desc, then domain."),
+  }),
+);
+const sourcingDescription =
+  "STAFF ONLY (carries the vendor basis, i.e. our margin: the api-service gateway mounts it behind requireStaff). What we paid to SOURCE a brand's people, since inception, on committed (actual) cost rows read from runs-service. " +
+  "Counted: the whole cost subtree of every lead-service lead-serve run of the brand (Jev pre-pay screens of the candidates, provider reveal / enrichment, email finding and verification, LinkedIn engagement and buying-signal reads) and apollo-service audience-companies runs (company lists pulled when an audience is built). Not counted: outreach (email writing, sending, reply reading), brand/offer setup, the LLM audience split, the audience-preview email pre-check. " +
+  "Per person = the serve runs lead-service recorded as handing that person out (read per campaign, so a person served by two campaigns carries both serves). Per company = Σ its people. Billed basis is list price before the org's usage discount; net is what the org pays after it.";
+const sourcingPaging = z.object({
+  limit: z.string().optional().describe("1..500, default 100."),
+  offset: z.string().optional().describe("Default 0."),
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/brands/{brandId}/sourcing-investment",
+  summary: "STAFF: $ invested in sourcing a brand's audiences (totals + per audience)",
+  description: sourcingDescription,
+  tags: ["Stats"],
+  request: { params: z.object({ brandId: z.string() }), headers: identityHeaders },
+  responses: {
+    200: { description: "Sourcing investment summary", content: { "application/json": { schema: sourcingInvestmentResponseRef } } },
+    502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+registry.registerPath({
+  method: "get",
+  path: "/brands/{brandId}/sourcing-investment/people",
+  summary: "STAFF: what acquiring each person cost (paged, or keyed by apolloPersonIds)",
+  description: sourcingDescription,
+  tags: ["Stats"],
+  request: {
+    params: z.object({ brandId: z.string() }),
+    headers: identityHeaders,
+    query: sourcingPaging.extend({ apolloPersonIds: z.string().optional().describe("Comma-separated, ≤500: only these people (the human-service page being rendered).") }),
+  },
+  responses: {
+    200: { description: "People", content: { "application/json": { schema: sourcingPeopleResponseRef } } },
+    400: { description: "Bad paging or key list", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+registry.registerPath({
+  method: "get",
+  path: "/brands/{brandId}/sourcing-investment/companies",
+  summary: "STAFF: what each company's people cost to acquire (paged, or keyed by domains)",
+  description: sourcingDescription,
+  tags: ["Stats"],
+  request: {
+    params: z.object({ brandId: z.string() }),
+    headers: identityHeaders,
+    query: sourcingPaging.extend({ domains: z.string().optional().describe("Comma-separated, ≤500, case-insensitive.") }),
+  },
+  responses: {
+    200: { description: "Companies", content: { "application/json": { schema: sourcingCompaniesResponseRef } } },
+    400: { description: "Bad paging or key list", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 const offerAudienceStatsResponseSchema = audienceStatsResponseSchema.extend({
   offerId: z.string(),
   channels: z.array(offerChannelSchema).describe("The channels combined into every row below, ascending by slug."),
