@@ -4,9 +4,9 @@
  * and why, the cost). The model, the formula and every rule live in `lib/offer-sales-paths.ts`; this
  * route only READS.
  *
- * ADDITIVE: no existing read moves. The per-leg price is the byte-same leg-keyed `workflow-projection`
- * ladder (`?leg=&offerId=&pricing=net`) campaign-service ranks on, invoked in-process so the best
- * workflow per leg is picked exactly the way it is picked everywhere else.
+ * ADDITIVE: no existing read moves. The per-leg price is read off the byte-same leg-keyed
+ * `workflow-projection` ladder (`?leg=&offerId=&pricing=net`) campaign-service ranks on, invoked
+ * in-process: the best MATURE workflow's mature price (`priceFromLadder`), never a learning one's flash.
  */
 import { StoreNotComputedError } from "../lib/await-warm-store.js";
 import { Router } from "express";
@@ -35,33 +35,48 @@ import {
 } from "../lib/offer-sales-paths.js";
 import { campaignNamesOf, salesPathNamesFor, SalesPathNamePoolExhaustedError, withCampaignNames } from "../lib/sales-path-names.js";
 import { runLadder, type LadderBody } from "../lib/leg-ladder.js";
+import { MISSION_PRICE_GRAINS, missionPriceOf } from "../lib/mission-workflow-order.js";
 
 const router = Router();
 
-/** PURE: what one channel's leg-keyed ladder says the leg costs, read off the recommended workflow's brand row. */
+/**
+ * PURE: what one channel's leg-keyed ladder says the leg costs on the customer's EXPECTED-ROI reads — the
+ * best MATURE workflow's mature price (owner rule 2026-10-05, features-service#1360).
+ *
+ * Not the recommendation: since 2026-10-01 a LEARNING workflow cheaper than the best mature one is rank 1
+ * and gets the money (unchanged), but its flash price is unproven, and an expected ROI labelled "Our best
+ * workflow" must rest on a proven one. So the leg is priced on the selectable, non-retired workflow whose
+ * brand row holds a mature price, in the mission order's own precedence (`missionPriceOf`): finest grain
+ * first (offer > brand > crossOrg), cheapest within it, slug last. No such workflow = no workflow price, and
+ * the leg falls to the fleet-measured / default rungs (`costSource` says which).
+ */
 export function priceFromLadder(status: number, body: LadderBody): LegChannelPrice {
   if (status !== 200) {
     return { costPerOutcomeUsd: null, workflowDynastySlug: null, grain: null, unpricedReason: body.reason ?? `ladder_${status}` };
   }
-  // A cold-start pick names a workflow to RUN, not a price: the leg stays priced from the fleet /
-  // default rungs exactly as before (its row's explore allowance is a floor, never a leg price).
-  const slug = body.recommendationBasis === "cold_start" ? null : (body.recommendedWorkflowDynastySlug ?? null);
-  if (!slug) {
+  const best = (body.rows ?? [])
+    .filter((r) => r.audienceId === null && r.retired !== true && r.legAssignment?.selectable !== false)
+    .map((r) => {
+      const g = r.estimatesByGrain ?? {};
+      const price = missionPriceOf({ grains: { offer: g.offer ?? null, brand: g.brand ?? null, crossOrg: g.crossOrg ?? null } });
+      return price ? { slug: r.workflow.workflowDynastySlug, ...price } : null;
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null)
+    .sort(
+      (a, b) =>
+        MISSION_PRICE_GRAINS.indexOf(a.grain) - MISSION_PRICE_GRAINS.indexOf(b.grain) ||
+        a.costPerOutcomeUsd - b.costPerOutcomeUsd ||
+        (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0),
+    )[0];
+  if (!best) {
     return {
       costPerOutcomeUsd: null,
       workflowDynastySlug: null,
       grain: null,
-      unpricedReason: body.recommendationWithheldReason ?? body.unmeasuredReason ?? "no_recommended_workflow",
+      unpricedReason: body.recommendationWithheldReason ?? body.unmeasuredReason ?? "no_mature_workflow",
     };
   }
-  const row = (body.rows ?? []).find((r) => r.audienceId === null && r.workflow.workflowDynastySlug === slug) ?? null;
-  const cost = row?.resolved.costPerOutcomeUsd ?? null;
-  return {
-    costPerOutcomeUsd: cost,
-    workflowDynastySlug: slug,
-    grain: row?.resolved.grain ?? null,
-    unpricedReason: cost === null ? "recommended_workflow_unpriced" : null,
-  };
+  return { costPerOutcomeUsd: best.costPerOutcomeUsd, workflowDynastySlug: best.slug, grain: best.grain, unpricedReason: null };
 }
 
 router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {

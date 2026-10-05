@@ -23,9 +23,11 @@
  *     roi                 = lifetimeRevenue(offer) ÷ costPerPayingClient   (a return multiple)
  *
  *   `costPerOutcome(Li)` is the NET cost per outcome of the leg's own step on the channel we would run it
- *   on: for every platform channel publishing the leg, the RECOMMENDED workflow of that channel's
+ *   on: for every platform channel publishing the leg, the best MATURE workflow of that channel's
  *   leg-keyed `workflow-projection` ladder for this brand and offer (`?leg=&offerId=&pricing=net`, the
- *   exact read campaign-service ranks on), read off its brand-level row (`resolved.costPerOutcomeUsd`).
+ *   exact read campaign-service ranks on): its brand-level row's mature price at the finest grain holding
+ *   one (offer > brand > crossOrg), cheapest. Never the recommendation when that is a LEARNING workflow
+ *   (owner 2026-10-05: an expected ROI rests on a proven price; the money still goes to rank 1).
  *
  * ── ONE ROW PER COMBINATION (owner 2026-10-04) ────────────────────────────────────────────────
  *
@@ -47,7 +49,7 @@
  *
  * ── EVERY MANAGED LEG IS PRICED (the cost cascade, like the rate cascade ends on a default) ──
  *
- *   costPerOutcome = the recommended workflow's net cost per outcome (the ladder, above)   `workflow`
+ *   costPerOutcome = the best MATURE workflow's net mature cost per outcome (above)        `workflow`
  *                  > the channel's MEASURED fleet cost per outcome on the leg, when real
  *                    spend exists (runs-service, `/public/stats/outcome-prices` legs)     `fleet_measured`
  *                  > the seeded `DEFAULT_COST_PER_OUTCOME_USD` for (channel, leg)        `default`

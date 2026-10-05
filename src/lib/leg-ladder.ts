@@ -1,13 +1,14 @@
 /**
  * The leg-keyed `workflow-projection` ladder, run IN-PROCESS — the one price list per (channel, leg,
  * offer) every reader of "what does an outcome of this leg cost on this workflow" shares:
- * `/offers/:offerId/sales-paths` (the recommended workflow's price) and the contacted-lead value
+ * `/offers/:offerId/sales-paths` (the best MATURE workflow's mature price, owner 2026-10-05) and the contacted-lead value
  * (`routes/contacted-value.ts`, the price of the workflow that served each lead). Sharing the call is
  * what makes a campaign 100% on one workflow reproduce its sales path's ROI by construction.
  *
  * The route module is imported lazily: it sits above a large import graph that reaches back here.
  */
 import type { Request, Response } from "express";
+import type { GrainMaturityFigures } from "./mission-workflow-order.js";
 
 export interface LadderBody {
   recommendedWorkflowDynastySlug?: string | null;
@@ -17,6 +18,11 @@ export interface LadderBody {
     /** False = the workflow has no evidence on this leg: its figure is an explore allowance, never a price. */
     measured?: boolean;
     resolved: { grain: string | null; costPerOutcomeUsd: number | null };
+    /** Per grain: the flash/mature blocks; a grain is absent when it has no evidence. */
+    estimatesByGrain?: Partial<Record<string, GrainMaturityFigures | null>> | null;
+    /** Absent when the leg has no assignment read; `selectable: false` = not assigned active on the leg. */
+    legAssignment?: { selectable: boolean } | null;
+    retired?: boolean;
   }>;
   reason?: string;
   unmeasuredReason?: string;

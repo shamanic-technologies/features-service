@@ -18,6 +18,7 @@ import {
 } from "./offer-sales-paths.js";
 import type { EffectiveArrowRate } from "./effective-conversion-rates.js";
 import { priceFromLadder } from "../routes/offer-sales-paths.js";
+import type { LadderBody } from "./leg-ladder.js";
 
 const arrow = (fromStep: string, toStep: string, pct: number, source: EffectiveArrowRate["source"] = "manual"): EffectiveArrowRate => ({
   fromStep,
@@ -222,17 +223,58 @@ describe("buildOfferSalesPaths", () => {
   });
 });
 
-describe("priceFromLadder", () => {
-  it("reads the recommended workflow's brand row, and states why when there is none", () => {
+describe("priceFromLadder — the best MATURE workflow prices the expected ROI (owner 2026-10-05, #1360)", () => {
+  const mature = (cost: number) => ({ isMature: true, mature: { costPerOutcomeUsd: cost } });
+  const learning = { isMature: false, mature: { costPerOutcomeUsd: null } };
+  type Row = NonNullable<LadderBody["rows"]>[number];
+  const row = (slug: string, flash: number, grains: Row["estimatesByGrain"], extra: Partial<Row> = {}): Row => ({
+    audienceId: null,
+    workflow: { workflowDynastySlug: slug },
+    resolved: { grain: "crossOrg", costPerOutcomeUsd: flash },
+    estimatesByGrain: grains,
+    legAssignment: { selectable: true },
+    ...extra,
+  });
+
+  it("a cheaper LEARNING workflow stays the recommendation, the leg is priced on the best mature one (prod 2026-10-05: keel $4.53 flash vs nobelium $44.83 mature)", () => {
+    const body = {
+      recommendedWorkflowDynastySlug: "keel",
+      rows: [
+        row("keel", 4.53, { crossOrg: learning }),
+        row("nobelium", 44.83, { crossOrg: mature(44.83) }),
+        row("azalea", 73, { brand: learning, crossOrg: mature(73) }),
+        // Mature but not assigned to the leg, or retired: never "our best workflow".
+        row("osprey", 36.3, { crossOrg: mature(36.3) }, { legAssignment: { selectable: false } }),
+        row("old", 30, { crossOrg: mature(30) }, { retired: true }),
+        // An audience row never prices the leg.
+        { ...row("cheap-cell", 1, { crossOrg: mature(1) }), audienceId: "a" },
+      ],
+    };
+    expect(priceFromLadder(200, body)).toEqual({ costPerOutcomeUsd: 44.83, workflowDynastySlug: "nobelium", grain: "crossOrg", unpricedReason: null });
+    // The ladder answer itself is untouched: the recommendation is still the learning workflow.
+    expect(body.recommendedWorkflowDynastySlug).toBe("keel");
+  });
+
+  it("finest grain holding a mature price first (offer > brand > crossOrg), cheapest within it", () => {
     expect(
       priceFromLadder(200, {
-        recommendedWorkflowDynastySlug: "alioth",
+        recommendedWorkflowDynastySlug: "a",
         rows: [
-          { audienceId: "a", workflow: { workflowDynastySlug: "alioth" }, resolved: { grain: "audience", costPerOutcomeUsd: 1 } },
-          { audienceId: null, workflow: { workflowDynastySlug: "alioth" }, resolved: { grain: "brand", costPerOutcomeUsd: 7 } },
+          row("a", 5, { crossOrg: mature(5) }),
+          row("b", 20, { brand: mature(20), crossOrg: mature(4) }),
+          row("c", 15, { brand: mature(15) }),
         ],
       }),
-    ).toEqual({ costPerOutcomeUsd: 7, workflowDynastySlug: "alioth", grain: "brand", unpricedReason: null });
+    ).toEqual({ costPerOutcomeUsd: 15, workflowDynastySlug: "c", grain: "brand", unpricedReason: null });
+  });
+
+  it("no mature workflow = no workflow price (the leg falls to fleet / default), with the reason", () => {
+    expect(priceFromLadder(200, { recommendedWorkflowDynastySlug: "keel", rows: [row("keel", 4.53, { crossOrg: learning })] })).toEqual({
+      costPerOutcomeUsd: null,
+      workflowDynastySlug: null,
+      grain: null,
+      unpricedReason: "no_mature_workflow",
+    });
     expect(priceFromLadder(404, { reason: "leg_not_declared" }).unpricedReason).toBe("leg_not_declared");
     expect(priceFromLadder(200, { recommendedWorkflowDynastySlug: null, unmeasuredReason: "no_active_workflows" }).unpricedReason).toBe(
       "no_active_workflows",
