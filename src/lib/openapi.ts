@@ -1836,6 +1836,36 @@ const offerSalesPathsResponseRef = registry.register(
     lifetimeRevenueUsd: z.number().nullable(),
     pricing: z.literal("net"),
     paths: z.array(salesPathSchema),
+    selectedSalesPaths: z
+      .object({
+        basis: z.enum(["customer_selected", "default_roi_above_1", "unavailable"]).describe("customer_selected: the paths the customer selected on the offer (brand-service selected-sales-paths). default_roi_above_1: the customer never stated any, so the paths of this read with roi > 1 count. unavailable: brand-service could not be read; every campaign roi is null with reason selected_paths_unavailable (never guessed)."),
+        combinationKeys: z.array(z.string()).describe("The paths that count, as listed in THIS read, in rank order."),
+        unlistedCombinationKeys: z.array(z.string()).describe("Keys the customer selected that this read does not list (e.g. a channel the offer no longer accepts). Ignored."),
+        statedAt: z.string().nullable(),
+      })
+      .describe("Which paths count as the customer's: the basis of every campaigns[].roi."),
+    campaigns: z
+      .array(
+        z.object({
+          campaignKey: z.string().describe("`campaign:<channelSlug>|<legKey>`, unique within the response (key rows on it)."),
+          channelSlug: z.string(),
+          channelName: z.string().nullable(),
+          legKey: z.string(),
+          campaignName: z.string().nullable().describe("The campaign's name, the same word as legs[].channel.campaignName."),
+          reactive: z.boolean().describe("False on an entry leg (proactive), true on a leg out of a step already reached (reactive)."),
+          managed: z.boolean(),
+          operatedBy: z.enum(["platform", "customer"]),
+          pathCount: z.number().int().describe("Paths of this read that use the campaign."),
+          selectedPathCount: z.number().int().describe("Selected paths (selectedSalesPaths) that use the campaign."),
+          roi: z.number().nullable().describe("The campaign's ROI (a return multiple) = the HIGHEST roi among the SELECTED paths whose leg legKey runs on channel channelSlug. A campaign is one link of a chain whose every link is needed for any revenue, so revenue cannot be split per link (a marginal ROI, path revenue over the link's own cost, credits every link with the whole revenue and inflates the cheap reactive links; an equal split is arbitrary): its ROI is what a dollar in it returns on the best selected path it is part of, with the rest of that path running. roiCombinationKey names that path. Render it, never re-derive it."),
+          roiCombinationKey: z.string().nullable().describe("The selected path (paths[].combinationKey) the roi is read off. Null when roi is null."),
+          roiUnavailableReason: z
+            .enum(["leg_cost_unavailable", "zero_conversion_rate", "no_lifetime_revenue", "no_platform_cost", "not_on_a_selected_path", "selected_paths_unavailable"])
+            .nullable()
+            .describe("Why roi is null: not_on_a_selected_path (no selected path uses it), selected_paths_unavailable (the selection could not be read), else the reason of the best-ranked selected path that uses it (its own paths[].roiUnavailableReason)."),
+        }),
+      )
+      .describe("One row per CAMPAIGN (one channel on one leg) any listed path uses, with its ROI. Ordered proactive before reactive, then roi descending, a null roi last (a consumer may put the campaigns that are on first)."),
   }),
 );
 

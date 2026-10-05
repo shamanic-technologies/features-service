@@ -85,3 +85,42 @@ export async function fetchOfferChannels(offerId: string): Promise<OfferChannels
   }
   return { offerId, stated: data.stated, channelSlugs: strings(data.channelSlugs) };
 }
+
+/**
+ * The sales paths the customer SELECTED on an offer (brand-service `GET /internal/offers/:offerId/selected-sales-paths`,
+ * `{offerId, stated, combinationKeys, statedAt}`; `stated: false` = never stated). Fails SOFT and LOUD: it only feeds
+ * the campaign ROIs, so an unreadable selection returns null (every campaign ROI then states
+ * `selected_paths_unavailable`) and logs, never 502s the sales paths themselves, and is never read as "never stated".
+ */
+export async function fetchOfferSelectedSalesPaths(
+  offerId: string,
+): Promise<{ stated: boolean; combinationKeys: string[] | null; statedAt: string | null } | null> {
+  const url = process.env.BRAND_SERVICE_URL;
+  const apiKey = process.env.BRAND_SERVICE_API_KEY;
+  if (!url || !apiKey) {
+    console.error("[features-service] selected-sales-paths: BRAND_SERVICE_URL or BRAND_SERVICE_API_KEY not configured");
+    return null;
+  }
+  try {
+    const response = await fetchWithRetry(`${url}/internal/offers/${encodeURIComponent(offerId)}/selected-sales-paths`, {
+      headers: { "x-api-key": apiKey },
+    });
+    if (!response.ok) {
+      console.error(`[features-service] selected-sales-paths for offer ${offerId}: brand-service ${response.status} ${await response.text()}`);
+      return null;
+    }
+    const data = (await response.json()) as Record<string, unknown>;
+    if (typeof data.stated !== "boolean") {
+      console.error(`[features-service] selected-sales-paths for offer ${offerId}: response carried no \`stated\` flag`);
+      return null;
+    }
+    return {
+      stated: data.stated,
+      combinationKeys: strings(data.combinationKeys),
+      statedAt: typeof data.statedAt === "string" ? data.statedAt : null,
+    };
+  } catch (error) {
+    console.error(`[features-service] selected-sales-paths for offer ${offerId}: ${(error as Error).message}`);
+    return null;
+  }
+}

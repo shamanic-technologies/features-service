@@ -18,7 +18,7 @@ import { buildChannelCatalogue } from "../lib/channel-catalogue.js";
 import { fetchBrandLegEconomics } from "../lib/brand-leg-economics-client.js";
 import { getBrandEffectiveRates } from "../lib/effective-conversion-rates.js";
 import { SalesFunnelsUnavailableError } from "../lib/sales-funnels-client.js";
-import { fetchOfferChannels, fetchOfferSalesPath, OfferSalesPathNotFoundError } from "../lib/offer-sales-path-client.js";
+import { fetchOfferChannels, fetchOfferSalesPath, fetchOfferSelectedSalesPaths, OfferSalesPathNotFoundError } from "../lib/offer-sales-path-client.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
 import {
   acceptedCatalogueChannels,
@@ -30,6 +30,7 @@ import {
   type LegChannelPrice,
   type SalesPathChannelInput,
   type SalesPathScope,
+  withCampaignRois,
   withSalesPathNames,
 } from "../lib/offer-sales-paths.js";
 import { campaignNamesOf, salesPathNamesFor, SalesPathNamePoolExhaustedError, withCampaignNames } from "../lib/sales-path-names.js";
@@ -120,10 +121,11 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
   const identity = { orgId: req.orgId, userId: req.userId, runId: req.runId };
 
   try {
-    const [salesPath, legEconomics, offerChannels] = await Promise.all([
+    const [salesPath, legEconomics, offerChannels, selectedPaths] = await Promise.all([
       fetchOfferSalesPath(offerId),
       fetchBrandLegEconomics(brandId, req.orgId),
       scope === "catalogue" ? fetchOfferChannels(offerId) : Promise.resolve(null),
+      fetchOfferSelectedSalesPaths(offerId),
     ]);
     // The catalogue lists only the channels the offer accepts (never stated = the three we run).
     const catalogueChannelSlugs = offerChannels ? acceptedCatalogueChannels(offerChannels) : undefined;
@@ -190,7 +192,8 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
     });
     // Every row's name, shared across clients and stable forever: assigned on first sight, in rank order.
     const names = await salesPathNamesFor(body.paths.map((p) => p.combinationKey));
-    return res.json(withSalesPathNames(body, names, campaignNamesOf(published)));
+    // Every campaign (channel × leg) with its ROI, read off the paths the customer selected.
+    return res.json(withCampaignRois(withSalesPathNames(body, names, campaignNamesOf(published)), selectedPaths));
   } catch (error) {
     if (error instanceof OfferSalesPathNotFoundError) {
       return res.status(404).json({ error: error.message, reason: "offer_not_found" });

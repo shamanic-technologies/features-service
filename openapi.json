@@ -11305,6 +11305,133 @@
                 "roiUnavailableReason"
               ]
             }
+          },
+          "selectedSalesPaths": {
+            "type": "object",
+            "properties": {
+              "basis": {
+                "type": "string",
+                "enum": [
+                  "customer_selected",
+                  "default_roi_above_1",
+                  "unavailable"
+                ],
+                "description": "customer_selected: the paths the customer selected on the offer (brand-service selected-sales-paths). default_roi_above_1: the customer never stated any, so the paths of this read with roi > 1 count. unavailable: brand-service could not be read; every campaign roi is null with reason selected_paths_unavailable (never guessed)."
+              },
+              "combinationKeys": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The paths that count, as listed in THIS read, in rank order."
+              },
+              "unlistedCombinationKeys": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Keys the customer selected that this read does not list (e.g. a channel the offer no longer accepts). Ignored."
+              },
+              "statedAt": {
+                "type": "string",
+                "nullable": true
+              }
+            },
+            "required": [
+              "basis",
+              "combinationKeys",
+              "unlistedCombinationKeys",
+              "statedAt"
+            ],
+            "description": "Which paths count as the customer's: the basis of every campaigns[].roi."
+          },
+          "campaigns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "campaignKey": {
+                  "type": "string",
+                  "description": "`campaign:<channelSlug>|<legKey>`, unique within the response (key rows on it)."
+                },
+                "channelSlug": {
+                  "type": "string"
+                },
+                "channelName": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "legKey": {
+                  "type": "string"
+                },
+                "campaignName": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The campaign's name, the same word as legs[].channel.campaignName."
+                },
+                "reactive": {
+                  "type": "boolean",
+                  "description": "False on an entry leg (proactive), true on a leg out of a step already reached (reactive)."
+                },
+                "managed": {
+                  "type": "boolean"
+                },
+                "operatedBy": {
+                  "type": "string",
+                  "enum": [
+                    "platform",
+                    "customer"
+                  ]
+                },
+                "pathCount": {
+                  "type": "integer",
+                  "description": "Paths of this read that use the campaign."
+                },
+                "selectedPathCount": {
+                  "type": "integer",
+                  "description": "Selected paths (selectedSalesPaths) that use the campaign."
+                },
+                "roi": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "The campaign's ROI (a return multiple) = the HIGHEST roi among the SELECTED paths whose leg legKey runs on channel channelSlug. A campaign is one link of a chain whose every link is needed for any revenue, so revenue cannot be split per link (a marginal ROI, path revenue over the link's own cost, credits every link with the whole revenue and inflates the cheap reactive links; an equal split is arbitrary): its ROI is what a dollar in it returns on the best selected path it is part of, with the rest of that path running. roiCombinationKey names that path. Render it, never re-derive it."
+                },
+                "roiCombinationKey": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The selected path (paths[].combinationKey) the roi is read off. Null when roi is null."
+                },
+                "roiUnavailableReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "leg_cost_unavailable",
+                    "zero_conversion_rate",
+                    "no_lifetime_revenue",
+                    "no_platform_cost",
+                    "not_on_a_selected_path",
+                    "selected_paths_unavailable"
+                  ],
+                  "description": "Why roi is null: not_on_a_selected_path (no selected path uses it), selected_paths_unavailable (the selection could not be read), else the reason of the best-ranked selected path that uses it (its own paths[].roiUnavailableReason)."
+                }
+              },
+              "required": [
+                "campaignKey",
+                "channelSlug",
+                "channelName",
+                "legKey",
+                "campaignName",
+                "reactive",
+                "managed",
+                "operatedBy",
+                "pathCount",
+                "selectedPathCount",
+                "roi",
+                "roiCombinationKey",
+                "roiUnavailableReason"
+              ]
+            },
+            "description": "One row per CAMPAIGN (one channel on one leg) any listed path uses, with its ROI. Ordered proactive before reactive, then roi descending, a null roi last (a consumer may put the campaigns that are on first)."
           }
         },
         "required": [
@@ -11317,7 +11444,9 @@
           "unknownLegKeys",
           "lifetimeRevenueUsd",
           "pricing",
-          "paths"
+          "paths",
+          "selectedSalesPaths",
+          "campaigns"
         ]
       },
       "OrgUsageResponse": {
