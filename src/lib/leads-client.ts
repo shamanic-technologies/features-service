@@ -408,3 +408,112 @@ export async function fetchLeadsForRevenue(
     };
   });
 }
+
+/**
+ * One SERVE of a person, as lead-service recorded it: which serve run handed the person out (the
+ * `lead-service:lead-serve` run whose cost subtree is what acquiring them cost), under which audience
+ * and campaign. Read for the staff "$ invested in audiences" figures (`lib/sourcing-investment.ts`).
+ */
+export interface ServedPersonRow {
+  /** The serve run (`leads_campaigns.run_id`). */
+  runId: string;
+  leadId: string;
+  /** The provider's person id — the key human-service's person rows carry too. */
+  apolloPersonId: string | null;
+  campaignId: string;
+  audienceId: string | null;
+  email: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  companyName: string | null;
+  /** Bare, lowercased company domain; null when lead-service knows none. */
+  companyDomain: string | null;
+}
+
+interface BasicServeRow {
+  leadId?: string | null;
+  runId?: string | null;
+  apolloPersonId?: string | null;
+  campaignId?: string | null;
+  audienceId?: string | null;
+  email?: string | null;
+  lead?: {
+    firstName?: string | null;
+    lastName?: string | null;
+    organization?: { name?: string | null; primaryDomain?: string | null; websiteUrl?: string | null } | null;
+  } | null;
+}
+
+/** Page size of the per-campaign serve walk: `view=basic` rows are heavy, so pages stay small. */
+const SERVE_PAGE_SIZE = positiveIntEnv("SERVE_PAGE_SIZE", 1000);
+
+/**
+ * EVERY serve of the brand's people in the given campaigns, one row per (person, campaign) serve.
+ *
+ * Read PER CAMPAIGN on purpose: lead-service's brand-scoped list collapses a person to ONE row, which
+ * hides the serve runs of their other campaigns (5.5% of fleet serve rows on 2026-10-05); a campaign
+ * scope is flat. `status=all` keeps rows the lifecycle has since skipped (the serve was still paid).
+ * `view=basic` is the view that carries `runId` + `apolloPersonId`; each page is reduced to the slim
+ * row above before the next one is read, so the heap holds one basic page at a time. Fails loud.
+ */
+export async function fetchServedPersonRows(
+  brandId: string,
+  campaignIds: readonly string[],
+  headers: { orgId: string; userId?: string; runId?: string },
+): Promise<ServedPersonRow[]> {
+  const url = process.env.LEAD_SERVICE_URL;
+  const apiKey = process.env.LEAD_SERVICE_API_KEY;
+  if (!url || !apiKey) throw new Error("LEAD_SERVICE_URL or LEAD_SERVICE_API_KEY not configured");
+  const out: ServedPersonRow[] = [];
+  for (const campaignId of campaignIds) {
+    const params = new URLSearchParams({ brandId, campaignId, view: "basic", status: "all", limit: String(SERVE_PAGE_SIZE) });
+    const reqHeaders: Record<string, string> = {
+      "x-api-key": apiKey,
+      "x-org-id": headers.orgId,
+      "x-brand-id": brandId,
+      "x-campaign-id": campaignId,
+    };
+    if (headers.userId) reqHeaders["x-user-id"] = headers.userId;
+    if (headers.runId) reqHeaders["x-run-id"] = headers.runId;
+    const baseUrl = `${url}/orgs/leads?${params}`;
+    const seenCursors = new Set<string>();
+    let cursor: string | null = null;
+    for (let page = 0; ; page += 1) {
+      if (page >= MAX_LEAD_PAGES) {
+        throw new Error(`lead-service /orgs/leads serve walk exceeded ${MAX_LEAD_PAGES} pages for ${baseUrl}`);
+      }
+      const pageUrl = cursor === null ? baseUrl : `${baseUrl}&cursor=${encodeURIComponent(cursor)}`;
+      const data = await leadReadSlots.run(async () => {
+        const response = await fetchWithRetry(pageUrl, { headers: reqHeaders }, { timeoutMs: LEAD_PAGE_TIMEOUT_MS });
+        if (!response.ok) {
+          throw new Error(`lead-service /orgs/leads failed (${response.status}): ${await response.text()}`);
+        }
+        return (await response.json()) as { leads: BasicServeRow[]; nextCursor?: string | null };
+      });
+      for (const row of data.leads) {
+        // A row with no serve run was buffered, never handed out: nothing was paid to acquire it.
+        if (!row.runId || !row.leadId) continue;
+        const org = row.lead?.organization ?? null;
+        const domain = org?.primaryDomain ?? domainFromUrl(org?.websiteUrl);
+        out.push({
+          runId: row.runId,
+          leadId: row.leadId,
+          apolloPersonId: row.apolloPersonId ?? null,
+          campaignId: row.campaignId ?? campaignId,
+          audienceId: row.audienceId ?? null,
+          email: row.email ? row.email : null,
+          firstName: row.lead?.firstName ?? null,
+          lastName: row.lead?.lastName ?? null,
+          companyName: org?.name ?? null,
+          companyDomain: domain ? domain.toLowerCase() : null,
+        });
+      }
+      const next = data.nextCursor ?? null;
+      if (next === null) break;
+      if (seenCursors.has(next)) throw new Error(`lead-service /orgs/leads returned a repeating cursor for ${baseUrl}`);
+      seenCursors.add(next);
+      cursor = next;
+    }
+  }
+  return out;
+}
