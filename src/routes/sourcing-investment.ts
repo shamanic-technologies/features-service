@@ -14,6 +14,7 @@ import {
   computeSourcingInvestment,
   fetchListBuildCosts,
   fetchServeRunCosts,
+  fetchHeldPersonCompanies,
   type SourcingInvestment,
 } from "../lib/sourcing-investment.js";
 
@@ -34,12 +35,13 @@ export const SOURCING_INVESTMENT_DEFINITION = {
 async function loadSourcingInvestment(brandId: string, req: AuthenticatedRequest): Promise<SourcingInvestment> {
   return servedCached({
     view: "brand-sourcing-investment",
-    scopeKey: buildScopeKey(brandId, { orgId: req.orgId, m: "sourcing-investment-v1" }),
+    scopeKey: buildScopeKey(brandId, { orgId: req.orgId, m: "sourcing-investment-v2" }),
     orgId: req.orgId,
     compute: async () => {
-      const [serves, listBuild] = await Promise.all([
+      const [serves, listBuild, heldCompanies] = await Promise.all([
         fetchServeRunCosts(brandId, req.orgId),
         fetchListBuildCosts(brandId, req.orgId),
+        fetchHeldPersonCompanies(brandId, req.orgId),
       ]);
       const campaignIds = [...new Set(serves.map((s) => s.campaignId).filter((c): c is string => !!c))].sort();
       const servedRows = await fetchServedPersonRows(brandId, campaignIds, {
@@ -47,7 +49,7 @@ async function loadSourcingInvestment(brandId: string, req: AuthenticatedRequest
         userId: req.userId,
         runId: req.runId,
       });
-      return computeSourcingInvestment({ serves, listBuild, servedRows });
+      return computeSourcingInvestment({ serves, listBuild, servedRows, heldCompanies });
     },
   });
 }
@@ -116,12 +118,22 @@ router.get("/brands/:brandId/sourcing-investment/people", apiKeyAuth, async (raw
 router.get("/brands/:brandId/sourcing-investment/companies", apiKeyAuth, async (rawReq, res) => {
   const req = rawReq as unknown as AuthenticatedRequest;
   const brandId = rawReq.params.brandId as string;
-  const paging = parsePaging(rawReq.query as Record<string, unknown>, "domains");
+  const query = rawReq.query as Record<string, unknown>;
+  if (query.companyKeys !== undefined && query.domains !== undefined) {
+    return res.status(400).json({ error: "name companyKeys or domains, not both" });
+  }
+  const byKey = query.companyKeys !== undefined;
+  const paging = parsePaging(query, byKey ? "companyKeys" : "domains");
   if ("error" in paging) return res.status(400).json({ error: paging.error });
   try {
     const r = await loadSourcingInvestment(brandId, req);
-    const keys = paging.keys ? new Set([...paging.keys].map((d) => d.toLowerCase())) : null;
-    const matching = keys ? r.companies.filter((c) => keys.has(c.companyDomain)) : r.companies;
+    const keys = paging.keys;
+    const domains = keys && !byKey ? new Set([...keys].map((d) => d.toLowerCase())) : null;
+    const matching = !keys
+      ? r.companies
+      : byKey
+        ? r.companies.filter((c) => keys.has(c.companyKey))
+        : r.companies.filter((c) => c.companyDomain !== null && domains!.has(c.companyDomain));
     return res.json({
       brandId,
       total: matching.length,
