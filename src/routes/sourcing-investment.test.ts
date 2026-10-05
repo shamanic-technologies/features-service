@@ -15,6 +15,7 @@ vi.mock("../lib/sourcing-investment.js", async (orig) => ({
   ...(await orig<typeof import("../lib/sourcing-investment.js")>()),
   fetchServeRunCosts: vi.fn(),
   fetchListBuildCosts: vi.fn(),
+  fetchHeldPersonCompanies: vi.fn(),
 }));
 
 process.env.FEATURES_SERVICE_API_KEY = "test-key";
@@ -24,7 +25,7 @@ process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 process.env.LEAD_SERVICE_URL = "http://lead";
 process.env.LEAD_SERVICE_API_KEY = "lk";
 
-const { fetchServeRunCosts, fetchListBuildCosts } = await import("../lib/sourcing-investment.js");
+const { fetchServeRunCosts, fetchListBuildCosts, fetchHeldPersonCompanies } = await import("../lib/sourcing-investment.js");
 const app = (await import("../index.js")).default;
 const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
 
@@ -52,6 +53,9 @@ describe("GET /brands/:brandId/sourcing-investment[/people|/companies]", () => {
     vi.mocked(fetchListBuildCosts).mockReset().mockResolvedValue([
       { audienceId: "A", billedCents: "100", netCents: "90", vendorCents: "80", unpricedBilledCents: "0" },
     ]);
+    vi.mocked(fetchHeldPersonCompanies).mockReset().mockResolvedValue(
+      new Map([["AP1", { companyKey: "domain:acme.com", name: "Acme", domain: "acme.com" }]]),
+    );
     fetchMock.mockReset().mockImplementation(async (url: string) => {
       const u = new URL(url);
       const campaignId = u.searchParams.get("campaignId")!;
@@ -85,7 +89,7 @@ describe("GET /brands/:brandId/sourcing-investment[/people|/companies]", () => {
     const res = await request(app).get("/brands/b1/sourcing-investment/people?apolloPersonIds=AP1,ZZ").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.total).toBe(1);
-    expect(res.body.people[0]).toMatchObject({ apolloPersonId: "AP1", serveCount: 2, companyDomain: "acme.com" });
+    expect(res.body.people[0]).toMatchObject({ apolloPersonId: "AP1", serveCount: 2, companyKey: "domain:acme.com", companyDomain: "acme.com" });
     expect(res.body.people[0].invested.billedUsd).toBeCloseTo(0.16, 10);
   });
 
@@ -94,6 +98,13 @@ describe("GET /brands/:brandId/sourcing-investment[/people|/companies]", () => {
     expect(res.status).toBe(200);
     expect(res.body.companies).toHaveLength(1);
     expect(res.body.companies[0].invested.billedUsd).toBeCloseTo(0.16, 10);
+  });
+
+  it("companies: keyed by human-service companyKey", async () => {
+    const res = await request(app).get("/brands/b1/sourcing-investment/companies?companyKeys=domain:acme.com,name:x").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.companies.map((c: { companyKey: string }) => c.companyKey)).toEqual(["domain:acme.com"]);
+    expect((await request(app).get("/brands/b1/sourcing-investment/companies?companyKeys=a&domains=b").set(AUTH)).status).toBe(400);
   });
 
   it("bad paging is a 400, never ignored", async () => {
