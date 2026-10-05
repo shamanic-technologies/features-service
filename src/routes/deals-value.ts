@@ -38,7 +38,7 @@ export async function computeBrandDealsValue(
   // never on the pipeline's "our outreach only" default. Measured in prod 2026-09-26 (Doc Dinners): on
   // the default, 45 of 54 Interested cards read $0 because their meetings came through the CRM.
   const [population, interested, won] = await Promise.all([
-    loadBrandPricedPopulation(brandId, headers, pre, { fleetEntryStats: false, pricedCauses: ALL_OUTCOME_CAUSES, campaignIds }),
+    loadBrandPricedPopulation(brandId, headers, pre, { pricedCauses: ALL_OUTCOME_CAUSES, campaignIds }),
     fetchLeadIdsByStanding(brandId, "sales_interest", headers),
     fetchLeadIdsByStanding(brandId, "customer", headers),
   ]);

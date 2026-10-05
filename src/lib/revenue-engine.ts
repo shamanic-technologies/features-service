@@ -593,9 +593,10 @@ export function contactedExpiryCutoffIso(now: Date): string {
 /**
  * WHAT A CONTACTED LEAD WHO HAS NOT ENGAGED IS WORTH, inside the pipeline.
  *
- * `value = combineIndependent over the entry routes r of P(r | contacted) × pathValue(r)` — the same
+ * `value = combineIndependent over the entry routes r of P(r | contacted, g) × pathValue(r)` — the same
  * formula `lib/contacted-value.ts` serves, on the same paths as every engaged lead, so a lead that
- * clicks moves from `P(click | contacted) × pathValue` to `pathValue`, never onto another price.
+ * clicks moves from `P(click | contacted) × pathValue` to `pathValue`, never onto another price. `g` is
+ * the lead's (campaign × workflow) group: P = cost per contact ÷ that workflow's cost per outcome.
  *
  * It EXPIRES: measured on the whole fleet, every positive reply and every click landed within 30 days
  * of the last email sent before it, so a lead whose last SENT email (`signalDates.lastSent`, the
@@ -603,10 +604,18 @@ export function contactedExpiryCutoffIso(now: Date): string {
  * not sent anything yet counts while pending (`contactedExpired`). Engaged leads are untouched by this.
  */
 export interface ContactedPricing {
-  /** P(entry step | contacted), 0..100, per engine signal (`clicked`, `positiveReply`). */
-  entryRatePct: Readonly<Record<string, number>>;
+  /**
+   * P(entry step | contacted), 0..100, per (campaign × workflow) group (`contactedGroupKey`), per engine
+   * signal (`clicked`, `positiveReply`). A lead whose group (or route) is absent carries nothing.
+   */
+  entryRatePctByGroup: Readonly<Record<string, Readonly<Record<string, number>>>>;
   /** ISO instant: a last send strictly before this has expired. */
   lastSentOnOrAfter: string;
+}
+
+/** The group a contacted lead's entry rate is keyed on: `<campaignId>|<workflowSlug>`, or null when either is unknown. */
+export function contactedGroupKey(campaignId: string | null | undefined, workflowSlug: string | null | undefined): string | null {
+  return campaignId && workflowSlug ? `${campaignId}|${workflowSlug}` : null;
 }
 
 /**
@@ -636,11 +645,14 @@ export function contactedLeadValue(
       ? person.valueUsd
       : null;
   const scale = statedValueUsd !== null && closeValueUsd > 0 ? statedValueUsd / closeValueUsd : 1;
+  const key = contactedGroupKey(person.campaignId, person.workflowSlug);
+  const rates = key === null ? undefined : pricing.entryRatePctByGroup[key];
+  if (!rates) return 0;
   const dead = new Set(person.deadSignals ?? []);
   const evs: number[] = [];
   for (const path of paths) {
     if (!path.engagementRoute || dead.has(path.signal)) continue;
-    const rate = pricing.entryRatePct[path.signal];
+    const rate = rates[path.signal];
     if (typeof rate !== "number" || !Number.isFinite(rate)) continue;
     evs.push((rate / 100) * path.expectedRevenueUsd * scale);
   }

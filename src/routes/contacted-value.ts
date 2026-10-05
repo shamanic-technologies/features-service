@@ -14,7 +14,7 @@
  */
 import { Router } from "express";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
-import { getFunnel, restrictPathsToDeclaredLegs } from "../lib/funnel-registry.js";
+import { restrictPathsToDeclaredLegs } from "../lib/funnel-registry.js";
 import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel, type DownstreamHeaders } from "./revenue.js";
 import { distinctChannelFunnels } from "./offer-economics.js";
 import { fetchEffectiveEconomics, economicsFingerprint } from "../lib/sales-economics-client.js";
@@ -37,12 +37,20 @@ import {
   type ResolvedPath,
 } from "../lib/revenue-engine.js";
 import { DEFAULT_PRICED_CAUSES, type OutcomeCause } from "../lib/outcome-cause.js";
-import { fetchPublicEmailStats } from "../lib/public-stats-clients.js";
+import { fetchPublicWorkflows } from "../lib/public-stats-clients.js";
+import { dynastyOfSlug } from "../lib/workflow-scope.js";
+import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
+import { fetchRunsCommittedCentsByCampaignWorkflow } from "../lib/runs-cost-client.js";
+import { mapWithConcurrency } from "../lib/concurrency.js";
+import { runLadder, dynastyPriceFromLadder, type LadderBody } from "../lib/leg-ladder.js";
 import {
   priceContactedLeads,
-  fleetEntryCountsOf,
+  contactedEntryLegs,
+  contactedEntryRatesByGroup,
+  contactedGroupsOf,
+  type ContactedGroupInput,
+  type ContactedRoutePrice,
   type ContactedValueResult,
-  type FleetEntryCounts,
 } from "../lib/contacted-value.js";
 
 const router = Router();
@@ -69,7 +77,6 @@ export async function loadBrandPricedPopulation(
   headers: DownstreamHeaders,
   pre: BrandPricingPre,
   opts: {
-    fleetEntryStats: boolean;
     /** Which cause states are PRICED (the pipeline's default: our outreach only). */
     pricedCauses?: readonly OutcomeCause[];
     /**
@@ -82,17 +89,14 @@ export async function loadBrandPricedPopulation(
   persons: EnginePerson[];
   paths: ResolvedPath[];
   lifetimeRevenueUsd: number | null;
-  fleetGroups: Map<string, Record<string, number>> | null;
   /** The step statements, per canonical email (null when unreadable). */
   observed: ObservedStepFacts | null;
 }> {
   const { channels, declared, effective } = pre;
   const pricedCauses = opts.pricedCauses ?? DEFAULT_PRICED_CAUSES;
-  const featureSlugs = brandFeatureSlugs(channels);
   const funnels = distinctChannelFunnels(channels);
   if (funnels.length > 1) throw new BrandPricesDifferentlyError(brandId);
   const funnel = funnels[0] ?? null;
-  const measuredSlugs = featureSlugs.filter((slug) => getFunnel(slug) !== null);
 
   const soft = <T>(what: string, p: Promise<T>): Promise<T | null> =>
     p.catch((err) => {
@@ -100,12 +104,7 @@ export async function loadBrandPricedPopulation(
       return null;
     });
 
-  const [persons, fleetGroups] = await Promise.all([
-    fetchLeadsForRevenue(brandId, opts.campaignIds, headers),
-    opts.fleetEntryStats && measuredSlugs.length > 0
-      ? soft("fleet email stats", fetchPublicEmailStats(measuredSlugs.join(","), "workflowSlug"))
-      : Promise.resolve(null),
-  ]);
+  const persons = await fetchLeadsForRevenue(brandId, opts.campaignIds, headers);
   const priced = priceOnDeclaredFunnel(declared, effective);
   const economics = priced.economics.economics;
 
@@ -138,9 +137,114 @@ export async function loadBrandPricedPopulation(
     persons: dedupPersonsByLead(persons),
     paths,
     lifetimeRevenueUsd: economics ? economics.lifetimeRevenueUsd : null,
-    fleetGroups: fleetGroups as Map<string, Record<string, number>> | null,
     observed,
   };
+}
+
+/**
+ * What one (campaign × workflow) group's leads cost per outcome on each entry route, and what the group
+ * spent — the inputs `priceContactedLeads` turns into P(entry | contacted, group). The price is the
+ * leg-keyed workflow-projection ladder `/offers/:offerId/sales-paths` reads (`?leg=&offerId=&pricing=net`,
+ * the campaign's channel), on the dynasty of the workflow that served the leads; the spend is runs'
+ * committed spend on the same NET basis (the basis the dashboard's "$ Invested" and the ladder read).
+ * Campaign rows and spend are fail-loud (the cell fails, the pipeline read degrades loudly); a ladder
+ * or a workflow catalogue that cannot answer leaves ITS groups unpriced with a named reason.
+ */
+async function priceContactedGroups(
+  brandId: string,
+  headers: DownstreamHeaders,
+  featureSlugs: string[],
+  persons: EnginePerson[],
+  paths: ResolvedPath[],
+): Promise<ContactedGroupInput[]> {
+  const groups = [...contactedGroupsOf(persons).values()];
+  const legs = contactedEntryLegs(paths);
+  if (groups.length === 0 || legs.length === 0) return [];
+  const identity = { orgId: headers.orgId, userId: headers.userId ?? "", runId: headers.runId ?? "" };
+
+  const [campaignRows, spendCents] = await Promise.all([
+    fetchBrandCampaignRows(brandId, undefined, headers),
+    fetchRunsCommittedCentsByCampaignWorkflow(brandId, featureSlugs, headers, "net"),
+  ]);
+  const campaignById = new Map(campaignRows.map((c) => [c.id, c]));
+
+  // Slug → dynasty, per channel the groups' campaigns run on.
+  const groupFeature = (campaignId: string) => campaignById.get(campaignId)?.featureSlug ?? null;
+  const features = [...new Set(groups.map((g) => groupFeature(g.campaignId)).filter((f): f is string => f !== null))];
+  const dynastyOf = new Map<string, ((slug: string) => string) | null>();
+  await Promise.all(
+    features.map(async (featureSlug) => {
+      try {
+        dynastyOf.set(featureSlug, dynastyOfSlug(await fetchPublicWorkflows(featureSlug, "all")));
+      } catch (err) {
+        console.error(
+          `[features-service] contacted value (brand ${brandId}): workflow catalogue of ${featureSlug} unreadable — its groups unpriced: ${(err as Error).message}`,
+        );
+        dynastyOf.set(featureSlug, null);
+      }
+    }),
+  );
+
+  // One ladder per (channel, offer, leg) actually needed.
+  const ladderKey = (featureSlug: string, offerId: string | null, legKey: string) => `${featureSlug}|${offerId ?? ""}|${legKey}`;
+  const needed = new Map<string, { featureSlug: string; offerId: string | null; legKey: string }>();
+  for (const g of groups) {
+    const row = campaignById.get(g.campaignId);
+    const featureSlug = row?.featureSlug ?? null;
+    if (!featureSlug || !dynastyOf.get(featureSlug)) continue;
+    for (const { legKey } of legs) {
+      needed.set(ladderKey(featureSlug, row?.offerId ?? null, legKey), { featureSlug, offerId: row?.offerId ?? null, legKey });
+    }
+  }
+  const ladders = new Map<string, { status: number; body: LadderBody } | null>();
+  await mapWithConcurrency([...needed.entries()], 4, async ([key, { featureSlug, offerId, legKey }]) => {
+    const query: Record<string, string> = { brandId, leg: legKey, pricing: "net" };
+    if (offerId) query.offerId = offerId;
+    try {
+      const answer = await runLadder(identity, featureSlug, query);
+      if (answer.status !== 200) {
+        console.error(
+          `[features-service] contacted value (brand ${brandId}): ladder ${featureSlug}/${legKey}${offerId ? ` offer ${offerId}` : ""} answered ${answer.status} (${answer.body.reason ?? "no reason"}) — its groups unpriced on that route`,
+        );
+      }
+      ladders.set(key, answer);
+    } catch (err) {
+      console.error(
+        `[features-service] contacted value (brand ${brandId}): ladder ${featureSlug}/${legKey} failed — its groups unpriced on that route: ${(err as Error).message}`,
+      );
+      ladders.set(key, null);
+    }
+  });
+
+  return groups.map((g) => {
+    const row = campaignById.get(g.campaignId);
+    const featureSlug = row?.featureSlug ?? null;
+    const offerId = row?.offerId ?? null;
+    const toDynasty = featureSlug ? dynastyOf.get(featureSlug) : null;
+    const workflowDynastySlug = toDynasty ? toDynasty(g.workflowSlug) : null;
+    const prices: Record<string, ContactedRoutePrice> = {};
+    for (const { signal, legKey } of legs) {
+      if (!row) prices[signal] = { costPerOutcomeUsd: null, unpricedReason: "campaign_unknown" };
+      else if (!featureSlug) prices[signal] = { costPerOutcomeUsd: null, unpricedReason: "campaign_states_no_channel" };
+      else if (!workflowDynastySlug) prices[signal] = { costPerOutcomeUsd: null, unpricedReason: "workflow_catalogue_unreadable" };
+      else {
+        const ladder = ladders.get(ladderKey(featureSlug, offerId, legKey));
+        prices[signal] = ladder
+          ? dynastyPriceFromLadder(ladder.status, ladder.body, workflowDynastySlug)
+          : { costPerOutcomeUsd: null, unpricedReason: "ladder_failed" };
+      }
+    }
+    const cents = spendCents.get(`${g.campaignId}|${g.workflowSlug}`);
+    return {
+      campaignId: g.campaignId,
+      workflowSlug: g.workflowSlug,
+      offerId,
+      featureSlug,
+      workflowDynastySlug,
+      committedSpentUsd: cents === undefined ? null : cents / 100,
+      prices,
+    };
+  });
 }
 
 /** The brand's figure, computed once per refresh (the Gold snapshot layer caches it). */
@@ -150,11 +254,9 @@ export async function computeBrandContactedValue(
   /** The brand-scoped reads the route already made to key the cache — never read twice. */
   pre: BrandPricingPre,
 ): Promise<ContactedValueResult> {
-  const { persons, paths, lifetimeRevenueUsd, fleetGroups } = await loadBrandPricedPopulation(brandId, headers, pre, {
-    fleetEntryStats: true,
-  });
-  const fleet: FleetEntryCounts = fleetGroups ? fleetEntryCountsOf(fleetGroups.values()) : null;
-  return priceContactedLeads({ paths, persons, lifetimeRevenueUsd, fleet });
+  const { persons, paths, lifetimeRevenueUsd } = await loadBrandPricedPopulation(brandId, headers, pre, {});
+  const groups = await priceContactedGroups(brandId, headers, brandFeatureSlugs(pre.channels), persons, paths);
+  return priceContactedLeads({ paths, persons, lifetimeRevenueUsd, groups });
 }
 
 export class BrandPricesDifferentlyError extends Error {
@@ -219,7 +321,7 @@ export async function getBrandContactedValue(brandId: string, headers: Downstrea
       channels: brandFeatureSlugs(channels).join("+"),
       decl: declared.map((f) => f.funnelKey).sort().join("+") || "none",
       econ: economicsFingerprint(priced.economics),
-      m: "contacted-value-v3",
+      m: "contacted-value-v4",
     }),
     orgId: headers.orgId,
     compute: () => computeBrandContactedValue(brandId, { orgId: headers.orgId, userId: headers.userId, runId: headers.runId }, { channels, declared, effective }),
@@ -227,18 +329,19 @@ export async function getBrandContactedValue(brandId: string, headers: Downstrea
 }
 
 /**
- * How a pipeline read prices this brand's contacted-but-not-engaged leads: the brand's entry rates
- * (P(click | contacted), P(positive reply | contacted), measured brand-wide, else the fleet's) and the
- * 30-day last-send expiry. FAIL-SOFT with a loud log, like every other per-lead enrichment of the
+ * How a pipeline read prices this brand's contacted-but-not-engaged leads: the per-(campaign × workflow)
+ * entry rates of the brand's contacted-value cell (cost per contact ÷ the serving workflow's cost per
+ * outcome) and the 30-day last-send expiry. FAIL-SOFT with a loud log, like every other per-lead enrichment of the
  * pipeline: unreadable → null → those leads carry nothing, never a guessed rate.
  */
 export async function contactedPricingSoft(brandId: string, headers: DownstreamHeaders): Promise<ContactedPricing | null> {
   try {
     const result = await getBrandContactedValue(brandId, headers);
     if (result.unmeasuredReason !== null) return null;
-    const entryRatePct: Record<string, number> = {};
-    for (const route of result.routes) if (route.entryRatePct !== null) entryRatePct[route.signal] = route.entryRatePct;
-    return { entryRatePct, lastSentOnOrAfter: contactedExpiryCutoffIso(new Date()) };
+    return {
+      entryRatePctByGroup: contactedEntryRatesByGroup(result.workflows),
+      lastSentOnOrAfter: contactedExpiryCutoffIso(new Date()),
+    };
   } catch (err) {
     console.warn(
       `[features-service] contacted-lead pricing unreadable for brand ${brandId} — contacted leads add nothing to this pipeline: ${(err as Error).message}`,
