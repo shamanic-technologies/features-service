@@ -12,10 +12,10 @@
  *
  *   - Interested = each person at the engine's expected value on every cause, a SUBSET of
  *     `/offers/:offerId/revenue?cause=outreach,other,unstated`'s pipeline.
- *   - Contacted value = what these leads add to `/offers/:offerId/revenue`'s pipeline. The ENTRY RATES
- *     are the brand's (the one cell every pipeline read prices a contacted lead on), never re-measured
- *     on the offer's narrower cohort — a re-measured rate would price the column off a different number
- *     than the pipeline beside it.
+ *   - Contacted value = what these leads add to `/offers/:offerId/revenue`'s pipeline. The per-(campaign
+ *     × workflow) ENTRY RATES are the brand cell's (the one cell every pipeline read prices a contacted
+ *     lead on), borrowed as is: a group is one campaign, so its rate applies unchanged to the offer's
+ *     leads — and a second computation could price the column off a different number than the pipeline.
  *
  * People do not add across offers: a lead served under two offers is in both offers' populations (it is
  * one person to each), so offer A + offer B can exceed the brand. A brand member no campaign of this
@@ -52,7 +52,7 @@ function campaignSetKey(campaignIds: string[]): string {
   return createHash("sha1").update(campaignIds.join("+")).digest("hex").slice(0, 12);
 }
 
-/** Why the brand's entry rates could not be borrowed (every route then reads null, as in the pipeline). */
+/** Why the brand's entry rates could not be borrowed (every lead then reads unpriced, as in the pipeline). */
 export type BrandEntryRatesUnavailableReason =
   | "brand_contacted_value_unreadable"
   | "no_economics"
@@ -61,7 +61,7 @@ export type BrandEntryRatesUnavailableReason =
   | "no_entry_rate";
 
 export type OfferContactedValueResult = ContactedValueResult & {
-  /** Where `routes[].entryRatePct` comes from: always the brand's contacted-value cell. */
+  /** Where `workflows[]` (each group's entry rates) comes from: always the brand's contacted-value cell. */
   entryRatesFrom: "brand";
   brandEntryRatesUnavailableReason: BrandEntryRatesUnavailableReason | null;
 };
@@ -92,11 +92,11 @@ export async function computeOfferContactedValue(
   campaignIds: string[],
 ): Promise<OfferContactedValueResult> {
   const [population, brandCell] = await Promise.all([
-    loadBrandPricedPopulation(brandId, headers, pre, { fleetEntryStats: false, campaignIds }),
+    loadBrandPricedPopulation(brandId, headers, pre, { campaignIds }),
     // Soft, exactly like the pipeline's own read of this cell (`contactedPricingSoft`): unreadable →
     // no rate, which is what the offer's pipeline prices these leads on too.
     getBrandContactedValue(brandId, headers).catch((err: Error) => {
-      console.warn(`[features-service] offer contacted value (brand ${brandId}): brand entry rates unreadable — every route null: ${err.message}`);
+      console.warn(`[features-service] offer contacted value (brand ${brandId}): brand entry rates unreadable — every lead unpriced: ${err.message}`);
       return null;
     }),
   ]);
@@ -106,8 +106,7 @@ export async function computeOfferContactedValue(
     paths: population.paths,
     persons: population.persons,
     lifetimeRevenueUsd: population.lifetimeRevenueUsd,
-    fleet: null,
-    entryRatesFrom: unavailable === null ? brandCell!.routes : null,
+    entryRatesFrom: unavailable === null ? brandCell!.workflows : null,
   });
   return { ...result, entryRatesFrom: "brand", brandEntryRatesUnavailableReason: unavailable };
 }
@@ -164,7 +163,7 @@ router.get("/offers/:offerId/contacted-value", apiKeyAuth, async (req, res) => {
         channels: featureSlugs.join("+"),
         campaigns: campaignSetKey(campaignIds),
         ...keyParts,
-        m: "contacted-value-v1",
+        m: "contacted-value-v2",
       }),
       orgId: headers.orgId,
       compute: () => computeOfferContactedValue(brandId, headers, pre, campaignIds),

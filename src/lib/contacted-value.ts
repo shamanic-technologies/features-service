@@ -3,56 +3,52 @@
  *
  * A delivery is a step of no funnel, so it prices nothing on its own (#863). But a contacted lead has a
  * known chance of reaching a funnel's first step, and the brand owner asks of the people sitting in
- * the "Contacted" column: given the brand's own conversion ladder and client value, what is somebody we
- * emailed worth BEFORE they do anything? That value now COUNTS in the pipeline (see below).
+ * the "Contacted" column: what is somebody we emailed worth BEFORE they do anything? That value COUNTS
+ * in the pipeline (see below).
  *
- *   value(contacted lead) = LTR × P(paid client | contacted)
- *   P(paid client | contacted) = orP over the ENTRY ROUTES r of  P(r | contacted) × P(paid client | r)
+ *   value(contacted lead) = combineIndependent over the ENTRY ROUTES r of P(r | contacted, g) × pathValue(r)
  *
  * - The entry routes are exactly the engine's engagement routes (click, positive reply) on the funnels
- *   this brand is priced on, and `P(paid client | r) × LTR` IS the engine's own path value for r — the
- *   same `resolvePaths` ladder, the same restriction to the priced funnels' legs, the same LTR. So a
+ *   this brand is priced on, and `pathValue(r)` IS the engine's own path value for r — the same
+ *   `resolvePaths` ladder, the same restriction to the priced funnels' legs, the same LTR. So a
  *   contacted lead that clicks tomorrow moves from `P(click | contacted) × pathValue` to `pathValue`,
  *   never onto a different price.
- * - The routes are combined as independent shots at one close (`combineIndependent`), exactly as the
- *   engine combines a lead that fired both.
  * - A route the lead was ruled out of by a human (`deadSignals`) contributes nothing.
  *
- * ── P(entry step | contacted): WHERE IT IS MEASURED ────────────────────────────────────────────────
+ * ── P(entry step | contacted): THE WORKFLOWS THAT SERVED THE LEADS (owner 2026-10-05) ──────────────
  *
- *   1. BRAND — on the brand's own MATURE cohort, by the ROUTE's own leg rule (`lib/maturity.ts`: the
- *      click route is the `start_to_website_visit` leg, the reply route `start_to_conversation`): leads
- *      SERVED (run-start clock) before UTC midnight of `today − duration` (21 days: a cold email's
- *      clicks and replies keep landing for weeks after it is sent, so counting last week's serves would
- *      read the rate low). Leads with no serve date are left out of the rate (their age is unknown). The
- *      bar is the leg's own MATURE-outcome count (`outcomesRequired`: 10 visits, 1 positive reply), not a
- *      bar on the denominator like the between-step arrows.
- *   2. FLEET — the cross-org rate on the same channels (email-gateway public recipient stats, every
- *      brand's lifetime, pooled). A measurement of the same arrow on everybody's outreach.
- *   3. Neither → that route reads null, and a lead with no route priced reads null with a named reason.
- *      Never a 0 and never a default.
+ * Priced with the SAME per-workflow cost-per-outcome estimates the workflow ranking serves, weighted by
+ * the workflows that actually served the leads. Per group g = (campaignId, workflowSlug) of contacted
+ * persons (every contacted person, engaged or bounced included: the spend bought all of them):
+ *
+ *   costPerContactUsd_g = committed spend_g ÷ contacted_g
+ *   P(r | contacted, g) = min(1, costPerContactUsd_g ÷ costPerOutcomeUsd(g's workflow, leg(r)))
+ *
+ * so Σ over g's leads of P = spend_g ÷ $/outcome: expected outcomes are dollars ÷ the price of one. The
+ * price is the leg-keyed workflow-projection ladder's `resolved.costPerOutcomeUsd` for the workflow's
+ * dynasty — what `/offers/:offerId/sales-paths` reads — so a campaign 100% on one workflow reproduces
+ * the sales path's ROI exactly. Every workflow has one even with 0 outcomes (the cascade floor). A
+ * group the ladder does not price, or runs recorded no spend for, has NO rate on that route (null +
+ * `unpricedReason`), never a fallback number. A person with no campaign or no workflow is unattributed.
  *
  * ── WHO IS PRICED ──────────────────────────────────────────────────────────────────────────────────
  *
- * A lead is "contacted only" when it was contacted, did not bounce or unsubscribe (those cannot convert
- * — `cannot_convert`), and reached NO conversion signal at all — no click, no reply of any class, no
- * meeting, no signup, no form, no sale (`engaged`: its value, if any, is the pipeline's). An opener is
- * still contacted-only: an open is a delivery milestone, not a funnel leg.
+ * A lead is "contacted only" when it was contacted, did not bounce or unsubscribe (`cannot_convert`),
+ * and reached NO conversion signal at all (`engaged`: its value, if any, is the pipeline's). An opener
+ * is still contacted-only: an open is a delivery milestone, not a funnel leg.
  *
  * ── IT IS PIPELINE, AND IT EXPIRES ─────────────────────────────────────────────────────────────────
  *
  * The per-lead value is the engine's own `contactedLeadValue` — the byte-same function the pipeline
- * prices a contacted-only lead with (`computeRevenue`'s `contacted` pricing), so this read states
- * exactly what these leads add to the brand's pipeline and ROI. A lead with no email SENT in the last
- * `CONTACTED_VALUE_EXPIRY_DAYS` (30) days — counted from the provider's per-step sent event, never the
- * contacted or first-send date — is worth 0 (`expired`). A lead not sent anything yet counts while
- * pending, bounded to 30 days after hand-off. The TOTAL is the pipeline's per-company rule:
- * Σ over organisations of the most valuable member.
+ * prices a contacted-only lead with (`computeRevenue`'s `contacted` pricing). A lead with no email SENT
+ * in the last `CONTACTED_VALUE_EXPIRY_DAYS` (30) days is worth 0 (`expired`); a lead not sent anything
+ * yet counts while pending, bounded to 30 days after hand-off. The TOTAL is the pipeline's per-company
+ * rule: Σ over organisations of the most valuable member.
  */
 import {
-  combineIndependent,
   contactedExpiryCutoffIso,
   contactedExpired,
+  contactedGroupKey,
   contactedLeadValue,
   CONTACTED_VALUE_EXPIRY_DAYS,
   ENGAGED_SIGNALS,
@@ -60,7 +56,6 @@ import {
   type EnginePerson,
   type ResolvedPath,
 } from "./revenue-engine.js";
-import { legMaturity, maturityCutoffIso, servedInMatureCohort } from "./maturity.js";
 
 export { ENGAGED_SIGNALS };
 
@@ -70,13 +65,11 @@ const ROUTE_STEP: Record<string, string> = {
   positiveReply: "Positive reply",
 };
 
-/** The LEG each entry route IS — whose maturity rule (`lib/maturity.ts`) its brand rate is measured on. */
+/** The LEG each entry route IS — whose workflow-projection ladder prices it. */
 const ROUTE_LEG: Record<string, string> = {
   clicked: "start_to_website_visit",
   positiveReply: "start_to_conversation",
 };
-
-export type EntryRateSource = "brand_measured" | "fleet_measured";
 
 export type ContactedValueUnmeasuredReason =
   /** The brand has no economics at all (cold start). */
@@ -85,73 +78,93 @@ export type ContactedValueUnmeasuredReason =
   | "no_client_value"
   /** No funnel the brand is priced on is entered through a click or a positive reply. */
   | "no_entry_path"
-  /** An entry path exists but no source measures how often a contacted lead reaches it. */
+  /** An entry path exists but no (campaign × workflow) group has a priced rate on it. */
   | "no_entry_rate";
-
-export interface EntryCounts {
-  contacted: number;
-  reached: number;
-}
 
 export interface ContactedEntryRoute {
   /** The engine signal of the route (`clicked` / `positiveReply`). */
   signal: string;
   /** The funnel step the route lands on. */
   step: string;
-  /** P(this step | contacted), 0..100, from `entryRateSource`. Null when no source measures it. */
-  entryRatePct: number | null;
-  entryRateSource: EntryRateSource | null;
-  /** The brand's mature cohort: leads served before this route's own cutoff, and how many reached the step. */
-  brand: EntryCounts;
-  /** The route's leg maturity duration (`lib/maturity.ts`). */
-  maturityDays: number;
-  /** The route's own cutoff: leads served before this instant count toward the brand rate. */
-  matureBefore: string;
-  /** Mature outcomes the brand needs on this route before its own rate is used (the leg's bar). */
-  minBrandOutcomes: number;
-  /** The fleet's pooled counts on the same channels. Null when that read failed. */
-  fleet: EntryCounts | null;
+  /** The leg the route IS (the ladder that prices it). */
+  legKey: string;
   /** P(paid client | this step), 0..100 — the engine's own ladder for the step. */
   paidClientGivenStepPct: number;
   /** What a lead standing on this step is worth — the engine's own path value. */
   valueAtStepUsd: number;
 }
 
+/** What the ladder says one outcome of a route's leg costs on a group's workflow. */
+export interface ContactedRoutePrice {
+  costPerOutcomeUsd: number | null;
+  /** Why there is no price (ladder status/reason, workflow absent, campaign unknown…). Null when priced. */
+  unpricedReason: string | null;
+}
+
+/** PURE input: one (campaign × workflow) group's spend and per-route prices, resolved by the route. */
+export interface ContactedGroupInput {
+  campaignId: string;
+  workflowSlug: string;
+  offerId: string | null;
+  featureSlug: string | null;
+  workflowDynastySlug: string | null;
+  /** Committed spend runs recorded on (campaign, workflow); null = runs recorded none. */
+  committedSpentUsd: number | null;
+  /** Keyed by engine signal. */
+  prices: Readonly<Record<string, ContactedRoutePrice>>;
+}
+
+export interface ContactedWorkflowRoute {
+  signal: string;
+  legKey: string;
+  costPerOutcomeUsd: number | null;
+  unpricedReason: string | null;
+  /** P(this step | contacted, group), 0..100 = min(100, 100 × costPerContact ÷ costPerOutcome). */
+  entryRatePct: number | null;
+  /** contacted × P: the outcomes this group's spend buys at the workflow's price. */
+  expectedOutcomes: number | null;
+}
+
+export interface ContactedWorkflowGroup {
+  campaignId: string;
+  offerId: string | null;
+  featureSlug: string | null;
+  workflowSlug: string;
+  workflowDynastySlug: string | null;
+  /** Contacted persons of the group (deduped; engaged and bounced included). */
+  contacted: number;
+  committedSpentUsd: number | null;
+  costPerContactUsd: number | null;
+  routes: ContactedWorkflowRoute[];
+}
+
 export interface ContactedLeadValue {
   leadId: string;
   /**
-   * LTR × P(paid client | contacted) — the SAME value this lead carries in the pipeline. `0` once it has
-   * EXPIRED (`expired`). Null exactly when the response's `unmeasuredReason` is set.
+   * The SAME value this lead carries in the pipeline. `0` once it has EXPIRED. Null when the response's
+   * `unmeasuredReason` is set, or the lead's group has no priced route (unattributed / unpriced): the
+   * pipeline counts such a lead as nothing.
    */
   expectedValueUsd: number | null;
-  /** True when the last send is older than `expiryDays` days (or, never sent, it was handed off longer ago): worth nothing. */
+  /** True when the last send is older than `expiryDays` days (or, never sent, it was handed off longer ago). */
   expired: boolean;
 }
 
 export interface ContactedValueResult {
   /** The client value every figure is priced on (the same LTR the pipeline uses). */
   lifetimeRevenueUsd: number | null;
-  /** P(paid client | contacted), 0..100, for a lead no human ruled out of any route. */
-  contactedToPaidClientPct: number | null;
-  /** LTR × that probability — every contacted-only lead's value unless a human ruled out a route. */
+  /** Mean expected value over the PRICED, non-expired contacted-only leads. */
   perLeadExpectedValueUsd: number | null;
-  /**
-   * Σ over organisations of the MOST valuable contacted-only member — the pipeline's own per-company
-   * rule (1 organisation = 1 client), so this is exactly what these leads add to the pipeline.
-   */
+  /** Σ over organisations of the MOST valuable contacted-only member — what these leads add to the pipeline. */
   totalExpectedValueUsd: number | null;
   unmeasuredReason: ContactedValueUnmeasuredReason | null;
   routes: ContactedEntryRoute[];
-  /** The EARLIEST route cutoff (each route states its own on `routes[]`). */
-  matureBefore: string;
-  /** The LONGEST route duration (each route states its own on `routes[]`). */
-  maturityDays: number;
+  /** One row per (campaign × workflow) group of contacted persons: the rate each lead is priced on. */
+  workflows: ContactedWorkflowGroup[];
   /** A contacted lead whose last send is older than this many days is worth nothing. */
   expiryDays: number;
   /** Leads whose last send is strictly before this instant have expired. */
   lastSentOnOrAfter: string;
-  /** The LARGEST route bar (each route states its own on `routes[]`). */
-  minBrandOutcomes: number;
   population: {
     contactedOnly: number;
     organizations: number;
@@ -161,26 +174,95 @@ export interface ContactedValueResult {
     cannotConvert: number;
     /** Contacted-only leads with no email sent in the last `expiryDays` days — valued at 0. */
     expired: number;
+    /** Contacted-only leads with no campaign or no workflow on their serve: no group, no value. */
+    unattributed: number;
+    /** Contacted-only leads whose group has no priced route: no value. */
+    unpriced: number;
   };
   /** One row per contacted-only lead, ordered by lead id. */
   leads: ContactedLeadValue[];
 }
 
-/** The extremes of the two entry routes' leg rules — what the response's single-valued fields state. */
-function entryRuleExtremes(now: Date): { matureBefore: string; maturityDays: number; minBrandOutcomes: number } {
-  const rules = Object.values(ROUTE_LEG).map((legKey) => legMaturity(legKey));
-  const maturityDays = Math.max(...rules.map((r) => r.durationDays));
-  return {
-    maturityDays,
-    matureBefore: maturityCutoffIso(maturityDays, now),
-    minBrandOutcomes: Math.max(...rules.map((r) => r.outcomesRequired)),
-  };
+const round = (n: number): number => Math.round(n * 1e6) / 1e6;
+
+/** PURE. The entry routes the priced paths carry, each with the leg whose ladder prices it. */
+export function contactedEntryLegs(paths: readonly ResolvedPath[]): Array<{ signal: string; legKey: string }> {
+  return paths
+    .filter((p) => p.engagementRoute && ROUTE_LEG[p.signal] !== undefined)
+    .map((p) => ({ signal: p.signal, legKey: ROUTE_LEG[p.signal] }));
 }
 
-/** Pooled fleet counts per entry signal (null = the fleet read failed). */
-export type FleetEntryCounts = Record<string, EntryCounts> | null;
+/** PURE. Contacted persons per (campaign × workflow) group, in first-seen order. Unattributed persons are in none. */
+export function contactedGroupsOf(
+  persons: readonly EnginePerson[],
+): Map<string, { campaignId: string; workflowSlug: string; contacted: number }> {
+  const groups = new Map<string, { campaignId: string; workflowSlug: string; contacted: number }>();
+  for (const p of persons) {
+    if (!p.signals.contacted) continue;
+    const key = contactedGroupKey(p.campaignId, p.workflowSlug);
+    if (key === null) continue;
+    const g = groups.get(key) ?? { campaignId: p.campaignId!, workflowSlug: p.workflowSlug!, contacted: 0 };
+    g.contacted += 1;
+    groups.set(key, g);
+  }
+  return groups;
+}
 
-const round = (n: number): number => Math.round(n * 1e6) / 1e6;
+/** PURE. The engine's `ContactedPricing.entryRatePctByGroup`, read off the served `workflows[]`. */
+export function contactedEntryRatesByGroup(
+  workflows: readonly ContactedWorkflowGroup[],
+): Record<string, Record<string, number>> {
+  const out: Record<string, Record<string, number>> = {};
+  for (const w of workflows) {
+    const rates: Record<string, number> = {};
+    for (const r of w.routes) if (r.entryRatePct !== null) rates[r.signal] = r.entryRatePct;
+    if (Object.keys(rates).length > 0) out[contactedGroupKey(w.campaignId, w.workflowSlug)!] = rates;
+  }
+  return out;
+}
+
+/** PURE. One group's row: cost per contact over each route's price, capped at 100%. */
+function priceGroup(
+  g: { campaignId: string; workflowSlug: string; contacted: number },
+  input: ContactedGroupInput | undefined,
+  legs: ReadonlyArray<{ signal: string; legKey: string }>,
+): ContactedWorkflowGroup {
+  const spend = input?.committedSpentUsd ?? null;
+  const costPerContactUsd = spend !== null && g.contacted > 0 ? spend / g.contacted : null;
+  return {
+    campaignId: g.campaignId,
+    offerId: input?.offerId ?? null,
+    featureSlug: input?.featureSlug ?? null,
+    workflowSlug: g.workflowSlug,
+    workflowDynastySlug: input?.workflowDynastySlug ?? null,
+    contacted: g.contacted,
+    committedSpentUsd: spend,
+    costPerContactUsd,
+    routes: legs.map(({ signal, legKey }) => {
+      const price = input?.prices[signal] ?? null;
+      const cost = price?.costPerOutcomeUsd ?? null;
+      const unpricedReason =
+        input === undefined
+          ? "group_not_priced"
+          : cost === null
+            ? (price?.unpricedReason ?? "workflow_unpriced")
+            : !(cost > 0)
+              ? "non_positive_cost_per_outcome"
+              : costPerContactUsd === null
+                ? "no_spend_recorded"
+                : null;
+      const p = unpricedReason === null ? Math.min(1, costPerContactUsd! / cost!) : null;
+      return {
+        signal,
+        legKey,
+        costPerOutcomeUsd: cost,
+        unpricedReason,
+        entryRatePct: p === null ? null : p * 100,
+        expectedOutcomes: p === null ? null : g.contacted * p,
+      };
+    }),
+  };
+}
 
 /** PURE. The whole figure, from inputs the engine already uses. */
 export function priceContactedLeads(input: {
@@ -190,19 +272,18 @@ export function priceContactedLeads(input: {
   persons: readonly EnginePerson[];
   /** LTR, or null at cold start. */
   lifetimeRevenueUsd: number | null;
-  fleet: FleetEntryCounts;
+  /** The BRAND grain: each (campaign × workflow) group's spend and per-route ladder prices. */
+  groups?: readonly ContactedGroupInput[];
   /**
-   * The OFFER grain: the entry rates are NOT re-measured on the narrower population — they are the
-   * brand's, copied from the brand's contacted-value routes, because those are the rates every pipeline
-   * read (`/offers/:offerId/revenue` included) prices a contacted lead with (`contactedPricingSoft`).
-   * `null` = the brand cell is unreadable or unmeasured, which the pipeline reads as "no rate": every
-   * route then reads null. Omitted → measured here on `persons` (the brand grain).
+   * The OFFER grain: the brand cell's `workflows[]` rows, borrowed as is (a group is one campaign, so the
+   * offer's leads are priced on exactly the rates the pipeline prices them on). `null` = the brand cell
+   * is unreadable or unmeasured: every lead reads unpriced.
    */
-  entryRatesFrom?: readonly ContactedEntryRoute[] | null;
+  entryRatesFrom?: readonly ContactedWorkflowGroup[] | null;
   now?: Date;
 }): ContactedValueResult {
-  const nowForCutoff = input.now ?? new Date();
   const ltr = input.lifetimeRevenueUsd;
+  const now = input.now ?? new Date();
 
   // ── Population
   let engaged = 0;
@@ -222,51 +303,39 @@ export function priceContactedLeads(input: {
   }
   contactedOnly.sort((a, b) => (a.leadId < b.leadId ? -1 : a.leadId > b.leadId ? 1 : 0));
 
-  // ── Entry routes: the engine's engagement routes, each with its entry rate, measured on the route's
-  // OWN leg rule — its duration cuts the cohort (on the serve clock), its bar gates the brand's own rate.
-  // A lead with no serve date is left out of a RATE: its age is unknown.
-  type WorkingRoute = ContactedEntryRoute & { _pathValue: number; _p: number | null };
-  const routes: WorkingRoute[] = input.paths
-    .filter((path) => path.engagementRoute && ROUTE_STEP[path.signal] !== undefined)
-    .map((path) => {
-      const rule = legMaturity(ROUTE_LEG[path.signal]);
-      const routeCutoff = maturityCutoffIso(rule.durationDays, nowForCutoff);
-      const mature = input.persons.filter(
-        (p) => Boolean(p.signals.contacted) && p.servedAt != null && servedInMatureCohort(p.servedAt, routeCutoff),
-      );
-      let brand = { contacted: mature.length, reached: mature.filter((p) => p.signals[path.signal]).length };
-      let fleet = input.fleet ? (input.fleet[path.signal] ?? { contacted: 0, reached: 0 }) : null;
-      let entryRatePct: number | null = null;
-      let entryRateSource: EntryRateSource | null = null;
-      if (input.entryRatesFrom !== undefined) {
-        const from = input.entryRatesFrom?.find((r) => r.signal === path.signal) ?? null;
-        brand = from ? from.brand : { contacted: 0, reached: 0 };
-        fleet = from ? from.fleet : null;
-        entryRatePct = from?.entryRatePct ?? null;
-        entryRateSource = entryRatePct === null ? null : from!.entryRateSource;
-      } else if (brand.contacted > 0 && brand.reached >= rule.outcomesRequired) {
-        entryRatePct = (brand.reached / brand.contacted) * 100;
-        entryRateSource = "brand_measured";
-      } else if (fleet && fleet.contacted > 0 && fleet.reached <= fleet.contacted) {
-        entryRatePct = (fleet.reached / fleet.contacted) * 100;
-        entryRateSource = "fleet_measured";
-      }
-      return {
-        signal: path.signal,
-        step: ROUTE_STEP[path.signal],
-        entryRatePct: entryRatePct === null ? null : round(entryRatePct),
-        entryRateSource,
-        brand,
-        fleet,
-        maturityDays: rule.durationDays,
-        matureBefore: routeCutoff,
-        minBrandOutcomes: rule.outcomesRequired,
-        paidClientGivenStepPct: ltr && ltr > 0 ? round((path.expectedRevenueUsd / ltr) * 100) : 0,
-        valueAtStepUsd: round(path.expectedRevenueUsd),
-        _pathValue: path.expectedRevenueUsd,
-        _p: entryRatePct === null ? null : entryRatePct / 100,
-      };
-    });
+  // ── Entry routes: the engine's engagement routes on the priced funnels.
+  const legs = contactedEntryLegs(input.paths);
+  const pathValue = new Map(input.paths.filter((p) => p.engagementRoute).map((p) => [p.signal, p.expectedRevenueUsd]));
+  const routes: ContactedEntryRoute[] = legs.map(({ signal, legKey }) => ({
+    signal,
+    step: ROUTE_STEP[signal],
+    legKey,
+    paidClientGivenStepPct: ltr && ltr > 0 ? round((pathValue.get(signal)! / ltr) * 100) : 0,
+    valueAtStepUsd: round(pathValue.get(signal)!),
+  }));
+
+  // ── Groups: measured here (brand) or borrowed (offer).
+  const seen = contactedGroupsOf(input.persons);
+  let workflows: ContactedWorkflowGroup[];
+  if (input.entryRatesFrom !== undefined) {
+    const byKey = new Map((input.entryRatesFrom ?? []).map((w) => [contactedGroupKey(w.campaignId, w.workflowSlug)!, w]));
+    workflows = [...seen.keys()].map((k) => byKey.get(k)).filter((w): w is ContactedWorkflowGroup => w !== undefined);
+  } else {
+    const byKey = new Map((input.groups ?? []).map((g) => [contactedGroupKey(g.campaignId, g.workflowSlug)!, g]));
+    workflows = [...seen.entries()].map(([k, g]) => priceGroup(g, byKey.get(k), legs));
+  }
+
+  const pricing: ContactedPricing = {
+    entryRatePctByGroup: contactedEntryRatesByGroup(workflows),
+    lastSentOnOrAfter: contactedExpiryCutoffIso(now),
+  };
+  const routeSignals = new Set(legs.map((l) => l.signal));
+  const pricedGroup = (p: EnginePerson): "unattributed" | "unpriced" | "priced" => {
+    const key = contactedGroupKey(p.campaignId, p.workflowSlug);
+    if (key === null) return "unattributed";
+    const rates = pricing.entryRatePctByGroup[key];
+    return rates && Object.keys(rates).some((s) => routeSignals.has(s)) ? "priced" : "unpriced";
+  };
 
   const unmeasuredReason: ContactedValueUnmeasuredReason | null =
     ltr === null
@@ -275,81 +344,57 @@ export function priceContactedLeads(input: {
         ? "no_client_value"
         : routes.length === 0
           ? "no_entry_path"
-          : routes.every((r) => r._p === null)
+          : !workflows.some((w) => w.routes.some((r) => routeSignals.has(r.signal) && r.entryRatePct !== null))
             ? "no_entry_rate"
             : null;
 
-  // ONE pricing, the engine's: the byte-same function the pipeline prices these leads with.
-  const now = input.now ?? new Date();
-  const pricing: ContactedPricing = {
-    entryRatePct: Object.fromEntries(routes.filter((r) => r._p !== null).map((r) => [r.signal, r._p! * 100])),
-    lastSentOnOrAfter: contactedExpiryCutoffIso(now),
-  };
   const isExpired = (p: EnginePerson): boolean => contactedExpired(p, pricing.lastSentOnOrAfter);
-  const valueOf = (person: EnginePerson): number | null =>
-    unmeasuredReason !== null ? null : contactedLeadValue(person, input.paths, ltr!, pricing);
+  // ONE pricing, the engine's: the byte-same function the pipeline prices these leads with.
+  const valueOf = (p: EnginePerson): number | null => {
+    if (unmeasuredReason !== null) return null;
+    if (isExpired(p)) return 0;
+    if (pricedGroup(p) !== "priced") return null;
+    return contactedLeadValue(p, input.paths, ltr!, pricing);
+  };
 
-  const leads: ContactedLeadValue[] = contactedOnly.map((p) => {
-    const v = valueOf(p);
-    return {
-      leadId: p.leadId,
-      expectedValueUsd: v === null ? null : round(v),
-      expired: isExpired(p),
-    };
-  });
+  const values = contactedOnly.map((p) => ({ p, v: valueOf(p) }));
+  const leads: ContactedLeadValue[] = values.map(({ p, v }) => ({
+    leadId: p.leadId,
+    expectedValueUsd: v === null ? null : round(v),
+    expired: isExpired(p),
+  }));
 
   // Company-level total, the pipeline's own rule: an organisation is worth its most valuable member.
   const byOrg = new Map<string, number>();
-  contactedOnly.forEach((p) => {
-    const v = valueOf(p);
-    if (v === null) return;
+  for (const { p, v } of values) {
+    if (v === null) continue;
     const key = p.orgId ? `org:${p.orgId}` : `lead:${p.leadId}`;
     byOrg.set(key, Math.max(byOrg.get(key) ?? 0, v));
-  });
-  const totalExpectedValueUsd =
-    unmeasuredReason !== null ? null : round([...byOrg.values()].reduce((sum, v) => sum + v, 0));
+  }
+  const totalExpectedValueUsd = unmeasuredReason !== null ? null : [...byOrg.values()].reduce((s, v) => s + v, 0);
 
-  const perLead = unmeasuredReason !== null ? null : combineIndependent(
-    routes.filter((r) => r._p !== null).map((r) => r._p! * r._pathValue),
-    ltr!,
-  );
+  const live = values.filter(({ p, v }) => v !== null && !isExpired(p)).map(({ v }) => v!);
+  const perLeadExpectedValueUsd =
+    unmeasuredReason !== null || live.length === 0 ? null : live.reduce((s, v) => s + v, 0) / live.length;
 
   return {
     lifetimeRevenueUsd: ltr,
-    contactedToPaidClientPct: perLead === null ? null : round((perLead / ltr!) * 100),
-    perLeadExpectedValueUsd: perLead === null ? null : round(perLead),
+    perLeadExpectedValueUsd,
     totalExpectedValueUsd,
     unmeasuredReason,
-    routes: routes.map(({ _pathValue, _p, ...r }) => r),
-    // Both entry legs carry one rule today; a route list states each route's own, these the extremes.
-    matureBefore: entryRuleExtremes(nowForCutoff).matureBefore,
-    maturityDays: entryRuleExtremes(nowForCutoff).maturityDays,
+    routes,
+    workflows,
     expiryDays: CONTACTED_VALUE_EXPIRY_DAYS,
     lastSentOnOrAfter: pricing.lastSentOnOrAfter,
-    minBrandOutcomes: entryRuleExtremes(nowForCutoff).minBrandOutcomes,
     population: {
       contactedOnly: contactedOnly.length,
       organizations: new Set(contactedOnly.map((p) => (p.orgId ? `org:${p.orgId}` : `lead:${p.leadId}`))).size,
       engaged,
       cannotConvert,
       expired: contactedOnly.filter(isExpired).length,
+      unattributed: contactedOnly.filter((p) => pricedGroup(p) === "unattributed").length,
+      unpriced: contactedOnly.filter((p) => pricedGroup(p) === "unpriced").length,
     },
     leads,
-  };
-}
-
-/** PURE. Sum email-gateway's per-group fleet recipient stats into entry counts per engine signal. */
-export function fleetEntryCountsOf(groups: Iterable<Record<string, number>>): Record<string, EntryCounts> {
-  let contacted = 0;
-  let clicked = 0;
-  let replied = 0;
-  for (const g of groups) {
-    contacted += Number(g.recipientsContacted) || 0;
-    clicked += Number(g.recipientsClicked) || 0;
-    replied += Number(g.recipientsRepliesPositive) || 0;
-  }
-  return {
-    clicked: { contacted, reached: clicked },
-    positiveReply: { contacted, reached: replied },
   };
 }

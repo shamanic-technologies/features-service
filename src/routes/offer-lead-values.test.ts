@@ -72,6 +72,7 @@ vi.mock("../lib/leads-client.js", async (orig) => ({
       email: `${r.leadId}@x.com`,
       orgId: r.orgId ?? `org-${r.leadId}`,
       campaignId: r.campaignId,
+      workflowSlug: "wf-1",
       servedAt: OLD,
       signals: { contacted: true, sent: true, delivered: true, ...(r.positiveReply ? { positiveReply: true } : {}) },
       signalDates: { contacted: OLD, lastSent: RECENT },
@@ -88,9 +89,39 @@ vi.mock("../lib/conversion-emails-client.js", async (orig) => ({
   ...(await orig<typeof import("../lib/conversion-emails-client.js")>()),
   fetchConversionEmails: vi.fn(async () => new Set<string>()),
 }));
+// Contacted-value pricing inputs: every campaign spent $0.50 per contacted person on workflow wf-1
+// (dynasty wf), whose ladder prices a visit at $25 and a positive reply at $100 → P = 2% / 0.5%.
+const CONTACTED_PER_CAMPAIGN: Record<string, number> = { "camp-a1": 11, "camp-a2": 10, "camp-b1": 11 };
 vi.mock("../lib/public-stats-clients.js", async (orig) => ({
   ...(await orig<typeof import("../lib/public-stats-clients.js")>()),
-  fetchPublicEmailStats: vi.fn(async () => new Map([["w", { recipientsContacted: 1000, recipientsClicked: 20, recipientsRepliesPositive: 5 }]])),
+  fetchPublicWorkflows: vi.fn(async () => [{ workflowSlug: "wf-1", workflowDynastySlug: "wf" }]),
+}));
+vi.mock("../lib/campaign-identity-client.js", async (orig) => ({
+  ...(await orig<typeof import("../lib/campaign-identity-client.js")>()),
+  fetchBrandCampaignRows: vi.fn(async () =>
+    Object.entries(CAMPAIGNS).flatMap(([offerId, ids]) => ids.map((id) => ({ id, offerId, featureSlug: "sales-cold-email-outreach" }))),
+  ),
+}));
+vi.mock("../lib/runs-cost-client.js", async (orig) => ({
+  ...(await orig<typeof import("../lib/runs-cost-client.js")>()),
+  fetchRunsCommittedCentsByCampaignWorkflow: vi.fn(
+    async () => new Map(Object.entries(CONTACTED_PER_CAMPAIGN).map(([id, n]) => [`${id}|wf-1`, n * 50])),
+  ),
+}));
+vi.mock("../lib/leg-ladder.js", async (orig) => ({
+  ...(await orig<typeof import("../lib/leg-ladder.js")>()),
+  runLadder: vi.fn(async (_identity: unknown, _slug: string, query: Record<string, string>) => ({
+    status: 200,
+    body: {
+      rows: [
+        {
+          audienceId: null,
+          workflow: { workflowDynastySlug: "wf" },
+          resolved: { grain: "brand", costPerOutcomeUsd: query.leg === "start_to_website_visit" ? 25 : 100 },
+        },
+      ],
+    },
+  })),
 }));
 
 const offerRoutes = (await import("./offer-lead-values.js")).default;
@@ -150,6 +181,12 @@ describe("GET /offers/:offerId/contacted-value", () => {
     expect(a.body.brandEntryRatesUnavailableReason).toBeNull();
     // The brand's rates, copied (the offer's own 1 reply in 21 would read differently).
     expect(a.body.routes).toEqual(brand.body.routes);
+    expect(a.body.workflows.map((w: { campaignId: string }) => w.campaignId).sort()).toEqual(["camp-a1", "camp-a2"]);
+    expect(a.body.workflows).toEqual(
+      brand.body.workflows.filter((w: { campaignId: string }) => w.campaignId !== "camp-b1"),
+    );
+    expect(brand.body.workflows[0].routes.map((r: { entryRatePct: number }) => r.entryRatePct)).toEqual([2, 0.5]);
+    expect(brand.body.unmeasuredReason).toBeNull();
     expect(a.body.perLeadExpectedValueUsd).toBeCloseTo(brand.body.perLeadExpectedValueUsd, 6);
     expect(a.body.totalExpectedValueUsd + b.body.totalExpectedValueUsd).toBeCloseTo(brand.body.totalExpectedValueUsd, 6);
   });

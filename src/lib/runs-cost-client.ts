@@ -223,6 +223,75 @@ export async function fetchRunsCostCentsByWorkflowSlug(
 }
 
 /**
+ * The brand's COMMITTED spend kept split per (campaignId, versioned workflowSlug), across a SET of
+ * channels — the spend leg of the contacted-lead value (`routes/contacted-value.ts`: P(entry | contacted)
+ * = spend ÷ contacted ÷ the workflow's cost per outcome). The same request as its siblings
+ * (`groupBy=workflowSlug,campaignId`, brand + plural `featureSlugs`, `selectCostCents` on
+ * `totalCostInUsdCents` for the chosen pricing, per-group rounding), keyed `<campaignId>|<workflowSlug>`.
+ * A group carrying no campaign or no workflow belongs to no key (logged loud, never parked on one).
+ *
+ * Fail-loud: a swallowed error would fake $0 spend, i.e. a contacted lead worth nothing.
+ */
+export async function fetchRunsCommittedCentsByCampaignWorkflow(
+  brandId: string,
+  featureSlugs: readonly string[],
+  headers: { orgId: string; userId?: string; runId?: string },
+  pricing: Pricing,
+): Promise<Map<string, number>> {
+  const url = process.env.RUNS_SERVICE_URL;
+  const apiKey = process.env.RUNS_SERVICE_API_KEY;
+  if (!url || !apiKey) {
+    throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
+  }
+  const byGroup = new Map<string, number>();
+  if (featureSlugs.length === 0) return byGroup;
+
+  const params = new URLSearchParams({
+    groupBy: "workflowSlug,campaignId",
+    brandId,
+    featureSlugs: featureSlugs.join(","),
+  });
+  const reqHeaders: Record<string, string> = {
+    "x-api-key": apiKey,
+    "x-org-id": headers.orgId,
+    "x-brand-id": brandId,
+  };
+  if (headers.userId) reqHeaders["x-user-id"] = headers.userId;
+  if (headers.runId) reqHeaders["x-run-id"] = headers.runId;
+
+  const response = await fetchWithRetry(runsCostsUrl(url, "org", pricing, params), { headers: reqHeaders });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`runs-service /v1/stats/costs (groupBy=workflowSlug,campaignId) failed (${response.status}): ${text}`);
+  }
+  const data = (await response.json()) as {
+    groups?: Array<Record<string, unknown> & { dimensions?: Record<string, string | null> }>;
+  };
+  if (!Array.isArray(data.groups)) {
+    throw new Error("runs-service /v1/stats/costs returned no groups array");
+  }
+
+  let unattributedCents = 0;
+  for (const group of data.groups) {
+    const cents = Math.round(selectCostCents(group, "totalCostInUsdCents", pricing));
+    const slug = group.dimensions?.workflowSlug;
+    const campaignId = group.dimensions?.campaignId;
+    if (!slug || slug === "__total__" || !campaignId) {
+      unattributedCents += cents;
+      continue;
+    }
+    const key = `${campaignId}|${slug}`;
+    byGroup.set(key, (byGroup.get(key) ?? 0) + cents);
+  }
+  if (unattributedCents !== 0) {
+    console.warn(
+      `[features-service] ${unattributedCents} committed cents of brand ${brandId}'s spend carry no campaign or no workflow and are in no (campaign × workflow) group`,
+    );
+  }
+  return byGroup;
+}
+
+/**
  * Enumerate the campaignIds that have runs for a brand, scoped to one feature's workflow
  * lineage — the same runs-service source `/stats` uses for its campaignId dimension. Drives
  * GET /features/:slug/revenue?groupBy=campaignId: one group per campaign returned here.

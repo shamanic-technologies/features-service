@@ -6,17 +6,14 @@ import type { ContactedValueResult } from "../lib/contacted-value.js";
 function result(n: number): ContactedValueResult {
   return {
     lifetimeRevenueUsd: 1000,
-    contactedToPaidClientPct: 0.4,
     perLeadExpectedValueUsd: 4,
     totalExpectedValueUsd: 4 * n,
     unmeasuredReason: null,
     routes: [],
-    matureBefore: "2026-09-12T00:00:00.000Z",
-    maturityDays: 14,
+    workflows: [],
     expiryDays: 30,
     lastSentOnOrAfter: "2026-08-27T12:00:00.000Z",
-    minBrandOutcomes: 10,
-    population: { contactedOnly: n, organizations: n, engaged: 0, cannotConvert: 0, expired: 0 },
+    population: { contactedOnly: n, organizations: n, engaged: 0, cannotConvert: 0, expired: 0, unattributed: 0, unpriced: 0 },
     leads: Array.from({ length: n }, (_, i) => ({
       leadId: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
       expectedValueUsd: 3.996004,
