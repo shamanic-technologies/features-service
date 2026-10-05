@@ -14,6 +14,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
+import { declaredFromEconomics, legCampaignRows, offerEconomicsFromDeclared } from "../lib/leg-economics-fixture.js";
 
 vi.mock("../db/index.js", () => ({
   db: { query: { features: { findFirst: vi.fn(), findMany: vi.fn() } } },
@@ -68,6 +69,17 @@ const ECONOMICS = {
   visitToPaidClientPct: 1,
 };
 
+/**
+ * The funnels that state `ECONOMICS` (owner 2026-10-05: the offer's terms are the only pricing input).
+ * The single-step reply → paid rate is only walked when a funnel stating it is priced, so the
+ * conversation-close funnel rides beside the three meeting/purchase funnels. Its reply rung (12%) ties
+ * the meeting funnel's (40% × 30%), so the max-per-signal ladder moves nothing.
+ */
+const FUNNELS = [
+  ...declaredFromEconomics(ECONOMICS),
+  { funnelKey: "sales_from_conversation", rates: { replyToPaidClientPct: ECONOMICS.replyToPaidClientPct }, lifetimeRevenueUsd: ECONOMICS.lifetimeRevenueUsd },
+];
+
 /** The prod shape: $202 committed against $191 billed — the $11 of open holds that split the two views. */
 const COMMITTED_CENTS = 20_200;
 const BILLED_CENTS = 19_100;
@@ -119,7 +131,9 @@ function mockFetch(): void {
       new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
 
     if (url.includes("/public/workflows")) return json({ workflows: WORKFLOWS });
-    if (url.includes("/campaigns?")) return json({ campaigns: [] });
+    // The brand's campaigns perform the ENTRY legs of the funnels it sells (owner 2026-10-05: the legs
+    // walked are what a read is priced on; a brand with no campaign walks no path).
+    if (url.includes("/campaigns?")) return json({ campaigns: legCampaignRows(FUNNELS) });
     if (url.includes("/sales-funnels")) return new Response("not found", { status: 404 });
 
     if (url.includes("/v1/stats/public/costs/timeseries")) {
@@ -168,7 +182,9 @@ function mockFetch(): void {
       });
     }
 
-    if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
+    // The offer's terms are the ONLY pricing input (owner 2026-10-05): the funnels stating exactly
+    // `ECONOMICS` (`declaredFromEconomics`), walked by the legs the scope's campaigns perform.
+    if (url.includes("/offer-economics")) return json(offerEconomicsFromDeclared(FUNNELS));
     if (url.includes("/orgs/leads")) return json({ leads: LEADS });
     if (url.includes("/manual-qualifications")) return json({ qualifications: [] });
     if (url.includes("/orgs/status")) {

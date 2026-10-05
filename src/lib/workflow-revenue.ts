@@ -72,8 +72,8 @@
  */
 import { contactedPricingSoft } from "../routes/contacted-value.js";
 import type { ContactedPricing, TimeSeriesPoint } from "./revenue-engine.js";
-import { restrictPathsToDeclaredLegs, type EconomicsSource, type getFunnel } from "./funnel-registry.js";
-import type { EffectiveEconomics } from "./sales-economics-client.js";
+import { restrictPathsToDeclaredLegs, type getFunnel } from "./funnel-registry.js";
+import type { PipelineUnpricedReason, PricedEconomics } from "./offer-priced-economics.js";
 import type { SalesFunnelKey } from "./sales-funnels.js";
 import { buildCostEconomics, type CostEconomics } from "./cost-economics.js";
 import { computeRevenue, dedupPersonsByLead, type EnginePerson } from "./revenue-engine.js";
@@ -130,7 +130,8 @@ export interface WorkflowRevenueGroup {
   workflowSlugs: string[];
   headline: {
     totalPipelineUsd: number | null;
-    economicsSource: EconomicsSource | null;
+    /** Why `totalPipelineUsd` is null (the brand read's own reason); null when it is priced. */
+    unpricedReason: PipelineUnpricedReason | null;
   };
   costEconomics: CostEconomics;
   /** ADDITIVE, purely — the volume half. See {@link WorkflowRevenueOutcomes}. */
@@ -205,7 +206,7 @@ export function buildWorkflowRevenueGroups(input: {
   workflows: WorkflowMetadata[];
   funnel: ReturnType<typeof getFunnel>;
   /** The brand's DECLARED-funnel-priced economics — resolved ONCE by the route, shared by every group. */
-  priced: { economics: EffectiveEconomics; pricedFunnelKeys: SalesFunnelKey[] } | null;
+  priced: { economics: PricedEconomics; pricedFunnelKeys: SalesFunnelKey[] } | null;
   /**
    * The MATURE cohort each group's ratios divide (`lib/roi-maturity.ts`): which campaigns are maturing,
    * and the mature spend per versioned slug. Omitted → nothing in scope is maturing, and every ratio
@@ -254,11 +255,9 @@ export function buildWorkflowRevenueGroups(input: {
   }
 
   const economics = priced?.economics.economics ?? null;
-  const economicsSource: EconomicsSource | null = !priced
-    ? null
-    : priced.economics.source === "user"
-      ? "sales-economics"
-      : "cross-brand-average";
+  const unpricedReason: PipelineUnpricedReason = !funnel
+    ? "no_funnel_wired"
+    : (priced?.economics.unpricedReason ?? "no_priced_funnel");
   // The SAME leg restriction the brand read applies: only the legs of the funnels the brand declared
   // carry value. A workflow does not state a funnel of its own, so every group is priced on the
   // brand's funnels — which is also why a single-workflow brand lands on the brand's own figure.
@@ -361,7 +360,7 @@ export function buildWorkflowRevenueGroups(input: {
         workflowSlugs: [...(slugsByDynasty.get(dynasty) ?? [])].sort(),
         headline: {
           totalPipelineUsd,
-          economicsSource: totalPipelineUsd === null ? null : economicsSource,
+          unpricedReason: totalPipelineUsd === null ? unpricedReason : null,
         },
         costEconomics,
         outcomes,
@@ -385,7 +384,7 @@ export async function computeWorkflowRevenueGroups(input: {
   funnel: ReturnType<typeof getFunnel>;
   headers: Headers;
   pricing: Pricing;
-  priced: { economics: EffectiveEconomics; pricedFunnelKeys: SalesFunnelKey[] } | null;
+  priced: { economics: PricedEconomics; pricedFunnelKeys: SalesFunnelKey[] } | null;
   /**
    * ONE CAMPAIGN — its whole IDENTITY, the family of rows sharing (org, brand, sales funnel,
    * acquisition channel) — when the caller named one. Every group then states what THAT campaign did

@@ -79,7 +79,9 @@ import {
   computeFeatureRevenue,
   noChannelRevenueBody,
   fetchDeclaredFunnelsSoft,
+  fetchFunnelPricedEconomics,
   priceOnDeclaredFunnel,
+  pricedFingerprint,
   type DownstreamHeaders,
   type FunnelPricedEconomics,
 } from "./revenue.js";
@@ -92,7 +94,7 @@ import { buildOfferChannelMap, offerCampaignIds, offerFeatureSlugs } from "../li
 import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
 import { computeAudienceStats, type ComputeResult } from "../lib/audience-stats-compute.js";
 import { computeBrandPipelineActivity } from "./pipeline-activity.js";
-import { fetchEffectiveEconomics, economicsFingerprint, BrandOwnershipError } from "../lib/sales-economics-client.js";
+import { BrandOwnershipError, assertBrandHeld as assertBrandHeldByOrg } from "../lib/brand-ownership.js";
 import { servedCached, servedCachedJson, sendSnapshotJson, buildScopeKey } from "../lib/view-cache.js";
 import { withInteractiveReads } from "../lib/lead-copy.js";
 import { applyLeadDetail, parseLeadDetail, LEAD_DETAIL_VALUES } from "../lib/lead-detail.js";
@@ -177,11 +179,11 @@ function describeChannels(channels: BrandChannel[]) {
  * That confirmation is what keeps an unknown or foreign brand a 404: campaign-service is read with the
  * org alone, so "no campaign" is also what a brand of another org (or no brand at all) looks like.
  * brand-service owns the org → brand edge and refuses 403/404 — {@link BrandOwnershipError} — and that
- * refusal is the named `brand_not_found` 404. The economics read is the check because the non-empty
- * path already makes it: no new producer call, and the revenue read has it in flight already.
+ * refusal is the named `brand_not_found` 404. The ownership check (`assertBrandHeldByOrg`) is the one
+ * the priced path already makes, so the revenue read has it in flight already.
  */
-async function assertBrandHeld(pendingEconomics: Promise<unknown>): Promise<void> {
-  await pendingEconomics;
+async function assertBrandHeld(pendingCheck: Promise<unknown>): Promise<void> {
+  await pendingCheck;
 }
 
 /** Named 404 / 409 / 502, shared by the handlers. */
@@ -227,13 +229,14 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
     // observed here and rethrown where it is awaited, exactly as before.
     const speculative = {
       declared: withInteractiveReads(() => fetchDeclaredFunnelsSoft(req.params.brandId, (req as AuthenticatedRequest).orgId)),
-      economics: fetchEffectiveEconomics(req.params.brandId, {
+      held: assertBrandHeldByOrg(req.params.brandId, {
         orgId: (req as AuthenticatedRequest).orgId,
         userId: (req as AuthenticatedRequest).userId,
         runId: (req as AuthenticatedRequest).runId,
       }),
     };
-    speculative.economics.catch(() => {}); // awaited below only when a funnel prices; never unhandled
+    speculative.held.catch(() => {}); // awaited below; never unhandled
+    speculative.declared.catch(() => {}); // a stale membership rethrows here too; awaited below
     // No campaign yet → `null` here, answered below once the query is validated (see assertBrandHeld).
     const resolved = await resolveRequest(req as never).catch((error: unknown) => {
       if (error instanceof BrandHasNoChannelsError) return null;
@@ -265,7 +268,7 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
     if (windowDays === null) return res.status(400).json(WINDOW_DAYS_ERROR);
 
     if (!resolved) {
-      await assertBrandHeld(speculative.economics);
+      await assertBrandHeld(speculative.held);
       return res.json({
         brandId: req.params.brandId,
         costBasis: "charged" as const,
@@ -277,16 +280,12 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
 
     const funnel = resolveBrandFunnel(brandId, channels);
 
-    // Economics are BRAND-scoped, so they are read ONCE here and shared by the brand body and every
-    // channel group: N channels cost one brand-service call, and the fingerprint rides the cache key so
-    // an economics write lands on a different cell instead of replaying the pre-write answer.
-    const [declaredFunnels, brandEconomics] = funnel
-      ? await Promise.all([speculative.declared, speculative.economics])
-      : [[], null];
-    const brandPriced: FunnelPricedEconomics | undefined = brandEconomics
-      ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics)
-      : undefined;
-    const econ = brandPriced ? economicsFingerprint(brandPriced.economics) : undefined;
+    // The offer terms are read ONCE here and shared by the brand body and every channel group, and
+    // their fingerprint rides the cache key so a terms write lands on a different cell instead of
+    // replaying the pre-write answer.
+    const [declaredFunnels] = funnel ? await Promise.all([speculative.declared, speculative.held]) : [[]];
+    const brandPriced: FunnelPricedEconomics | undefined = funnel ? priceOnDeclaredFunnel(declaredFunnels) : undefined;
+    const econ = brandPriced ? pricedFingerprint(brandPriced) : undefined;
     const decl = funnel ? declaredFunnels.map((f) => f.funnelKey).sort().join("+") || "none" : undefined;
 
     const payload = await servedCachedJson({
@@ -484,26 +483,29 @@ router.get("/brands/:brandId/offers", apiKeyAuth, async (req, res) => {
       runId: authed.runId,
     });
     if (buildBrandChannels(rows).length === 0) {
-      await assertBrandHeld(fetchEffectiveEconomics(brandId, headers));
+      await assertBrandHeld(assertBrandHeldByOrg(brandId, headers));
       return res.json({ brandId, costBasis: "charged" as const, outcomeCauses: { priced: [...causes] }, offers: [] });
     }
 
     const map = buildOfferChannelMap(rows);
     const offers = map.offerIds.map((offerId) => ({ offerId, channels: map.channelsOf(offerId) }));
 
-    // Economics are BRAND-scoped, so they are read ONCE and shared by every row: N offers cost one
-    // brand-service call, and the fingerprint rides the cache key so an economics write lands on a new
-    // cell instead of replaying the pre-write answer. Skipped entirely when no offer has a funnel —
-    // there is then nothing to price and every row reports spend with a null pipeline.
+    // Each row prices on ITS OWN offer's terms (its funnels, its stated lifetime revenue) — the byte-same
+    // pricing its `/offers/:offerId/revenue` and `?groupBy=offerId` reads use; a several-offer brand has no
+    // brand-level terms to share any more (owner 2026-10-05). Read once per offer before the cell, and
+    // every row's fingerprint rides the key so a terms write lands on a new cell. Skipped entirely when no
+    // offer has a funnel — there is then nothing to price and every row reports spend with a null pipeline.
     const anyFunnel = offers.some(({ channels }) => distinctChannelFunnels(channels).length > 0);
-    const [declaredFunnels, brandEconomics] = anyFunnel
-      ? await Promise.all([fetchDeclaredFunnelsSoft(brandId, headers.orgId), fetchEffectiveEconomics(brandId, headers)])
-      : [[], null];
-    const brandPriced: FunnelPricedEconomics | undefined = brandEconomics
-      ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics)
-      : undefined;
-    const econ = brandPriced ? economicsFingerprint(brandPriced.economics) : undefined;
-    const decl = anyFunnel ? declaredFunnels.map((f) => f.funnelKey).sort().join("+") || "none" : undefined;
+    const pricedByOffer = new Map<string, FunnelPricedEconomics>();
+    if (anyFunnel) {
+      const [priced] = await Promise.all([
+        Promise.all(offers.map(async ({ offerId }) => [offerId, priceOnDeclaredFunnel(await fetchDeclaredFunnelsSoft(brandId, headers.orgId, offerId))] as const)),
+        assertBrandHeldByOrg(brandId, headers),
+      ]);
+      for (const [offerId, offerPriced] of priced) pricedByOffer.set(offerId, offerPriced);
+    }
+    const econ = anyFunnel ? [...pricedByOffer].map(([id, p]) => `${id}:${pricedFingerprint(p)}`).sort().join(",") : undefined;
+    const decl = anyFunnel ? [...pricedByOffer].map(([id, p]) => `${id}:${p.pricedFunnelKeys.join("+") || "none"}`).sort().join(",") : undefined;
 
     const payload = await servedCachedJson({
       view: "brand-offers",
@@ -532,7 +534,7 @@ router.get("/brands/:brandId/offers", apiKeyAuth, async (req, res) => {
             resolveOfferFunnel(offerId, channels),
             headers,
             undefined,
-            brandPriced,
+            pricedByOffer.get(offerId),
             false,
             pricing,
             undefined,
@@ -582,10 +584,10 @@ router.get("/brands/:brandId/audience-stats", apiKeyAuth, async (req, res) => {
 
     let econ: string | undefined;
     try {
-      econ = economicsFingerprint(await fetchEffectiveEconomics(brandId, headers));
+      econ = pricedFingerprint(await fetchFunnelPricedEconomics(brandId, headers.orgId, undefined));
     } catch (err) {
-      // Feeds the KEY, not the response — degrading to "no fingerprint" keeps the compute (which reads
-      // economics fail-loud) the one that decides this request's status.
+      // Feeds the KEY, not the response — degrading to "no fingerprint" keeps the compute the one that
+      // decides this request's status.
       console.warn(`[features-service] brand audience-stats economics fingerprint unavailable: ${(err as Error).message}`);
     }
 

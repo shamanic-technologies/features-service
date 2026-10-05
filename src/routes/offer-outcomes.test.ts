@@ -13,7 +13,7 @@ vi.mock("@sentry/node", () => ({
 }));
 vi.mock("../lib/campaign-identity-client.js", async (orig) => ({ ...(await orig<typeof import("../lib/campaign-identity-client.js")>()), fetchBrandCampaignRows: vi.fn() }));
 vi.mock("./revenue.js", async (orig) => ({ ...(await orig<typeof import("./revenue.js")>()), fetchDeclaredFunnelsSoft: vi.fn() }));
-vi.mock("../lib/sales-economics-client.js", async (orig) => ({ ...(await orig<typeof import("../lib/sales-economics-client.js")>()), fetchEffectiveEconomics: vi.fn() }));
+vi.mock("../lib/brand-ownership.js", async (orig) => ({ ...(await orig<typeof import("../lib/brand-ownership.js")>()), assertBrandHeld: vi.fn() }));
 vi.mock("../lib/leads-client.js", async (orig) => ({ ...(await orig<typeof import("../lib/leads-client.js")>()), fetchLeadsForRevenue: vi.fn() }));
 vi.mock("../lib/observed-steps.js", async (orig) => ({ ...(await orig<typeof import("../lib/observed-steps.js")>()), fetchObservedStepFacts: vi.fn() }));
 vi.mock("../lib/qualifications-client.js", async (orig) => ({ ...(await orig<typeof import("../lib/qualifications-client.js")>()), fetchQualifications: vi.fn() }));
@@ -30,7 +30,7 @@ process.env.NODE_ENV = "test";
 
 const { fetchBrandCampaignRows } = await import("../lib/campaign-identity-client.js");
 const { fetchDeclaredFunnelsSoft } = await import("./revenue.js");
-const { fetchEffectiveEconomics } = await import("../lib/sales-economics-client.js");
+const { assertBrandHeld } = await import("../lib/brand-ownership.js");
 const { fetchLeadsForRevenue } = await import("../lib/leads-client.js");
 const { fetchObservedStepFacts } = await import("../lib/observed-steps.js");
 const { fetchQualifications } = await import("../lib/qualifications-client.js");
@@ -59,12 +59,10 @@ describe("GET /offers/:offerId/outcomes", () => {
       { id: "a1", offerId: "offer-1", featureSlug: "ai-meeting-booking", legKey: "conversation_to_meeting_booked", funnelKey: "sales_meetings_from_conversation" },
     ] as never);
     vi.mocked(fetchDeclaredFunnelsSoft).mockResolvedValue([
-      { funnelKey: "sales_meetings_from_conversation", name: "x", steps: [], rates: {}, lifetimeRevenueUsd: 1000, destinationUrl: null, bookingUrl: null, updatedAt: "" },
+      // The offer's own terms are the only pricing input (owner 2026-10-05).
+      { funnelKey: "sales_meetings_from_conversation", name: "x", steps: [], rates: { replyToMeetingPct: 50, meetingToClosePct: 20 }, lifetimeRevenueUsd: 1000, destinationUrl: null, bookingUrl: null, updatedAt: "" },
     ] as never);
-    vi.mocked(fetchEffectiveEconomics).mockResolvedValue({
-      economics: { lifetimeRevenueUsd: 1000, replyToMeetingPct: 50, visitToMeetingPct: 10, meetingToClosePct: 20, visitToSignupPct: 5, signupToPaidClientPct: 10, visitToClosePct: 1 },
-      source: "user",
-    });
+    vi.mocked(assertBrandHeld).mockResolvedValue(undefined);
     vi.mocked(fetchLeadsForRevenue).mockResolvedValue([
       lead("L1", "c1", { positiveReply: true }),
       lead("L2", "c1", { positiveReply: true }),

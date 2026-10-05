@@ -16,7 +16,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
-import { offerEconomicsFromDeclared } from "../lib/leg-economics-fixture.js";
+import { legCampaignRows, offerEconomicsFromDeclared } from "../lib/leg-economics-fixture.js";
 
 const assignmentsByLeg = new Map<string, Map<string, any>>();
 vi.mock("../lib/workflow-leg-assignments.js", async (importOriginal) => ({
@@ -69,15 +69,6 @@ const AUD = "aud-1";
 const URL_BASE = "/features/sales-cold-email-outreach/workflow-projection";
 
 /** The brand declares BOTH a conversation funnel and a website-led one, so both legs are answerable. */
-const ECONOMICS = {
-  lifetimeRevenueUsd: 5000,
-  replyToMeetingPct: 20,
-  visitToMeetingPct: 20,
-  meetingToClosePct: 50,
-  visitToClosePct: 2,
-  visitToSignupPct: 4,
-  signupToPaidClientPct: 50,
-};
 const CONVERSATION_FUNNEL = {
   funnelKey: "sales_meetings_from_conversation",
   name: "Sales Meeting from Conversation",
@@ -202,11 +193,12 @@ function mockFetch(options: Options = {}): void {
     }
     if (url.includes("/offer-economics")) return json(offerEconomicsFromDeclared([CONVERSATION_FUNNEL, WEBSITE_FUNNEL]));
     if (url.includes("/sales-funnels")) return json({ funnels: [CONVERSATION_FUNNEL, WEBSITE_FUNNEL] });
-    if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
     if (url.includes("/orgs/audiences")) {
       return json({ audiences: [{ id: AUD, name: "Aud", status: "active", filters: {} }] });
     }
-    if (url.includes("/campaigns")) return json({ campaigns: [] });
+    // The brand's campaigns perform each declared funnel's entry leg: what a goal-keyed read (no leg
+    // named) is priced on, now that the offer's terms are the only pricing input (owner 2026-10-05).
+    if (url.includes("/campaigns")) return json({ campaigns: legCampaignRows([CONVERSATION_FUNNEL, WEBSITE_FUNNEL], { brandId: BRAND }) });
     return json({});
   });
 }

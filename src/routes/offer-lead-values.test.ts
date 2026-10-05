@@ -32,24 +32,38 @@ vi.mock("../lib/brand-channels.js", async (orig) => {
     ]),
   };
 });
-vi.mock("./revenue.js", async (orig) => ({
-  ...(await orig<typeof import("./revenue.js")>()),
-  fetchDeclaredFunnelsSoft: vi.fn(async () => []),
-}));
-vi.mock("../lib/sales-economics-client.js", async (orig) => ({
-  ...(await orig<typeof import("../lib/sales-economics-client.js")>()),
-  fetchEffectiveEconomics: vi.fn(async () => ({
-    source: "user",
-    economics: {
-      lifetimeRevenueUsd: 1000,
-      replyToMeetingPct: 40,
-      visitToMeetingPct: 5,
-      meetingToClosePct: 30,
-      visitToSignupPct: 20,
-      signupToPaidClientPct: 10,
-      visitToClosePct: 2,
-    },
-  })),
+// The offer's terms are the ONLY pricing input (owner 2026-10-05): the brand reads the funnels stating
+// exactly the terms it used to read off a brand-wide record (`declaredFromEconomics`).
+// Mocked at its home (lib/offer-pricing), not on ./revenue.js: revenue.ts and contacted-value.ts import
+// each other, so a ./revenue.js factory would hand contacted-value the REAL function.
+vi.mock("../lib/offer-pricing.js", async (orig) => {
+  const { declaredFromEconomics } = await import("../lib/leg-economics-fixture.js");
+  const funnels = declaredFromEconomics({
+    lifetimeRevenueUsd: 1000,
+    replyToMeetingPct: 40,
+    visitToMeetingPct: 5,
+    meetingToClosePct: 30,
+    visitToSignupPct: 20,
+    signupToPaidClientPct: 10,
+  }).map((f) => ({
+    funnelKey: f.funnelKey,
+    name: f.funnelKey,
+    steps: [],
+    rates: f.rates ?? {},
+    lifetimeRevenueUsd: f.lifetimeRevenueUsd ?? null,
+    destinationUrl: null,
+    bookingUrl: null,
+    updatedAt: "2026-09-25T00:00:00Z",
+  }));
+  return {
+    ...(await orig<typeof import("../lib/offer-pricing.js")>()),
+    fetchDeclaredFunnelsSoft: vi.fn(async () => funnels),
+  };
+});
+// The ownership check the retired economics read used to make: every brand here is held.
+vi.mock("../lib/brand-ownership.js", async (orig) => ({
+  ...(await orig<typeof import("../lib/brand-ownership.js")>()),
+  assertBrandHeld: vi.fn(async () => undefined),
 }));
 
 const OLD = "2026-07-01T10:00:00Z";

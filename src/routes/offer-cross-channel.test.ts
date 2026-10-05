@@ -50,6 +50,7 @@ process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
+const { offerEconomicsFromDeclared, declaredFromEconomics } = await import("../lib/leg-economics-fixture.js");
 
 const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
 const PITCH = "sales-cold-email-outreach";
@@ -149,6 +150,7 @@ function mockFetch(fixture: Fixture): void {
             brandId: "b1",
             featureSlug: row.featureSlug,
             funnelKey: "sales_meetings_from_conversation",
+            legKey: "start_to_conversation",
             acquisitionChannel: row.featureSlug,
             offerId: row.offerId,
             status: "ongoing",
@@ -156,7 +158,14 @@ function mockFetch(fixture: Fixture): void {
           })),
       });
     }
-    if (path.includes("/offer-economics")) return new Response("not found", { status: 404 });
+    // The offer's terms are the ONLY pricing input (owner 2026-10-05): the funnels stating ECONOMICS,
+    // every offer the fixture's campaigns sell carrying the same lifetime revenue.
+    if (path.includes("/offer-economics")) {
+      const offerIds = [...new Set(Object.values(fixture.campaigns).map((r) => r.offerId).filter((o): o is string => !!o))];
+      return json(offerEconomicsFromDeclared(declaredFromEconomics(ECONOMICS), {
+        offers: (offerIds.length > 0 ? offerIds : [OFFER]).map((offerId) => ({ offerId, lifetimeRevenueUsd: ECONOMICS.lifetimeRevenueUsd })),
+      }));
+    }
     // The cross-org FLEET reads. Empty on purpose: an offer's own figures are realized money, never a
     // fleet benchmark, so a fleet with nothing in it must not move a single number asserted below.
     if (path.includes("/public/workflows")) return json({ workflows: [] });
@@ -182,8 +191,6 @@ function mockFetch(fixture: Fixture): void {
         }));
       return json({ groups });
     }
-
-    if (path.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
 
     if (path.endsWith("/orgs/leads")) {
       const only = q.get("campaignId");

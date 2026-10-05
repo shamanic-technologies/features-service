@@ -12,7 +12,7 @@
  */
 import { Router } from "express";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
-import { fetchDeclaredFunnelsSoft, type DownstreamHeaders } from "./revenue.js";
+import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel, pricedFingerprint, type DownstreamHeaders } from "./revenue.js";
 import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
 import { buildOfferChannelMap, OfferHasNoChannelsError } from "../lib/offer-channels.js";
 import {
@@ -26,7 +26,7 @@ import type { AcquisitionChannel } from "../lib/acquisition-channels.js";
 import { SEED_FEATURES } from "../seed/features.js";
 import { parsePricing, type Pricing } from "../lib/pricing.js";
 import { OUTCOME_CAUSES, causeScopeKeyPart, parseOutcomeCauses, type OutcomeCause } from "../lib/outcome-cause.js";
-import { fetchEffectiveEconomics, economicsFingerprint } from "../lib/sales-economics-client.js";
+import { assertBrandHeld } from "../lib/brand-ownership.js";
 import { servedCachedJson, sendSnapshotJson, buildScopeKey } from "../lib/view-cache.js";
 import { fetchLeadsForRevenue } from "../lib/leads-client.js";
 import { fetchObservedStepFacts } from "../lib/observed-steps.js";
@@ -122,10 +122,7 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
     if (buildOfferChannelMap(rows).channelsOf(offerId).length === 0) throw new OfferHasNoChannelsError(offerId, brandId);
 
     const partition = buildOfferLegPartition(rows, offerId, (slug) => catalogueEntry(slug)?.channel ?? null);
-    const [declared, brandEconomics] = await Promise.all([
-      fetchDeclaredFunnelsSoft(brandId, req.orgId, offerId),
-      fetchEffectiveEconomics(brandId, headers),
-    ]);
+    const [declared] = await Promise.all([fetchDeclaredFunnelsSoft(brandId, req.orgId, offerId), assertBrandHeld(brandId, headers)]);
 
     const payload = await servedCachedJson({
       view: "offer-outcomes",
@@ -134,7 +131,7 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
         brandId,
         legs: partition.groups.map((g) => `${g.legKey}@${g.featureSlug}>${g.campaignIds.join("+")}`).join(","),
         decl: declared.map((f) => f.funnelKey).sort().join("+") || "none",
-        econ: economicsFingerprint(brandEconomics),
+        econ: pricedFingerprint(priceOnDeclaredFunnel(declared)),
         pricing,
         cause: causeScopeKeyPart(causes),
       }),
@@ -180,7 +177,7 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
           persons: people.persons,
           evidence: people.evidence,
           spendByGroup,
-          values: stepValues(declared, brandEconomics.economics),
+          values: stepValues(declared),
           channelName: (slug) => catalogueEntry(slug)?.name ?? slug,
           actedLeadIdsByCampaign: acted,
           serveDatesStated: serveDatesStated(people.persons),

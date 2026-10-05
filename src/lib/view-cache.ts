@@ -103,8 +103,9 @@ export function defaultTtlFor(view: string, scopeKey: string): number {
  * that had a local copy.
  *
  * Staleness of ECONOMICS-dependent bodies is handled by the cache KEY, not this cap: the economics-driven
- * views fold `economicsFingerprint()` into their `scopeKey`, so an economics write changes the cell and
- * forces a fresh compute regardless of age (see `sales-economics-client.economicsFingerprint`). A view
+ * views fold the fingerprint of the offer terms they price on into their `scopeKey`, so a terms write
+ * changes the cell and forces a fresh compute regardless of age (see
+ * `offer-priced-economics.economicsFingerprint`). A view
  * that genuinely must never serve old data may still pass its own `maxStaleMs`.
  */
 function defaultMaxStaleMs(): number {

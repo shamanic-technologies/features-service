@@ -15,6 +15,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
+import { declaredFromEconomics, legCampaignRows, offerEconomicsFromDeclared } from "../lib/leg-economics-fixture.js";
 
 vi.mock("../db/index.js", () => ({
   db: { query: { features: { findFirst: vi.fn(), findMany: vi.fn() } } },
@@ -117,12 +118,19 @@ function mockFetch(fixture: Fixture = {}): void {
           id: "c-live", orgId: "org-1", brandId: "b1", brandIds: ["b1"], featureSlug: SALES,
           funnelKey: "sales_meetings_from_website", acquisitionChannel: "cold_email", legKey,
           status: "ongoing", createdAt: "2026-08-25T00:00:00.000Z",
-        }],
+        },
+        // Rows on a channel of their own performing the ENTRY legs of the funnels the brand sells (owner
+        // 2026-10-05: a read is priced on the offer's terms over the funnels its campaigns walk). They
+        // keep the brand's pricing the same whichever leg `c-live` performs, and — on another channel —
+        // never join this feature's maturity cohort.
+        ...legCampaignRows(declaredFromEconomics(ECONOMICS), { brandId: "b1" })],
       });
     }
     if (url.includes("/public/workflows")) return json({ workflows: WORKFLOWS });
     if (url.includes("/sales-funnels")) return new Response("not found", { status: 404 });
-    if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
+    // The offer's terms are the ONLY pricing input (owner 2026-10-05): the funnels stating exactly
+    // `ECONOMICS` (`declaredFromEconomics`), walked by the legs the scope's campaigns perform.
+    if (url.includes("/offer-economics")) return json(offerEconomicsFromDeclared(declaredFromEconomics(ECONOMICS)));
 
     if (url.includes("/costs/timeseries")) {
       const young = [{ period: "2026-09-25", cents: YOUNG_CENTS }];
@@ -384,16 +392,32 @@ describe("ROI, %CAC and $CAC are measured on the MATURE cohort", () => {
     mockFetch({ campaignsDown: true });
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     const res = await body();
-    expect(res.costEconomics.unmeasuredReason).toBe("maturity_unknown");
+    // Owner 2026-10-05: the legs a read walks come from campaign-service too, so with it down the read
+    // walks no funnel — NULL economics (`no_priced_funnel`), never a pipeline priced on a guess.
+    expect(res.headline.totalPipelineUsd).toBeNull();
+    expect(res.headline.unpricedReason).toBe("no_priced_funnel");
     expect(res.costEconomics.roiMultiple).toBeNull();
-    expect(res.costEconomics.ratioBasis).toEqual({ committedCostUsd: null, totalPipelineUsd: null });
+    expect(res.costEconomics.costOfAcquisitionPct).toBeNull();
+    expect(res.costEconomics.costPerAcquisitionUsd).toBeNull();
     expect(res.costEconomics.realizedReturn).toBeNull();
-    // Every other ratio follows the ROI into the named degrade.
+    // The spend is real and still stated.
+    expect(res.costEconomics.committedCostUsd).toBeCloseTo(100, 6);
     expect(res.spend.totalCpcCents).toBeNull();
-    expect(res.spend.ratioBasis.unmeasuredReason).toBe("maturity_unknown");
-    expect(res.outcomes.cpcCents).toBeNull();
-    expect(res.headline.totalPipelineUsd).toBeGreaterThan(0);
     expect(err).toHaveBeenCalled();
+  });
+
+  it("with campaign-service unreachable, the VOLUME ratios still refuse the whole-history figure (`maturity_unknown`)", async () => {
+    // SOURCE BUG pinned here (2026-10-05 offer-only refactor): campaign-service down now also nulls the
+    // economics, so the body takes the cold-start path — which serves `outcomes.cpcCents` as the
+    // WHOLE-HISTORY ratio ($100 / 7 clickers) with `maturityDays: 0` and no unmeasured reason, although
+    // the leg (21-day maturity) and the cohort could not be read. The priced path named this
+    // `maturity_unknown`; the cold-start path must too.
+    mockFetch({ campaignsDown: true });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await body();
+    expect(res.outcomes.cpcCents).toBeNull();
+    expect(res.outcomes.ratioBasis.unmeasuredReason).toBe("maturity_unknown");
+    expect(res.spend.ratioBasis.unmeasuredReason).toBe("maturity_unknown");
   });
 
   it("the lens divides the mature cohort too", async () => {

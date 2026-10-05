@@ -48,11 +48,16 @@ process.env.BRAND_SERVICE_URL = "http://brand:3000";
 process.env.BRAND_SERVICE_API_KEY = "brand-key";
 process.env.HUMAN_SERVICE_URL = "http://human:3000";
 process.env.HUMAN_SERVICE_API_KEY = "human-key";
+process.env.CAMPAIGN_SERVICE_URL = "http://campaign:3000";
+process.env.CAMPAIGN_SERVICE_API_KEY = "campaign-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
 process.env.NODE_ENV = "test";
 
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
+const { offerEconomicsFromDeclared, legCampaignRows, declaredFromEconomics } = await import("../lib/leg-economics-fixture.js");
+// The offer's terms are the ONLY pricing input (owner 2026-10-05): the funnels stating exactly ECONOMICS.
+const OFFER_FUNNELS = () => declaredFromEconomics(ECONOMICS);
 
 const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
 const FEATURE = { id: "feat-1", slug: "x", name: "X", description: "x", status: "active", createdAt: new Date(), updatedAt: new Date() };
@@ -122,7 +127,8 @@ function mockFetch(opts: { workflows?: unknown[] } = {}): void {
       return json({ groups: BRAND_EMAIL });
     }
     if (url.includes("/public/stats")) return json({ groups: CROSS_EMAIL });
-    if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
+    if (url.includes("/campaigns?")) return json({ campaigns: legCampaignRows(OFFER_FUNNELS()) });
+    if (url.includes("/offer-economics")) return json(offerEconomicsFromDeclared(OFFER_FUNNELS()));
     if (url.includes("/orgs/audiences")) return json({ audiences: AUDIENCES });
     return json({});
   });

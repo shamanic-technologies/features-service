@@ -158,15 +158,18 @@ function mockFetch(options: Options = {}): FetchImpl {
     }
     if (url.pathname.endsWith("/campaigns")) return json({ campaigns: CAMPAIGNS });
     // The funnel its campaigns read is ONE chain — so the funnel walk has one to state.
-    // Wave C1: the brand states where its replies go (a meeting) — at the brand-wide value, so every
-    // term still falls through unchanged — and sells one offer.
+    // The offer's terms are the ONLY pricing input (owner 2026-10-05): the brand states where its
+    // replies go (a meeting, 40%) and what an attended meeting closes at (30%), and its one offer states
+    // the $1000 lifetime revenue — so a positive reply is worth 1000 × .4 × .3 = 120.
     if (url.pathname.includes("/offer-economics")) {
       return json({
-        legRates: [{ fromStep: "Positive reply", toStep: "Meeting booked", ratePct: ECONOMICS.replyToMeetingPct, stated: true, statedAt: "x" }],
-        offers: [{ offerId: "offer-1", name: "Offer", lifetimeRevenueUsd: null, lifetimeRevenueStatedAt: null }],
+        legRates: [
+          { fromStep: "Positive reply", toStep: "Meeting booked", ratePct: ECONOMICS.replyToMeetingPct, stated: true, statedAt: "x" },
+          { fromStep: "Meeting attended", toStep: "Paid client", ratePct: ECONOMICS.meetingToClosePct, stated: true, statedAt: "x" },
+        ],
+        offers: [{ offerId: "offer-1", name: "Offer", lifetimeRevenueUsd: ECONOMICS.lifetimeRevenueUsd, lifetimeRevenueStatedAt: "x" }],
       });
     }
-    if (url.pathname.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
 
     // The producers filter on the VERSIONED slugs the caller resolved — `workflowSlugs`. The dynasty
     // lever exists on both, and this service deliberately does not use it (see workflow-scope.ts).

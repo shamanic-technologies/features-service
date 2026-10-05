@@ -32,11 +32,41 @@ process.env.BRAND_SERVICE_URL = "http://brand:3000";
 process.env.BRAND_SERVICE_API_KEY = "brand-key";
 process.env.HUMAN_SERVICE_URL = "http://human:3000";
 process.env.HUMAN_SERVICE_API_KEY = "human-key";
+process.env.CAMPAIGN_SERVICE_URL = "http://campaign:3000";
+process.env.CAMPAIGN_SERVICE_API_KEY = "campaign-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
 process.env.NODE_ENV = "test";
 
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
+const { offerEconomicsFromDeclared, legCampaignRows, declaredFromEconomics } = await import("../lib/leg-economics-fixture.js");
+
+/**
+ * The offer's terms are the ONLY pricing input (owner 2026-10-05): a test handing an economics record
+ * hands the funnels that state exactly those terms. The single-step rates are stated by the direct
+ * funnels (`sales_from_website` visit → paid, `sales_from_conversation` reply → paid), so a record
+ * carrying one adds the funnel that states it.
+ */
+function funnelsFor(economics: Record<string, unknown>): unknown[] {
+  const ltr = economics.lifetimeRevenueUsd as number | null;
+  const out: unknown[] = declaredFromEconomics(economics);
+  if (typeof economics.visitToPaidClientPct === "number") {
+    // visit → paid on this funnel is visit → direct purchase × purchase → paid: state the whole rate on
+    // the first arrow and a certain second one.
+    out.push({
+      funnelKey: "sales_from_website",
+      arrows: [
+        { fromStep: "Website visit", toStep: "Direct purchase", ratePct: economics.visitToPaidClientPct },
+        { fromStep: "Direct purchase", toStep: "Paid client", ratePct: 100 },
+      ],
+      lifetimeRevenueUsd: ltr,
+    });
+  }
+  if (typeof economics.replyToPaidClientPct === "number") {
+    out.push({ funnelKey: "sales_from_conversation", rates: { replyToPaidClientPct: economics.replyToPaidClientPct }, lifetimeRevenueUsd: ltr });
+  }
+  return out;
+}
 
 const AUTH = {
   "x-api-key": "test-key",
@@ -92,8 +122,8 @@ interface MockOpts {
   crossOrgEmail?: unknown[];
   brandCost?: unknown[];
   brandEmail?: unknown[];
-  economics?: unknown;
-  source?: unknown;
+  /** The offer terms, as the retired brand-wide record shape; null = the brand states no offer terms. */
+  economics?: Record<string, unknown> | null;
   // audiences: array of { id }, audienceCost groups, couple groups, audienceEngagement (send-tag)
   audiences?: Array<{ id: string }>;
   audienceCost?: unknown[];
@@ -104,6 +134,8 @@ interface MockOpts {
 }
 
 function mockFetch(opts: MockOpts = {}): void {
+  const economics = "economics" in opts ? opts.economics : ECONOMICS;
+  const funnels = economics ? funnelsFor(economics) : null;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
     const u = new URL(url, "http://x");
@@ -133,10 +165,11 @@ function mockFetch(opts: MockOpts = {}): void {
     if (url.includes("/public/stats")) {
       return json({ groups: opts.crossOrgEmail ?? CROSSORG_EMAIL });
     }
-    if (url.includes("/sales-economics-effective")) {
-      const economics = "economics" in opts ? opts.economics : ECONOMICS;
-      const source = "source" in opts ? opts.source : economics == null ? null : "user";
-      return json({ economics, source });
+    // The scope's campaigns perform the entry legs of the funnels the offer is priced on.
+    if (url.includes("/campaigns?")) return json({ campaigns: funnels ? legCampaignRows(funnels) : [] });
+    if (url.includes("/offer-economics")) {
+      if (!funnels) return new Response("no statements", { status: 404 });
+      return json(offerEconomicsFromDeclared(funnels));
     }
     // human-service active audiences list (grains enumerate every active audience).
     if (url.includes("/orgs/audiences")) {
@@ -351,7 +384,7 @@ describe("GET /features/:featureSlug/workflow-projection (3-grain ladder)", () =
     expect(withEcon.body.economics.lifetimeRevenueUsd).toBe(1000);
     expect(withEcon.body.economics.visitToSignupPct).toBe(4);
 
-    mockFetch({ economics: null, source: null });
+    mockFetch({ economics: null });
     const cold = await request(app).get(`${URL_BASE}?brandId=b1&goal=meetingBooked`).set(AUTH);
     expect(cold.status).toBe(200);
     expect(cold.body.economics).toBeNull();
@@ -619,10 +652,17 @@ describe("GET /features/:featureSlug/workflow-projection (3-grain ladder)", () =
     expect(a.resolved.grain).toBe("brand");
   });
 
-  it("single-step goal with the rate field ABSENT → fail loud (502)", async () => {
-    mockFetch({ economics: ECONOMICS }); // no visitToPaidClientPct
+  it("single-step goal on an offer that does not walk the direct route → rate 0, paid-client cost NULL (never $0, never a 502)", async () => {
+    // Offer terms only (owner 2026-10-05): no priced funnel states visit → paid, so the route is not
+    // walked and its rate is 0 — the paid-client figure is null, the visit cost stays the raw CPC.
+    mockFetch({ economics: ECONOMICS }); // no sales_from_website funnel
     const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=website_visits`).set(AUTH);
-    expect(res.status).toBe(502);
+    expect(res.status).toBe(200);
+    expect(res.body.economics.visitToPaidClientPct).toBe(0);
+    const a = rowFor(res.body, "dyn-a");
+    expect(a.resolved.costPerOutcomeUsd).toBeCloseTo(20, 3);
+    expect(a.resolved.costPerPaidClientUsd).toBeNull();
+    expect(a.resolved.roiMultiple).toBeNull();
   });
 
   it("COMBINED sales goal: cost-per-outcome == cost-per-paid-client == cost-per-sale (best-channel MIN); ROI = CLTV / cost-per-sale", async () => {
@@ -651,10 +691,16 @@ describe("GET /features/:featureSlug/workflow-projection (3-grain ladder)", () =
     expect(a.resolved.cacPct).toBeCloseTo(100 / 2.5, 3);
   });
 
-  it("COMBINED sales with a paid-client rate ABSENT → fail loud (502)", async () => {
-    mockFetch({ economics: ECONOMICS }); // no visitToPaidClientPct / replyToPaidClientPct
+  it("COMBINED sales on an offer walking neither direct route → both rates 0, the sale cost NULL (never $0, never a 502)", async () => {
+    mockFetch({ economics: ECONOMICS }); // no sales_from_website / sales_from_conversation funnel
     const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=sales`).set(AUTH);
-    expect(res.status).toBe(502);
+    expect(res.status).toBe(200);
+    expect(res.body.economics.visitToPaidClientPct).toBe(0);
+    expect(res.body.economics.replyToPaidClientPct).toBe(0);
+    const a = rowFor(res.body, "dyn-a");
+    expect(a.resolved.costPerOutcomeUsd).toBeNull();
+    expect(a.resolved.costPerPaidClientUsd).toBeNull();
+    expect(a.resolved.roiMultiple).toBeNull();
   });
 
   it("website_purchase goal (renamed `purchase`): echoes website_purchase/websitePurchase; legacy `purchase` input still accepted", async () => {
@@ -746,7 +792,7 @@ describe("GET /features/:featureSlug/workflow-projection (3-grain ladder)", () =
   });
 
   it("resolvedOutcomeCount: null at cold start (no economics)", async () => {
-    mockFetch({ economics: null, source: null });
+    mockFetch({ economics: null });
     const res = await request(app).get(`${URL_BASE}?brandId=b1&goal=meetingBooked`).set(AUTH);
     const a = rowFor(res.body, "dyn-a");
     expect(a.estimatesByGrain.crossOrg.resolvedOutcomeCount).toBeNull();

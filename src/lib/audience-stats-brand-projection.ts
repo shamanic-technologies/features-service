@@ -65,7 +65,6 @@
 
 import { fetchPublicCosts, fetchPublicEmailStats, fetchPublicWorkflows } from "./public-stats-clients.js";
 import { aggregateAcrossDynasties } from "../routes/public.js";
-import { fetchEffectiveEconomics } from "./sales-economics-client.js";
 import {
   projectOutcomeCosts,
   singleStepRateDecimal,
@@ -76,7 +75,6 @@ import {
 import { projectedCostPerOutcome } from "./cost-engine.js";
 import { goalToProjectionInputs, funnelToProjectionInputs, outcomeCostForGoal, paidClientCostForGoal, grainHasObservedOutcome } from "../routes/workflow-projection.js";
 import type { PricingChannel, SalesFunnelKey } from "./sales-funnels.js";
-import { mergeFunnelEconomics } from "./declared-funnels.js";
 import { fetchPositiveRepliers, setReplyCountsOnSlugStats } from "./crm-only-repliers.js";
 import { fetchFleetPositiveRepliesBySlug } from "./fleet-positive-repliers.js";
 import {
@@ -118,7 +116,7 @@ export interface AudienceProjectedCostsUsd {
  * answer.
  */
 export type FunnelPricingReason =
-  /** No effective economics for this brand (cold start) — nothing to normalise through. */
+  /** No offer terms to price on (no priced funnel, or the offer states no lifetime revenue) — nothing to normalise through. */
   | "no_economics"
   /** No workflow carries a usable cost of this funnel's outcome. */
   | "no_workflow_evidence"
@@ -357,14 +355,14 @@ export interface BrandProjectionEvidence {
   slugToDynasty: Map<string, string>;
   fleetCostGroups: Awaited<ReturnType<typeof fetchPublicCosts>>;
   fleetEmail: Awaited<ReturnType<typeof fetchPublicEmailStats>>;
-  effective: Awaited<ReturnType<typeof fetchEffectiveEconomics>>;
   brandGrain: Awaited<ReturnType<typeof fetchBrandWorkflowEvidence>>;
   audienceGrain: Awaited<ReturnType<typeof fetchAudienceGrainEvidence>>;
 }
 
 /**
  * The network half of `fetchBrandProjectedParents` — the cross-org fleet reads, the brand grain, the
- * per-(audience × dynasty) grain and the brand's effective economics. Fails loud on any downstream error.
+ * per-(audience × dynasty) grain. Nothing priced: the caller brings the offer's terms. Fails loud on any
+ * downstream error.
  */
 export async function fetchBrandProjectionEvidence(
   brandId: string,
@@ -380,19 +378,18 @@ export async function fetchBrandProjectionEvidence(
   // Positive repliers one per PERSON: the brand grain counts replies on them (the SAME basis
   // workflow-projection's brand grain uses), the audience grain adds the CRM-only ones by membership.
   const crmRepliers = await fetchPositiveRepliers(brandId, undefined, identity);
-  const [fleetCostGroups, fleetEmail, fleetReplies, effective, brandGrain, audienceGrain] = await Promise.all([
+  const [fleetCostGroups, fleetEmail, fleetReplies, brandGrain, audienceGrain] = await Promise.all([
     fetchPublicCosts(featureSlug, "workflowSlug", pricing),
     fetchPublicEmailStats(featureSlug, "workflowSlug"),
     // Fleet positive repliers on the brand grain's per-person basis — the byte-same crossOrg input
     // workflow-projection reads, so the two surfaces keep one number per workflow.
     fetchFleetPositiveRepliesBySlug(featureSlug, { orgId: identity.orgId, brandId, repliers: crmRepliers }),
-    fetchEffectiveEconomics(brandId, identity),
     fetchBrandWorkflowEvidence(brandId, featureSlug, workflows, identity, pricing, "charged", crmRepliers),
     fetchAudienceGrainEvidence(brandId, featureSlug, identity, slugToDynasty, pricing, audienceIds, crmRepliers),
   ]);
   // Always a Map in production; only the suite-wide test default (src/vitest.setup.ts) leaves it unset.
   if (fleetReplies) setReplyCountsOnSlugStats(fleetEmail, fleetReplies);
-  return { workflows, slugToDynasty, fleetCostGroups, fleetEmail, effective, brandGrain, audienceGrain };
+  return { workflows, slugToDynasty, fleetCostGroups, fleetEmail, brandGrain, audienceGrain };
 }
 
 export async function fetchBrandProjectedParents(
@@ -408,13 +405,14 @@ export async function fetchBrandProjectedParents(
   // cannot distinguish a meeting bought with a reply from one bought with a click, and this parent is
   // the number every per-audience cost floors against, so it must be priced on the same funnel the row is.
   funnelKey?: SalesFunnelKey,
-  // That funnel's OWN declared terms, merged over the brand's effective economics — the SAME merge the
-  // ranking does. Without it this parent prices on the brand-wide rates while the projection row prices
-  // on the funnel's, and the two surfaces split apart for one funnel.
-  funnelEconomics?: Partial<SalesEconomics> | null,
+  // The economics this parent is priced on — the OFFER's terms on the priced funnels
+  // (`lib/offer-priced-economics.ts`), the same record the projection row prices on, so the two surfaces
+  // never split apart for one funnel. Null = nothing to price (no priced funnel, no stated lifetime
+  // revenue) → `no_economics`, never an average.
+  economics?: SalesEconomics | null,
 ): Promise<BrandProjectedParentsUsd> {
   const evidence = await fetchBrandProjectionEvidence(brandId, featureSlug, identity, pricing, audienceIds);
-  return projectBrandParents(evidence, goal, funnelKey, funnelEconomics);
+  return projectBrandParents(evidence, goal, funnelKey, economics);
 }
 
 /**
@@ -425,9 +423,9 @@ export function projectBrandParents(
   evidence: BrandProjectionEvidence,
   goal: Goal,
   funnelKey?: SalesFunnelKey,
-  funnelEconomics?: Partial<SalesEconomics> | null,
+  pricedEconomics?: SalesEconomics | null,
 ): BrandProjectedParentsUsd {
-  const { workflows, slugToDynasty, fleetCostGroups, fleetEmail, effective, brandGrain, audienceGrain } = evidence;
+  const { workflows, slugToDynasty, fleetCostGroups, fleetEmail, brandGrain, audienceGrain } = evidence;
 
   // Collapse each workflow's version funnel into ONE dynasty before comparing — the EXACT rollup
   // workflow-projection's crossOrg/brand grains use, so "a workflow" means the same thing on both
@@ -484,7 +482,7 @@ export function projectBrandParents(
   const meetingChannel: PricingChannel = funnelInputs?.meetingChannel ?? null;
   const pricedGoal: Goal = funnelInputs ? (funnelInputs.goalEcho as Goal) : goal;
 
-  const economics = mergeFunnelEconomics(effective.economics, funnelEconomics ?? null);
+  const economics = pricedEconomics ?? null;
   const econ = economics ? buildEcon(economics, pricedGoal) : null;
 
   // THE single best workflow for the queried goal: the LOWEST cost of the goal's own outcome, scored
