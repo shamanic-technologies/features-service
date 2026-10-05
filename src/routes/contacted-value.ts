@@ -41,7 +41,7 @@ import { fetchPublicWorkflows } from "../lib/public-stats-clients.js";
 import { dynastyOfSlug } from "../lib/workflow-scope.js";
 import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
 import { fetchRunsCommittedCentsByCampaignWorkflow } from "../lib/runs-cost-client.js";
-import { mapWithConcurrency } from "../lib/concurrency.js";
+import { mapWithConcurrency, createSlotLimiter } from "../lib/concurrency.js";
 import { runLadder, dynastyPriceFromLadder, type LadderBody } from "../lib/leg-ladder.js";
 import {
   priceContactedLeads,
@@ -150,6 +150,15 @@ export async function loadBrandPricedPopulation(
  * Campaign rows and spend are fail-loud (the cell fails, the pipeline read degrades loudly); a ladder
  * or a workflow catalogue that cannot answer leaves ITS groups unpriced with a named reason.
  */
+/**
+ * ONE leg ladder in flight at a time across every brand's contacted-value cell. A cold ladder is a full
+ * workflow-projection compute; right after a deploy every brand's cell is cold at once (fleet warms,
+ * dashboard polls), and four ladders per brand in parallel took the 384 MB heap down twice
+ * (2026-10-05 13:08 and 13:53, `heap out of memory` ~3 min after boot). A warm ladder is a Gold hit,
+ * so the queue only bites while cold.
+ */
+const contactedLadderSlots = createSlotLimiter(1);
+
 async function priceContactedGroups(
   brandId: string,
   headers: DownstreamHeaders,
@@ -206,7 +215,7 @@ async function priceContactedGroups(
     const query: Record<string, string> = { brandId, leg: legKey, pricing: "net" };
     if (offerId) query.offerId = offerId;
     try {
-      const answer = await runLadder(identity, featureSlug, query);
+      const answer = await contactedLadderSlots.run(() => runLadder(identity, featureSlug, query));
       if (answer.status !== 200) {
         console.error(
           `[features-service] contacted value (brand ${brandId}): ladder ${featureSlug}/${legKey}${offerId ? ` offer ${offerId}` : ""} answered ${answer.status} (${answer.body.reason ?? "no reason"}) — its groups unpriced on that route`,
