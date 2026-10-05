@@ -1930,6 +1930,7 @@ registry.registerPath({
 
 const investedMoneySchema = z.object({
   billedUsd: z.number().describe("Committed (actual) cost at list price, before the org's usage discount, USD."),
+  netUsd: z.number().describe("What the org pays for those rows: runs-service's frozen net (after the org's usage discount), USD."),
   vendorUsd: z.number().nullable().describe("What those cost rows cost us from the vendor, before markup, USD. NULL when any row of the figure has no known vendor cost (see unpricedBilledUsd), never the billed figure."),
   unpricedBilledUsd: z.number().describe("Billed amount of the rows whose vendor cost is unknown, USD; 0 when vendorUsd is known."),
 });
@@ -2007,7 +2008,7 @@ const sourcingCompaniesResponseRef = registry.register(
 const sourcingDescription =
   "STAFF ONLY (carries the vendor basis, i.e. our margin: the api-service gateway mounts it behind requireStaff). What we paid to SOURCE a brand's people, since inception, on committed (actual) cost rows read from runs-service. " +
   "Counted: the whole cost subtree of every lead-service lead-serve run of the brand (Jev pre-pay screens of the candidates, provider reveal / enrichment, email finding and verification, LinkedIn engagement and buying-signal reads) and apollo-service audience-companies runs (company lists pulled when an audience is built). Not counted: outreach (email writing, sending, reply reading), brand/offer setup, the LLM audience split, the audience-preview email pre-check. " +
-  "Per person = the serve runs lead-service recorded as handing that person out (read per campaign, so a person served by two campaigns carries both serves). Per company = Σ its people. Billed basis is list price before the org's usage discount.";
+  "Per person = the serve runs lead-service recorded as handing that person out (read per campaign, so a person served by two campaigns carries both serves). Per company = Σ its people. Billed basis is list price before the org's usage discount; net is what the org pays after it.";
 const sourcingPaging = z.object({
   limit: z.string().optional().describe("1..500, default 100."),
   offset: z.string().optional().describe("Default 0."),

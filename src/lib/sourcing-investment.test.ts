@@ -12,6 +12,7 @@ const serve = (runId: string, audienceId: string | null, billed: string, vendor 
   audienceId,
   campaignId,
   billedCents: billed,
+  netCents: billed,
   vendorCents: vendor,
   unpricedBilledCents: unpriced,
 });
@@ -41,8 +42,8 @@ describe("computeSourcingInvestment", () => {
         serve("r5", null, "1.0000000000", "0.5000000000"),
       ],
       listBuild: [
-        { audienceId: "A", billedCents: "129.0000000000", vendorCents: "100.0000000000", unpricedBilledCents: "0" },
-        { audienceId: null, billedCents: "2.0000000000", vendorCents: "1.0000000000", unpricedBilledCents: "0" },
+        { audienceId: "A", billedCents: "129.0000000000", netCents: "129.0000000000", vendorCents: "100.0000000000", unpricedBilledCents: "0" },
+        { audienceId: null, billedCents: "2.0000000000", netCents: "2.0000000000", vendorCents: "1.0000000000", unpricedBilledCents: "0" },
       ],
       servedRows: [
         row("r1", "p1"),
@@ -84,6 +85,18 @@ describe("computeSourcingInvestment", () => {
     expect(sumCompanies + r.peopleWithoutCompanyDomain.invested.billedUsd).toBeCloseTo(sumPeople, 10);
 
     expect(r.audiences[0]!.audienceId).toBe("A"); // billed desc
+  });
+
+  it("net is the producer's frozen net, summed beside billed (never billed × a discount here)", () => {
+    const r = computeSourcingInvestment({
+      serves: [{ ...serve("r1", "A", "10"), netCents: "8" }, { ...serve("r2", "A", "5"), netCents: "4" }],
+      listBuild: [{ audienceId: "A", billedCents: "100", netCents: "80", vendorCents: "50", unpricedBilledCents: "0" }],
+      servedRows: [row("r1", "p1"), row("r2", "p2")],
+    });
+    expect(r.total.billedUsd).toBeCloseTo(1.15, 10);
+    expect(r.total.netUsd).toBeCloseTo(0.92, 10);
+    expect(r.audiences[0]!.invested.netUsd).toBeCloseTo(0.92, 10);
+    expect(r.people.find((p) => p.leadId === "p1")!.invested.netUsd).toBeCloseTo(0.08, 10);
   });
 
   it("vendor is NULL (never the billed figure) when part of the figure has no known vendor cost", () => {
@@ -132,9 +145,18 @@ describe("runs-service reads", () => {
   it("walks every page of the brand's lead-serve runs on the vendor run list, deduping a shifted repeat", async () => {
     const page1 = Array.from({ length: 500 }, (_, i) => run(`r${i}`));
     const page2 = [run("r499"), run("r500")];
-    fetchMock.mockResolvedValueOnce(json({ runs: page1 })).mockResolvedValueOnce(json({ runs: page2 }));
+    const net = (rows: Array<{ id: string }>) => json({ runs: rows.map((r) => ({ id: r.id, netActualCostInUsdCents: "0.8000000000" })) });
+    fetchMock
+      .mockResolvedValueOnce(json({ runs: page1 }))
+      .mockResolvedValueOnce(json({ runs: page2 }))
+      .mockResolvedValueOnce(net(page1))
+      .mockResolvedValueOnce(net([...page2, { id: "r-new" }]));
     const out = await fetchServeRunCosts("b1", "org-1");
     expect(out).toHaveLength(501);
+    expect(out[0]!.netCents).toBe("0.8000000000");
+    const netUrl = new URL(fetchMock.mock.calls[2]![0] as string);
+    expect(netUrl.pathname).toBe("/v1/runs");
+    expect(netUrl.searchParams.get("include")).toBe("subtreeCost");
     const url = new URL(fetchMock.mock.calls[0]![0] as string);
     expect(url.pathname).toBe("/internal/runs/vendor");
     expect(url.searchParams.get("serviceName")).toBe("lead-service");
@@ -144,17 +166,25 @@ describe("runs-service reads", () => {
     expect(new URL(fetchMock.mock.calls[1]![0] as string).searchParams.get("offset")).toBe("500");
   });
 
+  it("a serve run with no stated net subtree cost fails loud, never a guessed net", async () => {
+    fetchMock.mockResolvedValueOnce(json({ runs: [run("r1")] })).mockResolvedValueOnce(json({ runs: [{ id: "r1" }] }));
+    await expect(fetchServeRunCosts("b1", "org-1")).rejects.toThrow(/no net subtree cost/);
+  });
+
   it("fails loud on a runs-service error, never an empty list", async () => {
     fetchMock.mockResolvedValue(new Response("boom", { status: 500 }));
     await expect(fetchServeRunCosts("b1", "org-1")).rejects.toThrow(/internal\/runs\/vendor failed/);
   });
 
   it("reads list-build spend per audience from the vendor grouped read", async () => {
-    fetchMock.mockResolvedValueOnce(
-      json({ groups: [{ dimensions: { audienceId: "A" }, actualCostInUsdCents: "129", vendorActualCostInUsdCents: "100", unpricedActualCostInUsdCents: "0" }] }),
-    );
+    fetchMock
+      .mockResolvedValueOnce(
+        json({ groups: [{ dimensions: { audienceId: "A" }, actualCostInUsdCents: "129", vendorActualCostInUsdCents: "100", unpricedActualCostInUsdCents: "0" }] }),
+      )
+      .mockResolvedValueOnce(json({ groups: [{ dimensions: { audienceId: "A" }, netActualCostInUsdCents: "116" }] }));
     const out = await fetchListBuildCosts("b1", "org-1");
-    expect(out).toEqual([{ audienceId: "A", billedCents: "129", vendorCents: "100", unpricedBilledCents: "0" }]);
+    expect(out).toEqual([{ audienceId: "A", billedCents: "129", netCents: "116", vendorCents: "100", unpricedBilledCents: "0" }]);
+    expect(new URL(fetchMock.mock.calls[1]![0] as string).pathname).toBe("/v1/stats/costs");
     const url = new URL(fetchMock.mock.calls[0]![0] as string);
     expect(url.searchParams.get("taskName")).toBe("audience-companies");
     expect(url.searchParams.get("groupBy")).toBe("audienceId");

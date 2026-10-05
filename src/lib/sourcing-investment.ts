@@ -21,9 +21,10 @@
  * A serve that handed out nobody (every candidate screened out, or a failed reveal) is real sourcing
  * spend of its audience that no person carries: it is stated as `notOnAPerson`, never spread.
  *
- * Bases: BILLED (what the org is charged at list price, before its usage discount) and VENDOR (what
- * the rows cost us from the provider, before markup; null when any row of the figure has no known
- * vendor cost, with that billed amount named). Exact decimal sums on the producer's text.
+ * Bases: BILLED (list price, before the org's usage discount), NET (what the org pays: runs-service's
+ * frozen net per row) and VENDOR (what the rows cost us from the provider, before markup; null when any
+ * row of the figure has no known vendor cost, with that billed amount named). Exact decimal sums on the
+ * producer's text.
  */
 import { fetchWithRetry } from "./fetch-retry.js";
 import { addDecimals, decimalCentsToUsd } from "./decimal.js";
@@ -35,6 +36,7 @@ export interface ServeRunCost {
   audienceId: string | null;
   campaignId: string | null;
   billedCents: string;
+  netCents: string;
   vendorCents: string;
   unpricedBilledCents: string;
 }
@@ -43,6 +45,7 @@ export interface ServeRunCost {
 export interface ListBuildCost {
   audienceId: string | null;
   billedCents: string;
+  netCents: string;
   vendorCents: string;
   unpricedBilledCents: string;
 }
@@ -50,6 +53,8 @@ export interface ListBuildCost {
 export interface InvestedMoney {
   /** Billed at list price (before the org's usage discount), USD. */
   billedUsd: number;
+  /** What the org pays (after its frozen usage discount), USD. */
+  netUsd: number;
   /** What it cost us from the vendor, USD; null when part of it has no known vendor cost. */
   vendorUsd: number | null;
   /** Billed amount of the rows whose vendor cost is unknown (why `vendorUsd` is null), USD. */
@@ -109,20 +114,23 @@ export interface SourcingInvestment {
 
 interface Acc {
   billed: string;
+  net: string;
   vendor: string;
   unpriced: string;
 }
 
-const zero = (): Acc => ({ billed: "0", vendor: "0", unpriced: "0" });
+const zero = (): Acc => ({ billed: "0", net: "0", vendor: "0", unpriced: "0" });
 
-function add(acc: Acc, c: { billedCents: string; vendorCents: string; unpricedBilledCents: string }): void {
+function add(acc: Acc, c: { billedCents: string; netCents: string; vendorCents: string; unpricedBilledCents: string }): void {
   acc.billed = addDecimals(acc.billed, c.billedCents);
+  acc.net = addDecimals(acc.net, c.netCents);
   acc.vendor = addDecimals(acc.vendor, c.vendorCents);
   acc.unpriced = addDecimals(acc.unpriced, c.unpricedBilledCents);
 }
 
 function addAcc(acc: Acc, o: Acc): void {
   acc.billed = addDecimals(acc.billed, o.billed);
+  acc.net = addDecimals(acc.net, o.net);
   acc.vendor = addDecimals(acc.vendor, o.vendor);
   acc.unpriced = addDecimals(acc.unpriced, o.unpriced);
 }
@@ -131,6 +139,7 @@ function money(acc: Acc): InvestedMoney {
   const unpricedBilledUsd = decimalCentsToUsd(acc.unpriced);
   return {
     billedUsd: decimalCentsToUsd(acc.billed),
+    netUsd: decimalCentsToUsd(acc.net),
     vendorUsd: unpricedBilledUsd === 0 ? decimalCentsToUsd(acc.vendor) : null,
     unpricedBilledUsd,
   };
@@ -323,38 +332,59 @@ interface VendorRunRow {
  * newest first; a run inserted mid-walk shifts the pages DOWN (a repeat, deduped by id), never a skip.
  */
 export async function fetchServeRunCosts(brandId: string, orgId: string): Promise<ServeRunCost[]> {
+  // Vendor walk FIRST, net walk second: a serve started in between appears only in the second (ignored),
+  // so every run of the first walk is in the second; one that is not is a loud error, never a guessed net.
+  const vendor = await walkServeRuns<VendorRunRow>("/internal/runs/vendor", brandId, orgId, true);
+  const net = await walkServeRuns<NetRunRow>("/v1/runs", brandId, orgId, false);
+  const netById = new Map(net.map((r) => [r.id, r.netActualCostInUsdCents]));
+  return vendor.map((r) => {
+    const netCents = netById.get(r.id);
+    if (netCents === undefined || netCents === null) {
+      throw new Error(`runs-service /v1/runs?include=subtreeCost stated no net subtree cost for serve run ${r.id}`);
+    }
+    return {
+      runId: r.id,
+      audienceId: r.audienceId ?? null,
+      campaignId: r.campaignId ?? null,
+      billedCents: r.actualCostInUsdCents,
+      netCents,
+      vendorCents: r.vendorActualCostInUsdCents,
+      unpricedBilledCents: r.unpricedActualCostInUsdCents,
+    };
+  });
+}
+
+interface NetRunRow {
+  id: string;
+  netActualCostInUsdCents: string;
+}
+
+async function walkServeRuns<T extends { id: string }>(path: string, brandId: string, orgId: string, staff: boolean): Promise<T[]> {
   const { url, apiKey } = runsEnv();
-  const byId = new Map<string, ServeRunCost>();
+  const byId = new Map<string, T>();
   for (let page = 0; ; page += 1) {
     if (page >= MAX_SERVE_RUN_PAGES) {
       throw new Error(`runs-service serve-run walk exceeded ${MAX_SERVE_RUN_PAGES} pages for brand ${brandId}`);
     }
     const params = new URLSearchParams({
-      orgId,
       brandId,
       serviceName: "lead-service",
       taskName: "lead-serve",
       limit: String(SERVE_RUN_PAGE),
       offset: String(page * SERVE_RUN_PAGE),
     });
-    const response = await fetchWithRetry(`${url}/internal/runs/vendor?${params}`, {
+    // The staff vendor read takes the org as a parameter; the org-scoped list reads it from x-org-id.
+    if (staff) params.set("orgId", orgId);
+    else params.set("include", "subtreeCost");
+    const response = await fetchWithRetry(`${url}${path}?${params}`, {
       headers: { "x-api-key": apiKey, "x-org-id": orgId },
     });
     if (!response.ok) {
-      throw new Error(`runs-service /internal/runs/vendor failed (${response.status}): ${await response.text()}`);
+      throw new Error(`runs-service ${path} failed (${response.status}): ${await response.text()}`);
     }
-    const data = (await response.json()) as { runs?: VendorRunRow[] };
-    if (!Array.isArray(data.runs)) throw new Error("runs-service /internal/runs/vendor returned no runs array");
-    for (const r of data.runs) {
-      byId.set(r.id, {
-        runId: r.id,
-        audienceId: r.audienceId ?? null,
-        campaignId: r.campaignId ?? null,
-        billedCents: r.actualCostInUsdCents,
-        vendorCents: r.vendorActualCostInUsdCents,
-        unpricedBilledCents: r.unpricedActualCostInUsdCents,
-      });
-    }
+    const data = (await response.json()) as { runs?: T[] };
+    if (!Array.isArray(data.runs)) throw new Error(`runs-service ${path} returned no runs array`);
+    for (const r of data.runs) byId.set(r.id, r);
     if (data.runs.length < SERVE_RUN_PAGE) return [...byId.values()];
   }
 }
@@ -384,10 +414,31 @@ export async function fetchListBuildCosts(brandId: string, orgId: string): Promi
   }
   const data = (await response.json()) as { groups?: VendorGroupRow[] };
   if (!Array.isArray(data.groups)) throw new Error("runs-service /internal/stats/costs/vendor returned no groups array");
-  return data.groups.map((g) => ({
-    audienceId: g.dimensions.audienceId ?? null,
-    billedCents: g.actualCostInUsdCents,
-    vendorCents: g.vendorActualCostInUsdCents,
-    unpricedBilledCents: g.unpricedActualCostInUsdCents,
-  }));
+
+  // NET is served on the org-scoped billed aggregation (same groups: same filters, same audience key).
+  const netParams = new URLSearchParams({ brandId, serviceName: "apollo-service", taskName: "audience-companies", groupBy: "audienceId" });
+  const netResponse = await fetchWithRetry(`${url}/v1/stats/costs?${netParams}`, {
+    headers: { "x-api-key": apiKey, "x-org-id": orgId },
+  });
+  if (!netResponse.ok) {
+    throw new Error(`runs-service /v1/stats/costs failed (${netResponse.status}): ${await netResponse.text()}`);
+  }
+  const netData = (await netResponse.json()) as { groups?: Array<{ dimensions: { audienceId?: string | null }; netActualCostInUsdCents?: string }> };
+  if (!Array.isArray(netData.groups)) throw new Error("runs-service /v1/stats/costs returned no groups array");
+  const netByAudience = new Map(netData.groups.map((g) => [g.dimensions.audienceId ?? null, g.netActualCostInUsdCents]));
+
+  return data.groups.map((g) => {
+    const audienceId = g.dimensions.audienceId ?? null;
+    const netCents = netByAudience.get(audienceId);
+    if (netCents === undefined) {
+      throw new Error(`runs-service /v1/stats/costs stated no net list-build cost for audience ${audienceId}`);
+    }
+    return {
+      audienceId,
+      billedCents: g.actualCostInUsdCents,
+      netCents,
+      vendorCents: g.vendorActualCostInUsdCents,
+      unpricedBilledCents: g.unpricedActualCostInUsdCents,
+    };
+  });
 }

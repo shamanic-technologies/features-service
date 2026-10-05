@@ -45,12 +45,12 @@ describe("GET /brands/:brandId/sourcing-investment[/people|/companies]", () => {
   const fetchMock = vi.fn();
   beforeEach(() => {
     vi.mocked(fetchServeRunCosts).mockReset().mockResolvedValue([
-      { runId: "r1", audienceId: "A", campaignId: "c1", billedCents: "10", vendorCents: "4", unpricedBilledCents: "0" },
-      { runId: "r2", audienceId: "A", campaignId: "c2", billedCents: "6", vendorCents: "2", unpricedBilledCents: "0" },
-      { runId: "r3", audienceId: "A", campaignId: "c1", billedCents: "1", vendorCents: "1", unpricedBilledCents: "0" },
+      { runId: "r1", audienceId: "A", campaignId: "c1", billedCents: "10", netCents: "9", vendorCents: "4", unpricedBilledCents: "0" },
+      { runId: "r2", audienceId: "A", campaignId: "c2", billedCents: "6", netCents: "5", vendorCents: "2", unpricedBilledCents: "0" },
+      { runId: "r3", audienceId: "A", campaignId: "c1", billedCents: "1", netCents: "1", vendorCents: "1", unpricedBilledCents: "0" },
     ]);
     vi.mocked(fetchListBuildCosts).mockReset().mockResolvedValue([
-      { audienceId: "A", billedCents: "100", vendorCents: "80", unpricedBilledCents: "0" },
+      { audienceId: "A", billedCents: "100", netCents: "90", vendorCents: "80", unpricedBilledCents: "0" },
     ]);
     fetchMock.mockReset().mockImplementation(async (url: string) => {
       const u = new URL(url);
@@ -71,6 +71,7 @@ describe("GET /brands/:brandId/sourcing-investment[/people|/companies]", () => {
     expect(res.status).toBe(200);
     expect(res.body.total.billedUsd).toBeCloseTo(1.17, 10);
     expect(res.body.total.vendorUsd).toBeCloseTo(0.87, 10);
+    expect(res.body.total.netUsd).toBeCloseTo(1.05, 10);
     expect(res.body.notOnAPerson.billedUsd).toBeCloseTo(0.01, 10);
     expect(res.body.audiences).toHaveLength(1);
     expect(res.body.audiences[0].personCount).toBe(1);
