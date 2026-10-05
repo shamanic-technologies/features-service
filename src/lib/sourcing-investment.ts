@@ -17,7 +17,10 @@
  *   - audience: serve runs by the audience the serve was made from + list-build by its audience;
  *   - person: the serve runs lead-service recorded as having handed that person out (one person can be
  *     served by several campaigns: every one of those serves counts);
- *   - company: the sum over its people (keyed on the company's domain).
+ *   - company: the sum over its people, keyed on human-service's OWN `companyKey` (`domain:<d>`, else
+ *     `name:<lowercased name>`) read off its held-people list by provider person id, so a row joins
+ *     the Audience page's company rows exactly. A person human-service does not list falls back to
+ *     lead-service's domain under the same `domain:<d>` key; neither = in no company.
  * A serve that handed out nobody (every candidate screened out, or a failed reveal) is real sourcing
  * spend of its audience that no person carries: it is stated as `notOnAPerson`, never spread.
  *
@@ -79,6 +82,8 @@ export interface PersonInvestment {
   email: string | null;
   firstName: string | null;
   lastName: string | null;
+  /** human-service's company key (`domain:<d>` | `name:<n>`); null = in no company. */
+  companyKey: string | null;
   companyName: string | null;
   companyDomain: string | null;
   audienceIds: string[];
@@ -87,7 +92,9 @@ export interface PersonInvestment {
 }
 
 export interface CompanyInvestment {
-  companyDomain: string;
+  /** human-service's company key: the JOIN key onto its company rows. */
+  companyKey: string;
+  companyDomain: string | null;
   companyName: string | null;
   personCount: number;
   audienceIds: string[];
@@ -101,8 +108,8 @@ export interface SourcingInvestment {
   notOnAPerson: InvestedMoney;
   /** Spend carrying no audience (serves or list-build): in `total`, in no audience row. */
   withoutAudience: InvestedMoney;
-  /** People whose company domain is unknown: in `people`, in no company row. */
-  peopleWithoutCompanyDomain: { personCount: number; invested: InvestedMoney };
+  /** People with no known company: in `people`, in no company row. */
+  peopleWithoutCompany: { personCount: number; invested: InvestedMoney };
   serveCount: number;
   servesWithoutPerson: number;
   personCount: number;
@@ -145,11 +152,20 @@ function money(acc: Acc): InvestedMoney {
   };
 }
 
-/** Pure: the three grains from the serve runs, the list-build groups and lead-service's serve rows. */
+/** A held person's company as human-service keys it. */
+export interface HeldCompany {
+  companyKey: string;
+  name: string | null;
+  domain: string | null;
+}
+
+/** Pure: the three grains from the serve runs, the list-build groups, lead-service's serve rows and
+ *  human-service's company of each held person (provider person id → company, null = none). */
 export function computeSourcingInvestment(input: {
   serves: ServeRunCost[];
   listBuild: ListBuildCost[];
   servedRows: ServedPersonRow[];
+  heldCompanies: Map<string, HeldCompany | null>;
 }): SourcingInvestment {
   const serveById = new Map<string, ServeRunCost>();
   for (const s of input.serves) serveById.set(s.runId, s);
@@ -223,15 +239,17 @@ export function computeSourcingInvestment(input: {
     }
     if (runIds.size === 0) continue;
     const first = rows[0]!;
-    const withCompany = rows.find((r) => r.companyDomain) ?? first;
+    const apolloPersonId = rows.find((r) => r.apolloPersonId)?.apolloPersonId ?? null;
+    const company = companyOf(apolloPersonId, rows, input.heldCompanies);
     people.push({
       leadId,
-      apolloPersonId: rows.find((r) => r.apolloPersonId)?.apolloPersonId ?? null,
+      apolloPersonId,
       email: rows.find((r) => r.email)?.email ?? null,
       firstName: first.firstName,
       lastName: first.lastName,
-      companyName: withCompany.companyName,
-      companyDomain: withCompany.companyDomain,
+      companyKey: company?.companyKey ?? null,
+      companyName: company?.name ?? null,
+      companyDomain: company?.domain ?? null,
       audienceIds: [...audienceIds].sort(),
       serveCount: runIds.size,
       invested: money(acc),
@@ -239,33 +257,35 @@ export function computeSourcingInvestment(input: {
     for (const a of audienceIds) {
       const row = aud(a);
       row.persons.add(leadId);
-      if (withCompany.companyDomain) row.companies.add(withCompany.companyDomain);
+      if (company) row.companies.add(company.companyKey);
     }
     personAcc.set(leadId, acc);
   }
 
-  const companiesByDomain = new Map<string, { name: string | null; persons: number; audienceIds: Set<string>; acc: Acc }>();
-  const noDomain = { personCount: 0, acc: zero() };
+  const companiesByKey = new Map<string, { name: string | null; domain: string | null; persons: number; audienceIds: Set<string>; acc: Acc }>();
+  const noCompany = { personCount: 0, acc: zero() };
   for (const p of people) {
     const acc = personAcc.get(p.leadId)!;
-    if (!p.companyDomain) {
-      noDomain.personCount += 1;
-      addAcc(noDomain.acc, acc);
+    if (!p.companyKey) {
+      noCompany.personCount += 1;
+      addAcc(noCompany.acc, acc);
       continue;
     }
-    const c = companiesByDomain.get(p.companyDomain) ?? { name: p.companyName, persons: 0, audienceIds: new Set<string>(), acc: zero() };
+    const c = companiesByKey.get(p.companyKey) ?? { name: null, domain: null, persons: 0, audienceIds: new Set<string>(), acc: zero() };
     c.persons += 1;
     if (!c.name && p.companyName) c.name = p.companyName;
+    if (!c.domain && p.companyDomain) c.domain = p.companyDomain;
     for (const a of p.audienceIds) c.audienceIds.add(a);
     addAcc(c.acc, acc);
-    companiesByDomain.set(p.companyDomain, c);
+    companiesByKey.set(p.companyKey, c);
   }
 
   const byBilledDesc = <T extends { invested: InvestedMoney }>(key: (x: T) => string) => (a: T, b: T) =>
     b.invested.billedUsd - a.invested.billedUsd || key(a).localeCompare(key(b));
 
-  const companies: CompanyInvestment[] = [...companiesByDomain].map(([companyDomain, c]) => ({
-    companyDomain,
+  const companies: CompanyInvestment[] = [...companiesByKey].map(([companyKey, c]) => ({
+    companyKey,
+    companyDomain: c.domain,
     companyName: c.name,
     personCount: c.persons,
     audienceIds: [...c.audienceIds].sort(),
@@ -294,15 +314,69 @@ export function computeSourcingInvestment(input: {
     listBuild: money(listBuild),
     notOnAPerson: money(notOnAPerson),
     withoutAudience: money(withoutAudience),
-    peopleWithoutCompanyDomain: { personCount: noDomain.personCount, invested: money(noDomain.acc) },
+    peopleWithoutCompany: { personCount: noCompany.personCount, invested: money(noCompany.acc) },
     serveCount: input.serves.length,
     servesWithoutPerson,
     personCount: people.length,
     companyCount: companies.length,
     audiences: audienceRows.sort(byBilledDesc((x) => x.audienceId)),
     people: people.sort(byBilledDesc((x) => x.leadId)),
-    companies: companies.sort(byBilledDesc((x) => x.companyDomain)),
+    companies: companies.sort(byBilledDesc((x) => x.companyKey)),
   };
+}
+
+/** human-service's company for the person when it lists them, else lead-service's domain under the same key. */
+function companyOf(
+  apolloPersonId: string | null,
+  rows: ServedPersonRow[],
+  held: Map<string, HeldCompany | null>,
+): HeldCompany | null {
+  if (apolloPersonId && held.has(apolloPersonId)) return held.get(apolloPersonId) ?? null;
+  const withDomain = rows.find((r) => r.companyDomain);
+  if (!withDomain) return null;
+  return { companyKey: `domain:${withDomain.companyDomain}`, name: withDomain.companyName, domain: withDomain.companyDomain };
+}
+
+// ── human-service read: the company of every person a brand's lists hold ──────────────────────────
+
+const HELD_PAGE = 500;
+const MAX_HELD_PAGES = 1000;
+
+interface HeldPersonRow {
+  providerPersonId?: string | null;
+  company?: { companyKey: string; name?: string | null; domain?: string | null } | null;
+}
+
+/**
+ * provider person id → company, from human-service `GET /internal/brands/:id/audience-snapshot/people`
+ * (the held-people list the Audience page renders), every page. Fails loud.
+ */
+export async function fetchHeldPersonCompanies(brandId: string, orgId: string): Promise<Map<string, HeldCompany | null>> {
+  const url = process.env.HUMAN_SERVICE_URL;
+  const apiKey = process.env.HUMAN_SERVICE_API_KEY;
+  if (!url || !apiKey) throw new Error("HUMAN_SERVICE_URL or HUMAN_SERVICE_API_KEY not configured");
+  const out = new Map<string, HeldCompany | null>();
+  for (let page = 0; ; page += 1) {
+    if (page >= MAX_HELD_PAGES) throw new Error(`human-service held-people walk exceeded ${MAX_HELD_PAGES} pages for brand ${brandId}`);
+    const params = new URLSearchParams({ orgId, limit: String(HELD_PAGE), offset: String(page * HELD_PAGE) });
+    const response = await fetchWithRetry(
+      `${url}/internal/brands/${encodeURIComponent(brandId)}/audience-snapshot/people?${params}`,
+      { headers: { "x-api-key": apiKey, "x-org-id": orgId } },
+    );
+    if (!response.ok) {
+      throw new Error(`human-service audience-snapshot/people failed (${response.status}): ${await response.text()}`);
+    }
+    const data = (await response.json()) as { total?: number; people?: HeldPersonRow[] };
+    if (!Array.isArray(data.people)) throw new Error("human-service audience-snapshot/people returned no people array");
+    for (const p of data.people) {
+      if (!p.providerPersonId) continue;
+      out.set(
+        p.providerPersonId,
+        p.company ? { companyKey: p.company.companyKey, name: p.company.name ?? null, domain: p.company.domain ?? null } : null,
+      );
+    }
+    if (data.people.length < HELD_PAGE) return out;
+  }
 }
 
 // ── runs-service reads (service-auth; the vendor basis reveals our margin) ──────────────────────────

@@ -1950,14 +1950,16 @@ const sourcingPersonSchema = z.object({
   email: z.string().nullable(),
   firstName: z.string().nullable(),
   lastName: z.string().nullable(),
+  companyKey: z.string().nullable().describe("human-service's company key (`domain:<d>` else `name:<lowercased name>`): the JOIN KEY onto its company rows. Null = in no company."),
   companyName: z.string().nullable(),
-  companyDomain: z.string().nullable().describe("Bare lowercased domain; the company join key. Null when unknown."),
+  companyDomain: z.string().nullable(),
   audienceIds: z.array(z.string()).describe("Audiences the serves acquiring this person were made from."),
   serveCount: z.number().int().describe("Serve runs that handed this person out (one per campaign that served them)."),
   invested: investedMoneySchema.describe("Sum of those serve runs' subtree cost: what acquiring this person cost."),
 });
 const sourcingCompanySchema = z.object({
-  companyDomain: z.string().describe("Bare lowercased domain: the JOIN KEY onto human-service's company rows."),
+  companyKey: z.string().describe("human-service's company key (read off its held-people list by provider person id; a person it does not list falls back to lead-service's domain as `domain:<d>`): the JOIN KEY onto its company rows."),
+  companyDomain: z.string().nullable(),
   companyName: z.string().nullable(),
   personCount: z.number().int(),
   audienceIds: z.array(z.string()),
@@ -1977,7 +1979,7 @@ const sourcingInvestmentResponseRef = registry.register(
     listBuild: investedMoneySchema,
     notOnAPerson: investedMoneySchema.describe("Serve spend no person carries: total.serves − Σ people[].invested."),
     withoutAudience: investedMoneySchema.describe("Sourcing spend carrying no audience: in total, in no audience row."),
-    peopleWithoutCompanyDomain: z.object({ personCount: z.number().int(), invested: investedMoneySchema }).describe("People with no known company domain: in people, in no company row."),
+    peopleWithoutCompany: z.object({ personCount: z.number().int(), invested: investedMoneySchema }).describe("People with no known company: in people, in no company row."),
     serveCount: z.number().int(),
     servesWithoutPerson: z.number().int(),
     personCount: z.number().int(),
@@ -2002,13 +2004,13 @@ const sourcingCompaniesResponseRef = registry.register(
     total: z.number().int(),
     limit: z.number().int(),
     offset: z.number().int(),
-    companies: z.array(sourcingCompanySchema).describe("Billed desc, then domain."),
+    companies: z.array(sourcingCompanySchema).describe("Billed desc, then companyKey."),
   }),
 );
 const sourcingDescription =
   "STAFF ONLY (carries the vendor basis, i.e. our margin: the api-service gateway mounts it behind requireStaff). What we paid to SOURCE a brand's people, since inception, on committed (actual) cost rows read from runs-service. " +
   "Counted: the whole cost subtree of every lead-service lead-serve run of the brand (Jev pre-pay screens of the candidates, provider reveal / enrichment, email finding and verification, LinkedIn engagement and buying-signal reads) and apollo-service audience-companies runs (company lists pulled when an audience is built). Not counted: outreach (email writing, sending, reply reading), brand/offer setup, the LLM audience split, the audience-preview email pre-check. " +
-  "Per person = the serve runs lead-service recorded as handing that person out (read per campaign, so a person served by two campaigns carries both serves). Per company = Σ its people. Billed basis is list price before the org's usage discount; net is what the org pays after it.";
+  "Per person = the serve runs lead-service recorded as handing that person out (read per campaign, so a person served by two campaigns carries both serves). Per company = Σ its people, keyed on human-service's companyKey. Billed basis is list price before the org's usage discount; net is what the org pays after it.";
 const sourcingPaging = z.object({
   limit: z.string().optional().describe("1..500, default 100."),
   offset: z.string().optional().describe("Default 0."),
@@ -2046,13 +2048,16 @@ registry.registerPath({
 registry.registerPath({
   method: "get",
   path: "/brands/{brandId}/sourcing-investment/companies",
-  summary: "STAFF: what each company's people cost to acquire (paged, or keyed by domains)",
+  summary: "STAFF: what each company's people cost to acquire (paged, or keyed by companyKeys / domains)",
   description: sourcingDescription,
   tags: ["Stats"],
   request: {
     params: z.object({ brandId: z.string() }),
     headers: identityHeaders,
-    query: sourcingPaging.extend({ domains: z.string().optional().describe("Comma-separated, ≤500, case-insensitive.") }),
+    query: sourcingPaging.extend({
+      companyKeys: z.string().optional().describe("Comma-separated human-service company keys, ≤500 (exclusive with domains)."),
+      domains: z.string().optional().describe("Comma-separated, ≤500, case-insensitive."),
+    }),
   },
   responses: {
     200: { description: "Companies", content: { "application/json": { schema: sourcingCompaniesResponseRef } } },
