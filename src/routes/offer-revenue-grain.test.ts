@@ -47,6 +47,7 @@ process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
+const { offerEconomicsFromDeclared, declaredFromEconomics } = await import("../lib/leg-economics-fixture.js");
 
 const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
 const SALES_FEATURE = {
@@ -120,6 +121,7 @@ function mockFetch(fixture: Fixture): void {
           brandId: "b1",
           featureSlug: "sales-cold-email-outreach",
           funnelKey: "sales_meetings_from_conversation",
+          legKey: "start_to_conversation",
           acquisitionChannel: "sales-cold-email-outreach",
           offerId,
           status: "ongoing",
@@ -127,7 +129,14 @@ function mockFetch(fixture: Fixture): void {
         })),
       });
     }
-    if (path.includes("/sales-funnels")) return new Response("not found", { status: 404 });
+    // The offer's terms are the ONLY pricing input (owner 2026-10-05): the funnels stating ECONOMICS,
+    // every offer the fixture's campaigns sell carrying the same lifetime revenue.
+    if (path.includes("/offer-economics")) {
+      const offerIds = [...new Set(Object.values(fixture.campaigns).filter((o): o is string => !!o))];
+      return json(offerEconomicsFromDeclared(declaredFromEconomics(ECONOMICS), {
+        offers: (offerIds.length > 0 ? offerIds : ["offer-a"]).map((offerId) => ({ offerId, lifetimeRevenueUsd: ECONOMICS.lifetimeRevenueUsd })),
+      }));
+    }
     // The cross-org FLEET reads (workflow catalogue + its public spend / outcomes). Empty on purpose:
     // an offer's own figures are realized money, never a fleet benchmark, so a fleet with nothing in
     // it must not change a single number asserted below.
@@ -155,8 +164,6 @@ function mockFetch(fixture: Fixture): void {
         }));
       return json({ groups });
     }
-
-    if (path.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
 
     if (path.endsWith("/orgs/leads")) {
       const only = q.get("campaignId");
@@ -248,7 +255,7 @@ describe("GET /revenue?groupBy=offerId — what each of a brand's offers returns
     // Offer A: two replying leads at 120 each, $30 + $20 of spend across its two campaigns.
     expect(groups["offer-a"].campaignIds).toEqual(["c1", "c2"]);
     expect(groups["offer-a"].headline.totalPipelineUsd).toBeCloseTo(240, 6);
-    expect(groups["offer-a"].headline.economicsSource).toBe("sales-economics");
+    expect(groups["offer-a"].headline.unpricedReason).toBeNull();
     expect(groups["offer-a"].costEconomics.actualCostUsd).toBeCloseTo(50, 6);
     expect(groups["offer-a"].costEconomics.roiMultiple).toBeCloseTo(4.8, 6);
     expect(groups["offer-a"].costEconomics.costOfAcquisitionPct).toBeCloseTo((50 / 240) * 100, 6);
@@ -358,8 +365,11 @@ describe("?offerId= — every per-offer read describes that offer alone", () => 
     mockFetch(TWO_OFFERS);
     const brand = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1").set(AUTH);
     expect(brand.status).toBe(200);
-    // The brand's headline stays the sum across its offers — the offer grain narrows, never replaces.
-    expect(brand.body.headline.totalPipelineUsd).toBeCloseTo(360, 6);
+    // The brand's MONEY stays the sum across its offers — the offer grain narrows, never replaces. Its
+    // PIPELINE is unpriced: two offers with campaigns, a read naming none, and no brand-wide record to
+    // fall back to any more (owner 2026-10-05) — null with its reason, never one offer's terms.
+    expect(brand.body.headline.totalPipelineUsd).toBeNull();
+    expect(brand.body.headline.unpricedReason).toBe("no_priced_funnel");
     expect(brand.body.costEconomics.actualCostUsd).toBeCloseTo(90, 6);
   });
 

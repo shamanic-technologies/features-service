@@ -27,8 +27,8 @@
 import { createHash } from "node:crypto";
 import { Router } from "express";
 import { apiKeyAuth } from "../middleware/auth.js";
-import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel, type DownstreamHeaders } from "./revenue.js";
-import { fetchEffectiveEconomics, economicsFingerprint } from "../lib/sales-economics-client.js";
+import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel, pricedFingerprint, type DownstreamHeaders } from "./revenue.js";
+import { assertBrandHeld } from "../lib/brand-ownership.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { OfferHasNoChannelsError, type OfferChannel } from "../lib/offer-channels.js";
 import { resolveRequest, resolveOfferFunnel, OfferChannelsPriceDifferentlyError } from "./offer-economics.js";
@@ -70,16 +70,13 @@ export type OfferContactedValueResult = ContactedValueResult & {
 async function offerPricing(offerId: string, brandId: string, headers: DownstreamHeaders, channels: OfferChannel[]) {
   // Fails loud on several funnels BEFORE the population loader asks the brand-worded question.
   resolveOfferFunnel(offerId, channels);
-  const [declared, effective] = await Promise.all([
-    fetchDeclaredFunnelsSoft(brandId, headers.orgId, offerId),
-    fetchEffectiveEconomics(brandId, headers),
-  ]);
-  const priced = priceOnDeclaredFunnel(declared, effective);
+  const [declared] = await Promise.all([fetchDeclaredFunnelsSoft(brandId, headers.orgId, offerId), assertBrandHeld(brandId, headers)]);
+  const priced = priceOnDeclaredFunnel(declared);
   return {
-    pre: { channels, declared, effective },
+    pre: { channels, declared },
     keyParts: {
       decl: declared.map((f) => f.funnelKey).sort().join("+") || "none",
-      econ: economicsFingerprint(priced.economics),
+      econ: pricedFingerprint(priced),
     },
   };
 }
@@ -163,7 +160,7 @@ router.get("/offers/:offerId/contacted-value", apiKeyAuth, async (req, res) => {
         channels: featureSlugs.join("+"),
         campaigns: campaignSetKey(campaignIds),
         ...keyParts,
-        m: "contacted-value-v3",
+        m: "contacted-value-v4",
       }),
       orgId: headers.orgId,
       compute: () => computeOfferContactedValue(brandId, headers, pre, campaignIds),

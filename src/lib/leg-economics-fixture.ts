@@ -67,6 +67,37 @@ export function offerEconomicsFromDeclared(
   };
 }
 
+/**
+ * The declared-funnel fixtures that price a scope EXACTLY as a retired brand-wide economics
+ * record used to (owner 2026-10-05: that record is no input any more, only the offer's terms are). Each
+ * rate lands on the leg of the funnel that walks it, the offer carries the record's lifetime revenue:
+ *   - the conversation meeting funnel (reply → meeting → paid),
+ *   - the website meeting funnel (visit → meeting → paid),
+ *   - the website purchase funnel (visit → signup → paid; its visit → paid IS `visitToClosePct`),
+ *   - the form magnet, only when the record carries its two rates.
+ * A test that used to hand a brand-wide record hands this instead, and the figures it asserted stand.
+ */
+export function declaredFromEconomics(economics: Record<string, unknown>): DeclaredFixture[] {
+  const n = (key: string): number | null => {
+    const v = economics[key];
+    return typeof v === "number" && Number.isFinite(v) ? v : null;
+  };
+  const ltr = n("lifetimeRevenueUsd");
+  const out: DeclaredFixture[] = [
+    { funnelKey: "sales_meetings_from_conversation", rates: { replyToMeetingPct: n("replyToMeetingPct"), meetingToClosePct: n("meetingToClosePct") }, lifetimeRevenueUsd: ltr },
+    { funnelKey: "sales_meetings_from_website", rates: { visitToMeetingPct: n("visitToMeetingPct"), meetingToClosePct: n("meetingToClosePct") }, lifetimeRevenueUsd: ltr },
+    { funnelKey: "website_purchases", rates: { visitToSignupPct: n("visitToSignupPct"), signupToPaidClientPct: n("signupToPaidClientPct") }, lifetimeRevenueUsd: ltr },
+  ];
+  if (n("visitToFormSubmissionPct") !== null && n("formSubmissionToPaidClientPct") !== null) {
+    out.push({
+      funnelKey: "form_magnet",
+      rates: { visitToFormSubmissionPct: n("visitToFormSubmissionPct"), formSubmissionToPaidClientPct: n("formSubmissionToPaidClientPct") },
+      lifetimeRevenueUsd: ltr,
+    });
+  }
+  return out;
+}
+
 /** The entry leg of each funnel fixture — what a campaign selling it performs. */
 const ENTRY_LEG: Record<string, string> = {
   sales_meetings_from_conversation: "start_to_conversation",

@@ -61,6 +61,8 @@ process.env.HUMAN_SERVICE_URL = "http://human:3000";
 process.env.HUMAN_SERVICE_API_KEY = "human-key";
 process.env.LEAD_SERVICE_URL = "http://lead:3000";
 process.env.LEAD_SERVICE_API_KEY = "lead-key";
+process.env.CAMPAIGN_SERVICE_URL = "http://campaign:3000";
+process.env.CAMPAIGN_SERVICE_API_KEY = "campaign-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
 process.env.NODE_ENV = "test";
 process.env.FEATURE_VIEW_CACHE_ENABLED = "true";
@@ -69,6 +71,7 @@ process.env.FEATURE_VIEW_SNAPSHOT_TTL_MS = "60000";
 const { db } = await import("../db/index.js");
 const { fetchWithRetry } = await import("../lib/fetch-retry.js");
 const app = (await import("../index.js")).default;
+const { offerEconomicsFromDeclared, legCampaignRows, declaredFromEconomics } = await import("../lib/leg-economics-fixture.js");
 
 const AUTH = {
   "x-api-key": "test-key",
@@ -120,6 +123,8 @@ const withNet = (group: Record<string, unknown>) => ({
 });
 
 function mockFetch(): void {
+  // The offer's terms are the ONLY pricing input (owner 2026-10-05): the funnels stating exactly ECONOMICS.
+  const funnels = declaredFromEconomics(ECONOMICS);
   vi.mocked(fetchWithRetry).mockImplementation(async (input) => {
     const url = String(input);
     const parsed = new URL(url);
@@ -133,7 +138,8 @@ function mockFetch(): void {
       });
     }
     if (url.includes("/daily-budget")) return json({ brandId: "brand-1", dailyBudgetCents: "5000" });
-    if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
+    if (url.includes("/campaigns?")) return json({ campaigns: legCampaignRows(funnels) });
+    if (url.includes("/offer-economics")) return json(offerEconomicsFromDeclared(funnels));
     if (parsed.pathname.endsWith("/members")) return json({ members: [], total: 0 });
     if (parsed.pathname === "/orgs/audiences") return json({ audiences: [] });
     if (url.includes("/public/workflows")) return json({ workflows: WORKFLOWS });

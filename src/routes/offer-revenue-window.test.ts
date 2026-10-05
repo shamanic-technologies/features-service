@@ -47,6 +47,7 @@ process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
+const { offerEconomicsFromDeclared, declaredFromEconomics } = await import("../lib/leg-economics-fixture.js");
 
 const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
 const PITCH = "sales-cold-email-outreach";
@@ -114,12 +115,18 @@ function mockFetch(): void {
     if (path.endsWith("/campaigns")) {
       return json({
         campaigns: Object.entries(CAMPAIGNS).map(([id, row]) => ({
-          id, orgId: "org-1", brandId: "b1", featureSlug: row.featureSlug, funnelKey: "sales_meetings_from_conversation",
+          id, orgId: "org-1", brandId: "b1", featureSlug: row.featureSlug, funnelKey: "sales_meetings_from_conversation", legKey: "start_to_conversation",
           acquisitionChannel: row.featureSlug, offerId: row.offerId, status: "ongoing", createdAt: "2026-01-01T00:00:00.000Z",
         })),
       });
     }
-    if (path.includes("/offer-economics")) return new Response("not found", { status: 404 });
+    // The offer's terms are the ONLY pricing input (owner 2026-10-05): the funnels stating ECONOMICS,
+    // each of the brand's two offers carrying its lifetime revenue.
+    if (path.includes("/offer-economics")) {
+      return json(offerEconomicsFromDeclared(declaredFromEconomics(ECONOMICS), {
+        offers: [{ offerId: OFFER, lifetimeRevenueUsd: ECONOMICS.lifetimeRevenueUsd }, { offerId: "offer-b", lifetimeRevenueUsd: ECONOMICS.lifetimeRevenueUsd }],
+      }));
+    }
     if (path.includes("/public/workflows")) return json({ workflows: [] });
     if (path.endsWith("/costs/timeseries")) {
       // c1 spent yesterday and today; the brand's campaign-less setup ran today, on no channel.
@@ -165,7 +172,6 @@ function mockFetch(): void {
         : [];
       return json({ groups });
     }
-    if (path.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
     if (path.endsWith("/orgs/leads")) {
       return json({ leads: [{
         leadId: "l1", campaignId: "c1", workflowSlug: "dawn-v1", email: "l1@x.com", contacted: true, sent: true, delivered: true,

@@ -12,7 +12,7 @@
  * When brand-service ships a shared goals package, swap this for the brand-service-owned type.
  *
  * Each goal maps to ONE projected cost-per-outcome the funnel can already compute from a brand's
- * effective sales-economics:
+ * economics (the offer's terms on its priced funnels):
  *   - signup         → cost per self-serve signup (click → signup, visitToSignupPct)
  *   - meetingBooked  → cost per booked meeting (click + reply routes)
  *   - websitePurchase→ cost per paying close via the multi-step self-serve/meeting funnel (RENAMED from

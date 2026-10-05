@@ -41,7 +41,7 @@ process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
-const { offerEconomicsFromDeclared } = await import("../lib/leg-economics-fixture.js");
+const { offerEconomicsFromDeclared, declaredFromEconomics, legCampaignRows } = await import("../lib/leg-economics-fixture.js");
 
 const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
 // The feature must DECLARE the recipient keys — /stats scopes its fan-out to a feature's declared
@@ -105,7 +105,11 @@ interface Fixture {
   emailBrandTotal?: number;
   /** Auto-replies per campaign — the one person-grain key no lead evidence can produce. */
   emailAutoReplyByCampaign?: Record<string, number>;
-  /** What the brand DECLARED it sells through. Absent → brand-service serves nothing readable. */
+  /**
+   * The funnels whose terms the brand's offer states. Absent → the funnels stating exactly `ECONOMICS`
+   * (`declaredFromEconomics`), performed by rows on a channel of their own (`legCampaignRows`) so the
+   * leg-less FAMILY still walks them (owner 2026-10-05: the offer's terms are the only pricing input).
+   */
   salesFunnels?: Array<Record<string, unknown>>;
 }
 
@@ -136,11 +140,10 @@ function mockFetch(fixture: Fixture): void {
     const json = (body: unknown) =>
       new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
 
-    if (url.includes("/campaigns?")) return json({ campaigns: fixture.campaigns });
-    if (url.includes("/offer-economics")) {
-      if (!fixture.salesFunnels) return new Response("not found", { status: 404 });
-      return json(offerEconomicsFromDeclared(fixture.salesFunnels as any[]));
+    if (url.includes("/campaigns?")) {
+      return json({ campaigns: fixture.salesFunnels ? fixture.campaigns : [...fixture.campaigns, ...legCampaignRows(declaredFromEconomics(ECONOMICS), { brandId: "b1" })] });
     }
+    if (url.includes("/offer-economics")) return json(offerEconomicsFromDeclared((fixture.salesFunnels ?? declaredFromEconomics(ECONOMICS)) as any[]));
     if (url.includes("/sales-funnels")) {
       if (!fixture.salesFunnels) return new Response("not found", { status: 404 });
       return json({ funnels: fixture.salesFunnels });
@@ -159,7 +162,6 @@ function mockFetch(fixture: Fixture): void {
       }));
       return json({ groups });
     }
-    if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
     if (url.includes("/public/stats")) return json(PLATFORM_STATS);
     if (url.includes("/orgs/leads")) {
       // lead-service scopes by campaign when asked, else serves the brand's whole page.
@@ -393,7 +395,12 @@ describe("campaign figures are the campaign IDENTITY's figures", () => {
       .set(AUTH);
 
     expect(res.status).toBe(200);
-    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(120, 6); // its own row only
+    // The legs the scope walks come from campaign-service too, so with it down the read walks no funnel:
+    // NULL economics with its reason (owner 2026-10-05), never a pipeline priced on a guess.
+    expect(res.body.headline.totalPipelineUsd).toBeNull();
+    expect(res.body.headline.unpricedReason).toBe("no_priced_funnel");
+    // The spend half degrades to the campaign's own row, never to the brand's.
+    expect(res.body.costEconomics.actualCostUsd).toBeCloseTo(50, 6);
     expect(res.body.campaignIdentity.campaignIds).toEqual(["live"]);
   });
 });
@@ -481,7 +488,7 @@ describe("a campaign is priced on the funnels ITS OWN leg is read through, not t
     expect(res.body.reason).toBe("funnel_retired");
   });
 
-  it("a brand whose campaigns state NO leg reads no funnel, and is priced on the brand-wide record (wave C1)", async () => {
+  it("a brand whose campaigns state NO leg reads no funnel, and prices nothing — null, `no_priced_funnel` (owner 2026-10-05)", async () => {
     mockFetch({
       campaigns: FAMILY, // every member states funnelKey: null
       costByCampaign: { "stopped-1": 0, "stopped-2": 0, live: 1000 },
@@ -490,8 +497,9 @@ describe("a campaign is priced on the funnels ITS OWN leg is read through, not t
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?brandId=b1&campaignId=live").set(AUTH);
     expect(res.status).toBe(200);
-    // No campaign performs a leg, so no funnel is read: the brand-wide record prices the reply (the
-    // declared set this used to fall back on is no longer read).
-    expect(res.body.headline.totalPipelineUsd).toBe(120);
+    // No campaign performs a leg, so no funnel is read — and there is no brand-wide record to fall back
+    // on any more: the pipeline is NULL with its reason, never an average.
+    expect(res.body.headline.totalPipelineUsd).toBeNull();
+    expect(res.body.headline.unpricedReason).toBe("no_priced_funnel");
   });
 });

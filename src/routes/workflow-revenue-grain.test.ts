@@ -12,6 +12,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
+import { declaredFromEconomics, legCampaignRows, offerEconomicsFromDeclared } from "../lib/leg-economics-fixture.js";
 
 vi.mock("../db/index.js", () => ({
   db: { query: { features: { findFirst: vi.fn(), findMany: vi.fn() } } },
@@ -110,7 +111,9 @@ function mockFetch(fixture: Fixture): void {
       if (!fixture.workflows) return new Response("workflow-service down", { status: 503 });
       return json({ workflows: fixture.workflows });
     }
-    if (url.includes("/campaigns?")) return json({ campaigns: [] });
+    // The brand's campaigns perform the ENTRY legs of the funnels it sells (owner 2026-10-05: the legs
+    // walked are what a read is priced on; a brand with no campaign walks no path).
+    if (url.includes("/campaigns?")) return json({ campaigns: legCampaignRows(declaredFromEconomics(ECONOMICS)) });
     if (url.includes("/sales-funnels")) return new Response("not found", { status: 404 });
     if (url.includes("/stats/costs")) {
       const groups = Object.entries(fixture.costBySlug).map(([slug, cents]) => ({
@@ -123,7 +126,9 @@ function mockFetch(fixture: Fixture): void {
       }));
       return json({ groups });
     }
-    if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
+    // The offer's terms are the ONLY pricing input (owner 2026-10-05): the funnels stating exactly
+    // `ECONOMICS` (`declaredFromEconomics`), walked by the legs the scope's campaigns perform.
+    if (url.includes("/offer-economics")) return json(offerEconomicsFromDeclared(declaredFromEconomics(ECONOMICS)));
     if (url.includes("/orgs/leads")) return json({ leads: fixture.leads });
     if (url.includes("/manual-qualifications")) return json({ qualifications: [] });
     if (url.includes("/orgs/status")) return json({ results: [] });
@@ -167,7 +172,7 @@ describe("GET /revenue?groupBy=workflow — which workflows made money", () => {
     expect(groups.dawn.workflowDynastyName).toBe("Dawn");
     expect(groups.dawn.workflowSlugs).toEqual(["dawn-v1", "dawn-v2"]);
     expect(groups.dawn.headline.totalPipelineUsd).toBeCloseTo(240, 6);
-    expect(groups.dawn.headline.economicsSource).toBe("sales-economics");
+    expect(groups.dawn.headline.unpricedReason).toBeNull();
     expect(groups.dawn.costEconomics.actualCostUsd).toBeCloseTo(50, 6);
     expect(groups.dawn.costEconomics.roiMultiple).toBeCloseTo(4.8, 6);
     expect(groups.dawn.costEconomics.costOfAcquisitionPct).toBeCloseTo((50 / 240) * 100, 6);

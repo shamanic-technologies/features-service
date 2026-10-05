@@ -63,7 +63,7 @@ const FEATURE = {
   status: "active", createdAt: new Date(), updatedAt: new Date(),
 };
 
-/** The brand's effective economics — every declared funnel below falls through to these rates. */
+/** The offer's terms — every funnel below states its own legs at these rates, the offer this LTR. */
 let economics: Record<string, number> = {
   lifetimeRevenueUsd: 1000,
   replyToMeetingPct: 30,
@@ -136,11 +136,9 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
     if (url.includes("workflow:3000/public/workflows")) return json({ workflows: FLEET_WORKFLOWS });
     if (url.includes("runs:3000/v1/stats/public/costs")) return json({ groups: FLEET_COSTS });
     if (url.includes("email:3000/public/stats")) return json({ groups: FLEET_EMAIL });
-    if (url.includes("brand:3000/orgs/brands/brand-1/sales-economics-effective")) {
-      return json({ economics, source: "user" });
-    }
-    // Wave C1: the brand STATES the legs of the funnels it runs (at the brand-wide values), and its
-    // campaigns perform their entry legs — what brand-service's carry-over produced in prod.
+    // The offer's terms are the ONLY pricing input (owner 2026-10-05): the brand STATES the legs of the
+    // funnels it runs (at the `economics` values), its one offer states the lifetime revenue, and its
+    // campaigns perform their entry legs.
     if (url.includes("brand:3000/internal/brands/brand-1/offer-economics")) {
       if (declarationUnreadable) return json({ error: "boom" }, 500);
       const OWN: Record<string, string[]> = {
@@ -154,7 +152,7 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
           declaredKeys.map((funnelKey) => ({
             funnelKey,
             rates: Object.fromEntries((OWN[funnelKey] ?? []).map((k) => [k, (economics as any)[k]])),
-            lifetimeRevenueUsd: null,
+            lifetimeRevenueUsd: economics.lifetimeRevenueUsd,
           })),
         ),
       );

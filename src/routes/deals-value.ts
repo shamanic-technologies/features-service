@@ -10,8 +10,8 @@
  */
 import { Router } from "express";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
-import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel, type DownstreamHeaders } from "./revenue.js";
-import { fetchEffectiveEconomics, economicsFingerprint } from "../lib/sales-economics-client.js";
+import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel, pricedFingerprint, type DownstreamHeaders } from "./revenue.js";
+import { assertBrandHeld } from "../lib/brand-ownership.js";
 import { resolveBrandChannels, brandFeatureSlugs, BrandHasNoChannelsError } from "../lib/brand-channels.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { fetchLeadIdsByStanding } from "../lib/leads-client.js";
@@ -75,22 +75,19 @@ router.get("/brands/:brandId/deals-value", apiKeyAuth, async (rawReq, res) => {
   const headers: DownstreamHeaders = { orgId: req.orgId, userId: req.userId, runId: req.runId };
   try {
     const channels = await resolveBrandChannels(brandId, headers);
-    const [declared, effective] = await Promise.all([
-      fetchDeclaredFunnelsSoft(brandId, headers.orgId),
-      fetchEffectiveEconomics(brandId, headers),
-    ]);
-    const priced = priceOnDeclaredFunnel(declared, effective);
+    const [declared] = await Promise.all([fetchDeclaredFunnelsSoft(brandId, headers.orgId), assertBrandHeld(brandId, headers)]);
+    const priced = priceOnDeclaredFunnel(declared);
     const result = await servedCached({
       view: "brand-deals-value",
       scopeKey: buildScopeKey(brandId, {
         orgId: headers.orgId,
         channels: brandFeatureSlugs(channels).join("+"),
         decl: declared.map((f) => f.funnelKey).sort().join("+") || "none",
-        econ: economicsFingerprint(priced.economics),
+        econ: pricedFingerprint(priced),
         m: "deals-value-v2",
       }),
       orgId: headers.orgId,
-      compute: () => computeBrandDealsValue(brandId, headers, { channels, declared, effective }),
+      compute: () => computeBrandDealsValue(brandId, headers, { channels, declared }),
     });
     return res.json({ brandId, ...result });
   } catch (error) {

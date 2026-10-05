@@ -197,8 +197,8 @@ export function declaredFunnelsToRank(funnels: DeclaredSalesFunnel[]): RankableF
  * said $73.74 per meeting while the funnel-keyed read (since retired) — projecting on the brand-wide effective set, where the rate
  * is ~31% — said $237.87. Same funnel, same evidence, two numbers.
  *
- * Returns `null` when the brand declared no usable number for the funnel: the brand's effective
- * economics then apply unchanged, which is the correct answer and not a fabricated one.
+ * Returns `null` when the funnel carries no usable number: `offerTermsEconomics` then prices it on
+ * nothing (null economics with a reason), never on a brand-wide or averaged record.
  * Throws `UnknownSalesFunnelError` upstream via the client if the producer serves a key we cannot map.
  */
 export function declaredEconomicsForFunnel(
@@ -209,17 +209,3 @@ export function declaredEconomicsForFunnel(
   return match?.economics ?? null;
 }
 
-/**
- * Merge a funnel's declared terms OVER a brand's effective economics — the SAME merge the ranking does
- * (`mergeEconomics` in lib/funnel-ranking.ts): only stated fields win, and a rate the brand never declared
- * is absent here rather than 0, so it falls through to the effective value instead of zero-collapsing
- * the funnel.
- */
-export function mergeFunnelEconomics<T extends SalesEconomics>(
-  base: T | null,
-  override: Partial<SalesEconomics> | null,
-): T | null {
-  if (!base) return null;
-  if (!override) return base;
-  return { ...base, ...override };
-}

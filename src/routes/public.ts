@@ -90,7 +90,7 @@ import {
   updateStatedAmount,
   StatedAmountConflictError,
 } from "../lib/stated-monthly-amounts-store.js";
-import { BrandOwnershipError, fetchEffectiveEconomics } from "../lib/sales-economics-client.js";
+import { BrandOwnershipError, assertBrandHeld } from "../lib/brand-ownership.js";
 import { computeFeatureRevenue, buildCostEconomics, type DownstreamHeaders } from "./revenue.js";
 import { matureBasisOf, type CostEconomics } from "../lib/cost-economics.js";
 import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel } from "./revenue.js";
@@ -1923,10 +1923,9 @@ export async function handlePublicWorkflowEngagementLatency(
 // Real meeting/closed events ARE tracked (instantly manual qualifications) but thinly populated, so
 // the landing wants the projection — the SAME EV math the revenue engine / workflow-projection run:
 // each workflow's GLOBAL unit costs (cost/click, cost/positive-reply — cross-org, feature-scoped) pushed
-// through each brand's EFFECTIVE conversion economics. Per brand we pick the BEST workflow for EACH metric
+// through each brand's STATED conversion economics. Per brand we pick the BEST workflow for EACH metric
 // (lowest projected cost) independently, then take the unweighted mean across all client brands. Cross-org,
-// no auth. brand-service owns the null→cross-brand-average economics defaulting; a brand with no usable
-// economics contributes nothing. One economics fetch per brand → cached in-memory briefly.
+// no auth. A brand with no usable economics contributes nothing (never an average). Cached in-memory briefly.
 
 interface PublicCostProjectionPayload {
   featureSlug: string;
@@ -3562,13 +3561,14 @@ async function computeShowcaseBrand(
   }
   const funnel = distinct[0] ?? null;
 
-  // Economics are BRAND-scoped, so they are read ONCE and shared by every chain: N funnels cost one
-  // brand-service call. They do not move a single COUNT — the chain's rungs are people, not money —
-  // but the engine needs them to take the priced path rather than the cold-start short-circuit, which
-  // reads every statement-backed rung as UNMEASURED.
-  const [declaredFunnels, brandEconomics] = funnel
-    ? await Promise.all([fetchDeclaredFunnelsSoft(brandId, orgId), fetchEffectiveEconomics(brandId, headers)])
-    : [[], null];
+  // The funnels (each carrying the offer's terms) are read ONCE and shared by every chain. They do not
+  // move a single COUNT — the chain's rungs are people, not money — but the engine needs priced economics
+  // to take the priced path rather than the cold-start short-circuit, which reads every statement-backed
+  // rung as UNMEASURED (an offer stating no lifetime revenue now lands there: no average stands in).
+  // The ownership check rides beside it.
+  const declaredFunnels = funnel
+    ? (await Promise.all([fetchDeclaredFunnelsSoft(brandId, orgId), assertBrandHeld(brandId, headers)]))[0]
+    : [];
 
   const funnels: ShowcaseFunnel[] = [];
   // The per-OUTCOME twin's return (wave C4): the brand's own ROI across every path it sells. With ONE
@@ -3576,9 +3576,7 @@ async function computeShowcaseBrand(
   // brand selling several pays one extra, un-narrowed pass — off the request path, in this warm.
   let brandReturnPerDollar: number | null = null;
   for (const funnelKey of soldFunnels) {
-    const brandPriced = brandEconomics
-      ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics, funnelKey)
-      : undefined;
+    const brandPriced = funnel ? priceOnDeclaredFunnel(declaredFunnels, funnelKey) : undefined;
     // The byte-same call the brand revenue read makes for its own body: the brand's
     // whole channel set, no campaign narrowing, ONE engine pass, the named funnel walked.
     //
@@ -3614,7 +3612,7 @@ async function computeShowcaseBrand(
     if (soldFunnels.length === 1) brandReturnPerDollar = body.costEconomics.roiMultiple ?? null;
   }
   if (soldFunnels.length > 1) {
-    const brandPriced = brandEconomics ? priceOnDeclaredFunnel(declaredFunnels, brandEconomics) : undefined;
+    const brandPriced = funnel ? priceOnDeclaredFunnel(declaredFunnels) : undefined;
     const whole = await computeFeatureRevenue(featureSlugs, brandId, undefined, funnel, headers, undefined, brandPriced, true, "net");
     brandReturnPerDollar = whole.costEconomics.roiMultiple ?? null;
   }
@@ -4194,19 +4192,17 @@ async function computeFleetWorkflowPipelines(featureSlug: string, legKey?: strin
   const computed = await mapWithConcurrency(pairs, FLEET_WORKFLOW_PAIR_CONCURRENCY, async ({ orgId, brandId, campaignScope }) => {
     const headers: DownstreamHeaders = { orgId, featureSlug };
     try {
-      // The pair's OWN pricing — its declared funnels over its effective economics — exactly as its own
-      // `/revenue?groupBy=workflow` read resolves it, so a pair contributes the byte-same pipeline.
-      const [declared, effective] = await Promise.all([
-        fetchDeclaredFunnelsSoft(brandId, orgId),
-        fetchEffectiveEconomics(brandId, headers),
-      ]);
+      // The pair's OWN pricing — its funnels on its offer's terms — exactly as its own
+      // `/revenue?groupBy=workflow` read resolves it, so a pair contributes the byte-same pipeline. The
+      // ownership check rides beside it (a stale membership is skipped below).
+      const [declared] = await Promise.all([fetchDeclaredFunnelsSoft(brandId, orgId), assertBrandHeld(brandId, headers)]);
       const groups = await computeWorkflowRevenueGroups({
         featureSlug,
         brandId,
         funnel,
         headers,
         pricing: "net",
-        priced: priceOnDeclaredFunnel(declared, effective),
+        priced: priceOnDeclaredFunnel(declared),
         withPipelineTimeSeries: true,
         // The curve reads the pipeline series and nothing else: the maturity pairs would cost one
         // spend-split read per (org, brand) pair of the fleet for figures this fold never states.

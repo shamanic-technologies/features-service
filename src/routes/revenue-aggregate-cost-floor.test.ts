@@ -114,7 +114,10 @@ let brandCommittedCents = 2874;
 let brandActualCents = 2874;
 /** The SALES FUNNELS the brand declared it sells through (brand-service INTERNAL declared set). An
  * empty array means it declared nothing — the read fails loud there and the columns stay OBSERVED. */
-/** Wave C1: the brand STATES the legs of the funnels it runs, at the brand-wide values. */
+/**
+ * The brand STATES the legs of the funnels it runs at these values, and its offer states the lifetime
+ * revenue — the offer's terms are the ONLY pricing input (owner 2026-10-05; no brand-wide record).
+ */
 function legEconomicsOf(funnelKeys: string[]) {
   const OWN: Record<string, string[]> = {
     website_purchases: ["visitToSignupPct", "signupToPaidClientPct"],
@@ -126,7 +129,7 @@ function legEconomicsOf(funnelKeys: string[]) {
     funnelKeys.map((funnelKey) => ({
       funnelKey,
       rates: Object.fromEntries((OWN[funnelKey] ?? []).map((k) => [k, (ECONOMICS as any)[k]])),
-      lifetimeRevenueUsd: null,
+      lifetimeRevenueUsd: ECONOMICS.lifetimeRevenueUsd,
     })),
   );
 }
@@ -152,8 +155,7 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
     // (no groupBy) — one source, so the two never disagree on the fleet's engagement.
     if (url.includes("email:3000/public/stats")) return json({ groups: FLEET_EMAIL });
 
-    // ── Brand economics: effective (both surfaces) + INTERNAL saved (the declared goal) ────
-    if (url.includes("brand:3000/internal/brands/brand-1/offer-economics")) return json(legEconomicsOf(brandFunnels));
+    // ── The offer's terms (both surfaces) ────
     if (url.includes("brand:3000/internal/brands/brand-1/offer-economics")) return json(legEconomicsOf(brandFunnels));
   if (url.includes("brand:3000/internal/brands/brand-1/sales-funnels")) {
       // What the brand DECLARED it sells through — the funnel the spend columns are priced on. An empty
@@ -165,12 +167,6 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
           destinationUrl: null, bookingUrl: null, updatedAt: "2026-08-01T00:00:00.000Z",
         })),
       });
-    }
-    if (url.includes("brand:3000/internal/brands/brand-1/sales-economics")) {
-      return json({ salesEconomics: ECONOMICS });
-    }
-    if (url.includes("brand:3000/orgs/brands/brand-1/sales-economics-effective")) {
-      return json({ economics: ECONOMICS, source: "user" });
     }
 
     // ── Org-scoped runs cost ───────────────────────────────────────────────
@@ -327,10 +323,15 @@ describe("aggregate cost coherence: /revenue spend ↔ /workflow-projection", ()
   it("the funnel columns project through the winning workflow instead of reporting the raw spend total", async () => {
     const spend = await revenueSpend();
 
-    for (const field of ["cpsCents", "cpsmCents", "cpSaleCents"] as const) {
+    for (const field of ["cpsCents", "cpSaleCents"] as const) {
       expect({ field, value: spend[field] }).toEqual({ field, value: expect.any(Number) });
       expect({ field, value: spend[field] }).not.toEqual({ field, value: spend.totalSpentCents });
     }
+    // The brand sells through website_purchases alone, which walks no meeting: with the offer's terms
+    // the only input (owner 2026-10-05) no priced funnel states a visit/reply → meeting rate, so the
+    // cost per sales meeting has no projection — NULL, never the raw dollar total (and never the
+    // brand-wide record's meeting rates, which used to fill it).
+    expect(spend.cpsmCents).toBeNull();
     // cost per signup = clickUsd / visitToSignupPct(20%) — the brand's own economics through the
     // winner's click cost, not a dollar total.
     expect(spend.cpsCents / 100).toBeCloseTo(BENCHMARK_CPC_USD / 0.2, 9);
@@ -395,10 +396,7 @@ async function mockFetchOnce(url: string): Promise<Response> {
       })),
     });
   }
-  if (url.includes("brand:3000/internal/brands/brand-1/sales-economics")) {
-    return json({ salesEconomics: ECONOMICS });
-  }
-  if (url.includes("brand:3000/orgs/brands/brand-1/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
+  if (url.includes("brand:3000/internal/brands/brand-1/offer-economics")) return json(legEconomicsOf(brandFunnels));
   if (url.includes("runs:3000/v1/stats/costs")) {
     if ((params.get("groupBy") ?? "") === "costName") {
       const cents = params.get("startedAfter") ? 0 : brandCommittedCents;

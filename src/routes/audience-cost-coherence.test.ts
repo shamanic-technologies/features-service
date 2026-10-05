@@ -45,6 +45,8 @@ process.env.BRAND_SERVICE_URL = "http://brand:3000";
 process.env.BRAND_SERVICE_API_KEY = "brand-key";
 process.env.HUMAN_SERVICE_URL = "http://human:3000";
 process.env.HUMAN_SERVICE_API_KEY = "human-key";
+process.env.CAMPAIGN_SERVICE_URL = "http://campaign:3000";
+process.env.CAMPAIGN_SERVICE_API_KEY = "campaign-key";
 process.env.LEAD_SERVICE_URL = "http://lead:3000";
 process.env.LEAD_SERVICE_API_KEY = "lead-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
@@ -52,6 +54,7 @@ process.env.NODE_ENV = "test";
 
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
+const { offerEconomicsFromDeclared, legCampaignRows, declaredFromEconomics } = await import("../lib/leg-economics-fixture.js");
 
 const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
 const FEATURE = { id: "feat-1", slug: "sales-cold-email-outreach", name: "Sales", description: "x", status: "active", createdAt: new Date(), updatedAt: new Date() };
@@ -61,7 +64,8 @@ const ECONOMICS = {
   replyToMeetingPct: 30,
   visitToMeetingPct: 20,
   meetingToClosePct: 50,
-  visitToClosePct: 10,
+  // The self-serve close IS visit → signup × signup → paid on the offer's legs (20% × 40%).
+  visitToClosePct: 8,
   visitToSignupPct: 20,
   signupToPaidClientPct: 40,
   visitToPaidClientPct: 20,
@@ -69,6 +73,26 @@ const ECONOMICS = {
   visitToFormSubmissionPct: 25,
   formSubmissionToPaidClientPct: 20,
 };
+
+/**
+ * The OFFER's terms are the ONLY pricing input (owner 2026-10-05): the funnels stating exactly `econ`
+ * (`declaredFromEconomics` + the form magnet), plus the two direct funnels stating its single-step
+ * rates (visit → paid on `sales_from_website` is visit → direct purchase × purchase → paid).
+ */
+function offerFunnels(econ: Record<string, number | null>): unknown[] {
+  return [
+    ...declaredFromEconomics(econ),
+    {
+      funnelKey: "sales_from_website",
+      arrows: [
+        { fromStep: "Website visit", toStep: "Direct purchase", ratePct: econ.visitToPaidClientPct },
+        { fromStep: "Direct purchase", toStep: "Paid client", ratePct: 100 },
+      ],
+      lifetimeRevenueUsd: econ.lifetimeRevenueUsd,
+    },
+    { funnelKey: "sales_from_conversation", rates: { replyToPaidClientPct: econ.replyToPaidClientPct }, lifetimeRevenueUsd: econ.lifetimeRevenueUsd },
+  ];
+}
 
 function json(body: unknown): Response {
   return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -124,8 +148,8 @@ const FLEET_CHEAPEST_CLICK: Fleet = {
 const POOLED_CPC_USD = 120500 / 100 / 150; // the old cross-workflow pooled average ≈ $8.03
 
 // Case B — the best workflow for the GOAL is NOT the cheapest-click one:
-//   wf-cheap  $200 / 100 clicks / 0 replies   → click $2.00, cost-per-purchase $10.53
-//   wf-closer $400 / 100 clicks / 200 replies → click $4.00, reply $2.00, cost-per-purchase $8.16
+//   wf-cheap  $200 / 100 clicks / 0 replies   → click $2.00, cost-per-purchase $11.63
+//   wf-closer $400 / 100 clicks / 200 replies → click $4.00, reply $2.00, cost-per-purchase $8.47
 // The goal (website purchase) closes through BOTH channels, so wf-closer wins it despite pricier
 // clicks. Every column must then read wf-closer's unit costs — a per-column "best" would price clicks
 // off wf-cheap ($2.00) while the Strategy page shows wf-closer's $4.00.
@@ -191,12 +215,10 @@ function mockFetch(): ReturnType<typeof vi.spyOn> {
     if (url.includes("workflow:3000/public/workflows")) return json({ workflows: fleet.workflows });
     if (url.includes("runs:3000/v1/stats/public/costs")) return json({ groups: fleet.costs });
     if (url.includes("email:3000/public/stats")) return json({ groups: fleet.email });
-    if (url.includes("brand:3000/orgs/brands/brand-1/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
-    // Wave C1: the brand's leg statements (none of its own here — every rate falls through to the
-    // brand-wide record) and its one offer.
-    if (url.includes("brand:3000/internal/brands/brand-1/offer-economics")) {
-      return json({ legRates: [], offers: [{ offerId: "offer-1", name: "Offer", lifetimeRevenueUsd: null, lifetimeRevenueStatedAt: null }] });
-    }
+    // The brand's leg statements (ECONOMICS, leg by leg) and its one offer at ECONOMICS' lifetime
+    // revenue; its campaigns perform each funnel's entry leg.
+    if (url.includes("campaign:3000/campaigns?")) return json({ campaigns: legCampaignRows(offerFunnels(ECONOMICS)) });
+    if (url.includes("brand:3000/internal/brands/brand-1/offer-economics")) return json(offerEconomicsFromDeclared(offerFunnels(ECONOMICS)));
     // The funnels this brand declared (pre-C1 read; kept for any path still asking).
     if (url.includes("brand:3000/internal/brands/brand-1/sales-funnels")) {
       return json({
@@ -583,13 +605,13 @@ describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection"
       expect(row.projection.costOfAcquisitionPct).not.toBeNull();
     });
 
-    it("is NULL, never 0, when the brand states no lifetime revenue", async () => {
+    it("is NULL, never 0, when the offer states no lifetime revenue", async () => {
       const spy = fetchSpy as any;
       const inner = spy.getMockImplementation();
       spy.mockImplementation(async (input: unknown) => {
         const url = urlOf(input);
-        if (url.includes("sales-economics-effective")) {
-          return json({ economics: { ...ECONOMICS, lifetimeRevenueUsd: 0 }, source: "user" });
+        if (url.includes("offer-economics")) {
+          return json(offerEconomicsFromDeclared(offerFunnels({ ...ECONOMICS, lifetimeRevenueUsd: null })));
         }
         return inner(input);
       });

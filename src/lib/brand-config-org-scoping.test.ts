@@ -12,8 +12,9 @@
  * silently: the org header travels as a value assertion, not as a comment. The paired rule is that a
  * caller with NO org must FAIL LOUD — picking a plausible stand-in is the bug, not the fix.
  *
- * The `/orgs/*` economics reads (`fetchSalesEconomics` / `fetchEffectiveEconomics`) already forwarded
- * the org and are the in-repo precedent; they are covered here too so the two halves stay symmetric.
+ * The org-scoped ownership check (`assertBrandHeld`, `/orgs/brands/:id/leg-rates`) forwards the org
+ * too; it replaced the retired brand sales-economics reads (owner 2026-10-05) and is covered here, with
+ * the stale-membership contract those reads used to carry (403/404 -> BrandOwnershipError, else loud).
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
 
@@ -33,9 +34,7 @@ process.env.CAMPAIGN_SERVICE_API_KEY = "campaign-key";
 
 const { SalesFunnelsUnavailableError } = await import("./sales-funnels-client.js");
 const { fetchBrandLegEconomics } = await import("./brand-leg-economics-client.js");
-const { fetchBrandSavedEconomics, fetchEffectiveEconomics, fetchSalesEconomics } = await import(
-  "./sales-economics-client.js"
-);
+const { assertBrandHeld, BrandOwnershipError } = await import("./brand-ownership.js");
 const { fetchFunnelBucketDataset } = await import("./cross-org-cost-per-outcome.js");
 
 function json(body: unknown): Response {
@@ -54,16 +53,6 @@ function captureFetch(body: unknown): { url: () => string; headers: () => Record
   return { url: () => seenUrl, headers: () => seenHeaders };
 }
 
-const SAVED_ECONOMICS = {
-  lifetimeRevenueUsd: 1000,
-  visitToClosePct: 1,
-  visitToMeetingPct: 2,
-  meetingToClosePct: 30,
-  replyToMeetingPct: 20,
-  // NO optimizationGoal — the column is retired and nothing here reads one. What a brand sells through
-  // comes from its DECLARED SALES FUNNELS, on their own endpoint.
-};
-
 describe("internal brand-service config reads carry the org whose configuration is wanted", () => {
   afterEach(() => vi.restoreAllMocks());
 
@@ -77,40 +66,33 @@ describe("internal brand-service config reads carry the org whose configuration 
     expect(seen.headers()["x-org-id"]).toBe("org-A");
   });
 
-  it("GET /internal/brands/:id/sales-economics sends x-org-id", async () => {
-    const seen = captureFetch({ salesEconomics: SAVED_ECONOMICS });
+  it("GET /orgs/brands/:id/leg-rates (the ownership check) sends x-org-id + x-brand-id, and resolves when held", async () => {
+    const seen = captureFetch({});
 
-    const res = await fetchBrandSavedEconomics("brand-1", "org-A");
+    await expect(assertBrandHeld("brand-1", { orgId: "org-A", userId: "u-1", runId: "r-1" })).resolves.toBeUndefined();
 
-    expect(seen.url()).toBe("http://brand:3000/internal/brands/brand-1/sales-economics");
+    expect(seen.url()).toBe("http://brand:3000/orgs/brands/brand-1/leg-rates");
     expect(seen.headers()["x-api-key"]).toBe("brand-key");
     expect(seen.headers()["x-org-id"]).toBe("org-A");
-    expect(res.economics?.lifetimeRevenueUsd).toBe(1000);
-    // The retired goal is not read back under any name — a consumer reading one again would resurrect
-    // the defaulted column this change exists to stop trusting.
-    expect(Object.keys(res)).toEqual(["economics"]);
+    expect(seen.headers()["x-brand-id"]).toBe("brand-1");
+    expect(seen.headers()["x-user-id"]).toBe("u-1");
+    expect(seen.headers()["x-run-id"]).toBe("r-1");
   });
 
-  it("two orgs claiming ONE brand each get their OWN answer — the org, not the brand, selects it", async () => {
-    // Exactly the case brand-service now refuses to guess at: same brand id, two claiming orgs, two
-    // different sets of terms. The read must be able to ask for either one.
-    const byOrg: Record<string, unknown> = {
-      "org-A": { salesEconomics: { ...SAVED_ECONOMICS, lifetimeRevenueUsd: 1000 } },
-      "org-B": { salesEconomics: { ...SAVED_ECONOMICS, lifetimeRevenueUsd: 7777 } },
-    };
+  it("two orgs claiming ONE brand each get their OWN ownership answer — the org, not the brand, selects it", async () => {
+    // Same brand id, two claiming orgs: brand-service answers per org, so the check must ask under each.
+    const heldBy: Record<string, boolean> = { "org-A": true, "org-B": false };
     const seenOrgs: string[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
       const orgId = ((init?.headers as Record<string, string>) ?? {})["x-org-id"];
       seenOrgs.push(orgId);
-      return json(byOrg[orgId]);
+      return heldBy[orgId] ? json({}) : new Response("forbidden", { status: 403 });
     });
 
-    const a = await fetchBrandSavedEconomics("shared-brand", "org-A");
-    const b = await fetchBrandSavedEconomics("shared-brand", "org-B");
+    await expect(assertBrandHeld("shared-brand", { orgId: "org-A" })).resolves.toBeUndefined();
+    await expect(assertBrandHeld("shared-brand", { orgId: "org-B" })).rejects.toBeInstanceOf(BrandOwnershipError);
 
     expect(seenOrgs).toEqual(["org-A", "org-B"]);
-    expect(a.economics?.lifetimeRevenueUsd).toBe(1000);
-    expect(b.economics?.lifetimeRevenueUsd).toBe(7777);
   });
 
   it("a caller with NO org FAILS LOUD on both reads — never a substituted stand-in, never an org-less read", async () => {
@@ -120,7 +102,7 @@ describe("internal brand-service config reads carry the org whose configuration 
 
     await expect(fetchBrandLegEconomics("brand-1", "")).rejects.toBeInstanceOf(SalesFunnelsUnavailableError);
     await expect(fetchBrandLegEconomics("brand-1", "")).rejects.toThrow(/requires the org/);
-    await expect(fetchBrandSavedEconomics("brand-1", "")).rejects.toThrow(/requires the org/);
+    await expect(assertBrandHeld("brand-1", { orgId: "" })).rejects.toThrow(/requires the org/);
 
     // The point of failing loud: nothing was asked of brand-service without an org.
     expect(seen.url()).toBe("");
@@ -131,7 +113,6 @@ describe("internal brand-service config reads carry the org whose configuration 
     // that put a brand in the dataset names a real claiming org, and that is what the read asks under.
     // The dataset stays one row per brand — its spend + outcome legs are brand-grained, so a row per
     // (org, brand) would count a multi-org brand's fleet spend once per claimant.
-    const seenEconomicsOrgs: Array<string | undefined> = [];
     const seenFunnelOrgs: Array<string | undefined> = [];
     let spendCalls = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -150,15 +131,12 @@ describe("internal brand-service config reads carry the org whose configuration 
         seenFunnelOrgs.push(headers["x-org-id"]);
         return json({
           legRates: [{ fromStep: "Positive reply", toStep: "Meeting booked", ratePct: 30, stated: true, statedAt: "x" }],
-          offers: [{ offerId: "offer-1", name: "O", lifetimeRevenueUsd: null, lifetimeRevenueStatedAt: null }],
+          // The offer states its lifetime revenue: a brand priced on no stated LTR is omitted (no average).
+          offers: [{ offerId: "offer-1", name: "O", lifetimeRevenueUsd: 1000, lifetimeRevenueStatedAt: "x" }],
         });
       }
       if (url.includes("campaign:3000/campaigns")) {
         return json({ campaigns: [{ id: "c1", orgId: "org-A", brandId: "shared", featureSlug: "sales-cold-email-outreach", legKey: "start_to_conversation", offerId: "offer-1", status: "ongoing" }] });
-      }
-      if (url.includes("/internal/brands/") && url.includes("/sales-economics")) {
-        seenEconomicsOrgs.push(headers["x-org-id"]);
-        return json({ salesEconomics: SAVED_ECONOMICS });
       }
       if (url.includes("/v1/stats/public/costs/timeseries")) {
         spendCalls += 1;
@@ -170,9 +148,8 @@ describe("internal brand-service config reads carry the org whose configuration 
 
     const dataset = await fetchFunnelBucketDataset("sales-cold-email-outreach");
 
-    // Asked under a REAL claimant — never org-less, never a stand-in. BOTH per-brand configuration
-    // reads (the economics and the leg statements) name that same claiming org.
-    expect(seenEconomicsOrgs).toEqual(["org-A"]);
+    // Asked under a REAL claimant — never org-less, never a stand-in. The per-brand configuration read
+    // (the leg statements + offer terms) names that claiming org.
     expect(seenFunnelOrgs).toEqual(["org-A"]);
     // ...and the brand's fleet spend is read (and so counted) exactly ONCE.
     expect(spendCalls).toBe(1);
@@ -181,17 +158,28 @@ describe("internal brand-service config reads carry the org whose configuration 
     expect(dataset[0].funnels).toEqual(["sales_meetings_from_conversation"]);
   });
 
-  it("the org-scoped /orgs/* economics reads keep forwarding the caller's org (the in-repo precedent)", async () => {
-    const effective = captureFetch({ economics: SAVED_ECONOMICS, source: "user" });
-    await fetchEffectiveEconomics("brand-1", { orgId: "org-A" });
-    expect(effective.url()).toBe("http://brand:3000/orgs/brands/brand-1/sales-economics-effective");
-    expect(effective.headers()["x-org-id"]).toBe("org-A");
+  // A brand deleted (404) or claimed away (403) after its feature membership was recorded: every fleet
+  // fan-out skips a BrandOwnershipError, while a plain Error takes the whole read down. Pinned because
+  // one deleted brand 500'd the public workflow-cost-per-outcome read for every caller on 2026-09-18.
+  for (const status of [403, 404]) {
+    it(`the ownership check throws BrandOwnershipError on ${status} (a stale membership, skipped by fleet sweeps)`, async () => {
+      vi.spyOn(globalThis, "fetch").mockImplementation(
+        async () => new Response(JSON.stringify({ error: "Brand not found" }), { status }),
+      );
+      const err = await assertBrandHeld("b1", { orgId: "o1" }).catch((e) => e);
+      expect(err).toBeInstanceOf(BrandOwnershipError);
+      // It is also "we could not read what this brand sells": soft pricing callers degrade on it.
+      expect(err).toBeInstanceOf(SalesFunnelsUnavailableError);
+      expect(err.brandId).toBe("b1");
+      expect(err.orgId).toBe("o1");
+    });
+  }
 
-    vi.restoreAllMocks();
-
-    const saved = captureFetch({ salesEconomics: SAVED_ECONOMICS });
-    await fetchSalesEconomics("brand-1", { orgId: "org-B" });
-    expect(saved.url()).toBe("http://brand:3000/orgs/brands/brand-1/sales-economics");
-    expect(saved.headers()["x-org-id"]).toBe("org-B");
+  it("the ownership check still fails LOUD on a 500 — a plain Error, never a stale-membership skip", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("boom", { status: 500 }));
+    const err = await assertBrandHeld("b1", { orgId: "o1" }).catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(BrandOwnershipError);
+    expect(String(err.message)).toMatch(/500/);
   });
 });

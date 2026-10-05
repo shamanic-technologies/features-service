@@ -15,7 +15,9 @@ import {
 } from "../lib/public-stats-clients.js";
 import { fetchBrandWorkflowEvidence } from "../lib/workflow-projection-grains.js";
 import { parsePricing, selectCostCentsString, type Pricing } from "../lib/pricing.js";
-import { fetchEffectiveEconomics, economicsFingerprint, type EffectiveEconomics } from "../lib/sales-economics-client.js";
+import { assertBrandHeld } from "../lib/brand-ownership.js";
+import type { PricedEconomics } from "../lib/offer-priced-economics.js";
+import { fetchFunnelPricedEconomics, pricedFingerprint, type FunnelPricedEconomics } from "../lib/offer-pricing.js";
 import { projectOutcomeCosts, type SalesEconomics } from "../lib/funnel-registry.js";
 import {
   fetchConversionCountsByDay,
@@ -754,13 +756,26 @@ async function fetchBestAudienceForecast(
   };
 }
 
+/**
+ * The scope's pricing (the offer's terms on the funnels it walks) beside the ownership check the retired
+ * brand-economics read used to make for free: a foreign / gone brand throws `BrandOwnershipError`.
+ */
+async function pricedHeld(
+  brandId: string,
+  headers: { orgId: string; userId?: string; runId?: string },
+  offerId?: string | null,
+): Promise<FunnelPricedEconomics> {
+  const [priced] = await Promise.all([fetchFunnelPricedEconomics(brandId, headers.orgId, undefined, offerId), assertBrandHeld(brandId, headers)]);
+  return priced;
+}
+
 async function computeExpectedActivity(
   featureSlug: string,
   brandId: string,
   headers: { orgId: string; userId: string; runId: string },
   // Already resolved by the caller so it can fold the economics fingerprint into the cache key — reused
-  // here so the request path does not fetch the same brand-service read twice.
-  economicsOverride?: EffectiveEconomics,
+  // here so the request path does not price the scope twice. The OFFER's terms (lib/offer-pricing.ts).
+  economicsOverride?: PricedEconomics,
   // GROSS (default) → byte-identical to today. NET makes EVERY cost input below read runs#179's frozen
   // net twin, so the divisor is priced at what the org actually pays. The daily BUDGET is deliberately
   // NOT touched: a configured budget is a ceiling, never a charge, so it is never discounted.
@@ -768,9 +783,11 @@ async function computeExpectedActivity(
 ): Promise<ExpectedActivity> {
   const [dailyBudgetUsd, effective] = await Promise.all([
     fetchBrandDailyBudgetUsd(brandId, featureSlug, headers),
-    economicsOverride ?? fetchEffectiveEconomics(brandId, { ...headers, featureSlug }),
+    economicsOverride ?? fetchFunnelPricedEconomics(brandId, headers.orgId, undefined).then((priced) => priced.economics),
   ]);
 
+  // The offer's terms on the funnels the brand walks: a rate no priced funnel states is 0 (signups) or
+  // absent (form submissions → null series); no priced funnel / no stated lifetime revenue → null.
   const economics = effective.economics;
   const clickToSignupPct = economics?.visitToSignupPct ?? null;
   // Visit→form-submission rate (the form-submission projection rate). Present only when the brand's
@@ -912,13 +929,8 @@ export async function computeOfferPipelineActivity(
   if (days === null) return { ok: false, status: 400, body: { error: "days must be a positive integer" } };
 
   const featureSlugs = input.channels.map((channel) => channel.featureSlug);
-  const effectiveEconomics = await fetchEffectiveEconomics(input.brandId, {
-    orgId: input.headers.orgId,
-    userId: input.headers.userId,
-    runId: input.headers.runId,
-    // Not one of the channels: this read is about several, and naming one would attribute it to that one.
-    featureSlug: undefined,
-  });
+  const priced = await pricedHeld(input.brandId, input.headers, input.offerId);
+  const effectiveEconomics = priced.economics;
 
   const body = await servedCached({
     view: "offer-pipeline-activity",
@@ -931,7 +943,7 @@ export async function computeOfferPipelineActivity(
       timezone,
       days,
       pricing: input.pricing,
-      econ: economicsFingerprint(effectiveEconomics),
+      econ: pricedFingerprint(priced),
     }),
     orgId: input.headers.orgId,
     compute: async (): Promise<PipelineActivityResponse> => {
@@ -1014,14 +1026,8 @@ export async function computeBrandPipelineActivity(
 
   const featureSlugs = input.channels.map((channel) => channel.featureSlug);
   const soleChannel = featureSlugs.length === 1 ? featureSlugs[0] : undefined;
-  const effectiveEconomics = await fetchEffectiveEconomics(input.brandId, {
-    orgId: input.headers.orgId,
-    userId: input.headers.userId,
-    runId: input.headers.runId,
-    // Named only when there IS one: attributing a several-channel read to one of them would name a
-    // channel the caller never asked about.
-    featureSlug: soleChannel,
-  });
+  const priced = await pricedHeld(input.brandId, input.headers);
+  const effectiveEconomics = priced.economics;
 
   const body = await servedCached({
     view: "brand-pipeline-activity",
@@ -1033,7 +1039,7 @@ export async function computeBrandPipelineActivity(
       timezone,
       days,
       pricing: input.pricing,
-      econ: economicsFingerprint(effectiveEconomics),
+      econ: pricedFingerprint(priced),
     }),
     orgId: input.headers.orgId,
     compute: async (): Promise<PipelineActivityResponse> => {
@@ -1113,16 +1119,12 @@ router.get("/features/:featureSlug/pipeline-activity", apiKeyAuth, async (req, r
     const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
     if (!feature) return res.status(404).json({ error: "Feature not found" });
 
-    // The projected series (signups, form submissions) are driven by the brand's economics rates, so the
-    // economics are read LIVE and folded into the cache key: an economics write lands on a different
-    // `scope_key` and forces a fresh compute instead of replaying a pre-write snapshot for up to the
-    // hard-stale cap. The value is threaded into the compute so it is fetched once, not twice.
-    const effectiveEconomics = await fetchEffectiveEconomics(brandId, {
-      orgId: auth.orgId,
-      userId: auth.userId,
-      runId: auth.runId,
-      featureSlug,
-    });
+    // The projected series (signups, form submissions) are driven by the offer's terms (the priced
+    // funnels' effective leg rates), so they are read LIVE and folded into the cache key: a terms write
+    // lands on a different `scope_key` and forces a fresh compute instead of replaying a pre-write
+    // snapshot. The value is threaded into the compute so it is priced once, not twice.
+    const priced = await pricedHeld(brandId, { orgId: auth.orgId, userId: auth.userId, runId: auth.runId }, offerId);
+    const effectiveEconomics = priced.economics;
 
     // Fail-loud: the partition IS the scope, so serving without it would draw the whole brand's
     // activity under one offer's name.
@@ -1146,7 +1148,7 @@ router.get("/features/:featureSlug/pipeline-activity", apiKeyAuth, async (req, r
         // The offer narrows the whole body, so it MUST be in the key or an offer-scoped chart and the
         // brand-wide one would share a cell. Absent → dropped by buildScopeKey → key unchanged.
         offerId,
-        econ: economicsFingerprint(effectiveEconomics),
+        econ: pricedFingerprint(priced),
       }),
       orgId: auth.orgId,
       compute: async (): Promise<PipelineActivityResponse> => {

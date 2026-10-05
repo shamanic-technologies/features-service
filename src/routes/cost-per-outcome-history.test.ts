@@ -16,6 +16,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
+import { declaredFromEconomics, legCampaignRows, offerEconomicsFromDeclared } from "../lib/leg-economics-fixture.js";
 
 vi.mock("../db/index.js", () => ({
   db: { query: { features: { findFirst: vi.fn(), findMany: vi.fn() } } },
@@ -171,7 +172,11 @@ function mockFetch(fixture: Fixture): void {
           funnelKey: FUNNEL, acquisitionChannel: "cold_email",
           legKey: fixture.legKey === undefined ? VISIT_LEG : fixture.legKey,
           status: "ongoing", createdAt: "2026-09-01T00:00:00.000Z",
-        }],
+        },
+        // Rows on another channel performing the ENTRY legs of the funnels the brand sells (owner
+        // 2026-10-05: a read is priced on the offer's terms over the funnels its campaigns walk), so a
+        // campaign stating NO leg still falls back to the brand's priced funnels rather than to none.
+        ...legCampaignRows(declaredFromEconomics(ECONOMICS), { brandId: "b1" })],
       });
     }
     if (url.includes("/public/workflows")) return json({ workflows: WORKFLOWS });
@@ -179,7 +184,9 @@ function mockFetch(fixture: Fixture): void {
       return json({ brandId: "b1", legKey: VISIT_LEG, dailyBudgetCents: "5000", updatedAt: null, funnels: [], channels: [], offers: [], legs: [] });
     }
     if (url.includes("/sales-funnels")) return new Response("not found", { status: 404 });
-    if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
+    // The offer's terms are the ONLY pricing input (owner 2026-10-05): the funnels stating exactly
+    // `ECONOMICS` (`declaredFromEconomics`), walked by the legs the scope's campaigns perform.
+    if (url.includes("/offer-economics")) return json(offerEconomicsFromDeclared(declaredFromEconomics(ECONOMICS)));
 
     // THE DATED SPEND LEG — runs' own cost buckets, one per UTC day.
     if (url.includes("/costs/timeseries")) {

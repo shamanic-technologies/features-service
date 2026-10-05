@@ -183,9 +183,6 @@ function mockFetch(opts: {
       if (!opts.salesFunnels) return new Response("no declaration", { status: 404 });
       return json({ funnels: opts.salesFunnels });
     }
-    if (url.includes("/sales-economics-effective")) {
-      return json(opts.economics != null ? { economics: opts.economics, source: "user" } : { economics: null, source: null });
-    }
     if (url.includes("/public/stats")) return json({ broadcast: { recipientStats: {} } });
     if (url.includes("/manual-qualifications")) return json({ qualifications: [] });
     if (url.includes("/converted-leads")) return json({ event: "", outcomes: [] });
@@ -229,12 +226,15 @@ describe("a funnel is priced on the rates IT declares, not on a route it does no
     expect(res.body.leads[0].expectedRevenueUsd).toBeCloseTo(FORM_VISIT_USD, 5);
   });
 
-  it("the same fixture with NO declaration still reads the OLD number — the move is the funnel's, not the engine's", async () => {
+  it("the same fixture with NO declaration prices NOTHING — null, `no_priced_funnel`, never the old brand-wide number", async () => {
+    // Owner 2026-10-05: the brand-wide record (which priced every visit through a meeting route) is no
+    // input any more. A brand whose campaigns walk no funnel has no terms to price on: NULL pipeline
+    // with its reason, never the $0.373125-per-visit stand-in.
     mockFetch({ economics: ECONOMICS, leads: visitors(VISIT_COUNT) });
     const res = await read();
     expect(res.status).toBe(200);
-    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(VISIT_COUNT * BRAND_WIDE_VISIT_USD, 5);
-    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(17.572125, 5);
+    expect(res.body.headline.totalPipelineUsd).toBeNull();
+    expect(res.body.headline.unpricedReason).toBe("no_priced_funnel");
   });
 
   it("a lead that FILLED THE FORM is worth strictly more than one that only visited, and strictly less than one that paid", async () => {
@@ -266,6 +266,9 @@ describe("a funnel is priced on the rates IT declares, not on a route it does no
     // No arrows, no named rates, nothing measured: the visit leg has nothing to choose its onward path
     // on. The campaign row's stated funnel used to break that tie (C1 compatibility); it is retired and
     // never read, so every path from the visit is read and the engine's max decides — never a guess.
+    // And with the offer's terms the only input (owner 2026-10-05), a path nobody stated a rate for is
+    // worth 0: the read IS priced (the offer states its lifetime revenue), on paths that carry nothing —
+    // never the brand-wide meeting route that used to fill the gap.
     mockFetch({
       economics: ECONOMICS,
       leads: visitors(VISIT_COUNT),
@@ -273,7 +276,9 @@ describe("a funnel is priced on the rates IT declares, not on a route it does no
     });
     const res = await read();
     expect(res.status).toBe(200);
-    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(VISIT_COUNT * BRAND_WIDE_VISIT_USD, 2);
+    expect(res.body.headline.unpricedReason).toBeNull();
+    expect(res.body.headline.totalPipelineUsd).toBe(0);
+    expect(res.body.headline.totalPipelineUsd).not.toBeCloseTo(VISIT_COUNT * BRAND_WIDE_VISIT_USD, 2);
   });
 
   it("a leg whose LAST arrow is unstated is unpriceable — half a chain is not a rate", async () => {
@@ -311,7 +316,8 @@ describe("REGRESSION — the other three funnel keys are unchanged, to the cent"
           name: "Website purchases",
           steps: ["Website visit", "Signup", "Paid client"],
           arrows: [arrow("Website visit", "Signup", 5), arrow("Signup", "Paid client", 10)],
-          lifetimeRevenueUsd: null,
+          // The OFFER states the lifetime revenue (owner 2026-10-05: no brand-wide record supplies it).
+          lifetimeRevenueUsd: 30,
         }),
       ],
     });
@@ -322,7 +328,10 @@ describe("REGRESSION — the other three funnel keys are unchanged, to the cent"
     expect(res.body.leads[0].expectedRevenueUsd).toBeCloseTo(30 * 0.005, 5);
   });
 
-  it("sales_meetings_from_website keeps its visit on the identical expression", async () => {
+  it("sales_meetings_from_website prices its visit on ITS meeting route alone — no self-serve close it does not walk", async () => {
+    // Owner 2026-10-05: the terms are the offer's own — visit→meeting 3%, attended→paid 25%, $30. The
+    // brand-wide record's 0.5% direct close (website_purchases' chain) is not a path of this funnel, so
+    // it no longer combines into the visit: 30 × 0.03 × 0.25 = $0.225, not orP(0.005, 0.0075) × 30.
     mockFetch({
       economics: ECONOMICS,
       leads: visitors(VISIT_COUNT),
@@ -331,14 +340,15 @@ describe("REGRESSION — the other three funnel keys are unchanged, to the cent"
           funnelKey: "sales_meetings_from_website",
           name: "Meetings from the website",
           steps: ["Website visit", "Meeting booked", "Meeting attended", "Paid client"],
-          arrows: [],
-          lifetimeRevenueUsd: null,
+          arrows: [arrow("Website visit", "Meeting booked", 3), arrow("Meeting attended", "Paid client", 25)],
+          lifetimeRevenueUsd: 30,
         }),
       ],
     });
     const res = await read();
     expect(res.status).toBe(200);
-    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(VISIT_COUNT * BRAND_WIDE_VISIT_USD, 5);
+    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(VISIT_COUNT * 30 * 0.03 * 0.25, 5);
+    expect(res.body.headline.totalPipelineUsd).not.toBeCloseTo(VISIT_COUNT * BRAND_WIDE_VISIT_USD, 2);
   });
 
   it("sales_meetings_from_conversation keeps reply / booked / attended on the identical expressions", async () => {
@@ -353,8 +363,9 @@ describe("REGRESSION — the other three funnel keys are unchanged, to the cent"
           funnelKey: "sales_meetings_from_conversation",
           name: "Meetings from conversations",
           steps: ["Positive reply", "Meeting booked", "Meeting attended", "Paid client"],
-          arrows: [],
-          lifetimeRevenueUsd: null,
+          // The offer's own terms (owner 2026-10-05): the same 40% / 25% / $30 the brand-wide record held.
+          arrows: [arrow("Positive reply", "Meeting booked", 40), arrow("Meeting attended", "Paid client", 25)],
+          lifetimeRevenueUsd: 30,
         }),
       ],
     });

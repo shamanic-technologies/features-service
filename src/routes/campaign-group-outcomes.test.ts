@@ -14,6 +14,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
+import { declaredFromEconomics, legCampaignRows, offerEconomicsFromDeclared } from "../lib/leg-economics-fixture.js";
 
 vi.mock("../db/index.js", () => ({
   db: { query: { features: { findFirst: vi.fn(), findMany: vi.fn() } } },
@@ -107,8 +108,11 @@ function mockFetch(fixture: Fixture): void {
     const json = (body: unknown) =>
       new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
 
-    if (url.includes("/campaigns?")) return json({ campaigns: fixture.campaigns });
-    // The brand declares nothing readable → the brand-wide economics price the pipeline, unchanged.
+    // Beside the fixture's own (leg-less) campaigns, rows on another channel perform the ENTRY legs of
+    // the funnels the brand sells (owner 2026-10-05: a read is priced on the offer's terms over the
+    // funnels its campaigns walk; a brand none of whose campaigns performs a leg walks no path). They
+    // sit on a channel of their own, so no campaign group of this feature is moved by them.
+    if (url.includes("/campaigns?")) return json({ campaigns: [...fixture.campaigns, ...legCampaignRows(declaredFromEconomics(ECONOMICS), { brandId: "b1" })] });
     if (url.includes("/sales-funnels")) return new Response("not found", { status: 404 });
     if (url.includes("/stats/costs")) {
       const ids = cid ? [cid] : Object.keys(fixture.committedByCampaign);
@@ -123,7 +127,9 @@ function mockFetch(fixture: Fixture): void {
         })),
       });
     }
-    if (url.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
+    // The offer's terms are the ONLY pricing input (owner 2026-10-05): the funnels stating exactly
+    // `ECONOMICS` (`declaredFromEconomics`), walked by the legs the scope's campaigns perform.
+    if (url.includes("/offer-economics")) return json(offerEconomicsFromDeclared(declaredFromEconomics(ECONOMICS)));
     if (url.includes("/orgs/leads")) {
       return json({ leads: cid ? fixture.leads.filter((l) => l.campaignId === cid) : fixture.leads });
     }

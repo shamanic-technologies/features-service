@@ -3,7 +3,7 @@
  *
  * ONE downstream fixture shaped like the campaign that reported this (features-service#873): ten
  * contacted leads, of which exactly THREE reached something (a click, a positive reply, a stated
- * booked meeting) and seven reached nothing at all. Every case asserts the DIVERGENCE between the two
+ * booked meeting) and fourteen reached nothing at all. Every case asserts the DIVERGENCE between the two
  * answers — a suite that only checked "an array came back" would pass on an implementation that
  * ignored the parameter entirely.
  *
@@ -72,20 +72,6 @@ const FEATURE_ROW = (slug: string) => ({
   createdAt: new Date(), updatedAt: new Date(),
 });
 
-const ECONOMICS = {
-  lifetimeRevenueUsd: 1000,
-  replyToMeetingPct: 10,
-  visitToMeetingPct: 10,
-  meetingToClosePct: 10,
-  visitToSignupPct: 10,
-  signupToPaidClientPct: 10,
-  visitToClosePct: 1,
-  replyToPaidClientPct: 1,
-  visitToPaidClientPct: 1,
-  visitToFormSubmissionPct: 10,
-  formSubmissionToPaidClientPct: 10,
-};
-
 const DECLARED = [
   {
     funnelKey: CONVERSATION,
@@ -135,11 +121,15 @@ function lead(leadId: string, signal: "reply" | "click" | "none"): Record<string
   };
 }
 
-/** The three people who reached something, and the seven who did not. */
+/**
+ * The three people who reached something, and the fourteen who did not. Fourteen, not seven: since the
+ * campaign states its leg (the offer-terms pricing, owner 2026-10-05) the read carries its priced money
+ * blocks (learning phase, dated cost/rate curves), and the hydrated people must still BE the payload.
+ */
 const CLICKED = "reached-click";
 const REPLIED = "reached-reply";
 const BOOKED = "reached-booked";
-const REACHED_NOTHING = ["q1", "q2", "q3", "q4", "q5", "q6", "q7"];
+const REACHED_NOTHING = Array.from({ length: 14 }, (_, i) => `q${i + 1}`);
 
 const LEADS = [
   lead(CLICKED, "click"),
@@ -170,13 +160,13 @@ function mockFetch(degraded: Degraded = {}): void {
       return json({
         campaigns: [{
           id: "c1", orgId: "org-1", brandId: BRAND, featureSlug: PITCH,
-          funnelKey: CONVERSATION, acquisitionChannel: PITCH, offerId: OFFER,
+          // The leg the campaign performs is what the read is priced on (wave C1).
+          funnelKey: CONVERSATION, legKey: "start_to_conversation", acquisitionChannel: PITCH, offerId: OFFER,
           status: "ongoing", createdAt: "2026-01-01T00:00:00.000Z",
         }],
       });
     }
     if (path.includes("/offer-economics")) return json(offerEconomicsFromDeclared(DECLARED, { offerId: OFFER }));
-    if (path.includes("/sales-funnels")) return json({ funnels: DECLARED });
     if (path.includes("/costs/timeseries")) {
       return json({ buckets: [{ period: "2026-01-02", totalCostInUsdCents: "12000" }] });
     }
@@ -192,7 +182,6 @@ function mockFetch(degraded: Degraded = {}): void {
         }],
       });
     }
-    if (path.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
     if (path.endsWith("/orgs/leads")) return json({ leads: LEADS });
 
     if (path.includes("/converted-lead-emails")) {
@@ -261,7 +250,7 @@ describe("a revenue read answers about money — ?leads= decides how much of a p
     for (const row of res.body.leads) {
       expect(Object.keys(row).sort()).toEqual(NARROW_KEYS);
     }
-    // The seven who reached nothing are DROPPED, not narrowed: a false flag is "measured, did not
+    // The fourteen who reached nothing are DROPPED, not narrowed: a false flag is "measured, did not
     // happen", which both browser consumers look up and find absent either way.
     for (const id of REACHED_NOTHING) expect(ids).not.toContain(id);
   });

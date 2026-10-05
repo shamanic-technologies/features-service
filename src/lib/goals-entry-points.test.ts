@@ -17,8 +17,9 @@
  *
  * What this suite pins now:
  *  - the surviving caller door keeps its meaning;
- *  - the producer door is GONE — no resolver for it exists, and the saved-economics read returns no goal
- *    under any name (a consumer reading one again would resurrect the defaulted column);
+ *  - the producer door is GONE — no resolver for it exists, and the economics a read is priced on (the
+ *    offer's terms, `lib/offer-pricing.ts`; the brand-level saved-economics read was retired 2026-10-05)
+ *    carry no goal under any name (a consumer reading one again would resurrect the defaulted column);
  *  - bucket membership on the cross-org surfaces is decided by DECLARED FUNNELS, not by a goal;
  *  - `?funnel=` is sufficient on the request door, and `?goal=` still works beside it.
  *
@@ -39,26 +40,8 @@ const { matchCombinedSalesGoal } = goalsModule;
 const crossOrgModule = await import("./cross-org-cost-per-outcome.js");
 const { normalizeObjective, funnelsInObjectiveBucket } = crossOrgModule;
 const { declaredFunnelsToRank } = await import("./declared-funnels.js");
-const salesEconomicsModule = await import("./sales-economics-client.js");
-const { fetchBrandSavedEconomics } = salesEconomicsModule;
+const { priceOnDeclaredFunnel } = await import("./offer-pricing.js");
 const { validateAudienceStatsQuery } = await import("./audience-stats-compute.js");
-
-const savedEconomicsPayload = (extra: Record<string, unknown> = {}) =>
-  new Response(
-    JSON.stringify({
-      salesEconomics: {
-        lifetimeRevenueUsd: 100,
-        replyToMeetingPct: 30,
-        visitToMeetingPct: 3,
-        meetingToClosePct: 25,
-        visitToSignupPct: 5,
-        signupToPaidClientPct: 10,
-        visitToClosePct: 0.5,
-        ...extra,
-      },
-    }),
-    { status: 200, headers: { "Content-Type": "application/json" } },
-  );
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -71,20 +54,31 @@ describe("the producer door is GONE — nothing reads a brand's optimization goa
     expect("matchDeclaredCombinedSalesGoal" in goalsModule).toBe(false);
   });
 
-  it("the saved-economics read returns economics ONLY — no goal under any name, even when the payload still carries the column", async () => {
-    // brand-service has not dropped the column yet, so the payload below still has it. Reading it is
-    // what must not happen: it is NOT NULL with a server default, so it says "website purchases" for a
-    // brand that chose nothing.
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(savedEconomicsPayload({ optimizationGoal: "sales" }));
+  it("the economics a read is priced on carry NO goal — only the offer's terms and the funnels walked", () => {
+    // The brand-level saved-economics read (which still carried the column) is retired; what prices a
+    // read now is the offer's terms on its declared funnels. A resolved goal must not appear anywhere in
+    // it: the funnel keys ARE the vocabulary.
+    const priced = priceOnDeclaredFunnel([
+      {
+        funnelKey: "sales_meetings_from_conversation",
+        name: "Reply funnel",
+        steps: [],
+        rates: { replyToMeetingPct: 30, meetingToClosePct: 25 },
+        lifetimeRevenueUsd: 100,
+        destinationUrl: null,
+        bookingUrl: null,
+        updatedAt: "2026-08-01T00:00:00.000Z",
+      },
+    ]);
 
-    const res = await fetchBrandSavedEconomics("brand-1", "org-A");
-
-    // The economics object is a passthrough of the producer's payload, so the column may still ride
-    // along in it while brand-service has it. What must never come back is a RESOLVED goal — a value
-    // this service derived and then branched on.
-    expect(Object.keys(res)).toEqual(["economics"]);
-    expect(res.economics?.lifetimeRevenueUsd).toBe(100);
-    expect((res as unknown as Record<string, unknown>).goal).toBeUndefined();
+    expect(Object.keys(priced).sort()).toEqual(["economics", "pricedFunnelKeys"]);
+    expect(Object.keys(priced.economics).sort()).toEqual(["economics", "unpricedReason"]);
+    expect(priced.pricedFunnelKeys).toEqual(["sales_meetings_from_conversation"]);
+    expect(priced.economics.economics?.lifetimeRevenueUsd).toBe(100);
+    for (const key of ["goal", "optimizationGoal"]) {
+      expect(key in priced).toBe(false);
+      expect(key in (priced.economics.economics ?? {})).toBe(false);
+    }
   });
 
   it("a declared funnel carries no goal to read either — the funnel key is the whole vocabulary", () => {

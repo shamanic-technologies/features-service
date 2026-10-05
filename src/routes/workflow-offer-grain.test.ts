@@ -48,6 +48,7 @@ process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
+const { offerEconomicsFromDeclared, declaredFromEconomics } = await import("../lib/leg-economics-fixture.js");
 
 const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
 const SALES = "sales-cold-email-outreach";
@@ -88,11 +89,11 @@ const WORKFLOWS = [
  * none: it is in no offer's scope, with its spend and its leads, exactly as `?groupBy=offerId` has it.
  */
 const CAMPAIGNS = [
-  { id: "a1", orgId: "org-1", brandId: BRAND, featureSlug: SALES, offerId: OFFER_A, funnelKey: "sales_meetings_from_conversation", acquisitionChannel: SALES, status: "ongoing", createdAt: "2026-01-01T00:00:00.000Z" },
-  { id: "a2", orgId: "org-1", brandId: BRAND, featureSlug: SALES, offerId: OFFER_A, funnelKey: "sales_meetings_from_conversation", acquisitionChannel: "crm_email", status: "stopped", createdAt: "2026-01-02T00:00:00.000Z" },
-  { id: "b1", orgId: "org-1", brandId: BRAND, featureSlug: SALES, offerId: OFFER_B, funnelKey: "sales_meetings_from_conversation", acquisitionChannel: "linkedin", status: "ongoing", createdAt: "2026-02-01T00:00:00.000Z" },
-  { id: "q1", orgId: "org-1", brandId: BRAND, featureSlug: SALES, offerId: OFFER_QUIET, funnelKey: "sales_meetings_from_conversation", acquisitionChannel: "phone", status: "ongoing", createdAt: "2026-02-02T00:00:00.000Z" },
-  { id: "n1", orgId: "org-1", brandId: BRAND, featureSlug: SALES, offerId: null, funnelKey: "sales_meetings_from_conversation", acquisitionChannel: "sms", status: "ongoing", createdAt: "2026-02-03T00:00:00.000Z" },
+  { id: "a1", orgId: "org-1", brandId: BRAND, featureSlug: SALES, offerId: OFFER_A, funnelKey: "sales_meetings_from_conversation", legKey: "start_to_conversation", acquisitionChannel: SALES, status: "ongoing", createdAt: "2026-01-01T00:00:00.000Z" },
+  { id: "a2", orgId: "org-1", brandId: BRAND, featureSlug: SALES, offerId: OFFER_A, funnelKey: "sales_meetings_from_conversation", legKey: "start_to_conversation", acquisitionChannel: "crm_email", status: "stopped", createdAt: "2026-01-02T00:00:00.000Z" },
+  { id: "b1", orgId: "org-1", brandId: BRAND, featureSlug: SALES, offerId: OFFER_B, funnelKey: "sales_meetings_from_conversation", legKey: "start_to_conversation", acquisitionChannel: "linkedin", status: "ongoing", createdAt: "2026-02-01T00:00:00.000Z" },
+  { id: "q1", orgId: "org-1", brandId: BRAND, featureSlug: SALES, offerId: OFFER_QUIET, funnelKey: "sales_meetings_from_conversation", legKey: "start_to_conversation", acquisitionChannel: "phone", status: "ongoing", createdAt: "2026-02-02T00:00:00.000Z" },
+  { id: "n1", orgId: "org-1", brandId: BRAND, featureSlug: SALES, offerId: null, funnelKey: "sales_meetings_from_conversation", legKey: "start_to_conversation", acquisitionChannel: "sms", status: "ongoing", createdAt: "2026-02-03T00:00:00.000Z" },
 ];
 
 type LeadShape = { clicked?: boolean; positive?: boolean };
@@ -164,7 +165,15 @@ function mockFetch(options: Options = {}): FetchImpl {
     if (url.pathname.includes("/sales-funnels")) {
       return json({ funnels: [{ funnelKey: "sales_meetings_from_conversation", name: "Meetings from a conversation" }] });
     }
-    if (url.pathname.includes("/sales-economics-effective")) return json({ economics: ECONOMICS, source: "user" });
+    // The offer's terms are the ONLY pricing input (owner 2026-10-05): the brand states the leg rates
+    // of ECONOMICS, and every offer states the same lifetime revenue, so offers differ by evidence only.
+    if (url.pathname.includes("/offer-economics")) {
+      return json(
+        offerEconomicsFromDeclared(declaredFromEconomics(ECONOMICS), {
+          offers: [OFFER_A, OFFER_B, OFFER_QUIET].map((offerId) => ({ offerId, lifetimeRevenueUsd: ECONOMICS.lifetimeRevenueUsd })),
+        }),
+      );
+    }
 
     if (url.pathname.includes("/stats/public/costs/timeseries")) {
       const campaignId = q.get("campaignId");

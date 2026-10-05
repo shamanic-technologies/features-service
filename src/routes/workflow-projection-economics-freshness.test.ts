@@ -75,6 +75,8 @@ process.env.BRAND_SERVICE_URL = "http://brand:3000";
 process.env.BRAND_SERVICE_API_KEY = "brand-key";
 process.env.HUMAN_SERVICE_URL = "http://human:3000";
 process.env.HUMAN_SERVICE_API_KEY = "human-key";
+process.env.CAMPAIGN_SERVICE_URL = "http://campaign:3000";
+process.env.CAMPAIGN_SERVICE_API_KEY = "campaign-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
 process.env.NODE_ENV = "test";
 // Cache ON with a long fresh window: a second read inside the window is a FRESH snapshot hit — exactly
@@ -84,6 +86,7 @@ process.env.FEATURE_VIEW_SNAPSHOT_TTL_MS = "60000";
 
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
+const { offerEconomicsFromDeclared, legCampaignRows, declaredFromEconomics } = await import("../lib/leg-economics-fixture.js");
 
 const AUTH = {
   "x-api-key": "test-key",
@@ -96,23 +99,21 @@ const BRAND_ID = "7604c385-1f02-4016-b42f-344565bcd36d";
 const SALES_FEATURE = { id: "feat-1", slug: "sales-cold-email-outreach", name: "Sales", description: "x", status: "active", createdAt: new Date(), updatedAt: new Date() };
 const URL_BASE = `/features/sales-cold-email-outreach/workflow-projection?brandId=${BRAND_ID}&goal=meetingBooked`;
 
-/** Economics the "brand-service write" mutates between reads — only lifetimeRevenueUsd moves. */
+/** The offer's terms the "brand-service write" mutates between reads — only lifetimeRevenueUsd moves. */
 let lifetimeRevenueUsd = 2500;
 /** Counts the reads that make up the HEAVY evidence fan-out (everything except economics). */
 let fanOutCalls = 0;
 
-const economicsBody = () => ({
-  economics: {
+// The offer's terms are the ONLY pricing input (owner 2026-10-05): the funnels stating them.
+const offerFunnels = () =>
+  declaredFromEconomics({
     lifetimeRevenueUsd,
     replyToMeetingPct: 40,
     visitToMeetingPct: 5,
     meetingToClosePct: 30,
-    visitToClosePct: 2,
     visitToSignupPct: 4,
     signupToPaidClientPct: 50,
-  },
-  source: "user",
-});
+  });
 
 const WORKFLOWS = [
   { id: "ida", workflowSlug: "wf-a", workflowName: "WF A", workflowDynastyName: "Dynasty A", workflowDynastySlug: "dyn-a", version: 1, status: "active", featureSlug: "sales-cold-email-outreach", createdForBrandId: null, upgradedTo: null },
@@ -129,8 +130,12 @@ function mockFetch(): void {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
     const u = new URL(url, "http://x");
 
-    // The brand's economics — read LIVE on every request, never cached.
-    if (url.includes("/sales-economics-effective")) return json(economicsBody());
+    // The offer's terms (its leg rates + lifetime revenue, priced on the campaigns' legs) — read LIVE
+    // on every request, never cached.
+    if (url.includes("/offer-economics")) return json(offerEconomicsFromDeclared(offerFunnels()));
+    if (url.includes("/campaigns?")) return json({ campaigns: legCampaignRows(offerFunnels(), { brandId: BRAND_ID }) });
+    // The offer's ticked sales path (none here) is part of the same live pricing read.
+    if (url.includes("/sales-path")) return json({});
     // Each audience's contactability — also read LIVE on every request (features-service#1035). With
     // the cache off the evidence compute reads the same list, so neither is counted as fan-out.
     if (url.includes("/orgs/audiences")) return json({ audiences: [] });
