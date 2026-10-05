@@ -11511,6 +11511,605 @@
           "categories"
         ]
       },
+      "SourcingInvestmentResponse": {
+        "type": "object",
+        "properties": {
+          "brandId": {
+            "type": "string"
+          },
+          "definition": {
+            "type": "object",
+            "properties": {
+              "basis": {
+                "type": "string",
+                "enum": [
+                  "actual"
+                ]
+              },
+              "counted": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "notCounted": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "basis",
+              "counted",
+              "notCounted"
+            ]
+          },
+          "total": {
+            "type": "object",
+            "properties": {
+              "billedUsd": {
+                "type": "number",
+                "description": "Committed (actual) cost at list price, before the org's usage discount, USD."
+              },
+              "netUsd": {
+                "type": "number",
+                "description": "What the org pays for those rows: runs-service's frozen net (after the org's usage discount), USD."
+              },
+              "vendorUsd": {
+                "type": "number",
+                "nullable": true,
+                "description": "What those cost rows cost us from the vendor, before markup, USD. NULL when any row of the figure has no known vendor cost (see unpricedBilledUsd), never the billed figure."
+              },
+              "unpricedBilledUsd": {
+                "type": "number",
+                "description": "Billed amount of the rows whose vendor cost is unknown, USD; 0 when vendorUsd is known."
+              }
+            },
+            "required": [
+              "billedUsd",
+              "netUsd",
+              "vendorUsd",
+              "unpricedBilledUsd"
+            ],
+            "description": "Every sourcing cost of the brand since inception = serves + listBuild = Σ audiences[].invested + withoutAudience, exactly."
+          },
+          "serves": {
+            "type": "object",
+            "properties": {
+              "billedUsd": {
+                "type": "number",
+                "description": "Committed (actual) cost at list price, before the org's usage discount, USD."
+              },
+              "netUsd": {
+                "type": "number",
+                "description": "What the org pays for those rows: runs-service's frozen net (after the org's usage discount), USD."
+              },
+              "vendorUsd": {
+                "type": "number",
+                "nullable": true,
+                "description": "What those cost rows cost us from the vendor, before markup, USD. NULL when any row of the figure has no known vendor cost (see unpricedBilledUsd), never the billed figure."
+              },
+              "unpricedBilledUsd": {
+                "type": "number",
+                "description": "Billed amount of the rows whose vendor cost is unknown, USD; 0 when vendorUsd is known."
+              }
+            },
+            "required": [
+              "billedUsd",
+              "netUsd",
+              "vendorUsd",
+              "unpricedBilledUsd"
+            ]
+          },
+          "listBuild": {
+            "type": "object",
+            "properties": {
+              "billedUsd": {
+                "type": "number",
+                "description": "Committed (actual) cost at list price, before the org's usage discount, USD."
+              },
+              "netUsd": {
+                "type": "number",
+                "description": "What the org pays for those rows: runs-service's frozen net (after the org's usage discount), USD."
+              },
+              "vendorUsd": {
+                "type": "number",
+                "nullable": true,
+                "description": "What those cost rows cost us from the vendor, before markup, USD. NULL when any row of the figure has no known vendor cost (see unpricedBilledUsd), never the billed figure."
+              },
+              "unpricedBilledUsd": {
+                "type": "number",
+                "description": "Billed amount of the rows whose vendor cost is unknown, USD; 0 when vendorUsd is known."
+              }
+            },
+            "required": [
+              "billedUsd",
+              "netUsd",
+              "vendorUsd",
+              "unpricedBilledUsd"
+            ]
+          },
+          "notOnAPerson": {
+            "type": "object",
+            "properties": {
+              "billedUsd": {
+                "type": "number",
+                "description": "Committed (actual) cost at list price, before the org's usage discount, USD."
+              },
+              "netUsd": {
+                "type": "number",
+                "description": "What the org pays for those rows: runs-service's frozen net (after the org's usage discount), USD."
+              },
+              "vendorUsd": {
+                "type": "number",
+                "nullable": true,
+                "description": "What those cost rows cost us from the vendor, before markup, USD. NULL when any row of the figure has no known vendor cost (see unpricedBilledUsd), never the billed figure."
+              },
+              "unpricedBilledUsd": {
+                "type": "number",
+                "description": "Billed amount of the rows whose vendor cost is unknown, USD; 0 when vendorUsd is known."
+              }
+            },
+            "required": [
+              "billedUsd",
+              "netUsd",
+              "vendorUsd",
+              "unpricedBilledUsd"
+            ],
+            "description": "Serve spend no person carries: total.serves − Σ people[].invested."
+          },
+          "withoutAudience": {
+            "type": "object",
+            "properties": {
+              "billedUsd": {
+                "type": "number",
+                "description": "Committed (actual) cost at list price, before the org's usage discount, USD."
+              },
+              "netUsd": {
+                "type": "number",
+                "description": "What the org pays for those rows: runs-service's frozen net (after the org's usage discount), USD."
+              },
+              "vendorUsd": {
+                "type": "number",
+                "nullable": true,
+                "description": "What those cost rows cost us from the vendor, before markup, USD. NULL when any row of the figure has no known vendor cost (see unpricedBilledUsd), never the billed figure."
+              },
+              "unpricedBilledUsd": {
+                "type": "number",
+                "description": "Billed amount of the rows whose vendor cost is unknown, USD; 0 when vendorUsd is known."
+              }
+            },
+            "required": [
+              "billedUsd",
+              "netUsd",
+              "vendorUsd",
+              "unpricedBilledUsd"
+            ],
+            "description": "Sourcing spend carrying no audience: in total, in no audience row."
+          },
+          "peopleWithoutCompanyDomain": {
+            "type": "object",
+            "properties": {
+              "personCount": {
+                "type": "integer"
+              },
+              "invested": {
+                "type": "object",
+                "properties": {
+                  "billedUsd": {
+                    "type": "number",
+                    "description": "Committed (actual) cost at list price, before the org's usage discount, USD."
+                  },
+                  "netUsd": {
+                    "type": "number",
+                    "description": "What the org pays for those rows: runs-service's frozen net (after the org's usage discount), USD."
+                  },
+                  "vendorUsd": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "What those cost rows cost us from the vendor, before markup, USD. NULL when any row of the figure has no known vendor cost (see unpricedBilledUsd), never the billed figure."
+                  },
+                  "unpricedBilledUsd": {
+                    "type": "number",
+                    "description": "Billed amount of the rows whose vendor cost is unknown, USD; 0 when vendorUsd is known."
+                  }
+                },
+                "required": [
+                  "billedUsd",
+                  "netUsd",
+                  "vendorUsd",
+                  "unpricedBilledUsd"
+                ]
+              }
+            },
+            "required": [
+              "personCount",
+              "invested"
+            ],
+            "description": "People with no known company domain: in people, in no company row."
+          },
+          "serveCount": {
+            "type": "integer"
+          },
+          "servesWithoutPerson": {
+            "type": "integer"
+          },
+          "personCount": {
+            "type": "integer"
+          },
+          "companyCount": {
+            "type": "integer"
+          },
+          "audiences": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "audienceId": {
+                  "type": "string",
+                  "description": "human-service audience id (the audience the serve was made from / the list was built for)."
+                },
+                "invested": {
+                  "type": "object",
+                  "properties": {
+                    "billedUsd": {
+                      "type": "number",
+                      "description": "Committed (actual) cost at list price, before the org's usage discount, USD."
+                    },
+                    "netUsd": {
+                      "type": "number",
+                      "description": "What the org pays for those rows: runs-service's frozen net (after the org's usage discount), USD."
+                    },
+                    "vendorUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "What those cost rows cost us from the vendor, before markup, USD. NULL when any row of the figure has no known vendor cost (see unpricedBilledUsd), never the billed figure."
+                    },
+                    "unpricedBilledUsd": {
+                      "type": "number",
+                      "description": "Billed amount of the rows whose vendor cost is unknown, USD; 0 when vendorUsd is known."
+                    }
+                  },
+                  "required": [
+                    "billedUsd",
+                    "netUsd",
+                    "vendorUsd",
+                    "unpricedBilledUsd"
+                  ],
+                  "description": "serves + listBuild."
+                },
+                "serves": {
+                  "type": "object",
+                  "properties": {
+                    "billedUsd": {
+                      "type": "number",
+                      "description": "Committed (actual) cost at list price, before the org's usage discount, USD."
+                    },
+                    "netUsd": {
+                      "type": "number",
+                      "description": "What the org pays for those rows: runs-service's frozen net (after the org's usage discount), USD."
+                    },
+                    "vendorUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "What those cost rows cost us from the vendor, before markup, USD. NULL when any row of the figure has no known vendor cost (see unpricedBilledUsd), never the billed figure."
+                    },
+                    "unpricedBilledUsd": {
+                      "type": "number",
+                      "description": "Billed amount of the rows whose vendor cost is unknown, USD; 0 when vendorUsd is known."
+                    }
+                  },
+                  "required": [
+                    "billedUsd",
+                    "netUsd",
+                    "vendorUsd",
+                    "unpricedBilledUsd"
+                  ],
+                  "description": "Subtree cost of the brand's lead-serve runs made from this audience."
+                },
+                "listBuild": {
+                  "type": "object",
+                  "properties": {
+                    "billedUsd": {
+                      "type": "number",
+                      "description": "Committed (actual) cost at list price, before the org's usage discount, USD."
+                    },
+                    "netUsd": {
+                      "type": "number",
+                      "description": "What the org pays for those rows: runs-service's frozen net (after the org's usage discount), USD."
+                    },
+                    "vendorUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "What those cost rows cost us from the vendor, before markup, USD. NULL when any row of the figure has no known vendor cost (see unpricedBilledUsd), never the billed figure."
+                    },
+                    "unpricedBilledUsd": {
+                      "type": "number",
+                      "description": "Billed amount of the rows whose vendor cost is unknown, USD; 0 when vendorUsd is known."
+                    }
+                  },
+                  "required": [
+                    "billedUsd",
+                    "netUsd",
+                    "vendorUsd",
+                    "unpricedBilledUsd"
+                  ],
+                  "description": "apollo-service audience-companies spend (company lists) of this audience."
+                },
+                "notOnAPerson": {
+                  "type": "object",
+                  "properties": {
+                    "billedUsd": {
+                      "type": "number",
+                      "description": "Committed (actual) cost at list price, before the org's usage discount, USD."
+                    },
+                    "netUsd": {
+                      "type": "number",
+                      "description": "What the org pays for those rows: runs-service's frozen net (after the org's usage discount), USD."
+                    },
+                    "vendorUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "What those cost rows cost us from the vendor, before markup, USD. NULL when any row of the figure has no known vendor cost (see unpricedBilledUsd), never the billed figure."
+                    },
+                    "unpricedBilledUsd": {
+                      "type": "number",
+                      "description": "Billed amount of the rows whose vendor cost is unknown, USD; 0 when vendorUsd is known."
+                    }
+                  },
+                  "required": [
+                    "billedUsd",
+                    "netUsd",
+                    "vendorUsd",
+                    "unpricedBilledUsd"
+                  ],
+                  "description": "Serve spend of runs that handed out no person we hold (every candidate screened out, failed reveal): in `serves`, on no person."
+                },
+                "serveCount": {
+                  "type": "integer"
+                },
+                "personCount": {
+                  "type": "integer",
+                  "description": "Distinct people acquired by a serve made from this audience."
+                },
+                "companyCount": {
+                  "type": "integer",
+                  "description": "Distinct company domains of those people."
+                }
+              },
+              "required": [
+                "audienceId",
+                "invested",
+                "serves",
+                "listBuild",
+                "notOnAPerson",
+                "serveCount",
+                "personCount",
+                "companyCount"
+              ]
+            },
+            "description": "One row per audience with sourcing spend, billed desc."
+          }
+        },
+        "required": [
+          "brandId",
+          "definition",
+          "total",
+          "serves",
+          "listBuild",
+          "notOnAPerson",
+          "withoutAudience",
+          "peopleWithoutCompanyDomain",
+          "serveCount",
+          "servesWithoutPerson",
+          "personCount",
+          "companyCount",
+          "audiences"
+        ]
+      },
+      "SourcingInvestmentPeopleResponse": {
+        "type": "object",
+        "properties": {
+          "brandId": {
+            "type": "string"
+          },
+          "total": {
+            "type": "integer",
+            "description": "People matching the request (before paging)."
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "people": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "leadId": {
+                  "type": "string",
+                  "description": "lead-service lead id."
+                },
+                "apolloPersonId": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Provider person id: the JOIN KEY onto human-service's person rows."
+                },
+                "email": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "firstName": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "lastName": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "companyName": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "companyDomain": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Bare lowercased domain; the company join key. Null when unknown."
+                },
+                "audienceIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Audiences the serves acquiring this person were made from."
+                },
+                "serveCount": {
+                  "type": "integer",
+                  "description": "Serve runs that handed this person out (one per campaign that served them)."
+                },
+                "invested": {
+                  "type": "object",
+                  "properties": {
+                    "billedUsd": {
+                      "type": "number",
+                      "description": "Committed (actual) cost at list price, before the org's usage discount, USD."
+                    },
+                    "netUsd": {
+                      "type": "number",
+                      "description": "What the org pays for those rows: runs-service's frozen net (after the org's usage discount), USD."
+                    },
+                    "vendorUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "What those cost rows cost us from the vendor, before markup, USD. NULL when any row of the figure has no known vendor cost (see unpricedBilledUsd), never the billed figure."
+                    },
+                    "unpricedBilledUsd": {
+                      "type": "number",
+                      "description": "Billed amount of the rows whose vendor cost is unknown, USD; 0 when vendorUsd is known."
+                    }
+                  },
+                  "required": [
+                    "billedUsd",
+                    "netUsd",
+                    "vendorUsd",
+                    "unpricedBilledUsd"
+                  ],
+                  "description": "Sum of those serve runs' subtree cost: what acquiring this person cost."
+                }
+              },
+              "required": [
+                "leadId",
+                "apolloPersonId",
+                "email",
+                "firstName",
+                "lastName",
+                "companyName",
+                "companyDomain",
+                "audienceIds",
+                "serveCount",
+                "invested"
+              ]
+            },
+            "description": "Billed desc, then leadId."
+          }
+        },
+        "required": [
+          "brandId",
+          "total",
+          "limit",
+          "offset",
+          "people"
+        ]
+      },
+      "SourcingInvestmentCompaniesResponse": {
+        "type": "object",
+        "properties": {
+          "brandId": {
+            "type": "string"
+          },
+          "total": {
+            "type": "integer"
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "companies": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "companyDomain": {
+                  "type": "string",
+                  "description": "Bare lowercased domain: the JOIN KEY onto human-service's company rows."
+                },
+                "companyName": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "personCount": {
+                  "type": "integer"
+                },
+                "audienceIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "invested": {
+                  "type": "object",
+                  "properties": {
+                    "billedUsd": {
+                      "type": "number",
+                      "description": "Committed (actual) cost at list price, before the org's usage discount, USD."
+                    },
+                    "netUsd": {
+                      "type": "number",
+                      "description": "What the org pays for those rows: runs-service's frozen net (after the org's usage discount), USD."
+                    },
+                    "vendorUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "What those cost rows cost us from the vendor, before markup, USD. NULL when any row of the figure has no known vendor cost (see unpricedBilledUsd), never the billed figure."
+                    },
+                    "unpricedBilledUsd": {
+                      "type": "number",
+                      "description": "Billed amount of the rows whose vendor cost is unknown, USD; 0 when vendorUsd is known."
+                    }
+                  },
+                  "required": [
+                    "billedUsd",
+                    "netUsd",
+                    "vendorUsd",
+                    "unpricedBilledUsd"
+                  ],
+                  "description": "Sum over its people."
+                }
+              },
+              "required": [
+                "companyDomain",
+                "companyName",
+                "personCount",
+                "audienceIds",
+                "invested"
+              ]
+            },
+            "description": "Billed desc, then domain."
+          }
+        },
+        "required": [
+          "brandId",
+          "total",
+          "limit",
+          "offset",
+          "companies"
+        ]
+      },
       "OfferAudienceStatsResponse": {
         "type": "object",
         "properties": {
@@ -27682,6 +28281,378 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OrgUsageResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Downstream service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/brands/{brandId}/sourcing-investment": {
+      "get": {
+        "summary": "STAFF: $ invested in sourcing a brand's audiences (totals + per audience)",
+        "description": "STAFF ONLY (carries the vendor basis, i.e. our margin: the api-service gateway mounts it behind requireStaff). What we paid to SOURCE a brand's people, since inception, on committed (actual) cost rows read from runs-service. Counted: the whole cost subtree of every lead-service lead-serve run of the brand (Jev pre-pay screens of the candidates, provider reveal / enrichment, email finding and verification, LinkedIn engagement and buying-signal reads) and apollo-service audience-companies runs (company lists pulled when an audience is built). Not counted: outreach (email writing, sending, reply reading), brand/offer setup, the LLM audience split, the audience-preview email pre-check. Per person = the serve runs lead-service recorded as handing that person out (read per campaign, so a person served by two campaigns carries both serves). Per company = Σ its people. Billed basis is list price before the org's usage discount; net is what the org pays after it.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sourcing investment summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourcingInvestmentResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Downstream service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/brands/{brandId}/sourcing-investment/people": {
+      "get": {
+        "summary": "STAFF: what acquiring each person cost (paged, or keyed by apolloPersonIds)",
+        "description": "STAFF ONLY (carries the vendor basis, i.e. our margin: the api-service gateway mounts it behind requireStaff). What we paid to SOURCE a brand's people, since inception, on committed (actual) cost rows read from runs-service. Counted: the whole cost subtree of every lead-service lead-serve run of the brand (Jev pre-pay screens of the candidates, provider reveal / enrichment, email finding and verification, LinkedIn engagement and buying-signal reads) and apollo-service audience-companies runs (company lists pulled when an audience is built). Not counted: outreach (email writing, sending, reply reading), brand/offer setup, the LLM audience split, the audience-preview email pre-check. Per person = the serve runs lead-service recorded as handing that person out (read per campaign, so a person served by two campaigns carries both serves). Per company = Σ its people. Billed basis is list price before the org's usage discount; net is what the org pays after it.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "1..500, default 100."
+            },
+            "required": false,
+            "description": "1..500, default 100.",
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Default 0."
+            },
+            "required": false,
+            "description": "Default 0.",
+            "name": "offset",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Comma-separated, ≤500: only these people (the human-service page being rendered)."
+            },
+            "required": false,
+            "description": "Comma-separated, ≤500: only these people (the human-service page being rendered).",
+            "name": "apolloPersonIds",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "People",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourcingInvestmentPeopleResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad paging or key list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Downstream service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/brands/{brandId}/sourcing-investment/companies": {
+      "get": {
+        "summary": "STAFF: what each company's people cost to acquire (paged, or keyed by domains)",
+        "description": "STAFF ONLY (carries the vendor basis, i.e. our margin: the api-service gateway mounts it behind requireStaff). What we paid to SOURCE a brand's people, since inception, on committed (actual) cost rows read from runs-service. Counted: the whole cost subtree of every lead-service lead-serve run of the brand (Jev pre-pay screens of the candidates, provider reveal / enrichment, email finding and verification, LinkedIn engagement and buying-signal reads) and apollo-service audience-companies runs (company lists pulled when an audience is built). Not counted: outreach (email writing, sending, reply reading), brand/offer setup, the LLM audience split, the audience-preview email pre-check. Per person = the serve runs lead-service recorded as handing that person out (read per campaign, so a person served by two campaigns carries both serves). Per company = Σ its people. Billed basis is list price before the org's usage discount; net is what the org pays after it.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "1..500, default 100."
+            },
+            "required": false,
+            "description": "1..500, default 100.",
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Default 0."
+            },
+            "required": false,
+            "description": "Default 0.",
+            "name": "offset",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Comma-separated, ≤500, case-insensitive."
+            },
+            "required": false,
+            "description": "Comma-separated, ≤500, case-insensitive.",
+            "name": "domains",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Companies",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourcingInvestmentCompaniesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad paging or key list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
