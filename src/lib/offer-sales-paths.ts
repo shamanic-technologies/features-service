@@ -292,6 +292,68 @@ export interface OfferSalesPathsBody {
   lifetimeRevenueUsd: number | null;
   pricing: "net";
   paths: SalesPath[];
+  /** Which paths count as the customer's (the basis of every campaign ROI). Null on the PURE build's output. */
+  selectedSalesPaths?: SalesPathSelection;
+  /** One row per CAMPAIGN (channel × leg) any listed path uses, with its ROI. Absent on the PURE build's output. */
+  campaigns?: SalesPathCampaign[];
+}
+
+/** Where the customer's selected paths came from. */
+export type SalesPathSelectionBasis =
+  /** The customer selected them (brand-service `GET /internal/offers/:id/selected-sales-paths`, stated). */
+  | "customer_selected"
+  /** Never stated: the paths returning more than they cost (roi > 1), the dashboard's pre-tick. */
+  | "default_roi_above_1"
+  /** brand-service could not be read: no campaign ROI is served (reason `selected_paths_unavailable`). */
+  | "unavailable";
+
+export interface SalesPathSelection {
+  basis: SalesPathSelectionBasis;
+  /** The combinationKeys that count, as listed in THIS read (rank order). Empty when `unavailable`. */
+  combinationKeys: string[];
+  /** Keys the customer selected that this read does not list (a channel the offer no longer accepts, another scope). */
+  unlistedCombinationKeys: string[];
+  statedAt: string | null;
+}
+
+export type CampaignRoiUnavailableReason =
+  | SalesPathRoiUnavailableReason
+  /** No selected path uses this campaign. */
+  | "not_on_a_selected_path"
+  /** The customer's selection could not be read. */
+  | "selected_paths_unavailable";
+
+/**
+ * A CAMPAIGN = one channel on one leg. Its ROI (owner asked features-service to define it, 2026-10-05):
+ *
+ *   campaign.roi = MAX roi over the SELECTED paths whose leg `legKey` runs on channel `channelSlug`.
+ *
+ * Why the path's ROI and not a share of it: a campaign is one link of a chain whose every link is NEEDED
+ * for any revenue (drop one and the path sells nothing). So revenue cannot be split per link: a
+ * marginal-contribution ROI (path revenue ÷ the link's own cost) credits every link with the WHOLE
+ * revenue and inflates the cheap reactive links to absurd multiples; an equal split is arbitrary. The
+ * honest figure is the return of the cheapest-to-run selected path the campaign is part of: what a dollar
+ * in it returns at best, with the rest of that path running. `roiCombinationKey` names that path.
+ */
+export interface SalesPathCampaign {
+  /** `campaignNameKeyOf(channelSlug, legKey)`, unique within the response. */
+  campaignKey: string;
+  channelSlug: string;
+  channelName: string | null;
+  legKey: string;
+  campaignName: string | null;
+  /** False on an entry leg (proactive), true on a leg out of a step already reached. */
+  reactive: boolean;
+  managed: boolean;
+  operatedBy: "platform" | "customer";
+  /** Paths of this read that use the campaign. */
+  pathCount: number;
+  /** Selected paths that use it. */
+  selectedPathCount: number;
+  roi: number | null;
+  /** The selected path the roi is read off (the best). Null when roi is null. */
+  roiCombinationKey: string | null;
+  roiUnavailableReason: CampaignRoiUnavailableReason | null;
 }
 
 const stepWire = (key: keyof typeof CHANNEL_STEPS): ChannelStepDefWire => ({ ...CHANNEL_STEPS[key] });
@@ -674,4 +736,94 @@ export function withSalesPathNames(
 /** The key a CAMPAIGN (channel × leg) name is stored under in `sales_path_combination_names`: its own namespace, which no combination key can spell (re-exported by `lib/sales-path-names.ts`). */
 export function campaignNameKeyOf(channelSlug: string, legKey: string): string {
   return `campaign:${channelSlug}|${legKey}`;
+}
+
+/** What brand-service says the customer selected (null when it could not be read). */
+export interface SelectedSalesPathsInput {
+  stated: boolean;
+  combinationKeys: string[] | null;
+  statedAt: string | null;
+}
+
+/** PURE: the selection that counts, then one row per campaign with its ROI (see `SalesPathCampaign`).
+ *  Order: proactive before reactive, then roi descending, a null roi last. */
+export function withCampaignRois(body: OfferSalesPathsBody, selected: SelectedSalesPathsInput | null): OfferSalesPathsBody {
+  const listed = new Set(body.paths.map((p) => p.combinationKey));
+  let selection: SalesPathSelection;
+  if (selected === null) {
+    selection = { basis: "unavailable", combinationKeys: [], unlistedCombinationKeys: [], statedAt: null };
+  } else if (selected.stated) {
+    const keys = new Set(selected.combinationKeys ?? []);
+    selection = {
+      basis: "customer_selected",
+      combinationKeys: body.paths.filter((p) => keys.has(p.combinationKey)).map((p) => p.combinationKey),
+      unlistedCombinationKeys: [...keys].filter((k) => !listed.has(k)),
+      statedAt: selected.statedAt,
+    };
+  } else {
+    selection = {
+      basis: "default_roi_above_1",
+      combinationKeys: body.paths.filter((p) => p.roi !== null && p.roi > 1).map((p) => p.combinationKey),
+      unlistedCombinationKeys: [],
+      statedAt: null,
+    };
+  }
+  const counts = new Set(selection.combinationKeys);
+
+  const byKey = new Map<string, { row: SalesPathCampaign; best: SalesPath | null; firstSelected: SalesPath | null }>();
+  for (const p of body.paths) {
+    for (const l of p.legs) {
+      const ch = l.channel;
+      if (!ch?.slug) continue;
+      const key = campaignNameKeyOf(ch.slug, l.legKey);
+      let e = byKey.get(key);
+      if (!e) {
+        e = {
+          row: {
+            campaignKey: key,
+            channelSlug: ch.slug,
+            channelName: ch.name,
+            legKey: l.legKey,
+            campaignName: ch.campaignName,
+            reactive: l.reactive,
+            managed: ch.managed,
+            operatedBy: ch.operatedBy,
+            pathCount: 0,
+            selectedPathCount: 0,
+            roi: null,
+            roiCombinationKey: null,
+            roiUnavailableReason: null,
+          },
+          best: null,
+          firstSelected: null,
+        };
+        byKey.set(key, e);
+      }
+      e.row.pathCount += 1;
+      if (!counts.has(p.combinationKey)) continue;
+      e.row.selectedPathCount += 1;
+      // Paths arrive in rank order (roi desc, null last), so the first selected one is the best.
+      if (!e.firstSelected) e.firstSelected = p;
+      if (p.roi !== null && (e.best === null || p.roi > e.best.roi!)) e.best = p;
+    }
+  }
+
+  const campaigns = [...byKey.values()].map(({ row, best, firstSelected }): SalesPathCampaign => {
+    if (best) return { ...row, roi: best.roi, roiCombinationKey: best.combinationKey };
+    const reason: CampaignRoiUnavailableReason =
+      selection.basis === "unavailable"
+        ? "selected_paths_unavailable"
+        : firstSelected
+          ? firstSelected.roiUnavailableReason! // a null roi always carries its reason
+          : "not_on_a_selected_path";
+    return { ...row, roiUnavailableReason: reason };
+  });
+  campaigns.sort((a, b) => {
+    if (a.reactive !== b.reactive) return a.reactive ? 1 : -1;
+    if (a.roi !== null && b.roi !== null && a.roi !== b.roi) return b.roi - a.roi;
+    if (a.roi !== null && b.roi === null) return -1;
+    if (a.roi === null && b.roi !== null) return 1;
+    return a.campaignKey.localeCompare(b.campaignKey);
+  });
+  return { ...body, selectedSalesPaths: selection, campaigns };
 }

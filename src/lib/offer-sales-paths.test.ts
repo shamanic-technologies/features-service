@@ -13,6 +13,7 @@ import {
   resolveLegChannelCost,
   type LegChannelPrice,
   type SalesPathChannelInput,
+  withCampaignRois,
   withSalesPathNames,
 } from "./offer-sales-paths.js";
 import type { EffectiveArrowRate } from "./effective-conversion-rates.js";
@@ -332,5 +333,85 @@ describe("resolveLegChannelCost", () => {
     expect(DEFAULT_COST_PER_OUTCOME_USD.has(priceKey("conversation_to_booking_call", "ai-instant-call"))).toBe(true);
     expect(DEFAULT_COST_PER_OUTCOME_USD.has(priceKey("conversation_to_meeting_booked", "ai-meeting-booking"))).toBe(true);
     expect(DEFAULT_COST_PER_OUTCOME_USD.has(priceKey("start_to_conversation", "sales-cold-email-outreach"))).toBe(true);
+  });
+});
+
+describe("withCampaignRois", () => {
+  const ALL = [
+    "start_to_conversation",
+    "conversation_to_meeting_booked",
+    "meeting_booked_to_meeting_attended",
+    "meeting_attended_to_paid_client",
+    "conversation_to_paid_client",
+    "start_to_website_visit",
+    "website_visit_to_signup",
+    "signup_to_paid_client",
+  ];
+  const body = buildOfferSalesPaths({ ...base, legKeys: ALL });
+  const byKey = (b: ReturnType<typeof withCampaignRois>) => new Map(b.campaigns!.map((c) => [c.campaignKey, c]));
+  const pathsUsing = (slug: string, legKey: string) =>
+    body.paths.filter((p) => p.legs.some((l) => l.legKey === legKey && l.channel?.slug === slug));
+
+  it("a campaign's ROI is the BEST roi among the selected paths that run it, naming that path", () => {
+    const selected = body.paths.map((p) => p.combinationKey);
+    const out = withCampaignRois(body, { stated: true, combinationKeys: selected, statedAt: "2026-10-05T00:00:00Z" });
+    expect(out.selectedSalesPaths!.basis).toBe("customer_selected");
+    const pilot = byKey(out).get(campaignNameKeyOf("pilot", "conversation_to_meeting_booked"))!;
+    const using = pathsUsing("pilot", "conversation_to_meeting_booked");
+    expect(pilot.pathCount).toBe(using.length);
+    expect(pilot.selectedPathCount).toBe(using.length);
+    expect(pilot.roi).toBe(Math.max(...using.map((p) => p.roi!)));
+    expect(using.find((p) => p.combinationKey === pilot.roiCombinationKey)!.roi).toBe(pilot.roi);
+    expect(pilot.reactive).toBe(true);
+    expect(pilot.roiUnavailableReason).toBeNull();
+  });
+
+  it("reads ONLY the selected paths: an unselected path never lends its ROI", () => {
+    const pilotPaths = pathsUsing("pilot", "conversation_to_meeting_booked");
+    const worst = pilotPaths[pilotPaths.length - 1];
+    const out = withCampaignRois(body, { stated: true, combinationKeys: [worst.combinationKey, "gone@x"], statedAt: null });
+    const rows = byKey(out);
+    const pilot = rows.get(campaignNameKeyOf("pilot", "conversation_to_meeting_booked"))!;
+    expect(pilot.roi).toBe(worst.roi);
+    expect(pilot.selectedPathCount).toBe(1);
+    const visits = rows.get(campaignNameKeyOf("visits", "start_to_website_visit"))!;
+    expect(visits.roi).toBeNull();
+    expect(visits.roiUnavailableReason).toBe("not_on_a_selected_path");
+    expect(out.selectedSalesPaths!.unlistedCombinationKeys).toEqual(["gone@x"]);
+  });
+
+  it("never stated = the paths returning more than they cost (roi > 1)", () => {
+    const cheap = buildOfferSalesPaths({ ...base, legKeys: ALL, lifetimeRevenueUsd: 150 });
+    const out = withCampaignRois(cheap, { stated: false, combinationKeys: null, statedAt: null });
+    expect(out.selectedSalesPaths!.basis).toBe("default_roi_above_1");
+    expect(out.selectedSalesPaths!.combinationKeys).toEqual(cheap.paths.filter((p) => p.roi! > 1).map((p) => p.combinationKey));
+    expect(out.selectedSalesPaths!.combinationKeys.length).toBeLessThan(cheap.paths.length);
+  });
+
+  it("an unreadable selection states it on every campaign, never a guessed ROI", () => {
+    const out = withCampaignRois(body, null);
+    expect(out.selectedSalesPaths!.basis).toBe("unavailable");
+    expect(out.campaigns!.every((c) => c.roi === null && c.roiUnavailableReason === "selected_paths_unavailable")).toBe(true);
+  });
+
+  it("a selected path with no ROI passes its own reason on", () => {
+    const noLtr = buildOfferSalesPaths({ ...base, legKeys: ALL, lifetimeRevenueUsd: null });
+    const out = withCampaignRois(noLtr, { stated: true, combinationKeys: noLtr.paths.map((p) => p.combinationKey), statedAt: null });
+    expect(out.campaigns!.every((c) => c.roiUnavailableReason === "no_lifetime_revenue")).toBe(true);
+  });
+
+  it("orders proactive before reactive, then ROI descending, a null ROI last", () => {
+    const out = withCampaignRois(body, { stated: true, combinationKeys: body.paths.slice(0, 2).map((p) => p.combinationKey), statedAt: null });
+    const c = out.campaigns!;
+    const firstReactive = c.findIndex((x) => x.reactive);
+    expect(c.slice(firstReactive).every((x) => x.reactive)).toBe(true);
+    for (const group of [c.slice(0, firstReactive), c.slice(firstReactive)]) {
+      const rois = group.map((x) => x.roi);
+      const firstNull = rois.indexOf(null);
+      const priced = (firstNull === -1 ? rois : rois.slice(0, firstNull)) as number[];
+      expect([...priced].sort((a, b) => b - a)).toEqual(priced);
+      if (firstNull !== -1) expect(rois.slice(firstNull).every((r) => r === null)).toBe(true);
+    }
+    expect(new Set(c.map((x) => x.campaignKey)).size).toBe(c.length);
   });
 });
