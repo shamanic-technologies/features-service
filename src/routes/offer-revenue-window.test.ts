@@ -130,7 +130,7 @@ function mockFetch(): void {
     if (path.includes("/public/workflows")) return json({ workflows: [] });
     if (path.endsWith("/costs/timeseries")) {
       // c1 spent yesterday and today; the brand's campaign-less setup ran today, on no channel.
-      const rows = [
+      const rows: Array<{ period: string; campaignId: string | null; cents: string; total: string; otherSlug?: boolean }> = [
         // `total` = committed (actual + open holds): c1 holds 1886.2 today, the setup 10.
         { period: YESTERDAY, campaignId: "c1", cents: "1000.4", total: "1000.4" },
         { period: TODAY, campaignId: "c1", cents: "2722.3", total: "4608.5" },
@@ -139,12 +139,16 @@ function mockFetch(): void {
         // The brand's setup, 199 days ago: only a read with no lower bound sees it.
         { period: INCEPTION, campaignId: null, cents: "250", total: "250" },
         { period: INCEPTION, campaignId: "c1", cents: "40", total: "40" },
+        // A run of c1 tagged with ANOTHER slug (a reply judgment) today.
+        { period: TODAY, campaignId: "c1", cents: "3", total: "3", otherSlug: true },
       ].filter((r) => {
         const after = q.get("startedAfter");
         if (after && r.period < after.slice(0, 10)) return false;
         const ids = q.get("campaignIds")?.split(",");
         if (ids && (!r.campaignId || !ids.includes(r.campaignId))) return false;
         if (q.get("featureSlugs") && !r.campaignId) return false;
+        // Only a read without featureSlugs (the campaign grain) sees the other-slug run.
+        if (r.otherSlug && q.get("featureSlugs")) return false;
         return true;
       });
       return json({
@@ -328,8 +332,9 @@ describe("GET /features/:slug/revenue?campaignId=&windowDays= — the campaign c
     expect(w.queuedEmailsUnavailableReason).toBeNull();
     expect(w.emails.sent).toBe(w.emails.daily.reduce((s: number, d: { sent: number }) => s + d.sent, 0));
     // c1 alone: 40 + 1000.4 + 2722.3 actual; 40 + 1000.4 + 4608.5 committed. c9 and the setup are not its.
-    expect(w.spend.actualSpentCents).toBe(40 + 1000 + 2722);
-    expect(w.spend.totalSpentCents).toBe(40 + 1000 + 4609);
+    // ...plus its 3 cents of runs tagged with another slug: the campaign's whole spend, as costEconomics counts it.
+    expect(w.spend.actualSpentCents).toBe(40 + 1000 + 2725);
+    expect(w.spend.totalSpentCents).toBe(40 + 1000 + 4612);
     expect(w.spend.provisionedSpentCents).toBe(w.spend.totalSpentCents - w.spend.actualSpentCents);
     expect(w.spend.brandLevelActualSpentCents).toBe(0);
     expect(w.spend.brandLevelTotalSpentCents).toBe(0);
