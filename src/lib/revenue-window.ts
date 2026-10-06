@@ -7,7 +7,10 @@
  * unwindowed read is byte-unchanged (no key, same cache cell). Also on the CAMPAIGN read
  * (`/features/:slug/revenue?campaignId=&windowDays=`), over the campaign identity alone: there the
  * spend is the campaign's own (`campaignOnly`: no brand-wide read, brandLevel* are 0), because the
- * brand's campaign-less work belongs to no campaign.
+ * brand's campaign-less work belongs to no campaign, and its three TOTALS are the body's own `spend`
+ * block's (`spendTotals`): the same runs, but rounded per cost line there and per day here, so two
+ * roundings of one figure would print 67.20 beside 67.23 on one page (prod 2026-10-06, cb528e24).
+ * The daily values stay per-day rounded, so on that read Σ daily may differ from the total by cents.
  *
  * `?windowDays=all` = SINCE INCEPTION (owner 2026-10-03: the Today row states the brand's whole life,
  * no 7/30 switch): the same block, same parts, same composition, over every UTC day from the scope's
@@ -233,9 +236,7 @@ export async function fetchWindowActualSpendByDay(input: {
   const [scopedParts, brandWide] = await Promise.all([
     mapWithConcurrency(scopedReads, 6, (chunk) => {
       const p = base();
-      // The campaign grain counts EVERY run of the campaign, whatever slug a run carries (reply
-      // judgments, notifications): the composition costEconomics and `spend` serve on the same read.
-      if (!input.campaignOnly) p.set("featureSlugs", featureSlugsParam(input.featureScope));
+      p.set("featureSlugs", featureSlugsParam(input.featureScope));
       if (chunk) p.set("campaignIds", chunk.join(","));
       return fetchCampaignSplitDays(p, input.pricing);
     }),
@@ -262,6 +263,13 @@ export async function fetchWindowActualSpendByDay(input: {
   return { scoped, brandLevel, scopedTotal, brandLevelTotal };
 }
 
+/** The three spend totals of a body's `spend` block (committed = actual + provisioned). */
+export interface SpendTotals {
+  actualSpentCents: number;
+  totalSpentCents: number;
+  provisionedSpentCents: number;
+}
+
 export interface WindowSpendByDay {
   scoped: Map<string, number>;
   brandLevel: Map<string, number>;
@@ -280,6 +288,8 @@ export function buildRevenueWindow(input: {
   pipelineTimeSeries: TimeSeriesPoint[];
   sinceInception?: boolean;
   queuedEmails?: QueuedEmailsRead;
+  /** The campaign grain: the totals the same body's `spend` block serves (see header). */
+  spendTotals?: SpendTotals | null;
 }): RevenueWindow {
   const { dates } = input;
   const startDate = dates[0];
@@ -298,7 +308,8 @@ export function buildRevenueWindow(input: {
   }
 
   let spend: RevenueWindow["spend"] = null;
-  if (input.spendByDay) {
+  // The campaign grain without its body's totals: null, never a second rounding of the same spend.
+  if (input.spendByDay && input.spendTotals !== null) {
     const s = input.spendByDay;
     const daily = dates.map((date) => {
       const scoped = s.scoped.get(date) ?? 0;
@@ -320,15 +331,15 @@ export function buildRevenueWindow(input: {
     });
     const sum = (k: "actualSpentCents" | "brandLevelActualSpentCents" | "totalSpentCents" | "provisionedSpentCents" | "brandLevelTotalSpentCents") =>
       daily.reduce((acc, d) => acc + d[k], 0);
-    const actualSpentCents = sum("actualSpentCents");
-    const totalSpentCents = sum("totalSpentCents");
+    const actualSpentCents = input.spendTotals?.actualSpentCents ?? sum("actualSpentCents");
+    const totalSpentCents = input.spendTotals?.totalSpentCents ?? sum("totalSpentCents");
     const sent = emails?.sent ?? null;
     spend = {
       actualSpentCents,
       brandLevelActualSpentCents: sum("brandLevelActualSpentCents"),
       costPerEmailSentCents: sent ? actualSpentCents / sent : null,
       totalSpentCents,
-      provisionedSpentCents: sum("provisionedSpentCents"),
+      provisionedSpentCents: input.spendTotals?.provisionedSpentCents ?? sum("provisionedSpentCents"),
       brandLevelTotalSpentCents: sum("brandLevelTotalSpentCents"),
       totalCostPerEmailSentCents: sent ? totalSpentCents / sent : null,
       daily,
@@ -394,6 +405,7 @@ export async function computeRevenueWindow(input: {
     timeSeries: TimeSeriesPoint[];
     recipientsRepliesPositive: SignalSeries;
     recipientsClicked: SignalSeries;
+    spend?: SpendTotals | null;
   };
   now?: Date;
 }): Promise<RevenueWindow> {
@@ -450,5 +462,6 @@ export async function computeRevenueWindow(input: {
     totalPipelineUsd: input.body.headline.totalPipelineUsd,
     pipelineTimeSeries: input.body.timeSeries,
     queuedEmails,
+    spendTotals: input.campaignOnly ? (input.body.spend ?? null) : undefined,
   });
 }
