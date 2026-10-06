@@ -4408,7 +4408,8 @@ const publicChannelSchema = registry.register(
   z.object({
     slug: z.string().describe("The feature slug. A channel IS a feature slug in this fleet; there is no separate channel entity."),
     name: z.string(),
-    description: z.string(),
+    description: z.string().describe("The long marketing paragraph about the channel. For a small card, render `shortDescription`."),
+    shortDescription: z.string().describe("One plain line (about 8 words) printed under the channel's name on a small selectable card (onboarding 'Which channels may we use?', the offer's sales path page), so a visitor knows what ticking it means. The channel twin of a step's `shortDescription`; never hard-code it. Example: 'We find your buyers and email them for you.' under 'Sales Cold Email Outreach'."),
     icon: z.string(),
     displayOrder: z.number().int(),
     family: z.enum(["outbound_one_to_one", "paid_reach", "earned", "conversion"]),

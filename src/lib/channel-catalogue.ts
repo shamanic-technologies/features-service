@@ -37,6 +37,7 @@ import { legKeyFor, FUNNEL_LEGS, type FunnelLegDef } from "./funnel-legs.js";
 import { SALES_PATH_CATALOGUE_CHANNEL_SLUGS } from "./sales-path-cost-benchmarks.js";
 import { MANAGED_CHANNEL_SLUGS, channelLegMinimumMonthlyCents } from "./channel-leg-minimums.js";
 import { legMaturity, type LegMaturity } from "./maturity.js";
+import { channelShortDescription } from "./channel-short-descriptions.js";
 import { SALES_FUNNELS, SALES_FUNNEL_KEYS, type SalesFunnelKey } from "./sales-funnels.js";
 import { composeMinimumCommitment, minimumCommitmentDaysFor, type ComposedMinimumCommitment } from "./funnel-commercial-terms.js";
 
@@ -89,6 +90,9 @@ export interface PublicChannel {
   slug: string;
   name: string;
   description: string;
+  /** The one-line card caption under the channel's name (`lib/channel-short-descriptions.ts`); the
+   *  channel twin of a step's `shortDescription`. `description` stays the long paragraph. */
+  shortDescription: string;
   icon: string;
   displayOrder: number;
   family: ChannelFamily;
@@ -250,7 +254,10 @@ const stepWire = (key: ChannelStepKey): ChannelStepDefWire => ({ ...CHANNEL_STEP
  * every authenticated read of it keeps answering. This reads the marker rather than any particular
  * slug, so the next retirement states its successor and needs nothing here.
  */
-export function buildChannelCatalogue(rows: readonly CatalogueFeatureRow[]): PublicChannel[] {
+export function buildChannelCatalogue(
+  rows: readonly CatalogueFeatureRow[],
+  shortDescriptionOf: (slug: string) => string = channelShortDescription,
+): PublicChannel[] {
   const channels: PublicChannel[] = [];
   for (const row of rows) {
     if (row.supersededBySlug != null) continue;
@@ -260,6 +267,7 @@ export function buildChannelCatalogue(rows: readonly CatalogueFeatureRow[]): Pub
       slug: row.slug,
       name: row.name,
       description: row.description,
+      shortDescription: shortDescriptionOf(row.slug),
       icon: row.icon,
       displayOrder: row.displayOrder,
       family: channel.family,
