@@ -356,6 +356,52 @@ export interface SalesPathCampaign {
   /** The selected path the roi is read off (the best). Null when roi is null. */
   roiCombinationKey: string | null;
   roiUnavailableReason: CampaignRoiUnavailableReason | null;
+  /** What a credit of `creditUsd` buys of this campaign's outcome (its leg's `toStep`), on the SAME path its
+   *  roi is read off (see `CampaignOutcomesForCredit`). */
+  outcomesForCredit: CampaignOutcomesForCredit;
+}
+
+/** The credit a campaign's `outcomesForCredit` is computed for when the read names none (`?creditUsd=`). */
+export const DEFAULT_OUTCOMES_CREDIT_USD = 100;
+
+export type CampaignOutcomesUnavailableReason =
+  /** The leg is worked by the customer's team: we spend nothing on it, a credit buys none of it. */
+  | "no_platform_cost"
+  /** The leg on that path has no cost per outcome (unpriced). */
+  | "leg_cost_unavailable"
+  | "not_on_a_selected_path"
+  | "selected_paths_unavailable";
+
+/**
+ * What a credit buys of a campaign's outcome (owner 2026-10-06, the /get-started wall's "Here is what
+ * your $100 gets you"): the campaign's leg cost per outcome on the path its roi is read off
+ * (`roiCombinationKey`; when roi is null, the best-ranked selected path using it), and
+ *
+ *   outcomes = floor(creditUsd ÷ costPerOutcomeUsd)   (whole outcomes the credit pays for, 0 possible)
+ *
+ * Served so the browser divides nothing. Null figures always carry `unavailableReason`.
+ */
+export interface CampaignOutcomesForCredit {
+  creditUsd: number;
+  /** The path the figure is read off (null when no selected path uses the campaign). */
+  combinationKey: string | null;
+  /** That path's `legs[].costPerOutcomeUsd` for this campaign's leg (byte-equal). */
+  costPerOutcomeUsd: number | null;
+  outcomes: number | null;
+  unavailableReason: CampaignOutcomesUnavailableReason | null;
+}
+
+/** PURE: the outcomes `creditUsd` buys of `legKey` on `path` (see `CampaignOutcomesForCredit`). */
+export function outcomesForCreditOn(path: SalesPath | null, legKey: string, creditUsd: number, noPath: CampaignOutcomesUnavailableReason): CampaignOutcomesForCredit {
+  const none = { creditUsd, costPerOutcomeUsd: null, outcomes: null };
+  if (!path) return { ...none, combinationKey: null, unavailableReason: noPath };
+  const leg = path.legs.find((l) => l.legKey === legKey)!;
+  if (leg.workedBy === "human") return { ...none, combinationKey: path.combinationKey, unavailableReason: "no_platform_cost" };
+  const cost = leg.costPerOutcomeUsd;
+  if (cost === null || !(cost > 0)) return { ...none, combinationKey: path.combinationKey, unavailableReason: "leg_cost_unavailable" };
+  // The epsilon keeps an exact multiple ($100 at $2.50 = 40) from flooring to 39 on float noise.
+  const outcomes = Math.floor(creditUsd / cost + 1e-9);
+  return { creditUsd, combinationKey: path.combinationKey, costPerOutcomeUsd: cost, outcomes, unavailableReason: null };
 }
 
 const stepWire = (key: keyof typeof CHANNEL_STEPS): ChannelStepDefWire => ({ ...CHANNEL_STEPS[key] });
@@ -749,7 +795,11 @@ export interface SelectedSalesPathsInput {
 
 /** PURE: the selection that counts, then one row per campaign with its ROI (see `SalesPathCampaign`).
  *  Order: proactive before reactive, then roi descending, a null roi last. */
-export function withCampaignRois(body: OfferSalesPathsBody, selected: SelectedSalesPathsInput | null): OfferSalesPathsBody {
+export function withCampaignRois(
+  body: OfferSalesPathsBody,
+  selected: SelectedSalesPathsInput | null,
+  creditUsd: number = DEFAULT_OUTCOMES_CREDIT_USD,
+): OfferSalesPathsBody {
   const listed = new Set(body.paths.map((p) => p.combinationKey));
   let selection: SalesPathSelection;
   if (selected === null) {
@@ -795,6 +845,7 @@ export function withCampaignRois(body: OfferSalesPathsBody, selected: SelectedSa
             roi: null,
             roiCombinationKey: null,
             roiUnavailableReason: null,
+            outcomesForCredit: { creditUsd, combinationKey: null, costPerOutcomeUsd: null, outcomes: null, unavailableReason: null },
           },
           best: null,
           firstSelected: null,
@@ -811,14 +862,16 @@ export function withCampaignRois(body: OfferSalesPathsBody, selected: SelectedSa
   }
 
   const campaigns = [...byKey.values()].map(({ row, best, firstSelected }): SalesPathCampaign => {
-    if (best) return { ...row, roi: best.roi, roiCombinationKey: best.combinationKey };
+    const noPath = selection.basis === "unavailable" ? "selected_paths_unavailable" : "not_on_a_selected_path";
+    const outcomesForCredit = outcomesForCreditOn(best ?? firstSelected, row.legKey, creditUsd, noPath);
+    if (best) return { ...row, roi: best.roi, roiCombinationKey: best.combinationKey, outcomesForCredit };
     const reason: CampaignRoiUnavailableReason =
       selection.basis === "unavailable"
         ? "selected_paths_unavailable"
         : firstSelected
           ? firstSelected.roiUnavailableReason! // a null roi always carries its reason
           : "not_on_a_selected_path";
-    return { ...row, roiUnavailableReason: reason };
+    return { ...row, roiUnavailableReason: reason, outcomesForCredit };
   });
   campaigns.sort((a, b) => {
     if (a.reactive !== b.reactive) return a.reactive ? 1 : -1;

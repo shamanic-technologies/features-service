@@ -14,6 +14,7 @@ import {
   type LegChannelPrice,
   type SalesPathChannelInput,
   withCampaignRois,
+  outcomesForCreditOn,
   withSalesPathNames,
 } from "./offer-sales-paths.js";
 import type { EffectiveArrowRate } from "./effective-conversion-rates.js";
@@ -440,6 +441,49 @@ describe("withCampaignRois", () => {
     const noLtr = buildOfferSalesPaths({ ...base, legKeys: ALL, lifetimeRevenueUsd: null });
     const out = withCampaignRois(noLtr, { stated: true, combinationKeys: noLtr.paths.map((p) => p.combinationKey), statedAt: null });
     expect(out.campaigns!.every((c) => c.roiUnavailableReason === "no_lifetime_revenue")).toBe(true);
+  });
+
+  it("outcomesForCredit = floor(credit ÷ the leg's cost) on the SAME path as the roi", () => {
+    const out = withCampaignRois(body, { stated: true, combinationKeys: body.paths.map((p) => p.combinationKey), statedAt: null }, 100);
+    for (const c of out.campaigns!) {
+      const o = c.outcomesForCredit;
+      expect(o.creditUsd).toBe(100);
+      expect(o.combinationKey).toBe(c.roiCombinationKey);
+      const leg = body.paths.find((p) => p.combinationKey === o.combinationKey)!.legs.find((l) => l.legKey === c.legKey)!;
+      if (leg.workedBy === "human") {
+        expect(o.unavailableReason).toBe("no_platform_cost");
+        continue;
+      }
+      expect(o.costPerOutcomeUsd).toBe(leg.costPerOutcomeUsd);
+      expect(o.outcomes).toBe(Math.floor(100 / leg.costPerOutcomeUsd! + 1e-9));
+      expect(o.unavailableReason).toBeNull();
+    }
+    const visits = byKey(out).get(campaignNameKeyOf("visits", "start_to_website_visit"))!;
+    expect(visits.outcomesForCredit.outcomes).toBeGreaterThan(0);
+  });
+
+  it("outcomesForCredit follows the credit asked, and states why it is missing", () => {
+    const selected = { stated: true, combinationKeys: body.paths.map((p) => p.combinationKey), statedAt: null };
+    const at100 = byKey(withCampaignRois(body, selected)).get(campaignNameKeyOf("visits", "start_to_website_visit"))!;
+    const at250 = byKey(withCampaignRois(body, selected, 250)).get(campaignNameKeyOf("visits", "start_to_website_visit"))!;
+    expect(at100.outcomesForCredit.creditUsd).toBe(100);
+    expect(at250.outcomesForCredit.outcomes).toBe(Math.floor(250 / at250.outcomesForCredit.costPerOutcomeUsd! + 1e-9));
+    expect(at250.roi).toBe(at100.roi);
+    const none = withCampaignRois(body, null);
+    expect(none.campaigns!.every((c) => c.outcomesForCredit.outcomes === null && c.outcomesForCredit.unavailableReason === "selected_paths_unavailable")).toBe(true);
+    const unselected = byKey(withCampaignRois(body, { stated: true, combinationKeys: [], statedAt: null })).get(campaignNameKeyOf("visits", "start_to_website_visit"))!;
+    expect(unselected.outcomesForCredit.unavailableReason).toBe("not_on_a_selected_path");
+  });
+
+  it("outcomesForCreditOn: exact multiples do not floor down; unpriced leg is named", () => {
+    const p = body.paths.find((x) => x.legs.some((l) => l.workedBy === "platform"))!;
+    const leg = p.legs.find((l) => l.workedBy === "platform")!;
+    const at = (cost: number | null) => outcomesForCreditOn({ ...p, legs: p.legs.map((l) => (l === leg ? { ...l, costPerOutcomeUsd: cost } : l)) }, leg.legKey, 100, "not_on_a_selected_path");
+    expect(at(2.5).outcomes).toBe(40);
+    expect(at(0.1).outcomes).toBe(1000);
+    expect(at(2.4).outcomes).toBe(41);
+    expect(at(150).outcomes).toBe(0);
+    expect(at(null)).toMatchObject({ outcomes: null, unavailableReason: "leg_cost_unavailable" });
   });
 
   it("orders proactive before reactive, then ROI descending, a null ROI last", () => {

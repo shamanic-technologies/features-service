@@ -23,6 +23,7 @@ import { mapWithConcurrency } from "../lib/concurrency.js";
 import {
   acceptedCatalogueChannels,
   buildOfferSalesPaths,
+  DEFAULT_OUTCOMES_CREDIT_USD,
   enumerateSalesPaths,
   legChannelsForScope,
   MANAGED_CHANNEL_SLUGS,
@@ -89,6 +90,11 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
     return res.status(400).json({ error: `scope must be ticked or catalogue, got ${rawScope}`, reason: "scope_unrecognised" });
   }
   const scope: SalesPathScope = rawScope === "catalogue" ? "catalogue" : "ticked";
+  const rawCredit = ((req.query.creditUsd as string | undefined) ?? "").trim();
+  const creditUsd = rawCredit === "" ? DEFAULT_OUTCOMES_CREDIT_USD : Number(rawCredit);
+  if (!Number.isFinite(creditUsd) || creditUsd <= 0 || creditUsd > 1_000_000) {
+    return res.status(400).json({ error: `creditUsd must be a positive number of dollars up to 1000000, got ${rawCredit}`, reason: "credit_unrecognised" });
+  }
   const identity = { orgId: req.orgId, userId: req.userId, runId: req.runId };
 
   try {
@@ -163,8 +169,8 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
     });
     // Every row's name, shared across clients and stable forever: assigned on first sight, in rank order.
     const names = await salesPathNamesFor(body.paths.map((p) => p.combinationKey));
-    // Every campaign (channel × leg) with its ROI, read off the paths the customer selected.
-    return res.json(withCampaignRois(withSalesPathNames(body, names, campaignNamesOf(published)), selectedPaths));
+    // Every campaign (channel × leg) with its ROI and what `creditUsd` buys of its outcome, read off the paths the customer selected.
+    return res.json(withCampaignRois(withSalesPathNames(body, names, campaignNamesOf(published)), selectedPaths, creditUsd));
   } catch (error) {
     if (error instanceof OfferSalesPathNotFoundError) {
       return res.status(404).json({ error: error.message, reason: "offer_not_found" });
