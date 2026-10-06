@@ -11435,6 +11435,49 @@
                     "selected_paths_unavailable"
                   ],
                   "description": "Why roi is null: not_on_a_selected_path (no selected path uses it), selected_paths_unavailable (the selection could not be read), else the reason of the best-ranked selected path that uses it (its own paths[].roiUnavailableReason)."
+                },
+                "outcomesForCredit": {
+                  "type": "object",
+                  "properties": {
+                    "creditUsd": {
+                      "type": "number",
+                      "description": "The credit the figure is for, in dollars (echo of ?creditUsd=, default 100)."
+                    },
+                    "combinationKey": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The path (paths[].combinationKey) the figure is read off: roiCombinationKey when roi is set, else the best-ranked selected path using the campaign. Null when no selected path uses it."
+                    },
+                    "costPerOutcomeUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "That path's legs[].costPerOutcomeUsd for this campaign's leg (byte-equal): what one outcome of the leg's toStep costs on this campaign."
+                    },
+                    "outcomes": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "Whole outcomes of the leg's toStep the credit pays for = floor(creditUsd ÷ costPerOutcomeUsd). 0 when one outcome costs more than the credit. Null only with unavailableReason. Render it, never re-derive it."
+                    },
+                    "unavailableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "no_platform_cost",
+                        "leg_cost_unavailable",
+                        "not_on_a_selected_path",
+                        "selected_paths_unavailable"
+                      ],
+                      "description": "Why outcomes is null: no_platform_cost (the customer's team works the leg, a credit buys none of it), leg_cost_unavailable (the leg is unpriced on that path), not_on_a_selected_path, selected_paths_unavailable."
+                    }
+                  },
+                  "required": [
+                    "creditUsd",
+                    "combinationKey",
+                    "costPerOutcomeUsd",
+                    "outcomes",
+                    "unavailableReason"
+                  ],
+                  "description": "What a credit of creditUsd buys of this campaign's outcome, on the same path and the same leg cost as its roi (owner 2026-10-06: the get-started wall's 'Here is what your $100 gets you'). Additive: roi and every cost are unchanged."
                 }
               },
               "required": [
@@ -11450,7 +11493,8 @@
                 "selectedPathCount",
                 "roi",
                 "roiCombinationKey",
-                "roiUnavailableReason"
+                "roiUnavailableReason",
+                "outcomesForCredit"
               ]
             },
             "description": "One row per CAMPAIGN (one channel on one leg) any listed path uses, with its ROI. Ordered proactive before reactive, then roi descending, a null roi last (a consumer may put the campaigns that are on first)."
@@ -28198,6 +28242,16 @@
           {
             "schema": {
               "type": "string",
+              "description": "Dollars of credit campaigns[].outcomesForCredit is computed for (default 100). A positive number up to 1000000, else 400 credit_unrecognised."
+            },
+            "required": false,
+            "description": "Dollars of credit campaigns[].outcomesForCredit is computed for (default 100). A positive number up to 1000000, else 400 credit_unrecognised.",
+            "name": "creditUsd",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "format": "uuid",
               "description": "Internal org UUID from client-service"
             },
@@ -28251,7 +28305,7 @@
             }
           },
           "400": {
-            "description": "Missing brandId, or scope not ticked/catalogue (reason: scope_unrecognised)",
+            "description": "Missing brandId, scope not ticked/catalogue (reason: scope_unrecognised), or creditUsd not a positive number up to 1000000 (reason: credit_unrecognised)",
             "content": {
               "application/json": {
                 "schema": {

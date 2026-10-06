@@ -1868,6 +1868,18 @@ const offerSalesPathsResponseRef = registry.register(
             .enum(["leg_cost_unavailable", "zero_conversion_rate", "no_lifetime_revenue", "no_platform_cost", "not_on_a_selected_path", "selected_paths_unavailable"])
             .nullable()
             .describe("Why roi is null: not_on_a_selected_path (no selected path uses it), selected_paths_unavailable (the selection could not be read), else the reason of the best-ranked selected path that uses it (its own paths[].roiUnavailableReason)."),
+          outcomesForCredit: z
+            .object({
+              creditUsd: z.number().describe("The credit the figure is for, in dollars (echo of ?creditUsd=, default 100)."),
+              combinationKey: z.string().nullable().describe("The path (paths[].combinationKey) the figure is read off: roiCombinationKey when roi is set, else the best-ranked selected path using the campaign. Null when no selected path uses it."),
+              costPerOutcomeUsd: z.number().nullable().describe("That path's legs[].costPerOutcomeUsd for this campaign's leg (byte-equal): what one outcome of the leg's toStep costs on this campaign."),
+              outcomes: z.number().int().nullable().describe("Whole outcomes of the leg's toStep the credit pays for = floor(creditUsd ÷ costPerOutcomeUsd). 0 when one outcome costs more than the credit. Null only with unavailableReason. Render it, never re-derive it."),
+              unavailableReason: z
+                .enum(["no_platform_cost", "leg_cost_unavailable", "not_on_a_selected_path", "selected_paths_unavailable"])
+                .nullable()
+                .describe("Why outcomes is null: no_platform_cost (the customer's team works the leg, a credit buys none of it), leg_cost_unavailable (the leg is unpriced on that path), not_on_a_selected_path, selected_paths_unavailable."),
+            })
+            .describe("What a credit of creditUsd buys of this campaign's outcome, on the same path and the same leg cost as its roi (owner 2026-10-06: the get-started wall's 'Here is what your $100 gets you'). Additive: roi and every cost are unchanged."),
         }),
       )
       .describe("One row per CAMPAIGN (one channel on one leg) any listed path uses, with its ROI. Ordered proactive before reactive, then roi descending, a null roi last (a consumer may put the campaigns that are on first)."),
@@ -1891,11 +1903,12 @@ registry.registerPath({
     query: z.object({
       brandId: z.string().describe("Brand UUID (required)."),
       scope: z.enum(["ticked", "catalogue"]).optional().describe("ticked (default): the offer's ticked legs × the managed channels. catalogue: the same ticked chains × the owner's channel shortlist, benchmark-priced where unmeasured."),
+      creditUsd: z.string().optional().describe("Dollars of credit campaigns[].outcomesForCredit is computed for (default 100). A positive number up to 1000000, else 400 credit_unrecognised."),
     }),
   },
   responses: {
     200: { description: "The offer's sales paths", content: { "application/json": { schema: offerSalesPathsResponseRef } } },
-    400: { description: "Missing brandId, or scope not ticked/catalogue (reason: scope_unrecognised)", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "Missing brandId, scope not ticked/catalogue (reason: scope_unrecognised), or creditUsd not a positive number up to 1000000 (reason: credit_unrecognised)", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Offer not found or not an offer of this brand (reason: offer_not_found)", content: { "application/json": { schema: errorResponse } } },
     502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
     503: { description: "Right after a restart, the fleet's measured cost per outcome (the cost cascade's middle rung) was still being built after the read waited ~200 s for it (reason: fleet_costs_not_computed_yet, Retry-After: 60). Never answered with seeded default costs in place of a measurement.", content: { "application/json": { schema: errorResponse } } },
