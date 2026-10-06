@@ -21174,7 +21174,12 @@
             "type": "string"
           },
           "description": {
-            "type": "string"
+            "type": "string",
+            "description": "The long marketing paragraph about the channel. For a small card, render `shortDescription`."
+          },
+          "shortDescription": {
+            "type": "string",
+            "description": "One plain line (about 8 words) printed under the channel's name on a small selectable card (onboarding 'Which channels may we use?', the offer's sales path page), so a visitor knows what ticking it means. The channel twin of a step's `shortDescription`; never hard-code it. Example: 'We find your buyers and email them for you.' under 'Sales Cold Email Outreach'."
           },
           "icon": {
             "type": "string"
@@ -21447,6 +21452,7 @@
           "slug",
           "name",
           "description",
+          "shortDescription",
           "icon",
           "displayOrder",
           "family",

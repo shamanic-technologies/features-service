@@ -36,6 +36,9 @@ const CLOSER = {
   terms: { dailyOperatingCostCents: 0, minimumCommitmentDays: 30, maxDaysToFirstProduction: 1 },
 };
 
+/** Fixture slugs are invented, so captions are stubbed; the real map is guarded in channel-short-descriptions.test.ts. */
+const build = (rows: CatalogueFeatureRow[]) => buildChannelCatalogue(rows, () => "A caption.");
+
 const row = (over: Partial<CatalogueFeatureRow> = {}): CatalogueFeatureRow => ({
   slug: "cold-email",
   name: "Cold Email",
@@ -51,7 +54,7 @@ describe("reading a stored channel", () => {
     expect(parseAcquisitionChannel("x", { ...CHANNEL, trigger: "step_reached" })?.trigger).toBe("step_reached");
     expect(parseAcquisitionChannel("x", CHANNEL)?.trigger).toBeUndefined();
     expect(() => parseAcquisitionChannel("x", { ...CHANNEL, trigger: "hourly" })).toThrow(/unknown trigger/);
-    const [published] = buildChannelCatalogue([row({ acquisitionChannel: { ...CHANNEL, trigger: "step_reached" } })]);
+    const [published] = build([row({ acquisitionChannel: { ...CHANNEL, trigger: "step_reached" } })]);
     expect(published.trigger).toBe("step_reached");
   });
 
@@ -106,7 +109,7 @@ describe("reading a stored channel", () => {
 
 describe("building the public catalogue", () => {
   it("keeps only the channels, and orders them the way the catalogue orders features", () => {
-    const catalogue = buildChannelCatalogue([
+    const catalogue = build([
       row({ slug: "b-channel", name: "B", displayOrder: 5 }),
       row({ slug: "not-a-channel", name: "N", displayOrder: 2, acquisitionChannel: null }),
       row({ slug: "a-channel", name: "A", displayOrder: 3 }),
@@ -115,7 +118,7 @@ describe("building the public catalogue", () => {
   });
 
   it("publishes the terms verbatim and the funnels DERIVED from the legs the channel performs", () => {
-    const [channel] = buildChannelCatalogue([row()]);
+    const [channel] = build([row()]);
     expect(channel.terms).toEqual(CHANNEL.terms);
     expect(channel.operatedBy).toBe("platform");
     expect(channel.stepTransitions.map((t) => [t.from?.key ?? null, t.to.key])).toEqual([
@@ -166,13 +169,13 @@ describe("building the public catalogue", () => {
     // This used to publish an EMPTY funnel list: the step was spelled `in_ad_form_submission` and no
     // deployed funnel started on that spelling, so the channel's whole lead-form production sold
     // nothing. brand-service now starts `lead_forms_from_ads` on exactly the step the ad delivers.
-    const [channel] = buildChannelCatalogue([
+    const [channel] = build([
       row({ acquisitionChannel: { ...CHANNEL, stepTransitions: [{ from: null, to: "form_submitted" }] } }),
     ]);
     expect(channel.salesFunnels.map((f) => f.key)).toEqual(["lead_forms_from_ads"]);
     expect(channel.terms).toEqual(CHANNEL.terms);
 
-    const [meetings] = buildChannelCatalogue([
+    const [meetings] = build([
       row({ acquisitionChannel: { ...CHANNEL, stepTransitions: [{ from: null, to: "meeting_booked" }] } }),
     ]);
     expect(meetings.salesFunnels.map((f) => f.key)).toEqual(["sales_meetings_from_ads"]);
@@ -181,7 +184,7 @@ describe("building the public catalogue", () => {
   it("a step no deployed funnel takes still publishes the channel, and says so as an EMPTY funnel list", () => {
     // The honest empty answer still exists — it simply no longer fires for the ad steps. A channel
     // whose only leg is one no funnel has is bookable, listed with its terms, and pairable with nothing.
-    const [channel] = buildChannelCatalogue([
+    const [channel] = build([
       row({ acquisitionChannel: { ...CHANNEL, stepTransitions: [{ from: "signup", to: "meeting_attended" }] } }),
     ]);
     expect(channel.salesFunnels).toEqual([]);
@@ -208,12 +211,12 @@ describe("building the public catalogue", () => {
 
   it("a malformed row fails the whole read rather than quietly vanishing from the price list", () => {
     expect(() =>
-      buildChannelCatalogue([row(), row({ slug: "broken", acquisitionChannel: { family: "telepathy" } })]),
+      build([row(), row({ slug: "broken", acquisitionChannel: { family: "telepathy" } })]),
     ).toThrow(MalformedAcquisitionChannelError);
   });
 
   it("a RETIRED slug is not published — the offering is listed once, under the spelling that is current", () => {
-    const catalogue = buildChannelCatalogue([
+    const catalogue = build([
       row({ slug: "expert-quote-outreach", name: "Current", displayOrder: 1 }),
       // Same offering, same terms, older spelling. Publishing it would render a second identical page
       // and let a stranger book a slug we no longer sell.
@@ -228,7 +231,7 @@ describe("building the public catalogue", () => {
   });
 
   it("retirement is read off the MARKER, not off any particular slug — the next one needs no code here", () => {
-    const catalogue = buildChannelCatalogue([
+    const catalogue = build([
       row({ slug: "some-other-channel", supersededBySlug: "its-successor" }),
       row({ slug: "still-current", name: "Still", supersededBySlug: null }),
     ]);
@@ -243,7 +246,7 @@ describe("building the public catalogue", () => {
     // This is the shape the catalogue could not express before: it starts somewhere that is not the
     // beginning of a funnel, so it produces no entry step at all — and it is still sellable, through
     // every funnel that contains its leg.
-    const [channel] = buildChannelCatalogue([row({ slug: "closing", acquisitionChannel: CLOSER })]);
+    const [channel] = build([row({ slug: "closing", acquisitionChannel: CLOSER })]);
     expect(channel.producibleSteps).toEqual([]);
     expect(channel.stepTransitions).toEqual([
       {
@@ -300,7 +303,7 @@ describe("every published leg states its MATURITY RULE (lib/maturity.ts, feature
 describe("crew names are RETIRED (owner 2026-10-04: the poetic names now name sales path combinations)", () => {
   it("no leg of any channel carries a crew name, not even the ones that used to (Herald, Scout, Pilot)", () => {
     for (const slug of ["sales-cold-email-outreach", "ai-meeting-booking", "some-unnamed-channel"]) {
-      const [channel] = buildChannelCatalogue([row({ slug, acquisitionChannel: slug === "ai-meeting-booking" ? CLOSER : CHANNEL })]);
+      const [channel] = build([row({ slug, acquisitionChannel: slug === "ai-meeting-booking" ? CLOSER : CHANNEL })]);
       for (const t of channel.stepTransitions) expect(t.crewName).toBeNull();
     }
   });

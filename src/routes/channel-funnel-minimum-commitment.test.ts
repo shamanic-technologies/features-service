@@ -26,6 +26,9 @@ vi.mock("../lib/funnel-commercial-terms.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   minimumCommitmentDaysFor: (key: string) => (key === "sales_meetings_from_conversation" ? 60 : null),
 }));
+// The two channels below are invented, so their card captions are stubbed; the real map is guarded in
+// lib/channel-short-descriptions.test.ts.
+vi.mock("../lib/channel-short-descriptions.js", () => ({ channelShortDescription: () => "A caption." }));
 
 process.env.FEATURES_SERVICE_API_KEY = "test-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
