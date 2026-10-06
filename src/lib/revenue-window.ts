@@ -4,7 +4,10 @@
  * figure without adding anything up itself (the browser renders served stats, never computes them).
  *
  * Served on the offer and brand revenue reads as `window`, ONLY when `?windowDays=` is asked: an
- * unwindowed read is byte-unchanged (no key, same cache cell).
+ * unwindowed read is byte-unchanged (no key, same cache cell). Also on the CAMPAIGN read
+ * (`/features/:slug/revenue?campaignId=&windowDays=`), over the campaign identity alone: there the
+ * spend is the campaign's own (`campaignOnly`: no brand-wide read, brandLevel* are 0), because the
+ * brand's campaign-less work belongs to no campaign.
  *
  * `?windowDays=all` = SINCE INCEPTION (owner 2026-10-03: the Today row states the brand's whole life,
  * no 7/30 switch): the same block, same parts, same composition, over every UTC day from the scope's
@@ -215,6 +218,8 @@ export async function fetchWindowActualSpendByDay(input: {
   pricing: Pricing;
   /** Absent = no lower bound (since inception). */
   startedAfter?: string;
+  /** The campaign grain: the scope's campaigns only, no brand-level part (both brandLevel maps empty). */
+  campaignOnly?: boolean;
 }): Promise<WindowSpendByDay> {
   const base = () => {
     const p = new URLSearchParams({ orgId: input.orgId, brandId: input.brandId });
@@ -232,7 +237,7 @@ export async function fetchWindowActualSpendByDay(input: {
       if (chunk) p.set("campaignIds", chunk.join(","));
       return fetchCampaignSplitDays(p, input.pricing);
     }),
-    fetchCampaignSplitDays(base(), input.pricing),
+    input.campaignOnly ? Promise.resolve([]) : fetchCampaignSplitDays(base(), input.pricing),
   ]);
   const add = (m: Map<string, number>, day: string, cents: number) => m.set(day, (m.get(day) ?? 0) + cents);
   const scoped = new Map<string, number>();
@@ -380,6 +385,8 @@ export async function computeRevenueWindow(input: {
   featureScope: FeatureScope;
   pricing: Pricing;
   headers: { orgId: string; userId?: string; runId?: string };
+  /** The campaign grain: spend of the scope's campaigns only (see fetchWindowActualSpendByDay). */
+  campaignOnly?: boolean;
   body: {
     headline: { totalPipelineUsd: number | null };
     timeSeries: TimeSeriesPoint[];
@@ -404,6 +411,7 @@ export async function computeRevenueWindow(input: {
       featureScope: input.featureScope,
       pricing: input.pricing,
       startedAfter,
+      campaignOnly: input.campaignOnly,
     }).catch((err: Error) => {
       console.error(`[features-service] window spend unreadable for brand ${input.brandId} (window.spend null): ${err.message}`);
       return null;
