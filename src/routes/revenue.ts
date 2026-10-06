@@ -119,6 +119,7 @@ import { fetchOfferCampaigns, resolveOfferCampaignIds, OfferHasNoCampaignsError 
 import { featureSlugList, type FeatureScope } from "../lib/feature-scope.js";
 import { pickBestChannelParents } from "../lib/offer-parents.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
+import { computeRevenueWindow, parseWindowDays, WINDOW_DAYS_ERROR } from "../lib/revenue-window.js";
 import { serveDatesStated } from "../lib/mature-evidence.js";
 import type { MaturityPair } from "../lib/maturity.js";
 import { conversionRateFigures } from "../lib/conversion-rate-history.js";
@@ -2170,6 +2171,19 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
   }
   const causeKey = causeScopeKeyPart(causes);
 
+  // THE CAMPAIGN CARD ROW — the offer/brand reads' `window` block, over ONE campaign identity. Only on
+  // the un-grouped, un-lensed, un-narrowed ?campaignId= read: anywhere else it would be a second
+  // answer to a question the offer/brand reads already own (or a workflow slice the spend read cannot
+  // narrow). Refused, never silently ignored. Omitted → no key, same cache cell. See lib/revenue-window.ts.
+  const windowDays = parseWindowDays(req.query.windowDays);
+  if (windowDays === null) return res.status(400).json(WINDOW_DAYS_ERROR);
+  if (windowDays !== undefined && (!campaignId || lens || groupBy || workflowParam || costBasis === "actual")) {
+    return res.status(400).json({
+      error: "windowDays on this read requires campaignId, and combines with neither lens, groupBy, workflow nor the actual-cost path",
+      reason: "window_requires_campaign",
+    });
+  }
+
   try {
     const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
     if (!feature) {
@@ -2525,6 +2539,8 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
         // A read counting a different set of causes is a different answer, so it is a different cell.
         // Absent for the default set → dropped by buildScopeKey → today's keys are unmoved.
         cause: causeKey,
+        // The campaign card row adds a block. Absent → dropped → today's keys are unmoved.
+        windowDays,
       }),
       orgId,
       compute: async () => {
@@ -2535,6 +2551,20 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
 
         traceEvent(runId, { service: "features-service", event: "feature-revenue-done", detail: `featureSlug=${featureSlug}, orgs=${body.organizations.length}, pipelineUsd=${body.headline.totalPipelineUsd}` }, req.headers).catch(() => {});
 
+        // The campaign's own spend only: the brand's campaign-less work belongs to no campaign.
+        const window = windowDays
+          ? await computeRevenueWindow({
+              days: windowDays,
+              brandId,
+              campaignScope,
+              featureScope: featureSlug,
+              pricing,
+              headers,
+              campaignOnly: true,
+              body,
+            })
+          : undefined;
+
         // ACCOUNTING — every money figure below is what this customer was CHARGED. Spend the
         // platform comped is absent from it (they did not pay it), which is the opposite of the
         // cross-org benchmark on /workflow-projection's crossOrg grain and /public/stats/*, where
@@ -2544,6 +2574,7 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
           costBasis: "charged" as const,
           ...applyLeadDetail(body, leadDetail),
           campaignIdentity: campaignId ? describeIdentity(identity, campaignId) : undefined,
+          window,
           // WHAT THIS BODY ANSWERED FOR, when it was drilled into one workflow — the dynasty, its
           // name and the versions folded into it, so a consumer can SEE the subject rather than
           // infer it from a number that moved. Absent on an un-narrowed read.

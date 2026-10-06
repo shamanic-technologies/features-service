@@ -308,3 +308,48 @@ describe("GET /offers/:offerId/revenue — today's spend and ?windowDays=", () =
     expect(res.body.reason).toBe("window_days_unrecognised");
   });
 });
+
+describe("GET /features/:slug/revenue?campaignId=&windowDays= — the campaign card row", () => {
+  beforeEach(() => {
+    vi.mocked(db.query.features.findFirst).mockImplementation((async () => FEATURE_ROW(PITCH)) as never);
+    vi.mocked(db.query.features.findMany).mockResolvedValue([FEATURE_ROW(PITCH)] as never);
+    mockFetch();
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  const read = (extra = "") => request(app).get(`/features/${PITCH}/revenue?brandId=b1&pricing=net${extra}`).set(AUTH);
+
+  it("serves the campaign's own emails, queue and spend split; no brand-level work", async () => {
+    const res = await read("&campaignId=c1&windowDays=all");
+    expect(res.status).toBe(200);
+    const w = res.body.window;
+    expect(w.sinceInception).toBe(true);
+    expect(w.queuedEmails).toBe(42);
+    expect(w.queuedEmailsUnavailableReason).toBeNull();
+    expect(w.emails.sent).toBe(w.emails.daily.reduce((s: number, d: { sent: number }) => s + d.sent, 0));
+    // c1 alone: 40 + 1000.4 + 2722.3 actual; 40 + 1000.4 + 4608.5 committed. c9 and the setup are not its.
+    expect(w.spend.actualSpentCents).toBe(40 + 1000 + 2722);
+    expect(w.spend.totalSpentCents).toBe(40 + 1000 + 4609);
+    expect(w.spend.provisionedSpentCents).toBe(w.spend.totalSpentCents - w.spend.actualSpentCents);
+    expect(w.spend.brandLevelActualSpentCents).toBe(0);
+    expect(w.spend.brandLevelTotalSpentCents).toBe(0);
+  });
+
+  it("an unwindowed campaign read has no `window` and is byte-equal to the windowed one without it", async () => {
+    const plain = await read("&campaignId=c1");
+    const windowed = await read("&campaignId=c1&windowDays=7");
+    expect("window" in plain.body).toBe(false);
+    const { window, ...rest } = windowed.body;
+    expect(window).toBeTruthy();
+    expect(JSON.stringify(rest)).toBe(JSON.stringify(plain.body));
+  });
+
+  it("windowDays without campaignId, or beside lens / groupBy / workflow, is a 400", async () => {
+    for (const extra of ["&windowDays=all", "&campaignId=c1&windowDays=all&lens=sales", "&windowDays=all&groupBy=campaignId", "&campaignId=c1&windowDays=7&workflow=dawn"]) {
+      const res = await read(extra);
+      expect(res.status, extra).toBe(400);
+      expect(res.body.reason, extra).toBe("window_requires_campaign");
+    }
+    expect((await read("&campaignId=c1&windowDays=7d")).body.reason).toBe("window_days_unrecognised");
+  });
+});
