@@ -147,7 +147,7 @@ function mockFetch(): void {
         const ids = q.get("campaignIds")?.split(",");
         if (ids && (!r.campaignId || !ids.includes(r.campaignId))) return false;
         if (q.get("featureSlugs") && !r.campaignId) return false;
-        // Only a read without featureSlugs (the campaign grain) sees the other-slug run.
+        // A featureSlugs-narrowed read never sees the other-slug run.
         if (r.otherSlug && q.get("featureSlugs")) return false;
         return true;
       });
@@ -331,13 +331,17 @@ describe("GET /features/:slug/revenue?campaignId=&windowDays= — the campaign c
     expect(w.queuedEmails).toBe(42);
     expect(w.queuedEmailsUnavailableReason).toBeNull();
     expect(w.emails.sent).toBe(w.emails.daily.reduce((s: number, d: { sent: number }) => s + d.sent, 0));
-    // c1 alone: 40 + 1000.4 + 2722.3 actual; 40 + 1000.4 + 4608.5 committed. c9 and the setup are not its.
-    // ...plus its 3 cents of runs tagged with another slug: the campaign's whole spend, as costEconomics counts it.
-    expect(w.spend.actualSpentCents).toBe(40 + 1000 + 2725);
-    expect(w.spend.totalSpentCents).toBe(40 + 1000 + 4612);
-    expect(w.spend.provisionedSpentCents).toBe(w.spend.totalSpentCents - w.spend.actualSpentCents);
+    // Days: c1 alone (c9, the setup and c1's other-slug run are not this channel's), rounded per day.
+    expect(w.spend.daily.at(-1).totalSpentCents).toBe(4609);
+    expect(w.spend.daily.at(-1).brandLevelTotalSpentCents).toBe(0);
     expect(w.spend.brandLevelActualSpentCents).toBe(0);
     expect(w.spend.brandLevelTotalSpentCents).toBe(0);
+    // Totals: the SAME figures the body's own spend block serves (one rounding of one spend per page).
+    expect(w.spend.actualSpentCents).toBe(res.body.spend.actualSpentCents);
+    expect(w.spend.totalSpentCents).toBe(res.body.spend.totalSpentCents);
+    expect(w.spend.provisionedSpentCents).toBe(res.body.spend.provisionedSpentCents);
+    expect(w.spend.provisionedSpentCents).toBe(w.spend.totalSpentCents - w.spend.actualSpentCents);
+    expect(w.spend.totalSpentCents).toBe(Math.round(res.body.costEconomics.committedCostUsd * 100));
   });
 
   it("an unwindowed campaign read has no `window` and is byte-equal to the windowed one without it", async () => {
