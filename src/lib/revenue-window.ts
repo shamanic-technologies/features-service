@@ -233,7 +233,9 @@ export async function fetchWindowActualSpendByDay(input: {
   const [scopedParts, brandWide] = await Promise.all([
     mapWithConcurrency(scopedReads, 6, (chunk) => {
       const p = base();
-      p.set("featureSlugs", featureSlugsParam(input.featureScope));
+      // The campaign grain counts EVERY run of the campaign, whatever slug a run carries (reply
+      // judgments, notifications): the composition costEconomics and `spend` serve on the same read.
+      if (!input.campaignOnly) p.set("featureSlugs", featureSlugsParam(input.featureScope));
       if (chunk) p.set("campaignIds", chunk.join(","));
       return fetchCampaignSplitDays(p, input.pricing);
     }),

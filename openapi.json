@@ -1548,7 +1548,7 @@
             "properties": {
               "actualSpentCents": {
                 "type": "integer",
-                "description": "ACTUAL (charged) spend over the window, USD cents, on the read's ?pricing= basis: the scope's campaigns PLUS the brand's own work no campaign carries (setup, notifications) — the composition of spend.actualSpentTodayCents on the same read. Σ daily[].actualSpentCents, exactly. On the CAMPAIGN read (/features/{featureSlug}/revenue?campaignId=&windowDays=) it is the campaign identity's own spend only (its stopped ancestors included, no brand-level work), so brandLevel* are 0 there."
+                "description": "ACTUAL (charged) spend over the window, USD cents, on the read's ?pricing= basis: the scope's campaigns PLUS the brand's own work no campaign carries (setup, notifications) — the composition of spend.actualSpentTodayCents on the same read. Σ daily[].actualSpentCents, exactly. On the CAMPAIGN read (/features/{featureSlug}/revenue?campaignId=&windowDays=) it is the campaign identity's own spend only (its stopped ancestors included, every run of the campaign whatever slug the run carries, no brand-level work: the composition of costEconomics.committedCostUsd and `spend` on the same read), so brandLevel* are 0 there."
               },
               "brandLevelActualSpentCents": {
                 "type": "integer",
