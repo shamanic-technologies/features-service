@@ -8,6 +8,7 @@ import { RUNS_CAMPAIGN_IDS_PER_REQUEST } from "./brand-spend-by-day-client.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { runsCostsUrl, selectCostCentsString, type Pricing } from "./pricing.js";
 import { refundedCents, type CostBasis } from "./cost-basis.js";
+import { runsFeatureSlugsParam } from "./feature-scope.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -87,7 +88,7 @@ export async function fetchPublicCosts(
   // caller chunks). Used by a LEG-scoped ladder: only the campaigns performing that leg count.
   campaignIds?: readonly string[],
 ): Promise<CostGroup[]> {
-  const params = new URLSearchParams({ featureSlugs, groupBy });
+  const params = new URLSearchParams({ featureSlugs: runsFeatureSlugsParam(featureSlugs.split(",")), groupBy });
   if (campaignIds && campaignIds.length > 0) params.set("campaignIds", campaignIds.join(","));
 
   // The vendor basis reads the service-auth vendor twin (no org header = the whole fleet), never the

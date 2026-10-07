@@ -15,7 +15,7 @@
  */
 import { fetchWithRetry } from "./fetch-retry.js";
 import { mapWithConcurrency } from "./concurrency.js";
-import { featureSlugList, featureSlugsParam, soleFeatureSlug, type FeatureScope } from "./feature-scope.js";
+import { featureSlugList, runsFeatureSlugsParam, soleFeatureSlug, type FeatureScope } from "./feature-scope.js";
 import { selectCostCents, type Pricing } from "./pricing.js";
 
 /** The two counted signals a grain observes, for ONE campaign id. */
@@ -165,7 +165,7 @@ export async function fetchCampaignCommittedCents(
   const params = new URLSearchParams({
     groupBy: "campaignId",
     brandId,
-    featureSlugs: featureSlugsParam(featureScope),
+    featureSlugs: runsFeatureSlugsParam(featureScope),
   });
   const response = await fetchWithRetry(`${baseUrl}/v1/stats/costs?${params}`, { headers: h });
   if (!response.ok) {

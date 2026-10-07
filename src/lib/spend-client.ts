@@ -31,7 +31,7 @@
 import { fetchWithRetry } from "./fetch-retry.js";
 import { selectCostCents, type Pricing } from "./pricing.js";
 import { campaignFamilySet, campaignScopeIds, singleCampaignId, type CampaignFilter } from "./campaign-scope.js";
-import { featureSlugList, featureSlugsParam, type FeatureScope } from "./feature-scope.js";
+import { runsFeatureSlugsParam, type FeatureScope } from "./feature-scope.js";
 
 export interface SpendSource {
   /** runs-service cost name (the billable line item, e.g. "apollo people-search", "email-send-step-1"). */
@@ -229,7 +229,7 @@ export async function fetchSpendBreakdown(
   // By-source (groupBy=costName): the per-line-item rows carrying committed + actual. The totals are
   // Σ of these, so "Total spent" == sum of the source list the dashboard renders (coherent by
   // construction) for each of committed / actual / provisioned.
-  const featureSlugs = featureSlugsParam(featureScope);
+  const featureSlugs = runsFeatureSlugsParam(featureScope);
   const sourceParams = new URLSearchParams({ groupBy, brandId, featureSlugs });
   if (campaignId) sourceParams.set("campaignId", campaignId);
   if (workflowSlugs) sourceParams.set("workflowSlugs", workflowSlugs);
@@ -260,7 +260,7 @@ export async function fetchSpendBreakdown(
   const all = sumGroups(sourceGroups, pricing);
   const scopedToday = sumGroups(todayGroups, pricing);
   const extraToday = sumGroups(
-    campaignLessOutsideScope(brandLevelGroups, campaignScopeIds(campaignScope).length > 0, featureSlugList(featureScope)),
+    campaignLessOutsideScope(brandLevelGroups, campaignScopeIds(campaignScope).length > 0, runsFeatureSlugsParam(featureScope).split(",")),
     pricing,
   );
   const today = {

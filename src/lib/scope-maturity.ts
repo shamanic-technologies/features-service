@@ -45,7 +45,7 @@ import { ratiosOf, type CostRatios } from "./cost-economics.js";
 import { observedCostPerOutcome } from "./cost-engine.js";
 import { decimalCentsToUsd, sumDecimalStrings } from "./decimal.js";
 import { fetchBrandCampaignRows } from "./campaign-identity-client.js";
-import { featureSlugList, featureSlugsParam, type FeatureScope } from "./feature-scope.js";
+import { featureSlugList, runsFeatureSlugsParam, type FeatureScope } from "./feature-scope.js";
 import { fetchLeadsForRevenue } from "./leads-client.js";
 import { serveDatesStated } from "./mature-evidence.js";
 import { scopePredicate } from "./roi-maturity.js";
@@ -201,7 +201,7 @@ export async function fetchSpendSplit(req: SpendSplitRequest): Promise<Map<strin
     const params = new URLSearchParams({
       groupBy: req.by ? `${req.by},campaignId` : "campaignId",
       brandId: req.brandId,
-      featureSlugs: featureSlugsParam(req.featureScope),
+      featureSlugs: runsFeatureSlugsParam(req.featureScope),
     });
     if (single) params.set("campaignId", single);
     if (req.workflowSlugs) params.set("workflowSlugs", req.workflowSlugs);

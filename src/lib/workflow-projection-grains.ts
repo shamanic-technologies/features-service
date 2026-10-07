@@ -27,6 +27,7 @@ import { type CostBasis } from "./cost-basis.js";
 import { matureAudienceDynastyCounts, matureSlugStats } from "./mature-evidence.js";
 import { startedBeforeParam } from "./maturity.js";
 import type { EnginePerson } from "./revenue-engine.js";
+import { runsFeatureSlugsParam } from "./feature-scope.js";
 
 /**
  * Workflow-ranking EVIDENCE (per-workflow / per-audience engagement) moves on the scale of minutes
@@ -98,7 +99,7 @@ async function fetchBrandCostGroups(
 ): Promise<CostGroup[]> {
   const baseUrl = process.env.RUNS_SERVICE_URL;
   if (!baseUrl) throw new Error("RUNS_SERVICE_URL not configured");
-  const params = new URLSearchParams({ groupBy, brandId, featureSlugs: featureSlug });
+  const params = new URLSearchParams({ groupBy, brandId, featureSlugs: runsFeatureSlugsParam(featureSlug) });
   if (campaignIds && campaignIds.length > 0) params.set("campaignIds", campaignIds.join(","));
   if (startedBefore) params.set("startedBefore", startedBefore);
   const response = await fetchWithRetry(runsCostsUrl(baseUrl, "org", pricing, params), { headers: runsHeaders(brandId, identity) });
@@ -602,7 +603,7 @@ async function fetchCampaignCostGroups(
   const params = new URLSearchParams({
     groupBy: single ? "workflowSlug" : "workflowSlug,campaignId",
     brandId,
-    featureSlugs: featureSlug,
+    featureSlugs: runsFeatureSlugsParam(featureSlug),
   });
   if (single) params.set("campaignId", single);
   if (startedBefore) params.set("startedBefore", startedBefore);

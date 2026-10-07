@@ -22,6 +22,8 @@
  * merge, which is exact for anything a producer tags to one campaign. See
  * `fetchOfferDailyBroadcastActivity` in `routes/pipeline-activity.ts` for that shape.
  */
+import { withSourcingSlugs } from "./sourcing-origins.js";
+
 export type FeatureScope = string | string[];
 
 /** The scope as a list, ascending + de-duplicated, so a scope is deterministic wherever it is keyed. */
@@ -53,4 +55,15 @@ export function featureSlugsParam(scope: FeatureScope): string {
 export function soleFeatureSlug(scope: FeatureScope): string | undefined {
   const slugs = featureSlugList(scope);
   return slugs.length === 1 ? slugs[0] : undefined;
+}
+
+/**
+ * The value for runs-service's `featureSlugs` on a SPEND read: the scope, plus every sourcing origin slug
+ * when the scope holds a channel that sources leads (`lib/sourcing-origins.ts`). A serve run carries the
+ * outreach slug today and its origin's slug once lead-service / human-service switch, so a spend figure
+ * reads the same in both states; a run carries ONE slug, so the producer's `IN (...)` counts it once.
+ * Only for runs-service: email-gateway, workflow-service and lead reads keep `featureSlugsParam`.
+ */
+export function runsFeatureSlugsParam(scope: FeatureScope): string {
+  return withSourcingSlugs(featureSlugList(scope)).join(",");
 }
