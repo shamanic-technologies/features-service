@@ -10841,6 +10841,10 @@
                 },
                 "displayOrder": {
                   "type": "integer"
+                },
+                "sourceCampaignKey": {
+                  "type": "string",
+                  "description": "The key of this origin's SOURCE CAMPAIGN: `campaign:<slug>|start_to_lead_found`. A source campaign is keyed (offerId, featureSlug = this slug, legKey = start_to_lead_found) in campaign-service and billing, like every campaign."
                 }
               },
               "required": [
@@ -10851,7 +10855,8 @@
                 "provider",
                 "audienceLists",
                 "live",
-                "displayOrder"
+                "displayOrder",
+                "sourceCampaignKey"
               ]
             },
             "description": "Every origin a lead can come from, used by an offer or not."
@@ -10872,12 +10877,48 @@
               }
             },
             "description": "Per sourcing channel slug, the origin slugs it serves from: a serve run of that channel may carry exactly these origin slugs (its spend reads count them). An origin not listed for a channel would drop out of that channel's figures."
+          },
+          "leadFoundStep": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string",
+                "enum": [
+                  "lead_found"
+                ]
+              },
+              "label": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "shortDescription": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "key",
+              "label",
+              "description",
+              "shortDescription"
+            ],
+            "description": "The step every SOURCE campaign ends on and every outreach ENTRY campaign is fed from (customer copy: \"Lead found\"). Not a funnel step: no funnel names it, nothing prices it, no leg or campaign key of a funnel moves."
+          },
+          "sourceLegKey": {
+            "type": "string",
+            "enum": [
+              "start_to_lead_found"
+            ],
+            "description": "The leg key of every source campaign (from nothing to lead_found)."
           }
         },
         "required": [
           "origins",
           "sourcingChannels",
-          "originsByChannel"
+          "originsByChannel",
+          "leadFoundStep",
+          "sourceLegKey"
         ]
       },
       "OfferSourcingResponse": {
@@ -11387,6 +11428,88 @@
               "totalCostUsd"
             ],
             "description": "Σ campaigns, exact."
+          },
+          "outreachCampaigns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "campaignKey": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "`campaign:<featureSlug>|<legKey>`, the sales-paths campaigns[].campaignKey this money is (Jubilation = campaign:sales-cold-email-outreach|start_to_conversation). Null when campaign-service states no leg."
+                },
+                "featureSlug": {
+                  "type": "string"
+                },
+                "legKey": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "campaignIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "The campaign-service campaigns of the offer on this (channel × leg)."
+                },
+                "totalCostUsd": {
+                  "type": "number",
+                  "description": "The campaign's committed spend since inception, UNCHANGED (Σ campaigns[].totalCostUsd of campaignIds)."
+                },
+                "sourcingCostUsd": {
+                  "type": "number"
+                },
+                "outreachCostUsd": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "sourcedBy": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "sourceCampaignKey": {
+                        "type": "string"
+                      },
+                      "originSlug": {
+                        "type": "string"
+                      },
+                      "costUsd": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "sourceCampaignKey",
+                      "originSlug",
+                      "costUsd"
+                    ]
+                  },
+                  "description": "The part of its sourcing each SOURCE campaign now carries (cost desc)."
+                },
+                "unattributedSourcingCostUsd": {
+                  "type": "number",
+                  "description": "Sourcing no origin is proven for: it stays on this campaign, never spread."
+                },
+                "ownCostUsd": {
+                  "type": "number",
+                  "description": "totalCostUsd − Σ sourcedBy = outreach + unattributed sourcing. Σ sourcedBy + ownCostUsd = totalCostUsd exactly."
+                }
+              },
+              "required": [
+                "campaignKey",
+                "featureSlug",
+                "legKey",
+                "campaignIds",
+                "totalCostUsd",
+                "sourcingCostUsd",
+                "outreachCostUsd",
+                "sourcedBy",
+                "unattributedSourcingCostUsd",
+                "ownCostUsd"
+              ]
+            },
+            "description": "SOURCE-CAMPAIGN RE-CUT (owner 2026-10-07, the sources ARE campaigns): each OUTREACH campaign (channel × leg) of the offer, its total unchanged, split into what its source campaigns carry and its own cost. Over the offer: Σ sales-paths sourceCampaigns[].costUsd + Σ outreachCampaigns[].ownCostUsd = totals.totalCostUsd. Additive."
           }
         },
         "required": [
@@ -11398,7 +11521,8 @@
           "origins",
           "unattributed",
           "campaigns",
-          "totals"
+          "totals",
+          "outreachCampaigns"
         ]
       },
       "OfferSalesPathsResponse": {
@@ -12107,6 +12231,51 @@
                     "unavailableReason"
                   ],
                   "description": "What a credit of creditUsd buys of this campaign's outcome, on the same path and the same leg cost as its roi (owner 2026-10-06: the get-started wall's 'Here is what your $100 gets you'). Additive: roi and every cost are unchanged."
+                },
+                "fedBy": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "step": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string",
+                          "enum": [
+                            "lead_found"
+                          ]
+                        },
+                        "label": {
+                          "type": "string"
+                        },
+                        "description": {
+                          "type": "string"
+                        },
+                        "shortDescription": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "label",
+                        "description",
+                        "shortDescription"
+                      ],
+                      "description": "The step every SOURCE campaign ends on and every outreach ENTRY campaign is fed from (customer copy: \"Lead found\"). Not a funnel step: no funnel names it, nothing prices it, no leg or campaign key of a funnel moves."
+                    },
+                    "sourceCampaignKeys": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Every sourceCampaigns[].campaignKey of this read: the ON ones feed it."
+                    }
+                  },
+                  "required": [
+                    "step",
+                    "sourceCampaignKeys"
+                  ],
+                  "description": "Set on an ENTRY (proactive) campaign of a channel that sources leads (sales-cold-email-outreach, feedback-request-cold-email-outreach, sales-crm-email-outreach): it works every lead the offer's ON source campaigns found, so it reads `Lead found -> <channel> -> <toStep>`. Null on every other campaign. Its identity (campaignKey, legKey) is unchanged. Additive."
                 }
               },
               "required": [
@@ -12123,10 +12292,227 @@
                 "roi",
                 "roiCombinationKey",
                 "roiUnavailableReason",
-                "outcomesForCredit"
+                "outcomesForCredit",
+                "fedBy"
               ]
             },
             "description": "One row per CAMPAIGN (one channel on one leg) any listed path uses, with its ROI. Ordered proactive before reactive, then roi descending, a null roi last (a consumer may put the campaigns that are on first)."
+          },
+          "sourceCampaigns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "source"
+                  ]
+                },
+                "campaignKey": {
+                  "type": "string",
+                  "description": "`campaign:<origin slug>|start_to_lead_found`, unique within the response."
+                },
+                "channelSlug": {
+                  "type": "string",
+                  "description": "The ORIGIN's feature slug (sourcing-apollo-cold-filters, ...). campaign-service and billing key the campaign on (offerId, featureSlug = channelSlug, legKey)."
+                },
+                "channelName": {
+                  "type": "string",
+                  "description": "The origin's name (Apollo Cold Filters, ...)."
+                },
+                "legKey": {
+                  "type": "string",
+                  "enum": [
+                    "start_to_lead_found"
+                  ]
+                },
+                "campaignName": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The campaign's name, from the same pool and table as every campaign name (shared across clients, never changed nor reused)."
+                },
+                "reactive": {
+                  "type": "boolean",
+                  "enum": [
+                    false
+                  ]
+                },
+                "managed": {
+                  "type": "boolean",
+                  "enum": [
+                    true
+                  ]
+                },
+                "operatedBy": {
+                  "type": "string",
+                  "enum": [
+                    "platform"
+                  ]
+                },
+                "fromStep": {
+                  "nullable": true
+                },
+                "toStep": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "enum": [
+                        "lead_found"
+                      ]
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "shortDescription": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "label",
+                    "description",
+                    "shortDescription"
+                  ],
+                  "description": "The step every SOURCE campaign ends on and every outreach ENTRY campaign is fed from (customer copy: \"Lead found\"). Not a funnel step: no funnel names it, nothing prices it, no leg or campaign key of a funnel moves."
+                },
+                "provider": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "description": "The vendor's name (Apollo, LinkedIn, Apify)."
+                    },
+                    "domain": {
+                      "type": "string",
+                      "description": "The vendor's domain, stated by the backend: key a logo on it (logo.dev), never derive it from the name."
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "domain"
+                  ],
+                  "description": "The vendor ({name, domain}) a logo keys on; null = the client's own contacts."
+                },
+                "family": {
+                  "type": "string",
+                  "enum": [
+                    "cold_filters",
+                    "signal",
+                    "own_contacts"
+                  ]
+                },
+                "description": {
+                  "type": "string"
+                },
+                "live": {
+                  "type": "boolean",
+                  "description": "False on a retired origin, listed only when the offer used it."
+                },
+                "roi": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "MEASURED since inception: what this source's leads returned once contacted = its positive replies × the offer's value of a positive reply ÷ what they cost end to end (sourcing + the outreach spent on them). Same figure as /offers/:id/sourcing origins[].roi (pricing=net)."
+                },
+                "roiBasis": {
+                  "type": "string",
+                  "enum": [
+                    "measured"
+                  ]
+                },
+                "roiUnavailableReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "no_positive_reply_value",
+                    "nothing_spent",
+                    "sourcing_unavailable"
+                  ]
+                },
+                "leadsFound": {
+                  "type": "integer",
+                  "nullable": true
+                },
+                "positiveReplies": {
+                  "type": "integer",
+                  "nullable": true
+                },
+                "costUsd": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Its committed cost since inception (net): the origin's sourcing over every campaign of the offer (+ the non-serve spend of campaigns whose featureSlug is the origin)."
+                },
+                "endToEndCostUsd": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "costPerLeadUsd": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "costByOutreachCampaign": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "campaignKey": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "featureSlug": {
+                        "type": "string"
+                      },
+                      "legKey": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "costUsd": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "campaignKey",
+                      "featureSlug",
+                      "legKey",
+                      "costUsd"
+                    ]
+                  },
+                  "description": "costUsd split per outreach campaign it fed. With /offers/:id/sourcing outreachCampaigns[].ownCostUsd, Σ = the outreach campaign's unchanged total."
+                }
+              },
+              "required": [
+                "kind",
+                "campaignKey",
+                "channelSlug",
+                "channelName",
+                "legKey",
+                "campaignName",
+                "reactive",
+                "managed",
+                "operatedBy",
+                "fromStep",
+                "toStep",
+                "provider",
+                "family",
+                "description",
+                "live",
+                "roi",
+                "roiBasis",
+                "roiUnavailableReason",
+                "leadsFound",
+                "positiveReplies",
+                "costUsd",
+                "endToEndCostUsd",
+                "costPerLeadUsd",
+                "costByOutreachCampaign"
+              ]
+            },
+            "description": "The offer's SOURCE CAMPAIGNS (owner 2026-10-07: the sourcing origins ARE campaigns, `<Name> [origin] -> Lead found [On|Off] [Up to $X/day]`): every live origin, plus a retired one the offer used, in catalogue order. Their On/Off lives in campaign-service and their budget in billing, keyed (offerId, channelSlug, legKey). A failed sourcing read lists them with null figures (roiUnavailableReason sourcing_unavailable). Additive: campaigns[] is unchanged."
           }
         },
         "required": [
@@ -12141,7 +12527,8 @@
           "pricing",
           "paths",
           "selectedSalesPaths",
-          "campaigns"
+          "campaigns",
+          "sourceCampaigns"
         ]
       },
       "OrgUsageResponse": {

@@ -37,6 +37,8 @@ import {
 import { campaignNamesOf, salesPathNamesFor, SalesPathNamePoolExhaustedError, withCampaignNames } from "../lib/sales-path-names.js";
 import { runLadder, type LadderBody } from "../lib/leg-ladder.js";
 import { MISSION_PRICE_GRAINS, missionPriceOf } from "../lib/mission-workflow-order.js";
+import { buildSourceCampaigns, sourceCampaignNameKeys, sourceCampaignOrigins, withSourceCampaigns } from "../lib/source-campaigns.js";
+import { readOfferSourcing, type OfferSourcingPayload } from "./offer-sourcing.js";
 
 const router = Router();
 
@@ -96,6 +98,14 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
     return res.status(400).json({ error: `creditUsd must be a positive number of dollars up to 1000000, got ${rawCredit}`, reason: "credit_unrecognised" });
   }
   const identity = { orgId: req.orgId, userId: req.userId, runId: req.runId };
+
+  // The offer's SOURCE CAMPAIGNS read the same Gold cell as `/offers/:id/sourcing?pricing=net` (started now,
+  // awaited last). A failure lists the source campaigns with null figures (`sourcing_unavailable`), loudly:
+  // the paths and the outreach campaigns never depend on it.
+  const sourcingP: Promise<OfferSourcingPayload | null> = readOfferSourcing({ offerId, brandId, pricing: "net", identity }).catch((error) => {
+    console.error(`[features-service] sales-paths for offer ${offerId}: source campaigns unreadable (sourcing_unavailable): ${(error as Error).message}`);
+    return null;
+  });
 
   try {
     const [salesPath, legEconomics, offerChannels, selectedPaths] = await Promise.all([
@@ -170,7 +180,11 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
     // Every row's name, shared across clients and stable forever: assigned on first sight, in rank order.
     const names = await salesPathNamesFor(body.paths.map((p) => p.combinationKey));
     // Every campaign (channel × leg) with its ROI and what `creditUsd` buys of its outcome, read off the paths the customer selected.
-    return res.json(withCampaignRois(withSalesPathNames(body, names, campaignNamesOf(published)), selectedPaths, creditUsd));
+    const withRois = withCampaignRois(withSalesPathNames(body, names, campaignNamesOf(published)), selectedPaths, creditUsd);
+    // Then the source campaigns beside them (named from the same pool, in catalogue order), and `fedBy` on the outreach ones.
+    const sourcing = await sourcingP;
+    const sourceNames = await salesPathNamesFor(sourceCampaignNameKeys(sourceCampaignOrigins(sourcing)));
+    return res.json(withSourceCampaigns(withRois, buildSourceCampaigns({ sourcing, names: sourceNames })));
   } catch (error) {
     if (error instanceof OfferSalesPathNotFoundError) {
       return res.status(404).json({ error: error.message, reason: "offer_not_found" });
