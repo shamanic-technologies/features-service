@@ -1645,11 +1645,16 @@
                     },
                     "count": {
                       "type": "integer"
+                    },
+                    "cumulativeCount": {
+                      "type": "integer",
+                      "description": "Running total: Σ count from the window's first day through this day (on ?windowDays=all, since inception). Non-decreasing; the last day's value IS total, so a cumulative curve ends on the printed figure without the consumer summing anything."
                     }
                   },
                   "required": [
                     "date",
-                    "count"
+                    "count",
+                    "cumulativeCount"
                   ]
                 },
                 "description": "One entry per day of the window, ascending, zero-filled."
@@ -1679,11 +1684,16 @@
                     },
                     "count": {
                       "type": "integer"
+                    },
+                    "cumulativeCount": {
+                      "type": "integer",
+                      "description": "Running total: Σ count from the window's first day through this day (on ?windowDays=all, since inception). Non-decreasing; the last day's value IS total, so a cumulative curve ends on the printed figure without the consumer summing anything."
                     }
                   },
                   "required": [
                     "date",
-                    "count"
+                    "count",
+                    "cumulativeCount"
                   ]
                 },
                 "description": "One entry per day of the window, ascending, zero-filled."
