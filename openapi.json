@@ -10772,6 +10772,529 @@
           "hiddenCampaignIds"
         ]
       },
+      "SourcingOriginsResponse": {
+        "type": "object",
+        "properties": {
+          "origins": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "slug": {
+                  "type": "string",
+                  "description": "The origin's feature slug (a feature of the catalogue, acquisitionChannel null)."
+                },
+                "name": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string",
+                  "description": "One line a customer reads under the name."
+                },
+                "family": {
+                  "type": "string",
+                  "enum": [
+                    "cold_filters",
+                    "signal",
+                    "own_contacts"
+                  ]
+                },
+                "audienceLists": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "human-service audience list kinds (channels[].list) this origin is."
+                },
+                "live": {
+                  "type": "boolean",
+                  "description": "False on an origin nothing serves from any more (kept for its history)."
+                },
+                "displayOrder": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "slug",
+                "name",
+                "description",
+                "family",
+                "audienceLists",
+                "live",
+                "displayOrder"
+              ]
+            },
+            "description": "Every origin a lead can come from, used by an offer or not."
+          },
+          "sourcingChannels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Channel slugs whose campaigns source leads (their spend reads also count every origin slug)."
+          }
+        },
+        "required": [
+          "origins",
+          "sourcingChannels"
+        ]
+      },
+      "OfferSourcingResponse": {
+        "type": "object",
+        "properties": {
+          "offerId": {
+            "type": "string"
+          },
+          "brandId": {
+            "type": "string"
+          },
+          "pricing": {
+            "type": "string",
+            "enum": [
+              "gross",
+              "net"
+            ]
+          },
+          "definition": {
+            "type": "object",
+            "properties": {
+              "basis": {
+                "type": "string",
+                "enum": [
+                  "committed"
+                ]
+              },
+              "window": {
+                "type": "string",
+                "enum": [
+                  "since_inception"
+                ]
+              },
+              "campaignTotal": {
+                "type": "string"
+              },
+              "sourcing": {
+                "type": "string"
+              },
+              "outreach": {
+                "type": "string"
+              },
+              "outreachAllocation": {
+                "type": "string"
+              },
+              "notCounted": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "basis",
+              "window",
+              "campaignTotal",
+              "sourcing",
+              "outreach",
+              "outreachAllocation",
+              "notCounted"
+            ]
+          },
+          "valuePerPositiveReplyUsd": {
+            "type": "number",
+            "nullable": true,
+            "description": "What a positive reply is worth on the offer's terms (best declared path); null = no value stated."
+          },
+          "origins": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "slug": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Origin slug; null on the unattributed row."
+                },
+                "name": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "family": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "cold_filters",
+                    "signal",
+                    "own_contacts"
+                  ]
+                },
+                "description": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "live": {
+                  "type": "boolean",
+                  "nullable": true
+                },
+                "used": {
+                  "type": "boolean",
+                  "description": "True when the offer's campaigns served or hold a lead from this origin."
+                },
+                "audienceIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "The offer's audiences of this origin that served or hold a lead."
+                },
+                "serveCount": {
+                  "type": "integer",
+                  "description": "lead-service lead-serve runs from this origin (a serve that screened everyone out still costs)."
+                },
+                "leadsServed": {
+                  "type": "integer",
+                  "description": "Distinct leads lead-service tags with an audience of this origin."
+                },
+                "sourcingCostUsd": {
+                  "type": "number",
+                  "description": "Σ committed subtree cost of those serves."
+                },
+                "costPerLeadUsd": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "sourcingCostUsd ÷ leadsServed; null at 0 leads."
+                },
+                "positiveReplies": {
+                  "type": "integer",
+                  "description": "Those leads with a positive reply (distinct leads)."
+                },
+                "sourcingCostPerPositiveReplyUsd": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "outreachCostUsd": {
+                  "type": "number",
+                  "description": "Each campaign's outreach share allocated to this origin by the leads it served from it."
+                },
+                "endToEndCostUsd": {
+                  "type": "number",
+                  "description": "sourcingCostUsd + outreachCostUsd: what this origin's leads cost end to end."
+                },
+                "endToEndCostPerPositiveReplyUsd": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "roi": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "positiveReplies × valuePerPositiveReplyUsd ÷ endToEndCostUsd, since inception."
+                },
+                "roiUnavailableReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "no_positive_reply_value",
+                    "nothing_spent"
+                  ]
+                }
+              },
+              "required": [
+                "slug",
+                "name",
+                "family",
+                "description",
+                "live",
+                "used",
+                "audienceIds",
+                "serveCount",
+                "leadsServed",
+                "sourcingCostUsd",
+                "costPerLeadUsd",
+                "positiveReplies",
+                "sourcingCostPerPositiveReplyUsd",
+                "outreachCostUsd",
+                "endToEndCostUsd",
+                "endToEndCostPerPositiveReplyUsd",
+                "roi",
+                "roiUnavailableReason"
+              ]
+            },
+            "description": "EVERY origin of the catalogue, in catalogue order, used or not (used:false = zeros). Not additive when a lead came from two origins."
+          },
+          "unattributed": {
+            "type": "object",
+            "properties": {
+              "slug": {
+                "type": "string",
+                "nullable": true,
+                "description": "Origin slug; null on the unattributed row."
+              },
+              "name": {
+                "type": "string",
+                "nullable": true
+              },
+              "family": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "cold_filters",
+                  "signal",
+                  "own_contacts"
+                ]
+              },
+              "description": {
+                "type": "string",
+                "nullable": true
+              },
+              "live": {
+                "type": "boolean",
+                "nullable": true
+              },
+              "used": {
+                "type": "boolean",
+                "description": "True when the offer's campaigns served or hold a lead from this origin."
+              },
+              "audienceIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The offer's audiences of this origin that served or hold a lead."
+              },
+              "serveCount": {
+                "type": "integer",
+                "description": "lead-service lead-serve runs from this origin (a serve that screened everyone out still costs)."
+              },
+              "leadsServed": {
+                "type": "integer",
+                "description": "Distinct leads lead-service tags with an audience of this origin."
+              },
+              "sourcingCostUsd": {
+                "type": "number",
+                "description": "Σ committed subtree cost of those serves."
+              },
+              "costPerLeadUsd": {
+                "type": "number",
+                "nullable": true,
+                "description": "sourcingCostUsd ÷ leadsServed; null at 0 leads."
+              },
+              "positiveReplies": {
+                "type": "integer",
+                "description": "Those leads with a positive reply (distinct leads)."
+              },
+              "sourcingCostPerPositiveReplyUsd": {
+                "type": "number",
+                "nullable": true
+              },
+              "outreachCostUsd": {
+                "type": "number",
+                "description": "Each campaign's outreach share allocated to this origin by the leads it served from it."
+              },
+              "endToEndCostUsd": {
+                "type": "number",
+                "description": "sourcingCostUsd + outreachCostUsd: what this origin's leads cost end to end."
+              },
+              "endToEndCostPerPositiveReplyUsd": {
+                "type": "number",
+                "nullable": true
+              },
+              "roi": {
+                "type": "number",
+                "nullable": true,
+                "description": "positiveReplies × valuePerPositiveReplyUsd ÷ endToEndCostUsd, since inception."
+              },
+              "roiUnavailableReason": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "no_positive_reply_value",
+                  "nothing_spent"
+                ]
+              }
+            },
+            "required": [
+              "slug",
+              "name",
+              "family",
+              "description",
+              "live",
+              "used",
+              "audienceIds",
+              "serveCount",
+              "leadsServed",
+              "sourcingCostUsd",
+              "costPerLeadUsd",
+              "positiveReplies",
+              "sourcingCostPerPositiveReplyUsd",
+              "outreachCostUsd",
+              "endToEndCostUsd",
+              "endToEndCostPerPositiveReplyUsd",
+              "roi",
+              "roiUnavailableReason"
+            ],
+            "description": "Serves with no audience / an audience stating no list, and leads with no audience: never spread onto an origin."
+          },
+          "campaigns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "campaignId": {
+                  "type": "string"
+                },
+                "featureSlug": {
+                  "type": "string",
+                  "description": "The OUTREACH channel."
+                },
+                "channelName": {
+                  "type": "string"
+                },
+                "legKey": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "status": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "sources": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "slug": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "name": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "sourcingCostUsd": {
+                        "type": "number"
+                      },
+                      "serveCount": {
+                        "type": "integer"
+                      },
+                      "leadsServed": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "slug",
+                      "name",
+                      "sourcingCostUsd",
+                      "serveCount",
+                      "leadsServed"
+                    ]
+                  },
+                  "description": "The origins this campaign's leads came from (slug null = unattributed), sourcing cost desc. Render [sources] -> [channelName]."
+                },
+                "serveCount": {
+                  "type": "integer"
+                },
+                "leadsServed": {
+                  "type": "integer"
+                },
+                "positiveReplies": {
+                  "type": "integer"
+                },
+                "sourcingCostUsd": {
+                  "type": "number",
+                  "description": "Σ committed subtree cost of the campaign's lead-serve runs."
+                },
+                "outreachCostUsd": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "totalCostUsd − sourcingCostUsd, exact. Null only when sourcing exceeds the total (outreachUnavailableReason)."
+                },
+                "totalCostUsd": {
+                  "type": "number",
+                  "description": "The campaign's committed spend since inception = the figure the campaign's outcome reads print. sourcingCostUsd + outreachCostUsd = totalCostUsd to the cent."
+                },
+                "outreachUnavailableReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "sourcing_exceeds_campaign_total"
+                  ]
+                },
+                "costPerPositiveReply": {
+                  "type": "object",
+                  "properties": {
+                    "sourcingUsd": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "outreachUsd": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "totalUsd": {
+                      "type": "number",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "sourcingUsd",
+                    "outreachUsd",
+                    "totalUsd"
+                  ],
+                  "description": "Each half and the total ÷ positiveReplies; null at 0."
+                }
+              },
+              "required": [
+                "campaignId",
+                "featureSlug",
+                "channelName",
+                "legKey",
+                "status",
+                "sources",
+                "serveCount",
+                "leadsServed",
+                "positiveReplies",
+                "sourcingCostUsd",
+                "outreachCostUsd",
+                "totalCostUsd",
+                "outreachUnavailableReason",
+                "costPerPositiveReply"
+              ]
+            },
+            "description": "The offer's campaigns on a channel that sources leads, totalCostUsd desc."
+          },
+          "totals": {
+            "type": "object",
+            "properties": {
+              "sourcingCostUsd": {
+                "type": "number"
+              },
+              "outreachCostUsd": {
+                "type": "number",
+                "nullable": true
+              },
+              "totalCostUsd": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "sourcingCostUsd",
+              "outreachCostUsd",
+              "totalCostUsd"
+            ],
+            "description": "Σ campaigns, exact."
+          }
+        },
+        "required": [
+          "offerId",
+          "brandId",
+          "pricing",
+          "definition",
+          "valuePerPositiveReplyUsd",
+          "origins",
+          "unattributed",
+          "campaigns",
+          "totals"
+        ]
+      },
       "OfferSalesPathsResponse": {
         "type": "object",
         "properties": {
@@ -28162,6 +28685,179 @@
           },
           "404": {
             "description": "No campaign of this brand sells this offer (reason: offer_has_no_channels)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Downstream service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/public/sourcing-origins": {
+      "get": {
+        "summary": "Every sourcing origin a lead can come from (no auth)",
+        "description": "The sourcing half of the catalogue: one feature per origin (Apollo cold filters, Apollo buying signals, LinkedIn engagement signals, CRM contacts, retired Apify search). A campaign reads [origin] -> [outreach channel] -> outcome.",
+        "tags": [
+          "Public"
+        ],
+        "responses": {
+          "200": {
+            "description": "Sourcing origins",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourcingOriginsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/offers/{offerId}/sourcing": {
+      "get": {
+        "summary": "Where an offer's leads come from, what each source cost and paid back, and each campaign's sourcing + outreach split",
+        "description": "Since inception, committed basis. SOURCING = the whole cost subtree of each lead-service lead-serve run (attribution by parent link), OUTREACH = the campaign's committed spend minus it, so sourcing + outreach = the campaign's total exactly. The campaign total counts the channel slug AND every sourcing origin slug, so it reads the same whether serve runs carry the outreach slug (old) or the origin's slug (new). A serve's origin = its run's own slug when it is an origin, else its audience's list kind (human-service).",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "offerId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID (required)."
+            },
+            "required": true,
+            "description": "Brand UUID (required).",
+            "name": "brandId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gross",
+                "net"
+              ],
+              "description": "Omit or 'gross' (default); 'net' reads runs-service's frozen net amounts, fail-loud."
+            },
+            "required": false,
+            "description": "Omit or 'gross' (default); 'net' reads runs-service's frozen net amounts, fail-loud.",
+            "name": "pricing",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sourcing split",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfferSourcingResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing brandId or invalid pricing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Brand not held by the org (reason: brand_not_found)",
             "content": {
               "application/json": {
                 "schema": {
