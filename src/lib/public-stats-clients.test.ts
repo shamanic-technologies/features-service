@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { withSourcingSlugs } from "./sourcing-origins.js";
 
 process.env.BRAND_SERVICE_URL = "http://brand:3000";
 process.env.BRAND_SERVICE_API_KEY = "brand-key";
@@ -28,7 +29,7 @@ describe("fetchFleetSpendByDay", () => {
     const url = spy.mock.calls[0][0] as string;
     expect(url).toContain("/v1/stats/public/costs/timeseries");
     expect(url).toContain("interval=day");
-    expect(url).toContain("featureSlug=sales-cold-email-outreach");
+    expect(new URL(url).searchParams.get("featureSlugs")).toBe(withSourcingSlugs(["sales-cold-email-outreach"]).join(","));
     expect(map.get("2026-07-01")).toBeCloseTo(3, 6); // 300 cents = $3
     expect(map.get("2026-07-02")).toBeCloseTo(1.5, 6);
   });

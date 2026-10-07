@@ -129,7 +129,7 @@ export async function fetchFleetSpendByDay(
   // cross-org PERFORMANCE benchmarks, so comped spend counts at full value here (see `cost-basis.ts`).
   basis: CostBasis = "incurred",
 ): Promise<Map<string, number>> {
-  const params = new URLSearchParams({ interval: "day", featureSlug });
+  const params = new URLSearchParams({ interval: "day", featureSlugs: runsFeatureSlugsParam(featureSlug) });
   // runs filters brandId as a single `= ANY(r.brand_ids)` (NOT comma-split) — pass ONE brand per call.
   if (brandId) params.set("brandId", brandId);
   return fetchCostTimeseriesByDay(params, basis);
@@ -147,7 +147,7 @@ export async function fetchDynastySpendByDay(
   // Per-workflow cross-org RECENT rate — a performance benchmark, same basis rule as its fleet sibling.
   basis: CostBasis = "incurred",
 ): Promise<Map<string, number>> {
-  const params = new URLSearchParams({ interval: "day", featureSlug, workflowDynastySlug });
+  const params = new URLSearchParams({ interval: "day", featureSlugs: runsFeatureSlugsParam(featureSlug), workflowDynastySlug });
   return fetchCostTimeseriesByDay(params, basis);
 }
 
@@ -181,7 +181,7 @@ async function fetchDynastyBilledSpendChunk(
   workflowDynastySlug: string,
   campaignIds: string[] | undefined,
 ): Promise<Map<string, number>> {
-  const params = new URLSearchParams({ interval: "day", featureSlug, workflowDynastySlug });
+  const params = new URLSearchParams({ interval: "day", featureSlugs: runsFeatureSlugsParam(featureSlug), workflowDynastySlug });
   if (campaignIds) params.set("campaignIds", campaignIds.join(","));
   const url = `${process.env.RUNS_SERVICE_URL}/v1/stats/public/costs/timeseries?${params}`;
   const response = await fetchWithRetry(url, { headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY! } });
