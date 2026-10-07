@@ -1759,11 +1759,19 @@ registry.registerPath({
 });
 
 // ── Sourcing split (lib/sourcing-origins.ts, lib/offer-sourcing.ts) ──────────────────────────────
+const sourcingProviderSchema = z
+  .object({
+    name: z.string().describe("The vendor's name (Apollo, LinkedIn, Apify)."),
+    domain: z.string().describe("The vendor's domain, stated by the backend: key a logo on it (logo.dev), never derive it from the name."),
+  })
+  .nullable()
+  .describe("The vendor whose data this origin is. Null = no third party: the client's own contacts (a CSV upload or a connected CRM; which CRM is not known at this grain, so none is claimed).");
 const sourcingOriginSchema = z.object({
   slug: z.string().describe("The origin's feature slug (a feature of the catalogue, acquisitionChannel null)."),
   name: z.string(),
   description: z.string().describe("One line a customer reads under the name."),
   family: z.enum(["cold_filters", "signal", "own_contacts"]),
+  provider: sourcingProviderSchema,
   audienceLists: z.array(z.string()).describe("human-service audience list kinds (channels[].list) this origin is."),
   live: z.boolean().describe("False on an origin nothing serves from any more (kept for its history)."),
   displayOrder: z.number().int(),
@@ -1791,6 +1799,7 @@ const offerSourcingOriginStatsSchema = z.object({
   slug: z.string().nullable().describe("Origin slug; null on the unattributed row."),
   name: z.string().nullable(),
   family: z.enum(["cold_filters", "signal", "own_contacts"]).nullable(),
+  provider: sourcingProviderSchema.describe("The origin's vendor ({name, domain}); null on the client's own contacts AND on the unattributed row."),
   description: z.string().nullable(),
   live: z.boolean().nullable(),
   used: z.boolean().describe("True when the offer's campaigns served or hold a lead from this origin."),
@@ -1814,7 +1823,7 @@ const offerSourcingCampaignSchema = z.object({
   legKey: z.string().nullable(),
   status: z.string().nullable(),
   sources: z
-    .array(z.object({ slug: z.string().nullable(), name: z.string().nullable(), sourcingCostUsd: z.number(), serveCount: z.number().int(), leadsServed: z.number().int() }))
+    .array(z.object({ slug: z.string().nullable(), name: z.string().nullable(), provider: sourcingProviderSchema, sourcingCostUsd: z.number(), serveCount: z.number().int(), leadsServed: z.number().int() }))
     .describe("The origins this campaign's leads came from (slug null = unattributed), sourcing cost desc. Render [sources] -> [channelName]."),
   serveCount: z.number().int(),
   leadsServed: z.number().int(),
@@ -1838,11 +1847,14 @@ const offerSourcingResponseRef = registry.register(
       sourcing: z.string(),
       outreach: z.string(),
       outreachAllocation: z.string(),
+      unrecordedOrigin: z.string().describe("How a serve or lead that recorded no audience is attributed (positive evidence only)."),
       notCounted: z.array(z.string()),
     }),
     valuePerPositiveReplyUsd: z.number().nullable().describe("What a positive reply is worth on the offer's terms (best declared path); null = no value stated."),
     origins: z.array(offerSourcingOriginStatsSchema).describe("EVERY origin of the catalogue, in catalogue order, used or not (used:false = zeros). Not additive when a lead came from two origins."),
-    unattributed: offerSourcingOriginStatsSchema.describe("Serves with no audience / an audience stating no list, and leads with no audience: never spread onto an origin."),
+    unattributed: offerSourcingOriginStatsSchema.describe(
+      "Serves and leads nothing identifies: an audience stating no list, or no audience recorded on a campaign whose audience-less runs prove no single origin (definition.unrecordedOrigin). Never spread onto an origin.",
+    ),
     campaigns: z.array(offerSourcingCampaignSchema).describe("The offer's campaigns on a channel that sources leads, totalCostUsd desc."),
     totals: z.object({ sourcingCostUsd: z.number(), outreachCostUsd: z.number().nullable(), totalCostUsd: z.number() }).describe("Σ campaigns, exact."),
   }),
@@ -1853,7 +1865,7 @@ registry.registerPath({
   summary: "Where an offer's leads come from, what each source cost and paid back, and each campaign's sourcing + outreach split",
   description:
     "Since inception, committed basis. SOURCING = the whole cost subtree of each lead-service lead-serve run (attribution by parent link), OUTREACH = the campaign's committed spend minus it, so sourcing + outreach = the campaign's total exactly. " +
-    "The campaign total counts the channel slug AND every sourcing origin slug, so it reads the same whether serve runs carry the outreach slug (old) or the origin's slug (new). A serve's origin = its run's own slug when it is an origin, else its audience's list kind (human-service).",
+    "The campaign total counts the channel slug AND every sourcing origin slug, so it reads the same whether serve runs carry the outreach slug (old) or the origin's slug (new). A serve's origin = its run's own slug when it is an origin, else its audience's list kind (human-service), else (no audience recorded) the origin its campaign is PROVEN to source from: a channel serving one origin only (CRM email), else the lead-provider costs its audience-less runs bought (Apollo only, before Apollo Buying Signals existed -> Apollo Cold Filters; Apify search only -> Apify Search). Moving a serve between origins never changes a campaign total or sourcing total.",
   tags: ["Stats"],
   request: {
     headers: identityHeaders,

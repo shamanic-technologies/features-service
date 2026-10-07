@@ -26,6 +26,8 @@ import {
   fetchAudienceListKinds,
   fetchCampaignTotalCents,
   fetchOfferServeCosts,
+  fetchUnrecordedCostEvidence,
+  unrecordedOriginsByCampaign,
   type SourcedLead,
 } from "../lib/offer-sourcing.js";
 
@@ -40,6 +42,8 @@ export const OFFER_SOURCING_DEFINITION = {
   sourcing: "the whole cost subtree of every lead-service lead-serve run of the campaign (screening, reveal, enrichment, email finding and verification)",
   outreach: "campaign total minus sourcing, exact",
   outreachAllocation: "per origin, each campaign's outreach is shared over its origins by the leads it served from each",
+  unrecordedOrigin:
+    "a serve or lead that recorded no audience counts under the origin its campaign is proven to source from: a channel serving from one origin only (CRM email), else the lead-provider costs its audience-less runs bought (Apollo only, all before Apollo Buying Signals existed on 2026-10-02 -> Apollo Cold Filters; Apify search only -> Apify Search); otherwise unattributed",
   notCounted: ["audience list building (apollo-service audience-companies): it belongs to no campaign"],
 } as const;
 
@@ -50,6 +54,7 @@ router.get("/public/sourcing-origins", (_req, res) => {
       name: o.name,
       description: o.description,
       family: o.family,
+      provider: o.provider,
       audienceLists: [...o.audienceLists],
       live: o.live,
       displayOrder: o.displayOrder,
@@ -98,9 +103,10 @@ router.get("/offers/:offerId/sourcing", apiKeyAuth, async (rawReq, res) => {
         const campaignIds = campaigns.map((c) => c.id);
         const channelSlugs = [...new Set(campaigns.map((c) => c.featureSlug))];
         // Serves FIRST, campaign total second: a cost written between the two lands in the campaign total (outreach).
-        const [serves, listOfAudience, people] = await Promise.all([
+        const [serves, listOfAudience, unrecordedEvidence, people] = await Promise.all([
           fetchOfferServeCosts(brandId, campaignIds, identity, pricing),
           fetchAudienceListKinds(brandId, identity),
+          fetchUnrecordedCostEvidence(brandId, campaignIds, channelSlugs, identity),
           campaignIds.length > 0
             ? readOfferPersons({
                 brandId,
@@ -125,6 +131,7 @@ router.get("/offers/:offerId/sourcing", apiKeyAuth, async (rawReq, res) => {
           serves,
           totalCentsByCampaign,
           listOfAudience,
+          unrecordedOriginByCampaign: unrecordedOriginsByCampaign(campaigns, unrecordedEvidence),
           leads,
           valuePerPositiveReplyUsd: value,
         });

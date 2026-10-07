@@ -29,12 +29,28 @@ export type AudienceListKind = "apollo_search" | "apollo_buying_signal" | "linke
 
 export type SourcingFamily = "cold_filters" | "signal" | "own_contacts";
 
+/**
+ * The vendor whose data an origin is. `domain` is what a logo is keyed on (logo.dev), STATED here so
+ * no reader ever derives a domain from a name. Null = no third party: the client's own contacts (a CSV
+ * upload or a connected CRM; which CRM is not known at the offer grain, so none is claimed).
+ */
+export interface SourcingProvider {
+  name: string;
+  domain: string;
+}
+
+const APOLLO: SourcingProvider = { name: "Apollo", domain: "apollo.io" };
+const LINKEDIN: SourcingProvider = { name: "LinkedIn", domain: "linkedin.com" };
+const APIFY: SourcingProvider = { name: "Apify", domain: "apify.com" };
+
 export interface SourcingOrigin {
   slug: string;
   name: string;
   /** One line a customer reads under the name. */
   description: string;
   family: SourcingFamily;
+  /** The vendor whose data it is; null = the client's own contacts (no third party). */
+  provider: SourcingProvider | null;
   /** The audience list kinds this origin is (human-service's vocabulary). */
   audienceLists: readonly AudienceListKind[];
   /** False on an origin nothing serves from any more (kept: its history still costs what it cost). */
@@ -48,6 +64,7 @@ export const SOURCING_ORIGINS: readonly SourcingOrigin[] = [
     name: "Apollo Cold Filters",
     description: "People who match your target, found on Apollo by title, company and location.",
     family: "cold_filters",
+    provider: APOLLO,
     audienceLists: ["apollo_search"],
     live: true,
     displayOrder: 101,
@@ -57,6 +74,7 @@ export const SOURCING_ORIGINS: readonly SourcingOrigin[] = [
     name: "Apollo Buying Signals",
     description: "People who match your target and show a buying signal right now.",
     family: "signal",
+    provider: APOLLO,
     audienceLists: ["apollo_buying_signal"],
     live: true,
     displayOrder: 102,
@@ -66,6 +84,7 @@ export const SOURCING_ORIGINS: readonly SourcingOrigin[] = [
     name: "LinkedIn Engagement Signals",
     description: "People who recently reacted to or commented on your competitors' LinkedIn posts.",
     family: "signal",
+    provider: LINKEDIN,
     audienceLists: ["linkedin_engagement"],
     live: true,
     displayOrder: 103,
@@ -75,6 +94,7 @@ export const SOURCING_ORIGINS: readonly SourcingOrigin[] = [
     name: "Your CRM Contacts",
     description: "People from the contact list you uploaded.",
     family: "own_contacts",
+    provider: null,
     audienceLists: ["crm_contacts"],
     live: true,
     displayOrder: 104,
@@ -84,6 +104,7 @@ export const SOURCING_ORIGINS: readonly SourcingOrigin[] = [
     name: "Apify Search",
     description: "People found by our former search provider. Retired, kept for its history.",
     family: "cold_filters",
+    provider: APIFY,
     audienceLists: ["apify_search"],
     live: false,
     displayOrder: 105,
@@ -142,16 +163,79 @@ export function withSourcingSlugs(slugs: readonly string[]): string[] {
 
 /**
  * The origin of one serve: the run's own slug when it is an origin (new runs), else the list kind of
- * the audience it served from (old runs). Null = unknown (no audience on the run, or an audience
- * human-service states no list for): reported as unattributed, never guessed.
+ * the audience it served from (old runs), else — a serve that RECORDED no audience — the origin its
+ * campaign's unrecorded runs are proven to come from (`unrecordedOrigin`, see `originOfUnrecorded`).
+ * Null = no evidence: reported as unattributed, never guessed. A serve whose audience human-service
+ * states no list for stays unattributed (the evidence below is about runs that recorded NO audience).
  */
 export function originOfServe(input: {
   runFeatureSlug: string | null;
   audienceId: string | null;
   listOfAudience: ReadonlyMap<string, string | null>;
+  unrecordedOrigin?: SourcingOrigin | null;
 }): SourcingOrigin | null {
   const bySlug = sourcingOriginBySlug(input.runFeatureSlug);
   if (bySlug) return bySlug;
-  if (!input.audienceId) return null;
+  if (!input.audienceId) return input.unrecordedOrigin ?? null;
   return sourcingOriginOfList(input.listOfAudience.get(input.audienceId) ?? null);
+}
+
+// ── UNRECORDED SERVES: attributed on POSITIVE evidence, never guessed ───────────────────────────────
+//
+// Before 2026-06-25 a serve recorded no audience (and, before 2026-10-07, no origin slug). Owner
+// 2026-10-07: those were Apollo cold filters. That is checked, not assumed, per campaign:
+//   1. A channel that serves from exactly ONE origin (CRM email -> your CRM contacts) proves it.
+//   2. Else the LEAD-PROVIDER costs the campaign's unrecorded runs (no audience on the cost row) bought:
+//      only Apollo lead costs -> Apollo Cold Filters, only Apify search costs -> Apify Search; both,
+//      or neither -> unattributed. Apollo means COLD FILTERS because a buying-signal serve has carried
+//      its origin slug and audience since the very first one (2026-10-02, measured fleet-wide): an
+//      unrecorded Apollo run started on or after that day would be ambiguous, so it proves nothing.
+//      `apify-bounceverify-email` is email verification (any origin), not a lead provider: neutral, as
+//      is every LLM / scrape cost.
+// Measured 2026-10-07 at campaign grain: no campaign's unrecorded runs bought from both providers.
+
+/** The day Apollo Buying Signals served its first lead (every one of its serves records its origin). */
+export const APOLLO_BUYING_SIGNALS_FIRST_SERVE = "2026-10-02T00:00:00.000Z";
+
+type LeadProvider = "apollo" | "apify_search";
+
+/** The lead provider a cost name proves, or null when it proves none (LLM, verification, scrape...). */
+export function leadProviderOfCost(costName: string): LeadProvider | null {
+  if (costName.startsWith("apollo-")) return "apollo";
+  if (costName.startsWith("apify-pipelinelabs-") || costName.startsWith("apify-microworlds-")) return "apify_search";
+  return null;
+}
+
+/** One cost group of a campaign's UNRECORDED runs (no audience): its name and its latest run start. */
+export interface UnrecordedCostEvidence {
+  costName: string;
+  maxStartedAt: string | null;
+}
+
+/**
+ * The origin a campaign's unrecorded serves and leads come from, or null when nothing proves one.
+ * PURE. See the block comment above for the rule.
+ */
+export function originOfUnrecorded(channelSlug: string, evidence: readonly UnrecordedCostEvidence[]): SourcingOrigin | null {
+  const channelOrigins = SOURCING_ORIGINS_BY_CHANNEL[channelSlug] ?? [];
+  if (channelOrigins.length === 1) return sourcingOriginBySlug(channelOrigins[0]);
+  const providers = new Set<LeadProvider>();
+  let apolloLast: string | null = null;
+  for (const e of evidence) {
+    const p = leadProviderOfCost(e.costName);
+    if (!p) continue;
+    providers.add(p);
+    if (p === "apollo") {
+      // An Apollo cost of unknown start date cannot be placed before the signal origin existed.
+      const at = e.maxStartedAt ?? APOLLO_BUYING_SIGNALS_FIRST_SERVE;
+      if (apolloLast === null || at > apolloLast) apolloLast = at;
+    }
+  }
+  if (providers.size !== 1) return null;
+  const pick = (slug: string): SourcingOrigin | null => (channelOrigins.includes(slug) ? sourcingOriginBySlug(slug) : null);
+  if (providers.has("apify_search")) return pick("sourcing-apify-search");
+  if (apolloLast !== null && new Date(apolloLast).getTime() < new Date(APOLLO_BUYING_SIGNALS_FIRST_SERVE).getTime()) {
+    return pick("sourcing-apollo-cold-filters");
+  }
+  return null;
 }
