@@ -72,6 +72,14 @@ describe("the catalogue shortlist", () => {
     for (const s of MANAGED_CHANNEL_SLUGS) expect(SALES_PATH_CATALOGUE_CHANNEL_SLUGS.has(s)).toBe(true);
   });
 
+  it("lists LinkedIn Posting as a channel we do not run (owner 2026-10-07)", () => {
+    const c = buildChannelCatalogue(SEED_FEATURES).find((x) => x.slug === "organic-linkedin-publishing")!;
+    expect(c.name).toBe("LinkedIn Posting");
+    expect(c.salesPathEligible).toBe(true);
+    expect(c.managed).toBe(false);
+    expect(c.shortDescription).toBe("We post on LinkedIn in your name.");
+  });
+
   it("has a sourced benchmark for every (leg, channel we do not run) the shortlist publishes", () => {
     for (const legKey of FUNNEL_LEG_KEYS) {
       for (const c of legChannelsForScope(CATALOGUE, legKey, "catalogue")) {
@@ -125,7 +133,7 @@ describe("?scope=catalogue", () => {
 
   it("enters through every shortlisted entry channel, never through an agency or unlisted one", () => {
     const entries = new Set(body.paths.map((p) => p.entryChannelSlug));
-    for (const s of ["sales-cold-email-outreach", "cold-linkedin-outreach", "cold-call-outreach", "google-ads", "linkedin-ads", "meta-ads"]) {
+    for (const s of ["sales-cold-email-outreach", "cold-linkedin-outreach", "cold-call-outreach", "google-ads", "linkedin-ads", "meta-ads", "organic-linkedin-publishing"]) {
       expect(entries.has(s), s).toBe(true);
     }
     expect(SALES_PATH_CATALOGUE_CHANNEL_SLUGS.has("seo-content")).toBe(false);
