@@ -1768,7 +1768,10 @@ const sourcingOriginsResponseRef = registry.register(
   "SourcingOriginsResponse",
   z.object({
     origins: z.array(sourcingOriginSchema).describe("Every origin a lead can come from, used by an offer or not."),
-    sourcingChannels: z.array(z.string()).describe("Channel slugs whose campaigns source leads (their spend reads also count every origin slug)."),
+    sourcingChannels: z.array(z.string()).describe("Channel slugs whose campaigns source leads (their spend reads also count the origins they serve from)."),
+    originsByChannel: z
+      .record(z.string(), z.array(z.string()))
+      .describe("Per sourcing channel slug, the origin slugs it serves from: a serve run of that channel may carry exactly these origin slugs (its spend reads count them). An origin not listed for a channel would drop out of that channel's figures."),
   }),
 );
 registry.registerPath({
