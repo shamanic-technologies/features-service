@@ -26,6 +26,7 @@ import {
 import { aggregateAcrossDynasties, buildWorkflowDynasties } from "./public.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
 import { resolveOfferCampaignIds, OfferHasNoCampaignsError } from "../lib/offer-scope.js";
+import { runsFeatureSlugsParam } from "../lib/feature-scope.js";
 
 const router = Router();
 
@@ -636,7 +637,7 @@ async function fetchAudienceCosts(
   const params = new URLSearchParams({
     groupBy: "audienceId",
     brandId,
-    featureSlugs: featureSlug,
+    featureSlugs: runsFeatureSlugsParam(featureSlug),
     workflowDynastySlug,
   });
 

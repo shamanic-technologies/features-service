@@ -16,6 +16,7 @@
  * Fail loud on any transport / non-OK error (this is the essential input, not optional enrichment).
  */
 import { fetchWithRetry } from "./fetch-retry.js";
+import { runsFeatureSlugsParam } from "./feature-scope.js";
 
 function runsConfig(): { url: string; apiKey: string } {
   const url = process.env.RUNS_SERVICE_URL;
@@ -39,7 +40,7 @@ export async function fetchOrgActiveDays(
   const { url, apiKey } = runsConfig();
   const params = new URLSearchParams({
     interval: "day",
-    featureSlugs: coldEmailSlugsCsv,
+    featureSlugs: runsFeatureSlugsParam(coldEmailSlugsCsv.split(",")),
     orgId,
     startedAfter: startedAfterIso,
     tz: "UTC",

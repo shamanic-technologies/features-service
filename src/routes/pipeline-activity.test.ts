@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { withSourcingSlugs } from "../lib/sourcing-origins.js";
 import request from "supertest";
 
 vi.mock("../db/index.js", () => ({
@@ -700,7 +701,8 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
       expect(costCall).toBeTruthy();
       const costUrl = new URL(String(costCall?.[0]));
       expect(costUrl.searchParams.get("brandId")).toBe("brand-1");
-      expect(costUrl.searchParams.get("featureSlugs")).toBe("sales-cold-email-outreach");
+      // The runs spend read also counts every sourcing origin slug (lib/sourcing-origins.ts).
+      expect(costUrl.searchParams.get("featureSlugs")).toBe(withSourcingSlugs(["sales-cold-email-outreach"]).join(","));
 
       const statsCall = vi.mocked(fetchWithRetry).mock.calls.find(([input]) => {
         const callUrl = new URL(String(input));

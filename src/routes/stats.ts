@@ -20,6 +20,7 @@ import { observedCostPerOutcome } from "../lib/cost-engine.js";
 import { fetchCampaignFamiliesSoft } from "../lib/campaign-identity-client.js";
 import { resolveOfferCampaignIds, OfferHasNoCampaignsError } from "../lib/offer-scope.js";
 import { describeIdentity, EMPTY_CAMPAIGN_FAMILIES, type CampaignIdentityView } from "../lib/campaign-identity.js";
+import { runsFeatureSlugsParam } from "../lib/feature-scope.js";
 
 const RUNS_SERVICE_URL = process.env.RUNS_SERVICE_URL!;
 const RUNS_SERVICE_API_KEY = process.env.RUNS_SERVICE_API_KEY!;
@@ -251,7 +252,7 @@ async function fetchRunsStats(
   // that don't pre-resolve lineage.
   const slugs = featureSlugs ?? (filters.featureSlug ? [filters.featureSlug] : []);
   if (slugs.length > 0) {
-    params.set("featureSlugs", slugs.join(","));
+    params.set("featureSlugs", runsFeatureSlugsParam(slugs));
   }
 
   const url = `${RUNS_SERVICE_URL}/v1/stats/costs?${params}`;

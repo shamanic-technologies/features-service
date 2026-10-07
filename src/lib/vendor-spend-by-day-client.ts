@@ -24,7 +24,7 @@
 import { fetchWithRetry } from "./fetch-retry.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { campaignScopeIds } from "./campaign-scope.js";
-import { featureSlugsParam } from "./feature-scope.js";
+import { runsFeatureSlugsParam } from "./feature-scope.js";
 import { RUNS_CAMPAIGN_IDS_PER_REQUEST, SPEND_BY_DAY_MEMBER_CONCURRENCY } from "./brand-spend-by-day-client.js";
 import type { DatedSpendReader, VendorSpendDay } from "./actual-cost-history.js";
 
@@ -54,7 +54,7 @@ async function fetchOne(
   const apiKey = process.env.RUNS_SERVICE_API_KEY;
   if (!url || !apiKey) throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
 
-  const params = new URLSearchParams({ interval: "day", featureSlugs: featureSlugsParam(featureScope), orgId, brandId });
+  const params = new URLSearchParams({ interval: "day", featureSlugs: runsFeatureSlugsParam(featureScope), orgId, brandId });
   if (typeof campaign === "string") params.set("campaignId", campaign);
   else if (campaign) params.set("campaignIds", campaign.join(","));
   if (workflowDynastySlug) params.set("workflowDynastySlug", workflowDynastySlug);
@@ -145,7 +145,7 @@ async function fetchDynastyVendorChunk(
   const url = process.env.RUNS_SERVICE_URL;
   const apiKey = process.env.RUNS_SERVICE_API_KEY;
   if (!url || !apiKey) throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
-  const params = new URLSearchParams({ interval: "day", featureSlugs: featureSlug, workflowDynastySlug });
+  const params = new URLSearchParams({ interval: "day", featureSlugs: runsFeatureSlugsParam(featureSlug), workflowDynastySlug });
   if (campaignIds) params.set("campaignIds", campaignIds.join(","));
   const response = await fetchWithRetry(`${url}/internal/stats/costs/timeseries/vendor?${params}`, {
     headers: { "x-api-key": apiKey },

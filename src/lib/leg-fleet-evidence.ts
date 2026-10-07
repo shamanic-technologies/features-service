@@ -33,6 +33,7 @@ import { sumDecimalStrings } from "./decimal.js";
 import { startedBeforeParam } from "./maturity.js";
 import { fetchFleetMatureSlugStats } from "./fleet-positive-repliers.js";
 import type { EnginePerson } from "./revenue-engine.js";
+import { runsFeatureSlugsParam } from "./feature-scope.js";
 
 const FRESH_MS = 15 * 60_000;
 const STALE_MS = 6 * 60 * 60_000;
@@ -188,7 +189,7 @@ async function readOrgMatureCostGroups(
   if (!baseUrl || !apiKey) throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
   const params = new URLSearchParams({
     groupBy: "workflowSlug",
-    featureSlugs: featureSlug,
+    featureSlugs: runsFeatureSlugsParam(featureSlug),
     campaignIds: campaignIds.join(","),
     startedBefore,
   });
