@@ -897,7 +897,7 @@ const PUBLISHED_CHANNELS: ChannelSeed[] = [
     terms: terms(4000, 90, 45),
     description: "Recruit partners who send you buyers and get paid on what closes, and measure the visits they send.",
     inputs: EARNED_INPUTS },
-  { slug: "organic-linkedin-publishing", name: "Organic LinkedIn Publishing", displayOrder: 37, icon: "linkedin", family: "earned", performedBy: "software", stepTransitions: CONVERSATION_AND_VISIT,
+  { slug: "organic-linkedin-publishing", name: "LinkedIn Posting", displayOrder: 37, icon: "linkedin", family: "earned", performedBy: "software", stepTransitions: CONVERSATION_AND_VISIT,
     terms: terms(10000, 90, 30),
     description: "Publish on LinkedIn under your spokesperson's name, and earn both the replies it opens and the visits it sends.",
     inputs: EARNED_INPUTS },

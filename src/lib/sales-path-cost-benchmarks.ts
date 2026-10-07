@@ -35,6 +35,8 @@ export const SALES_PATH_CATALOGUE_CHANNEL_SLUGS: ReadonlySet<string> = new Set([
   "google-ads",
   "linkedin-ads",
   "meta-ads",
+  // Owner 2026-10-07: "In Channels add a new 'Linkedin Posting' card, Contact us on GA, and activable on Staff mode." Not managed.
+  "organic-linkedin-publishing",
   // seo-content: off the shortlist "for now" (owner 2026-10-04); its benchmark ($164/lead, First Page Sage) is in git history.
   // Middle / closing
   "ai-meeting-booking",
@@ -56,6 +58,8 @@ const METADATA_LINKEDIN = "Metadata.io, What LinkedIn Ads Cost in 2025, 138 B2B 
 const WORDSTREAM_META = "WordStream, Facebook Ads Benchmarks 2025 (https://www.wordstream.com/blog/facebook-ads-benchmarks-2025)";
 const METADATA_META = "Metadata.io, Meta Ads for B2B, $57.6M of 2025 spend (https://metadata.io/resources/blog/fb-ad-strategies)";
 const OVERLOOP_LINKEDIN = "Overloop, LinkedIn Outreach Benchmarks (https://overloop.com/blog/linkedin-outreach-benchmarks)";
+const VIRALBRAIN_GHOSTWRITING = "ViralBrain, LinkedIn Ghostwriting Pricing 2026 (https://www.viralbrain.ai/blog/linkedin-ghostwriting-pricing)";
+const SOCIALINSIDER_LINKEDIN = "Socialinsider, 2025 LinkedIn Benchmarks (https://www.socialinsider.io/social-media-benchmarks/linkedin)";
 const SALESHIVE_CALLS = "SalesHive, Cold Calling Benchmarks for B2B Sales Teams (https://saleshive.com/blog/b2b-sales-cold-calling-benchmarks-teams-2025)";
 
 export const SALES_PATH_COST_BENCHMARKS: ReadonlyMap<string, SalesPathCostBenchmark> = new Map([
@@ -77,6 +81,10 @@ export const SALES_PATH_COST_BENCHMARKS: ReadonlyMap<string, SalesPathCostBenchm
   // ── Cold LinkedIn outreach: one sender's tools over what one sender produces ──
   ["start_to_conversation|cold-linkedin-outreach", { costPerOutcomeUsd: 30, source: `Derived: ~$180/month of tools per sender (Sales Navigator + a sending tool) over 440 requests × 28% accepted × 10.4% reply × 48% positive = ~6 positive replies, rounded up. ${OVERLOOP_LINKEDIN}` }],
   ["start_to_website_visit|cold-linkedin-outreach", { costPerOutcomeUsd: 14, source: `Derived: ~$180/month of tools per sender over 440 requests × 28% accepted × 10.4% clicking (click rate assumed equal to the reply rate) = ~13 visits. ${OVERLOOP_LINKEDIN}` }],
+
+  // ── Organic LinkedIn posting ("LinkedIn Posting"): a mid-tier ghostwriter's retainer over what ~20 posts a month earn ──
+  ["start_to_conversation|organic-linkedin-publishing", { costPerOutcomeUsd: 300, source: `Derived: mid-tier ghostwriter retainer $3,000/month (top of $2,000-4,000 for daily posts) over ~10 conversations opened by ~20 posts a month (assumption). ${VIRALBRAIN_GHOSTWRITING}` }],
+  ["start_to_website_visit|organic-linkedin-publishing", { costPerOutcomeUsd: 15, source: `Derived: $3,000/month retainer over 20 posts × 1,000 impressions (low end of the 500-2,000 median) × 1% link clicks (below the 2-3% organic CTR) = 200 visits. ${VIRALBRAIN_GHOSTWRITING}; ${SOCIALINSIDER_LINKEDIN}` }],
 
   // ── Cold calls: a fully loaded in-house SDR ──
   ["start_to_conversation|cold-call-outreach", { costPerOutcomeUsd: 250, source: `Derived: in-house SDR cost per booked meeting $821 (low end of $821-1,150) × 30% (our positive conversation → meeting benchmark), rounded up. ${SALESHIVE_CALLS}` }],
