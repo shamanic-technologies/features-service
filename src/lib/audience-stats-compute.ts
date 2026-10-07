@@ -49,7 +49,7 @@ import {
 import { declaredFunnelsToRank } from "./declared-funnels.js";
 import { selectCostCents, type Pricing } from "./pricing.js";
 import { mapWithConcurrency } from "./concurrency.js";
-import { featureSlugList, featureSlugsParam, type FeatureScope } from "./feature-scope.js";
+import { featureSlugList, runsFeatureSlugsParam, type FeatureScope } from "./feature-scope.js";
 import { pickBestChannel } from "./offer-parents.js";
 import type { CampaignIdentityView } from "./campaign-identity.js";
 import { fetchLeadsForRevenue } from "./leads-client.js";
@@ -846,7 +846,7 @@ async function fetchAudienceCosts(
     // `fetchRunsCostCents` uses for a campaign family. One campaign keeps the original single grouping.
     groupBy: scopeMembers ? "audienceId,campaignId" : "audienceId",
     brandId,
-    featureSlugs: featureSlugsParam(featureScope),
+    featureSlugs: runsFeatureSlugsParam(featureScope),
   });
   // Campaign scope narrows the numerator to spend tagged to this campaign (runs supports a campaignId
   // filter alongside groupBy=audienceId). brandId stays so the query remains brand-bounded.

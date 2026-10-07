@@ -54,7 +54,7 @@ import { mapWithConcurrency } from "./concurrency.js";
 import { isVendorPricing, type Pricing } from "./pricing.js";
 import type { CampaignFilter } from "./campaign-scope.js";
 import { campaignScopeIds } from "./campaign-scope.js";
-import { featureSlugsParam, type FeatureScope } from "./feature-scope.js";
+import { runsFeatureSlugsParam, type FeatureScope } from "./feature-scope.js";
 import { fetchBroadcastEmailsByDay, fetchBroadcastQueuedEmails } from "./sequences-client.js";
 import { RUNS_CAMPAIGN_IDS_PER_REQUEST } from "./brand-spend-by-day-client.js";
 import type { SignalSeries, TimeSeriesPoint } from "./revenue-engine.js";
@@ -236,7 +236,7 @@ export async function fetchWindowActualSpendByDay(input: {
   const [scopedParts, brandWide] = await Promise.all([
     mapWithConcurrency(scopedReads, 6, (chunk) => {
       const p = base();
-      p.set("featureSlugs", featureSlugsParam(input.featureScope));
+      p.set("featureSlugs", runsFeatureSlugsParam(input.featureScope));
       if (chunk) p.set("campaignIds", chunk.join(","));
       return fetchCampaignSplitDays(p, input.pricing);
     }),

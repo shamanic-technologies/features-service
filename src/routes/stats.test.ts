@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { withSourcingSlugs } from "../lib/sourcing-origins.js";
 import request from "supertest";
 import { STATS_REGISTRY } from "../lib/stats-registry.js";
 
@@ -209,7 +210,8 @@ describe("GET /features/:featureSlug/stats — feature scoping", () => {
         // runs-service: GET takes the lineage CSV via featureSlugs; POST carries
         // it in the body (no query string), so any URL with no query is fine.
         if (parsed.search) {
-          expect(parsed.searchParams.get("featureSlugs")).toBe("sales-cold-email-outreach");
+          // A spend read also counts every sourcing origin slug (lib/sourcing-origins.ts).
+          expect(parsed.searchParams.get("featureSlugs")).toBe(withSourcingSlugs(["sales-cold-email-outreach"]).join(","));
           expect(parsed.searchParams.get("featureSlug")).toBeNull();
         }
       } else {

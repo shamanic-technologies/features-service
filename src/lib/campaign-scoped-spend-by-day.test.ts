@@ -13,6 +13,7 @@
  * (features-service#983.)
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { withSourcingSlugs } from "./sourcing-origins.js";
 
 process.env.RUNS_SERVICE_URL = "http://runs:3000";
 process.env.RUNS_SERVICE_API_KEY = "runs-key";
@@ -163,7 +164,7 @@ describe("a campaign-scoped dated-spend read answers for the CAMPAIGN, not its b
       expect(call.params.get("workflowDynastySlug")).toBe("azalea");
       expect(call.params.get("brandId")).toBe(BRAND);
       expect(call.params.get("orgId")).toBe(HEADERS.orgId);
-      expect(call.params.get("featureSlugs")).toBe(CHANNEL);
+      expect(call.params.get("featureSlugs")).toBe(withSourcingSlugs([CHANNEL]).join(","));
       expect(call.params.get("interval")).toBe("day");
     }
     // NET reads the frozen net twin on every member — a member left on gross would over-state the

@@ -28,7 +28,7 @@ import { fetchWithRetry } from "./fetch-retry.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { isVendorPricing, type Pricing } from "./pricing.js";
 import { campaignScopeIds, type CampaignFilter } from "./campaign-scope.js";
-import { featureSlugsParam, type FeatureScope } from "./feature-scope.js";
+import { runsFeatureSlugsParam, type FeatureScope } from "./feature-scope.js";
 
 /**
  * How many `campaignIds` CHUNKS of a campaign IDENTITY are read at once. Since runs-service v0.47.7 a
@@ -64,7 +64,7 @@ async function fetchDatedSpendForCampaign(
 
   const params = new URLSearchParams({
     interval: "day",
-    featureSlugs: featureSlugsParam(featureScope),
+    featureSlugs: runsFeatureSlugsParam(featureScope),
     orgId: headers.orgId,
     brandId,
   });

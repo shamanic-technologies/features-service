@@ -28,7 +28,7 @@ import { runsCostsUrl, selectCostCents, selectCostCentsString, type Pricing } fr
 import { sumDecimalStrings } from "./decimal.js";
 import { startedBeforeParam } from "./maturity.js";
 import { campaignFamilySet, singleCampaignId, type CampaignFilter } from "./campaign-scope.js";
-import { featureSlugsParam, type FeatureScope } from "./feature-scope.js";
+import { runsFeatureSlugsParam, type FeatureScope } from "./feature-scope.js";
 
 /**
  * One scope's run spend on both bases. `committedCents` is THE basis (see the module header);
@@ -79,7 +79,7 @@ export async function fetchRunsCostCents(
   const params = new URLSearchParams({
     groupBy: family ? "workflowSlug,campaignId" : "workflowSlug",
     brandId,
-    featureSlugs: featureSlugsParam(featureScope),
+    featureSlugs: runsFeatureSlugsParam(featureScope),
   });
   if (campaignId) params.set("campaignId", campaignId);
   if (workflowSlugs) params.set("workflowSlugs", workflowSlugs);
@@ -161,7 +161,7 @@ export async function fetchRunsCostCentsByWorkflowSlug(
   const params = new URLSearchParams({
     groupBy: family ? "workflowSlug,campaignId" : "workflowSlug",
     brandId,
-    featureSlugs: featureSlug,
+    featureSlugs: runsFeatureSlugsParam(featureSlug),
   });
   if (campaignId) params.set("campaignId", campaignId);
 
@@ -249,7 +249,7 @@ export async function fetchRunsCommittedCentsByCampaignWorkflow(
   const params = new URLSearchParams({
     groupBy: "workflowSlug,campaignId",
     brandId,
-    featureSlugs: featureSlugs.join(","),
+    featureSlugs: runsFeatureSlugsParam([...featureSlugs]),
   });
   const reqHeaders: Record<string, string> = {
     "x-api-key": apiKey,
@@ -313,7 +313,7 @@ export async function fetchCampaignIdsWithRuns(
     throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
   }
 
-  const params = new URLSearchParams({ groupBy: "campaignId", brandId, featureSlugs: featureSlug });
+  const params = new URLSearchParams({ groupBy: "campaignId", brandId, featureSlugs: runsFeatureSlugsParam(featureSlug) });
 
   const reqHeaders: Record<string, string> = {
     "x-api-key": apiKey,
@@ -399,7 +399,7 @@ export async function fetchMatureSpendCents(
     const params = new URLSearchParams({
       groupBy: "workflowSlug,campaignId",
       brandId,
-      featureSlugs: featureSlugsParam(featureScope),
+      featureSlugs: runsFeatureSlugsParam(featureScope),
     });
     if (campaignId) params.set("campaignId", campaignId);
     if (workflowSlugs) params.set("workflowSlugs", workflowSlugs);

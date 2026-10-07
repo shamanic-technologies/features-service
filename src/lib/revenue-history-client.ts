@@ -26,6 +26,7 @@
  * Fail loud on any transport / non-OK error (this is the essential input, not optional enrichment).
  */
 import { fetchWithRetry } from "./fetch-retry.js";
+import { runsFeatureSlugsParam } from "./feature-scope.js";
 
 /** A single dated cost bucket from runs-service /v1/stats/public/costs/timeseries (only the fields we read). */
 export interface RunsTimeseriesBucket {
@@ -73,7 +74,7 @@ export async function fetchOrgDailySpendCents(
   const { url, apiKey } = runsConfig();
   const params = new URLSearchParams({
     interval: "day",
-    featureSlugs: coldEmailSlugsCsv,
+    featureSlugs: runsFeatureSlugsParam(coldEmailSlugsCsv.split(",")),
     orgId,
     startedAfter: startedAfterIso,
     tz: "UTC",
@@ -134,7 +135,7 @@ export async function fetchBrandFirstBilledDay(
   const { url, apiKey } = runsConfig();
   const params = new URLSearchParams({
     interval: "day",
-    featureSlugs: coldEmailSlugsCsv,
+    featureSlugs: runsFeatureSlugsParam(coldEmailSlugsCsv.split(",")),
     orgId,
     brandId,
     startedAfter: startedAfterIso,
