@@ -10,6 +10,7 @@ import {
   type AcquisitionChannel,
   type ChannelStepTransition,
 } from "../lib/acquisition-channels.js";
+import { SOURCING_ORIGINS } from "../lib/sourcing-origins.js";
 
 /**
  * WHICH SALES FUNNELS A FEATURE MAY BE SOLD THROUGH — stated on EVERY feature, never omitted, and
@@ -1011,6 +1012,31 @@ for (const channel of PUBLISHED_CHANNELS) {
     inputs: channel.inputs,
     // Empty on purpose — see the block above. This service measures email today, and a stat family a
     // channel cannot produce would report a measured-looking zero for ever.
+    outputs: [],
+    charts: [],
+    entities: [],
+  });
+}
+
+/**
+ * THE SOURCING ORIGINS (`lib/sourcing-origins.ts`): where a lead comes from, one feature per origin, so
+ * a serve run can carry the origin's slug and its cost reads under the origin instead of the outreach
+ * channel. Not acquisition channels (`acquisitionChannel: null`): an origin produces no funnel step, it
+ * hands a person to a channel that does, so no channel picker lists one. Measured nowhere by `/stats`
+ * (no outputs): the origin reads are `GET /offers/:offerId/sourcing` and `GET /public/sourcing-origins`.
+ */
+for (const origin of SOURCING_ORIGINS) {
+  SEED_FEATURE_DEFS.push({
+    slug: origin.slug,
+    name: origin.name,
+    description: origin.description,
+    icon: origin.family === "signal" ? "radar" : origin.family === "own_contacts" ? "address-book" : "filter",
+    implemented: true,
+    displayOrder: origin.displayOrder,
+    status: origin.live ? "active" : "deprecated",
+    acquisitionChannel: null,
+    supersededBySlug: null,
+    inputs: [],
     outputs: [],
     charts: [],
     entities: [],
