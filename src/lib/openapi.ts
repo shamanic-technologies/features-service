@@ -1754,6 +1754,116 @@ registry.registerPath({
   },
 });
 
+// ── Sourcing split (lib/sourcing-origins.ts, lib/offer-sourcing.ts) ──────────────────────────────
+const sourcingOriginSchema = z.object({
+  slug: z.string().describe("The origin's feature slug (a feature of the catalogue, acquisitionChannel null)."),
+  name: z.string(),
+  description: z.string().describe("One line a customer reads under the name."),
+  family: z.enum(["cold_filters", "signal", "own_contacts"]),
+  audienceLists: z.array(z.string()).describe("human-service audience list kinds (channels[].list) this origin is."),
+  live: z.boolean().describe("False on an origin nothing serves from any more (kept for its history)."),
+  displayOrder: z.number().int(),
+});
+const sourcingOriginsResponseRef = registry.register(
+  "SourcingOriginsResponse",
+  z.object({
+    origins: z.array(sourcingOriginSchema).describe("Every origin a lead can come from, used by an offer or not."),
+    sourcingChannels: z.array(z.string()).describe("Channel slugs whose campaigns source leads (their spend reads also count every origin slug)."),
+  }),
+);
+registry.registerPath({
+  method: "get",
+  path: "/public/sourcing-origins",
+  summary: "Every sourcing origin a lead can come from (no auth)",
+  description: "The sourcing half of the catalogue: one feature per origin (Apollo cold filters, Apollo buying signals, LinkedIn engagement signals, CRM contacts, retired Apify search). A campaign reads [origin] -> [outreach channel] -> outcome.",
+  tags: ["Public"],
+  responses: { 200: { description: "Sourcing origins", content: { "application/json": { schema: sourcingOriginsResponseRef } } } },
+});
+
+const offerSourcingOriginStatsSchema = z.object({
+  slug: z.string().nullable().describe("Origin slug; null on the unattributed row."),
+  name: z.string().nullable(),
+  family: z.enum(["cold_filters", "signal", "own_contacts"]).nullable(),
+  description: z.string().nullable(),
+  live: z.boolean().nullable(),
+  used: z.boolean().describe("True when the offer's campaigns served or hold a lead from this origin."),
+  audienceIds: z.array(z.string()).describe("The offer's audiences of this origin that served or hold a lead."),
+  serveCount: z.number().int().describe("lead-service lead-serve runs from this origin (a serve that screened everyone out still costs)."),
+  leadsServed: z.number().int().describe("Distinct leads lead-service tags with an audience of this origin."),
+  sourcingCostUsd: z.number().describe("Σ committed subtree cost of those serves."),
+  costPerLeadUsd: z.number().nullable().describe("sourcingCostUsd ÷ leadsServed; null at 0 leads."),
+  positiveReplies: z.number().int().describe("Those leads with a positive reply (distinct leads)."),
+  sourcingCostPerPositiveReplyUsd: z.number().nullable(),
+  outreachCostUsd: z.number().describe("Each campaign's outreach share allocated to this origin by the leads it served from it."),
+  endToEndCostUsd: z.number().describe("sourcingCostUsd + outreachCostUsd: what this origin's leads cost end to end."),
+  endToEndCostPerPositiveReplyUsd: z.number().nullable(),
+  roi: z.number().nullable().describe("positiveReplies × valuePerPositiveReplyUsd ÷ endToEndCostUsd, since inception."),
+  roiUnavailableReason: z.enum(["no_positive_reply_value", "nothing_spent"]).nullable(),
+});
+const offerSourcingCampaignSchema = z.object({
+  campaignId: z.string(),
+  featureSlug: z.string().describe("The OUTREACH channel."),
+  channelName: z.string(),
+  legKey: z.string().nullable(),
+  status: z.string().nullable(),
+  sources: z
+    .array(z.object({ slug: z.string().nullable(), name: z.string().nullable(), sourcingCostUsd: z.number(), serveCount: z.number().int(), leadsServed: z.number().int() }))
+    .describe("The origins this campaign's leads came from (slug null = unattributed), sourcing cost desc. Render [sources] -> [channelName]."),
+  serveCount: z.number().int(),
+  leadsServed: z.number().int(),
+  positiveReplies: z.number().int(),
+  sourcingCostUsd: z.number().describe("Σ committed subtree cost of the campaign's lead-serve runs."),
+  outreachCostUsd: z.number().nullable().describe("totalCostUsd − sourcingCostUsd, exact. Null only when sourcing exceeds the total (outreachUnavailableReason)."),
+  totalCostUsd: z.number().describe("The campaign's committed spend since inception = the figure the campaign's outcome reads print. sourcingCostUsd + outreachCostUsd = totalCostUsd to the cent."),
+  outreachUnavailableReason: z.enum(["sourcing_exceeds_campaign_total"]).nullable(),
+  costPerPositiveReply: z.object({ sourcingUsd: z.number().nullable(), outreachUsd: z.number().nullable(), totalUsd: z.number().nullable() }).describe("Each half and the total ÷ positiveReplies; null at 0."),
+});
+const offerSourcingResponseRef = registry.register(
+  "OfferSourcingResponse",
+  z.object({
+    offerId: z.string(),
+    brandId: z.string(),
+    pricing: z.enum(["gross", "net"]),
+    definition: z.object({
+      basis: z.literal("committed"),
+      window: z.literal("since_inception"),
+      campaignTotal: z.string(),
+      sourcing: z.string(),
+      outreach: z.string(),
+      outreachAllocation: z.string(),
+      notCounted: z.array(z.string()),
+    }),
+    valuePerPositiveReplyUsd: z.number().nullable().describe("What a positive reply is worth on the offer's terms (best declared path); null = no value stated."),
+    origins: z.array(offerSourcingOriginStatsSchema).describe("EVERY origin of the catalogue, in catalogue order, used or not (used:false = zeros). Not additive when a lead came from two origins."),
+    unattributed: offerSourcingOriginStatsSchema.describe("Serves with no audience / an audience stating no list, and leads with no audience: never spread onto an origin."),
+    campaigns: z.array(offerSourcingCampaignSchema).describe("The offer's campaigns on a channel that sources leads, totalCostUsd desc."),
+    totals: z.object({ sourcingCostUsd: z.number(), outreachCostUsd: z.number().nullable(), totalCostUsd: z.number() }).describe("Σ campaigns, exact."),
+  }),
+);
+registry.registerPath({
+  method: "get",
+  path: "/offers/{offerId}/sourcing",
+  summary: "Where an offer's leads come from, what each source cost and paid back, and each campaign's sourcing + outreach split",
+  description:
+    "Since inception, committed basis. SOURCING = the whole cost subtree of each lead-service lead-serve run (attribution by parent link), OUTREACH = the campaign's committed spend minus it, so sourcing + outreach = the campaign's total exactly. " +
+    "The campaign total counts the channel slug AND every sourcing origin slug, so it reads the same whether serve runs carry the outreach slug (old) or the origin's slug (new). A serve's origin = its run's own slug when it is an origin, else its audience's list kind (human-service).",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ offerId: z.string() }),
+    query: z.object({
+      brandId: z.string().describe("Brand UUID (required)."),
+      pricing: z.enum(["gross", "net"]).optional().describe("Omit or 'gross' (default); 'net' reads runs-service's frozen net amounts, fail-loud."),
+    }),
+  },
+  responses: {
+    200: { description: "Sourcing split", content: { "application/json": { schema: offerSourcingResponseRef } } },
+    400: { description: "Missing brandId or invalid pricing", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Brand not held by the org (reason: brand_not_found)", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 const salesPathStepSchema = z.object({ key: z.string(), label: z.string(), description: z.string(), shortDescription: z.string() });
 const salesPathCandidateSchema = z.object({
   slug: z.string(),

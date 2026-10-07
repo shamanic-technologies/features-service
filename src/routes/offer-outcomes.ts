@@ -60,7 +60,7 @@ const soft = <T>(what: string, p: Promise<T>): Promise<T | null> =>
   });
 
 /** The offer's people, carrying the SAME per-lead overlays the brand revenue read applies. */
-async function readOfferPersons(input: {
+export async function readOfferPersons(input: {
   brandId: string;
   campaignIds: string[];
   headers: DownstreamHeaders;
