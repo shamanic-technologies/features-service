@@ -290,6 +290,12 @@ describe("GET /offers/:offerId/revenue — today's spend and ?windowDays=", () =
     expect(w.recipientsRepliesPositive.total).toBe(
       w.recipientsRepliesPositive.daily.reduce((s: number, d: { count: number }) => s + d.count, 0),
     );
+    // Since-inception running totals: non-decreasing, last point = the served total.
+    for (const series of [w.recipientsRepliesPositive, w.recipientsClicked]) {
+      const cum = series.daily.map((d: { cumulativeCount: number }) => d.cumulativeCount);
+      expect(cum.every((v: number, i: number) => i === 0 || v >= cum[i - 1])).toBe(true);
+      expect(cum[cum.length - 1]).toBe(series.total);
+    }
 
     const bounded = (await read("&windowDays=90")).body.window;
     expect(bounded.sinceInception).toBe(false);
