@@ -10831,12 +10831,23 @@
             "items": {
               "type": "string"
             },
-            "description": "Channel slugs whose campaigns source leads (their spend reads also count every origin slug)."
+            "description": "Channel slugs whose campaigns source leads (their spend reads also count the origins they serve from)."
+          },
+          "originsByChannel": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "description": "Per sourcing channel slug, the origin slugs it serves from: a serve run of that channel may carry exactly these origin slugs (its spend reads count them). An origin not listed for a channel would drop out of that channel's figures."
           }
         },
         "required": [
           "origins",
-          "sourcingChannels"
+          "sourcingChannels",
+          "originsByChannel"
         ]
       },
       "OfferSourcingResponse": {

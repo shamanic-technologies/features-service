@@ -20,7 +20,7 @@ import { DEFAULT_PRICED_CAUSES } from "../lib/outcome-cause.js";
 import { assertBrandHeld, BrandOwnershipError } from "../lib/brand-ownership.js";
 import { stepValues } from "../lib/offer-outcomes.js";
 import { SEED_FEATURES } from "../seed/features.js";
-import { SOURCING_ORIGINS, SOURCING_PARENT_CHANNEL_SLUGS } from "../lib/sourcing-origins.js";
+import { SOURCING_ORIGINS, SOURCING_ORIGINS_BY_CHANNEL, SOURCING_PARENT_CHANNEL_SLUGS } from "../lib/sourcing-origins.js";
 import {
   computeOfferSourcing,
   fetchAudienceListKinds,
@@ -55,6 +55,7 @@ router.get("/public/sourcing-origins", (_req, res) => {
       displayOrder: o.displayOrder,
     })),
     sourcingChannels: [...SOURCING_PARENT_CHANNEL_SLUGS],
+    originsByChannel: Object.fromEntries(SOURCING_PARENT_CHANNEL_SLUGS.map((c) => [c, [...SOURCING_ORIGINS_BY_CHANNEL[c]!]])),
   });
 });
 
