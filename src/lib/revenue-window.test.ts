@@ -95,9 +95,15 @@ describe("buildRevenueWindow", () => {
     expect(w.spend!.totalCostPerEmailSentCents).toBeCloseTo(5.197);
     expect(w.recipientsRepliesPositive).toEqual({
       total: 1,
-      daily: [{ date: "2026-10-01", count: 0 }, { date: "2026-10-02", count: 1 }, { date: "2026-10-03", count: 0 }],
+      daily: [
+        { date: "2026-10-01", count: 0, cumulativeCount: 0 },
+        { date: "2026-10-02", count: 1, cumulativeCount: 1 },
+        { date: "2026-10-03", count: 0, cumulativeCount: 1 },
+      ],
     });
     expect(w.recipientsClicked.total).toBe(3);
+    // The running total climbs day by day and ends on the printed total.
+    expect(w.recipientsClicked.daily.map((d) => d.cumulativeCount)).toEqual([0, 0, 3]);
   });
 
   it("cost per email is null when nothing was sent, and every part null when unread", () => {

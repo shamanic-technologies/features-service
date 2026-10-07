@@ -34,7 +34,8 @@
  *     2026-10-03). `totalCostPerEmailSentCents` divides THAT total; `costPerEmailSentCents` stays actual.
  *   - recipientsRepliesPositive / recipientsClicked — the body's OWN per-day series (people, first
  *     time each did it) summed over the window's days; an undated one sits on no day and is not in a
- *     window.
+ *     window. Each day also carries `cumulativeCount`, the running total since the window start (on
+ *     `?windowDays=all`, since inception), so its last point IS `total`.
  *   - queuedEmails — EMAILS (every step) scheduled and not yet sent RIGHT NOW over the scope's campaigns
  *     and channels: email-gateway's `broadcast.emailStats.queued`, relayed from the sender's own queue
  *     (live sequences only). A SNAPSHOT, not a window figure: the same number whatever ?windowDays=.
@@ -123,6 +124,12 @@ export interface WindowEmailDay {
   deliveryRatePct: number | null;
 }
 
+/** A count per window day, plus its running total since the window start (last point = `total`). */
+export interface WindowCountSeries {
+  total: number;
+  daily: Array<{ date: string; count: number; cumulativeCount: number }>;
+}
+
 export interface RevenueWindow {
   days: number;
   sinceInception: boolean;
@@ -146,8 +153,8 @@ export interface RevenueWindow {
       brandLevelTotalSpentCents: number;
     }>;
   } | null;
-  recipientsRepliesPositive: { total: number; daily: Array<{ date: string; count: number }> };
-  recipientsClicked: { total: number; daily: Array<{ date: string; count: number }> };
+  recipientsRepliesPositive: WindowCountSeries;
+  recipientsClicked: WindowCountSeries;
   expectedPipeline: {
     totalPipelineUsd: number;
     undatedPipelineUsd: number;
@@ -346,10 +353,17 @@ export function buildRevenueWindow(input: {
     };
   }
 
-  const inWindow = (series: SignalSeries) => {
+  // Served with its running total so a "since inception" curve climbs to the printed figure
+  // without the browser summing a series (its last point IS `total`).
+  const inWindow = (series: SignalSeries): WindowCountSeries => {
     const byDate = new Map(series.daily.map((p) => [p.date, p.count] as const));
-    const daily = dates.map((date) => ({ date, count: byDate.get(date) ?? 0 }));
-    return { total: daily.reduce((s, d) => s + d.count, 0), daily };
+    let running = 0;
+    const daily = dates.map((date) => {
+      const count = byDate.get(date) ?? 0;
+      running += count;
+      return { date, count, cumulativeCount: running };
+    });
+    return { total: running, daily };
   };
 
   let expectedPipeline: RevenueWindow["expectedPipeline"] = null;

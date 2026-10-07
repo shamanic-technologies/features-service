@@ -855,7 +855,11 @@ const pipelineUnpricedReasonSchema = z.enum(PIPELINE_UNPRICED_REASONS);
 
 const windowCountSeriesSchema = z.object({
   total: z.number().int().describe("Σ daily[].count, exactly."),
-  daily: z.array(z.object({ date: z.string().describe("UTC day, YYYY-MM-DD."), count: z.number().int() })).describe("One entry per day of the window, ascending, zero-filled."),
+  daily: z.array(z.object({
+    date: z.string().describe("UTC day, YYYY-MM-DD."),
+    count: z.number().int(),
+    cumulativeCount: z.number().int().describe("Running total: Σ count from the window's first day through this day (on ?windowDays=all, since inception). Non-decreasing; the last day's value IS total, so a cumulative curve ends on the printed figure without the consumer summing anything."),
+  })).describe("One entry per day of the window, ascending, zero-filled."),
 });
 
 const revenueWindowSchema = z.object({
