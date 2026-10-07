@@ -113,6 +113,36 @@ export const SOURCING_ORIGINS: readonly SourcingOrigin[] = [
 
 export const SOURCING_ORIGIN_SLUGS: readonly string[] = SOURCING_ORIGINS.map((o) => o.slug);
 
+// ── SOURCE CAMPAIGNS (owner 2026-10-07: "the sources ARE campaigns") ─────────────────────────────────
+//
+// Each origin is a CAMPAIGN of the offer, ending on the step "Lead found":
+//     <Name>  [Apollo Cold Filters] -> Lead found   [On|Off]  [Up to $X/day]
+// and the outreach campaigns that follow START on it ("Lead found -> Sales Cold Email -> Positive reply").
+// A source campaign is keyed exactly like every other campaign of the fleet: (offer, featureSlug, legKey)
+// with featureSlug = the ORIGIN's slug and legKey = `SOURCE_LEG_KEY`. Its name comes from the same pool
+// and table as every campaign name (`campaignNameKeyOf(originSlug, SOURCE_LEG_KEY)`).
+//
+// `lead_found` is NOT a funnel step: no funnel names it, nothing prices it, `CHANNEL_STEP_KEYS` does not hold
+// it (the entry legs of the funnels stay `start_to_*`, so no existing campaign, budget or leg key moves). It is
+// the shared hand-off between the sources and the outreach: every ON source puts people on it, every ON
+// outreach campaign of the offer works them, a person found by two sources is contacted once.
+
+/** The step every source campaign ends on and every outreach entry campaign is fed from. Customer copy. */
+export const LEAD_FOUND_STEP = {
+  key: "lead_found",
+  label: "Lead found",
+  description: "A person who matches your target is found, with a verified email.",
+  shortDescription: "Finds the right people",
+} as const;
+
+/** The leg a source campaign works: from nothing to `lead_found`. The leg key of every source campaign. */
+export const SOURCE_LEG_KEY = "start_to_lead_found" as const;
+
+/** The campaign key of an origin's source campaign (`campaignNameKeyOf(originSlug, SOURCE_LEG_KEY)`). */
+export function sourceCampaignKeyOf(originSlug: string): string {
+  return `campaign:${originSlug}|${SOURCE_LEG_KEY}`;
+}
+
 const ORIGIN_BY_SLUG = new Map(SOURCING_ORIGINS.map((o) => [o.slug, o] as const));
 const ORIGIN_BY_LIST = new Map<string, SourcingOrigin>(
   SOURCING_ORIGINS.flatMap((o) => o.audienceLists.map((l) => [l, o] as const)),
@@ -217,6 +247,9 @@ export interface UnrecordedCostEvidence {
  * PURE. See the block comment above for the rule.
  */
 export function originOfUnrecorded(channelSlug: string, evidence: readonly UnrecordedCostEvidence[]): SourcingOrigin | null {
+  // A SOURCE campaign (its featureSlug is an origin) sources from that origin and nothing else.
+  const self = sourcingOriginBySlug(channelSlug);
+  if (self) return self;
   const channelOrigins = SOURCING_ORIGINS_BY_CHANNEL[channelSlug] ?? [];
   if (channelOrigins.length === 1) return sourcingOriginBySlug(channelOrigins[0]);
   const providers = new Set<LeadProvider>();
