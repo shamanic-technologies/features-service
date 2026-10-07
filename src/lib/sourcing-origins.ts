@@ -106,23 +106,37 @@ export function sourcingOriginOfList(list: string | null | undefined): SourcingO
 }
 
 /**
- * The channels whose runs SOURCE leads (serve subtrees run under them). Measured 2026-10-07: every
- * `lead-service:lead-serve` run of the last 30 days carried `sales-cold-email-outreach` (lifetime: a
- * handful under retired channels). A second channel that serves leads must be listed here, or its
- * spend reads lose the sourcing cost once serves carry an origin slug.
+ * The channels whose runs SOURCE leads, and the origins each one serves from. A spend read about a
+ * channel counts ONLY its own origins, so a brand running two of them never counts one channel's
+ * sourcing under the other. Measured 2026-10-07 (runs × human-service audiences, lifetime):
+ * `sales-cold-email-outreach` served apollo (202k) + apify (529) audiences, `feedback-request-cold-
+ * email-outreach` apollo (519, inactive since 2026-08-25), `sales-crm-email-outreach` no audience so far,
+ * and human-service routes CRM audiences onto it (never onto cold email). A channel that starts serving
+ * another origin must list it here, or its spend reads lose that sourcing cost once serves carry the
+ * origin slug.
  */
-export const SOURCING_PARENT_CHANNEL_SLUGS: readonly string[] = ["sales-cold-email-outreach"];
+const SEARCH_AND_SIGNAL_ORIGINS = [
+  "sourcing-apollo-cold-filters",
+  "sourcing-apollo-buying-signals",
+  "sourcing-linkedin-engagement-signals",
+  "sourcing-apify-search",
+] as const;
+export const SOURCING_ORIGINS_BY_CHANNEL: Readonly<Record<string, readonly string[]>> = {
+  "sales-cold-email-outreach": SEARCH_AND_SIGNAL_ORIGINS,
+  "feedback-request-cold-email-outreach": SEARCH_AND_SIGNAL_ORIGINS,
+  "sales-crm-email-outreach": ["sourcing-crm-contacts"],
+};
+
+export const SOURCING_PARENT_CHANNEL_SLUGS: readonly string[] = Object.keys(SOURCING_ORIGINS_BY_CHANNEL).sort();
 
 /**
  * The slugs a runs-service SPEND read must filter on to count a channel's whole cost in both states:
- * the scope itself, plus every origin slug when the scope holds a channel that sources leads.
- * Sorted + de-duplicated, so the producer's `IN (...)` counts each run once.
+ * the scope itself, plus the origins each sourcing channel of the scope serves from. Sorted +
+ * de-duplicated, so the producer's `IN (...)` counts each run once.
  */
 export function withSourcingSlugs(slugs: readonly string[]): string[] {
   const set = new Set(slugs);
-  if (slugs.some((s) => SOURCING_PARENT_CHANNEL_SLUGS.includes(s))) {
-    for (const s of SOURCING_ORIGIN_SLUGS) set.add(s);
-  }
+  for (const s of slugs) for (const o of SOURCING_ORIGINS_BY_CHANNEL[s] ?? []) set.add(o);
   return [...set].sort();
 }
 
