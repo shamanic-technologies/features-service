@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { computeOfferSourcing, type ServeCost, type SourcedLead } from "./offer-sourcing.js";
-import { originOfServe, withSourcingSlugs, SOURCING_ORIGIN_SLUGS, SOURCING_ORIGINS } from "./sourcing-origins.js";
+import { originOfServe, withSourcingSlugs, SOURCING_ORIGIN_SLUGS, SOURCING_ORIGINS, SOURCING_ORIGINS_BY_CHANNEL } from "./sourcing-origins.js";
 import { SEED_FEATURES } from "../seed/features.js";
 
 const AUD_COLD = "aud-cold";
@@ -35,9 +35,24 @@ describe("sourcing origins", () => {
     expect(originOfServe({ runFeatureSlug: "sales-cold-email-outreach", audienceId: "unknown", listOfAudience: lists })).toBeNull();
   });
 
-  it("a spend read about a sourcing channel also counts every origin slug; any other scope is unchanged", () => {
-    expect(withSourcingSlugs(["sales-cold-email-outreach"])).toEqual(["sales-cold-email-outreach", ...SOURCING_ORIGIN_SLUGS].sort());
+  it("a spend read about a sourcing channel also counts the origins THAT channel serves from; any other scope is unchanged", () => {
+    expect(withSourcingSlugs(["sales-cold-email-outreach"])).toEqual([
+      "sales-cold-email-outreach",
+      "sourcing-apify-search",
+      "sourcing-apollo-buying-signals",
+      "sourcing-apollo-cold-filters",
+      "sourcing-linkedin-engagement-signals",
+    ]);
+    expect(withSourcingSlugs(["sales-crm-email-outreach"])).toEqual(["sales-crm-email-outreach", "sourcing-crm-contacts"]);
     expect(withSourcingSlugs(["ai-meeting-booking"])).toEqual(["ai-meeting-booking"]);
+  });
+
+  it("every origin is served by at least one sourcing channel, and no origin by two channel families", () => {
+    const servedBy = new Map<string, string[]>();
+    for (const [channel, origins] of Object.entries(SOURCING_ORIGINS_BY_CHANNEL)) for (const o of origins) servedBy.set(o, [...(servedBy.get(o) ?? []), channel]);
+    for (const slug of SOURCING_ORIGIN_SLUGS) expect(servedBy.has(slug), slug).toBe(true);
+    // a CRM origin under cold email would be counted twice on a brand running both channels
+    expect(servedBy.get("sourcing-crm-contacts")).toEqual(["sales-crm-email-outreach"]);
   });
 });
 
