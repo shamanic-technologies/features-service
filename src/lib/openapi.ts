@@ -1775,7 +1775,11 @@ const sourcingOriginSchema = z.object({
   audienceLists: z.array(z.string()).describe("human-service audience list kinds (channels[].list) this origin is."),
   live: z.boolean().describe("False on an origin nothing serves from any more (kept for its history)."),
   displayOrder: z.number().int(),
+  sourceCampaignKey: z.string().describe("The key of this origin's SOURCE CAMPAIGN: `campaign:<slug>|start_to_lead_found`. A source campaign is keyed (offerId, featureSlug = this slug, legKey = start_to_lead_found) in campaign-service and billing, like every campaign."),
 });
+const leadFoundStepSchema = z
+  .object({ key: z.literal("lead_found"), label: z.string(), description: z.string(), shortDescription: z.string() })
+  .describe("The step every SOURCE campaign ends on and every outreach ENTRY campaign is fed from (customer copy: \"Lead found\"). Not a funnel step: no funnel names it, nothing prices it, no leg or campaign key of a funnel moves.");
 const sourcingOriginsResponseRef = registry.register(
   "SourcingOriginsResponse",
   z.object({
@@ -1784,6 +1788,8 @@ const sourcingOriginsResponseRef = registry.register(
     originsByChannel: z
       .record(z.string(), z.array(z.string()))
       .describe("Per sourcing channel slug, the origin slugs it serves from: a serve run of that channel may carry exactly these origin slugs (its spend reads count them). An origin not listed for a channel would drop out of that channel's figures."),
+    leadFoundStep: leadFoundStepSchema,
+    sourceLegKey: z.literal("start_to_lead_found").describe("The leg key of every source campaign (from nothing to lead_found)."),
   }),
 );
 registry.registerPath({
@@ -1857,6 +1863,22 @@ const offerSourcingResponseRef = registry.register(
     ),
     campaigns: z.array(offerSourcingCampaignSchema).describe("The offer's campaigns on a channel that sources leads, totalCostUsd desc."),
     totals: z.object({ sourcingCostUsd: z.number(), outreachCostUsd: z.number().nullable(), totalCostUsd: z.number() }).describe("Σ campaigns, exact."),
+    outreachCampaigns: z
+      .array(
+        z.object({
+          campaignKey: z.string().nullable().describe("`campaign:<featureSlug>|<legKey>`, the sales-paths campaigns[].campaignKey this money is (Jubilation = campaign:sales-cold-email-outreach|start_to_conversation). Null when campaign-service states no leg."),
+          featureSlug: z.string(),
+          legKey: z.string().nullable(),
+          campaignIds: z.array(z.string()).describe("The campaign-service campaigns of the offer on this (channel × leg)."),
+          totalCostUsd: z.number().describe("The campaign's committed spend since inception, UNCHANGED (Σ campaigns[].totalCostUsd of campaignIds)."),
+          sourcingCostUsd: z.number(),
+          outreachCostUsd: z.number().nullable(),
+          sourcedBy: z.array(z.object({ sourceCampaignKey: z.string(), originSlug: z.string(), costUsd: z.number() })).describe("The part of its sourcing each SOURCE campaign now carries (cost desc)."),
+          unattributedSourcingCostUsd: z.number().describe("Sourcing no origin is proven for: it stays on this campaign, never spread."),
+          ownCostUsd: z.number().describe("totalCostUsd − Σ sourcedBy = outreach + unattributed sourcing. Σ sourcedBy + ownCostUsd = totalCostUsd exactly."),
+        }),
+      )
+      .describe("SOURCE-CAMPAIGN RE-CUT (owner 2026-10-07, the sources ARE campaigns): each OUTREACH campaign (channel × leg) of the offer, its total unchanged, split into what its source campaigns carry and its own cost. Over the offer: Σ sales-paths sourceCampaigns[].costUsd + Σ outreachCampaigns[].ownCostUsd = totals.totalCostUsd. Additive."),
   }),
 );
 registry.registerPath({
@@ -2009,9 +2031,45 @@ const offerSalesPathsResponseRef = registry.register(
                 .describe("Why outcomes is null: no_platform_cost (the customer's team works the leg, a credit buys none of it), leg_cost_unavailable (the leg is unpriced on that path), not_on_a_selected_path, selected_paths_unavailable."),
             })
             .describe("What a credit of creditUsd buys of this campaign's outcome, on the same path and the same leg cost as its roi (owner 2026-10-06: the get-started wall's 'Here is what your $100 gets you'). Additive: roi and every cost are unchanged."),
+          fedBy: z
+            .object({ step: leadFoundStepSchema, sourceCampaignKeys: z.array(z.string()).describe("Every sourceCampaigns[].campaignKey of this read: the ON ones feed it.") })
+            .nullable()
+            .describe("Set on an ENTRY (proactive) campaign of a channel that sources leads (sales-cold-email-outreach, feedback-request-cold-email-outreach, sales-crm-email-outreach): it works every lead the offer's ON source campaigns found, so it reads `Lead found -> <channel> -> <toStep>`. Null on every other campaign. Its identity (campaignKey, legKey) is unchanged. Additive."),
         }),
       )
       .describe("One row per CAMPAIGN (one channel on one leg) any listed path uses, with its ROI. Ordered proactive before reactive, then roi descending, a null roi last (a consumer may put the campaigns that are on first)."),
+    sourceCampaigns: z
+      .array(
+        z.object({
+          kind: z.literal("source"),
+          campaignKey: z.string().describe("`campaign:<origin slug>|start_to_lead_found`, unique within the response."),
+          channelSlug: z.string().describe("The ORIGIN's feature slug (sourcing-apollo-cold-filters, ...). campaign-service and billing key the campaign on (offerId, featureSlug = channelSlug, legKey)."),
+          channelName: z.string().describe("The origin's name (Apollo Cold Filters, ...)."),
+          legKey: z.literal("start_to_lead_found"),
+          campaignName: z.string().nullable().describe("The campaign's name, from the same pool and table as every campaign name (shared across clients, never changed nor reused)."),
+          reactive: z.literal(false),
+          managed: z.literal(true),
+          operatedBy: z.literal("platform"),
+          fromStep: z.null(),
+          toStep: leadFoundStepSchema,
+          provider: sourcingProviderSchema.describe("The vendor ({name, domain}) a logo keys on; null = the client's own contacts."),
+          family: z.enum(["cold_filters", "signal", "own_contacts"]),
+          description: z.string(),
+          live: z.boolean().describe("False on a retired origin, listed only when the offer used it."),
+          roi: z.number().nullable().describe("MEASURED since inception: what this source's leads returned once contacted = its positive replies × the offer's value of a positive reply ÷ what they cost end to end (sourcing + the outreach spent on them). Same figure as /offers/:id/sourcing origins[].roi (pricing=net)."),
+          roiBasis: z.literal("measured"),
+          roiUnavailableReason: z.enum(["no_positive_reply_value", "nothing_spent", "sourcing_unavailable"]).nullable(),
+          leadsFound: z.number().int().nullable(),
+          positiveReplies: z.number().int().nullable(),
+          costUsd: z.number().nullable().describe("Its committed cost since inception (net): the origin's sourcing over every campaign of the offer (+ the non-serve spend of campaigns whose featureSlug is the origin)."),
+          endToEndCostUsd: z.number().nullable(),
+          costPerLeadUsd: z.number().nullable(),
+          costByOutreachCampaign: z
+            .array(z.object({ campaignKey: z.string().nullable(), featureSlug: z.string(), legKey: z.string().nullable(), costUsd: z.number() }))
+            .describe("costUsd split per outreach campaign it fed. With /offers/:id/sourcing outreachCampaigns[].ownCostUsd, Σ = the outreach campaign's unchanged total."),
+        }),
+      )
+      .describe("The offer's SOURCE CAMPAIGNS (owner 2026-10-07: the sourcing origins ARE campaigns, `<Name> [origin] -> Lead found [On|Off] [Up to $X/day]`): every live origin, plus a retired one the offer used, in catalogue order. Their On/Off lives in campaign-service and their budget in billing, keyed (offerId, channelSlug, legKey). A failed sourcing read lists them with null figures (roiUnavailableReason sourcing_unavailable). Additive: campaigns[] is unchanged."),
   }),
 );
 
