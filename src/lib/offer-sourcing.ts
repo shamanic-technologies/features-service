@@ -27,7 +27,10 @@
  *                       lead's emails is not split per origin anywhere upstream.
  *   endToEndCostUsd        sourcing + allocated outreach: what the origin's leads cost end to end.
  *   roi                 positive replies × value of a positive reply (offer terms) ÷ end-to-end cost.
- * Serves and leads whose origin is unknown sit in `unattributed`, never spread.
+ * A serve or lead that recorded NO audience takes the origin its campaign's unrecorded runs are PROVEN
+ * to come from (`originOfUnrecorded`: a single-origin channel, or the lead-provider costs those runs
+ * bought). Only WHICH origin a serve counts under moves: every campaign total and sourcing figure is
+ * the same sum. Serves and leads nothing proves sit in `unattributed`, never spread.
  */
 import { fetchWithRetry } from "./fetch-retry.js";
 import { addDecimals, decimalCentsToUsd, sumDecimalStrings } from "./decimal.js";
@@ -36,9 +39,12 @@ import { runsCostsUrl, selectCostCentsString, type Pricing } from "./pricing.js"
 import {
   SOURCING_ORIGINS,
   originOfServe,
+  originOfUnrecorded,
   sourcingOriginOfList,
   withSourcingSlugs,
   type SourcingOrigin,
+  type SourcingProvider,
+  type UnrecordedCostEvidence,
 } from "./sourcing-origins.js";
 
 /** One serve run of the offer's campaigns and its subtree's committed cost (cents, decimal text). */
@@ -70,6 +76,7 @@ export interface OriginStats {
   slug: string | null;
   name: string | null;
   family: SourcingOrigin["family"] | null;
+  provider: SourcingProvider | null;
   description: string | null;
   live: boolean | null;
   used: boolean;
@@ -93,7 +100,7 @@ export interface CampaignSourcingSplit {
   channelName: string;
   legKey: string | null;
   status: string | null;
-  sources: Array<{ slug: string | null; name: string | null; sourcingCostUsd: number; serveCount: number; leadsServed: number }>;
+  sources: Array<{ slug: string | null; name: string | null; provider: SourcingProvider | null; sourcingCostUsd: number; serveCount: number; leadsServed: number }>;
   serveCount: number;
   leadsServed: number;
   positiveReplies: number;
@@ -135,6 +142,8 @@ export function computeOfferSourcing(input: {
   serves: readonly ServeCost[];
   totalCentsByCampaign: ReadonlyMap<string, string>;
   listOfAudience: ReadonlyMap<string, string | null>;
+  /** campaign id → the origin its unrecorded (audience-less) serves and leads are proven to come from. */
+  unrecordedOriginByCampaign: ReadonlyMap<string, SourcingOrigin | null>;
   leads: readonly SourcedLead[];
   valuePerPositiveReplyUsd: number | null;
 }): OfferSourcing {
@@ -182,7 +191,12 @@ export function computeOfferSourcing(input: {
 
   for (const s of input.serves) {
     if (!campaignIds.has(s.campaignId)) continue;
-    const origin = originOfServe({ runFeatureSlug: s.featureSlug, audienceId: s.audienceId, listOfAudience: input.listOfAudience });
+    const origin = originOfServe({
+      runFeatureSlug: s.featureSlug,
+      audienceId: s.audienceId,
+      listOfAudience: input.listOfAudience,
+      unrecordedOrigin: input.unrecordedOriginByCampaign.get(s.campaignId) ?? null,
+    });
     const a = acc(origin);
     a.serveCount += 1;
     a.cents.push(s.cents);
@@ -197,7 +211,9 @@ export function computeOfferSourcing(input: {
 
   for (const l of input.leads) {
     if (!l.campaignId || !campaignIds.has(l.campaignId)) continue;
-    const origin = l.audienceId ? sourcingOriginOfList(input.listOfAudience.get(l.audienceId) ?? null) : null;
+    const origin = l.audienceId
+      ? sourcingOriginOfList(input.listOfAudience.get(l.audienceId) ?? null)
+      : (input.unrecordedOriginByCampaign.get(l.campaignId) ?? null);
     const a = acc(origin);
     a.leads.add(l.leadId);
     if (l.audienceId) a.audienceIds.add(l.audienceId);
@@ -248,6 +264,7 @@ export function computeOfferSourcing(input: {
         .map((e) => ({
           slug: e.origin?.slug ?? null,
           name: e.origin?.name ?? null,
+          provider: e.origin?.provider ?? null,
           sourcingCostUsd: decimalCentsToUsd(sumDecimalStrings(e.cents)),
           serveCount: e.serves,
           leadsServed: e.leads.size,
@@ -277,6 +294,7 @@ export function computeOfferSourcing(input: {
       slug: a.origin?.slug ?? null,
       name: a.origin?.name ?? null,
       family: a.origin?.family ?? null,
+      provider: a.origin?.provider ?? null,
       description: a.origin?.description ?? null,
       live: a.origin?.live ?? null,
       used: a.serveCount > 0 || a.leads.size > 0,
@@ -417,6 +435,51 @@ export async function fetchCampaignTotalCents(
     out.set(id, addDecimals(out.get(id) ?? "0", selectCostCentsString(g, "totalCostInUsdCents", pricing)));
   }
   return out;
+}
+
+/**
+ * Per campaign, the cost names its UNRECORDED runs bought (cost rows with no audience, on the channel
+ * slugs + origin slugs) and each name's latest run start: the evidence `originOfUnrecorded` reads.
+ * One runs `/v1/stats/costs?groupBy=campaignId,audienceId,costName` read. Fails loud.
+ */
+export async function fetchUnrecordedCostEvidence(
+  brandId: string,
+  campaignIds: readonly string[],
+  channelSlugs: readonly string[],
+  identity: DownstreamIdentity,
+): Promise<Map<string, UnrecordedCostEvidence[]>> {
+  const out = new Map<string, UnrecordedCostEvidence[]>();
+  if (campaignIds.length === 0) return out;
+  const { url, apiKey } = runsEnv();
+  const params = new URLSearchParams({
+    groupBy: "campaignId,audienceId,costName",
+    brandId,
+    featureSlugs: withSourcingSlugs(channelSlugs).join(","),
+  });
+  const response = await fetchWithRetry(runsCostsUrl(url, "org", "gross", params), { headers: runsHeaders(apiKey, brandId, identity) });
+  if (!response.ok) throw new Error(`runs-service /v1/stats/costs (unrecorded evidence) failed (${response.status}): ${await response.text()}`);
+  const data = (await response.json()) as {
+    groups?: Array<{ dimensions?: { campaignId?: string | null; audienceId?: string | null; costName?: string | null }; maxStartedAt?: string | null }>;
+  };
+  if (!Array.isArray(data.groups)) throw new Error("runs-service /v1/stats/costs returned no groups array");
+  const wanted = new Set(campaignIds);
+  for (const g of data.groups) {
+    const id = g.dimensions?.campaignId ?? null;
+    const costName = g.dimensions?.costName ?? null;
+    if (!id || !wanted.has(id) || g.dimensions?.audienceId || !costName) continue;
+    const list = out.get(id) ?? [];
+    list.push({ costName, maxStartedAt: g.maxStartedAt ?? null });
+    out.set(id, list);
+  }
+  return out;
+}
+
+/** campaign id → the origin of its unrecorded serves and leads (null = nothing proves one). PURE. */
+export function unrecordedOriginsByCampaign(
+  campaigns: readonly Pick<SourcingCampaignInput, "id" | "featureSlug">[],
+  evidence: ReadonlyMap<string, readonly UnrecordedCostEvidence[]>,
+): Map<string, SourcingOrigin | null> {
+  return new Map(campaigns.map((c) => [c.id, originOfUnrecorded(c.featureSlug, evidence.get(c.id) ?? [])] as const));
 }
 
 const AUDIENCE_STATUSES = ["suggested", "active", "paused", "archived", "deprecated"] as const;

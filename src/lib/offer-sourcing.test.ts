@@ -1,6 +1,21 @@
 import { describe, it, expect, vi } from "vitest";
-import { computeOfferSourcing, type ServeCost, type SourcedLead } from "./offer-sourcing.js";
-import { originOfServe, withSourcingSlugs, SOURCING_ORIGIN_SLUGS, SOURCING_ORIGINS, SOURCING_ORIGINS_BY_CHANNEL } from "./sourcing-origins.js";
+import {
+  computeOfferSourcing,
+  fetchUnrecordedCostEvidence,
+  unrecordedOriginsByCampaign,
+  type ServeCost,
+  type SourcedLead,
+} from "./offer-sourcing.js";
+import {
+  originOfServe,
+  originOfUnrecorded,
+  sourcingOriginBySlug,
+  withSourcingSlugs,
+  APOLLO_BUYING_SIGNALS_FIRST_SERVE,
+  SOURCING_ORIGIN_SLUGS,
+  SOURCING_ORIGINS,
+  SOURCING_ORIGINS_BY_CHANNEL,
+} from "./sourcing-origins.js";
 import { SEED_FEATURES } from "../seed/features.js";
 
 const AUD_COLD = "aud-cold";
@@ -77,7 +92,7 @@ describe("computeOfferSourcing", () => {
     ["c2", "40.0000000000"],
   ]);
 
-  const r = computeOfferSourcing({ campaigns, serves, totalCentsByCampaign: totals, listOfAudience: lists, leads, valuePerPositiveReplyUsd: 10 });
+  const r = computeOfferSourcing({ campaigns, serves, totalCentsByCampaign: totals, listOfAudience: lists, unrecordedOriginByCampaign: new Map(), leads, valuePerPositiveReplyUsd: 10 });
 
   it("sourcing + outreach = the campaign total to the cent, per campaign and overall", () => {
     const c1 = r.campaigns.find((c) => c.campaignId === "c1")!;
@@ -126,6 +141,7 @@ describe("computeOfferSourcing", () => {
       serves: serves.slice(0, 1),
       totalCentsByCampaign: new Map([["c1", "50"]]),
       listOfAudience: lists,
+      unrecordedOriginByCampaign: new Map(),
       leads: [],
       valuePerPositiveReplyUsd: null,
     });
@@ -136,7 +152,161 @@ describe("computeOfferSourcing", () => {
   });
 
   it("no value for a positive reply = no ROI, named", () => {
-    const none = computeOfferSourcing({ campaigns, serves, totalCentsByCampaign: totals, listOfAudience: lists, leads, valuePerPositiveReplyUsd: null });
+    const none = computeOfferSourcing({ campaigns, serves, totalCentsByCampaign: totals, listOfAudience: lists, unrecordedOriginByCampaign: new Map(), leads, valuePerPositiveReplyUsd: null });
     expect(none.origins[0]).toMatchObject({ roi: null, roiUnavailableReason: "no_positive_reply_value" });
+  });
+});
+
+describe("every origin states its provider (a logo keys on the stated domain)", () => {
+  it("Apollo origins are Apollo, LinkedIn engagement is LinkedIn, Apify search is Apify, your CRM contacts have none", () => {
+    const provider = Object.fromEntries(SOURCING_ORIGINS.map((o) => [o.slug, o.provider]));
+    expect(provider).toEqual({
+      "sourcing-apollo-cold-filters": { name: "Apollo", domain: "apollo.io" },
+      "sourcing-apollo-buying-signals": { name: "Apollo", domain: "apollo.io" },
+      "sourcing-linkedin-engagement-signals": { name: "LinkedIn", domain: "linkedin.com" },
+      "sourcing-crm-contacts": null,
+      "sourcing-apify-search": { name: "Apify", domain: "apify.com" },
+    });
+  });
+
+  it("the offer read carries it on every origin row and every campaign source; the unattributed row has none", () => {
+    const r = computeOfferSourcing({
+      campaigns: [{ id: "c1", featureSlug: "sales-cold-email-outreach", channelName: "x", legKey: null, status: null }],
+      serves: [{ runId: "s", campaignId: "c1", audienceId: AUD_COLD, featureSlug: "sales-cold-email-outreach", cents: "1" }],
+      totalCentsByCampaign: new Map([["c1", "2"]]),
+      listOfAudience: lists,
+      unrecordedOriginByCampaign: new Map(),
+      leads: [],
+      valuePerPositiveReplyUsd: null,
+    });
+    for (const o of r.origins) expect(o.provider).toEqual(sourcingOriginBySlug(o.slug)!.provider);
+    expect(r.unattributed.provider).toBeNull();
+    expect(r.campaigns[0]!.sources[0]!.provider).toEqual({ name: "Apollo", domain: "apollo.io" });
+  });
+});
+
+describe("unrecorded serves (no audience): attributed on positive evidence only", () => {
+  const before = "2026-05-10T09:00:00.000Z";
+  const after = "2026-10-03T09:00:00.000Z";
+  const COLD = "sales-cold-email-outreach";
+
+  it("Apollo lead costs only, all before Apollo Buying Signals existed -> Apollo Cold Filters", () => {
+    const ev = [
+      { costName: "apollo-credit", maxStartedAt: before },
+      { costName: "apollo-enrichment-credit", maxStartedAt: before },
+      { costName: "apollo-search-credit", maxStartedAt: before },
+      { costName: "google-pro-3.1-tokens-input", maxStartedAt: after },
+    ];
+    expect(originOfUnrecorded(COLD, ev)?.slug).toBe("sourcing-apollo-cold-filters");
+  });
+
+  it("an Apollo cost on or after the first buying-signal serve (or of unknown date) proves nothing", () => {
+    expect(originOfUnrecorded(COLD, [{ costName: "apollo-credit", maxStartedAt: after }])).toBeNull();
+    expect(originOfUnrecorded(COLD, [{ costName: "apollo-credit", maxStartedAt: APOLLO_BUYING_SIGNALS_FIRST_SERVE }])).toBeNull();
+    expect(originOfUnrecorded(COLD, [{ costName: "apollo-credit", maxStartedAt: null }])).toBeNull();
+  });
+
+  it("Apify search lead costs only -> Apify Search; both providers -> unattributed", () => {
+    expect(originOfUnrecorded(COLD, [{ costName: "apify-pipelinelabs-lead", maxStartedAt: before }])?.slug).toBe("sourcing-apify-search");
+    expect(
+      originOfUnrecorded(COLD, [
+        { costName: "apify-pipelinelabs-lead", maxStartedAt: before },
+        { costName: "apollo-credit", maxStartedAt: before },
+      ]),
+    ).toBeNull();
+  });
+
+  it("no lead-provider cost (LLM, email verification, nothing at all) -> unattributed", () => {
+    expect(originOfUnrecorded(COLD, [])).toBeNull();
+    expect(
+      originOfUnrecorded(COLD, [
+        { costName: "apify-bounceverify-email", maxStartedAt: before },
+        { costName: "anthropic-sonnet-4.6-tokens-input", maxStartedAt: before },
+      ]),
+    ).toBeNull();
+  });
+
+  it("a channel serving from ONE origin proves it (CRM email -> your CRM contacts), whatever its costs", () => {
+    expect(originOfUnrecorded("sales-crm-email-outreach", [])?.slug).toBe("sourcing-crm-contacts");
+    // an origin the channel never serves from is never picked
+    expect(originOfUnrecorded("sales-crm-email-outreach", [{ costName: "apollo-credit", maxStartedAt: before }])?.slug).toBe("sourcing-crm-contacts");
+  });
+
+  it("an unrecorded serve AND lead move to the proven origin; campaign totals, sourcing totals and offer totals stay to the cent", () => {
+    const serves: ServeCost[] = [
+      { runId: "a", campaignId: "c1", audienceId: AUD_COLD, featureSlug: COLD, cents: "100.0000000000" },
+      { runId: "b", campaignId: "c2", audienceId: null, featureSlug: COLD, cents: "23002.1234567890" },
+      { runId: "c", campaignId: "c2", audienceId: null, featureSlug: COLD, cents: "0" },
+    ];
+    const leads: SourcedLead[] = [
+      { leadId: "l1", campaignId: "c1", audienceId: AUD_COLD, positiveReply: false },
+      { leadId: "l2", campaignId: "c2", audienceId: null, positiveReply: true },
+    ];
+    const totals = new Map([
+      ["c1", "300.0000000000"],
+      ["c2", "40000.0000000000"],
+    ]);
+    const base = { campaigns, serves, totalCentsByCampaign: totals, listOfAudience: lists, leads, valuePerPositiveReplyUsd: 50 };
+    const beforeRule = computeOfferSourcing({ ...base, unrecordedOriginByCampaign: new Map() });
+    const evidence = new Map([["c2", [{ costName: "apollo-credit", maxStartedAt: before }]]]);
+    const afterRule = computeOfferSourcing({ ...base, unrecordedOriginByCampaign: unrecordedOriginsByCampaign(campaigns, evidence) });
+
+    expect(beforeRule.unattributed).toMatchObject({ serveCount: 2, leadsServed: 1, sourcingCostUsd: 230.021234567890 });
+    expect(afterRule.unattributed).toMatchObject({ used: false, serveCount: 0, leadsServed: 0, sourcingCostUsd: 0, positiveReplies: 0 });
+    const cold = afterRule.origins.find((o) => o.slug === "sourcing-apollo-cold-filters")!;
+    expect(cold).toMatchObject({ serveCount: 3, leadsServed: 2, positiveReplies: 1 });
+    expect(cold.sourcingCostUsd).toBeCloseTo(231.02123456789, 9);
+
+    expect(afterRule.totals).toEqual(beforeRule.totals);
+    for (const c of afterRule.campaigns) {
+      const b = beforeRule.campaigns.find((x) => x.campaignId === c.campaignId)!;
+      expect([c.sourcingCostUsd, c.outreachCostUsd, c.totalCostUsd]).toEqual([b.sourcingCostUsd, b.outreachCostUsd, b.totalCostUsd]);
+    }
+    expect(afterRule.campaigns.find((c) => c.campaignId === "c2")!.sources.map((s) => s.slug)).toEqual(["sourcing-apollo-cold-filters"]);
+    const endToEnd = (r: typeof afterRule) => r.origins.reduce((s, o) => s + o.endToEndCostUsd, 0) + r.unattributed.endToEndCostUsd;
+    expect(endToEnd(afterRule)).toBeCloseTo(endToEnd(beforeRule), 9);
+  });
+
+  it("a serve with an audience human-service states no list for stays unattributed (the evidence is about audience-less runs)", () => {
+    const origin = originOfServe({
+      runFeatureSlug: COLD,
+      audienceId: "aud-without-list",
+      listOfAudience: new Map([["aud-without-list", null]]),
+      unrecordedOrigin: sourcingOriginBySlug("sourcing-apollo-cold-filters"),
+    });
+    expect(origin).toBeNull();
+  });
+});
+
+describe("fetchUnrecordedCostEvidence", () => {
+  it("reads runs costs by campaign, audience and cost name, keeping only audience-less rows of the offer's campaigns", async () => {
+    process.env.RUNS_SERVICE_URL = "http://runs";
+    process.env.RUNS_SERVICE_API_KEY = "k";
+    const calls: string[] = [];
+    const fetchMock = vi.fn(async (url: string) => {
+      calls.push(url);
+      return new Response(
+        JSON.stringify({
+          groups: [
+            { dimensions: { campaignId: "c1", audienceId: null, costName: "apollo-credit" }, maxStartedAt: "2026-05-01T00:00:00.000Z" },
+            { dimensions: { campaignId: "c1", audienceId: "aud", costName: "apify-pipelinelabs-lead" }, maxStartedAt: "2026-06-01T00:00:00.000Z" },
+            { dimensions: { campaignId: "other", audienceId: null, costName: "apify-pipelinelabs-lead" }, maxStartedAt: null },
+          ],
+        }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const ev = await fetchUnrecordedCostEvidence("brand", ["c1"], ["sales-cold-email-outreach"], { orgId: "org" });
+      expect(ev.get("c1")).toEqual([{ costName: "apollo-credit", maxStartedAt: "2026-05-01T00:00:00.000Z" }]);
+      expect(ev.has("other")).toBe(false);
+      const u = new URL(calls[0]!);
+      expect(u.pathname).toBe("/v1/stats/costs");
+      expect(u.searchParams.get("groupBy")).toBe("campaignId,audienceId,costName");
+      expect(u.searchParams.get("featureSlugs")).toBe(withSourcingSlugs(["sales-cold-email-outreach"]).join(","));
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

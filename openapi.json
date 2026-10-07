@@ -10809,6 +10809,25 @@
                     "own_contacts"
                   ]
                 },
+                "provider": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "description": "The vendor's name (Apollo, LinkedIn, Apify)."
+                    },
+                    "domain": {
+                      "type": "string",
+                      "description": "The vendor's domain, stated by the backend: key a logo on it (logo.dev), never derive it from the name."
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "domain"
+                  ],
+                  "description": "The vendor whose data this origin is. Null = no third party: the client's own contacts (a CSV upload or a connected CRM; which CRM is not known at this grain, so none is claimed)."
+                },
                 "audienceLists": {
                   "type": "array",
                   "items": {
@@ -10829,6 +10848,7 @@
                 "name",
                 "description",
                 "family",
+                "provider",
                 "audienceLists",
                 "live",
                 "displayOrder"
@@ -10903,6 +10923,10 @@
               "outreachAllocation": {
                 "type": "string"
               },
+              "unrecordedOrigin": {
+                "type": "string",
+                "description": "How a serve or lead that recorded no audience is attributed (positive evidence only)."
+              },
               "notCounted": {
                 "type": "array",
                 "items": {
@@ -10917,6 +10941,7 @@
               "sourcing",
               "outreach",
               "outreachAllocation",
+              "unrecordedOrigin",
               "notCounted"
             ]
           },
@@ -10947,6 +10972,25 @@
                     "signal",
                     "own_contacts"
                   ]
+                },
+                "provider": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "description": "The vendor's name (Apollo, LinkedIn, Apify)."
+                    },
+                    "domain": {
+                      "type": "string",
+                      "description": "The vendor's domain, stated by the backend: key a logo on it (logo.dev), never derive it from the name."
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "domain"
+                  ],
+                  "description": "The origin's vendor ({name, domain}); null on the client's own contacts AND on the unattributed row."
                 },
                 "description": {
                   "type": "string",
@@ -11022,6 +11066,7 @@
                 "slug",
                 "name",
                 "family",
+                "provider",
                 "description",
                 "live",
                 "used",
@@ -11061,6 +11106,25 @@
                   "signal",
                   "own_contacts"
                 ]
+              },
+              "provider": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "The vendor's name (Apollo, LinkedIn, Apify)."
+                  },
+                  "domain": {
+                    "type": "string",
+                    "description": "The vendor's domain, stated by the backend: key a logo on it (logo.dev), never derive it from the name."
+                  }
+                },
+                "required": [
+                  "name",
+                  "domain"
+                ],
+                "description": "The origin's vendor ({name, domain}); null on the client's own contacts AND on the unattributed row."
               },
               "description": {
                 "type": "string",
@@ -11136,6 +11200,7 @@
               "slug",
               "name",
               "family",
+              "provider",
               "description",
               "live",
               "used",
@@ -11152,7 +11217,7 @@
               "roi",
               "roiUnavailableReason"
             ],
-            "description": "Serves with no audience / an audience stating no list, and leads with no audience: never spread onto an origin."
+            "description": "Serves and leads nothing identifies: an audience stating no list, or no audience recorded on a campaign whose audience-less runs prove no single origin (definition.unrecordedOrigin). Never spread onto an origin."
           },
           "campaigns": {
             "type": "array",
@@ -11190,6 +11255,25 @@
                         "type": "string",
                         "nullable": true
                       },
+                      "provider": {
+                        "type": "object",
+                        "nullable": true,
+                        "properties": {
+                          "name": {
+                            "type": "string",
+                            "description": "The vendor's name (Apollo, LinkedIn, Apify)."
+                          },
+                          "domain": {
+                            "type": "string",
+                            "description": "The vendor's domain, stated by the backend: key a logo on it (logo.dev), never derive it from the name."
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "domain"
+                        ],
+                        "description": "The vendor whose data this origin is. Null = no third party: the client's own contacts (a CSV upload or a connected CRM; which CRM is not known at this grain, so none is claimed)."
+                      },
                       "sourcingCostUsd": {
                         "type": "number"
                       },
@@ -11203,6 +11287,7 @@
                     "required": [
                       "slug",
                       "name",
+                      "provider",
                       "sourcingCostUsd",
                       "serveCount",
                       "leadsServed"
@@ -28767,7 +28852,7 @@
     "/offers/{offerId}/sourcing": {
       "get": {
         "summary": "Where an offer's leads come from, what each source cost and paid back, and each campaign's sourcing + outreach split",
-        "description": "Since inception, committed basis. SOURCING = the whole cost subtree of each lead-service lead-serve run (attribution by parent link), OUTREACH = the campaign's committed spend minus it, so sourcing + outreach = the campaign's total exactly. The campaign total counts the channel slug AND every sourcing origin slug, so it reads the same whether serve runs carry the outreach slug (old) or the origin's slug (new). A serve's origin = its run's own slug when it is an origin, else its audience's list kind (human-service).",
+        "description": "Since inception, committed basis. SOURCING = the whole cost subtree of each lead-service lead-serve run (attribution by parent link), OUTREACH = the campaign's committed spend minus it, so sourcing + outreach = the campaign's total exactly. The campaign total counts the channel slug AND every sourcing origin slug, so it reads the same whether serve runs carry the outreach slug (old) or the origin's slug (new). A serve's origin = its run's own slug when it is an origin, else its audience's list kind (human-service), else (no audience recorded) the origin its campaign is PROVEN to source from: a channel serving one origin only (CRM email), else the lead-provider costs its audience-less runs bought (Apollo only, before Apollo Buying Signals existed -> Apollo Cold Filters; Apify search only -> Apify Search). Moving a serve between origins never changes a campaign total or sourcing total.",
         "tags": [
           "Stats"
         ],
