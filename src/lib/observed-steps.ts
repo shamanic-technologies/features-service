@@ -3,6 +3,7 @@ import {
   fetchStepOutcomes,
   type LeadStepOutcome,
   type StepOutcomeRow,
+  type ColdLeadsRead,
 } from "./step-outcomes-client.js";
 import {
   DEFAULT_PRICED_CAUSES,
@@ -88,6 +89,8 @@ export interface ObservedStepFacts {
    * producer and carry no cause, so nothing here counts them.
    */
   causeCounts: OutcomeCauseCounts;
+  /** Who went cold (lead-service's rule, CRM brands only), as the producer served it; null when not served. */
+  cold: ColdLeadsRead | null;
 }
 
 /** What a human observed about one lead, in the engine's own terms. */
@@ -215,7 +218,7 @@ export async function fetchObservedStepFacts(
     }
   }
 
-  return { byEmail, causeCounts };
+  return { byEmail, causeCounts, cold: dead.cold };
 }
 
 /**

@@ -579,6 +579,11 @@ const roiHistorySchema = z.object({
   daily: z.array(roiHistoryPointSchema).describe("One point per UTC day that has spend or a dated outcome, ascending, spanning the brand's whole life. Days with neither are absent (never fabricated). Empty when the brand has neither spend nor a dated outcome."),
   datedPipelineUsd: z.number().describe("The curve's final cumulative pipeline — the part of the MATURE cohort's pipeline (the one costEconomics.roiMultiple divides; headline.totalPipelineUsd when costEconomics.maturityDays is 0) this curve can describe."),
   undatedPipelineUsd: z.number().describe("Mature-cohort pipeline whose outcome carries NO timestamp, so it sits on no day. Reported rather than dropped or parked on a fabricated day: datedPipelineUsd + undatedPipelineUsd === the mature cohort's pipeline, which is headline.totalPipelineUsd when costEconomics.maturityDays is 0."),
+  flash: z.object({
+    daily: z.array(roiHistoryPointSchema),
+    datedPipelineUsd: z.number(),
+    undatedPipelineUsd: z.number(),
+  }).optional().describe("THE FLASH TWIN of this curve: the same fold over EVERY dollar committed and EVERY lead's dated pipeline (no maturity cut). Its last roiMultiple is costEconomics.maturity.flash.roiMultiple (when nothing is undated), where `daily`'s last point is maturity.mature.roiMultiple. A surface showing the FLASH return (scope not mature yet) charts this curve, never `daily`, so the line under a headline ends on that headline. Identical to the outer curve when costEconomics.maturityDays is 0."),
 });
 
 // Server-computed "contacted" aggregates for the Overview's Outreach surfaces (stat card + 7-day
@@ -1712,6 +1717,86 @@ const offerOutcomeLegSchema = z.object({
   ...outcomeFiguresShape,
   maturity: offerOutcomeMaturitySchema.optional(),
 });
+const explainedLegSchema = z.object({
+  fromStep: stepRefSchema,
+  toStep: stepRefSchema,
+  legKey: z.string(),
+  ratePct: z.number().describe("The rate this leg converts at, 0..100, exactly the one the value was priced on."),
+  source: z.enum(["measured", "manual", "median", "default"]).nullable().describe("Where the rate comes from: measured (on the client's CRM or on our leads, see measured.basis), manual (the client stated it), median (fleet median of what brands stated), default (industry benchmark)."),
+  measured: z.object({
+    basis: z.enum(["crm", "our_leads"]),
+    fromReached: z.number().int().nullable(),
+    toReached: z.number().int().nullable(),
+  }).nullable().describe("The counts a MEASURED rate was read on: toReached of fromReached (e.g. 13 of 20). Null for any other source."),
+});
+const stepValueExplanationSchema = z.object({
+  lifetimeRevenueUsd: z.number().describe("The offer's stated lifetime revenue per paying client."),
+  probabilityPct: z.number().describe("P(paid client | reached the step) x 100 = the product of legs[].ratePct/100, x 100. lifetimeRevenueUsd x probabilityPct / 100 = valuePerOutcomeUsd to the cent (reconciled before serving)."),
+  basisFunnelKey: z.string().describe("The path the best value was found through (same rule as the value: best path, max)."),
+  legs: z.array(explainedLegSchema).describe("The legs multiplied, from this step to Paid client, in order. Empty on Paid client itself (probability 100%)."),
+}).nullable().describe("WHY valuePerOutcomeUsd is what it is. Null when there is no value, or the legs did not multiply back to the value to the cent (never served beside a value it does not explain).");
+const stepConversionSchema = z.object({
+  previousSteps: z.array(z.string()).describe("The step(s) right before this one on the offer's priced paths (`contacted` before a path's first step). Several are unioned."),
+  previousReached: z.number().int().describe("Distinct leads that stood on at least one previous step."),
+  reachedFromPrevious: z.number().int().describe("Of those, the distinct leads that also reached this step."),
+  ratePct: z.number().nullable().describe("reachedFromPrevious / previousReached x 100. Null when nobody stood on a previous step."),
+}).nullable().describe("Conversion from the previous step, distinct leads on both sides. Null when a previous step is not counted or its producer was unreadable.");
+const pipelineLeadSchema = z.object({
+  leadId: z.string(),
+  firstName: z.string().nullable(),
+  lastName: z.string().nullable(),
+  title: z.string().nullable(),
+  orgName: z.string().nullable(),
+  orgDomain: z.string().nullable(),
+  orgLogoUrl: z.string().nullable(),
+  step: stepRefSchema.describe("The furthest step the lead reached (for a cold lead: the step it stalled on)."),
+  valueUsd: z.number().nullable().describe("What the pipeline prices the lead at NOW (the engine's own per-lead value, cold-lead pricing included). Null only when the offer has no priced economics."),
+  probabilityPct: z.number().nullable().describe("valueUsd / (the lead's stated value, else the offer's lifetime revenue) x 100."),
+});
+const coldPipelineLeadSchema = pipelineLeadSchema.extend({
+  coldAtStep: stepRefSchema.describe("The step that never came (meeting booked, or meeting attended)."),
+  coldSince: z.string().describe("When the lead went cold (stalledSince + the rule's afterDays)."),
+  stalledSince: z.string().describe("When the lead reached `step`."),
+});
+const offerPipelineSchema = z.object({
+  peopleContacted: z.number().int().describe("Distinct people contacted for the offer."),
+  companiesContacted: z.number().int().describe("Distinct companies those people belong to."),
+  contactedWithoutCompanyCount: z.number().int().describe("Contacted people whose company is unknown: in peopleContacted, in no company."),
+  ladder: z.array(z.object({
+    step: stepRefSchema,
+    recipientsReached: z.number().int().nullable().describe("Distinct offer leads that reached the step (every cause). Null = the step is not counted or its producer was unreadable."),
+    pricedRecipientsReached: z.number().int().nullable().describe("Of those, the ones whose step is priced (`cause`, default our outreach)."),
+    valuePerOutcomeUsd: z.number().nullable().describe("Byte-same value per outcome as the outcome row of the same step."),
+    valueExplanation: stepValueExplanationSchema,
+    conversionFromPrevious: stepConversionSchema,
+    wentCold: z.object({
+      count: z.number().int(),
+      valueUsd: z.number().nullable(),
+    }).nullable().describe("Leads that reached this step and then went cold (lead-service's rule), and what the pipeline prices them at now. Null when who went cold could not be read; count 0 when nobody did (always 0 for a brand the rule does not apply to, see coldRule)."),
+  })).describe("Every step a lead climbs (visit, reply, signup, form, meeting booked, meeting attended, paid client), whether or not a leg of ours lands on it — the outcome rows only carry steps a leg lands on."),
+  customersWon: z.object({
+    count: z.number().int().describe("Paying clients won on the PRICED causes (default: our outreach only). One organisation = one client."),
+    leadCount: z.number().int(),
+    valueUsd: z.number().nullable().describe("Per client the amount stated on its sale, else the offer's lifetime revenue, summed. Null when a client has neither."),
+    otherCausesLeadCount: z.number().int().describe("Paying clients counted but not priced (another cause, or unstated)."),
+  }).nullable().describe("CUSTOMERS WON THANKS TO US. 0 = measured, nobody. Null = no source of closed deals could be read."),
+  coldRule: z.object({
+    applies: z.boolean().describe("False = not a CRM brand (or its CRM cannot prove an absence): nothing goes cold and coldLeads is empty."),
+    afterDays: z.number().int().nullable(),
+  }).nullable().describe("lead-service's went-cold rule for this brand. Null when it could not be read."),
+  coldLeads: z.object({
+    count: z.number().int(),
+    valueUsd: z.number().nullable(),
+    leads: z.array(coldPipelineLeadSchema).describe("Every cold lead of the offer, oldest cold first."),
+  }).nullable().describe("Leads that showed interest and went cold, priced as the pipeline prices them now. Null when who went cold could not be read."),
+  hotLeads: z.object({
+    limit: z.number().int(),
+    totalCount: z.number().int().describe("Every live engaged lead (reached a step, not won, not cold) the pipeline prices above 0."),
+    totalValueUsd: z.number(),
+    leads: z.array(pipelineLeadSchema).describe("The top `limit` of them by value, highest first."),
+  }).nullable().describe("The leads we think will convert. Null when the offer has no priced economics (leadValuesUnpricedReason)."),
+  leadValuesUnpricedReason: z.string().nullable(),
+}).describe("WHAT WORKING WITH US EARNED THE OFFER, step by step and why (lib/offer-pipeline-explained.ts). Same people, same prices as the outcome rows.");
 const offerOutcomesResponseSchema = z.object({
   offerId: z.string(),
   brandId: z.string(),
@@ -1722,6 +1807,8 @@ const offerOutcomesResponseSchema = z.object({
     z.object({
       step: z.object({ key: z.string(), label: z.string(), description: z.string(), shortDescription: z.string() }),
       valueBasisFunnelKey: z.string().nullable(),
+      valueExplanation: stepValueExplanationSchema,
+      conversionFromPrevious: stepConversionSchema.describe("Conversion into THIS ROW's distinct leads from the step(s) before it. Null when a previous step is not counted or unreadable."),
       ...outcomeFiguresShape,
       legs: z.array(offerOutcomeLegSchema).describe("Every leg x channel serving this outcome, in parallel. Their counts can overlap (one lead reached by two channels); the outcome row's count is the distinct union."),
   maturity: offerOutcomeMaturitySchema.optional(),
@@ -1729,6 +1816,7 @@ const offerOutcomesResponseSchema = z.object({
   ).describe("One row per step a leg of OUR channels lands on, in step order. NOT additive across rows."),
   unattributedCampaignIds: z.array(z.string()).describe("Campaigns of the offer whose leg could not be known. Their spend is in no row."),
   hiddenCampaignIds: z.array(z.string()).describe("Campaigns on a channel the customer operates — hidden from the rows."),
+  pipeline: offerPipelineSchema,
 });
 const offerOutcomesResponseRef = registry.register("OfferOutcomesResponse", offerOutcomesResponseSchema);
 
