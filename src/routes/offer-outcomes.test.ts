@@ -170,4 +170,28 @@ describe("GET /offers/:offerId/outcomes", () => {
     expect(soft.status).toBe(200);
     expect(soft.body.pipeline.exclusiveLadder.total.gapReason).toBe("headline_unreadable");
   });
+
+  it("refuses a conversionHistory it does not know", async () => {
+    const res = await request(app).get("/offers/offer-1/outcomes?brandId=brand-1&conversionHistory=yes").set(AUTH);
+    expect(res.status).toBe(400);
+    expect(res.body.reason).toBe("conversion_history_unrecognised");
+  });
+
+  it("?conversionHistory=true serves the sliced rows' dated % Conversion, last point = today's column", async () => {
+    const dates = (day: string) => ({ contacted: `${day}T09:00:00.000Z`, sent: null, delivered: `${day}T09:00:00.000Z`, open: null, clicked: null, positiveReply: `${day}T12:00:00.000Z`, lastSent: null });
+    vi.mocked(fetchEventTimestamps).mockResolvedValue(new Map([["L1@x.com", dates("2026-09-01")], ["L2@x.com", dates("2026-09-02")]]) as never);
+    const plain = await request(app).get("/offers/offer-1/outcomes?brandId=brand-1").set(AUTH);
+    const res = await request(app).get("/offers/offer-1/outcomes?brandId=brand-1&conversionHistory=true").set(AUTH);
+    expect(res.status).toBe(200);
+    const x = res.body.pipeline.exclusiveLadder;
+    expect(plain.body.pipeline.exclusiveLadder.contacted.conversionHistory).toBeNull();
+    const reply = x.rows.find((r: { step: { key: string } }) => r.step.key === "conversation");
+    expect(reply.conversionHistory.startsOn).toBe("2026-09-01");
+    const last = reply.conversionHistory.points[reply.conversionHistory.points.length - 1];
+    expect(last.date).toBe(new Date().toISOString().slice(0, 10));
+    expect(last.ratePct).toBe(reply.conversionFromRowAbove?.ratePct ?? null);
+    // Every other figure is byte-identical.
+    const strip = (b: unknown) => JSON.parse(JSON.stringify(b, (k, v) => (k === "conversionHistory" ? undefined : v)));
+    expect(strip(res.body)).toEqual(strip(plain.body));
+  });
 });

@@ -105,7 +105,7 @@ import {
 import type { DeclaredSalesFunnel } from "./sales-funnels-client.js";
 import { DISPLAY_ONLY_SALES_FUNNELS, SALES_FUNNELS, type SalesFunnelKey } from "./sales-funnels.js";
 import type { ColdLeadsRead } from "./step-outcomes-client.js";
-import type { MeasurementBasis } from "./effective-conversion-rates.js";
+import type { MeasurementBasis, RateCandidate } from "./effective-conversion-rates.js";
 import { DEFAULT_PRICED_CAUSES, causeByDeliveryRule, type OutcomeCause } from "./outcome-cause.js";
 
 /** Where a leg rate comes from — the effective-rate vocabulary (`lib/effective-conversion-rates.ts`). */
@@ -119,6 +119,11 @@ export interface ExplainedLeg {
   source: ExplainedRateSource | null;
   /** The counts a MEASURED rate was read on (`toReached` of `fromReached`); null for any other source. */
   measured: { basis: MeasurementBasis; fromReached: number | null; toReached: number | null } | null;
+  /**
+   * Every rate the precedence weighed for the leg, in precedence order, exactly one `kept` (its `ratePct`
+   * = `ratePct` above). A leg priced off a funnel carrying no candidates states its one rate as the kept one.
+   */
+  candidates: RateCandidate[];
 }
 
 export interface StepValueExplanation {
@@ -136,6 +141,37 @@ const SOURCES: Record<string, ExplainedRateSource> = {
   stated_median: "median",
   stated_default: "default",
 };
+
+/**
+ * The leg's candidates as served: the arrow's own when they agree with the rate it is priced on (one kept,
+ * at that rate), else the one rate the arrow carries, kept. Never two kept, never a kept rate the value
+ * was not priced on.
+ */
+function legCandidates(
+  ratePct: number,
+  source: ExplainedRateSource | null,
+  measured: ExplainedLeg["measured"],
+  candidates: readonly RateCandidate[] | undefined,
+): RateCandidate[] {
+  const kept = candidates?.filter((c) => c.kept) ?? [];
+  if (candidates && kept.length === 1 && kept[0]!.ratePct === ratePct) return candidates.map((c) => ({ ...c }));
+  if (candidates) {
+    console.error(`[features-service] offer value explanation: a leg's rate candidates do not keep its rate ${ratePct}; serving the rate alone`);
+  }
+  if (source === null) return [];
+  return [
+    {
+      basis: source === "measured" ? (measured?.basis ?? "our_leads") : source,
+      ratePct,
+      fromReached: measured?.fromReached ?? null,
+      toReached: measured?.toReached ?? null,
+      outcomesCounted: null,
+      brandCount: null,
+      kept: true,
+      notKeptReason: null,
+    },
+  ];
+}
 
 /** Tolerance of the reconciliation: half a cent, or a relative 1e-9 on a very large value. */
 const reconciles = (a: number, b: number): boolean => Math.abs(a - b) <= Math.max(0.005, Math.abs(b) * 1e-9);
@@ -165,16 +201,18 @@ export function explainStepValue(
     const source = SOURCES[arrow.provenance] ?? null;
     const from = steps[i];
     const to = steps[i + 1];
+    const measured =
+      source === "measured" && arrow.measured
+        ? { basis: arrow.measured.basis, fromReached: arrow.measured.fromReached, toReached: arrow.measured.toReached }
+        : null;
     legs.push({
       fromStep: { key: from, label: CHANNEL_STEPS[from].label },
       toStep: { key: to, label: CHANNEL_STEPS[to].label },
       legKey: legKeyFor({ from, to }),
       ratePct: arrow.ratePct,
       source,
-      measured:
-        source === "measured" && arrow.measured
-          ? { basis: arrow.measured.basis, fromReached: arrow.measured.fromReached, toReached: arrow.measured.toReached }
-          : null,
+      measured,
+      candidates: legCandidates(arrow.ratePct, source, measured, arrow.candidates),
     });
   }
   if (!reconciles(ltr * probability, value.valuePerOutcomeUsd)) {
@@ -416,6 +454,35 @@ export interface ExclusiveLadderRow {
   hot: ({ limit: number } & StepPeopleGroup<ExclusiveStepPerson>) | null;
   /** The row's "% Conversion" (owner 2026-10-08), see `ConversionFromRowAbove`. */
   conversionFromRowAbove: ConversionFromRowAbove | null;
+  /** The same figure, one point per day since the offer's first delivery (see `ConversionHistory`). Null unless asked, or the step is not counted. */
+  conversionHistory: ConversionHistory | null;
+}
+
+/** One day of a sliced row's % Conversion: the rule of `ConversionFromRowAbove` on where each person stood that day. */
+export interface ConversionHistoryPoint {
+  /** UTC day, YYYY-MM-DD. */
+  date: string;
+  /** Null when the row had no row above that day, or was not displayed (no priced, no notOurs people), or both rows were 0. */
+  ratePct: number | null;
+  /** The row's people that day (pricedPeople; the contacted row: count). */
+  rowPeople: number;
+  rowAbove: { key: ChannelStepKey; label: string } | null;
+  rowAbovePeople: number | null;
+}
+
+/**
+ * THE SLICED % CONVERSION, DATED (owner 2026-10-08, the step side panel's chart). Per UTC day from the offer's
+ * first delivered email to today, every person stands where they stood THAT day: the furthest step priced
+ * for them reached by then, else the furthest reached (notOurs), else the contacted row once contacted;
+ * then the SAME rule (`conversionsFromRowAbove`) as today's column. Same population and sets, so the last
+ * point IS today's `conversionFromRowAbove`. A step a person reached with NO date is placed on the last
+ * point only (never back-dated); `undatedPeople` counts the row's people whose arrival on it is undated.
+ */
+export interface ConversionHistory {
+  startsOn: string;
+  endsOn: string;
+  undatedPeople: number;
+  points: ConversionHistoryPoint[];
 }
 
 /**
@@ -463,6 +530,8 @@ export interface ExclusiveContactedRow {
   people: { limit: number; leads: ExclusiveStepPerson[] };
   /** The row's "% Conversion": the shallowest displayed step row over (count + it). Null when no step row is displayed. */
   conversionFromRowAbove: ConversionFromRowAbove | null;
+  /** Its dated series (see `ConversionHistory`). Null unless asked. */
+  conversionHistory: ConversionHistory | null;
 }
 
 export interface ExclusiveLadder {
@@ -599,6 +668,8 @@ export function buildOfferPipelineAndFamilies(input: {
   contactedPricing?: ContactedPricing | null;
   /** The offer revenue read's `headline.totalPipelineUsd`, to reconcile the exclusive total against; null = unread. */
   headlinePipelineUsd?: number | null;
+  /** Asked: the sliced rows' dated % Conversion (`ConversionHistory`). Absent/null = not served (null on the wire). */
+  conversionHistory?: ConversionHistoryInput | null;
 }): { pipeline: OfferPipeline; families: LeadFamilyRow[] } {
   const persons = dedupPersonsByLead([...input.persons]);
   const priced = priceOnDeclaredFunnel([...input.declared]);
@@ -853,6 +924,7 @@ export function buildOfferPipelineAndFamilies(input: {
     byLeadId,
     contactedPricing: input.contactedPricing ?? null,
     headlinePipelineUsd: input.headlinePipelineUsd ?? null,
+    history: input.conversionHistory ?? null,
   });
 
   const pipeline: OfferPipeline = {
@@ -890,38 +962,59 @@ const CONTACTED_ROUTE: Record<string, { step: ChannelStepKey; legKey: string }> 
 /** Half a cent: the tolerance two sums of the same values in different orders are held to. */
 const sameCents = (a: number, b: number): boolean => Math.abs(a - b) < 0.005;
 
-/** PURE: the exclusive reading of the pipeline (see the module doc). */
+/** A sliced row's two counts the conversion column reads: priced people (null = not counted) and notOurs people. */
+export interface SlicedRowCounts {
+  step: ChannelStepKey;
+  pricedPeople: number | null;
+  notOursPeople: number | null;
+}
+
 /** A sliced row is displayed when it has people: priced (ours + lost) or notOurs. */
-function displayedRowPeople(row: ExclusiveLadderRow): number | null {
-  if (row.people === null || row.pricedPeople === null) return null;
-  return row.pricedPeople > 0 || row.people.notOurs.count > 0 ? row.pricedPeople : null;
+function displayedRowPeople(row: SlicedRowCounts): number | null {
+  if (row.pricedPeople === null || row.notOursPeople === null) return null;
+  return row.pricedPeople > 0 || row.notOursPeople > 0 ? row.pricedPeople : null;
 }
 
 /**
- * Fills `conversionFromRowAbove` on every displayed row and the contacted row (see `ConversionFromRowAbove`).
- * `rows` climb (shallowest first), so a row's "row above" is the next displayed row deeper in the array.
+ * PURE, THE ONE RULE of the sliced % Conversion (see `ConversionFromRowAbove`), on counts alone, so today's
+ * column and its dated series (`conversionHistory`) are the same function. `rows` climb (shallowest first),
+ * so a row's "row above" is the next displayed row deeper in the array.
  */
-export function applyConversionFromRowAbove(rows: ExclusiveLadderRow[], contacted: ExclusiveContactedRow): void {
-  let above: { row: ExclusiveLadderRow; people: number } | null = null;
-  const conversion = (rowPeople: number, a: { row: ExclusiveLadderRow; people: number }): ConversionFromRowAbove => ({
-    rowAbove: a.row.step,
+export function conversionsFromRowAbove(
+  rows: readonly SlicedRowCounts[],
+  contactedCount: number,
+): { rows: (ConversionFromRowAbove | null)[]; contacted: ConversionFromRowAbove | null } {
+  let above: { step: ChannelStepKey; people: number } | null = null;
+  const conversion = (rowPeople: number, a: { step: ChannelStepKey; people: number }): ConversionFromRowAbove => ({
+    rowAbove: stepWire(a.step),
     rowAbovePeople: a.people,
     rowPeople,
     ratePct: rowPeople + a.people > 0 ? (a.people / (rowPeople + a.people)) * 100 : null,
   });
+  const out: (ConversionFromRowAbove | null)[] = rows.map(() => null);
   for (let i = rows.length - 1; i >= 0; i--) {
     const row = rows[i]!;
     const people = displayedRowPeople(row);
-    if (people === null) {
-      row.conversionFromRowAbove = null;
-      continue;
-    }
-    row.conversionFromRowAbove = above ? conversion(people, above) : null;
-    above = { row, people };
+    if (people === null) continue;
+    out[i] = above ? conversion(people, above) : null;
+    above = { step: row.step, people };
   }
-  contacted.conversionFromRowAbove = above ? conversion(contacted.count, above) : null;
+  return { rows: out, contacted: above ? conversion(contactedCount, above) : null };
 }
 
+/** Fills `conversionFromRowAbove` on every displayed row and the contacted row (see `ConversionFromRowAbove`). */
+export function applyConversionFromRowAbove(rows: ExclusiveLadderRow[], contacted: ExclusiveContactedRow): void {
+  const result = conversionsFromRowAbove(
+    rows.map((r) => ({ step: r.step.key, pricedPeople: r.people === null ? null : r.pricedPeople, notOursPeople: r.people?.notOurs.count ?? null })),
+    contacted.count,
+  );
+  rows.forEach((row, i) => {
+    row.conversionFromRowAbove = result.rows[i] ?? null;
+  });
+  contacted.conversionFromRowAbove = result.contacted;
+}
+
+/** PURE: the exclusive reading of the pipeline (see the module doc). */
 function buildExclusiveLadder(input: {
   persons: readonly EnginePerson[];
   paths: ResolvedPath[] | null;
@@ -940,6 +1033,7 @@ function buildExclusiveLadder(input: {
   byLeadId: (a: { leadId: string }, b: { leadId: string }) => number;
   contactedPricing: ContactedPricing | null;
   headlinePipelineUsd: number | null;
+  history?: ConversionHistoryInput | null;
 }): ExclusiveLadder {
   const { persons, paths, ltr } = input;
   const priced = paths !== null && ltr !== null;
@@ -1049,6 +1143,7 @@ function buildExclusiveLadder(input: {
       people: counted ? { limit: STEP_PEOPLE_LIMIT, ours: group(ours), lost: group(lost), notOurs: group(notOurs) } : null,
       hot: input.hotIds ? { limit: STEP_PEOPLE_LIMIT, ...group(hot) } : null,
       conversionFromRowAbove: null,
+      conversionHistory: null,
     };
   });
 
@@ -1095,8 +1190,30 @@ function buildExclusiveLadder(input: {
         : null,
     people: { limit: STEP_PEOPLE_LIMIT, leads: contactedCards.slice(0, STEP_PEOPLE_LIMIT) },
     conversionFromRowAbove: null,
+    conversionHistory: null,
   };
   applyConversionFromRowAbove(rows, contacted);
+  if (input.history) {
+    const history = buildConversionHistory({
+      persons,
+      sets: input.sets,
+      pricedSets: input.pricedSets,
+      dateOf: input.history.dateOf,
+      today: input.history.today,
+    });
+    if (history) {
+      rows.forEach((row, i) => {
+        row.conversionHistory = history.rows[i] ?? null;
+      });
+      contacted.conversionHistory = history.contacted;
+      // The last point IS today's column (same people, same rule) — said loudly if it ever is not.
+      const last = (h: ConversionHistory | null) => h?.points[h.points.length - 1]?.ratePct ?? null;
+      const agrees = (h: ConversionHistory | null, c: ConversionFromRowAbove | null) => h === null || last(h) === (c?.ratePct ?? null);
+      if (!rows.every((r) => agrees(r.conversionHistory, r.conversionFromRowAbove)) || !agrees(contacted.conversionHistory, contacted.conversionFromRowAbove)) {
+        console.error("[features-service] sliced conversion history: a last point disagrees with today's conversionFromRowAbove");
+      }
+    }
+  }
 
   // THE TOTAL — the engine's own headline over this population; the rows add up to it.
   const pipelineUsd = engine ? engine.headline.totalPipelineUsd : null;
@@ -1149,5 +1266,147 @@ function buildExclusiveLadder(input: {
       gapReason,
       hot: hotTotal,
     },
+  };
+}
+
+/** What the dated series needs beyond the ladder's own inputs: a person's date of a signal, and today. */
+export interface ConversionHistoryInput {
+  /** When the person reached `signal` (`contacted`, `delivered`, a step's signal); null = undated. */
+  dateOf: (p: EnginePerson, signal: string) => string | null;
+  /** The last point's UTC day, YYYY-MM-DD. */
+  today: string;
+}
+
+const DAY_MS = 86_400_000;
+const utcDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
+
+/**
+ * PURE: the sliced rows' % Conversion per day (see `ConversionHistory`), or null when no person of the offer
+ * carries a delivery date (nothing to start the series on). Each person changes row only on the days one of
+ * their dates falls, so the counts are built from per-person transitions, not a person × day walk.
+ */
+export function buildConversionHistory(input: {
+  persons: readonly EnginePerson[];
+  sets: OfferStepSets;
+  pricedSets: OfferStepSets;
+  dateOf: ConversionHistoryInput["dateOf"];
+  today: string;
+}): { rows: (ConversionHistory | null)[]; contacted: ConversionHistory } | null {
+  const parse = (d: string | null): number | null => {
+    if (!d) return null;
+    const ms = Date.parse(d);
+    return Number.isFinite(ms) ? ms : null;
+  };
+  const todayMs = Date.parse(`${input.today}T00:00:00.000Z`);
+  if (!Number.isFinite(todayMs)) throw new Error(`buildConversionHistory: today "${input.today}" is not a YYYY-MM-DD day`);
+  // NO POINT BEFORE OUR FIRST EMAIL: the series starts on the offer's first delivery.
+  let firstMs: number | null = null;
+  for (const p of input.persons) {
+    const ms = parse(input.dateOf(p, "delivered"));
+    if (ms !== null && (firstMs === null || ms < firstMs)) firstMs = ms;
+  }
+  if (firstMs === null) return null;
+  const startMs = Math.min(Date.parse(`${utcDay(firstMs)}T00:00:00.000Z`), todayMs);
+  const days = Math.round((todayMs - startMs) / DAY_MS) + 1;
+  const last = days - 1;
+  /** The day index a date counts from: before the start = day 0, after today or undated = the last day. */
+  const indexOf = (d: string | null): { index: number; dated: boolean } => {
+    const ms = parse(d);
+    if (ms === null) return { index: last, dated: false };
+    return { index: Math.max(0, Math.min(last, Math.floor((ms - startMs) / DAY_MS))), dated: true };
+  };
+
+  const steps = LADDER_STEPS;
+  const CONTACTED = steps.length;
+  const signalOf = (step: ChannelStepKey): string | null => {
+    const field = STEP_LEAD_FIELD[step];
+    return field ? LEAD_FIELD_TO_SIGNAL[field] : null;
+  };
+  // Per day, the change in each row's priced and notOurs people (row index; CONTACTED = the contacted row).
+  const pricedDiff = steps.map(() => new Int32Array(days + 1));
+  const notOursDiff = steps.map(() => new Int32Array(days + 1));
+  const contactedDiff = new Int32Array(days + 1);
+  const undated = new Array<number>(steps.length + 1).fill(0);
+  type State = { row: number; ours: boolean } | null;
+  const move = (state: State, day: number, sign: 1 | -1) => {
+    if (!state) return;
+    if (state.row === CONTACTED) contactedDiff[day]! += sign;
+    else (state.ours ? pricedDiff : notOursDiff)[state.row]![day]! += sign;
+  };
+
+  for (const p of input.persons) {
+    const reached: Array<{ row: number; ours: boolean; index: number; dated: boolean }> = [];
+    steps.forEach((step, row) => {
+      if (!input.sets.byStep.get(step)?.has(p.leadId)) return;
+      const signal = signalOf(step);
+      const at = indexOf(signal ? input.dateOf(p, signal) : null);
+      reached.push({ row, ours: Boolean(input.pricedSets.byStep.get(step)?.has(p.leadId)), ...at });
+    });
+    const contactedAt = p.signals.contacted ? indexOf(input.dateOf(p, "contacted")) : null;
+    if (reached.length === 0 && !contactedAt) continue;
+    // Where the person stands on day d: the today rule, on what they had reached by d.
+    const stateOn = (d: number): State => {
+      const by = reached.filter((r) => r.index <= d);
+      const ours = by.filter((r) => r.ours);
+      const pick = (xs: typeof by) => xs.reduce((a, b) => (b.row > a.row ? b : a));
+      if (ours.length > 0) return { row: pick(ours).row, ours: true };
+      if (by.length > 0) return { row: pick(by).row, ours: false };
+      return contactedAt && contactedAt.index <= d ? { row: CONTACTED, ours: true } : null;
+    };
+    const eventDays = [...new Set([...reached.map((r) => r.index), ...(contactedAt ? [contactedAt.index] : [])])].sort((a, b) => a - b);
+    let current = null as State;
+    for (const d of eventDays) {
+      const next = stateOn(d);
+      if (current?.row === next?.row && current?.ours === next?.ours) continue;
+      move(current, d, -1);
+      move(next, d, 1);
+      current = next;
+    }
+    // Undated arrival on today's row: counted from the last point only.
+    const final = current;
+    if (final) {
+      const arrival = final.row === CONTACTED ? contactedAt : reached.find((r) => r.row === final.row && r.ours === final.ours);
+      if (arrival && !arrival.dated) undated[final.row]! += 1;
+    }
+  }
+
+  const counted = steps.map((step) => input.sets.byStep.get(step) !== null && input.sets.byStep.get(step) !== undefined && signalOf(step) !== null);
+  const rowPoints: ConversionHistoryPoint[][] = steps.map(() => []);
+  const contactedPoints: ConversionHistoryPoint[] = [];
+  const priced = steps.map(() => 0);
+  const notOurs = steps.map(() => 0);
+  let contactedCount = 0;
+  for (let d = 0; d < days; d++) {
+    steps.forEach((_, i) => {
+      priced[i]! += pricedDiff[i]![d]!;
+      notOurs[i]! += notOursDiff[i]![d]!;
+    });
+    contactedCount += contactedDiff[d]!;
+    const result = conversionsFromRowAbove(
+      steps.map((step, i) => ({ step, pricedPeople: counted[i] ? priced[i]! : null, notOursPeople: counted[i] ? notOurs[i]! : null })),
+      contactedCount,
+    );
+    const date = utcDay(startMs + d * DAY_MS);
+    const point = (rowPeople: number, c: ConversionFromRowAbove | null): ConversionHistoryPoint => ({
+      date,
+      ratePct: c?.ratePct ?? null,
+      rowPeople,
+      rowAbove: c?.rowAbove ?? null,
+      rowAbovePeople: c?.rowAbovePeople ?? null,
+    });
+    steps.forEach((_, i) => {
+      if (counted[i]) rowPoints[i]!.push(point(priced[i]!, result.rows[i] ?? null));
+    });
+    contactedPoints.push(point(contactedCount, result.contacted));
+  }
+  const series = (points: ConversionHistoryPoint[], undatedPeople: number): ConversionHistory => ({
+    startsOn: utcDay(startMs),
+    endsOn: input.today,
+    undatedPeople,
+    points,
+  });
+  return {
+    rows: steps.map((_, i) => (counted[i] ? series(rowPoints[i]!, undated[i]!) : null)),
+    contacted: series(contactedPoints, undated[CONTACTED]!),
   };
 }

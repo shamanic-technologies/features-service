@@ -10753,6 +10753,81 @@
                               "toReached"
                             ],
                             "description": "The counts a MEASURED rate was read on: toReached of fromReached (e.g. 13 of 20). Null for any other source."
+                          },
+                          "candidates": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "basis": {
+                                  "type": "string",
+                                  "enum": [
+                                    "crm",
+                                    "our_leads",
+                                    "manual",
+                                    "median",
+                                    "default"
+                                  ],
+                                  "description": "crm: measured on the client's whole CRM. our_leads: measured on our leads. manual: the value the client stated. median: what other brands stated for the leg (fleet median). default: industry benchmark."
+                                },
+                                "ratePct": {
+                                  "type": "number",
+                                  "description": "The candidate's rate, 0..100 (a measured to_exceeds_from candidate may exceed 100: it is no probability and is never kept)."
+                                },
+                                "fromReached": {
+                                  "type": "integer",
+                                  "nullable": true,
+                                  "description": "Measured candidates: the people (or CRM contacts) at the FROM step. Null otherwise."
+                                },
+                                "toReached": {
+                                  "type": "integer",
+                                  "nullable": true,
+                                  "description": "Measured candidates: of those, the people through the leg to the TO step (\"28 of 43\"). Null otherwise."
+                                },
+                                "outcomesCounted": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "enum": [
+                                    "all",
+                                    "caused_by_our_outreach"
+                                  ],
+                                  "description": "our_leads only: which outcomes the counts include. Null otherwise."
+                                },
+                                "brandCount": {
+                                  "type": "integer",
+                                  "nullable": true,
+                                  "description": "median only: how many brands stated the leg. Null otherwise."
+                                },
+                                "kept": {
+                                  "type": "boolean",
+                                  "description": "True on exactly ONE candidate when the leg has a rate: the one the leg's rate uses (its ratePct equals the leg's)."
+                                },
+                                "notKeptReason": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "enum": [
+                                    "outranked",
+                                    "below_learning_bar",
+                                    "to_exceeds_from",
+                                    "too_few_brands",
+                                    "crm_measures_this_leg"
+                                  ],
+                                  "description": "Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. too_few_brands: a median over fewer than 5 brands. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."
+                                }
+                              },
+                              "required": [
+                                "basis",
+                                "ratePct",
+                                "fromReached",
+                                "toReached",
+                                "outcomesCounted",
+                                "brandCount",
+                                "kept",
+                                "notKeptReason"
+                              ],
+                              "description": "One rate the precedence weighed for the leg (measured on the CRM > measured on our leads when the CRM does not measure the leg > the client's value > fleet median > default). The precedence is unchanged; this only shows what it weighed."
+                            },
+                            "description": "EVERY RATE CANDIDATE of the leg, in precedence order; a source with no number is absent. Exactly one is kept when the leg has a rate, and its ratePct is the leg's rate."
                           }
                         },
                         "required": [
@@ -10761,7 +10836,8 @@
                           "legKey",
                           "ratePct",
                           "source",
-                          "measured"
+                          "measured",
+                          "candidates"
                         ]
                       },
                       "description": "The legs multiplied, from this step to Paid client, in order. Empty on Paid client itself (probability 100%)."
@@ -11168,6 +11244,81 @@
                                   "toReached"
                                 ],
                                 "description": "The counts a MEASURED rate was read on: toReached of fromReached (e.g. 13 of 20). Null for any other source."
+                              },
+                              "candidates": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "basis": {
+                                      "type": "string",
+                                      "enum": [
+                                        "crm",
+                                        "our_leads",
+                                        "manual",
+                                        "median",
+                                        "default"
+                                      ],
+                                      "description": "crm: measured on the client's whole CRM. our_leads: measured on our leads. manual: the value the client stated. median: what other brands stated for the leg (fleet median). default: industry benchmark."
+                                    },
+                                    "ratePct": {
+                                      "type": "number",
+                                      "description": "The candidate's rate, 0..100 (a measured to_exceeds_from candidate may exceed 100: it is no probability and is never kept)."
+                                    },
+                                    "fromReached": {
+                                      "type": "integer",
+                                      "nullable": true,
+                                      "description": "Measured candidates: the people (or CRM contacts) at the FROM step. Null otherwise."
+                                    },
+                                    "toReached": {
+                                      "type": "integer",
+                                      "nullable": true,
+                                      "description": "Measured candidates: of those, the people through the leg to the TO step (\"28 of 43\"). Null otherwise."
+                                    },
+                                    "outcomesCounted": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "all",
+                                        "caused_by_our_outreach"
+                                      ],
+                                      "description": "our_leads only: which outcomes the counts include. Null otherwise."
+                                    },
+                                    "brandCount": {
+                                      "type": "integer",
+                                      "nullable": true,
+                                      "description": "median only: how many brands stated the leg. Null otherwise."
+                                    },
+                                    "kept": {
+                                      "type": "boolean",
+                                      "description": "True on exactly ONE candidate when the leg has a rate: the one the leg's rate uses (its ratePct equals the leg's)."
+                                    },
+                                    "notKeptReason": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "outranked",
+                                        "below_learning_bar",
+                                        "to_exceeds_from",
+                                        "too_few_brands",
+                                        "crm_measures_this_leg"
+                                      ],
+                                      "description": "Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. too_few_brands: a median over fewer than 5 brands. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."
+                                    }
+                                  },
+                                  "required": [
+                                    "basis",
+                                    "ratePct",
+                                    "fromReached",
+                                    "toReached",
+                                    "outcomesCounted",
+                                    "brandCount",
+                                    "kept",
+                                    "notKeptReason"
+                                  ],
+                                  "description": "One rate the precedence weighed for the leg (measured on the CRM > measured on our leads when the CRM does not measure the leg > the client's value > fleet median > default). The precedence is unchanged; this only shows what it weighed."
+                                },
+                                "description": "EVERY RATE CANDIDATE of the leg, in precedence order; a source with no number is absent. Exactly one is kept when the leg has a rate, and its ratePct is the leg's rate."
                               }
                             },
                             "required": [
@@ -11176,7 +11327,8 @@
                               "legKey",
                               "ratePct",
                               "source",
-                              "measured"
+                              "measured",
+                              "candidates"
                             ]
                           },
                           "description": "The legs multiplied, from this step to Paid client, in order. Empty on Paid client itself (probability 100%)."
@@ -12324,6 +12476,82 @@
                           "ratePct"
                         ],
                         "description": "THE SLICED LADDER'S % CONVERSION (owner 2026-10-08: \"the total of the row above / (total of that row + total above)\"). Null on the deepest displayed row (no row above) and on a row not displayed. Not ladder[].pricedConversionFromPrevious (cumulative)."
+                      },
+                      "conversionHistory": {
+                        "type": "object",
+                        "nullable": true,
+                        "properties": {
+                          "startsOn": {
+                            "type": "string",
+                            "description": "The first point's UTC day (YYYY-MM-DD): the day of the offer's first delivered email. No point before it."
+                          },
+                          "endsOn": {
+                            "type": "string",
+                            "description": "The last point's UTC day: today."
+                          },
+                          "undatedPeople": {
+                            "type": "integer",
+                            "description": "The row's people today whose arrival on it has no date: counted on the last point only, never back-dated."
+                          },
+                          "points": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "date": {
+                                  "type": "string",
+                                  "description": "UTC day, YYYY-MM-DD. One point per day, no gap."
+                                },
+                                "ratePct": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "rowAbovePeople / (rowPeople + rowAbovePeople) x 100 on where each person stood that day. Null when the row had no row above that day, was not displayed (no people), or both rows were 0. Never 0 for an undefined rate."
+                                },
+                                "rowPeople": {
+                                  "type": "integer",
+                                  "description": "The row's people that day (pricedPeople; the contacted row: count)."
+                                },
+                                "rowAbove": {
+                                  "type": "object",
+                                  "nullable": true,
+                                  "properties": {
+                                    "key": {
+                                      "type": "string"
+                                    },
+                                    "label": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "label"
+                                  ],
+                                  "description": "The row above that day (the next deeper row with people). Null when none."
+                                },
+                                "rowAbovePeople": {
+                                  "type": "integer",
+                                  "nullable": true,
+                                  "description": "Its people that day. Null when there is no row above."
+                                }
+                              },
+                              "required": [
+                                "date",
+                                "ratePct",
+                                "rowPeople",
+                                "rowAbove",
+                                "rowAbovePeople"
+                              ]
+                            },
+                            "description": "Daily, startsOn to endsOn. The last point equals conversionFromRowAbove (same people, same rule)."
+                          }
+                        },
+                        "required": [
+                          "startsOn",
+                          "endsOn",
+                          "undatedPeople",
+                          "points"
+                        ],
+                        "description": "THE SLICED % CONVERSION, DATED (only with ?conversionHistory=true, else null): per day since the offer's first delivery, every person stands where they stood that day (the furthest step priced for them reached by then, else the furthest reached, else the contacted row once contacted), then the conversionFromRowAbove rule. Null on a step that is not counted, and when no delivery date is known."
                       }
                     },
                     "required": [
@@ -12337,7 +12565,8 @@
                       "countedWithColleagueUsd",
                       "explanation",
                       "people",
-                      "conversionFromRowAbove"
+                      "conversionFromRowAbove",
+                      "conversionHistory"
                     ],
                     "description": "PEOPLE CONTACTED, NOTHING YET: on the same one-row-per-person basis."
                   },
@@ -12877,6 +13106,82 @@
                             "ratePct"
                           ],
                           "description": "THE SLICED LADDER'S % CONVERSION (owner 2026-10-08: \"the total of the row above / (total of that row + total above)\"). Null on the deepest displayed row (no row above) and on a row not displayed. Not ladder[].pricedConversionFromPrevious (cumulative)."
+                        },
+                        "conversionHistory": {
+                          "type": "object",
+                          "nullable": true,
+                          "properties": {
+                            "startsOn": {
+                              "type": "string",
+                              "description": "The first point's UTC day (YYYY-MM-DD): the day of the offer's first delivered email. No point before it."
+                            },
+                            "endsOn": {
+                              "type": "string",
+                              "description": "The last point's UTC day: today."
+                            },
+                            "undatedPeople": {
+                              "type": "integer",
+                              "description": "The row's people today whose arrival on it has no date: counted on the last point only, never back-dated."
+                            },
+                            "points": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "date": {
+                                    "type": "string",
+                                    "description": "UTC day, YYYY-MM-DD. One point per day, no gap."
+                                  },
+                                  "ratePct": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "rowAbovePeople / (rowPeople + rowAbovePeople) x 100 on where each person stood that day. Null when the row had no row above that day, was not displayed (no people), or both rows were 0. Never 0 for an undefined rate."
+                                  },
+                                  "rowPeople": {
+                                    "type": "integer",
+                                    "description": "The row's people that day (pricedPeople; the contacted row: count)."
+                                  },
+                                  "rowAbove": {
+                                    "type": "object",
+                                    "nullable": true,
+                                    "properties": {
+                                      "key": {
+                                        "type": "string"
+                                      },
+                                      "label": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "key",
+                                      "label"
+                                    ],
+                                    "description": "The row above that day (the next deeper row with people). Null when none."
+                                  },
+                                  "rowAbovePeople": {
+                                    "type": "integer",
+                                    "nullable": true,
+                                    "description": "Its people that day. Null when there is no row above."
+                                  }
+                                },
+                                "required": [
+                                  "date",
+                                  "ratePct",
+                                  "rowPeople",
+                                  "rowAbove",
+                                  "rowAbovePeople"
+                                ]
+                              },
+                              "description": "Daily, startsOn to endsOn. The last point equals conversionFromRowAbove (same people, same rule)."
+                            }
+                          },
+                          "required": [
+                            "startsOn",
+                            "endsOn",
+                            "undatedPeople",
+                            "points"
+                          ],
+                          "description": "THE SLICED % CONVERSION, DATED (only with ?conversionHistory=true, else null): per day since the offer's first delivery, every person stands where they stood that day (the furthest step priced for them reached by then, else the furthest reached, else the contacted row once contacted), then the conversionFromRowAbove rule. Null on a step that is not counted, and when no delivery date is known."
                         }
                       },
                       "required": [
@@ -12887,7 +13192,8 @@
                         "countedWithColleagueUsd",
                         "people",
                         "hot",
-                        "conversionFromRowAbove"
+                        "conversionFromRowAbove",
+                        "conversionHistory"
                       ]
                     },
                     "description": "The ladder's steps in climbing order. A person stands on the furthest step priced for them (else, nothing priced, the furthest reached, as notOurs; else the contacted row)."
@@ -19602,6 +19908,81 @@
                         "type": "number",
                         "nullable": true,
                         "description": "The seeded per-leg default (industry benchmark, 0..100], stated whether or not it is the effective source."
+                      },
+                      "candidates": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "basis": {
+                              "type": "string",
+                              "enum": [
+                                "crm",
+                                "our_leads",
+                                "manual",
+                                "median",
+                                "default"
+                              ],
+                              "description": "crm: measured on the client's whole CRM. our_leads: measured on our leads. manual: the value the client stated. median: what other brands stated for the leg (fleet median). default: industry benchmark."
+                            },
+                            "ratePct": {
+                              "type": "number",
+                              "description": "The candidate's rate, 0..100 (a measured to_exceeds_from candidate may exceed 100: it is no probability and is never kept)."
+                            },
+                            "fromReached": {
+                              "type": "integer",
+                              "nullable": true,
+                              "description": "Measured candidates: the people (or CRM contacts) at the FROM step. Null otherwise."
+                            },
+                            "toReached": {
+                              "type": "integer",
+                              "nullable": true,
+                              "description": "Measured candidates: of those, the people through the leg to the TO step (\"28 of 43\"). Null otherwise."
+                            },
+                            "outcomesCounted": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "all",
+                                "caused_by_our_outreach"
+                              ],
+                              "description": "our_leads only: which outcomes the counts include. Null otherwise."
+                            },
+                            "brandCount": {
+                              "type": "integer",
+                              "nullable": true,
+                              "description": "median only: how many brands stated the leg. Null otherwise."
+                            },
+                            "kept": {
+                              "type": "boolean",
+                              "description": "True on exactly ONE candidate when the leg has a rate: the one the leg's rate uses (its ratePct equals the leg's)."
+                            },
+                            "notKeptReason": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "outranked",
+                                "below_learning_bar",
+                                "to_exceeds_from",
+                                "too_few_brands",
+                                "crm_measures_this_leg"
+                              ],
+                              "description": "Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. too_few_brands: a median over fewer than 5 brands. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."
+                            }
+                          },
+                          "required": [
+                            "basis",
+                            "ratePct",
+                            "fromReached",
+                            "toReached",
+                            "outcomesCounted",
+                            "brandCount",
+                            "kept",
+                            "notKeptReason"
+                          ],
+                          "description": "One rate the precedence weighed for the leg (measured on the CRM > measured on our leads when the CRM does not measure the leg > the client's value > fleet median > default). The precedence is unchanged; this only shows what it weighed."
+                        },
+                        "description": "EVERY RATE CANDIDATE of the leg, in precedence order; a source with no number is absent. Exactly one is kept when the leg has a rate, and its ratePct is the leg's rate."
                       }
                     },
                     "required": [
@@ -19616,7 +19997,8 @@
                       "measured",
                       "manualRatePct",
                       "median",
-                      "defaultRatePct"
+                      "defaultRatePct",
+                      "candidates"
                     ]
                   },
                   "description": "One entry per consecutive pair of the funnel's steps, in order."
@@ -19777,6 +20159,81 @@
                   "type": "number",
                   "nullable": true,
                   "description": "The seeded per-leg default (industry benchmark, 0..100], stated whether or not it is the effective source."
+                },
+                "candidates": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "basis": {
+                        "type": "string",
+                        "enum": [
+                          "crm",
+                          "our_leads",
+                          "manual",
+                          "median",
+                          "default"
+                        ],
+                        "description": "crm: measured on the client's whole CRM. our_leads: measured on our leads. manual: the value the client stated. median: what other brands stated for the leg (fleet median). default: industry benchmark."
+                      },
+                      "ratePct": {
+                        "type": "number",
+                        "description": "The candidate's rate, 0..100 (a measured to_exceeds_from candidate may exceed 100: it is no probability and is never kept)."
+                      },
+                      "fromReached": {
+                        "type": "integer",
+                        "nullable": true,
+                        "description": "Measured candidates: the people (or CRM contacts) at the FROM step. Null otherwise."
+                      },
+                      "toReached": {
+                        "type": "integer",
+                        "nullable": true,
+                        "description": "Measured candidates: of those, the people through the leg to the TO step (\"28 of 43\"). Null otherwise."
+                      },
+                      "outcomesCounted": {
+                        "type": "string",
+                        "nullable": true,
+                        "enum": [
+                          "all",
+                          "caused_by_our_outreach"
+                        ],
+                        "description": "our_leads only: which outcomes the counts include. Null otherwise."
+                      },
+                      "brandCount": {
+                        "type": "integer",
+                        "nullable": true,
+                        "description": "median only: how many brands stated the leg. Null otherwise."
+                      },
+                      "kept": {
+                        "type": "boolean",
+                        "description": "True on exactly ONE candidate when the leg has a rate: the one the leg's rate uses (its ratePct equals the leg's)."
+                      },
+                      "notKeptReason": {
+                        "type": "string",
+                        "nullable": true,
+                        "enum": [
+                          "outranked",
+                          "below_learning_bar",
+                          "to_exceeds_from",
+                          "too_few_brands",
+                          "crm_measures_this_leg"
+                        ],
+                        "description": "Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. too_few_brands: a median over fewer than 5 brands. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."
+                      }
+                    },
+                    "required": [
+                      "basis",
+                      "ratePct",
+                      "fromReached",
+                      "toReached",
+                      "outcomesCounted",
+                      "brandCount",
+                      "kept",
+                      "notKeptReason"
+                    ],
+                    "description": "One rate the precedence weighed for the leg (measured on the CRM > measured on our leads when the CRM does not measure the leg > the client's value > fleet median > default). The precedence is unchanged; this only shows what it weighed."
+                  },
+                  "description": "EVERY RATE CANDIDATE of the leg, in precedence order; a source with no number is absent. Exactly one is kept when the leg has a rate, and its ratePct is the leg's rate."
                 }
               },
               "required": [
@@ -19791,7 +20248,8 @@
                 "measured",
                 "manualRatePct",
                 "median",
-                "defaultRatePct"
+                "defaultRatePct",
+                "candidates"
               ]
             },
             "description": "Every leg between two steps, once (the grain a rate lives at), including EVERY non-entry leg of the public catalogue (GET /public/channels legs[] with a fromStep), each with a non-null effectiveRatePct and its source (the seeded default at worst). Join to the catalogue on legKey."
@@ -31782,6 +32240,20 @@
           {
             "schema": {
               "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "true: serve pipeline.exclusiveLadder rows[].conversionHistory and contacted.conversionHistory (the sliced % Conversion per day since the offer's first delivery). Default false (both null). Every other figure is byte-identical either way."
+            },
+            "required": false,
+            "description": "true: serve pipeline.exclusiveLadder rows[].conversionHistory and contacted.conversionHistory (the sliced % Conversion per day since the offer's first delivery). Default false (both null). Every other figure is byte-identical either way.",
+            "name": "conversionHistory",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "format": "uuid",
               "description": "Internal org UUID from client-service"
             },
@@ -31835,7 +32307,7 @@
             }
           },
           "400": {
-            "description": "Missing brandId, invalid pricing or cause",
+            "description": "Missing brandId, invalid pricing, cause or conversionHistory (reason conversion_history_unrecognised)",
             "content": {
               "application/json": {
                 "schema": {

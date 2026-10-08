@@ -198,6 +198,67 @@ export interface EffectiveArrowRate {
   median: { ratePct: number | null; brandCount: number };
   /** The seeded per-leg default (industry benchmark), whether or not it is the effective source. */
   defaultRatePct: number | null;
+  /** Every source the precedence weighed for this leg that holds a number, in precedence order, exactly one `kept` (see `RateCandidate`). */
+  candidates: RateCandidate[];
+}
+
+/** Where a rate candidate comes from: measured on the client's CRM, measured on our leads, or a source of the precedence. */
+export type RateCandidateBasis = "crm" | "our_leads" | "manual" | "median" | "default";
+
+/**
+ * ONE RATE THE PRECEDENCE WEIGHED FOR A LEG (owner 2026-10-08, the step side panel: "Measured in your CRM:
+ * 28 of 43 (65%) [Kept] / Measured in our data: 1 of 4 (25%) / Your value: 32%"). Exposes what
+ * `resolveArrow` already weighs; the precedence and the kept rate are unchanged. A source holding no number
+ * is absent. Exactly one candidate is `kept` when the leg has a rate, and its `ratePct` IS the leg's rate.
+ */
+export interface RateCandidate {
+  basis: RateCandidateBasis;
+  ratePct: number;
+  /** Measured candidates: the population (FROM) and the people through the leg (TO). Null otherwise. */
+  fromReached: number | null;
+  toReached: number | null;
+  /** our_leads only: which outcomes the counts include. Null otherwise. */
+  outcomesCounted: MeasuredOutcomes | null;
+  /** median only: over how many brands' statements. Null otherwise. */
+  brandCount: number | null;
+  kept: boolean;
+  /**
+   * Null when kept. Otherwise why not: `outranked` (usable, a source earlier in the precedence won),
+   * `below_learning_bar` (fewer than `MIN_MEASURED_FROM_REACHED` at FROM), `to_exceeds_from` (no
+   * probability), `too_few_brands` (median over fewer than `MIN_FLEET_MEDIAN_BRANDS`),
+   * `crm_measures_this_leg` (our leads, when the client's CRM is where this leg is measured).
+   */
+  notKeptReason: "outranked" | "below_learning_bar" | "to_exceeds_from" | "too_few_brands" | "crm_measures_this_leg" | null;
+}
+
+/** PURE: the candidates of a resolved leg (see `RateCandidate`). `ourLeads` = the our-leads measurement beside a CRM one. */
+export function rateCandidatesOf(
+  leg: Pick<EffectiveArrowRate, "source" | "effectiveRatePct" | "measured" | "manualRatePct" | "median" | "defaultRatePct">,
+  ourLeads: MeasuredArrowRate | null,
+): RateCandidate[] {
+  const keptBasis: RateCandidateBasis | null =
+    leg.source === "measured" ? leg.measured.basis : leg.source;
+  const none = { fromReached: null, toReached: null, outcomesCounted: null, brandCount: null };
+  const out: RateCandidate[] = [];
+  const push = (basis: RateCandidateBasis, ratePct: number, extra: Partial<RateCandidate>, blocked: RateCandidate["notKeptReason"]) => {
+    const kept = basis === keptBasis;
+    out.push({ basis, ratePct, ...none, ...extra, kept, notKeptReason: kept ? null : (blocked ?? "outranked") });
+  };
+  const measuredBlock = (m: MeasuredArrowRate): RateCandidate["notKeptReason"] =>
+    m.gap === "below_learning_bar" || m.gap === "to_exceeds_from" ? m.gap : null;
+  for (const m of [leg.measured, ourLeads]) {
+    if (!m || m.ratePct === null) continue;
+    const counts = { fromReached: m.fromReached, toReached: m.toReached, outcomesCounted: m.outcomesCounted };
+    // Our leads beside a CRM measurement: the CRM is where this leg is measured, our leads are shown, never weighed.
+    const blocked = m === ourLeads ? "crm_measures_this_leg" : measuredBlock(m);
+    push(m.basis, m.ratePct, counts, blocked);
+  }
+  if (leg.manualRatePct !== null) push("manual", leg.manualRatePct, {}, null);
+  if (leg.median.ratePct !== null) {
+    push("median", leg.median.ratePct, { brandCount: leg.median.brandCount }, fleetMedianApplies(leg.median) ? null : "too_few_brands");
+  }
+  if (leg.defaultRatePct !== null) push("default", leg.defaultRatePct, {}, null);
+  return out;
 }
 
 export interface EffectiveFunnelRates {
@@ -605,6 +666,8 @@ export function resolveArrow(
   manualRatePct: number | null,
   medianRate: { ratePct: number | null; brandCount: number },
   defaultRatePct: number | null = null,
+  /** The our-leads measurement when `measured` is the CRM's: a candidate shown beside it, never weighed. */
+  ourLeadsMeasured: MeasuredArrowRate | null = null,
 ): EffectiveArrowRate {
   let effectiveRatePct: number | null = null;
   let source: EffectiveRateSource | null = null;
@@ -621,18 +684,19 @@ export function resolveArrow(
     effectiveRatePct = defaultRatePct;
     source = "default";
   }
-  return {
+  const resolved = {
     fromStep,
     toStep,
     ...catalogueLegOf(fromStep, toStep),
     effectiveRatePct,
     source,
-    unresolvedReason: effectiveRatePct === null ? "no_rate_available" : null,
+    unresolvedReason: effectiveRatePct === null ? ("no_rate_available" as const) : null,
     measured,
     manualRatePct,
     median: medianRate,
     defaultRatePct,
   };
+  return { ...resolved, candidates: rateCandidatesOf(resolved, measured.basis === "crm" ? ourLeadsMeasured : null) };
 }
 
 /**
@@ -661,21 +725,32 @@ export function buildBrandEffectiveRates(input: {
   const legs = new Map<string, EffectiveArrowRate>();
   const crm = measurement.crm ?? null;
   const crmUsed = crm?.status === "used";
-  const measureLeg = (fromStep: string, toStep: string): MeasuredArrowRate =>
-    (crmUsed ? crmArrowRate(crm!, fromStep, toStep) : null) ??
-    measuredArrowRate(measurement, leadFieldOfStep(fromStep), leadFieldOfStep(toStep), crmUsed ? "caused_by_our_outreach" : "all");
+  // The measurement precedence is unchanged: the CRM when it evidences both ends, else our leads. Beside a
+  // CRM measurement, our leads' own rate is read too (a candidate shown, never weighed).
+  const measureLeg = (fromStep: string, toStep: string): { measured: MeasuredArrowRate; ourLeads: MeasuredArrowRate | null } => {
+    const crmRate = crmUsed ? crmArrowRate(crm!, fromStep, toStep) : null;
+    const canReadOurs = !crmUsed || (measurement.ourReachedCounts !== undefined && measurement.ourReachedPatterns !== undefined);
+    const ours = canReadOurs
+      ? measuredArrowRate(measurement, leadFieldOfStep(fromStep), leadFieldOfStep(toStep), crmUsed ? "caused_by_our_outreach" : "all")
+      : null;
+    if (crmRate) return { measured: crmRate, ourLeads: ours };
+    if (!ours) throw new Error("measuredArrowRate: an outreach-caused rate needs ourReachedCounts and ourReachedPatterns, and this measurement carries none");
+    return { measured: ours, ourLeads: null };
+  };
   const resolveLeg = (fromStep: string, toStep: string): EffectiveArrowRate => {
     const key = legPairKey(fromStep, toStep);
     const cached = legs.get(key);
     if (cached) return cached;
     const label = producerLabels.get(key) ?? { fromStep, toStep };
+    const { measured, ourLeads } = measureLeg(fromStep, toStep);
     const resolved = resolveArrow(
       label.fromStep,
       label.toStep,
-      measureLeg(fromStep, toStep),
+      measured,
       manualByLeg.get(key) ?? null,
       input.medians.get(key) ?? { ratePct: null, brandCount: 0 },
       defaultRateOfLeg(fromStep, toStep),
+      ourLeads,
     );
     legs.set(key, resolved);
     return resolved;

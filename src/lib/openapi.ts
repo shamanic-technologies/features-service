@@ -1717,6 +1717,17 @@ const offerOutcomeLegSchema = z.object({
   ...outcomeFiguresShape,
   maturity: offerOutcomeMaturitySchema.optional(),
 });
+const rateCandidateSchema = z.object({
+  basis: z.enum(["crm", "our_leads", "manual", "median", "default"]).describe("crm: measured on the client's whole CRM. our_leads: measured on our leads. manual: the value the client stated. median: what other brands stated for the leg (fleet median). default: industry benchmark."),
+  ratePct: z.number().describe("The candidate's rate, 0..100 (a measured to_exceeds_from candidate may exceed 100: it is no probability and is never kept)."),
+  fromReached: z.number().int().nullable().describe("Measured candidates: the people (or CRM contacts) at the FROM step. Null otherwise."),
+  toReached: z.number().int().nullable().describe("Measured candidates: of those, the people through the leg to the TO step (\"28 of 43\"). Null otherwise."),
+  outcomesCounted: z.enum(["all", "caused_by_our_outreach"]).nullable().describe("our_leads only: which outcomes the counts include. Null otherwise."),
+  brandCount: z.number().int().nullable().describe("median only: how many brands stated the leg. Null otherwise."),
+  kept: z.boolean().describe("True on exactly ONE candidate when the leg has a rate: the one the leg's rate uses (its ratePct equals the leg's)."),
+  notKeptReason: z.enum(["outranked", "below_learning_bar", "to_exceeds_from", "too_few_brands", "crm_measures_this_leg"]).nullable().describe("Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. too_few_brands: a median over fewer than 5 brands. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."),
+}).describe("One rate the precedence weighed for the leg (measured on the CRM > measured on our leads when the CRM does not measure the leg > the client's value > fleet median > default). The precedence is unchanged; this only shows what it weighed.");
+const rateCandidatesSchema = z.array(rateCandidateSchema).describe("EVERY RATE CANDIDATE of the leg, in precedence order; a source with no number is absent. Exactly one is kept when the leg has a rate, and its ratePct is the leg's rate.");
 const explainedLegSchema = z.object({
   fromStep: stepRefSchema,
   toStep: stepRefSchema,
@@ -1728,6 +1739,7 @@ const explainedLegSchema = z.object({
     fromReached: z.number().int().nullable(),
     toReached: z.number().int().nullable(),
   }).nullable().describe("The counts a MEASURED rate was read on: toReached of fromReached (e.g. 13 of 20). Null for any other source."),
+  candidates: rateCandidatesSchema,
 });
 const stepValueExplanationSchema = z.object({
   lifetimeRevenueUsd: z.number().describe("The offer's stated lifetime revenue per paying client."),
@@ -1802,6 +1814,18 @@ const conversionFromRowAboveSchema = z.object({
   rowPeople: z.number().int().describe("This row's total: pricedPeople (the contacted row: count)."),
   ratePct: z.number().nullable().describe("rowAbovePeople / (rowPeople + rowAbovePeople) x 100. Null when both are 0."),
 }).nullable().describe("THE SLICED LADDER'S % CONVERSION (owner 2026-10-08: \"the total of the row above / (total of that row + total above)\"). Null on the deepest displayed row (no row above) and on a row not displayed. Not ladder[].pricedConversionFromPrevious (cumulative).");
+const conversionHistorySchema = z.object({
+  startsOn: z.string().describe("The first point's UTC day (YYYY-MM-DD): the day of the offer's first delivered email. No point before it."),
+  endsOn: z.string().describe("The last point's UTC day: today."),
+  undatedPeople: z.number().int().describe("The row's people today whose arrival on it has no date: counted on the last point only, never back-dated."),
+  points: z.array(z.object({
+    date: z.string().describe("UTC day, YYYY-MM-DD. One point per day, no gap."),
+    ratePct: z.number().nullable().describe("rowAbovePeople / (rowPeople + rowAbovePeople) x 100 on where each person stood that day. Null when the row had no row above that day, was not displayed (no people), or both rows were 0. Never 0 for an undefined rate."),
+    rowPeople: z.number().int().describe("The row's people that day (pricedPeople; the contacted row: count)."),
+    rowAbove: stepRefSchema.nullable().describe("The row above that day (the next deeper row with people). Null when none."),
+    rowAbovePeople: z.number().int().nullable().describe("Its people that day. Null when there is no row above."),
+  })).describe("Daily, startsOn to endsOn. The last point equals conversionFromRowAbove (same people, same rule)."),
+}).nullable().describe("THE SLICED % CONVERSION, DATED (only with ?conversionHistory=true, else null): per day since the offer's first delivery, every person stands where they stood that day (the furthest step priced for them reached by then, else the furthest reached, else the contacted row once contacted), then the conversionFromRowAbove rule. Null on a step that is not counted, and when no delivery date is known.");
 const exclusiveLadderSchema = z.object({
   contacted: z.object({
     count: z.number().int().describe("Contacted people who reached no step yet (openers included; bounced and unsubscribed included, worth 0)."),
@@ -1826,6 +1850,7 @@ const exclusiveLadderSchema = z.object({
     }).nullable().describe("How one contacted person is priced. Null when nobody is valued or the offer is unpriced."),
     people: z.object({ limit: z.number().int(), leads: z.array(exclusiveStepPersonSchema) }).describe("Highest value first, capped at limit; counted whole in count. reachedAt = when they were contacted."),
     conversionFromRowAbove: conversionFromRowAboveSchema,
+    conversionHistory: conversionHistorySchema,
   }).describe("PEOPLE CONTACTED, NOTHING YET: on the same one-row-per-person basis."),
   rows: z.array(z.object({
     step: stepRefSchema,
@@ -1841,6 +1866,7 @@ const exclusiveLadderSchema = z.object({
     }).nullable().describe("Same three groups as ladder[].people, on the exclusive basis: a person is on ONE row only."),
     hot: z.object({ limit: z.number().int(), count: z.number().int(), leads: z.array(exclusiveStepPersonSchema) }).nullable().describe("HOT LEADS ON THIS ROW: the row's people in pipeline.hotLeads (the same verdict, every hot person counted, not only the listed top), highest value first, capped at limit. A hot person is in people.ours or people.notOurs, never lost. Σ rows[].hot.count + total.hot.onContactedRow + total.hot.onNoRow = hotLeads.totalCount. Null when hotLeads is null (unpriced offer)."),
     conversionFromRowAbove: conversionFromRowAboveSchema,
+    conversionHistory: conversionHistorySchema,
   })).describe("The ladder's steps in climbing order. A person stands on the furthest step priced for them (else, nothing priced, the furthest reached, as notOurs; else the contacted row)."),
   total: z.object({
     people: z.number().int().describe("Distinct people on a row (contacted row included)."),
@@ -1954,11 +1980,12 @@ registry.registerPath({
       brandId: z.string().describe("Brand UUID (required)."),
       pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every money figure. Omit or 'gross' (default); 'net' reads runs-service's frozen net amounts, fail-loud."),
       cause: z.string().optional().describe("Which cause states are PRICED (value, ROI) — comma-separated subset of outreach | other | unstated, default outreach. Every cause is always COUNTED."),
+      conversionHistory: z.enum(["true", "false"]).optional().describe("true: serve pipeline.exclusiveLadder rows[].conversionHistory and contacted.conversionHistory (the sliced % Conversion per day since the offer's first delivery). Default false (both null). Every other figure is byte-identical either way."),
     }),
   },
   responses: {
     200: { description: "One row per outcome", content: { "application/json": { schema: offerOutcomesResponseRef } } },
-    400: { description: "Missing brandId, invalid pricing or cause", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "Missing brandId, invalid pricing, cause or conversionHistory (reason conversion_history_unrecognised)", content: { "application/json": { schema: errorResponse } } },
     404: { description: "No campaign of this brand sells this offer (reason: offer_has_no_channels)", content: { "application/json": { schema: errorResponse } } },
     502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
   },
@@ -2804,6 +2831,7 @@ const effectiveArrowRateSchema = z.object({
     brandCount: z.number().int().describe("How many brands' statements the median is taken over. The median becomes the effective rate only when this is at least 5, and never on a leg leaving website_visit."),
   }),
   defaultRatePct: z.number().nullable().describe("The seeded per-leg default (industry benchmark, 0..100], stated whether or not it is the effective source."),
+  candidates: rateCandidatesSchema,
 });
 const brandConversionRatesResponseRef = registry.register(
   "BrandConversionRatesResponse",
