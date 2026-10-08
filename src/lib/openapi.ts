@@ -1882,6 +1882,58 @@ registry.registerPath({
   },
 });
 
+const leadFamilyEnum = z.enum(["won", "hot", "lost", "cold"]);
+const leadFamilyCountsSchema = z.object({
+  won: z.number().int(),
+  hot: z.number().int(),
+  lost: z.number().int(),
+  cold: z.number().int(),
+});
+const brandLeadFamiliesResponseRef = registry.register(
+  "BrandLeadFamiliesResponse",
+  z.object({
+    brandId: z.string(),
+    outcomeCauses: z.object({ priced: z.array(z.string()) }),
+    counts: leadFamilyCountsSchema.describe("People per family over the whole brand (a person counted once, in its strongest family)."),
+    lostBreakdown: z.object({
+      wentCold: z.number().int().describe("Lost because they went cold on interest we caused (= Today's Lost leads, coldLeads.count)."),
+      ruledOut: z.number().int().describe("Lost because a human ruled them out and nothing priced is left."),
+    }),
+    offers: z.array(z.object({ offerId: z.string(), counts: leadFamilyCountsSchema })).describe("Per offer, before the union: won = that offer's customersWon.leadCount, hot = hotLeads.totalCount, lost = coldLeads.count + ruled out."),
+    people: z.array(z.object({
+      leadId: z.string(),
+      email: z.string().nullable().describe("Trimmed, lower-cased. Null when lead-service states none."),
+      campaignLeadIds: z.array(z.string()).describe("The person's leads_campaigns row ids (the id lead-service's step-statement write takes), across every offer."),
+      family: leadFamilyEnum,
+      lostReason: z.enum(["went_cold", "ruled_out"]).nullable(),
+      offerId: z.string().describe("The offer whose verdict gave the family."),
+    })).describe("Every person with a family, won > hot > lost > cold, then lead id. A person with no family (engaged or gone cold on another cause) is absent. Unpaged."),
+  }),
+);
+
+registry.registerPath({
+  method: "get",
+  path: "/brands/{brandId}/lead-families",
+  summary: "Every person of a brand's offers in its family: won client, hot lead, lost lead, cold lead",
+  description:
+    "The Unibox filters. Each family is the offer outcomes pipeline's own verdict (GET /offers/{offerId}/outcomes), off the same inputs: won = a paying client on the priced causes; hot = a hot lead (all of them, not only the listed top); lost = interested thanks to us then went cold, or engaged and ruled out by a human (now $0); cold = contacted by us, never engaged. " +
+    "Unioned across the brand's offers, the strongest family wins (won > hot > lost > cold). Additive read.",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ brandId: z.string() }),
+    query: z.object({
+      cause: z.string().optional().describe("Which cause states are PRICED, as on /offers/{offerId}/outcomes (default outreach)."),
+    }),
+  },
+  responses: {
+    200: { description: "Every person's family", content: { "application/json": { schema: brandLeadFamiliesResponseRef } } },
+    400: { description: "Invalid cause", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Brand not held by the org (reason: brand_not_found)", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 // ── Sourcing split (lib/sourcing-origins.ts, lib/offer-sourcing.ts) ──────────────────────────────
 const sourcingProviderSchema = z
   .object({

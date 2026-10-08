@@ -11936,6 +11936,169 @@
           "pipeline"
         ]
       },
+      "BrandLeadFamiliesResponse": {
+        "type": "object",
+        "properties": {
+          "brandId": {
+            "type": "string"
+          },
+          "outcomeCauses": {
+            "type": "object",
+            "properties": {
+              "priced": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "priced"
+            ]
+          },
+          "counts": {
+            "type": "object",
+            "properties": {
+              "won": {
+                "type": "integer"
+              },
+              "hot": {
+                "type": "integer"
+              },
+              "lost": {
+                "type": "integer"
+              },
+              "cold": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "won",
+              "hot",
+              "lost",
+              "cold"
+            ],
+            "description": "People per family over the whole brand (a person counted once, in its strongest family)."
+          },
+          "lostBreakdown": {
+            "type": "object",
+            "properties": {
+              "wentCold": {
+                "type": "integer",
+                "description": "Lost because they went cold on interest we caused (= Today's Lost leads, coldLeads.count)."
+              },
+              "ruledOut": {
+                "type": "integer",
+                "description": "Lost because a human ruled them out and nothing priced is left."
+              }
+            },
+            "required": [
+              "wentCold",
+              "ruledOut"
+            ]
+          },
+          "offers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "offerId": {
+                  "type": "string"
+                },
+                "counts": {
+                  "type": "object",
+                  "properties": {
+                    "won": {
+                      "type": "integer"
+                    },
+                    "hot": {
+                      "type": "integer"
+                    },
+                    "lost": {
+                      "type": "integer"
+                    },
+                    "cold": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "won",
+                    "hot",
+                    "lost",
+                    "cold"
+                  ]
+                }
+              },
+              "required": [
+                "offerId",
+                "counts"
+              ]
+            },
+            "description": "Per offer, before the union: won = that offer's customersWon.leadCount, hot = hotLeads.totalCount, lost = coldLeads.count + ruled out."
+          },
+          "people": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "leadId": {
+                  "type": "string"
+                },
+                "email": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Trimmed, lower-cased. Null when lead-service states none."
+                },
+                "campaignLeadIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "The person's leads_campaigns row ids (the id lead-service's step-statement write takes), across every offer."
+                },
+                "family": {
+                  "type": "string",
+                  "enum": [
+                    "won",
+                    "hot",
+                    "lost",
+                    "cold"
+                  ]
+                },
+                "lostReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "went_cold",
+                    "ruled_out"
+                  ]
+                },
+                "offerId": {
+                  "type": "string",
+                  "description": "The offer whose verdict gave the family."
+                }
+              },
+              "required": [
+                "leadId",
+                "email",
+                "campaignLeadIds",
+                "family",
+                "lostReason",
+                "offerId"
+              ]
+            },
+            "description": "Every person with a family, won > hot > lost > cold, then lead id. A person with no family (engaged or gone cold on another cause) is absent. Unpaged."
+          }
+        },
+        "required": [
+          "brandId",
+          "outcomeCauses",
+          "counts",
+          "lostBreakdown",
+          "offers",
+          "people"
+        ]
+      },
       "SourcingOriginsResponse": {
         "type": "object",
         "properties": {
@@ -30380,6 +30543,144 @@
           },
           "404": {
             "description": "No campaign of this brand sells this offer (reason: offer_has_no_channels)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Downstream service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/brands/{brandId}/lead-families": {
+      "get": {
+        "summary": "Every person of a brand's offers in its family: won client, hot lead, lost lead, cold lead",
+        "description": "The Unibox filters. Each family is the offer outcomes pipeline's own verdict (GET /offers/{offerId}/outcomes), off the same inputs: won = a paying client on the priced causes; hot = a hot lead (all of them, not only the listed top); lost = interested thanks to us then went cold, or engaged and ruled out by a human (now $0); cold = contacted by us, never engaged. Unioned across the brand's offers, the strongest family wins (won > hot > lost > cold). Additive read.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Which cause states are PRICED, as on /offers/{offerId}/outcomes (default outreach)."
+            },
+            "required": false,
+            "description": "Which cause states are PRICED, as on /offers/{offerId}/outcomes (default outreach).",
+            "name": "cause",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Every person's family",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrandLeadFamiliesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid cause",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Brand not held by the org (reason: brand_not_found)",
             "content": {
               "application/json": {
                 "schema": {
