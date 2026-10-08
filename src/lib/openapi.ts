@@ -1741,8 +1741,40 @@ const stepConversionSchema = z.object({
   reachedFromPrevious: z.number().int().describe("Of those, the distinct leads that also reached this step."),
   ratePct: z.number().nullable().describe("reachedFromPrevious / previousReached x 100. Null when nobody stood on a previous step."),
 }).nullable().describe("Conversion from the previous step, distinct leads on both sides. Null when a previous step is not counted or its producer was unreadable.");
+const campaignLeadIdsShape = {
+  campaignLeadId: z.string().nullable().describe("One `leads_campaigns` row id of the person (the first of campaignLeadIds): the id lead-service's per-lead step-statement write takes (POST /orgs/leads/{id}/step-statements). Null when lead-service stated none."),
+  campaignLeadIds: z.array(z.string()).describe("Every `leads_campaigns` row id of the person within the offer's campaigns (several when the person sits on several campaigns)."),
+};
+const pipelinePersonIdentityShape = {
+  leadId: z.string(),
+  ...campaignLeadIdsShape,
+  firstName: z.string().nullable(),
+  lastName: z.string().nullable(),
+  title: z.string().nullable(),
+  orgName: z.string().nullable(),
+  orgDomain: z.string().nullable(),
+  orgLogoUrl: z.string().nullable(),
+};
+const stepPersonSchema = z.object({
+  ...pipelinePersonIdentityShape,
+  reachedAt: z.string().nullable().describe("When the person first reached the step. Null when no producer dated it."),
+  valueUsd: z.number().nullable().describe("What the pipeline prices the person at NOW (same per-lead value as hotLeads). Null only when the offer has no priced economics."),
+  probabilityPct: z.number().nullable().describe("valueUsd / (the person's stated value, else the offer's lifetime revenue) x 100."),
+});
+const lostStepPersonSchema = stepPersonSchema.extend({
+  lostReason: z.enum(["went_cold", "ruled_out"]).describe("went_cold = in coldLeads (lead-service's rule, interest we caused); ruled_out = a human stated a step will never happen and nothing priced is left (the deals board's verdict)."),
+  lostSince: z.string().nullable().describe("went_cold: coldSince. ruled_out: null (undated here)."),
+  coldAtStep: stepRefSchema.nullable().describe("went_cold: the step that never came. ruled_out: null."),
+});
+const stepPeopleSchema = z.object({
+  limit: z.number().int().describe("How many people each group lists; every group is counted whole."),
+  ours: z.object({ count: z.number().int(), leads: z.array(stepPersonSchema) }).describe("Reached the step THANKS TO US (the step is priced for them) and still alive. Highest value first."),
+  lost: z.object({ count: z.number().int(), leads: z.array(lostStepPersonSchema) }).describe("Reached the step thanks to us but lost (went cold, or ruled out). Most recent first. A paying client is never lost."),
+  notOurs: z.object({ count: z.number().int(), leads: z.array(stepPersonSchema) }).describe("Reached the step NOT thanks to us (another cause, e.g. the client's CRM, or unstated). Highest value first."),
+}).nullable().describe("WHO STANDS ON THE STEP, in three disjoint groups. ours.count + lost.count = pricedRecipientsReached; + notOurs.count = recipientsReached. Null when the step is not counted.");
 const pipelineLeadSchema = z.object({
   leadId: z.string(),
+  ...campaignLeadIdsShape,
   firstName: z.string().nullable(),
   lastName: z.string().nullable(),
   title: z.string().nullable(),
@@ -1770,6 +1802,8 @@ const offerPipelineSchema = z.object({
     pricedValueUsd: z.number().nullable().describe("THE STEP'S $ PIPELINE: pricedRecipientsReached x valuePerOutcomeUsd, the outcome row's valueUsd rule (equal to it on a step whose row counts the offer's own leads). Per person, like valueUsd. Null when the step is not counted or not priced. Not additive across steps: a lead that booked is also a replier."),
     valueExplanation: stepValueExplanationSchema,
     conversionFromPrevious: stepConversionSchema,
+    pricedConversionFromPrevious: stepConversionSchema.describe("conversionFromPrevious measured on the PRICED leads only (the pricedRecipientsReached basis, both sides; `contacted` stays everyone contacted), so it reads beside the priced People count. Null when a previous step is not counted or unreadable."),
+    people: stepPeopleSchema,
     wentCold: z.object({
       count: z.number().int(),
       valueUsd: z.number().nullable(),

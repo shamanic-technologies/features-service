@@ -124,6 +124,12 @@ export interface EnginePerson {
    */
   campaignId?: string | null;
   /**
+   * The `leads_campaigns` row ids this person was served under (one per campaign membership read):
+   * the id a per-lead write (a step statement) takes. The engine never reads it; `dedupPersonsByLead`
+   * UNIONS them, so a person on several campaigns carries every row. Absent when the producer states none.
+   */
+  campaignLeadIds?: readonly string[];
+  /**
    * The WORKFLOW the row was served under, frozen on the producer's `leads_campaigns` row at serve
    * time. Carried for the SAME reason as `campaignId` above and with the same rules: it lets a grain
    * partition persons BEFORE they are deduped, the engine never reads it (it can never affect EV),
@@ -494,6 +500,9 @@ export function dedupPersonsByLead(rows: EnginePerson[]): EnginePerson[] {
       existing.signals[key] = Boolean(existing.signals[key]) || value;
     }
     existing.unpricedSignals = unpricedSignals;
+    if (row.campaignLeadIds && row.campaignLeadIds.length > 0) {
+      existing.campaignLeadIds = [...new Set([...(existing.campaignLeadIds ?? []), ...row.campaignLeadIds])];
+    }
     if (row.signalDates) {
       existing.signalDates = existing.signalDates ?? {};
       for (const [key, value] of Object.entries(row.signalDates)) {
