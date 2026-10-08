@@ -381,9 +381,6 @@ export async function fetchHeldPersonCompanies(brandId: string, orgId: string): 
 
 // ── runs-service reads (service-auth; the vendor basis reveals our margin) ──────────────────────────
 
-const SERVE_RUN_PAGE = 500;
-const MAX_SERVE_RUN_PAGES = 400;
-
 function runsEnv(): { url: string; apiKey: string } {
   const url = process.env.RUNS_SERVICE_URL;
   const apiKey = process.env.RUNS_SERVICE_API_KEY;
@@ -391,76 +388,50 @@ function runsEnv(): { url: string; apiKey: string } {
   return { url, apiKey };
 }
 
-interface VendorRunRow {
+interface SubtreeCostRow {
   id: string;
   audienceId: string | null;
   campaignId: string | null;
   actualCostInUsdCents: string;
+  netActualCostInUsdCents: string;
   vendorActualCostInUsdCents: string;
   unpricedActualCostInUsdCents: string;
 }
 
 /**
- * Every `lead-service:lead-serve` run of the brand with its subtree's committed cost on the billed and
- * vendor bases (runs-service `GET /internal/runs/vendor`, the run list with subtree costs). Paged
- * newest first; a run inserted mid-walk shifts the pages DOWN (a repeat, deduped by id), never a skip.
+ * Every `lead-service:lead-serve` run of the brand with its subtree's committed cost on the billed, net
+ * and vendor bases: ONE read (runs-service `GET /internal/runs/subtree-costs`, one statement, one
+ * snapshot). It replaced a walk of `/internal/runs/vendor` + `/v1/runs?include=subtreeCost` in OFFSET
+ * pages of 500 (the owner brand: 244 calls a refresh, each page re-scanning the ones before), with the
+ * same figures per run. A row missing a basis is a loud error, never a guessed figure.
  */
 export async function fetchServeRunCosts(brandId: string, orgId: string): Promise<ServeRunCost[]> {
-  // Vendor walk FIRST, net walk second: a serve started in between appears only in the second (ignored),
-  // so every run of the first walk is in the second; one that is not is a loud error, never a guessed net.
-  const vendor = await walkServeRuns<VendorRunRow>("/internal/runs/vendor", brandId, orgId, true);
-  const net = await walkServeRuns<NetRunRow>("/v1/runs", brandId, orgId, false);
-  const netById = new Map(net.map((r) => [r.id, r.netActualCostInUsdCents]));
-  return vendor.map((r) => {
-    const netCents = netById.get(r.id);
-    if (netCents === undefined || netCents === null) {
-      throw new Error(`runs-service /v1/runs?include=subtreeCost stated no net subtree cost for serve run ${r.id}`);
+  const { url, apiKey } = runsEnv();
+  const params = new URLSearchParams({ orgId, brandId, serviceName: "lead-service", taskName: "lead-serve" });
+  const response = await fetchWithRetry(`${url}/internal/runs/subtree-costs?${params}`, {
+    headers: { "x-api-key": apiKey, "x-org-id": orgId },
+  });
+  if (!response.ok) {
+    throw new Error(`runs-service /internal/runs/subtree-costs failed (${response.status}): ${await response.text()}`);
+  }
+  const data = (await response.json()) as { runs?: SubtreeCostRow[] };
+  if (!Array.isArray(data.runs)) throw new Error("runs-service /internal/runs/subtree-costs returned no runs array");
+  return data.runs.map((r) => {
+    for (const field of ["actualCostInUsdCents", "netActualCostInUsdCents", "vendorActualCostInUsdCents", "unpricedActualCostInUsdCents"] as const) {
+      if (typeof r[field] !== "string") {
+        throw new Error(`runs-service /internal/runs/subtree-costs stated no ${field} for serve run ${r.id}`);
+      }
     }
     return {
       runId: r.id,
       audienceId: r.audienceId ?? null,
       campaignId: r.campaignId ?? null,
       billedCents: r.actualCostInUsdCents,
-      netCents,
+      netCents: r.netActualCostInUsdCents,
       vendorCents: r.vendorActualCostInUsdCents,
       unpricedBilledCents: r.unpricedActualCostInUsdCents,
     };
   });
-}
-
-interface NetRunRow {
-  id: string;
-  netActualCostInUsdCents: string;
-}
-
-async function walkServeRuns<T extends { id: string }>(path: string, brandId: string, orgId: string, staff: boolean): Promise<T[]> {
-  const { url, apiKey } = runsEnv();
-  const byId = new Map<string, T>();
-  for (let page = 0; ; page += 1) {
-    if (page >= MAX_SERVE_RUN_PAGES) {
-      throw new Error(`runs-service serve-run walk exceeded ${MAX_SERVE_RUN_PAGES} pages for brand ${brandId}`);
-    }
-    const params = new URLSearchParams({
-      brandId,
-      serviceName: "lead-service",
-      taskName: "lead-serve",
-      limit: String(SERVE_RUN_PAGE),
-      offset: String(page * SERVE_RUN_PAGE),
-    });
-    // The staff vendor read takes the org as a parameter; the org-scoped list reads it from x-org-id.
-    if (staff) params.set("orgId", orgId);
-    else params.set("include", "subtreeCost");
-    const response = await fetchWithRetry(`${url}${path}?${params}`, {
-      headers: { "x-api-key": apiKey, "x-org-id": orgId },
-    });
-    if (!response.ok) {
-      throw new Error(`runs-service ${path} failed (${response.status}): ${await response.text()}`);
-    }
-    const data = (await response.json()) as { runs?: T[] };
-    if (!Array.isArray(data.runs)) throw new Error(`runs-service ${path} returned no runs array`);
-    for (const r of data.runs) byId.set(r.id, r);
-    if (data.runs.length < SERVE_RUN_PAGE) return [...byId.values()];
-  }
 }
 
 interface VendorGroupRow {
