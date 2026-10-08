@@ -123,14 +123,17 @@ router.get("/brands/:brandId/lead-families", apiKeyAuth, async (rawReq, res) => 
     const headers: DownstreamHeaders = { orgId: req.orgId, userId: req.userId, runId: req.runId, featureSlug: undefined };
     const rows = await fetchBrandCampaignRows(brandId, undefined, { orgId: req.orgId, userId: req.userId, runId: req.runId });
     const offerIds = buildOfferChannelMap(rows).offerIds;
-    await assertBrandHeld(brandId, headers);
-    const offers = await Promise.all(
-      offerIds.map(async (offerId) => ({
-        offerId,
-        partition: buildOfferLegPartition(rows, offerId, (slug) => catalogueEntry(slug)?.channel ?? null),
-        declared: await fetchDeclaredFunnelsSoft(brandId, req.orgId, offerId),
-      })),
-    );
+    // The ownership check and the offers' pricing reads are independent: one round trip, not two.
+    const [, offers] = await Promise.all([
+      assertBrandHeld(brandId, headers),
+      Promise.all(
+        offerIds.map(async (offerId) => ({
+          offerId,
+          partition: buildOfferLegPartition(rows, offerId, (slug) => catalogueEntry(slug)?.channel ?? null),
+          declared: await fetchDeclaredFunnelsSoft(brandId, req.orgId, offerId),
+        })),
+      ),
+    ]);
 
     const payload = await servedCachedJson({
       view: "brand-lead-families",

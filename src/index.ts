@@ -6,6 +6,7 @@ import cors from "cors";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { db } from "./db/index.js";
 import { warmFleetPositiveRepliers } from "./lib/fleet-positive-repliers.js";
+import { warmFleetArrowMediansOnBoot } from "./lib/effective-conversion-rates.js";
 import { coldEmailOutreachSlugs } from "./lib/send-forecast-compute.js";
 import healthRoutes from "./routes/health.js";
 import featuresRoutes from "./routes/features.js";
@@ -127,6 +128,8 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
     announceViewRefresherReady();
     // Workflow projections are computed HERE, so this is the process whose fleet cell must be warm.
     warmFleetPositiveRepliersOnBoot();
+    // Every priced compute reads the fleet conversion-rate medians (in-memory per process).
+    warmFleetArrowMediansOnBoot();
   });
 } else if (process.env.NODE_ENV !== "test") {
   migrate(db, { migrationsFolder: "./drizzle" })
@@ -151,6 +154,8 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
         // Research reads the cold-email legs' fleet ranking; warm both so its first read is not empty.
         void warmLegWorkflowRanking("sales-cold-email-outreach", "start_to_conversation");
         void warmLegWorkflowRanking("sales-cold-email-outreach", "start_to_website_visit");
+        // Every priced read (lead families' cache key included) reads the fleet medians first.
+        warmFleetArrowMediansOnBoot();
         // With the refresher off, projections compute in this process — warm its fleet cell instead.
         if (process.env.VIEW_REFRESHER_ENABLED === "false") warmFleetPositiveRepliersOnBoot();
       });

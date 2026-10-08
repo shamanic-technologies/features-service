@@ -630,6 +630,14 @@ async function computeFleetArrowMedians(): Promise<FleetArrowMedians> {
  * fleet's hand-stated rates cannot visibly move faster), served stale up to 6 hours while ONE refresh
  * runs behind the read.
  */
+/**
+ * Boot warm, after listen() and fire-and-forget: the medians live in memory only, so without it the first
+ * priced read of every brand after a deploy waited on the fleet scan (O(brands) leg-economics reads).
+ */
+export function warmFleetArrowMediansOnBoot(): void {
+  getFleetArrowMedians().catch((err) => console.error(`[features-service] fleet conversion-rate median boot warm failed: ${(err as Error).message}`));
+}
+
 export async function getFleetArrowMedians(): Promise<FleetArrowMedians> {
   const now = Date.now();
   const refresh = (): Promise<FleetArrowMedians> => {
@@ -791,6 +799,11 @@ export function getBrandStepCounts(brandId: string, orgId: string): Promise<Bran
     view: "brand-conversion-step-counts",
     // `m` names the measurement rule, so a snapshot computed under a retired rule is never served.
     scopeKey: buildScopeKey(brandId, { orgId, m: "funnel-step-crm-through-leg-v2" }),
+    // An INTERNAL measurement, never a response body: `m` is its shape. Keyed on the build's response
+    // shape it went cold on every deploy touching any route, and every priced read of the brand (the
+    // Unibox lead families included) waited on a 9-30 s lead walk BEFORE its own cache lookup (prod
+    // 2026-10-08, brand `75d7e3e8…`). Change `m` when the measurement's shape or rule changes.
+    responseShape: "internal-measurement",
     orgId,
     compute: async () => summariseMeasurement(await measureBrandSteps(brandId, orgId, [])),
   });
