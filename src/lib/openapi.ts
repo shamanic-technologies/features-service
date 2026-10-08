@@ -1796,6 +1796,12 @@ const exclusivePersonShape = {
 };
 const exclusiveStepPersonSchema = stepPersonSchema.extend(exclusivePersonShape).describe("A person on the exclusive ladder. valueUsd is the pipeline engine's own per-person value (contacted value included).");
 const exclusiveLostStepPersonSchema = lostStepPersonSchema.extend(exclusivePersonShape);
+const conversionFromRowAboveSchema = z.object({
+  rowAbove: stepRefSchema.describe("The row above as displayed: the next DEEPER sliced row that has people (a row with no priced and no notOurs people is not displayed, so it is skipped)."),
+  rowAbovePeople: z.number().int().describe("The row above's total: its pricedPeople."),
+  rowPeople: z.number().int().describe("This row's total: pricedPeople (the contacted row: count)."),
+  ratePct: z.number().nullable().describe("rowAbovePeople / (rowPeople + rowAbovePeople) x 100. Null when both are 0."),
+}).nullable().describe("THE SLICED LADDER'S % CONVERSION (owner 2026-10-08: \"the total of the row above / (total of that row + total above)\"). Null on the deepest displayed row (no row above) and on a row not displayed. Not ladder[].pricedConversionFromPrevious (cumulative).");
 const exclusiveLadderSchema = z.object({
   contacted: z.object({
     count: z.number().int().describe("Contacted people who reached no step yet (openers included; bounced and unsubscribed included, worth 0)."),
@@ -1819,6 +1825,7 @@ const exclusiveLadderSchema = z.object({
       lastSentOnOrAfter: z.string().describe("A person whose last email was sent before this instant is worth 0."),
     }).nullable().describe("How one contacted person is priced. Null when nobody is valued or the offer is unpriced."),
     people: z.object({ limit: z.number().int(), leads: z.array(exclusiveStepPersonSchema) }).describe("Highest value first, capped at limit; counted whole in count. reachedAt = when they were contacted."),
+    conversionFromRowAbove: conversionFromRowAboveSchema,
   }).describe("PEOPLE CONTACTED, NOTHING YET: on the same one-row-per-person basis."),
   rows: z.array(z.object({
     step: stepRefSchema,
@@ -1833,6 +1840,7 @@ const exclusiveLadderSchema = z.object({
       notOurs: z.object({ count: z.number().int(), leads: z.array(exclusiveStepPersonSchema) }).describe("No step is priced for them; they stand on the furthest step they reached."),
     }).nullable().describe("Same three groups as ladder[].people, on the exclusive basis: a person is on ONE row only."),
     hot: z.object({ limit: z.number().int(), count: z.number().int(), leads: z.array(exclusiveStepPersonSchema) }).nullable().describe("HOT LEADS ON THIS ROW: the row's people in pipeline.hotLeads (the same verdict, every hot person counted, not only the listed top), highest value first, capped at limit. A hot person is in people.ours or people.notOurs, never lost. Σ rows[].hot.count + total.hot.onContactedRow + total.hot.onNoRow = hotLeads.totalCount. Null when hotLeads is null (unpriced offer)."),
+    conversionFromRowAbove: conversionFromRowAboveSchema,
   })).describe("The ladder's steps in climbing order. A person stands on the furthest step priced for them (else, nothing priced, the furthest reached, as notOurs; else the contacted row)."),
   total: z.object({
     people: z.number().int().describe("Distinct people on a row (contacted row included)."),
@@ -1849,7 +1857,7 @@ const exclusiveLadderSchema = z.object({
       onNoRow: z.number().int().describe("Hot people on no row (same cause, never contacted)."),
     }).nullable().describe("Where the hot leads stand on the sliced ladder: onRows + onContactedRow + onNoRow = count. Null when hotLeads is null."),
   }),
-}).describe("THE PIPELINE SLICED: ladder[] is cumulative (a paying client is also on every step below), so it never adds; here every person stands on ONE row and the rows add up to the pipeline. The conversion column stays ladder[].pricedConversionFromPrevious (step to step is cumulative by nature).");
+}).describe("THE PIPELINE SLICED: ladder[] is cumulative (a paying client is also on every step below), so it never adds; here every person stands on ONE row and the rows add up to the pipeline. The sliced conversion column is rows[].conversionFromRowAbove and contacted.conversionFromRowAbove (row above / (row + row above)); ladder[].pricedConversionFromPrevious stays the cumulative step-to-step rate.");
 const offerPipelineSchema = z.object({
   peopleContacted: z.number().int().describe("Distinct people contacted for the offer."),
   companiesContacted: z.number().int().describe("Distinct companies those people belong to."),

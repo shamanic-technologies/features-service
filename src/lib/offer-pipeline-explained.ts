@@ -414,6 +414,22 @@ export interface ExclusiveLadderRow {
    * at `STEP_PEOPLE_LIMIT`, counted whole. Null when `hotLeads` is null (the offer is unpriced).
    */
   hot: ({ limit: number } & StepPeopleGroup<ExclusiveStepPerson>) | null;
+  /** The row's "% Conversion" (owner 2026-10-08), see `ConversionFromRowAbove`. */
+  conversionFromRowAbove: ConversionFromRowAbove | null;
+}
+
+/**
+ * THE SLICED LADDER'S CONVERSION COLUMN (owner 2026-10-08, verbatim: "the conversion colonne is recalculated as
+ * the total of the row above / (total of that row + totla above)"). A row's total = its people (`pricedPeople`;
+ * the contacted row: `count`); "the row above" = the next DEEPER row as displayed (a row with no priced and no
+ * notOurs people is not displayed, so it is skipped). Rate = above / (row + above) × 100, null when both are 0.
+ * The deepest displayed row has no row above: null. Not ladder[].pricedConversionFromPrevious (cumulative).
+ */
+export interface ConversionFromRowAbove {
+  rowAbove: { key: ChannelStepKey; label: string };
+  rowAbovePeople: number;
+  rowPeople: number;
+  ratePct: number | null;
 }
 
 export interface ContactedEntryRouteExplained {
@@ -445,6 +461,8 @@ export interface ExclusiveContactedRow {
   explanation: { routes: ContactedEntryRouteExplained[]; combine: "independent"; expiryDays: number; lastSentOnOrAfter: string } | null;
   /** Listed highest value first, capped at `limit`; counted whole in `count`. */
   people: { limit: number; leads: ExclusiveStepPerson[] };
+  /** The row's "% Conversion": the shallowest displayed step row over (count + it). Null when no step row is displayed. */
+  conversionFromRowAbove: ConversionFromRowAbove | null;
 }
 
 export interface ExclusiveLadder {
@@ -873,6 +891,37 @@ const CONTACTED_ROUTE: Record<string, { step: ChannelStepKey; legKey: string }> 
 const sameCents = (a: number, b: number): boolean => Math.abs(a - b) < 0.005;
 
 /** PURE: the exclusive reading of the pipeline (see the module doc). */
+/** A sliced row is displayed when it has people: priced (ours + lost) or notOurs. */
+function displayedRowPeople(row: ExclusiveLadderRow): number | null {
+  if (row.people === null || row.pricedPeople === null) return null;
+  return row.pricedPeople > 0 || row.people.notOurs.count > 0 ? row.pricedPeople : null;
+}
+
+/**
+ * Fills `conversionFromRowAbove` on every displayed row and the contacted row (see `ConversionFromRowAbove`).
+ * `rows` climb (shallowest first), so a row's "row above" is the next displayed row deeper in the array.
+ */
+export function applyConversionFromRowAbove(rows: ExclusiveLadderRow[], contacted: ExclusiveContactedRow): void {
+  let above: { row: ExclusiveLadderRow; people: number } | null = null;
+  const conversion = (rowPeople: number, a: { row: ExclusiveLadderRow; people: number }): ConversionFromRowAbove => ({
+    rowAbove: a.row.step,
+    rowAbovePeople: a.people,
+    rowPeople,
+    ratePct: rowPeople + a.people > 0 ? (a.people / (rowPeople + a.people)) * 100 : null,
+  });
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i]!;
+    const people = displayedRowPeople(row);
+    if (people === null) {
+      row.conversionFromRowAbove = null;
+      continue;
+    }
+    row.conversionFromRowAbove = above ? conversion(people, above) : null;
+    above = { row, people };
+  }
+  contacted.conversionFromRowAbove = above ? conversion(contacted.count, above) : null;
+}
+
 function buildExclusiveLadder(input: {
   persons: readonly EnginePerson[];
   paths: ResolvedPath[] | null;
@@ -999,6 +1048,7 @@ function buildExclusiveLadder(input: {
       countedWithColleagueUsd: sumOr(withColleague),
       people: counted ? { limit: STEP_PEOPLE_LIMIT, ours: group(ours), lost: group(lost), notOurs: group(notOurs) } : null,
       hot: input.hotIds ? { limit: STEP_PEOPLE_LIMIT, ...group(hot) } : null,
+      conversionFromRowAbove: null,
     };
   });
 
@@ -1044,7 +1094,9 @@ function buildExclusiveLadder(input: {
         ? { routes, combine: "independent", expiryDays: CONTACTED_VALUE_EXPIRY_DAYS, lastSentOnOrAfter: pricing!.lastSentOnOrAfter }
         : null,
     people: { limit: STEP_PEOPLE_LIMIT, leads: contactedCards.slice(0, STEP_PEOPLE_LIMIT) },
+    conversionFromRowAbove: null,
   };
+  applyConversionFromRowAbove(rows, contacted);
 
   // THE TOTAL — the engine's own headline over this population; the rows add up to it.
   const pipelineUsd = engine ? engine.headline.totalPipelineUsd : null;
