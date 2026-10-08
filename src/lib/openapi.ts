@@ -1825,6 +1825,19 @@ const offerPipelineSchema = z.object({
     leads: z.array(coldPipelineLeadSchema).describe("Every cold lead of the offer whose interest WE caused, oldest cold first."),
     otherCausesCount: z.number().int().describe("Cold leads of the offer NOT listed: the step they stalled on was not caused by our outreach (another cause, or before our first delivered email, or undated). Never in count, valueUsd or the ladder."),
   }).nullable().describe("Leads that showed interest THANKS TO US and went cold, priced as the pipeline prices them now (a cold step kills every path through it, so most read $0: that is the current cold pricing, not a gap). Null when who went cold could not be read."),
+  lostLeads: z.object({
+    count: z.number().int().describe("TODAY'S LOST LEADS: wentColdCount + ruledOutCount. Equal to the `lost` family count of GET /brands/{brandId}/lead-families for a one-offer brand."),
+    valueUsd: z.number().nullable(),
+    wentColdCount: z.number().int().describe("= coldLeads.count."),
+    ruledOutCount: z.number().int().describe("Engaged leads a human ruled out at a step, with nothing priced left."),
+    leads: z.array(pipelineLeadSchema.extend({
+      lostReason: z.enum(["went_cold", "ruled_out"]),
+      lostSince: z.string().nullable().describe("went_cold: coldSince. ruled_out: null (undated here)."),
+      coldAtStep: stepRefSchema.nullable().describe("went_cold: the step that never came. ruled_out: null."),
+      coldSince: z.string().nullable(),
+      stalledSince: z.string().nullable(),
+    })).describe("Every lost lead: the went-cold ones first (oldest cold first, as coldLeads), then the ruled-out ones."),
+  }).nullable().describe("LOST LEADS (owner 2026-10-08): interested thanks to us then went cold (coldLeads), or ruled out by a human and now $0. One verdict with the `lost` lead family. Null when who went cold could not be read."),
   hotLeads: z.object({
     limit: z.number().int(),
     totalCount: z.number().int().describe("Every live engaged lead (reached a step, not won, not cold) the pipeline prices above 0."),
