@@ -11223,6 +11223,356 @@
                       ],
                       "description": "Conversion from the previous step, distinct leads on both sides. Null when a previous step is not counted or its producer was unreadable."
                     },
+                    "pricedConversionFromPrevious": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "previousSteps": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "The step(s) right before this one on the offer's priced paths (`contacted` before a path's first step). Several are unioned."
+                        },
+                        "previousReached": {
+                          "type": "integer",
+                          "description": "Distinct leads that stood on at least one previous step."
+                        },
+                        "reachedFromPrevious": {
+                          "type": "integer",
+                          "description": "Of those, the distinct leads that also reached this step."
+                        },
+                        "ratePct": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "reachedFromPrevious / previousReached x 100. Null when nobody stood on a previous step."
+                        }
+                      },
+                      "required": [
+                        "previousSteps",
+                        "previousReached",
+                        "reachedFromPrevious",
+                        "ratePct"
+                      ],
+                      "description": "conversionFromPrevious measured on the PRICED leads only (the pricedRecipientsReached basis, both sides; `contacted` stays everyone contacted), so it reads beside the priced People count. Null when a previous step is not counted or unreadable."
+                    },
+                    "people": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "limit": {
+                          "type": "integer",
+                          "description": "How many people each group lists; every group is counted whole."
+                        },
+                        "ours": {
+                          "type": "object",
+                          "properties": {
+                            "count": {
+                              "type": "integer"
+                            },
+                            "leads": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "leadId": {
+                                    "type": "string"
+                                  },
+                                  "campaignLeadId": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "description": "One `leads_campaigns` row id of the person (the first of campaignLeadIds): the id lead-service's per-lead step-statement write takes (POST /orgs/leads/{id}/step-statements). Null when lead-service stated none."
+                                  },
+                                  "campaignLeadIds": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    },
+                                    "description": "Every `leads_campaigns` row id of the person within the offer's campaigns (several when the person sits on several campaigns)."
+                                  },
+                                  "firstName": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "lastName": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "title": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "orgName": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "orgDomain": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "orgLogoUrl": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "reachedAt": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "description": "When the person first reached the step. Null when no producer dated it."
+                                  },
+                                  "valueUsd": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "What the pipeline prices the person at NOW (same per-lead value as hotLeads). Null only when the offer has no priced economics."
+                                  },
+                                  "probabilityPct": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "valueUsd / (the person's stated value, else the offer's lifetime revenue) x 100."
+                                  }
+                                },
+                                "required": [
+                                  "leadId",
+                                  "campaignLeadId",
+                                  "campaignLeadIds",
+                                  "firstName",
+                                  "lastName",
+                                  "title",
+                                  "orgName",
+                                  "orgDomain",
+                                  "orgLogoUrl",
+                                  "reachedAt",
+                                  "valueUsd",
+                                  "probabilityPct"
+                                ]
+                              }
+                            }
+                          },
+                          "required": [
+                            "count",
+                            "leads"
+                          ],
+                          "description": "Reached the step THANKS TO US (the step is priced for them) and still alive. Highest value first."
+                        },
+                        "lost": {
+                          "type": "object",
+                          "properties": {
+                            "count": {
+                              "type": "integer"
+                            },
+                            "leads": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "leadId": {
+                                    "type": "string"
+                                  },
+                                  "campaignLeadId": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "description": "One `leads_campaigns` row id of the person (the first of campaignLeadIds): the id lead-service's per-lead step-statement write takes (POST /orgs/leads/{id}/step-statements). Null when lead-service stated none."
+                                  },
+                                  "campaignLeadIds": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    },
+                                    "description": "Every `leads_campaigns` row id of the person within the offer's campaigns (several when the person sits on several campaigns)."
+                                  },
+                                  "firstName": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "lastName": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "title": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "orgName": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "orgDomain": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "orgLogoUrl": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "reachedAt": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "description": "When the person first reached the step. Null when no producer dated it."
+                                  },
+                                  "valueUsd": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "What the pipeline prices the person at NOW (same per-lead value as hotLeads). Null only when the offer has no priced economics."
+                                  },
+                                  "probabilityPct": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "valueUsd / (the person's stated value, else the offer's lifetime revenue) x 100."
+                                  },
+                                  "lostReason": {
+                                    "type": "string",
+                                    "enum": [
+                                      "went_cold",
+                                      "ruled_out"
+                                    ],
+                                    "description": "went_cold = in coldLeads (lead-service's rule, interest we caused); ruled_out = a human stated a step will never happen and nothing priced is left (the deals board's verdict)."
+                                  },
+                                  "lostSince": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "description": "went_cold: coldSince. ruled_out: null (undated here)."
+                                  },
+                                  "coldAtStep": {
+                                    "type": "object",
+                                    "nullable": true,
+                                    "properties": {
+                                      "key": {
+                                        "type": "string"
+                                      },
+                                      "label": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "key",
+                                      "label"
+                                    ],
+                                    "description": "went_cold: the step that never came. ruled_out: null."
+                                  }
+                                },
+                                "required": [
+                                  "leadId",
+                                  "campaignLeadId",
+                                  "campaignLeadIds",
+                                  "firstName",
+                                  "lastName",
+                                  "title",
+                                  "orgName",
+                                  "orgDomain",
+                                  "orgLogoUrl",
+                                  "reachedAt",
+                                  "valueUsd",
+                                  "probabilityPct",
+                                  "lostReason",
+                                  "lostSince",
+                                  "coldAtStep"
+                                ]
+                              }
+                            }
+                          },
+                          "required": [
+                            "count",
+                            "leads"
+                          ],
+                          "description": "Reached the step thanks to us but lost (went cold, or ruled out). Most recent first. A paying client is never lost."
+                        },
+                        "notOurs": {
+                          "type": "object",
+                          "properties": {
+                            "count": {
+                              "type": "integer"
+                            },
+                            "leads": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "leadId": {
+                                    "type": "string"
+                                  },
+                                  "campaignLeadId": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "description": "One `leads_campaigns` row id of the person (the first of campaignLeadIds): the id lead-service's per-lead step-statement write takes (POST /orgs/leads/{id}/step-statements). Null when lead-service stated none."
+                                  },
+                                  "campaignLeadIds": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    },
+                                    "description": "Every `leads_campaigns` row id of the person within the offer's campaigns (several when the person sits on several campaigns)."
+                                  },
+                                  "firstName": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "lastName": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "title": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "orgName": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "orgDomain": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "orgLogoUrl": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "reachedAt": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "description": "When the person first reached the step. Null when no producer dated it."
+                                  },
+                                  "valueUsd": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "What the pipeline prices the person at NOW (same per-lead value as hotLeads). Null only when the offer has no priced economics."
+                                  },
+                                  "probabilityPct": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "valueUsd / (the person's stated value, else the offer's lifetime revenue) x 100."
+                                  }
+                                },
+                                "required": [
+                                  "leadId",
+                                  "campaignLeadId",
+                                  "campaignLeadIds",
+                                  "firstName",
+                                  "lastName",
+                                  "title",
+                                  "orgName",
+                                  "orgDomain",
+                                  "orgLogoUrl",
+                                  "reachedAt",
+                                  "valueUsd",
+                                  "probabilityPct"
+                                ]
+                              }
+                            }
+                          },
+                          "required": [
+                            "count",
+                            "leads"
+                          ],
+                          "description": "Reached the step NOT thanks to us (another cause, e.g. the client's CRM, or unstated). Highest value first."
+                        }
+                      },
+                      "required": [
+                        "limit",
+                        "ours",
+                        "lost",
+                        "notOurs"
+                      ],
+                      "description": "WHO STANDS ON THE STEP, in three disjoint groups. ours.count + lost.count = pricedRecipientsReached; + notOurs.count = recipientsReached. Null when the step is not counted."
+                    },
                     "wentCold": {
                       "type": "object",
                       "nullable": true,
@@ -11250,6 +11600,8 @@
                     "pricedValueUsd",
                     "valueExplanation",
                     "conversionFromPrevious",
+                    "pricedConversionFromPrevious",
+                    "people",
                     "wentCold"
                   ]
                 },
@@ -11321,6 +11673,18 @@
                       "properties": {
                         "leadId": {
                           "type": "string"
+                        },
+                        "campaignLeadId": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "One `leads_campaigns` row id of the person (the first of campaignLeadIds): the id lead-service's per-lead step-statement write takes (POST /orgs/leads/{id}/step-statements). Null when lead-service stated none."
+                        },
+                        "campaignLeadIds": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Every `leads_campaigns` row id of the person within the offer's campaigns (several when the person sits on several campaigns)."
                         },
                         "firstName": {
                           "type": "string",
@@ -11399,6 +11763,8 @@
                       },
                       "required": [
                         "leadId",
+                        "campaignLeadId",
+                        "campaignLeadIds",
                         "firstName",
                         "lastName",
                         "title",
@@ -11449,6 +11815,18 @@
                       "properties": {
                         "leadId": {
                           "type": "string"
+                        },
+                        "campaignLeadId": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "One `leads_campaigns` row id of the person (the first of campaignLeadIds): the id lead-service's per-lead step-statement write takes (POST /orgs/leads/{id}/step-statements). Null when lead-service stated none."
+                        },
+                        "campaignLeadIds": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Every `leads_campaigns` row id of the person within the offer's campaigns (several when the person sits on several campaigns)."
                         },
                         "firstName": {
                           "type": "string",
@@ -11503,6 +11881,8 @@
                       },
                       "required": [
                         "leadId",
+                        "campaignLeadId",
+                        "campaignLeadIds",
                         "firstName",
                         "lastName",
                         "title",

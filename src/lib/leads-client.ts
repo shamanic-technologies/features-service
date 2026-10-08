@@ -42,6 +42,11 @@ function domainFromUrl(websiteUrl: string | null | undefined): string | null {
 }
 
 interface LeadRow {
+  /**
+   * The `leads_campaigns` membership row id — the id lead-service's per-lead writes take
+   * (`POST /orgs/leads/:id/step-statements`). Carried on `view=compact` and the change feed.
+   */
+  id?: string;
   leadId: string;
   /** The campaign the row was served under — the key a campaign family is filtered on. */
   campaignId?: string | null;
@@ -377,6 +382,7 @@ export async function fetchLeadsForRevenue(
     };
     return {
       leadId: row.leadId,
+      ...(row.id ? { campaignLeadIds: [row.id] } : {}),
       campaignId: row.campaignId ?? null,
       workflowSlug: row.workflowSlug ?? null,
       // The run-start clock of the mature cohort, and the audience the serve drew the lead from. An

@@ -69,6 +69,13 @@ describe("fetchLeadsForRevenue — firmographic passthrough", () => {
     });
   });
 
+  it("carries the leads_campaigns row id (compact `id`) as campaignLeadIds — the id a step statement write takes", async () => {
+    mockLeads([compactRow({ id: "lc-1" }), compactRow({ leadId: "l2" })]);
+    const persons = await fetchLeadsForRevenue("brand-1", undefined, HEADERS);
+    expect(persons[0].campaignLeadIds).toEqual(["lc-1"]);
+    expect(persons[1].campaignLeadIds).toBeUndefined();
+  });
+
   it("requests the view=compact projection built for whole-population reads", async () => {
     let seenUrl = "";
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -130,6 +137,7 @@ describe("fetchLeadsForRevenue — firmographic passthrough", () => {
 
     expect(person).toEqual({
       leadId: "l9",
+      campaignLeadIds: ["row-1"],
       campaignId: "c9",
       workflowSlug: "wf-9",
       email: "z@zeta.io",

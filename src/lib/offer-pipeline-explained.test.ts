@@ -4,7 +4,7 @@ vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
 import { buildPricingFunnels } from "./reading-funnels.js";
 import { stepValues } from "./offer-outcomes.js";
-import { buildOfferPipeline, explainStepValue, offerStepSets, previousStepsOf, stepConversion } from "./offer-pipeline-explained.js";
+import { STEP_PEOPLE_LIMIT, buildOfferPipeline, explainStepValue, offerStepSets, previousStepsOf, stepConversion } from "./offer-pipeline-explained.js";
 import { ALL_STEP_EVIDENCE } from "./funnel-steps.js";
 import { DISPLAY_ONLY_SALES_FUNNELS, SALES_FUNNELS, type SalesFunnelKey } from "./sales-funnels.js";
 import { funnelStepKeys } from "./acquisition-channels.js";
@@ -234,6 +234,95 @@ describe("buildOfferPipeline", () => {
     expect(p.ladder.find((s) => s.step.key === "website_visit")!.pricedValueUsd).toBeNull();
     expect(booked.valueExplanation?.legs.map((l) => l.legKey)).toEqual(["meeting_booked_to_meeting_attended", "meeting_attended_to_paid_client"]);
     expect(p.ladder.find((s) => s.step.key === "website_visit")!.valuePerOutcomeUsd).toBeNull();
+  });
+
+  it("each step lists who stands on it in three disjoint groups that reconcile with the counts", () => {
+    const p = run();
+    for (const step of p.ladder) {
+      if (!step.people) continue;
+      expect(step.people.ours.count + step.people.lost.count, step.step.key).toBe(step.pricedRecipientsReached);
+      expect(step.people.ours.count + step.people.lost.count + step.people.notOurs.count, step.step.key).toBe(step.recipientsReached);
+    }
+    const paid = p.ladder.find((s) => s.step.key === "paid_client")!.people!;
+    // Same people as customersWon: 2 leads of ours, none lost, 1 not ours.
+    expect(paid.ours.count).toBe(p.customersWon!.leadCount);
+    expect(paid.lost.count).toBe(0);
+    expect(paid.notOurs.count).toBe(p.customersWon!.otherCausesLeadCount);
+    expect(paid.notOurs.leads.map((l) => l.leadId)).toEqual(["won-other"]);
+    expect(paid.ours.leads[0].leadId).toBe("won-ours"); // stated $9,000 ranks first
+    const reply = p.ladder.find((s) => s.step.key === "conversation")!.people!;
+    expect(reply.lost.leads).toEqual([
+      expect.objectContaining({ leadId: "cold1", lostReason: "went_cold", lostSince: "2026-09-01T00:00:00Z", coldAtStep: { key: "meeting_booked", label: expect.any(String) } }),
+    ]);
+    expect(reply.ours.leads.map((l) => l.leadId).sort()).toEqual(["hot-meeting", "hot-reply", "won-ours"]);
+    // pre-us: lead-service says it went cold (its cold row is not ours to LIST, but it is not alive either:
+    // hot leads exclude it on the same verdict).
+    const booked = p.ladder.find((s) => s.step.key === "meeting_booked")!.people!;
+    expect(booked.lost.leads.map((l) => [l.leadId, l.lostReason, l.lostSince])).toEqual([["pre-us", "went_cold", "2024-09-23T00:00:00Z"]]);
+    expect(p.hotLeads!.leads.map((l) => l.leadId)).not.toContain("pre-us");
+    // A step nobody's producer counts lists nobody (null), never an empty "ours".
+    const unread = buildOfferPipeline({
+      persons,
+      evidence: { ...ALL_STEP_EVIDENCE, observedSteps: false, legacyQualifications: false },
+      declared,
+      values,
+      cold,
+      sets: offerStepSets(persons, { ...ALL_STEP_EVIDENCE, observedSteps: false, legacyQualifications: false }),
+    });
+    expect(unread.ladder.find((s) => s.step.key === "meeting_attended")!.people).toBeNull();
+  });
+
+  it("caps each group's list at STEP_PEOPLE_LIMIT and still counts every one", () => {
+    const many = Array.from({ length: STEP_PEOPLE_LIMIT + 7 }, (_, i) => person(`r${String(i).padStart(3, "0")}`, { positiveReply: true }));
+    const p = buildOfferPipeline({ persons: many, evidence: ALL_STEP_EVIDENCE, declared, values, cold: null, sets: offerStepSets(many, ALL_STEP_EVIDENCE) });
+    const reply = p.ladder.find((s) => s.step.key === "conversation")!.people!;
+    expect(reply.ours.count).toBe(STEP_PEOPLE_LIMIT + 7);
+    expect(reply.ours.leads).toHaveLength(STEP_PEOPLE_LIMIT);
+    expect(reply.limit).toBe(STEP_PEOPLE_LIMIT);
+  });
+
+  it("every listed person carries the leads_campaigns row ids a status write takes, merged across campaigns", () => {
+    const rows = [
+      person("x", { positiveReply: true, meeting: true }, { campaignLeadIds: ["lc-1"] }),
+      person("x", { positiveReply: true }, { campaignId: "c2", campaignLeadIds: ["lc-2"] }),
+      person("y", { positiveReply: true }, { campaignLeadIds: ["lc-3"], signalDates: { delivered: "2026-07-20T00:00:00Z" } }),
+      // Ruled out by a human, nothing priced left, not cold.
+      person("z", { positiveReply: true, meeting: true }, { campaignLeadIds: ["lc-4"], deadSignals: ["positiveReply", "meeting", "meetingAttended", "closeWin"] }),
+    ];
+    const coldY: ColdLeadsRead = {
+      applies: true,
+      afterDays: 30,
+      leads: [{ leadId: "y", campaignId: "c1", email: "y@x.com", step: "meeting_booked", since: "2026-09-01T00:00:00Z", after: "positive_reply", stalledSince: "2026-08-02T00:00:00Z" }],
+    };
+    const p = buildOfferPipeline({ persons: rows, evidence: ALL_STEP_EVIDENCE, declared, values, cold: coldY, sets: offerStepSets(rows, ALL_STEP_EVIDENCE) });
+    const x = p.hotLeads!.leads.find((l) => l.leadId === "x")!;
+    expect(x.campaignLeadIds).toEqual(["lc-1", "lc-2"]);
+    expect(x.campaignLeadId).toBe("lc-1");
+    expect(p.coldLeads!.leads[0]).toEqual(expect.objectContaining({ leadId: "y", campaignLeadId: "lc-3", campaignLeadIds: ["lc-3"] }));
+    const booked = p.ladder.find((s) => s.step.key === "meeting_booked")!.people!;
+    expect(booked.ours.leads[0]).toEqual(expect.objectContaining({ leadId: "x", campaignLeadIds: ["lc-1", "lc-2"] }));
+    expect(booked.lost.leads).toEqual([expect.objectContaining({ leadId: "z", campaignLeadId: "lc-4", lostReason: "ruled_out", lostSince: null, coldAtStep: null, valueUsd: 0 })]);
+    // No row id stated: null + [], never an invented one.
+    const bare = run().hotLeads!.leads[0];
+    expect(bare.campaignLeadId).toBeNull();
+    expect(bare.campaignLeadIds).toEqual([]);
+  });
+
+  it("serves the conversion from the previous step on the PRICED leads beside the every-cause one", () => {
+    const rows = [
+      person("a", { positiveReply: true, meeting: true, meetingAttended: true, closeWin: true }),
+      person("b", { positiveReply: true, meeting: true, meetingAttended: true, closeWin: true }, { unpricedSignals: ["closeWin"] }),
+      person("c", { positiveReply: true, meeting: true, meetingAttended: true }, { unpricedSignals: ["meetingAttended"] }),
+    ];
+    const p = buildOfferPipeline({ persons: rows, evidence: ALL_STEP_EVIDENCE, declared, values, cold: null, sets: offerStepSets(rows, ALL_STEP_EVIDENCE) });
+    const paid = p.ladder.find((s) => s.step.key === "paid_client")!;
+    expect(paid.conversionFromPrevious).toEqual(expect.objectContaining({ previousSteps: ["meeting_attended"], previousReached: 3, reachedFromPrevious: 2 }));
+    expect(paid.pricedConversionFromPrevious).toEqual(expect.objectContaining({ previousSteps: ["meeting_attended"], previousReached: 2, reachedFromPrevious: 1, ratePct: 50 }));
+    expect(paid.pricedConversionFromPrevious!.reachedFromPrevious).toBeLessThanOrEqual(paid.pricedRecipientsReached!);
+    // The entry step converts from everyone contacted on both bases.
+    const reply = p.ladder.find((s) => s.step.key === "conversation")!;
+    expect(reply.pricedConversionFromPrevious?.previousSteps).toEqual(["contacted"]);
+    expect(reply.pricedConversionFromPrevious?.previousReached).toBe(3);
   });
 
   it("no priced economics ⇒ lead values null with the reason, counts still served", () => {
