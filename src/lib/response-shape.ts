@@ -43,6 +43,45 @@ export function responseShapeFingerprint(): string {
   return (memo ??= shapeFingerprint(openApiDocument));
 }
 
+const routeMemo = new Map<string, string>();
+
+/** `value` with every `#/components/schemas/X` reference replaced by the schema it names (cycles kept as the ref). */
+function inlineRefs(value: unknown, schemas: Record<string, unknown>, seen: ReadonlySet<string> = new Set()): unknown {
+  if (Array.isArray(value)) return value.map((v) => inlineRefs(v, schemas, seen));
+  if (!value || typeof value !== "object") return value;
+  const ref = (value as Record<string, unknown>).$ref;
+  if (typeof ref === "string" && ref.startsWith("#/components/schemas/")) {
+    const name = ref.slice("#/components/schemas/".length);
+    if (seen.has(name) || !(name in schemas)) return value;
+    return inlineRefs(schemas[name], schemas, new Set([...seen, name]));
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as object)) out[k] = inlineRefs(v, schemas, seen);
+  return out;
+}
+
+/**
+ * The response shape of ONE route (its responses, every referenced component inlined, prose removed), for a
+ * view whose cell must survive deploys that change OTHER routes. The whole-document fingerprint re-keys every
+ * cell on any shape change anywhere: on a ~4 MB brand body whose cold compute takes 9-30 s (lead families,
+ * brand `75d7e3e8…`, 2026-10-08: 7 shape-changing deploys in a day, crm-service's 30 s read timed out after
+ * one), that is a blocking miss on the first read after nearly every deploy. A change to THIS route's
+ * response still keys the cell anew, so the old shape is never served.
+ */
+export function routeResponseShapeFingerprint(path: string, method = "get", document: unknown = openApiDocument): string {
+  const memoKey = `${method} ${path}`;
+  if (document === openApiDocument) {
+    const hit = routeMemo.get(memoKey);
+    if (hit) return hit;
+  }
+  const doc = document as { paths?: Record<string, Record<string, { responses?: unknown }>>; components?: { schemas?: Record<string, unknown> } };
+  const operation = doc.paths?.[path]?.[method];
+  if (!operation?.responses) throw new Error(`routeResponseShapeFingerprint: no ${method.toUpperCase()} ${path} in the OpenAPI document`);
+  const fingerprint = shapeFingerprint(inlineRefs(operation.responses, doc.components?.schemas ?? {}));
+  if (document === openApiDocument) routeMemo.set(memoKey, fingerprint);
+  return fingerprint;
+}
+
 /** The scope-key part carrying the shape. Underscored: no route reads a `_shape` query param. */
 export const SHAPE_KEY_PART = "_shape";
 
