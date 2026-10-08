@@ -59,6 +59,28 @@
  * Every person listed anywhere in this block carries `campaignLeadIds` (the `leads_campaigns` rows of
  * the person within the offer's campaigns; the id lead-service's per-lead step-statement write takes)
  * and `campaignLeadId` (the first of them), so a panel can write a status without a lookup.
+ *
+ * ── THE PIPELINE, SLICED: ONE ROW PER PERSON (`exclusiveLadder`, owner 2026-10-08) ──────────────
+ *
+ * `ladder[]` is CUMULATIVE (a paying client is also on Meeting attended, Meeting booked, Positive
+ * reply), so its rows overlap and never add. `exclusiveLadder` is the second reading: every person
+ * stands on ONE row, and the rows add up to the offer's pipeline.
+ *   - A person's row = the furthest step we brought them to (the furthest step PRICED for them); a
+ *     person no step is priced for stands, as `notOurs`, on the furthest step they reached; a contacted
+ *     person who reached no step stands on the `contacted` row. Never contacted and no step = no row.
+ *   - What a person adds = the engine's own per-person value (`computeRevenue`, contacted pricing
+ *     included: the byte-same run as the offer's revenue read), under the pipeline's company rule: one
+ *     company is counted once, at its most valuable member (ties: smallest lead id). A colleague of that
+ *     member adds 0 (`countedWithColleague`); what they would have added rides `countedWithColleagueUsd`.
+ *   - So Σ rows' `pipelineUsd` + `contacted.pipelineUsd` = `total.pipelineUsd` = the engine's
+ *     `totalPipelineUsd` over this population, and `total.headlinePipelineUsd` is what the offer's
+ *     revenue read serves; a gap between the two is served with its reason, never silent.
+ *   - The contacted row's value is explained like a step's: per entry route, the chance of reaching
+ *     its step from contact (the brand's per-(campaign × workflow) entry rate, averaged over the valued
+ *     people) times that step's value, the routes combined as independent shots at one close, expiring
+ *     30 days after the last email sent.
+ * The conversion column stays the cumulative `pricedConversionFromPrevious` (step to step is a
+ * cumulative notion: of those who stood on the previous step, how many reached this one).
  */
 import { CHANNEL_STEPS, funnelStepKeys, type ChannelStepKey } from "./acquisition-channels.js";
 import { getFunnel, restrictPathsToDeclaredLegs } from "./funnel-registry.js";
@@ -66,7 +88,17 @@ import { LEAD_FIELD_TO_SIGNAL, stepMeasured, type StepEvidence } from "./funnel-
 import { legKeyFor } from "./funnel-legs.js";
 import { STEP_LEAD_FIELD, type StepValue } from "./offer-outcomes.js";
 import { priceOnDeclaredFunnel } from "./offer-pricing.js";
-import { dedupPersonsByLead, expectedValueOfPerson, type EnginePerson, type ResolvedPath } from "./revenue-engine.js";
+import {
+  computeRevenue,
+  contactedExpired,
+  contactedGroupKey,
+  CONTACTED_VALUE_EXPIRY_DAYS,
+  dedupPersonsByLead,
+  expectedValueOfPerson,
+  type ContactedPricing,
+  type EnginePerson,
+  type ResolvedPath,
+} from "./revenue-engine.js";
 import type { DeclaredSalesFunnel } from "./sales-funnels-client.js";
 import { DISPLAY_ONLY_SALES_FUNNELS, SALES_FUNNELS, type SalesFunnelKey } from "./sales-funnels.js";
 import type { ColdLeadsRead } from "./step-outcomes-client.js";
@@ -337,6 +369,88 @@ export interface StepPeople {
   notOurs: StepPeopleGroup<StepPerson>;
 }
 
+/** A person on the exclusive ladder: the card, plus what they add to the pipeline under the company rule. */
+export interface ExclusiveStepPerson extends StepPerson {
+  /** What this person adds to the pipeline: their value when they carry their company's, else 0. Null = unpriced offer. */
+  pipelineUsd: number | null;
+  /** A colleague at the same company carries the company's value (one company is counted once). */
+  countedWithColleague: boolean;
+}
+export type ExclusiveLostStepPerson = LostStepPerson & Pick<ExclusiveStepPerson, "pipelineUsd" | "countedWithColleague">;
+
+export interface ExclusiveStepPeople {
+  limit: number;
+  ours: StepPeopleGroup<ExclusiveStepPerson>;
+  lost: StepPeopleGroup<ExclusiveLostStepPerson>;
+  notOurs: StepPeopleGroup<ExclusiveStepPerson>;
+}
+
+export interface ExclusiveLadderRow {
+  step: { key: ChannelStepKey; label: string };
+  /** People whose furthest step WE brought them to is this one (ours + lost). Null when the step is not counted. */
+  pricedPeople: number | null;
+  /** What one person reaching the step is worth (the cumulative ladder's own value). */
+  valuePerOutcomeUsd: number | null;
+  /** Σ what the row's people add to the pipeline (company rule applied). Null when the offer is unpriced. */
+  pipelineUsd: number | null;
+  /** Σ the values of the row's people whose company a colleague already carries (NOT in pipelineUsd). */
+  countedWithColleagueUsd: number | null;
+  people: ExclusiveStepPeople | null;
+}
+
+export interface ContactedEntryRouteExplained {
+  signal: string;
+  step: { key: ChannelStepKey; label: string };
+  legKey: string;
+  /** Average over the valued people of P(this step | contacted), their (campaign × workflow) group's rate. */
+  entryRatePct: number;
+  /** What a person standing on the step is worth (the engine's path value). */
+  valueAtStepUsd: number;
+}
+
+export interface ExclusiveContactedRow {
+  /** Contacted people who reached no step (openers included; bounced and unsubscribed included, at 0). */
+  count: number;
+  /** Of those, the ones the pipeline values above 0 (priced entry rate, not expired, can convert). */
+  valuedCount: number;
+  /** Last email sent more than `expiryDays` ago: worth 0. */
+  expiredCount: number;
+  /** Bounced or unsubscribed: worth 0. */
+  cannotConvertCount: number;
+  /** No priced entry rate for their (campaign × workflow) group, or no campaign/workflow: worth 0. */
+  unpricedCount: number;
+  /** Mean value over the valued people. Null when nobody is valued or the offer is unpriced. */
+  valuePerPersonUsd: number | null;
+  pipelineUsd: number | null;
+  countedWithColleagueUsd: number | null;
+  /** How one is priced. Null when nobody is valued (no rate, all expired) or the offer is unpriced. */
+  explanation: { routes: ContactedEntryRouteExplained[]; combine: "independent"; expiryDays: number; lastSentOnOrAfter: string } | null;
+  /** Listed highest value first, capped at `limit`; counted whole in `count`. */
+  people: { limit: number; leads: ExclusiveStepPerson[] };
+}
+
+export interface ExclusiveLadder {
+  contacted: ExclusiveContactedRow;
+  /** The ladder's steps in climbing order; every person on exactly one row (or the contacted row). */
+  rows: ExclusiveLadderRow[];
+  total: {
+    /** Distinct people on a row (contacted row included). */
+    people: number;
+    /** Served people on no row: never contacted, reached no step (worth 0). */
+    peopleOnNoRow: number;
+    /** What the people on no row add (0 by construction; served so the sum below is whole). */
+    noRowPipelineUsd: number | null;
+    /** Σ rows' pipelineUsd + contacted.pipelineUsd (+ noRowPipelineUsd, 0) = the engine's totalPipelineUsd over this population. */
+    pipelineUsd: number | null;
+    /** The offer revenue read's `headline.totalPipelineUsd` (the page's Pipeline figure). Null when unread. */
+    headlinePipelineUsd: number | null;
+    /** headlinePipelineUsd − pipelineUsd; 0 when they agree to the cent. Null when either is null. */
+    gapUsd: number | null;
+    /** Why there is a gap (or why it could not be checked); null when they agree. */
+    gapReason: "population_differs" | "headline_unreadable" | "unpriced" | null;
+  };
+}
+
 export interface OfferPipeline {
   peopleContacted: number;
   companiesContacted: number;
@@ -358,6 +472,8 @@ export interface OfferPipeline {
   hotLeads: { limit: number; totalCount: number; totalValueUsd: number; leads: PricedPipelineLead[] } | null;
   /** Why lead values (hot, cold values) are null: the offer has no priced economics. */
   leadValuesUnpricedReason: string | null;
+  /** The pipeline sliced: each person on one row, rows adding to the total (see the module doc). */
+  exclusiveLadder: ExclusiveLadder;
 }
 
 const SIGNAL_STEP: ReadonlyArray<[string, ChannelStepKey]> = [
@@ -431,6 +547,10 @@ export function buildOfferPipelineAndFamilies(input: {
   sets: OfferStepSets;
   /** The priced causes (`?cause=`, default our outreach): a cold lead is listed only when its interest was one. */
   pricedCauses?: readonly OutcomeCause[];
+  /** How the pipeline prices a contacted-only lead (the revenue read's own `contactedPricingSoft`); null = at 0. */
+  contactedPricing?: ContactedPricing | null;
+  /** The offer revenue read's `headline.totalPipelineUsd`, to reconcile the exclusive total against; null = unread. */
+  headlinePipelineUsd?: number | null;
 }): { pipeline: OfferPipeline; families: LeadFamilyRow[] } {
   const persons = dedupPersonsByLead([...input.persons]);
   const priced = priceOnDeclaredFunnel([...input.declared]);
@@ -643,6 +763,24 @@ export function buildOfferPipelineAndFamilies(input: {
       ...familyOf.get(p.leadId)!,
     }));
 
+  const exclusiveLadder = buildExclusiveLadder({
+    persons,
+    paths,
+    ltr,
+    values: input.values,
+    sets: input.sets,
+    pricedSets,
+    signalOfStep,
+    pricedOn,
+    card,
+    coldVerdicts,
+    byValue,
+    desc,
+    byLeadId,
+    contactedPricing: input.contactedPricing ?? null,
+    headlinePipelineUsd: input.headlinePipelineUsd ?? null,
+  });
+
   const pipeline: OfferPipeline = {
     peopleContacted: contacted.length,
     companiesContacted: companies.size,
@@ -655,6 +793,225 @@ export function buildOfferPipelineAndFamilies(input: {
       : null,
     hotLeads,
     leadValuesUnpricedReason: paths ? null : (priced.economics.unpricedReason ?? "no_priced_funnel"),
+    exclusiveLadder,
   };
   return { pipeline, families };
+}
+
+/** The engine's entry routes, as the contacted row explains them (`lib/contacted-value.ts` ROUTE_* twins). */
+const CONTACTED_ROUTE: Record<string, { step: ChannelStepKey; legKey: string }> = {
+  clicked: { step: "website_visit", legKey: "start_to_website_visit" },
+  positiveReply: { step: "conversation", legKey: "start_to_conversation" },
+};
+
+/** Half a cent: the tolerance two sums of the same values in different orders are held to. */
+const sameCents = (a: number, b: number): boolean => Math.abs(a - b) < 0.005;
+
+/** PURE: the exclusive reading of the pipeline (see the module doc). */
+function buildExclusiveLadder(input: {
+  persons: readonly EnginePerson[];
+  paths: ResolvedPath[] | null;
+  ltr: number | null;
+  values: ReadonlyMap<ChannelStepKey, StepValue>;
+  sets: OfferStepSets;
+  pricedSets: OfferStepSets;
+  signalOfStep: (step: ChannelStepKey) => string | null;
+  pricedOn: (p: EnginePerson, signal: string) => boolean;
+  card: (p: EnginePerson, signal: string) => StepPerson;
+  coldVerdicts: ReadonlyMap<string, { coldSince: string; coldAtStep: { key: ChannelStepKey; label: string } }>;
+  byValue: (a: StepPerson, b: StepPerson) => number;
+  desc: (x: string | null, y: string | null) => number;
+  byLeadId: (a: { leadId: string }, b: { leadId: string }) => number;
+  contactedPricing: ContactedPricing | null;
+  headlinePipelineUsd: number | null;
+}): ExclusiveLadder {
+  const { persons, paths, ltr } = input;
+  const priced = paths !== null && ltr !== null;
+
+  // WHAT EACH PERSON IS WORTH — the engine's own run (the offer revenue read's `computeRevenue`, contacted
+  // pricing included). A person the engine lists nowhere is worth 0.
+  const engine = priced ? computeRevenue(paths!, [...persons], ltr!, [], input.contactedPricing) : null;
+  const evOf = new Map<string, number>((engine?.leads ?? []).map((l) => [l.leadId, l.expectedRevenueUsd] as const));
+  const ev = (p: EnginePerson): number | null => (priced ? (evOf.get(p.leadId) ?? 0) : null);
+
+  // ONE COMPANY IS COUNTED ONCE, at its most valuable member (ties: smallest lead id) — the engine's rule.
+  const carrier = new Map<string, { leadId: string; ev: number }>();
+  if (priced) {
+    for (const p of persons) {
+      const key = p.orgId ? `org:${p.orgId}` : `lead:${p.leadId}`;
+      const v = ev(p)!;
+      const cur = carrier.get(key);
+      if (!cur || v > cur.ev || (v === cur.ev && p.leadId < cur.leadId)) carrier.set(key, { leadId: p.leadId, ev: v });
+    }
+  }
+  const addsOf = (p: EnginePerson): { pipelineUsd: number | null; countedWithColleague: boolean; withColleagueUsd: number } => {
+    const v = ev(p);
+    if (v === null) return { pipelineUsd: null, countedWithColleague: false, withColleagueUsd: 0 };
+    const key = p.orgId ? `org:${p.orgId}` : `lead:${p.leadId}`;
+    const carries = carrier.get(key)?.leadId === p.leadId;
+    return carries
+      ? { pipelineUsd: v, countedWithColleague: false, withColleagueUsd: 0 }
+      : { pipelineUsd: 0, countedWithColleague: v > 0, withColleagueUsd: v };
+  };
+  const probabilityOf = (p: EnginePerson, v: number): number | null => {
+    const base = statedValue(p) ?? ltr;
+    return base !== null && base > 0 ? (v / base) * 100 : null;
+  };
+  const exclusiveCard = (p: EnginePerson, signal: string | null): ExclusiveStepPerson => {
+    const base: StepPerson = signal
+      ? input.card(p, signal)
+      : { ...identity(p), reachedAt: p.signalDates?.contacted ?? null, valueUsd: null, probabilityPct: null };
+    const v = ev(p);
+    const adds = addsOf(p);
+    return {
+      ...base,
+      valueUsd: v,
+      probabilityPct: v === null ? null : probabilityOf(p, v),
+      pipelineUsd: adds.pipelineUsd,
+      countedWithColleague: adds.countedWithColleague,
+    };
+  };
+
+  // WHERE EACH PERSON STANDS: the furthest counted step priced for them, else (nothing priced) the furthest
+  // counted step reached, else the contacted row.
+  const climbing = [...LADDER_STEPS].reverse();
+  const rowOf = new Map<string, { step: ChannelStepKey; ours: boolean } | "contacted">();
+  for (const p of persons) {
+    const pricedStep = climbing.find((s) => input.pricedSets.byStep.get(s)?.has(p.leadId));
+    if (pricedStep) {
+      rowOf.set(p.leadId, { step: pricedStep, ours: true });
+      continue;
+    }
+    const reachedStep = climbing.find((s) => input.sets.byStep.get(s)?.has(p.leadId));
+    if (reachedStep) rowOf.set(p.leadId, { step: reachedStep, ours: false });
+    else if (p.signals.contacted) rowOf.set(p.leadId, "contacted");
+  }
+
+  const sumOr = (xs: readonly number[]): number | null => (priced ? xs.reduce((s, x) => s + x, 0) : null);
+  const group = <T>(xs: T[]): StepPeopleGroup<T> => ({ count: xs.length, leads: xs.slice(0, STEP_PEOPLE_LIMIT) });
+
+  const rows: ExclusiveLadderRow[] = LADDER_STEPS.map((step) => {
+    const signal = input.signalOfStep(step);
+    const counted = input.sets.byStep.get(step) !== null && input.sets.byStep.get(step) !== undefined && signal !== null;
+    const ours: ExclusiveStepPerson[] = [];
+    const lost: ExclusiveLostStepPerson[] = [];
+    const notOurs: ExclusiveStepPerson[] = [];
+    const adds: number[] = [];
+    const withColleague: number[] = [];
+    for (const p of persons) {
+      const at = rowOf.get(p.leadId);
+      if (!at || at === "contacted" || at.step !== step) continue;
+      const c = exclusiveCard(p, signal);
+      const a = addsOf(p);
+      adds.push(a.pipelineUsd ?? 0);
+      withColleague.push(a.withColleagueUsd);
+      if (!at.ours) {
+        notOurs.push(c);
+        continue;
+      }
+      const cold = p.signals.closeWin ? undefined : input.coldVerdicts.get(p.leadId);
+      if (cold) {
+        lost.push({ ...c, lostReason: "went_cold", lostSince: cold.coldSince, coldAtStep: cold.coldAtStep });
+      } else if (!p.signals.closeWin && (p.deadSignals?.length ?? 0) > 0 && c.valueUsd === 0) {
+        lost.push({ ...c, lostReason: "ruled_out", lostSince: null, coldAtStep: null });
+      } else {
+        ours.push(c);
+      }
+    }
+    ours.sort(input.byValue);
+    notOurs.sort(input.byValue);
+    lost.sort((a, b) => input.desc(a.lostSince, b.lostSince) || input.byLeadId(a, b));
+    return {
+      step: stepWire(step),
+      pricedPeople: counted ? ours.length + lost.length : null,
+      valuePerOutcomeUsd: input.values.get(step)?.valuePerOutcomeUsd ?? null,
+      pipelineUsd: sumOr(adds),
+      countedWithColleagueUsd: sumOr(withColleague),
+      people: counted ? { limit: STEP_PEOPLE_LIMIT, ours: group(ours), lost: group(lost), notOurs: group(notOurs) } : null,
+    };
+  });
+
+  // THE CONTACTED ROW.
+  const onContacted = persons.filter((p) => rowOf.get(p.leadId) === "contacted");
+  const pricing = input.contactedPricing;
+  const cutoff = pricing?.lastSentOnOrAfter ?? null;
+  const cannotConvert = onContacted.filter((p) => p.signals.bounced || p.signals.unsubscribed);
+  const canConvert = onContacted.filter((p) => !(p.signals.bounced || p.signals.unsubscribed));
+  const expired = cutoff ? canConvert.filter((p) => contactedExpired(p, cutoff)) : [];
+  const valued = canConvert.filter((p) => (ev(p) ?? 0) > 0);
+  const contactedCards = onContacted.map((p) => exclusiveCard(p, null)).sort(input.byValue);
+  const routes: ContactedEntryRouteExplained[] = [];
+  if (priced && pricing && valued.length > 0) {
+    for (const path of paths!) {
+      const route = CONTACTED_ROUTE[path.signal];
+      if (!path.engagementRoute || !route) continue;
+      const rates = valued.map((p) => {
+        const key = contactedGroupKey(p.campaignId, p.workflowSlug);
+        const r = key === null ? undefined : pricing.entryRatePctByGroup[key]?.[path.signal];
+        return typeof r === "number" && Number.isFinite(r) ? r : 0;
+      });
+      routes.push({
+        signal: path.signal,
+        step: stepWire(route.step),
+        legKey: route.legKey,
+        entryRatePct: rates.reduce((s, r) => s + r, 0) / rates.length,
+        valueAtStepUsd: path.expectedRevenueUsd,
+      });
+    }
+  }
+  const contacted: ExclusiveContactedRow = {
+    count: onContacted.length,
+    valuedCount: valued.length,
+    expiredCount: expired.length,
+    cannotConvertCount: cannotConvert.length,
+    unpricedCount: canConvert.length - expired.length - valued.length,
+    valuePerPersonUsd: priced && valued.length > 0 ? valued.reduce((s, p) => s + ev(p)!, 0) / valued.length : null,
+    pipelineUsd: sumOr(onContacted.map((p) => addsOf(p).pipelineUsd ?? 0)),
+    countedWithColleagueUsd: sumOr(onContacted.map((p) => addsOf(p).withColleagueUsd)),
+    explanation:
+      routes.length > 0
+        ? { routes, combine: "independent", expiryDays: CONTACTED_VALUE_EXPIRY_DAYS, lastSentOnOrAfter: pricing!.lastSentOnOrAfter }
+        : null,
+    people: { limit: STEP_PEOPLE_LIMIT, leads: contactedCards.slice(0, STEP_PEOPLE_LIMIT) },
+  };
+
+  // THE TOTAL — the engine's own headline over this population; the rows add up to it.
+  const pipelineUsd = engine ? engine.headline.totalPipelineUsd : null;
+  // People on no row are never contacted and reached no step, so they add nothing — served, not assumed.
+  const noRowPipelineUsd = sumOr(persons.filter((p) => !rowOf.has(p.leadId)).map((p) => addsOf(p).pipelineUsd ?? 0));
+  if (pipelineUsd !== null) {
+    const rowsSum = rows.reduce((s, r) => s + (r.pipelineUsd ?? 0), 0) + (contacted.pipelineUsd ?? 0) + (noRowPipelineUsd ?? 0);
+    if (!sameCents(rowsSum, pipelineUsd)) {
+      console.error(`[features-service] exclusive ladder rows add to ${rowsSum}, not the engine's pipeline ${pipelineUsd}`);
+    }
+  }
+  const headline = input.headlinePipelineUsd;
+  const gapUsd = pipelineUsd !== null && headline !== null ? headline - pipelineUsd : null;
+  const gapReason: ExclusiveLadder["total"]["gapReason"] =
+    pipelineUsd === null
+      ? "unpriced"
+      : headline === null
+        ? "headline_unreadable"
+        : sameCents(headline, pipelineUsd)
+          ? null
+          : "population_differs";
+  if (gapReason === "population_differs") {
+    console.error(
+      `[features-service] exclusive ladder total ${pipelineUsd} ≠ the offer revenue headline ${headline} (gap ${gapUsd}): the two reads priced different people`,
+    );
+  }
+  const onRow = persons.filter((p) => rowOf.has(p.leadId)).length;
+  return {
+    contacted,
+    rows,
+    total: {
+      people: onRow,
+      peopleOnNoRow: persons.length - onRow,
+      noRowPipelineUsd,
+      pipelineUsd,
+      headlinePipelineUsd: headline,
+      gapUsd: gapUsd === null ? null : sameCents(gapUsd, 0) ? 0 : gapUsd,
+      gapReason,
+    },
+  };
 }

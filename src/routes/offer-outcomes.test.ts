@@ -22,6 +22,9 @@ vi.mock("../lib/email-status-client.js", async (orig) => ({ ...(await orig<typeo
 vi.mock("../lib/followup-actions-client.js", () => ({ fetchFollowupActedLeads: vi.fn() }));
 vi.mock("../lib/runs-cost-client.js", async (orig) => ({ ...(await orig<typeof import("../lib/runs-cost-client.js")>()), fetchRunsCostCents: vi.fn(), fetchMatureSpendCents: vi.fn() }));
 vi.mock("../lib/scope-maturity.js", async (orig) => ({ ...(await orig<typeof import("../lib/scope-maturity.js")>()), fetchSpendSplit: vi.fn() }));
+// The exclusive ladder's two reconciliation reads (the offer revenue headline, the contacted pricing).
+vi.mock("./offer-economics.js", async (orig) => ({ ...(await orig<typeof import("./offer-economics.js")>()), offerRevenueJson: vi.fn() }));
+vi.mock("./contacted-value.js", async (orig) => ({ ...(await orig<typeof import("./contacted-value.js")>()), contactedPricingSoft: vi.fn() }));
 
 process.env.FEATURES_SERVICE_API_KEY = "test-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
@@ -39,6 +42,9 @@ const { fetchEventTimestamps } = await import("../lib/email-status-client.js");
 const { fetchRunsCostCents, fetchMatureSpendCents } = await import("../lib/runs-cost-client.js");
 const { fetchFollowupActedLeads } = await import("../lib/followup-actions-client.js");
 const { fetchSpendSplit } = await import("../lib/scope-maturity.js");
+const { offerRevenueJson } = await import("./offer-economics.js");
+const { contactedPricingSoft } = await import("./contacted-value.js");
+const { SnapshotJson } = await import("../lib/view-cache.js");
 const app = (await import("../index.js")).default;
 const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
 
@@ -53,6 +59,8 @@ const lead = (leadId: string, campaignId: string, signals: Record<string, boolea
 
 describe("GET /offers/:offerId/outcomes", () => {
   beforeEach(() => {
+    vi.mocked(contactedPricingSoft).mockResolvedValue(null);
+    vi.mocked(offerRevenueJson).mockResolvedValue(new SnapshotJson(JSON.stringify({ headline: { totalPipelineUsd: 0 } })));
     vi.mocked(fetchBrandCampaignRows).mockResolvedValue([
       { id: "c1", offerId: "offer-1", featureSlug: "sales-cold-email-outreach", legKey: "start_to_conversation", funnelKey: "sales_meetings_from_conversation" },
       { id: "f1", offerId: "offer-1", featureSlug: "feedback-request-cold-email-outreach", legKey: "start_to_conversation", funnelKey: "sales_meetings_from_conversation" },
@@ -140,5 +148,26 @@ describe("GET /offers/:offerId/outcomes", () => {
     const res = await request(app).get("/offers/other/outcomes?brandId=brand-1").set(AUTH);
     expect(res.status).toBe(404);
     expect(res.body.reason).toBe("offer_has_no_channels");
+  });
+
+  it("serves the pipeline sliced one row per person, its total reconciled to the offer revenue headline", async () => {
+    vi.mocked(offerRevenueJson).mockResolvedValue(new SnapshotJson(JSON.stringify({ headline: { totalPipelineUsd: 300 } })));
+    const res = await request(app).get("/offers/offer-1/outcomes?brandId=brand-1&pricing=net").set(AUTH);
+    expect(res.status).toBe(200);
+    // The headline is read through the offer revenue read's own door, same pricing and causes.
+    expect(vi.mocked(offerRevenueJson).mock.calls.at(-1)![0]).toEqual(expect.objectContaining({ offerId: "offer-1", brandId: "brand-1", pricing: "net", leadDetail: "outcomes" }));
+    const x = res.body.pipeline.exclusiveLadder;
+    const row = (k: string) => x.rows.find((r: { step: { key: string } }) => r.step.key === k);
+    // L1 booked (and replied): on Meeting booked only. L2 replied: on Positive reply.
+    expect(row("meeting_booked").people.ours.leads.map((l: { leadId: string }) => l.leadId)).toEqual(["L1"]);
+    expect(row("conversation").people.ours.leads.map((l: { leadId: string }) => l.leadId)).toEqual(["L2"]);
+    expect(row("meeting_booked").pipelineUsd).toBeCloseTo(200);
+    expect(row("conversation").pipelineUsd).toBeCloseTo(100);
+    expect(x.total).toEqual(expect.objectContaining({ pipelineUsd: 300, headlinePipelineUsd: 300, gapUsd: 0, gapReason: null }));
+    // A headline that cannot be read never fails the outcome read: the gap says so.
+    vi.mocked(offerRevenueJson).mockRejectedValue(new Error("boom"));
+    const soft = await request(app).get("/offers/offer-1/outcomes?brandId=brand-1&pricing=gross").set(AUTH);
+    expect(soft.status).toBe(200);
+    expect(soft.body.pipeline.exclusiveLadder.total.gapReason).toBe("headline_unreadable");
   });
 });

@@ -11908,6 +11908,696 @@
               "leadValuesUnpricedReason": {
                 "type": "string",
                 "nullable": true
+              },
+              "exclusiveLadder": {
+                "type": "object",
+                "properties": {
+                  "contacted": {
+                    "type": "object",
+                    "properties": {
+                      "count": {
+                        "type": "integer",
+                        "description": "Contacted people who reached no step yet (openers included; bounced and unsubscribed included, worth 0)."
+                      },
+                      "valuedCount": {
+                        "type": "integer",
+                        "description": "Of those, the people the pipeline values above 0."
+                      },
+                      "expiredCount": {
+                        "type": "integer",
+                        "description": "Last email sent more than expiryDays ago: worth 0."
+                      },
+                      "cannotConvertCount": {
+                        "type": "integer",
+                        "description": "Bounced or unsubscribed: worth 0."
+                      },
+                      "unpricedCount": {
+                        "type": "integer",
+                        "description": "No priced entry rate for their (campaign x workflow) group, or no campaign/workflow: worth 0."
+                      },
+                      "valuePerPersonUsd": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "Mean value over the valued people. Null when nobody is valued or the offer is unpriced."
+                      },
+                      "pipelineUsd": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "What the row adds to the pipeline (the contacted value the pipeline already counts), company rule applied."
+                      },
+                      "countedWithColleagueUsd": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "Values of the row's people whose company a colleague already carries (NOT in pipelineUsd)."
+                      },
+                      "explanation": {
+                        "type": "object",
+                        "nullable": true,
+                        "properties": {
+                          "routes": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "signal": {
+                                  "type": "string"
+                                },
+                                "step": {
+                                  "type": "object",
+                                  "properties": {
+                                    "key": {
+                                      "type": "string"
+                                    },
+                                    "label": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "label"
+                                  ],
+                                  "description": "The entry step the route lands on."
+                                },
+                                "legKey": {
+                                  "type": "string"
+                                },
+                                "entryRatePct": {
+                                  "type": "number",
+                                  "description": "P(this step | contacted), averaged over the valued people (each person's rate is its campaign x workflow group's: cost per contact / the workflow's cost per outcome)."
+                                },
+                                "valueAtStepUsd": {
+                                  "type": "number",
+                                  "description": "What one person on the step is worth (the engine's path value)."
+                                }
+                              },
+                              "required": [
+                                "signal",
+                                "step",
+                                "legKey",
+                                "entryRatePct",
+                                "valueAtStepUsd"
+                              ]
+                            }
+                          },
+                          "combine": {
+                            "type": "string",
+                            "enum": [
+                              "independent"
+                            ],
+                            "description": "Per person, value = 1 - Π(1 - entryRate x valueAtStep / LTR) x LTR: the routes are independent shots at one close."
+                          },
+                          "expiryDays": {
+                            "type": "integer"
+                          },
+                          "lastSentOnOrAfter": {
+                            "type": "string",
+                            "description": "A person whose last email was sent before this instant is worth 0."
+                          }
+                        },
+                        "required": [
+                          "routes",
+                          "combine",
+                          "expiryDays",
+                          "lastSentOnOrAfter"
+                        ],
+                        "description": "How one contacted person is priced. Null when nobody is valued or the offer is unpriced."
+                      },
+                      "people": {
+                        "type": "object",
+                        "properties": {
+                          "limit": {
+                            "type": "integer"
+                          },
+                          "leads": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "leadId": {
+                                  "type": "string"
+                                },
+                                "campaignLeadId": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "One `leads_campaigns` row id of the person (the first of campaignLeadIds): the id lead-service's per-lead step-statement write takes (POST /orgs/leads/{id}/step-statements). Null when lead-service stated none."
+                                },
+                                "campaignLeadIds": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "description": "Every `leads_campaigns` row id of the person within the offer's campaigns (several when the person sits on several campaigns)."
+                                },
+                                "firstName": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "lastName": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "title": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "orgName": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "orgDomain": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "orgLogoUrl": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "reachedAt": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "When the person first reached the step. Null when no producer dated it."
+                                },
+                                "valueUsd": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "What the pipeline prices the person at NOW (same per-lead value as hotLeads). Null only when the offer has no priced economics."
+                                },
+                                "probabilityPct": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "valueUsd / (the person's stated value, else the offer's lifetime revenue) x 100."
+                                },
+                                "pipelineUsd": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "What this person adds to the pipeline: valueUsd when they carry their company's value, else 0 (one company is counted once, at its most valuable member). Null when the offer is unpriced."
+                                },
+                                "countedWithColleague": {
+                                  "type": "boolean",
+                                  "description": "True when a colleague at the same company already carries the company's value, so this person adds 0."
+                                }
+                              },
+                              "required": [
+                                "leadId",
+                                "campaignLeadId",
+                                "campaignLeadIds",
+                                "firstName",
+                                "lastName",
+                                "title",
+                                "orgName",
+                                "orgDomain",
+                                "orgLogoUrl",
+                                "reachedAt",
+                                "valueUsd",
+                                "probabilityPct",
+                                "pipelineUsd",
+                                "countedWithColleague"
+                              ],
+                              "description": "A person on the exclusive ladder. valueUsd is the pipeline engine's own per-person value (contacted value included)."
+                            }
+                          }
+                        },
+                        "required": [
+                          "limit",
+                          "leads"
+                        ],
+                        "description": "Highest value first, capped at limit; counted whole in count. reachedAt = when they were contacted."
+                      }
+                    },
+                    "required": [
+                      "count",
+                      "valuedCount",
+                      "expiredCount",
+                      "cannotConvertCount",
+                      "unpricedCount",
+                      "valuePerPersonUsd",
+                      "pipelineUsd",
+                      "countedWithColleagueUsd",
+                      "explanation",
+                      "people"
+                    ],
+                    "description": "PEOPLE CONTACTED, NOTHING YET: on the same one-row-per-person basis."
+                  },
+                  "rows": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "step": {
+                          "type": "object",
+                          "properties": {
+                            "key": {
+                              "type": "string"
+                            },
+                            "label": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "key",
+                            "label"
+                          ]
+                        },
+                        "pricedPeople": {
+                          "type": "integer",
+                          "nullable": true,
+                          "description": "People whose furthest step WE brought them to is this one (people.ours.count + people.lost.count). Null when the step is not counted."
+                        },
+                        "valuePerOutcomeUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "What one person on the step is worth: the cumulative ladder's own value."
+                        },
+                        "pipelineUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "THE ROW'S SLICE OF THE PIPELINE: what its people add (the engine's per-person value, company rule applied). Additive across rows. Null when the offer is unpriced."
+                        },
+                        "countedWithColleagueUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Values of the row's people whose company a colleague already carries (NOT in pipelineUsd)."
+                        },
+                        "people": {
+                          "type": "object",
+                          "nullable": true,
+                          "properties": {
+                            "limit": {
+                              "type": "integer"
+                            },
+                            "ours": {
+                              "type": "object",
+                              "properties": {
+                                "count": {
+                                  "type": "integer"
+                                },
+                                "leads": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "leadId": {
+                                        "type": "string"
+                                      },
+                                      "campaignLeadId": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "description": "One `leads_campaigns` row id of the person (the first of campaignLeadIds): the id lead-service's per-lead step-statement write takes (POST /orgs/leads/{id}/step-statements). Null when lead-service stated none."
+                                      },
+                                      "campaignLeadIds": {
+                                        "type": "array",
+                                        "items": {
+                                          "type": "string"
+                                        },
+                                        "description": "Every `leads_campaigns` row id of the person within the offer's campaigns (several when the person sits on several campaigns)."
+                                      },
+                                      "firstName": {
+                                        "type": "string",
+                                        "nullable": true
+                                      },
+                                      "lastName": {
+                                        "type": "string",
+                                        "nullable": true
+                                      },
+                                      "title": {
+                                        "type": "string",
+                                        "nullable": true
+                                      },
+                                      "orgName": {
+                                        "type": "string",
+                                        "nullable": true
+                                      },
+                                      "orgDomain": {
+                                        "type": "string",
+                                        "nullable": true
+                                      },
+                                      "orgLogoUrl": {
+                                        "type": "string",
+                                        "nullable": true
+                                      },
+                                      "reachedAt": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "description": "When the person first reached the step. Null when no producer dated it."
+                                      },
+                                      "valueUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "What the pipeline prices the person at NOW (same per-lead value as hotLeads). Null only when the offer has no priced economics."
+                                      },
+                                      "probabilityPct": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "valueUsd / (the person's stated value, else the offer's lifetime revenue) x 100."
+                                      },
+                                      "pipelineUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "What this person adds to the pipeline: valueUsd when they carry their company's value, else 0 (one company is counted once, at its most valuable member). Null when the offer is unpriced."
+                                      },
+                                      "countedWithColleague": {
+                                        "type": "boolean",
+                                        "description": "True when a colleague at the same company already carries the company's value, so this person adds 0."
+                                      }
+                                    },
+                                    "required": [
+                                      "leadId",
+                                      "campaignLeadId",
+                                      "campaignLeadIds",
+                                      "firstName",
+                                      "lastName",
+                                      "title",
+                                      "orgName",
+                                      "orgDomain",
+                                      "orgLogoUrl",
+                                      "reachedAt",
+                                      "valueUsd",
+                                      "probabilityPct",
+                                      "pipelineUsd",
+                                      "countedWithColleague"
+                                    ],
+                                    "description": "A person on the exclusive ladder. valueUsd is the pipeline engine's own per-person value (contacted value included)."
+                                  }
+                                }
+                              },
+                              "required": [
+                                "count",
+                                "leads"
+                              ]
+                            },
+                            "lost": {
+                              "type": "object",
+                              "properties": {
+                                "count": {
+                                  "type": "integer"
+                                },
+                                "leads": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "leadId": {
+                                        "type": "string"
+                                      },
+                                      "campaignLeadId": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "description": "One `leads_campaigns` row id of the person (the first of campaignLeadIds): the id lead-service's per-lead step-statement write takes (POST /orgs/leads/{id}/step-statements). Null when lead-service stated none."
+                                      },
+                                      "campaignLeadIds": {
+                                        "type": "array",
+                                        "items": {
+                                          "type": "string"
+                                        },
+                                        "description": "Every `leads_campaigns` row id of the person within the offer's campaigns (several when the person sits on several campaigns)."
+                                      },
+                                      "firstName": {
+                                        "type": "string",
+                                        "nullable": true
+                                      },
+                                      "lastName": {
+                                        "type": "string",
+                                        "nullable": true
+                                      },
+                                      "title": {
+                                        "type": "string",
+                                        "nullable": true
+                                      },
+                                      "orgName": {
+                                        "type": "string",
+                                        "nullable": true
+                                      },
+                                      "orgDomain": {
+                                        "type": "string",
+                                        "nullable": true
+                                      },
+                                      "orgLogoUrl": {
+                                        "type": "string",
+                                        "nullable": true
+                                      },
+                                      "reachedAt": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "description": "When the person first reached the step. Null when no producer dated it."
+                                      },
+                                      "valueUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "What the pipeline prices the person at NOW (same per-lead value as hotLeads). Null only when the offer has no priced economics."
+                                      },
+                                      "probabilityPct": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "valueUsd / (the person's stated value, else the offer's lifetime revenue) x 100."
+                                      },
+                                      "lostReason": {
+                                        "type": "string",
+                                        "enum": [
+                                          "went_cold",
+                                          "ruled_out"
+                                        ],
+                                        "description": "went_cold = in coldLeads (lead-service's rule, interest we caused); ruled_out = a human stated a step will never happen and nothing priced is left (the deals board's verdict)."
+                                      },
+                                      "lostSince": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "description": "went_cold: coldSince. ruled_out: null (undated here)."
+                                      },
+                                      "coldAtStep": {
+                                        "type": "object",
+                                        "nullable": true,
+                                        "properties": {
+                                          "key": {
+                                            "type": "string"
+                                          },
+                                          "label": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "key",
+                                          "label"
+                                        ],
+                                        "description": "went_cold: the step that never came. ruled_out: null."
+                                      },
+                                      "pipelineUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "What this person adds to the pipeline: valueUsd when they carry their company's value, else 0 (one company is counted once, at its most valuable member). Null when the offer is unpriced."
+                                      },
+                                      "countedWithColleague": {
+                                        "type": "boolean",
+                                        "description": "True when a colleague at the same company already carries the company's value, so this person adds 0."
+                                      }
+                                    },
+                                    "required": [
+                                      "leadId",
+                                      "campaignLeadId",
+                                      "campaignLeadIds",
+                                      "firstName",
+                                      "lastName",
+                                      "title",
+                                      "orgName",
+                                      "orgDomain",
+                                      "orgLogoUrl",
+                                      "reachedAt",
+                                      "valueUsd",
+                                      "probabilityPct",
+                                      "lostReason",
+                                      "lostSince",
+                                      "coldAtStep",
+                                      "pipelineUsd",
+                                      "countedWithColleague"
+                                    ]
+                                  }
+                                }
+                              },
+                              "required": [
+                                "count",
+                                "leads"
+                              ]
+                            },
+                            "notOurs": {
+                              "type": "object",
+                              "properties": {
+                                "count": {
+                                  "type": "integer"
+                                },
+                                "leads": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "leadId": {
+                                        "type": "string"
+                                      },
+                                      "campaignLeadId": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "description": "One `leads_campaigns` row id of the person (the first of campaignLeadIds): the id lead-service's per-lead step-statement write takes (POST /orgs/leads/{id}/step-statements). Null when lead-service stated none."
+                                      },
+                                      "campaignLeadIds": {
+                                        "type": "array",
+                                        "items": {
+                                          "type": "string"
+                                        },
+                                        "description": "Every `leads_campaigns` row id of the person within the offer's campaigns (several when the person sits on several campaigns)."
+                                      },
+                                      "firstName": {
+                                        "type": "string",
+                                        "nullable": true
+                                      },
+                                      "lastName": {
+                                        "type": "string",
+                                        "nullable": true
+                                      },
+                                      "title": {
+                                        "type": "string",
+                                        "nullable": true
+                                      },
+                                      "orgName": {
+                                        "type": "string",
+                                        "nullable": true
+                                      },
+                                      "orgDomain": {
+                                        "type": "string",
+                                        "nullable": true
+                                      },
+                                      "orgLogoUrl": {
+                                        "type": "string",
+                                        "nullable": true
+                                      },
+                                      "reachedAt": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "description": "When the person first reached the step. Null when no producer dated it."
+                                      },
+                                      "valueUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "What the pipeline prices the person at NOW (same per-lead value as hotLeads). Null only when the offer has no priced economics."
+                                      },
+                                      "probabilityPct": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "valueUsd / (the person's stated value, else the offer's lifetime revenue) x 100."
+                                      },
+                                      "pipelineUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "What this person adds to the pipeline: valueUsd when they carry their company's value, else 0 (one company is counted once, at its most valuable member). Null when the offer is unpriced."
+                                      },
+                                      "countedWithColleague": {
+                                        "type": "boolean",
+                                        "description": "True when a colleague at the same company already carries the company's value, so this person adds 0."
+                                      }
+                                    },
+                                    "required": [
+                                      "leadId",
+                                      "campaignLeadId",
+                                      "campaignLeadIds",
+                                      "firstName",
+                                      "lastName",
+                                      "title",
+                                      "orgName",
+                                      "orgDomain",
+                                      "orgLogoUrl",
+                                      "reachedAt",
+                                      "valueUsd",
+                                      "probabilityPct",
+                                      "pipelineUsd",
+                                      "countedWithColleague"
+                                    ],
+                                    "description": "A person on the exclusive ladder. valueUsd is the pipeline engine's own per-person value (contacted value included)."
+                                  }
+                                }
+                              },
+                              "required": [
+                                "count",
+                                "leads"
+                              ],
+                              "description": "No step is priced for them; they stand on the furthest step they reached."
+                            }
+                          },
+                          "required": [
+                            "limit",
+                            "ours",
+                            "lost",
+                            "notOurs"
+                          ],
+                          "description": "Same three groups as ladder[].people, on the exclusive basis: a person is on ONE row only."
+                        }
+                      },
+                      "required": [
+                        "step",
+                        "pricedPeople",
+                        "valuePerOutcomeUsd",
+                        "pipelineUsd",
+                        "countedWithColleagueUsd",
+                        "people"
+                      ]
+                    },
+                    "description": "The ladder's steps in climbing order. A person stands on the furthest step priced for them (else, nothing priced, the furthest reached, as notOurs; else the contacted row)."
+                  },
+                  "total": {
+                    "type": "object",
+                    "properties": {
+                      "people": {
+                        "type": "integer",
+                        "description": "Distinct people on a row (contacted row included)."
+                      },
+                      "peopleOnNoRow": {
+                        "type": "integer",
+                        "description": "Served people never contacted and on no step (worth 0)."
+                      },
+                      "noRowPipelineUsd": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "What those add: 0 by construction."
+                      },
+                      "pipelineUsd": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "THE TOTAL ROW: Σ rows[].pipelineUsd + contacted.pipelineUsd (+ noRowPipelineUsd) = the engine's totalPipelineUsd over this offer's people. Null when the offer is unpriced."
+                      },
+                      "headlinePipelineUsd": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "GET /offers/{offerId}/revenue headline.totalPipelineUsd (same pricing and cause): the page's Pipeline figure. Null when unread."
+                      },
+                      "gapUsd": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "headlinePipelineUsd - pipelineUsd; 0 when they agree to the cent."
+                      },
+                      "gapReason": {
+                        "type": "string",
+                        "nullable": true,
+                        "enum": [
+                          "population_differs",
+                          "headline_unreadable",
+                          "unpriced"
+                        ],
+                        "description": "Why there is a gap or it could not be checked; null when they agree."
+                      }
+                    },
+                    "required": [
+                      "people",
+                      "peopleOnNoRow",
+                      "noRowPipelineUsd",
+                      "pipelineUsd",
+                      "headlinePipelineUsd",
+                      "gapUsd",
+                      "gapReason"
+                    ]
+                  }
+                },
+                "required": [
+                  "contacted",
+                  "rows",
+                  "total"
+                ],
+                "description": "THE PIPELINE SLICED: ladder[] is cumulative (a paying client is also on every step below), so it never adds; here every person stands on ONE row and the rows add up to the pipeline. The conversion column stays ladder[].pricedConversionFromPrevious (step to step is cumulative by nature)."
               }
             },
             "required": [
@@ -11919,7 +12609,8 @@
               "coldRule",
               "coldLeads",
               "hotLeads",
-              "leadValuesUnpricedReason"
+              "leadValuesUnpricedReason",
+              "exclusiveLadder"
             ],
             "description": "WHAT WORKING WITH US EARNED THE OFFER, step by step and why (lib/offer-pipeline-explained.ts). Same people, same prices as the outcome rows."
           }

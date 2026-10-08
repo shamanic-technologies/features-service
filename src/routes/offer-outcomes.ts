@@ -43,6 +43,24 @@ import type { StepEvidence } from "../lib/funnel-steps.js";
 import type { EnginePerson } from "../lib/revenue-engine.js";
 import type { ColdLeadsRead } from "../lib/step-outcomes-client.js";
 import { buildOfferPipeline, explainStepValue, offerStepSets, stepConversion } from "../lib/offer-pipeline-explained.js";
+import { contactedPricingSoft } from "./contacted-value.js";
+import { offerRevenueJson } from "./offer-economics.js";
+
+/**
+ * The offer revenue read's `headline.totalPipelineUsd` (the page's Pipeline figure), through its own Gold
+ * cell, so the exclusive ladder's total is reconciled against the figure the customer reads. Soft: null
+ * (served as `headline_unreadable`) never fails the outcome read.
+ */
+async function headlinePipelineSoft(args: Parameters<typeof offerRevenueJson>[0]): Promise<number | null> {
+  try {
+    const body = JSON.parse((await offerRevenueJson(args)).json) as { headline?: { totalPipelineUsd?: unknown } };
+    const v = body.headline?.totalPipelineUsd;
+    return typeof v === "number" && Number.isFinite(v) ? v : null;
+  } catch (err) {
+    console.warn(`[features-service] offer outcomes: offer revenue headline unreadable (exclusive total unreconciled): ${(err as Error).message}`);
+    return null;
+  }
+}
 
 const router = Router();
 
@@ -144,6 +162,16 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
         const groupCampaignIds = [...new Set(partition.groups.flatMap((g) => g.campaignIds))].sort();
         const needDates = partition.groups.some((g) => maturityDaysForLeg(g.legKey) > 0);
         const internalCampaignIds = partition.groups.filter((g) => g.fromStep !== null).flatMap((g) => g.campaignIds);
+        const contactedPricingPromise = contactedPricingSoft(brandId, headers);
+        const headlinePromise = headlinePipelineSoft({
+          offerId,
+          brandId,
+          pricing,
+          identity: { orgId: req.orgId },
+          leadDetail: "outcomes",
+          causes,
+          windowDays: undefined,
+        });
         const [people, spends, acted] = await Promise.all([
           groupCampaignIds.length > 0
             ? readOfferPersons({
@@ -210,6 +238,8 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
             cold: people.cold,
             sets,
             pricedCauses: causes,
+            contactedPricing: await contactedPricingPromise,
+            headlinePipelineUsd: await headlinePromise,
           }),
         };
       },

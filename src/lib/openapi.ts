@@ -1790,6 +1790,59 @@ const coldPipelineLeadSchema = pipelineLeadSchema.extend({
   coldSince: z.string().describe("When the lead went cold (stalledSince + the rule's afterDays)."),
   stalledSince: z.string().describe("When the lead reached `step`."),
 });
+const exclusivePersonShape = {
+  pipelineUsd: z.number().nullable().describe("What this person adds to the pipeline: valueUsd when they carry their company's value, else 0 (one company is counted once, at its most valuable member). Null when the offer is unpriced."),
+  countedWithColleague: z.boolean().describe("True when a colleague at the same company already carries the company's value, so this person adds 0."),
+};
+const exclusiveStepPersonSchema = stepPersonSchema.extend(exclusivePersonShape).describe("A person on the exclusive ladder. valueUsd is the pipeline engine's own per-person value (contacted value included).");
+const exclusiveLostStepPersonSchema = lostStepPersonSchema.extend(exclusivePersonShape);
+const exclusiveLadderSchema = z.object({
+  contacted: z.object({
+    count: z.number().int().describe("Contacted people who reached no step yet (openers included; bounced and unsubscribed included, worth 0)."),
+    valuedCount: z.number().int().describe("Of those, the people the pipeline values above 0."),
+    expiredCount: z.number().int().describe("Last email sent more than expiryDays ago: worth 0."),
+    cannotConvertCount: z.number().int().describe("Bounced or unsubscribed: worth 0."),
+    unpricedCount: z.number().int().describe("No priced entry rate for their (campaign x workflow) group, or no campaign/workflow: worth 0."),
+    valuePerPersonUsd: z.number().nullable().describe("Mean value over the valued people. Null when nobody is valued or the offer is unpriced."),
+    pipelineUsd: z.number().nullable().describe("What the row adds to the pipeline (the contacted value the pipeline already counts), company rule applied."),
+    countedWithColleagueUsd: z.number().nullable().describe("Values of the row's people whose company a colleague already carries (NOT in pipelineUsd)."),
+    explanation: z.object({
+      routes: z.array(z.object({
+        signal: z.string(),
+        step: stepRefSchema.describe("The entry step the route lands on."),
+        legKey: z.string(),
+        entryRatePct: z.number().describe("P(this step | contacted), averaged over the valued people (each person's rate is its campaign x workflow group's: cost per contact / the workflow's cost per outcome)."),
+        valueAtStepUsd: z.number().describe("What one person on the step is worth (the engine's path value)."),
+      })),
+      combine: z.literal("independent").describe("Per person, value = 1 - Π(1 - entryRate x valueAtStep / LTR) x LTR: the routes are independent shots at one close."),
+      expiryDays: z.number().int(),
+      lastSentOnOrAfter: z.string().describe("A person whose last email was sent before this instant is worth 0."),
+    }).nullable().describe("How one contacted person is priced. Null when nobody is valued or the offer is unpriced."),
+    people: z.object({ limit: z.number().int(), leads: z.array(exclusiveStepPersonSchema) }).describe("Highest value first, capped at limit; counted whole in count. reachedAt = when they were contacted."),
+  }).describe("PEOPLE CONTACTED, NOTHING YET: on the same one-row-per-person basis."),
+  rows: z.array(z.object({
+    step: stepRefSchema,
+    pricedPeople: z.number().int().nullable().describe("People whose furthest step WE brought them to is this one (people.ours.count + people.lost.count). Null when the step is not counted."),
+    valuePerOutcomeUsd: z.number().nullable().describe("What one person on the step is worth: the cumulative ladder's own value."),
+    pipelineUsd: z.number().nullable().describe("THE ROW'S SLICE OF THE PIPELINE: what its people add (the engine's per-person value, company rule applied). Additive across rows. Null when the offer is unpriced."),
+    countedWithColleagueUsd: z.number().nullable().describe("Values of the row's people whose company a colleague already carries (NOT in pipelineUsd)."),
+    people: z.object({
+      limit: z.number().int(),
+      ours: z.object({ count: z.number().int(), leads: z.array(exclusiveStepPersonSchema) }),
+      lost: z.object({ count: z.number().int(), leads: z.array(exclusiveLostStepPersonSchema) }),
+      notOurs: z.object({ count: z.number().int(), leads: z.array(exclusiveStepPersonSchema) }).describe("No step is priced for them; they stand on the furthest step they reached."),
+    }).nullable().describe("Same three groups as ladder[].people, on the exclusive basis: a person is on ONE row only."),
+  })).describe("The ladder's steps in climbing order. A person stands on the furthest step priced for them (else, nothing priced, the furthest reached, as notOurs; else the contacted row)."),
+  total: z.object({
+    people: z.number().int().describe("Distinct people on a row (contacted row included)."),
+    peopleOnNoRow: z.number().int().describe("Served people never contacted and on no step (worth 0)."),
+    noRowPipelineUsd: z.number().nullable().describe("What those add: 0 by construction."),
+    pipelineUsd: z.number().nullable().describe("THE TOTAL ROW: Σ rows[].pipelineUsd + contacted.pipelineUsd (+ noRowPipelineUsd) = the engine's totalPipelineUsd over this offer's people. Null when the offer is unpriced."),
+    headlinePipelineUsd: z.number().nullable().describe("GET /offers/{offerId}/revenue headline.totalPipelineUsd (same pricing and cause): the page's Pipeline figure. Null when unread."),
+    gapUsd: z.number().nullable().describe("headlinePipelineUsd - pipelineUsd; 0 when they agree to the cent."),
+    gapReason: z.enum(["population_differs", "headline_unreadable", "unpriced"]).nullable().describe("Why there is a gap or it could not be checked; null when they agree."),
+  }),
+}).describe("THE PIPELINE SLICED: ladder[] is cumulative (a paying client is also on every step below), so it never adds; here every person stands on ONE row and the rows add up to the pipeline. The conversion column stays ladder[].pricedConversionFromPrevious (step to step is cumulative by nature).");
 const offerPipelineSchema = z.object({
   peopleContacted: z.number().int().describe("Distinct people contacted for the offer."),
   companiesContacted: z.number().int().describe("Distinct companies those people belong to."),
@@ -1832,6 +1885,7 @@ const offerPipelineSchema = z.object({
     leads: z.array(pipelineLeadSchema).describe("The top `limit` of them by value, highest first."),
   }).nullable().describe("The leads we think will convert. Null when the offer has no priced economics (leadValuesUnpricedReason)."),
   leadValuesUnpricedReason: z.string().nullable(),
+  exclusiveLadder: exclusiveLadderSchema,
 }).describe("WHAT WORKING WITH US EARNED THE OFFER, step by step and why (lib/offer-pipeline-explained.ts). Same people, same prices as the outcome rows.");
 const offerOutcomesResponseSchema = z.object({
   offerId: z.string(),
