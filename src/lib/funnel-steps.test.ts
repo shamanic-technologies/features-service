@@ -111,14 +111,15 @@ describe("a rung several legs lead into counts only the leads that came through 
 
   it("website visit → meeting booked does not borrow the reply leg's meetings", () => {
     const [, booked] = buildFunnelSteps("sales_meetings_from_website", persons, COMMITTED_CENTS, ALL_STEP_EVIDENCE).steps;
-    // 4 people booked; 3 of them came through the reply leg. The one with no earlier rung stays.
-    expect(booked).toMatchObject({ recipientsReached: 4, recipientsThroughLeg: 1, fromRecipientsReached: 12 });
-    expect(booked.conversionFromPreviousPct).toBeCloseTo(100 / 12, 9);
+    // 4 people booked; none of them clicked, so the leg is a measured 0 (owner 2026-10-08: of the
+    // people at FROM, how many reached TO).
+    expect(booked).toMatchObject({ recipientsReached: 4, recipientsThroughLeg: 0, fromRecipientsReached: 12 });
+    expect(booked.conversionFromPreviousPct).toBe(0);
   });
 
-  it("the reply leg keeps its meetings and the first rung is untouched", () => {
+  it("the reply leg keeps the meetings of the people who replied, and the first rung is untouched", () => {
     const [reply, booked] = buildFunnelSteps("sales_meetings_from_conversation", persons, COMMITTED_CENTS, ALL_STEP_EVIDENCE).steps;
     expect(reply).toMatchObject({ recipientsReached: 3, recipientsThroughLeg: 3 });
-    expect(booked).toMatchObject({ recipientsReached: 4, recipientsThroughLeg: 4, fromRecipientsReached: 3 });
+    expect(booked).toMatchObject({ recipientsReached: 4, recipientsThroughLeg: 3, fromRecipientsReached: 3 });
   });
 });
