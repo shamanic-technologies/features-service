@@ -3457,7 +3457,7 @@
                     "recipientsThroughLeg": {
                       "type": "integer",
                       "nullable": true,
-                      "description": "Of recipientsReached, the leads that got onto this rung THROUGH its leg: a lead that reached this step only through ANOTHER leg into it (a meeting booked off a positive reply, read on a website-visit funnel) is not counted. Equal to recipientsReached on the first rung and on any step only one leg leads into. Same null rule."
+                      "description": "Of recipientsReached, the leads that also reached the previous rung (the leg's FROM step): a lead that reached this step without it (a meeting booked off a positive reply, read on a website-visit funnel, or a meeting attended with no booking recorded) is not counted. Equal to recipientsReached on the first rung. Same null rule."
                     },
                     "conversionFromPreviousPct": {
                       "type": "number",
@@ -9782,7 +9782,7 @@
                     "recipientsThroughLeg": {
                       "type": "integer",
                       "nullable": true,
-                      "description": "Of recipientsReached, the leads that got onto this rung THROUGH its leg: a lead that reached this step only through ANOTHER leg into it (a meeting booked off a positive reply, read on a website-visit funnel) is not counted. Equal to recipientsReached on the first rung and on any step only one leg leads into. Same null rule."
+                      "description": "Of recipientsReached, the leads that also reached the previous rung (the leg's FROM step): a lead that reached this step without it (a meeting booked off a positive reply, read on a website-visit funnel, or a meeting attended with no booking recorded) is not counted. Equal to recipientsReached on the first rung. Same null rule."
                     },
                     "conversionFromPreviousPct": {
                       "type": "number",
@@ -14655,12 +14655,12 @@
                               "toReached": {
                                 "type": "number",
                                 "nullable": true,
-                                "description": "Leads that reached the TO step THROUGH this leg (a meeting booked off a positive reply is not credited to the website-visit leg)."
+                                "description": "Of the leads at the FROM step, those who also reached the TO step (always ≤ fromReached)."
                               },
                               "toReachedThroughOtherLegs": {
                                 "type": "number",
                                 "nullable": true,
-                                "description": "Leads at the TO step that came through ANOTHER leg into it, so not counted in toReached. 0 when only one leg leads into the step; null on the crm basis."
+                                "description": "Leads at the TO step who were never at the FROM step (another leg, or an earlier step not recorded), so not counted in toReached. Null on the crm basis."
                               },
                               "ratePct": {
                                 "type": "number",
@@ -18662,7 +18662,7 @@
                     "recipientsThroughLeg": {
                       "type": "integer",
                       "nullable": true,
-                      "description": "Of recipientsReached, the leads that got onto this rung THROUGH its leg: a lead that reached this step only through ANOTHER leg into it (a meeting booked off a positive reply, read on a website-visit funnel) is not counted. Equal to recipientsReached on the first rung and on any step only one leg leads into. Same null rule."
+                      "description": "Of recipientsReached, the leads that also reached the previous rung (the leg's FROM step): a lead that reached this step without it (a meeting booked off a positive reply, read on a website-visit funnel, or a meeting attended with no booking recorded) is not counted. Equal to recipientsReached on the first rung. Same null rule."
                     },
                     "conversionFromPreviousPct": {
                       "type": "number",
@@ -19842,12 +19842,12 @@
                           "toReached": {
                             "type": "integer",
                             "nullable": true,
-                            "description": "Distinct leads that reached the TO step THROUGH this leg: a lead at TO counts unless it got there only through ANOTHER leg into the same step (it reached that leg's FROM step and not this one — e.g. a meeting booked off a positive reply is not credited to the website visit → meeting booked leg). A lead at TO with no earlier step recorded on any leg into it still counts. On a step only one leg leads into, this is every lead at TO. Same null rule."
+                            "description": "Of the fromReached leads, those who also reached the TO step (owner 2026-10-08: the numerator is a subset of the denominator, so toReached ≤ fromReached on the our_leads basis). A lead at TO who was never at FROM — booked off a positive reply on the website visit → meeting booked leg, or attended with no booked step recorded — is not counted. Same null rule."
                           },
                           "toReachedThroughOtherLegs": {
                             "type": "integer",
                             "nullable": true,
-                            "description": "Leads at the TO step NOT counted in toReached because they reached it only through another leg into the same step. 0 on a step only one leg leads into. Null on the crm basis and whenever toReached is null."
+                            "description": "Leads at the TO step NOT counted in toReached because they were never at the FROM step (they came through another leg, or their earlier step was not recorded). Null on the crm basis and whenever toReached is null."
                           },
                           "ratePct": {
                             "type": "number",
@@ -20093,12 +20093,12 @@
                     "toReached": {
                       "type": "integer",
                       "nullable": true,
-                      "description": "Distinct leads that reached the TO step THROUGH this leg: a lead at TO counts unless it got there only through ANOTHER leg into the same step (it reached that leg's FROM step and not this one — e.g. a meeting booked off a positive reply is not credited to the website visit → meeting booked leg). A lead at TO with no earlier step recorded on any leg into it still counts. On a step only one leg leads into, this is every lead at TO. Same null rule."
+                      "description": "Of the fromReached leads, those who also reached the TO step (owner 2026-10-08: the numerator is a subset of the denominator, so toReached ≤ fromReached on the our_leads basis). A lead at TO who was never at FROM — booked off a positive reply on the website visit → meeting booked leg, or attended with no booked step recorded — is not counted. Same null rule."
                     },
                     "toReachedThroughOtherLegs": {
                       "type": "integer",
                       "nullable": true,
-                      "description": "Leads at the TO step NOT counted in toReached because they reached it only through another leg into the same step. 0 on a step only one leg leads into. Null on the crm basis and whenever toReached is null."
+                      "description": "Leads at the TO step NOT counted in toReached because they were never at the FROM step (they came through another leg, or their earlier step was not recorded). Null on the crm basis and whenever toReached is null."
                     },
                     "ratePct": {
                       "type": "number",

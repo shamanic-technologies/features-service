@@ -147,44 +147,23 @@ export function leadFieldOfStep(step: string): LeadStepField | null {
 }
 
 /**
- * WHICH LEADS WENT THROUGH A LEG, WHEN ITS TO STEP CAN BE REACHED BY SEVERAL.
+ * WHICH LEADS WENT THROUGH A LEG: those at TO who ALSO reached FROM (owner 2026-10-08: "of the people
+ * who reached the FROM step, how many reached the TO step" — the numerator is a subset of the
+ * denominator, so a rate is a probability).
  *
- * A step like "Meeting booked" is the TO of several legs (from a positive reply, from a website visit),
- * so counting every lead at TO credits each leg with its siblings' outcomes: prod brand `75d7e3e8…`
- * read website visit → meeting booked at 6 of 106 while ZERO leads who clicked booked — all 6 came
- * from replies. A lead at TO therefore counts for leg FROM → TO unless it reached TO only through a
- * SIBLING leg: it reached another catalogue step leading straight into TO and NOT this FROM.
- *
- * A lead at TO with NO recorded earlier rung on any leg into TO still counts (benefit of the doubt):
- * producers record the later rung without the earlier one (14 meetings, 5 reply flags — #1053), and
- * the plain intersection under-stated those legs at 21.7% against 60.9%. On a single-route TO step
- * the rule is the count ratio, byte for byte.
+ * Supersedes #1053's benefit of the doubt (a lead at TO with no recorded earlier rung counted for the
+ * leg): it put people in the numerator who were not in the denominator. Doc Dinners read meeting
+ * booked → attended "4 of 8" beside its own ladder's 3 of 8, the 4th being a paying client with no
+ * booked step. It also covers the sibling case (2026-10-02: website visit → meeting booked read 6 of
+ * 106 while zero clickers booked): a lead who reached TO only through another leg never reached this
+ * FROM. A lead at TO without FROM is served as `toReachedThroughOtherLegs`, never dropped silently.
  */
-const SIBLING_FROM_FIELDS: Map<LeadStepField, Set<LeadStepField>> = (() => {
-  const out = new Map<LeadStepField, Set<LeadStepField>>();
-  for (const funnel of Object.values(SALES_FUNNELS)) {
-    for (let i = 0; i + 1 < funnel.steps.length; i++) {
-      const from = leadFieldOfStep(funnel.steps[i]);
-      const to = leadFieldOfStep(funnel.steps[i + 1]);
-      if (from === null || to === null) continue;
-      const set = out.get(to) ?? new Set<LeadStepField>();
-      set.add(from);
-      out.set(to, set);
-    }
-  }
-  return out;
-})();
-
-/** PURE: did this lead go THROUGH the leg `from → to` (see `SIBLING_FROM_FIELDS`)? */
 export function reachedThroughLeg(
   reached: Partial<Record<LeadStepField, boolean>>,
   from: LeadStepField,
   to: LeadStepField,
 ): boolean {
-  if (!reached[to]) return false;
-  if (reached[from]) return true;
-  for (const sibling of SIBLING_FROM_FIELDS.get(to) ?? []) if (sibling !== from && reached[sibling]) return false;
-  return true;
+  return Boolean(reached[to]) && Boolean(reached[from]);
 }
 
 /** The `EnginePerson.signals` key each lead field is read from. The engine's own vocabulary. */
@@ -353,10 +332,10 @@ export interface FunnelStep {
   /** Distinct leads that reached `fromStep` — the base of the rate below. Same null rule. */
   fromRecipientsReached: number | null;
   /**
-   * Of `recipientsReached`, the leads that got here THROUGH this rung's leg (`reachedThroughLeg`): a
-   * lead that reached this step only through ANOTHER leg into it (a meeting booked off a reply, on a
-   * website-visit funnel) is not counted. Equals `recipientsReached` on the first rung and on any step
-   * one leg alone leads into. Same null rule.
+   * Of `recipientsReached`, the leads that also reached `fromStep` (`reachedThroughLeg`): a lead at this
+   * step never at the previous one (a meeting booked off a reply on a website-visit funnel, a meeting
+   * attended with no booking recorded) is not counted. Equals `recipientsReached` on the first rung.
+   * Same null rule.
    */
   recipientsThroughLeg: number | null;
   /**
@@ -488,7 +467,7 @@ export function buildFunnelSteps(
       leadField !== null && personSignal !== null && stepMeasured(leadField, evidence)
         ? deduped.reduce((n, p) => n + (p.signals[personSignal] ? 1 : 0), 0)
         : null;
-    // Of those, the leads that came through THIS rung's leg, not through a sibling leg into the step.
+    // Of those, the leads that also reached the previous rung (numerator ⊂ denominator).
     const recipientsThroughLeg =
       recipientsReached === null || leadField === null || fromField === null
         ? recipientsReached
