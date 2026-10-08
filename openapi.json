@@ -12399,6 +12399,175 @@
           "sourceLegKey"
         ]
       },
+      "SourceOverlap": {
+        "type": "object",
+        "properties": {
+          "window": {
+            "type": "string",
+            "enum": [
+              "since_inception"
+            ]
+          },
+          "leadTotal": {
+            "type": "integer",
+            "description": "Distinct leads of the offer's campaigns, each counted ONCE = Σ buckets[].leads."
+          },
+          "positiveReplyTotal": {
+            "type": "integer"
+          },
+          "sourceCreditTotal": {
+            "type": "integer",
+            "description": "Σ origins[].leadsServed (a lead counted once per origin that found it)."
+          },
+          "multiSourceLeads": {
+            "type": "integer",
+            "description": "Leads 2+ origins found."
+          },
+          "extraSourceCredits": {
+            "type": "integer",
+            "description": "Σ over multi-source leads of (origins − 1) = sourceCreditTotal − (leadTotal − the unattributed bucket's leads)."
+          },
+          "maturityRule": {
+            "type": "object",
+            "properties": {
+              "legKey": {
+                "type": "string"
+              },
+              "durationDays": {
+                "type": "integer"
+              },
+              "outcomesRequired": {
+                "type": "integer"
+              },
+              "cutoff": {
+                "type": "string",
+                "nullable": true
+              }
+            },
+            "required": [
+              "legKey",
+              "durationDays",
+              "outcomesRequired",
+              "cutoff"
+            ],
+            "description": "The conversation leg's maturity rule the buckets follow: MATURE = leads served before cutoff; isMature = mature positive replies ≥ outcomesRequired."
+          },
+          "buckets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "leads": {
+                  "type": "integer"
+                },
+                "positiveReplies": {
+                  "type": "integer",
+                  "description": "Distinct leads with a positive reply."
+                },
+                "positiveReplyRatePct": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "100 × positiveReplies ÷ leads; null at 0 leads, a measured 0 stays 0."
+                },
+                "sourceCount": {
+                  "type": "integer",
+                  "description": "0 = no origin proven, 1, 2, 3 = three or more."
+                },
+                "label": {
+                  "type": "string",
+                  "enum": [
+                    "unattributed",
+                    "1",
+                    "2",
+                    "3+"
+                  ]
+                },
+                "maturity": {
+                  "type": "object",
+                  "properties": {
+                    "flash": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "leads": {
+                          "type": "integer"
+                        },
+                        "positiveReplies": {
+                          "type": "integer",
+                          "description": "Distinct leads with a positive reply."
+                        },
+                        "positiveReplyRatePct": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "100 × positiveReplies ÷ leads; null at 0 leads, a measured 0 stays 0."
+                        }
+                      },
+                      "required": [
+                        "leads",
+                        "positiveReplies",
+                        "positiveReplyRatePct"
+                      ]
+                    },
+                    "mature": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "leads": {
+                          "type": "integer"
+                        },
+                        "positiveReplies": {
+                          "type": "integer",
+                          "description": "Distinct leads with a positive reply."
+                        },
+                        "positiveReplyRatePct": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "100 × positiveReplies ÷ leads; null at 0 leads, a measured 0 stays 0."
+                        }
+                      },
+                      "required": [
+                        "leads",
+                        "positiveReplies",
+                        "positiveReplyRatePct"
+                      ]
+                    },
+                    "isMature": {
+                      "type": "boolean",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "flash",
+                    "mature",
+                    "isMature"
+                  ],
+                  "description": "FLASH (every lead to date, = the bucket's own figures) + MATURE (leads served before maturityRule.cutoff; null when none) + the verdict. isMature false = Learning: show the rate as learning, not as a measured rate."
+                }
+              },
+              "required": [
+                "leads",
+                "positiveReplies",
+                "positiveReplyRatePct",
+                "sourceCount",
+                "label",
+                "maturity"
+              ]
+            },
+            "description": "Always four buckets, in order unattributed, 1, 2, 3+. Σ leads = leadTotal."
+          }
+        },
+        "required": [
+          "window",
+          "leadTotal",
+          "positiveReplyTotal",
+          "sourceCreditTotal",
+          "multiSourceLeads",
+          "extraSourceCredits",
+          "maturityRule",
+          "buckets"
+        ],
+        "description": "The offer's leads by number of sourcing origins that found them (owner 2026-10-08: a human in several signals is a higher interest)."
+      },
       "OfferSourcingResponse": {
         "type": "object",
         "properties": {
@@ -12442,6 +12611,10 @@
               "outreachAllocation": {
                 "type": "string"
               },
+              "leadOrigins": {
+                "type": "string",
+                "description": "Which origins a lead carries (every origin that found it)."
+              },
               "unrecordedOrigin": {
                 "type": "string",
                 "description": "How a serve or lead that recorded no audience is attributed (positive evidence only)."
@@ -12460,6 +12633,7 @@
               "sourcing",
               "outreach",
               "outreachAllocation",
+              "leadOrigins",
               "unrecordedOrigin",
               "notCounted"
             ]
@@ -12536,7 +12710,12 @@
                 },
                 "leadsServed": {
                   "type": "integer",
-                  "description": "Distinct leads lead-service tags with an audience of this origin."
+                  "description": "Distinct leads CARRYING this origin: served from one of its audiences, or found by one (human-service membership, served there or found there while already taken). A lead several origins found counts under each (owner 2026-10-08, no first-found credit)."
+                },
+                "leadsAlsoFoundByAnotherSource": {
+                  "type": "integer",
+                  "nullable": true,
+                  "description": "Of leadsServed, the leads another origin found too. Null when human-service's memberships were unreadable (sourceOverlapUnavailableReason)."
                 },
                 "sourcingCostUsd": {
                   "type": "number",
@@ -12557,7 +12736,7 @@
                 },
                 "outreachCostUsd": {
                   "type": "number",
-                  "description": "Each campaign's outreach share allocated to this origin by the leads it served from it."
+                  "description": "Each campaign's outreach split evenly over the leads it served; each lead's share counts for every origin it carries."
                 },
                 "endToEndCostUsd": {
                   "type": "number",
@@ -12592,6 +12771,7 @@
                 "audienceIds",
                 "serveCount",
                 "leadsServed",
+                "leadsAlsoFoundByAnotherSource",
                 "sourcingCostUsd",
                 "costPerLeadUsd",
                 "positiveReplies",
@@ -12670,7 +12850,12 @@
               },
               "leadsServed": {
                 "type": "integer",
-                "description": "Distinct leads lead-service tags with an audience of this origin."
+                "description": "Distinct leads CARRYING this origin: served from one of its audiences, or found by one (human-service membership, served there or found there while already taken). A lead several origins found counts under each (owner 2026-10-08, no first-found credit)."
+              },
+              "leadsAlsoFoundByAnotherSource": {
+                "type": "integer",
+                "nullable": true,
+                "description": "Of leadsServed, the leads another origin found too. Null when human-service's memberships were unreadable (sourceOverlapUnavailableReason)."
               },
               "sourcingCostUsd": {
                 "type": "number",
@@ -12691,7 +12876,7 @@
               },
               "outreachCostUsd": {
                 "type": "number",
-                "description": "Each campaign's outreach share allocated to this origin by the leads it served from it."
+                "description": "Each campaign's outreach split evenly over the leads it served; each lead's share counts for every origin it carries."
               },
               "endToEndCostUsd": {
                 "type": "number",
@@ -12726,6 +12911,7 @@
               "audienceIds",
               "serveCount",
               "leadsServed",
+              "leadsAlsoFoundByAnotherSource",
               "sourcingCostUsd",
               "costPerLeadUsd",
               "positiveReplies",
@@ -12907,6 +13093,24 @@
             ],
             "description": "Σ campaigns, exact."
           },
+          "sourceOverlap": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SourceOverlap"
+              },
+              {
+                "nullable": true,
+                "description": "Null with sourceOverlapUnavailableReason when human-service's memberships were unreadable."
+              }
+            ]
+          },
+          "sourceOverlapUnavailableReason": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "memberships_unavailable"
+            ]
+          },
           "outreachCampaigns": {
             "type": "array",
             "items": {
@@ -13000,6 +13204,8 @@
           "unattributed",
           "campaigns",
           "totals",
+          "sourceOverlap",
+          "sourceOverlapUnavailableReason",
           "outreachCampaigns"
         ]
       },
@@ -13914,11 +14120,18 @@
                 },
                 "leadsFound": {
                   "type": "integer",
-                  "nullable": true
+                  "nullable": true,
+                  "description": "Leads CARRYING this source (= /offers/:id/sourcing origins[].leadsServed): a lead several sources found counts in each. Σ over sources ≥ the offer's leads; see sourceOverlap."
+                },
+                "leadsAlsoFoundByAnotherSource": {
+                  "type": "integer",
+                  "nullable": true,
+                  "description": "Of leadsFound, the leads another source found too (higher interest). Null when unreadable."
                 },
                 "positiveReplies": {
                   "type": "integer",
-                  "nullable": true
+                  "nullable": true,
+                  "description": "Positive replies of every lead carrying this source."
                 },
                 "costUsd": {
                   "type": "number",
@@ -13983,6 +14196,7 @@
                 "roiBasis",
                 "roiUnavailableReason",
                 "leadsFound",
+                "leadsAlsoFoundByAnotherSource",
                 "positiveReplies",
                 "costUsd",
                 "endToEndCostUsd",
@@ -13991,6 +14205,26 @@
               ]
             },
             "description": "The offer's SOURCE CAMPAIGNS (owner 2026-10-07: the sourcing origins ARE campaigns, `<Name> [origin] -> Lead found [On|Off] [Up to $X/day]`): every live origin, plus a retired one the offer used, in catalogue order. Their On/Off lives in campaign-service and their budget in billing, keyed (offerId, channelSlug, legKey). A failed sourcing read lists them with null figures (roiUnavailableReason sourcing_unavailable). Additive: campaigns[] is unchanged."
+          },
+          "sourceOverlap": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SourceOverlap"
+              },
+              {
+                "nullable": true,
+                "description": "Same block as /offers/:id/sourcing?pricing=net sourceOverlap: the offer's leads (each once) by number of sources that found them."
+              }
+            ]
+          },
+          "sourceOverlapUnavailableReason": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "memberships_unavailable",
+              "sourcing_unavailable"
+            ],
+            "description": "Why sourceOverlap is null: memberships_unavailable (human-service's memberships unreadable), sourcing_unavailable (the offer's sourcing read failed)."
           }
         },
         "required": [
@@ -14006,7 +14240,9 @@
           "paths",
           "selectedSalesPaths",
           "campaigns",
-          "sourceCampaigns"
+          "sourceCampaigns",
+          "sourceOverlap",
+          "sourceOverlapUnavailableReason"
         ]
       },
       "OrgUsageResponse": {
