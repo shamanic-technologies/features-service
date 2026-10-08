@@ -44,19 +44,17 @@ const MEASUREMENT: BrandStepMeasurement = {
 };
 
 describe("measuredArrowRate — the funnel-step conversion, the bar on the denominator", () => {
-  it("counts the leads THROUGH the leg at TO — not the intersection, not a sibling leg's outcomes", () => {
+  it("of the leads at FROM, those who reached TO: the numerator is a subset of the denominator (owner 2026-10-08)", () => {
     const m = measuredArrowRate(MEASUREMENT, "repliedPositive", "meetingBooked");
-    // 13 meetings over 20 replies: the 8 who replied and booked, plus the 5 booked with NO earlier rung
-    // recorded (benefit of the doubt). The 3 booked off the website are the visit leg's, not this one's.
-    // The intersection would have read 8 / 20 = 40%, under-stating every brand whose bookings are
-    // recorded without a reply flag (prod: 21.7% against the rung's 60.9%).
+    // 8 meetings over 20 replies: only the 8 who replied AND booked. The 3 booked off the website and the
+    // 5 booked with no reply recorded are at TO without having been at FROM: served beside, never counted.
     expect(m).toEqual({
       basis: "our_leads",
       outcomesCounted: "all",
       fromReached: 20,
-      toReached: 13,
-      toReachedThroughOtherLegs: 3,
-      ratePct: 65,
+      toReached: 8,
+      toReachedThroughOtherLegs: 8,
+      ratePct: 40,
       sufficient: true,
       gap: null,
     });
@@ -94,7 +92,7 @@ describe("measuredArrowRate — the funnel-step conversion, the bar on the denom
     });
   });
 
-  it("#1053 still holds: meetings recorded without the reply flag stay on the reply leg", () => {
+  it("supersedes #1053: a meeting recorded without the reply flag is not counted on the reply leg", () => {
     // 23 positive replies, 14 booked meetings of which only 5 carry the reply flag; nobody clicked.
     const m1053: BrandStepMeasurement = {
       contactedRecipients: 500,
@@ -106,26 +104,38 @@ describe("measuredArrowRate — the funnel-step conversion, the bar on the denom
       ],
     };
     const m = measuredArrowRate(m1053, "repliedPositive", "meetingBooked");
-    expect(m).toMatchObject({ fromReached: 23, toReached: 14, toReachedThroughOtherLegs: 0, sufficient: true });
-    expect(m.ratePct).toBeCloseTo(60.87, 2);
+    expect(m).toMatchObject({ fromReached: 23, toReached: 5, toReachedThroughOtherLegs: 9, sufficient: true });
+    expect(m.ratePct).toBeCloseTo(21.74, 2);
   });
 
-  it("a single-route TO step is the count ratio, byte for byte", () => {
-    // Meeting attended has one leg into it: every attended lead counts, even one with no booking flag.
-    const m = measuredArrowRate(
-      { ...MEASUREMENT, reached: [...MEASUREMENT.reached, lead({ meetingAttended: true })] },
-      "meetingBooked",
-      "meetingAttended",
-    );
-    expect(m).toMatchObject({ fromReached: 16, toReached: 6, toReachedThroughOtherLegs: 0 });
+  it("Doc Dinners, booked → attended: 3 of 8, not 4 of 8 (the paying client who attended without a booked step is not in the 8)", () => {
+    // Prod patterns of the outcomes our outreach caused (brand 75d7e3e8, 2026-10-08).
+    const docDinners: BrandStepMeasurement = {
+      contactedRecipients: 17_000,
+      evidence: ALL_STEP_EVIDENCE,
+      reached: [
+        ...times(5, lead({ repliedPositive: true, meetingBooked: true })),
+        ...times(3, lead({ repliedPositive: true, meetingBooked: true, meetingAttended: true })),
+        lead({ repliedPositive: true, meetingAttended: true, purchased: true }),
+      ],
+    };
+    const m = measuredArrowRate(docDinners, "meetingBooked", "meetingAttended");
+    expect(m).toMatchObject({ fromReached: 8, toReached: 3, toReachedThroughOtherLegs: 1, ratePct: 37.5 });
   });
 
-  it("more leads at TO than at FROM is no probability: unmeasurable, never clamped", () => {
+  it("on our leads TO never exceeds FROM: leads at TO without FROM are served beside, the rate stays a probability", () => {
     const skewed: BrandStepMeasurement = {
       ...MEASUREMENT,
       reached: [...times(10, lead({ repliedPositive: true })), ...times(12, lead({ meetingBooked: true }))],
     };
-    expect(measuredArrowRate(skewed, "repliedPositive", "meetingBooked")).toMatchObject({ ratePct: 120, sufficient: false, gap: "to_exceeds_from" });
+    expect(measuredArrowRate(skewed, "repliedPositive", "meetingBooked")).toMatchObject({
+      fromReached: 10,
+      toReached: 0,
+      toReachedThroughOtherLegs: 12,
+      ratePct: 0,
+      sufficient: true,
+      gap: null,
+    });
   });
 
   it("an arrow truly at 0% becomes measured once the FROM step clears the bar", () => {
@@ -137,9 +147,8 @@ describe("measuredArrowRate — the funnel-step conversion, the bar on the denom
 
   it("below the bar the rate is still reported, and is not sufficient", () => {
     const m = measuredArrowRate(MEASUREMENT, "clicked", "meetingBooked");
-    // 3 website visits; 8 meetings count for the leg (3 off the website + 5 with no earlier rung) — over
-    // 100%, so not a probability.
-    expect(m).toMatchObject({ fromReached: 3, toReached: 8, sufficient: false, gap: "to_exceeds_from" });
+    // 3 website visits, all 3 booked; the 13 other meetings never visited.
+    expect(m).toMatchObject({ fromReached: 3, toReached: 3, toReachedThroughOtherLegs: 13, ratePct: 100, sufficient: false, gap: "below_learning_bar" });
   });
 
   it("a step nothing counts, and an unreadable producer, are told apart and never read as 0", () => {
@@ -160,7 +169,7 @@ describe("resolveArrow — measured, else manual, else median, else null", () =>
 
   it("a sufficient measurement wins over a stated rate", () => {
     expect(resolveArrow("Positive reply", "Meeting booked", measured, 70, median)).toMatchObject({
-      effectiveRatePct: 65,
+      effectiveRatePct: 40,
       source: "measured",
       manualRatePct: 70,
       median,
@@ -242,7 +251,7 @@ describe("pricing rests on the EFFECTIVE rate", () => {
   it("each arrow resolves from its own best source", () => {
     const [funnel] = effective.funnels;
     expect(funnel.arrows.map((a) => [a.source, a.effectiveRatePct])).toEqual([
-      ["measured", 65], // 13 meetings through the reply leg over 20 replies
+      ["measured", 40], // 8 of the 20 replies booked
       ["measured", 5 / 16 * 100], // 5 attended over 16 booked — 16 ≥ 10
       ["manual", 25], // 5 attended < the bar → the brand's own statement
     ]);
@@ -258,7 +267,7 @@ describe("pricing rests on the EFFECTIVE rate", () => {
       },
     });
     const econ = declaredEconomicsForFunnel([onEffective], "sales_meetings_from_conversation")!;
-    expect(econ.replyToMeetingPct).toBeCloseTo(65, 9);
+    expect(econ.replyToMeetingPct).toBeCloseTo(40, 9);
     expect(econ.meetingAttendedToPaidClientPct).toBeCloseTo(25, 9);
     // booked → paid = show-up (measured 31.25%) × attended → paid (25%).
     expect(econ.meetingToClosePct).toBeCloseTo(31.25 * 0.25, 9);
@@ -399,13 +408,13 @@ describe("a leg is measured WHERE ITS DATA LIVES — the client's CRM, or our le
     expect(close.measured).toMatchObject({ basis: "crm", fromReached: 43, toReached: 28 });
   });
 
-  it("the SAME brand without a usable CRM reads today's numbers: 45 > 26 is no probability, so the hand-stated 61% wins", () => {
+  it("the SAME brand without a usable CRM measures on all its leads: 6 of the 26 replies booked, measured over the hand-stated 61%", () => {
     for (const status of ["no_connection", "not_synced", "stage_meanings_pending"] as const) {
       const r = build(crmMeasurementOf({ available: false, reason: status }));
       expect(r.crm).toEqual({ status, totalContacts: null, lastSyncedAt: null });
       const [reply, show, close] = arrows(r);
-      expect(reply).toMatchObject({ source: "manual", effectiveRatePct: 61 });
-      expect(reply.measured).toMatchObject({ basis: "our_leads", outcomesCounted: "all", fromReached: 26, toReached: 45, gap: "to_exceeds_from" });
+      expect(reply).toMatchObject({ source: "measured", effectiveRatePct: (6 / 26) * 100 });
+      expect(reply.measured).toMatchObject({ basis: "our_leads", outcomesCounted: "all", fromReached: 26, toReached: 6, toReachedThroughOtherLegs: 39, gap: null });
       expect(show.measured).toMatchObject({ basis: "our_leads", outcomesCounted: "all", fromReached: 45, toReached: 15 });
       expect(close.measured).toMatchObject({ basis: "our_leads", fromReached: 15, toReached: 9 });
     }

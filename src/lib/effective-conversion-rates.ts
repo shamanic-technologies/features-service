@@ -37,18 +37,15 @@
  *
  * ── THE MEASURED RATE IS THE FUNNEL-STEP CONVERSION, BYTE FOR BYTE ─────────────────────────────
  *
- * `count(leads THROUGH the leg at TO) ÷ count(leads at FROM)` — exactly what
+ * `count(leads at FROM that also reached TO) ÷ count(leads at FROM)` — exactly what
  * `funnelSteps.conversionFromPreviousPct` states for the rung, so the rate a brand is priced on and the
- * funnel it reads on its Overview are one number. "Through the leg" (`reachedThroughLeg`,
- * `lib/funnel-steps.ts`): a lead at TO counts unless it reached TO only through a SIBLING leg (it
- * reached another step leading straight into TO and not this FROM). Without it, a TO several legs
- * share was credited to every one of them: brand `75d7e3e8…` read website visit → meeting booked at
- * 6 of 106 while zero leads who clicked booked (all 6 came from replies), and that path priced a paying
- * client at $361 on a conversion that never happened. A lead at TO with NO earlier rung recorded on any
- * leg still counts: NOT the plain intersection, shipped first (v0.172.7) and wrong the same hour — the
- * same brand had 14 booked meetings of which only 5 carried a positive-reply flag, so the intersection
- * read reply → meeting at 21.7% against the rung's 60.9%. When TO exceeds FROM the ratio is no
- * probability: `gap: "to_exceeds_from"`, never clamped, and the next source wins.
+ * funnel it reads on its Overview are one number (`reachedThroughLeg`, `lib/funnel-steps.ts`). The
+ * numerator is a subset of the denominator (owner 2026-10-08): a lead at TO who was never at FROM —
+ * booked off a reply on the website-visit leg (brand `75d7e3e8…` once read visit → meeting at 6 of 106
+ * while zero clickers booked), or attended with no booking recorded (the same brand read booked →
+ * attended "4 of 8" beside its ladder's 3 of 8) — is served as `toReachedThroughOtherLegs`, never
+ * counted. This supersedes #1053's benefit of the doubt. When TO exceeds FROM (CRM basis) the ratio is
+ * no probability: `gap: "to_exceeds_from"`, never clamped, and the next source wins.
  *
  * ── WHERE A LEG IS MEASURED: THE CLIENT'S CRM, OR OUR LEADS (owner rule, 2026-09-26) ────────────
  *
