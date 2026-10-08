@@ -168,42 +168,43 @@ describe("runs-service reads", () => {
     audienceId: "A",
     campaignId: "c1",
     actualCostInUsdCents: "1.0000000000",
+    netActualCostInUsdCents: "0.8000000000",
     vendorActualCostInUsdCents: "0.5000000000",
     unpricedActualCostInUsdCents: "0.0000000000",
   });
 
-  it("walks every page of the brand's lead-serve runs on the vendor run list, deduping a shifted repeat", async () => {
-    const page1 = Array.from({ length: 500 }, (_, i) => run(`r${i}`));
-    const page2 = [run("r499"), run("r500")];
-    const net = (rows: Array<{ id: string }>) => json({ runs: rows.map((r) => ({ id: r.id, netActualCostInUsdCents: "0.8000000000" })) });
-    fetchMock
-      .mockResolvedValueOnce(json({ runs: page1 }))
-      .mockResolvedValueOnce(json({ runs: page2 }))
-      .mockResolvedValueOnce(net(page1))
-      .mockResolvedValueOnce(net([...page2, { id: "r-new" }]));
+  it("reads every lead-serve run of the brand with its subtree cost in ONE call", async () => {
+    fetchMock.mockResolvedValueOnce(json({ runs: Array.from({ length: 1200 }, (_, i) => run(`r${i}`)) }));
     const out = await fetchServeRunCosts("b1", "org-1");
-    expect(out).toHaveLength(501);
-    expect(out[0]!.netCents).toBe("0.8000000000");
-    const netUrl = new URL(fetchMock.mock.calls[2]![0] as string);
-    expect(netUrl.pathname).toBe("/v1/runs");
-    expect(netUrl.searchParams.get("include")).toBe("subtreeCost");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(out).toHaveLength(1200);
+    expect(out[0]).toEqual({
+      runId: "r0",
+      audienceId: "A",
+      campaignId: "c1",
+      billedCents: "1.0000000000",
+      netCents: "0.8000000000",
+      vendorCents: "0.5000000000",
+      unpricedBilledCents: "0.0000000000",
+    });
     const url = new URL(fetchMock.mock.calls[0]![0] as string);
-    expect(url.pathname).toBe("/internal/runs/vendor");
+    expect(url.pathname).toBe("/internal/runs/subtree-costs");
     expect(url.searchParams.get("serviceName")).toBe("lead-service");
     expect(url.searchParams.get("taskName")).toBe("lead-serve");
     expect(url.searchParams.get("orgId")).toBe("org-1");
     expect(url.searchParams.get("brandId")).toBe("b1");
-    expect(new URL(fetchMock.mock.calls[1]![0] as string).searchParams.get("offset")).toBe("500");
+    expect(url.searchParams.has("offset")).toBe(false);
   });
 
   it("a serve run with no stated net subtree cost fails loud, never a guessed net", async () => {
-    fetchMock.mockResolvedValueOnce(json({ runs: [run("r1")] })).mockResolvedValueOnce(json({ runs: [{ id: "r1" }] }));
-    await expect(fetchServeRunCosts("b1", "org-1")).rejects.toThrow(/no net subtree cost/);
+    const { netActualCostInUsdCents: _n, ...noNet } = run("r1");
+    fetchMock.mockResolvedValueOnce(json({ runs: [noNet] }));
+    await expect(fetchServeRunCosts("b1", "org-1")).rejects.toThrow(/no netActualCostInUsdCents for serve run r1/);
   });
 
   it("fails loud on a runs-service error, never an empty list", async () => {
     fetchMock.mockResolvedValue(new Response("boom", { status: 500 }));
-    await expect(fetchServeRunCosts("b1", "org-1")).rejects.toThrow(/internal\/runs\/vendor failed/);
+    await expect(fetchServeRunCosts("b1", "org-1")).rejects.toThrow(/internal\/runs\/subtree-costs failed/);
   });
 
   it("reads list-build spend per audience from the vendor grouped read", async () => {
