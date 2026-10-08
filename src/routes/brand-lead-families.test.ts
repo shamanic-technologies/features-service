@@ -113,7 +113,7 @@ describe("GET /brands/:brandId/lead-families", () => {
       const p = out.body.pipeline;
       expect(offer.counts.won, offer.offerId).toBe(p.customersWon?.leadCount ?? 0);
       expect(offer.counts.hot, offer.offerId).toBe(p.hotLeads?.totalCount ?? 0);
-      expect(offer.counts.lost, offer.offerId).toBe(p.coldLeads?.count ?? 0); // no one ruled out in this fixture
+      expect(offer.counts.lost, offer.offerId).toBe(p.lostLeads?.count ?? 0);
     }
   });
 
