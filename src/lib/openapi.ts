@@ -1987,12 +1987,13 @@ const offerSourcingOriginStatsSchema = z.object({
   used: z.boolean().describe("True when the offer's campaigns served or hold a lead from this origin."),
   audienceIds: z.array(z.string()).describe("The offer's audiences of this origin that served or hold a lead."),
   serveCount: z.number().int().describe("lead-service lead-serve runs from this origin (a serve that screened everyone out still costs)."),
-  leadsServed: z.number().int().describe("Distinct leads lead-service tags with an audience of this origin."),
+  leadsServed: z.number().int().describe("Distinct leads CARRYING this origin: served from one of its audiences, or found by one (human-service membership, served there or found there while already taken). A lead several origins found counts under each (owner 2026-10-08, no first-found credit)."),
+  leadsAlsoFoundByAnotherSource: z.number().int().nullable().describe("Of leadsServed, the leads another origin found too. Null when human-service's memberships were unreadable (sourceOverlapUnavailableReason)."),
   sourcingCostUsd: z.number().describe("Σ committed subtree cost of those serves."),
   costPerLeadUsd: z.number().nullable().describe("sourcingCostUsd ÷ leadsServed; null at 0 leads."),
   positiveReplies: z.number().int().describe("Those leads with a positive reply (distinct leads)."),
   sourcingCostPerPositiveReplyUsd: z.number().nullable(),
-  outreachCostUsd: z.number().describe("Each campaign's outreach share allocated to this origin by the leads it served from it."),
+  outreachCostUsd: z.number().describe("Each campaign's outreach split evenly over the leads it served; each lead's share counts for every origin it carries."),
   endToEndCostUsd: z.number().describe("sourcingCostUsd + outreachCostUsd: what this origin's leads cost end to end."),
   endToEndCostPerPositiveReplyUsd: z.number().nullable(),
   roi: z.number().nullable().describe("positiveReplies × valuePerPositiveReplyUsd ÷ endToEndCostUsd, since inception."),
@@ -2016,6 +2017,38 @@ const offerSourcingCampaignSchema = z.object({
   outreachUnavailableReason: z.enum(["sourcing_exceeds_campaign_total"]).nullable(),
   costPerPositiveReply: z.object({ sourcingUsd: z.number().nullable(), outreachUsd: z.number().nullable(), totalUsd: z.number().nullable() }).describe("Each half and the total ÷ positiveReplies; null at 0."),
 });
+const replyFiguresSchema = z.object({
+  leads: z.number().int(),
+  positiveReplies: z.number().int().describe("Distinct leads with a positive reply."),
+  positiveReplyRatePct: z.number().nullable().describe("100 × positiveReplies ÷ leads; null at 0 leads, a measured 0 stays 0."),
+});
+const sourceOverlapSchema = registry.register(
+  "SourceOverlap",
+  z
+    .object({
+      window: z.literal("since_inception"),
+      leadTotal: z.number().int().describe("Distinct leads of the offer's campaigns, each counted ONCE = Σ buckets[].leads."),
+      positiveReplyTotal: z.number().int(),
+      sourceCreditTotal: z.number().int().describe("Σ origins[].leadsServed (a lead counted once per origin that found it)."),
+      multiSourceLeads: z.number().int().describe("Leads 2+ origins found."),
+      extraSourceCredits: z.number().int().describe("Σ over multi-source leads of (origins − 1) = sourceCreditTotal − (leadTotal − the unattributed bucket's leads)."),
+      maturityRule: z
+        .object({ legKey: z.string(), durationDays: z.number().int(), outcomesRequired: z.number().int(), cutoff: z.string().nullable() })
+        .describe("The conversation leg's maturity rule the buckets follow: MATURE = leads served before cutoff; isMature = mature positive replies ≥ outcomesRequired."),
+      buckets: z
+        .array(
+          replyFiguresSchema.extend({
+            sourceCount: z.number().int().describe("0 = no origin proven, 1, 2, 3 = three or more."),
+            label: z.enum(["unattributed", "1", "2", "3+"]),
+            maturity: z
+              .object({ flash: replyFiguresSchema.nullable(), mature: replyFiguresSchema.nullable(), isMature: z.boolean().nullable() })
+              .describe("FLASH (every lead to date, = the bucket's own figures) + MATURE (leads served before maturityRule.cutoff; null when none) + the verdict. isMature false = Learning: show the rate as learning, not as a measured rate."),
+          }),
+        )
+        .describe("Always four buckets, in order unattributed, 1, 2, 3+. Σ leads = leadTotal."),
+    })
+    .describe("The offer's leads by number of sourcing origins that found them (owner 2026-10-08: a human in several signals is a higher interest)."),
+);
 const offerSourcingResponseRef = registry.register(
   "OfferSourcingResponse",
   z.object({
@@ -2029,6 +2062,7 @@ const offerSourcingResponseRef = registry.register(
       sourcing: z.string(),
       outreach: z.string(),
       outreachAllocation: z.string(),
+      leadOrigins: z.string().describe("Which origins a lead carries (every origin that found it)."),
       unrecordedOrigin: z.string().describe("How a serve or lead that recorded no audience is attributed (positive evidence only)."),
       notCounted: z.array(z.string()),
     }),
@@ -2039,6 +2073,8 @@ const offerSourcingResponseRef = registry.register(
     ),
     campaigns: z.array(offerSourcingCampaignSchema).describe("The offer's campaigns on a channel that sources leads, totalCostUsd desc."),
     totals: z.object({ sourcingCostUsd: z.number(), outreachCostUsd: z.number().nullable(), totalCostUsd: z.number() }).describe("Σ campaigns, exact."),
+    sourceOverlap: sourceOverlapSchema.nullable().describe("Null with sourceOverlapUnavailableReason when human-service's memberships were unreadable."),
+    sourceOverlapUnavailableReason: z.enum(["memberships_unavailable"]).nullable(),
     outreachCampaigns: z
       .array(
         z.object({
@@ -2235,8 +2271,9 @@ const offerSalesPathsResponseRef = registry.register(
           roi: z.number().nullable().describe("MEASURED since inception: what this source's leads returned once contacted = its positive replies × the offer's value of a positive reply ÷ what they cost end to end (sourcing + the outreach spent on them). Same figure as /offers/:id/sourcing origins[].roi (pricing=net)."),
           roiBasis: z.literal("measured"),
           roiUnavailableReason: z.enum(["no_positive_reply_value", "nothing_spent", "sourcing_unavailable"]).nullable(),
-          leadsFound: z.number().int().nullable(),
-          positiveReplies: z.number().int().nullable(),
+          leadsFound: z.number().int().nullable().describe("Leads CARRYING this source (= /offers/:id/sourcing origins[].leadsServed): a lead several sources found counts in each. Σ over sources ≥ the offer's leads; see sourceOverlap."),
+          leadsAlsoFoundByAnotherSource: z.number().int().nullable().describe("Of leadsFound, the leads another source found too (higher interest). Null when unreadable."),
+          positiveReplies: z.number().int().nullable().describe("Positive replies of every lead carrying this source."),
           costUsd: z.number().nullable().describe("Its committed cost since inception (net): the origin's sourcing over every campaign of the offer (+ the non-serve spend of campaigns whose featureSlug is the origin)."),
           endToEndCostUsd: z.number().nullable(),
           costPerLeadUsd: z.number().nullable(),
@@ -2246,6 +2283,11 @@ const offerSalesPathsResponseRef = registry.register(
         }),
       )
       .describe("The offer's SOURCE CAMPAIGNS (owner 2026-10-07: the sourcing origins ARE campaigns, `<Name> [origin] -> Lead found [On|Off] [Up to $X/day]`): every live origin, plus a retired one the offer used, in catalogue order. Their On/Off lives in campaign-service and their budget in billing, keyed (offerId, channelSlug, legKey). A failed sourcing read lists them with null figures (roiUnavailableReason sourcing_unavailable). Additive: campaigns[] is unchanged."),
+    sourceOverlap: sourceOverlapSchema.nullable().describe("Same block as /offers/:id/sourcing?pricing=net sourceOverlap: the offer's leads (each once) by number of sources that found them."),
+    sourceOverlapUnavailableReason: z
+      .enum(["memberships_unavailable", "sourcing_unavailable"])
+      .nullable()
+      .describe("Why sourceOverlap is null: memberships_unavailable (human-service's memberships unreadable), sourcing_unavailable (the offer's sourcing read failed)."),
   }),
 );
 

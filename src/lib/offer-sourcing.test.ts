@@ -310,3 +310,137 @@ describe("fetchUnrecordedCostEvidence", () => {
     }
   });
 });
+
+describe("a lead carries EVERY source that found it (owner 2026-10-08: no first-found credit)", () => {
+  const AUD_SIGNALS_APOLLO = "aud-buying";
+  const listsMulti = new Map<string, string | null>([...lists, [AUD_SIGNALS_APOLLO, "apollo_buying_signal"]]);
+  const serves: ServeCost[] = [
+    { runId: "s1", campaignId: "c1", audienceId: AUD_COLD, featureSlug: "sales-cold-email-outreach", cents: "100" },
+    { runId: "s2", campaignId: "c1", audienceId: AUD_COLD, featureSlug: "sales-cold-email-outreach", cents: "100" },
+    { runId: "s3", campaignId: "c1", audienceId: AUD_SIGNAL, featureSlug: "sourcing-linkedin-engagement-signals", cents: "100" },
+    { runId: "s4", campaignId: "c2", audienceId: null, featureSlug: "sales-cold-email-outreach", cents: "100" },
+  ];
+  // l1 served from cold, ALSO found by the LinkedIn signal and the Apollo buying signal (3 sources).
+  // l2 served from cold, also found by the LinkedIn signal (2 sources). l3 LinkedIn only. l4 nothing proven.
+  // l1 is on two campaigns: still ONE lead of the offer.
+  const leads: SourcedLead[] = [
+    { leadId: "l1", campaignId: "c1", audienceId: AUD_COLD, positiveReply: true, email: "A@x.com", servedAt: "2026-08-01T00:00:00.000Z" },
+    { leadId: "l1", campaignId: "c2", audienceId: null, positiveReply: false, email: "a@x.com", servedAt: "2026-08-05T00:00:00.000Z" },
+    { leadId: "l2", campaignId: "c1", audienceId: AUD_COLD, positiveReply: true, email: "b@x.com", servedAt: "2026-10-07T00:00:00.000Z" },
+    { leadId: "l3", campaignId: "c1", audienceId: AUD_SIGNAL, positiveReply: false, email: "c@x.com", servedAt: "2026-08-01T00:00:00.000Z" },
+    { leadId: "l4", campaignId: "c2", audienceId: null, positiveReply: false, email: "d@x.com", servedAt: null },
+  ];
+  const memberships = new Map<string, Set<string>>([
+    ["a@x.com", new Set(["sourcing-apollo-cold-filters", "sourcing-linkedin-engagement-signals", "sourcing-apollo-buying-signals"])],
+    ["b@x.com", new Set(["sourcing-apollo-cold-filters", "sourcing-linkedin-engagement-signals"])],
+    ["c@x.com", new Set(["sourcing-linkedin-engagement-signals"])],
+  ]);
+  const totals = new Map([
+    ["c1", "700"],
+    ["c2", "200"],
+  ]);
+  const base = {
+    campaigns,
+    serves,
+    totalCentsByCampaign: totals,
+    listOfAudience: listsMulti,
+    unrecordedOriginByCampaign: new Map(),
+    leads,
+    valuePerPositiveReplyUsd: 10,
+    now: new Date("2026-10-08T12:00:00.000Z"),
+  };
+  const r = computeOfferSourcing({ ...base, memberships });
+  const by = (slug: string) => r.origins.find((o) => o.slug === slug)!;
+
+  it("each source counts every lead carrying it, and how many of those another source found too", () => {
+    expect(by("sourcing-apollo-cold-filters")).toMatchObject({ leadsServed: 2, leadsAlsoFoundByAnotherSource: 2, positiveReplies: 2 });
+    expect(by("sourcing-linkedin-engagement-signals")).toMatchObject({ leadsServed: 3, leadsAlsoFoundByAnotherSource: 2, positiveReplies: 2 });
+    expect(by("sourcing-apollo-buying-signals")).toMatchObject({ leadsServed: 1, leadsAlsoFoundByAnotherSource: 1, positiveReplies: 1, sourcingCostUsd: 0 });
+    // l1's c2 row had no proven origin: a lead some source is proven for is never also unattributed.
+    expect(r.unattributed).toMatchObject({ leadsServed: 1, positiveReplies: 0 });
+  });
+
+  it("Σ per-source leads − the leads with a source = Σ (sources − 1) over multi-source leads; buckets sum to the offer total", () => {
+    const o = r.sourceOverlap!;
+    const perSource = r.origins.reduce((s, x) => s + x.leadsServed, 0);
+    expect(o.leadTotal).toBe(4);
+    expect(o.sourceCreditTotal).toBe(perSource);
+    expect(perSource).toBe(6);
+    expect(o.multiSourceLeads).toBe(2);
+    expect(o.extraSourceCredits).toBe((3 - 1) + (2 - 1));
+    expect(perSource - (o.leadTotal - o.buckets[0]!.leads)).toBe(o.extraSourceCredits);
+    expect(o.buckets.reduce((s, b) => s + b.leads, 0)).toBe(o.leadTotal);
+    expect(o.buckets.map((b) => [b.label, b.leads, b.positiveReplies])).toEqual([
+      ["unattributed", 1, 0],
+      ["1", 1, 0],
+      ["2", 1, 1],
+      ["3+", 1, 1],
+    ]);
+    expect(o.positiveReplyTotal).toBe(2);
+  });
+
+  it("bucket rates follow the conversation leg's maturity rule: a lead served inside 21 days is flash only", () => {
+    const o = r.sourceOverlap!;
+    expect(o.maturityRule).toEqual({ legKey: "start_to_conversation", durationDays: 21, outcomesRequired: 1, cutoff: "2026-09-17T00:00:00.000Z" });
+    const two = o.buckets.find((b) => b.label === "2")!;
+    expect(two.positiveReplyRatePct).toBe(100);
+    expect(two.maturity).toEqual({ flash: { leads: 1, positiveReplies: 1, positiveReplyRatePct: 100 }, mature: null, isMature: false });
+    const three = o.buckets.find((b) => b.label === "3+")!;
+    expect(three.maturity.isMature).toBe(true);
+    const one = o.buckets.find((b) => b.label === "1")!;
+    expect(one.maturity).toEqual({ flash: { leads: 1, positiveReplies: 0, positiveReplyRatePct: 0 }, mature: { leads: 1, positiveReplies: 0, positiveReplyRatePct: 0 }, isMature: false });
+  });
+
+  it("money totals are unchanged by the tags; each source's end-to-end cost counts its leads' outreach", () => {
+    const without = computeOfferSourcing({ ...base, memberships: null });
+    expect(r.totals).toEqual(without.totals);
+    expect(r.campaigns).toEqual(without.campaigns);
+    // c1 outreach $4 over l1,l2,l3 = $4/3 each; c2 outreach $1 over l1,l4 = $0.5 each.
+    expect(by("sourcing-apollo-buying-signals").outreachCostUsd).toBeCloseTo(4 / 3 + 0.5, 10);
+    expect(by("sourcing-linkedin-engagement-signals").outreachCostUsd).toBeCloseTo(4 + 0.5, 10);
+  });
+
+  it("memberships unreadable: each lead carries its serve's origin only, the overlap is null and named", () => {
+    const without = computeOfferSourcing({ ...base, memberships: null });
+    expect(without.sourceOverlap).toBeNull();
+    expect(without.sourceOverlapUnavailableReason).toBe("memberships_unavailable");
+    expect(without.origins.find((o) => o.slug === "sourcing-apollo-cold-filters")).toMatchObject({ leadsServed: 2, leadsAlsoFoundByAnotherSource: null });
+    // l1 served from cold (c1) with an unproven row on c2: still cold only, never also unattributed.
+    expect(without.unattributed.leadsServed).toBe(1);
+  });
+});
+
+describe("fetchMembershipOrigins (human-service memberships, RAW)", () => {
+  it("maps each email to the origins of this offer's (or offer-less) audiences, every page, never another offer's", async () => {
+    vi.stubEnv("HUMAN_SERVICE_URL", "http://human");
+    vi.stubEnv("HUMAN_SERVICE_API_KEY", "k");
+    const page = (people: unknown[]) => new Response(JSON.stringify({ people }), { status: 200 });
+    const fill = Array.from({ length: 4999 }, (_, i) => ({ emailNorm: `p${i}@x.com`, memberships: [] }));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        page([
+          ...fill,
+          {
+            emailNorm: "A@x.com",
+            memberships: [
+              { audienceId: "1", offerId: "off", list: "apollo_search" },
+              { audienceId: "2", offerId: null, list: "linkedin_engagement" },
+              { audienceId: "3", offerId: "other", list: "apollo_buying_signal" },
+              { audienceId: "4", offerId: "off", list: null },
+            ],
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(page([{ emailNorm: "b@x.com", memberships: [{ audienceId: "5", offerId: "off", list: "apify_search" }] }]));
+    vi.stubGlobal("fetch", fetchMock);
+    const { fetchMembershipOrigins } = await import("./offer-sourcing.js");
+    const out = await fetchMembershipOrigins("brand-1", "off", { orgId: "org-1" });
+    expect([...out.get("a@x.com")!].sort()).toEqual(["sourcing-apollo-cold-filters", "sourcing-linkedin-engagement-signals"]);
+    expect([...out.get("b@x.com")!]).toEqual(["sourcing-apify-search"]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1]![0])).toBe("http://human/internal/brands/brand-1/memberships?orgId=org-1&limit=5000&offset=5000");
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+});

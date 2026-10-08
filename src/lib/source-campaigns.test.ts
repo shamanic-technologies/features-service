@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from "vitest";
 
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 import { computeOfferSourcing, type ServeCost, type SourcedLead } from "./offer-sourcing.js";
-import { buildOutreachCampaignSplits, buildSourceCampaigns, sourceCampaignOrigins, withSourceCampaigns } from "./source-campaigns.js";
+import { buildOutreachCampaignSplits, buildSourceCampaigns, sourceCampaignOrigins, sourceOverlapOf, withSourceCampaigns } from "./source-campaigns.js";
 import { LEAD_FOUND_STEP, SOURCE_LEG_KEY, originOfUnrecorded, sourceCampaignKeyOf, SOURCING_ORIGINS } from "./sourcing-origins.js";
 import { campaignNameKeyOf } from "./offer-sales-paths.js";
 import { CHANNEL_STEP_KEYS } from "./acquisition-channels.js";
@@ -156,7 +156,7 @@ describe("withSourceCampaigns: additive on the sales-paths body", () => {
     { campaignKey: JUBILATION, channelSlug: COLD, legKey: "start_to_conversation", reactive: false, roi: 0.87 },
     { campaignKey: "campaign:ai-meeting-booking|conversation_to_meeting_booked", channelSlug: "ai-meeting-booking", legKey: "conversation_to_meeting_booked", reactive: true, roi: 0.7 },
   ];
-  const out = withSourceCampaigns({ offerId: "o", campaigns: campaignsRows }, rows);
+  const out = withSourceCampaigns({ offerId: "o", campaigns: campaignsRows }, rows, sourceOverlapOf(null));
 
   it("every existing campaign field is unchanged; fedBy is added", () => {
     out.campaigns!.forEach((c, i) => {
@@ -173,7 +173,7 @@ describe("withSourceCampaigns: additive on the sales-paths body", () => {
   });
 
   it("a body without campaigns (pure build) gains only sourceCampaigns", () => {
-    const bare = withSourceCampaigns({ offerId: "o" } as { offerId: string; campaigns?: never[] }, rows);
+    const bare = withSourceCampaigns({ offerId: "o" } as { offerId: string; campaigns?: never[] }, rows, sourceOverlapOf(null));
     expect("campaigns" in bare).toBe(false);
     expect(bare.sourceCampaigns).toHaveLength(4);
   });
@@ -187,7 +187,7 @@ describe("the routes wire it (source guards)", () => {
   it("sales-paths reads the SAME net sourcing cell as the dashboard, fail-soft, and serves the source campaigns", () => {
     expect(paths).toContain('readOfferSourcing({ offerId, brandId, pricing: "net", identity })');
     expect(paths).toContain(".catch(");
-    expect(paths).toContain("withSourceCampaigns(withRois, buildSourceCampaigns({ sourcing, names: sourceNames }))");
+    expect(paths).toContain("withSourceCampaigns(withRois, buildSourceCampaigns({ sourcing, names: sourceNames }), sourceOverlapOf(sourcing))");
   });
 
   it("the sourcing cell includes the offer's SOURCE campaigns (featureSlug = an origin) and serves the outreach split", () => {

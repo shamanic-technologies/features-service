@@ -19,12 +19,19 @@
  * So sourcing + outreach = campaign total exactly, in either labelling state.
  *
  * ── PER ORIGIN (rows NOT additive across origins when a lead came from two) ─────────────────────
+ * A lead CARRIES every origin that found it (owner 2026-10-08, no first-found credit): its serve's origin
+ * (audience kind, else the proven unrecorded origin) PLUS the list kind of every audience of the offer
+ * human-service records it a member of (`MembershipOrigins`: served there, or found there while already
+ * taken for the brand). A lead with a proven origin is never also unattributed.
  *   sourcingCostUsd     Σ subtree cost of the serves from that origin (run slug, else audience kind).
- *   leadsServed         distinct leads lead-service tags with an audience of that origin.
+ *   leadsServed         distinct leads CARRYING that origin (a lead two sources found counts in both).
+ *   leadsAlsoFoundByAnotherSource  of those, the leads another origin found too.
  *   positiveReplies     those leads with a positive reply (same per-lead signal as the outcome reads).
- *   outreachCostUsd     each campaign's outreach shared over the origins by the leads it served from
- *                       each (`outreachAllocation`): an outreach run writes to one lead, the cost of a
- *                       lead's emails is not split per origin anywhere upstream.
+ *   outreachCostUsd     each campaign's outreach split evenly over the leads it served, each lead's share
+ *                       credited to EVERY origin it carries (`outreachAllocation`): an outreach run
+ *                       writes to one lead, the cost of a lead's emails is not split per origin upstream.
+ * The OFFER counts each lead once: `sourceOverlap` buckets the leads by how many origins found them
+ * (Σ buckets = leadTotal) and states the excess Σ per-origin leads carries (`extraSourceCredits`).
  *   endToEndCostUsd        sourcing + allocated outreach: what the origin's leads cost end to end.
  *   roi                 positive replies × value of a positive reply (offer terms) ÷ end-to-end cost.
  * A serve or lead that recorded NO audience takes the origin its campaign's unrecorded runs are PROVEN
@@ -36,10 +43,12 @@ import { fetchWithRetry } from "./fetch-retry.js";
 import { addDecimals, decimalCentsToUsd, sumDecimalStrings } from "./decimal.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { runsCostsUrl, selectCostCentsString, type Pricing } from "./pricing.js";
+import { isMatureCount, legCutoffIso, legMaturity, maturityPair, servedInMatureCohort, type MaturityPair } from "./maturity.js";
 import {
   SOURCING_ORIGINS,
   originOfServe,
   originOfUnrecorded,
+  sourcingOriginBySlug,
   sourcingOriginOfList,
   withSourcingSlugs,
   type SourcingOrigin,
@@ -62,7 +71,20 @@ export interface SourcedLead {
   campaignId: string | null;
   audienceId: string | null;
   positiveReply: boolean;
+  /** The lead's email: the key its audience memberships (human-service) join on. */
+  email?: string | null;
+  /** When the run that contacts it took it (the maturity clock). Null/absent = not stated (in the mature cohort). */
+  servedAt?: string | null;
 }
+
+/**
+ * EVERY SOURCE THAT FOUND A PERSON (owner 2026-10-08: "It must be tagged both ... So we know a human
+ * belongs to several signals, which is a higher interest"): normalised email → the origin slugs of every
+ * audience of this offer (or of no offer) human-service records the person a member of, served there or
+ * found there while already taken. Null = the read failed: every lead carries only its serve's origin and
+ * the overlap figures are null, never "nobody was found twice".
+ */
+export type MembershipOrigins = ReadonlyMap<string, ReadonlySet<string>>;
 
 export interface SourcingCampaignInput {
   id: string;
@@ -83,6 +105,8 @@ export interface OriginStats {
   audienceIds: string[];
   serveCount: number;
   leadsServed: number;
+  /** Of `leadsServed`, the leads another source found too. Null when memberships were unreadable. */
+  leadsAlsoFoundByAnotherSource: number | null;
   sourcingCostUsd: number;
   costPerLeadUsd: number | null;
   positiveReplies: number;
@@ -111,11 +135,47 @@ export interface CampaignSourcingSplit {
   costPerPositiveReply: { sourcingUsd: number | null; outreachUsd: number | null; totalUsd: number | null };
 }
 
+/** The leads, positive replies and positive reply rate of one population. */
+export interface ReplyFigures {
+  leads: number;
+  positiveReplies: number;
+  /** 100 × positiveReplies / leads; null at 0 leads (a measured 0 stays 0). */
+  positiveReplyRatePct: number | null;
+}
+
+/** The offer's leads bucketed by how many sources found each one. */
+export interface SourceCountBucket extends ReplyFigures {
+  /** 0 = no source proven (unattributed), 1, 2, 3 = three or more. */
+  sourceCount: 0 | 1 | 2 | 3;
+  label: "unattributed" | "1" | "2" | "3+";
+  /** FLASH (every lead to date) + MATURE (leads served before the conversation leg's cutoff) + the verdict. */
+  maturity: MaturityPair<ReplyFigures>;
+}
+
+export interface SourceOverlap {
+  window: "since_inception";
+  /** Distinct leads of the offer's campaigns, each counted ONCE (= Σ buckets.leads). */
+  leadTotal: number;
+  positiveReplyTotal: number;
+  /** Σ over origins of `leadsServed`: ≥ the leads with a source; the excess is `extraSourceCredits`. */
+  sourceCreditTotal: number;
+  /** Leads 2+ sources found. */
+  multiSourceLeads: number;
+  /** Σ over multi-source leads of (sources − 1) = sourceCreditTotal − (leadTotal − unattributed leads). */
+  extraSourceCredits: number;
+  /** The maturity rule the buckets' MATURE cohort and verdict follow (the conversation leg's). */
+  maturityRule: { legKey: string; durationDays: number; outcomesRequired: number; cutoff: string | null };
+  buckets: SourceCountBucket[];
+}
+
 export interface OfferSourcing {
   origins: OriginStats[];
   unattributed: OriginStats;
   campaigns: CampaignSourcingSplit[];
   totals: { sourcingCostUsd: number; outreachCostUsd: number | null; totalCostUsd: number };
+  /** Null when human-service's memberships were unreadable (`sourceOverlapUnavailableReason`). */
+  sourceOverlap: SourceOverlap | null;
+  sourceOverlapUnavailableReason: "memberships_unavailable" | null;
 }
 
 const perUnit = (usd: number, n: number): number | null => (n > 0 ? usd / n : null);
@@ -133,6 +193,7 @@ interface OriginAcc {
   cents: string[];
   leads: Set<string>;
   replied: Set<string>;
+  alsoFoundElsewhere: Set<string>;
   outreachUsd: number;
 }
 
@@ -146,7 +207,11 @@ export function computeOfferSourcing(input: {
   unrecordedOriginByCampaign: ReadonlyMap<string, SourcingOrigin | null>;
   leads: readonly SourcedLead[];
   valuePerPositiveReplyUsd: number | null;
+  /** Every source that found each person; null = unreadable. Absent = not read (same as null). */
+  memberships?: MembershipOrigins | null;
+  now?: Date;
 }): OfferSourcing {
+  const memberships = input.memberships ?? null;
   const campaignIds = new Set(input.campaigns.map((c) => c.id));
   const accs = new Map<string, OriginAcc>();
   const UNKNOWN = "__unattributed__";
@@ -154,7 +219,7 @@ export function computeOfferSourcing(input: {
     const key = origin?.slug ?? UNKNOWN;
     let a = accs.get(key);
     if (!a) {
-      a = { origin, audienceIds: new Set(), serveCount: 0, cents: [], leads: new Set(), replied: new Set(), outreachUsd: 0 };
+      a = { origin, audienceIds: new Set(), serveCount: 0, cents: [], leads: new Set(), replied: new Set(), alsoFoundElsewhere: new Set(), outreachUsd: 0 };
       accs.set(key, a);
     }
     return a;
@@ -209,19 +274,47 @@ export function computeOfferSourcing(input: {
     co.serves += 1;
   }
 
+  // Per lead (the offer counts each ONCE): every origin it carries — its serves' and every audience that found it.
+  interface LeadAcc {
+    origins: Set<string>;
+    replied: boolean;
+    emails: Set<string>;
+    servedAt: string | null;
+  }
+  const leadAccs = new Map<string, LeadAcc>();
   for (const l of input.leads) {
     if (!l.campaignId || !campaignIds.has(l.campaignId)) continue;
     const origin = l.audienceId
       ? sourcingOriginOfList(input.listOfAudience.get(l.audienceId) ?? null)
       : (input.unrecordedOriginByCampaign.get(l.campaignId) ?? null);
-    const a = acc(origin);
-    a.leads.add(l.leadId);
-    if (l.audienceId) a.audienceIds.add(l.audienceId);
-    if (l.positiveReply) a.replied.add(l.leadId);
+    if (l.audienceId) acc(origin).audienceIds.add(l.audienceId);
     const c = camp(l.campaignId);
     c.leads.add(l.leadId);
     if (l.positiveReply) c.replied.add(l.leadId);
     campOrigin(c, origin).leads.add(l.leadId);
+    let la = leadAccs.get(l.leadId);
+    if (!la) {
+      la = { origins: new Set(), replied: false, emails: new Set(), servedAt: null };
+      leadAccs.set(l.leadId, la);
+    }
+    la.origins.add(origin?.slug ?? UNKNOWN);
+    if (l.positiveReply) la.replied = true;
+    const email = l.email?.trim().toLowerCase();
+    if (email) la.emails.add(email);
+    if (l.servedAt && (la.servedAt === null || l.servedAt < la.servedAt)) la.servedAt = l.servedAt;
+  }
+  for (const la of leadAccs.values()) {
+    if (memberships) for (const e of la.emails) for (const slug of memberships.get(e) ?? []) if (accs.has(slug)) la.origins.add(slug);
+    // A lead some source is proven for is not unattributed.
+    if (la.origins.size > 1) la.origins.delete(UNKNOWN);
+  }
+  for (const [leadId, la] of leadAccs) {
+    for (const slug of la.origins) {
+      const a = accs.get(slug)!;
+      a.leads.add(leadId);
+      if (la.replied) a.replied.add(leadId);
+      if (la.origins.size > 1) a.alsoFoundElsewhere.add(leadId);
+    }
   }
 
   const campaigns: CampaignSourcingSplit[] = [];
@@ -243,10 +336,14 @@ export function computeOfferSourcing(input: {
     } else {
       outreachTotal.push(outreachCents);
       // Share the campaign's outreach over its origins by the leads it served from each.
+      // A lead's share is credited to EVERY source it carries (each source's end-to-end cost is what its
+      // leads cost; rows are not additive across sources when a lead came from two).
       const outreachUsd = decimalCentsToUsd(outreachCents);
       const totalLeads = c.leads.size;
       if (totalLeads === 0) acc(null).outreachUsd += outreachUsd;
-      else for (const e of c.byOrigin.values()) acc(e.origin).outreachUsd += (outreachUsd * e.leads.size) / totalLeads;
+      else
+        for (const leadId of c.leads)
+          for (const slug of leadAccs.get(leadId)!.origins) accs.get(slug)!.outreachUsd += outreachUsd / totalLeads;
     }
     sourcingTotal.push(sourcingCents);
     campaignTotal.push(totalCents);
@@ -301,6 +398,7 @@ export function computeOfferSourcing(input: {
       audienceIds: [...a.audienceIds].sort(),
       serveCount: a.serveCount,
       leadsServed: a.leads.size,
+      leadsAlsoFoundByAnotherSource: memberships ? a.alsoFoundElsewhere.size : null,
       sourcingCostUsd,
       costPerLeadUsd: perUnit(sourcingCostUsd, a.leads.size),
       positiveReplies: replies,
@@ -322,6 +420,64 @@ export function computeOfferSourcing(input: {
       outreachCostUsd: outreachKnown ? decimalCentsToUsd(sumDecimalStrings(outreachTotal)) : null,
       totalCostUsd: decimalCentsToUsd(sumDecimalStrings(campaignTotal)),
     },
+    sourceOverlap: memberships ? buildSourceOverlap([...leadAccs.values()], input.now ?? new Date()) : null,
+    sourceOverlapUnavailableReason: memberships ? null : "memberships_unavailable",
+  };
+}
+
+/** The leg whose maturity rule a positive-reply rate follows. */
+const REPLY_LEG = "start_to_conversation";
+
+const replyFigures = (leads: number, positiveReplies: number): ReplyFigures => ({
+  leads,
+  positiveReplies,
+  positiveReplyRatePct: leads > 0 ? (100 * positiveReplies) / leads : null,
+});
+
+/** PURE: the offer's leads bucketed by how many sources found each (0 = unattributed, 1, 2, 3+). */
+export function buildSourceOverlap(
+  leads: ReadonlyArray<{ origins: ReadonlySet<string>; replied: boolean; servedAt: string | null }>,
+  now: Date,
+): SourceOverlap {
+  const rule = legMaturity(REPLY_LEG);
+  const cutoff = legCutoffIso(REPLY_LEG, now);
+  const LABELS = ["unattributed", "1", "2", "3+"] as const;
+  const counts = LABELS.map(() => ({ flash: [0, 0], mature: [0, 0] }));
+  let credits = 0;
+  let multi = 0;
+  let replies = 0;
+  for (const l of leads) {
+    const known = [...l.origins].filter((o) => sourcingOriginBySlug(o)).length;
+    credits += known;
+    if (known > 1) multi += 1;
+    if (l.replied) replies += 1;
+    const b = counts[Math.min(known, 3)]!;
+    b.flash[0]! += 1;
+    if (l.replied) b.flash[1]! += 1;
+    if (servedInMatureCohort(l.servedAt, cutoff)) {
+      b.mature[0]! += 1;
+      if (l.replied) b.mature[1]! += 1;
+    }
+  }
+  const unattributed = counts[0]!.flash[0]!;
+  return {
+    window: "since_inception",
+    leadTotal: leads.length,
+    positiveReplyTotal: replies,
+    sourceCreditTotal: credits,
+    multiSourceLeads: multi,
+    extraSourceCredits: credits - (leads.length - unattributed),
+    maturityRule: { legKey: REPLY_LEG, durationDays: rule.durationDays, outcomesRequired: rule.outcomesRequired, cutoff },
+    buckets: counts.map((c, i) => {
+      const flash = replyFigures(c.flash[0]!, c.flash[1]!);
+      const mature = replyFigures(c.mature[0]!, c.mature[1]!);
+      return {
+        sourceCount: i as 0 | 1 | 2 | 3,
+        label: LABELS[i]!,
+        ...flash,
+        maturity: maturityPair(flash, mature.leads > 0 ? mature : null, isMatureCount(mature.positiveReplies, REPLY_LEG)),
+      };
+    }),
   };
 }
 
@@ -518,4 +674,47 @@ export async function fetchAudienceListKinds(brandId: string, identity: Downstre
     }),
   );
   return out;
+}
+
+const MEMBERSHIP_PAGE = 5000;
+const MAX_MEMBERSHIP_PAGES = 200;
+
+interface MembershipPersonRow {
+  emailNorm?: string | null;
+  memberships?: Array<{ audienceId?: string; offerId?: string | null; list?: string | null }> | null;
+}
+
+/**
+ * normalised email → the origins of every audience of `offerId` (or of no offer) the person is a member of,
+ * RAW (no deprecated→canonical collapse), from human-service `GET /internal/brands/:brandId/memberships`,
+ * every page. Throws on any failure (the caller degrades to `memberships_unavailable`, loudly).
+ */
+export async function fetchMembershipOrigins(brandId: string, offerId: string, identity: DownstreamIdentity): Promise<Map<string, Set<string>>> {
+  const url = process.env.HUMAN_SERVICE_URL;
+  const apiKey = process.env.HUMAN_SERVICE_API_KEY;
+  if (!url || !apiKey) throw new Error("HUMAN_SERVICE_URL or HUMAN_SERVICE_API_KEY not configured");
+  const out = new Map<string, Set<string>>();
+  for (let page = 0; ; page += 1) {
+    if (page >= MAX_MEMBERSHIP_PAGES) throw new Error(`human-service memberships walk exceeded ${MAX_MEMBERSHIP_PAGES} pages for brand ${brandId}`);
+    const params = new URLSearchParams({ orgId: identity.orgId, limit: String(MEMBERSHIP_PAGE), offset: String(page * MEMBERSHIP_PAGE) });
+    const response = await fetchWithRetry(`${url}/internal/brands/${encodeURIComponent(brandId)}/memberships?${params}`, {
+      headers: { "x-api-key": apiKey },
+    });
+    if (!response.ok) throw new Error(`human-service memberships failed (${response.status}): ${await response.text()}`);
+    const data = (await response.json()) as { people?: MembershipPersonRow[] };
+    if (!Array.isArray(data.people)) throw new Error("human-service memberships returned no people array");
+    for (const p of data.people) {
+      const email = p.emailNorm?.trim().toLowerCase();
+      if (!email) continue;
+      for (const m of p.memberships ?? []) {
+        if (m.offerId && m.offerId !== offerId) continue;
+        const origin = sourcingOriginOfList(m.list ?? null);
+        if (!origin) continue;
+        const set = out.get(email) ?? new Set<string>();
+        set.add(origin.slug);
+        out.set(email, set);
+      }
+    }
+    if (data.people.length < MEMBERSHIP_PAGE) return out;
+  }
 }
