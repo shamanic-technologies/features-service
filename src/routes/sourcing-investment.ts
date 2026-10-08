@@ -38,17 +38,12 @@ async function loadSourcingInvestment(brandId: string, req: AuthenticatedRequest
     scopeKey: buildScopeKey(brandId, { orgId: req.orgId, m: "sourcing-investment-v2" }),
     orgId: req.orgId,
     compute: async () => {
-      const [serves, listBuild, heldCompanies] = await Promise.all([
+      const [serves, listBuild, heldCompanies, servedRows] = await Promise.all([
         fetchServeRunCosts(brandId, req.orgId),
         fetchListBuildCosts(brandId, req.orgId),
         fetchHeldPersonCompanies(brandId, req.orgId),
+        fetchServedPersonRows(brandId, { orgId: req.orgId, userId: req.userId, runId: req.runId }),
       ]);
-      const campaignIds = [...new Set(serves.map((s) => s.campaignId).filter((c): c is string => !!c))].sort();
-      const servedRows = await fetchServedPersonRows(brandId, campaignIds, {
-        orgId: req.orgId,
-        userId: req.userId,
-        runId: req.runId,
-      });
       return computeSourcingInvestment({ serves, listBuild, servedRows, heldCompanies });
     },
   });
