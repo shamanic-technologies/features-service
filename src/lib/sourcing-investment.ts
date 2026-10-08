@@ -339,44 +339,46 @@ function companyOf(
 
 // ── human-service read: the company of every person a brand's lists hold ──────────────────────────
 
-const HELD_PAGE = 500;
-const MAX_HELD_PAGES = 1000;
-
 interface HeldPersonRow {
-  providerPersonId?: string | null;
-  company?: { companyKey: string; name?: string | null; domain?: string | null } | null;
+  providerPersonId?: unknown;
+  company?: { companyKey?: unknown; name?: string | null; domain?: string | null } | null;
 }
 
 /**
- * provider person id → company, from human-service `GET /internal/brands/:id/audience-snapshot/people`
- * (the held-people list the Audience page renders), every page. Fails loud.
+ * provider person id → company for every person the brand's lists hold: ONE read of human-service
+ * `GET /internal/brands/:id/audience-snapshot/person-companies` (one statement, one snapshot; the same
+ * relation and company key as the held-people list the Audience page renders). It replaced walking that
+ * list (`/audience-snapshot/people`) in OFFSET pages of 500, each page re-running the whole relation
+ * (~5.5s a page, 17+ pages a refresh), with the same map. Fails loud on any malformed row.
  */
 export async function fetchHeldPersonCompanies(brandId: string, orgId: string): Promise<Map<string, HeldCompany | null>> {
   const url = process.env.HUMAN_SERVICE_URL;
   const apiKey = process.env.HUMAN_SERVICE_API_KEY;
   if (!url || !apiKey) throw new Error("HUMAN_SERVICE_URL or HUMAN_SERVICE_API_KEY not configured");
-  const out = new Map<string, HeldCompany | null>();
-  for (let page = 0; ; page += 1) {
-    if (page >= MAX_HELD_PAGES) throw new Error(`human-service held-people walk exceeded ${MAX_HELD_PAGES} pages for brand ${brandId}`);
-    const params = new URLSearchParams({ orgId, limit: String(HELD_PAGE), offset: String(page * HELD_PAGE) });
-    const response = await fetchWithRetry(
-      `${url}/internal/brands/${encodeURIComponent(brandId)}/audience-snapshot/people?${params}`,
-      { headers: { "x-api-key": apiKey, "x-org-id": orgId } },
-    );
-    if (!response.ok) {
-      throw new Error(`human-service audience-snapshot/people failed (${response.status}): ${await response.text()}`);
-    }
-    const data = (await response.json()) as { total?: number; people?: HeldPersonRow[] };
-    if (!Array.isArray(data.people)) throw new Error("human-service audience-snapshot/people returned no people array");
-    for (const p of data.people) {
-      if (!p.providerPersonId) continue;
-      out.set(
-        p.providerPersonId,
-        p.company ? { companyKey: p.company.companyKey, name: p.company.name ?? null, domain: p.company.domain ?? null } : null,
-      );
-    }
-    if (data.people.length < HELD_PAGE) return out;
+  const params = new URLSearchParams({ orgId });
+  const response = await fetchWithRetry(
+    `${url}/internal/brands/${encodeURIComponent(brandId)}/audience-snapshot/person-companies?${params}`,
+    { headers: { "x-api-key": apiKey, "x-org-id": orgId } },
+  );
+  if (!response.ok) {
+    throw new Error(`human-service audience-snapshot/person-companies failed (${response.status}): ${await response.text()}`);
   }
+  const data = (await response.json()) as { people?: HeldPersonRow[] };
+  if (!Array.isArray(data.people)) throw new Error("human-service audience-snapshot/person-companies returned no people array");
+  const out = new Map<string, HeldCompany | null>();
+  for (const p of data.people) {
+    if (typeof p.providerPersonId !== "string" || !p.providerPersonId) {
+      throw new Error(`human-service audience-snapshot/person-companies returned a row with no providerPersonId for brand ${brandId}`);
+    }
+    if (p.company && typeof p.company.companyKey !== "string") {
+      throw new Error(`human-service audience-snapshot/person-companies returned a company with no companyKey for ${p.providerPersonId}`);
+    }
+    out.set(
+      p.providerPersonId,
+      p.company ? { companyKey: p.company.companyKey as string, name: p.company.name ?? null, domain: p.company.domain ?? null } : null,
+    );
+  }
+  return out;
 }
 
 // ── runs-service reads (service-auth; the vendor basis reveals our margin) ──────────────────────────

@@ -221,20 +221,28 @@ describe("runs-service reads", () => {
     expect(url.searchParams.get("groupBy")).toBe("audienceId");
   });
 
-  it("reads every page of human-service's held people: provider person id → company (null kept)", async () => {
+  it("reads human-service's held people in ONE read: provider person id → company (null kept)", async () => {
     process.env.HUMAN_SERVICE_URL = "http://human";
     process.env.HUMAN_SERVICE_API_KEY = "hk";
-    const page1 = Array.from({ length: 500 }, (_, i) => ({ providerPersonId: `ap${i}`, company: { companyKey: `domain:c${i}.com`, name: null, domain: `c${i}.com` } }));
-    fetchMock
-      .mockResolvedValueOnce(json({ total: 502, people: page1 }))
-      .mockResolvedValueOnce(json({ total: 502, people: [{ providerPersonId: "apX", company: null }, { providerPersonId: null, company: null }] }));
+    const people = Array.from({ length: 1200 }, (_, i) => ({ providerPersonId: `ap${i}`, company: { companyKey: `domain:c${i}.com`, name: null, domain: `c${i}.com` } }));
+    fetchMock.mockResolvedValueOnce(json({ brandId: "b1", total: 1201, people: [...people, { providerPersonId: "apX", company: null }] }));
     const out = await fetchHeldPersonCompanies("b1", "org-1");
-    expect(out.size).toBe(501);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(out.size).toBe(1201);
     expect(out.get("apX")).toBeNull();
     expect(out.get("ap3")).toEqual({ companyKey: "domain:c3.com", name: null, domain: "c3.com" });
-    const url = new URL(fetchMock.mock.calls[1]![0] as string);
-    expect(url.pathname).toBe("/internal/brands/b1/audience-snapshot/people");
+    const url = new URL(fetchMock.mock.calls[0]![0] as string);
+    expect(url.pathname).toBe("/internal/brands/b1/audience-snapshot/person-companies");
     expect(url.searchParams.get("orgId")).toBe("org-1");
-    expect(url.searchParams.get("offset")).toBe("500");
+    expect(url.searchParams.has("offset")).toBe(false);
+  });
+
+  it("fails loud on a human-service error or a row with no provider person id, never a partial map", async () => {
+    process.env.HUMAN_SERVICE_URL = "http://human";
+    process.env.HUMAN_SERVICE_API_KEY = "hk";
+    fetchMock.mockResolvedValueOnce(json({ people: [{ providerPersonId: null, company: null }] }));
+    await expect(fetchHeldPersonCompanies("b1", "org-1")).rejects.toThrow(/no providerPersonId/);
+    fetchMock.mockResolvedValue(new Response("boom", { status: 500 }));
+    await expect(fetchHeldPersonCompanies("b1", "org-1")).rejects.toThrow(/person-companies failed/);
   });
 });
