@@ -153,7 +153,12 @@ export async function fetchActiveAudienceAvailabilitySoft(
   headers: AudienceFetchHeaders,
 ): Promise<Map<string, number> | null> {
   try {
-    const audiences = await fetchActiveAudiences(brandId, headers);
+    // Reused 30s keyed on (org, brand) — the freshness the audiences read already states — never on the
+    // request's run: the gateway mints a new `x-run-id` per request, so the header-keyed shared read
+    // never hit across a page's polls (prod 2026-10-08, ~150ms per workflow-projection request).
+    const audiences = await memoizeInteractive(`active-audiences|${headers.orgId}|${brandId}`, 30_000, () =>
+      fetchActiveAudiences(brandId, headers),
+    );
     const byId = new Map<string, number>();
     for (const a of audiences) {
       if (typeof a.availableToContactCount === "number" && Number.isFinite(a.availableToContactCount)) {

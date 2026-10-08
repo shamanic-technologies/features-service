@@ -8,7 +8,9 @@ import { STEP_PEOPLE_LIMIT, buildOfferPipeline, buildOfferPipelineAndFamilies, e
 import { ALL_STEP_EVIDENCE } from "./funnel-steps.js";
 import { DISPLAY_ONLY_SALES_FUNNELS, SALES_FUNNELS, type SalesFunnelKey } from "./sales-funnels.js";
 import { funnelStepKeys } from "./acquisition-channels.js";
-import type { EnginePerson } from "./revenue-engine.js";
+import { computeRevenue, contactedExpiryCutoffIso, type EnginePerson } from "./revenue-engine.js";
+import { getFunnel, restrictPathsToDeclaredLegs } from "./funnel-registry.js";
+import { priceOnDeclaredFunnel } from "./offer-pricing.js";
 import type { ColdLeadsRead } from "./step-outcomes-client.js";
 
 const ALL_FUNNELS = (Object.keys(SALES_FUNNELS) as SalesFunnelKey[]).filter((k) => !DISPLAY_ONLY_SALES_FUNNELS.has(k));
@@ -349,5 +351,126 @@ describe("buildOfferPipeline", () => {
     expect(p.coldLeads?.leads[0].valueUsd).toBeNull();
     expect(p.coldLeads?.valueUsd).toBeNull();
     expect(p.peopleContacted).toBe(8);
+  });
+});
+
+describe("exclusiveLadder", () => {
+  const declared = pricingFunnels(["sales_meetings_from_conversation", "sales_from_website"]);
+  const values = stepValues(declared);
+  const now = new Date();
+  const recent = new Date(now.getTime() - 3 * 86_400_000).toISOString();
+  const old = new Date(now.getTime() - 60 * 86_400_000).toISOString();
+  const wf = { workflowSlug: "wf-a" };
+  const persons = [
+    person("paid", { clicked: true, positiveReply: true, meeting: true, meetingAttended: true, closeWin: true }, { ...wf, orgId: "org-p" }),
+    person("attended", { positiveReply: true, meeting: true, meetingAttended: true }, wf),
+    person("booked", { positiveReply: true, meeting: true }, wf),
+    person("booked-colleague", { positiveReply: true }, { ...wf, orgId: "org-b2" }),
+    person("booked-2", { positiveReply: true, meeting: true }, { ...wf, orgId: "org-b2" }),
+    person("reply", { positiveReply: true }, wf),
+    person("visit", { clicked: true }, wf),
+    person("crm-meeting", { meeting: true }, { ...wf, unpricedSignals: ["meeting"] }),
+    person("fresh", {}, { ...wf, signalDates: { lastSent: recent } }),
+    person("fresh-2", {}, { ...wf, signalDates: { lastSent: recent } }),
+    person("stale", {}, { ...wf, signalDates: { lastSent: old } }),
+    person("bounced", { bounced: true }, { ...wf, signalDates: { lastSent: recent } }),
+    person("queued", { contacted: false }, wf),
+  ];
+  const contactedPricing = { entryRatePctByGroup: { "c1|wf-a": { clicked: 2, positiveReply: 1 } }, lastSentOnOrAfter: contactedExpiryCutoffIso(now) };
+  const engineTotal = () => {
+    const priced = priceOnDeclaredFunnel([...declared]);
+    const engine = getFunnel("sales-cold-email-outreach")!;
+    const paths = restrictPathsToDeclaredLegs(
+      engine.resolvePaths({ economics: priced.economics.economics!, pricedFunnelKeys: priced.pricedFunnelKeys }),
+      priced.pricedFunnelKeys,
+    );
+    return computeRevenue(paths, [...persons], priced.economics.economics!.lifetimeRevenueUsd!, [], contactedPricing).headline.totalPipelineUsd;
+  };
+  const run = (headlinePipelineUsd: number | null) =>
+    buildOfferPipeline({
+      persons,
+      evidence: ALL_STEP_EVIDENCE,
+      declared,
+      values,
+      cold: null,
+      sets: offerStepSets(persons, ALL_STEP_EVIDENCE),
+      contactedPricing,
+      headlinePipelineUsd,
+    }).exclusiveLadder;
+  const listed = (x: ReturnType<typeof run>) => [
+    ...x.rows.flatMap((r) => (r.people ? [...r.people.ours.leads, ...r.people.lost.leads, ...r.people.notOurs.leads] : [])),
+    ...x.contacted.people.leads,
+  ].map((l) => l.leadId);
+
+  it("puts every person on ONE row: the furthest step we brought them to", () => {
+    const x = run(null);
+    const ids = listed(x);
+    expect(new Set(ids).size).toBe(ids.length);
+    const rowOf = (id: string) => x.rows.find((r) => r.people && [...r.people.ours.leads, ...r.people.lost.leads, ...r.people.notOurs.leads].some((l) => l.leadId === id))?.step.key;
+    expect(rowOf("paid")).toBe("paid_client");
+    expect(rowOf("attended")).toBe("meeting_attended");
+    expect(rowOf("booked")).toBe("meeting_booked");
+    expect(rowOf("reply")).toBe("conversation");
+    expect(rowOf("visit")).toBe("website_visit");
+    // A meeting not caused by us stands on that meeting, as not ours.
+    expect(x.rows.find((r) => r.step.key === "meeting_booked")!.people!.notOurs.leads.map((l) => l.leadId)).toEqual(["crm-meeting"]);
+    expect(x.rows.find((r) => r.step.key === "meeting_attended")!.pricedPeople).toBe(1);
+    expect(x.rows.find((r) => r.step.key === "paid_client")!.pricedPeople).toBe(1);
+    expect(x.total.people).toBe(12);
+    expect(x.total.peopleOnNoRow).toBe(1); // queued: never contacted
+  });
+
+  it("the rows (contacted row included) add up to the engine's pipeline, one company counted once", () => {
+    const x = run(null);
+    const total = engineTotal();
+    expect(total).toBeGreaterThan(0);
+    const sum = x.rows.reduce((s, r) => s + r.pipelineUsd!, 0) + x.contacted.pipelineUsd! + x.total.noRowPipelineUsd!;
+    expect(Math.abs(sum - total)).toBeLessThan(0.005);
+    expect(x.total.pipelineUsd).toBeCloseTo(total, 9);
+    // org-b2: booked-2 (meeting) carries the company; the colleague who only replied adds 0.
+    const reply = x.rows.find((r) => r.step.key === "conversation")!;
+    const colleague = reply.people!.ours.leads.find((l) => l.leadId === "booked-colleague")!;
+    expect(colleague.countedWithColleague).toBe(true);
+    expect(colleague.pipelineUsd).toBe(0);
+    expect(reply.countedWithColleagueUsd).toBeCloseTo(colleague.valueUsd!, 9);
+    const booked = x.rows.find((r) => r.step.key === "meeting_booked")!;
+    expect(booked.pipelineUsd).toBeCloseTo(2 * values.get("meeting_booked")!.valuePerOutcomeUsd, 9);
+  });
+
+  it("serves the contacted row: count, value per person, pipeline, explanation and a capped list", () => {
+    const c = run(null).contacted;
+    expect(c.count).toBe(4); // fresh, fresh-2, stale, bounced
+    expect(c.valuedCount).toBe(2);
+    expect(c.expiredCount).toBe(1);
+    expect(c.cannotConvertCount).toBe(1);
+    expect(c.unpricedCount).toBe(0);
+    expect(c.valuePerPersonUsd).toBeGreaterThan(0);
+    expect(c.pipelineUsd).toBeCloseTo(2 * c.valuePerPersonUsd!, 9);
+    expect(c.explanation!.routes.map((r) => [r.signal, r.step.key, r.entryRatePct])).toEqual(
+      expect.arrayContaining([["clicked", "website_visit", 2], ["positiveReply", "conversation", 1]]),
+    );
+    // The value of one person IS the routes combined as independent shots at one close.
+    const ltr = 2500;
+    const combined = (1 - c.explanation!.routes.reduce((q, r) => q * (1 - ((r.entryRatePct / 100) * r.valueAtStepUsd) / ltr), 1)) * ltr;
+    expect(c.valuePerPersonUsd).toBeCloseTo(combined, 6);
+    expect(c.people.leads.map((l) => l.leadId).slice(0, 2).sort()).toEqual(["fresh", "fresh-2"]);
+    expect(c.people.limit).toBe(STEP_PEOPLE_LIMIT);
+  });
+
+  it("reconciles the total against the offer revenue headline, and names a gap", () => {
+    const total = engineTotal();
+    expect(run(total).total).toEqual(expect.objectContaining({ headlinePipelineUsd: total, gapUsd: 0, gapReason: null }));
+    const off = run(total + 10).total;
+    expect(off.gapReason).toBe("population_differs");
+    expect(off.gapUsd).toBeCloseTo(10, 9);
+    expect(run(null).total.gapReason).toBe("headline_unreadable");
+  });
+
+  it("an unpriced offer serves counts with null money", () => {
+    const unpriced = pricingFunnels(["sales_meetings_from_conversation"], null);
+    const x = buildOfferPipeline({ persons, evidence: ALL_STEP_EVIDENCE, declared: unpriced, values: stepValues(unpriced), cold: null, sets: offerStepSets(persons, ALL_STEP_EVIDENCE), contactedPricing }).exclusiveLadder;
+    expect(x.total).toEqual(expect.objectContaining({ pipelineUsd: null, gapReason: "unpriced" }));
+    expect(x.rows.every((r) => r.pipelineUsd === null)).toBe(true);
+    expect(x.contacted.count).toBe(4);
   });
 });
