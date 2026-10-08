@@ -41,6 +41,24 @@
  *     client, worth the amount stated on its sale, else the offer's lifetime revenue (the Deals board's
  *     Won rule, narrowed to the priced causes).
  *   - CONTACTED: distinct people and distinct companies contacted.
+ *
+ * ── WHO STANDS ON EACH STEP (`ladder[].people`) ──────────────────────────────────────────────────
+ *
+ * The people at a ladder step (the same distinct leads `recipientsReached` counts), in three disjoint
+ * groups, each COUNTED whole and LISTED up to `STEP_PEOPLE_LIMIT`:
+ *   - `ours`: the step is priced for them (the `pricedRecipientsReached` rule) and they are not lost.
+ *   - `lost`: priced for them, but lost — lead-service says they went cold (`went_cold`, since `coldSince`;
+ *     the same verdict that keeps a person out of hot leads), or
+ *     ruled out by a human at a step and now priced at 0 (`ruled_out`, the deals board's verdict; no date).
+ *     A paying client is never lost.
+ *   - `notOurs`: reached, but the step is not priced for them (another cause, or unstated).
+ * `ours.count + lost.count === pricedRecipientsReached`; `+ notOurs.count === recipientsReached`.
+ * `pricedConversionFromPrevious` is `conversionFromPrevious` measured on the priced sets only
+ * (`contacted` stays everyone contacted), so it reads beside the priced People count.
+ *
+ * Every person listed anywhere in this block carries `campaignLeadIds` (the `leads_campaigns` rows of
+ * the person within the offer's campaigns; the id lead-service's per-lead step-statement write takes)
+ * and `campaignLeadId` (the first of them), so a panel can write a status without a lookup.
  */
 import { CHANNEL_STEPS, funnelStepKeys, type ChannelStepKey } from "./acquisition-channels.js";
 import { getFunnel, restrictPathsToDeclaredLegs } from "./funnel-registry.js";
@@ -241,6 +259,10 @@ const ENGAGED_SIGNALS = ["clicked", "positiveReply", "signup", "formSubmission",
 
 export interface PipelineLeadIdentity {
   leadId: string;
+  /** One `leads_campaigns` row id of the person (the first of `campaignLeadIds`); null when none stated. */
+  campaignLeadId: string | null;
+  /** Every `leads_campaigns` row id of the person within the offer's campaigns. */
+  campaignLeadIds: string[];
   firstName: string | null;
   lastName: string | null;
   title: string | null;
@@ -276,8 +298,43 @@ export interface LadderStep {
   pricedValueUsd: number | null;
   valueExplanation: StepValueExplanation | null;
   conversionFromPrevious: StepConversion | null;
+  /** The same conversion over the PRICED leads of each step (the People column's basis). */
+  pricedConversionFromPrevious: StepConversion | null;
+  /** Who stands on the step, in three groups (see the module doc). Null when the step is not counted. */
+  people: StepPeople | null;
   /** Leads that reached this step and then went cold; null when who went cold could not be read. */
   wentCold: { count: number; valueUsd: number | null } | null;
+}
+
+/** How many people each group of a step lists (every group is counted whole). */
+export const STEP_PEOPLE_LIMIT = 25;
+
+export interface StepPerson extends PipelineLeadIdentity {
+  /** When the person first reached the step; null when the producer dated it nowhere. */
+  reachedAt: string | null;
+  /** What the pipeline prices the person at now; null when the offer has no priced economics. */
+  valueUsd: number | null;
+  probabilityPct: number | null;
+}
+
+export interface LostStepPerson extends StepPerson {
+  lostReason: "went_cold" | "ruled_out";
+  /** Since when (the cold verdict's `coldSince`); null for a ruled-out person (the statement is undated here). */
+  lostSince: string | null;
+  /** The step that never came (went cold only). */
+  coldAtStep: { key: ChannelStepKey; label: string } | null;
+}
+
+export interface StepPeopleGroup<T> {
+  count: number;
+  leads: T[];
+}
+
+export interface StepPeople {
+  limit: number;
+  ours: StepPeopleGroup<StepPerson>;
+  lost: StepPeopleGroup<LostStepPerson>;
+  notOurs: StepPeopleGroup<StepPerson>;
 }
 
 export interface OfferPipeline {
@@ -322,6 +379,8 @@ const stepWire = (key: ChannelStepKey) => ({ key, label: CHANNEL_STEPS[key].labe
 
 const identity = (p: EnginePerson): PipelineLeadIdentity => ({
   leadId: p.leadId,
+  campaignLeadId: p.campaignLeadIds?.[0] ?? null,
+  campaignLeadIds: [...(p.campaignLeadIds ?? [])],
   firstName: p.firstName ?? null,
   lastName: p.lastName ?? null,
   title: p.title ?? null,
@@ -369,6 +428,8 @@ export function buildOfferPipeline(input: {
   const byEmail = new Map(persons.filter((p) => p.email).map((p) => [p.email!.trim().toLowerCase(), p] as const));
   const coldLeads: ColdPipelineLead[] = [];
   const coldIds = new Set<string>();
+  /** Every matched cold verdict, ours or not (a step's `lost` group, like hot leads, excludes any cold person). */
+  const coldVerdicts = new Map<string, { coldSince: string; coldAtStep: { key: ChannelStepKey; label: string } }>();
   let coldOtherCauses = 0;
   const pricedCauses = new Set<OutcomeCause>(input.pricedCauses ?? DEFAULT_PRICED_CAUSES);
   if (input.cold) {
@@ -377,6 +438,7 @@ export function buildOfferPipeline(input: {
       const person = byLead.get(row.leadId) ?? (row.email ? byEmail.get(row.email) : undefined);
       if (!person || coldIds.has(person.leadId)) continue;
       coldIds.add(person.leadId);
+      coldVerdicts.set(person.leadId, { coldSince: row.since, coldAtStep: stepWire(row.step) });
       // ONLY INTEREST WE CAUSED: the step it stalled on must be priced on this read (its cause verdict),
       // and must have happened after our first delivered email (the cause rule, `causeByDeliveryRule`).
       // A CRM deal that went cold in 2024, before we ever emailed, is not a lead we lost.
@@ -406,14 +468,66 @@ export function buildOfferPipeline(input: {
   for (const lead of coldLeads) coldByStep.set(lead.step.key, [...(coldByStep.get(lead.step.key) ?? []), lead]);
 
   // LADDER.
+  const pricedOn = (p: EnginePerson, signal: string) => !(p.unpricedSignals ?? []).includes(signal);
+  const signalOfStep = (step: ChannelStepKey): string | null => {
+    const field = STEP_LEAD_FIELD[step];
+    return field ? LEAD_FIELD_TO_SIGNAL[field] : null;
+  };
+  // The priced twin of the step sets: per step, only the leads the step is priced for.
+  const pricedSets: OfferStepSets = { contacted: input.sets.contacted, byStep: new Map() };
+  for (const [step, set] of input.sets.byStep) {
+    const signal = signalOfStep(step);
+    pricedSets.byStep.set(
+      step,
+      set && signal ? new Set(persons.filter((p) => set.has(p.leadId) && pricedOn(p, signal)).map((p) => p.leadId)) : null,
+    );
+  }
+  const card = (p: EnginePerson, signal: string): StepPerson => {
+    const v = valueOf(p);
+    return {
+      ...identity(p),
+      reachedAt: p.signalDates?.[signal] ?? null,
+      valueUsd: v,
+      probabilityPct: v === null ? null : probabilityOf(p, v),
+    };
+  };
+  /** Descending on a string that may be null (null last), then ascending lead id. */
+  const desc = (x: string | null, y: string | null) => ((x ?? "") < (y ?? "") ? 1 : (x ?? "") > (y ?? "") ? -1 : 0);
+  const byLeadId = (a: { leadId: string }, b: { leadId: string }) => (a.leadId < b.leadId ? -1 : a.leadId > b.leadId ? 1 : 0);
+  const byValue = (a: StepPerson, b: StepPerson) =>
+    (b.valueUsd ?? -1) - (a.valueUsd ?? -1) || desc(a.reachedAt, b.reachedAt) || byLeadId(a, b);
+  const peopleAt = (reached: ReadonlySet<string>, signal: string): StepPeople => {
+    const ours: StepPerson[] = [];
+    const lost: LostStepPerson[] = [];
+    const notOurs: StepPerson[] = [];
+    for (const p of persons) {
+      if (!reached.has(p.leadId)) continue;
+      const c = card(p, signal);
+      if (!pricedOn(p, signal)) {
+        notOurs.push(c);
+        continue;
+      }
+      const cold = p.signals.closeWin ? undefined : coldVerdicts.get(p.leadId);
+      if (cold) {
+        lost.push({ ...c, lostReason: "went_cold", lostSince: cold.coldSince, coldAtStep: cold.coldAtStep });
+      } else if (!p.signals.closeWin && (p.deadSignals?.length ?? 0) > 0 && c.valueUsd === 0) {
+        lost.push({ ...c, lostReason: "ruled_out", lostSince: null, coldAtStep: null });
+      } else {
+        ours.push(c);
+      }
+    }
+    ours.sort(byValue);
+    notOurs.sort(byValue);
+    lost.sort((a, b) => desc(a.lostSince, b.lostSince) || byLeadId(a, b));
+    const group = <T>(xs: T[]): StepPeopleGroup<T> => ({ count: xs.length, leads: xs.slice(0, STEP_PEOPLE_LIMIT) });
+    return { limit: STEP_PEOPLE_LIMIT, ours: group(ours), lost: group(lost), notOurs: group(notOurs) };
+  };
+
   const ladder: LadderStep[] = LADDER_STEPS.map((step) => {
     const reached = input.sets.byStep.get(step) ?? null;
-    const field = STEP_LEAD_FIELD[step];
-    const signal = field ? LEAD_FIELD_TO_SIGNAL[field] : null;
-    const pricedCount =
-      reached && signal
-        ? persons.filter((p) => reached.has(p.leadId) && !(p.unpricedSignals ?? []).includes(signal)).length
-        : null;
+    const signal = signalOfStep(step);
+    const pricedReached = pricedSets.byStep.get(step) ?? null;
+    const pricedCount = reached && signal ? (pricedReached?.size ?? 0) : null;
     const value = input.values.get(step);
     return {
       step: stepWire(step),
@@ -423,6 +537,9 @@ export function buildOfferPipeline(input: {
       pricedValueUsd: pricedCount !== null && value ? pricedCount * value.valuePerOutcomeUsd : null,
       valueExplanation: explainStepValue(input.declared, step, value),
       conversionFromPrevious: reached ? stepConversion(step, reached, input.sets, priced.pricedFunnelKeys) : null,
+      pricedConversionFromPrevious:
+        reached && pricedReached ? stepConversion(step, pricedReached, pricedSets, priced.pricedFunnelKeys) : null,
+      people: reached && signal ? peopleAt(reached, signal) : null,
       wentCold: input.cold
         ? { count: coldByStep.get(step)?.length ?? 0, valueUsd: sumValues(coldByStep.get(step) ?? []) }
         : null,
