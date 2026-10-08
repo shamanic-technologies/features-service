@@ -392,8 +392,36 @@ const identity = (p: EnginePerson): PipelineLeadIdentity => ({
 const statedValue = (p: EnginePerson): number | null =>
   typeof p.valueUsd === "number" && Number.isFinite(p.valueUsd) && p.valueUsd >= 0 ? p.valueUsd : null;
 
+/**
+ * WHICH FAMILY A PERSON IS IN (the Unibox filters, owner 2026-10-08), from the SAME verdicts the pipeline
+ * block serves, so a filter count can never disagree with Today's:
+ *   - `won`: a paying client on the priced causes (the people `customersWon` counts).
+ *   - `hot`: a hot lead (every one `hotLeads.totalCount` counts, not only the listed top).
+ *   - `lost`: interested thanks to us then went cold (`coldLeads`, reason `went_cold`), or engaged, ruled
+ *     out by a human and now priced at 0 (`ruled_out`).
+ *   - `cold`: contacted by us, never engaged.
+ * Precedence won > hot > lost > cold; anyone else (engaged on another cause, cold on another cause) has
+ * no family and is absent.
+ */
+export type LeadFamily = "won" | "hot" | "lost" | "cold";
+export const LEAD_FAMILY_RANK: Record<LeadFamily, number> = { won: 0, hot: 1, lost: 2, cold: 3 };
+
+export interface LeadFamilyRow {
+  leadId: string;
+  /** Canonical (trimmed, lower-cased) email; null when the producer states none. */
+  email: string | null;
+  campaignLeadIds: string[];
+  family: LeadFamily;
+  lostReason: "went_cold" | "ruled_out" | null;
+}
+
 /** PURE: the whole pipeline block. `values`/`explanations` are the outcome rows' own (one source). */
-export function buildOfferPipeline(input: {
+export function buildOfferPipeline(input: Parameters<typeof buildOfferPipelineAndFamilies>[0]): OfferPipeline {
+  return buildOfferPipelineAndFamilies(input).pipeline;
+}
+
+/** PURE: the pipeline block AND every person's family, off one pass (see `LeadFamily`). */
+export function buildOfferPipelineAndFamilies(input: {
   persons: readonly EnginePerson[];
   evidence: StepEvidence;
   declared: readonly DeclaredSalesFunnel[];
@@ -403,7 +431,7 @@ export function buildOfferPipeline(input: {
   sets: OfferStepSets;
   /** The priced causes (`?cause=`, default our outreach): a cold lead is listed only when its interest was one. */
   pricedCauses?: readonly OutcomeCause[];
-}): OfferPipeline {
+}): { pipeline: OfferPipeline; families: LeadFamilyRow[] } {
   const persons = dedupPersonsByLead([...input.persons]);
   const priced = priceOnDeclaredFunnel([...input.declared]);
   const economics = priced.economics.economics;
@@ -549,9 +577,11 @@ export function buildOfferPipeline(input: {
   // WON — on the priced causes; one organisation is one client, worth its best member's amount.
   const purchasedMeasured = stepMeasured("purchased", input.evidence);
   let customersWon: OfferPipeline["customersWon"] = null;
+  const wonOurs: EnginePerson[] = [];
   if (purchasedMeasured) {
     const won = persons.filter((p) => p.signals.closeWin);
     const ours = won.filter((p) => !(p.unpricedSignals ?? []).includes("closeWin"));
+    wonOurs.push(...ours);
     const byOrg = new Map<string, number | null>();
     for (const p of ours) {
       const key = p.orgId ? `org:${p.orgId}` : `lead:${p.leadId}`;
@@ -570,8 +600,8 @@ export function buildOfferPipeline(input: {
 
   // HOT — live engaged leads still priced above 0, not won, not cold.
   let hotLeads: OfferPipeline["hotLeads"] = null;
+  const hot: PricedPipelineLead[] = [];
   if (paths) {
-    const hot: PricedPipelineLead[] = [];
     for (const p of persons) {
       if (p.signals.closeWin || coldIds.has(p.leadId)) continue;
       if (!ENGAGED_SIGNALS.some((s) => p.signals[s])) continue;
@@ -589,7 +619,31 @@ export function buildOfferPipeline(input: {
     };
   }
 
-  return {
+  // FAMILIES — the verdicts above, per person, strongest first.
+  const familyOf = new Map<string, { family: LeadFamily; lostReason: LeadFamilyRow["lostReason"] }>();
+  const assign = (leadId: string, family: LeadFamily, lostReason: LeadFamilyRow["lostReason"] = null) => {
+    const current = familyOf.get(leadId);
+    if (!current || LEAD_FAMILY_RANK[family] < LEAD_FAMILY_RANK[current.family]) familyOf.set(leadId, { family, lostReason });
+  };
+  for (const p of wonOurs) assign(p.leadId, "won");
+  for (const l of hot) assign(l.leadId, "hot");
+  for (const l of coldLeads) assign(l.leadId, "lost", "went_cold");
+  for (const p of persons) {
+    const engaged = ENGAGED_SIGNALS.some((s) => p.signals[s]);
+    if (p.signals.closeWin || coldIds.has(p.leadId)) continue;
+    if (engaged && (p.deadSignals?.length ?? 0) > 0 && valueOf(p) === 0) assign(p.leadId, "lost", "ruled_out");
+    else if (!engaged && p.signals.contacted) assign(p.leadId, "cold");
+  }
+  const families: LeadFamilyRow[] = persons
+    .filter((p) => familyOf.has(p.leadId))
+    .map((p) => ({
+      leadId: p.leadId,
+      email: p.email ? p.email.trim().toLowerCase() : null,
+      campaignLeadIds: [...(p.campaignLeadIds ?? [])],
+      ...familyOf.get(p.leadId)!,
+    }));
+
+  const pipeline: OfferPipeline = {
     peopleContacted: contacted.length,
     companiesContacted: companies.size,
     contactedWithoutCompanyCount: contacted.filter((p) => !p.orgId).length,
@@ -602,4 +656,5 @@ export function buildOfferPipeline(input: {
     hotLeads,
     leadValuesUnpricedReason: paths ? null : (priced.economics.unpricedReason ?? "no_priced_funnel"),
   };
+  return { pipeline, families };
 }
