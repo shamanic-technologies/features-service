@@ -436,90 +436,67 @@ export interface ServedPersonRow {
   companyDomain: string | null;
 }
 
-interface BasicServeRow {
-  leadId?: string | null;
-  runId?: string | null;
-  apolloPersonId?: string | null;
-  campaignId?: string | null;
-  audienceId?: string | null;
-  email?: string | null;
-  lead?: {
-    firstName?: string | null;
-    lastName?: string | null;
-    organization?: { name?: string | null; primaryDomain?: string | null; websiteUrl?: string | null } | null;
-  } | null;
+interface ServeRecord {
+  runId: string;
+  leadId: string;
+  campaignId: string;
+  audienceId: string | null;
+  apolloPersonId: string | null;
+  email: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  company: { name: string | null; primaryDomain: string | null; websiteUrl: string | null } | null;
 }
 
-/** Page size of the per-campaign serve walk: `view=basic` rows are heavy, so pages stay small. */
-const SERVE_PAGE_SIZE = positiveIntEnv("SERVE_PAGE_SIZE", 1000);
+/** One read of the whole brand: lead-service streams it from one statement. */
+const SERVE_RECORDS_TIMEOUT_MS = positiveIntEnv("SERVE_RECORDS_TIMEOUT_MS", 180_000);
 
 /**
- * EVERY serve of the brand's people in the given campaigns, one row per (person, campaign) serve.
+ * EVERY serve of the brand's people, one row per serve run, every campaign, never deduped per person:
+ * lead-service `GET /internal/brands/:brandId/serve-records`, ONE call for the whole brand.
  *
- * Read PER CAMPAIGN on purpose: lead-service's brand-scoped list collapses a person to ONE row, which
- * hides the serve runs of their other campaigns (5.5% of fleet serve rows on 2026-10-05); a campaign
- * scope is flat. `status=all` keeps rows the lifecycle has since skipped (the serve was still paid).
- * `view=basic` is the view that carries `runId` + `apolloPersonId`; each page is reduced to the slim
- * row above before the next one is read, so the heap holds one basic page at a time. Fails loud.
+ * It replaced a walk of `/orgs/leads?view=basic&status=all` campaign by campaign (the brand list
+ * collapses a person to one row): 2,303 calls and ~30 minutes for one refresh of brand f4d73dab,
+ * which then failed on a 503 (2026-10-08). The identity fields are lead-service's `view=basic`
+ * projections, so each row equals what the walk read. `count` must match the rows, else the body
+ * was short: fails loud.
  */
 export async function fetchServedPersonRows(
   brandId: string,
-  campaignIds: readonly string[],
   headers: { orgId: string; userId?: string; runId?: string },
 ): Promise<ServedPersonRow[]> {
   const url = process.env.LEAD_SERVICE_URL;
   const apiKey = process.env.LEAD_SERVICE_API_KEY;
   if (!url || !apiKey) throw new Error("LEAD_SERVICE_URL or LEAD_SERVICE_API_KEY not configured");
-  const out: ServedPersonRow[] = [];
-  for (const campaignId of campaignIds) {
-    const params = new URLSearchParams({ brandId, campaignId, view: "basic", status: "all", limit: String(SERVE_PAGE_SIZE) });
-    const reqHeaders: Record<string, string> = {
-      "x-api-key": apiKey,
-      "x-org-id": headers.orgId,
-      "x-brand-id": brandId,
-      "x-campaign-id": campaignId,
-    };
-    if (headers.userId) reqHeaders["x-user-id"] = headers.userId;
-    if (headers.runId) reqHeaders["x-run-id"] = headers.runId;
-    const baseUrl = `${url}/orgs/leads?${params}`;
-    const seenCursors = new Set<string>();
-    let cursor: string | null = null;
-    for (let page = 0; ; page += 1) {
-      if (page >= MAX_LEAD_PAGES) {
-        throw new Error(`lead-service /orgs/leads serve walk exceeded ${MAX_LEAD_PAGES} pages for ${baseUrl}`);
-      }
-      const pageUrl = cursor === null ? baseUrl : `${baseUrl}&cursor=${encodeURIComponent(cursor)}`;
-      const data = await leadReadSlots.run(async () => {
-        const response = await fetchWithRetry(pageUrl, { headers: reqHeaders }, { timeoutMs: LEAD_PAGE_TIMEOUT_MS });
-        if (!response.ok) {
-          throw new Error(`lead-service /orgs/leads failed (${response.status}): ${await response.text()}`);
-        }
-        return (await response.json()) as { leads: BasicServeRow[]; nextCursor?: string | null };
-      });
-      for (const row of data.leads) {
-        // A row with no serve run was buffered, never handed out: nothing was paid to acquire it.
-        if (!row.runId || !row.leadId) continue;
-        const org = row.lead?.organization ?? null;
-        const domain = org?.primaryDomain ?? domainFromUrl(org?.websiteUrl);
-        out.push({
-          runId: row.runId,
-          leadId: row.leadId,
-          apolloPersonId: row.apolloPersonId ?? null,
-          campaignId: row.campaignId ?? campaignId,
-          audienceId: row.audienceId ?? null,
-          email: row.email ? row.email : null,
-          firstName: row.lead?.firstName ?? null,
-          lastName: row.lead?.lastName ?? null,
-          companyName: org?.name ?? null,
-          companyDomain: domain ? domain.toLowerCase() : null,
-        });
-      }
-      const next = data.nextCursor ?? null;
-      if (next === null) break;
-      if (seenCursors.has(next)) throw new Error(`lead-service /orgs/leads returned a repeating cursor for ${baseUrl}`);
-      seenCursors.add(next);
-      cursor = next;
+  const reqHeaders: Record<string, string> = { "x-api-key": apiKey, "x-org-id": headers.orgId, "x-brand-id": brandId };
+  if (headers.userId) reqHeaders["x-user-id"] = headers.userId;
+  if (headers.runId) reqHeaders["x-run-id"] = headers.runId;
+  const endpoint = `${url}/internal/brands/${encodeURIComponent(brandId)}/serve-records`;
+  const data = await leadReadSlots.run(async () => {
+    const response = await fetchWithRetry(endpoint, { headers: reqHeaders }, { timeoutMs: SERVE_RECORDS_TIMEOUT_MS });
+    if (!response.ok) {
+      throw new Error(`lead-service serve-records failed (${response.status}): ${await response.text()}`);
     }
+    return (await response.json()) as { serves?: ServeRecord[]; count?: number };
+  });
+  if (!Array.isArray(data.serves) || data.count !== data.serves.length) {
+    throw new Error(`lead-service serve-records returned an incomplete body for brand ${brandId}`);
   }
-  return out;
+  return data.serves.map((s) => {
+    const domain = s.company?.primaryDomain ?? domainFromUrl(s.company?.websiteUrl);
+    return {
+      runId: s.runId,
+      leadId: s.leadId,
+      apolloPersonId: s.apolloPersonId ?? null,
+      campaignId: s.campaignId,
+      audienceId: s.audienceId ?? null,
+      email: s.email ? s.email : null,
+      // The per-campaign walk read view=basic, which renders an unknown name as "": kept, so the
+      // served people rows stay byte-identical.
+      firstName: s.firstName ?? "",
+      lastName: s.lastName ?? "",
+      companyName: s.company?.name ?? null,
+      companyDomain: domain ? domain.toLowerCase() : null,
+    };
+  });
 }
