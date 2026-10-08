@@ -11068,6 +11068,11 @@
                       "nullable": true,
                       "description": "Byte-same value per outcome as the outcome row of the same step."
                     },
+                    "pricedValueUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "THE STEP'S $ PIPELINE: pricedRecipientsReached x valuePerOutcomeUsd, the outcome row's valueUsd rule (equal to it on a step whose row counts the offer's own leads). Per person, like valueUsd. Null when the step is not counted or not priced. Not additive across steps: a lead that booked is also a replier."
+                    },
                     "valueExplanation": {
                       "type": "object",
                       "nullable": true,
@@ -11242,6 +11247,7 @@
                     "recipientsReached",
                     "pricedRecipientsReached",
                     "valuePerOutcomeUsd",
+                    "pricedValueUsd",
                     "valueExplanation",
                     "conversionFromPrevious",
                     "wentCold"
