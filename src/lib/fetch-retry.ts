@@ -133,8 +133,14 @@ function sharedKey(input: string, init?: RequestInit, allowBody = false): string
   // Only a plain header object can be keyed faithfully; anything else is never shared.
   const raw = init?.headers;
   if (raw !== undefined && (raw instanceof Headers || Array.isArray(raw))) return null;
+  // `x-run-id` names WHO is asking (it becomes the sibling's parent run), never WHAT is asked: no sibling
+  // scopes a read on it. api-service mints a new one per request, and the refresher replays each request
+  // with its own, so a key holding it never matched across two refreshes — every "reused" read (the
+  // past half of a lifetime cost read included, lib/runs-cost-split.ts) went to the sibling every time
+  // (prod 2026-10-08). It is left out of the key; every header that can change an answer stays in it.
   const headers = Object.entries((raw as Record<string, string> | undefined) ?? {})
     .map(([k, v]) => [k.toLowerCase(), v])
+    .filter(([k]) => k !== "x-run-id")
     .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
   return `${method} ${input}\n${JSON.stringify(headers)}\n${(init?.body as string | undefined) ?? ""}`;
 }
