@@ -26,6 +26,7 @@
  * Fail-LOUD client; the caller wraps it fail-SOFT.
  */
 import { fetchWithRetry } from "./fetch-retry.js";
+import { memoizeInteractive } from "./interactive-memo.js";
 import type { Identity } from "./workflow-projection-grains.js";
 
 interface WorkflowRow {
@@ -98,7 +99,14 @@ export async function fetchWorkflowContentModelsSoft(
   // model alias, the same display-only null as a failed read, without logging a refusal we caused.
   if (!identity.userId || !identity.runId) return null;
   try {
-    return await fetchWorkflowContentModels(featureSlug, identity);
+    // The DERIVED map is what is reused, keyed on the feature and the org — never on the request's run:
+    // the gateway mints a new `x-run-id` per request, so the header-keyed shared read below never hit
+    // across polls, and every leg-keyed projection downloaded and parsed the channel's whole catalogue
+    // (5.1 MB, ~100-150ms of blocked event loop + 300-1000ms of transfer; prod 2026-10-08) to read one
+    // alias per dynasty. Same 30s freshness the catalogue read already states.
+    return await memoizeInteractive(`workflow-content-models|${featureSlug}|${identity.orgId}`, 30_000, () =>
+      fetchWorkflowContentModels(featureSlug, identity),
+    );
   } catch (error) {
     console.error(
       "[features-service] workflow content models unavailable — rows state no model alias (display only):",
