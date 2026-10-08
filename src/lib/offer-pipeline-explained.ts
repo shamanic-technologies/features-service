@@ -30,7 +30,9 @@
  *
  * ── COLD, HOT, WON, CONTACTED (`buildOfferPipeline`) ────────────────────────────────────────────
  *
- *   - COLD: lead-service's went-cold rule, exactly as served (CRM brands only; nothing re-derived). A
+ *   - COLD: lead-service's went-cold rule, exactly as served (CRM brands only; nothing re-derived), narrowed
+ *     to interest WE caused (the stalled step priced on this read and after our first delivered email;
+ *     the rest is counted in `otherCausesCount`, never listed). A
  *     cold lead is worth what the pipeline prices it at TODAY (`expectedValueOfPerson`, the dead-step
  *     overlay already applied), i.e. back to whatever path the cold step does not kill.
  *   - HOT: live engaged leads (any step reached, not won, not cold) the pipeline still prices above 0,
@@ -51,6 +53,7 @@ import type { DeclaredSalesFunnel } from "./sales-funnels-client.js";
 import { DISPLAY_ONLY_SALES_FUNNELS, SALES_FUNNELS, type SalesFunnelKey } from "./sales-funnels.js";
 import type { ColdLeadsRead } from "./step-outcomes-client.js";
 import type { MeasurementBasis } from "./effective-conversion-rates.js";
+import { DEFAULT_PRICED_CAUSES, causeByDeliveryRule, type OutcomeCause } from "./outcome-cause.js";
 
 /** Where a leg rate comes from — the effective-rate vocabulary (`lib/effective-conversion-rates.ts`). */
 export type ExplainedRateSource = "measured" | "manual" | "median" | "default";
@@ -226,6 +229,10 @@ const COLD_REACHED_STEP: Record<"positive_reply" | "meeting_booked", ChannelStep
   positive_reply: "conversation",
   meeting_booked: "meeting_booked",
 };
+const COLD_REACHED_SIGNAL: Record<"positive_reply" | "meeting_booked", string> = {
+  positive_reply: "positiveReply",
+  meeting_booked: "meeting",
+};
 
 /** How many hot leads are listed (all are counted and summed). */
 export const HOT_LEADS_LIMIT = 25;
@@ -290,7 +297,7 @@ export interface OfferPipeline {
   } | null;
   /** Null when lead-service did not say who went cold. `applies: false` = not a CRM brand: nothing goes cold. */
   coldRule: { applies: boolean; afterDays: number | null } | null;
-  coldLeads: { count: number; valueUsd: number | null; leads: ColdPipelineLead[] } | null;
+  coldLeads: { count: number; valueUsd: number | null; leads: ColdPipelineLead[]; otherCausesCount: number } | null;
   hotLeads: { limit: number; totalCount: number; totalValueUsd: number; leads: PricedPipelineLead[] } | null;
   /** Why lead values (hot, cold values) are null: the offer has no priced economics. */
   leadValuesUnpricedReason: string | null;
@@ -335,6 +342,8 @@ export function buildOfferPipeline(input: {
   /** lead-service's went-cold read; null when it was unreadable or not served. */
   cold: ColdLeadsRead | null;
   sets: OfferStepSets;
+  /** The priced causes (`?cause=`, default our outreach): a cold lead is listed only when its interest was one. */
+  pricedCauses?: readonly OutcomeCause[];
 }): OfferPipeline {
   const persons = dedupPersonsByLead([...input.persons]);
   const priced = priceOnDeclaredFunnel([...input.declared]);
@@ -360,12 +369,25 @@ export function buildOfferPipeline(input: {
   const byEmail = new Map(persons.filter((p) => p.email).map((p) => [p.email!.trim().toLowerCase(), p] as const));
   const coldLeads: ColdPipelineLead[] = [];
   const coldIds = new Set<string>();
+  let coldOtherCauses = 0;
+  const pricedCauses = new Set<OutcomeCause>(input.pricedCauses ?? DEFAULT_PRICED_CAUSES);
   if (input.cold) {
     const rows = [...input.cold.leads].sort((a, b) => (a.since < b.since ? -1 : a.since > b.since ? 1 : 0));
     for (const row of rows) {
       const person = byLead.get(row.leadId) ?? (row.email ? byEmail.get(row.email) : undefined);
       if (!person || coldIds.has(person.leadId)) continue;
       coldIds.add(person.leadId);
+      // ONLY INTEREST WE CAUSED: the step it stalled on must be priced on this read (its cause verdict),
+      // and must have happened after our first delivered email (the cause rule, `causeByDeliveryRule`).
+      // A CRM deal that went cold in 2024, before we ever emailed, is not a lead we lost.
+      const reachedSignal = COLD_REACHED_SIGNAL[row.after];
+      const ours =
+        !(person.unpricedSignals ?? []).includes(reachedSignal) &&
+        pricedCauses.has(causeByDeliveryRule(row.stalledSince, person.signalDates?.delivered ?? null));
+      if (!ours) {
+        coldOtherCauses += 1;
+        continue;
+      }
       const v = valueOf(person);
       coldLeads.push({
         ...identity(person),
@@ -458,7 +480,7 @@ export function buildOfferPipeline(input: {
     customersWon,
     coldRule: input.cold ? { applies: input.cold.applies, afterDays: input.cold.afterDays } : null,
     coldLeads: input.cold
-      ? { count: coldLeads.length, valueUsd: sumValues(coldLeads), leads: coldLeads }
+      ? { count: coldLeads.length, valueUsd: sumValues(coldLeads), leads: coldLeads, otherCausesCount: coldOtherCauses }
       : null,
     hotLeads,
     leadValuesUnpricedReason: paths ? null : (priced.economics.unpricedReason ?? "no_priced_funnel"),

@@ -144,11 +144,14 @@ describe("buildOfferPipeline", () => {
     leads: [
       { leadId: "cold1", campaignId: "c1", email: "cold1@x.com", step: "meeting_booked", since: "2026-09-01T00:00:00Z", after: "positive_reply", stalledSince: "2026-08-02T00:00:00Z" },
       { leadId: "elsewhere", campaignId: "c9", email: "z@x.com", step: "meeting_booked", since: "2026-09-01T00:00:00Z", after: "positive_reply", stalledSince: "2026-08-02T00:00:00Z" },
+      // A CRM deal that stalled in 2024, before we ever emailed: not interest we caused.
+      { leadId: "pre-us", campaignId: "c1", email: "pre-us@x.com", step: "meeting_attended", since: "2024-09-23T00:00:00Z", after: "meeting_booked", stalledSince: "2024-08-24T00:00:00Z" },
     ],
   };
   const persons = [
     // Cold at meeting_booked: the dead-step overlay already killed the meeting funnel for it.
-    person("cold1", { positiveReply: true }, { deadSignals: ["positiveReply", "meeting", "meetingAttended", "closeWin"] }),
+    person("cold1", { positiveReply: true }, { deadSignals: ["positiveReply", "meeting", "meetingAttended", "closeWin"], signalDates: { delivered: "2026-07-20T00:00:00Z" } }),
+    person("pre-us", { meeting: true }, { deadSignals: ["meetingAttended", "closeWin"], signalDates: { delivered: "2026-07-20T00:00:00Z" } }),
     person("hot-reply", { positiveReply: true }),
     person("hot-meeting", { positiveReply: true, meeting: true }),
     person("won-ours", { positiveReply: true, meeting: true, closeWin: true }, { orgId: "org-w", valueUsd: 9000 }),
@@ -161,8 +164,8 @@ describe("buildOfferPipeline", () => {
 
   it("counts people and distinct companies contacted", () => {
     const p = run();
-    expect(p.peopleContacted).toBe(7);
-    expect(p.companiesContacted).toBe(5); // org-w twice, nobody has none
+    expect(p.peopleContacted).toBe(8);
+    expect(p.companiesContacted).toBe(6); // org-w twice, nobody has none
     expect(p.contactedWithoutCompanyCount).toBe(1);
   });
 
@@ -170,6 +173,7 @@ describe("buildOfferPipeline", () => {
     const p = run();
     expect(p.coldRule).toEqual({ applies: true, afterDays: 30 });
     expect(p.coldLeads?.count).toBe(1);
+    expect(p.coldLeads?.otherCausesCount).toBe(1); // pre-us: stalled before our first delivered email
     const lead = p.coldLeads!.leads[0];
     expect(lead.leadId).toBe("cold1");
     expect(lead.step.key).toBe("conversation");
@@ -182,7 +186,7 @@ describe("buildOfferPipeline", () => {
   it("a brand the rule does not apply to serves zero cold leads, stated; an unread rule serves null", () => {
     const none = run({ applies: false, afterDays: 30, leads: [] });
     expect(none.coldRule?.applies).toBe(false);
-    expect(none.coldLeads).toEqual({ count: 0, valueUsd: 0, leads: [] });
+    expect(none.coldLeads).toEqual({ count: 0, valueUsd: 0, leads: [], otherCausesCount: 0 });
     const unread = run(null);
     expect(unread.coldRule).toBeNull();
     expect(unread.coldLeads).toBeNull();
@@ -223,10 +227,10 @@ describe("buildOfferPipeline", () => {
     const p = run();
     expect(p.ladder.map((s) => s.step.key)).toEqual(["website_visit", "conversation", "signup", "form_submitted", "meeting_booked", "meeting_attended", "paid_client"]);
     const booked = p.ladder.find((s) => s.step.key === "meeting_booked")!;
-    expect(booked.recipientsReached).toBe(2);
+    expect(booked.recipientsReached).toBe(3);
     expect(booked.valuePerOutcomeUsd).toBe(values.get("meeting_booked")!.valuePerOutcomeUsd);
-    expect(booked.pricedRecipientsReached).toBe(2);
-    expect(booked.pricedValueUsd).toBe(2 * values.get("meeting_booked")!.valuePerOutcomeUsd);
+    expect(booked.pricedRecipientsReached).toBe(3);
+    expect(booked.pricedValueUsd).toBe(3 * values.get("meeting_booked")!.valuePerOutcomeUsd);
     expect(p.ladder.find((s) => s.step.key === "website_visit")!.pricedValueUsd).toBeNull();
     expect(booked.valueExplanation?.legs.map((l) => l.legKey)).toEqual(["meeting_booked_to_meeting_attended", "meeting_attended_to_paid_client"]);
     expect(p.ladder.find((s) => s.step.key === "website_visit")!.valuePerOutcomeUsd).toBeNull();
@@ -239,6 +243,6 @@ describe("buildOfferPipeline", () => {
     expect(p.leadValuesUnpricedReason).toBe("lifetime_revenue_not_stated");
     expect(p.coldLeads?.leads[0].valueUsd).toBeNull();
     expect(p.coldLeads?.valueUsd).toBeNull();
-    expect(p.peopleContacted).toBe(7);
+    expect(p.peopleContacted).toBe(8);
   });
 });

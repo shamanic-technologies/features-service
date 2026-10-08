@@ -209,6 +209,7 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
             values,
             cold: people.cold,
             sets,
+            pricedCauses: causes,
           }),
         };
       },
