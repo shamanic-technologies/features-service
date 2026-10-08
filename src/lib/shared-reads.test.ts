@@ -40,6 +40,17 @@ describe("shared downstream reads", () => {
     expect(calls).toHaveLength(2);
   });
 
+  it("shares across two requests that differ only by run (api-service mints one per request), sending each its own run", async () => {
+    const read = (run: string) =>
+      withLiveLeadCopy(async () => (await fetchWithRetry("http://runs/x", { headers: { "x-org-id": "o1", "x-user-id": "u1", "x-run-id": run } })).json());
+    expect(await read("run-1")).toEqual({ n: 1 });
+    expect(await read("run-2")).toEqual({ n: 1 });
+    expect(calls).toHaveLength(1);
+    // a different user is still another question
+    await withLiveLeadCopy(() => fetchWithRetry("http://runs/x", { headers: { "x-org-id": "o1", "x-user-id": "u2", "x-run-id": "run-3" } }));
+    expect(calls).toHaveLength(2);
+  });
+
   it("never reuses a failed answer, never shares a POST, never shares outside a view compute", async () => {
     status = 502;
     await withLiveLeadCopy(() => fetchWithRetry("http://runs/x"));
