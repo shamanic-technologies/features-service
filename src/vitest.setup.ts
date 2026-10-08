@@ -15,6 +15,17 @@ vi.mock("./lib/fleet-positive-repliers.js", () => ({
 }));
 
 /**
+ * Suite-wide default: the stored fleet cell (lib/fleet-cell-store.ts) is a Postgres row. Here nothing is
+ * stored, every build claim is granted and a store is a no-op — each process builds its own cell, the
+ * behaviour before the store existed. `fleet-positive-repliers.test.ts` swaps in an in-memory store.
+ */
+vi.mock("./lib/fleet-cell-store.js", () => ({
+  loadFleetCell: vi.fn(async () => null),
+  claimFleetCellBuild: vi.fn(async () => true),
+  storeFleetCell: vi.fn(async () => undefined),
+}));
+
+/**
  * Suite-wide default: the LEG's fleet population (lib/leg-fleet-evidence.ts) reads campaign-service's
  * whole campaign list, which no route fixture answers. It resolves to `undefined` here, so a leg-keyed
  * route suite keeps the leg-less evidence its fixture states. Suites asserting the leg scope `vi.unmock` it.
