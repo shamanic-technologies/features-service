@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { buildScopeKey, familyKeyOf } from "./view-cache.js";
-import { shapeFingerprint, withResponseShape, withoutResponseShape } from "./response-shape.js";
+import { routeResponseShapeFingerprint, shapeFingerprint, withResponseShape, withoutResponseShape } from "./response-shape.js";
+import { openApiDocument } from "./openapi.js";
 
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
@@ -55,5 +56,39 @@ describe("withResponseShape", () => {
     const now = familyKeyOf(withResponseShape(key, "new"));
     expect(withoutResponseShape(now)).toBe(withoutResponseShape(old));
     expect(withoutResponseShape(familyKeyOf(withResponseShape(key, "a")))).toBe(withoutResponseShape(familyKeyOf(withResponseShape(key, "b"))));
+  });
+});
+
+describe("routeResponseShapeFingerprint", () => {
+  const routeDoc = (wField: Record<string, unknown> = {}, otherField: Record<string, unknown> = {}) => ({
+    paths: {
+      "/x": { get: { responses: { 200: { description: "ok", content: { "application/json": { schema: { $ref: "#/components/schemas/W" } } } } } } },
+      "/y": { get: { responses: { 200: { description: "ok", content: { "application/json": { schema: { $ref: "#/components/schemas/V" } } } } } } },
+    },
+    components: {
+      schemas: {
+        W: { type: "object", properties: { a: { type: "integer" }, nested: { $ref: "#/components/schemas/N" }, ...wField } },
+        N: { type: "object", properties: { b: { type: "string" } } },
+        V: { type: "object", properties: { c: { type: "integer" }, ...otherField } },
+      },
+    },
+  });
+
+  it("does not move when ANOTHER route's response changes (the lead-families cell survives such a deploy)", () => {
+    expect(routeResponseShapeFingerprint("/x", "get", routeDoc({}, { d: { type: "string" } }))).toBe(
+      routeResponseShapeFingerprint("/x", "get", routeDoc()),
+    );
+  });
+
+  it("moves when a field of THIS route's response changes, a referenced component's included", () => {
+    expect(routeResponseShapeFingerprint("/x", "get", routeDoc({ e: { type: "string" } }))).not.toBe(routeResponseShapeFingerprint("/x", "get", routeDoc()));
+    const nestedMoved = routeDoc();
+    (nestedMoved.components.schemas.N.properties as Record<string, unknown>).z = { type: "integer" };
+    expect(routeResponseShapeFingerprint("/x", "get", nestedMoved)).not.toBe(routeResponseShapeFingerprint("/x", "get", routeDoc()));
+  });
+
+  it("fails loud on a route the document does not hold, and resolves the real lead-families route", () => {
+    expect(() => routeResponseShapeFingerprint("/nope", "get", routeDoc())).toThrow(/no GET \/nope/);
+    expect(routeResponseShapeFingerprint("/brands/{brandId}/lead-families", "get", openApiDocument)).toMatch(/^[0-9a-f]{12}$/);
   });
 });
