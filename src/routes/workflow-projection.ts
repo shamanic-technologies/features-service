@@ -39,6 +39,7 @@ import {
 } from "../lib/leg-outcome.js";
 import { fetchCampaignFamiliesSoft } from "../lib/campaign-identity-client.js";
 import { fetchOfferScopeIdsSoft } from "../lib/offer-scope.js";
+import { withInteractiveReads } from "../lib/lead-copy.js";
 import { describeIdentity, type CampaignIdentity, type CampaignIdentityView } from "../lib/campaign-identity.js";
 import { DEFAULT_MAXIMIZE, MAXIMIZE_ERROR, parseMaximize, type Maximize } from "../lib/maximize.js";
 import {
@@ -1705,13 +1706,22 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
 
 // The customer read: ALWAYS the billed basis, whatever it is sent. Its gateway forward is transparent,
 // so the actual basis must not be reachable through any parameter of this path.
-router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, (req, res) => handleWorkflowProjection(req, res, "billed"));
+//
+// Both run inside the interactive read scope (lib/lead-copy.ts withInteractiveReads), like the offer
+// revenue read: the live reads this handler makes on the REQUEST path beside the cached evidence (the
+// campaign's family, the offer's scope, the pricing funnels, the workflow catalogue, the observed picks,
+// the audiences' availability) are then shared across the views a page polls at once (3s, the catalogue
+// 30s; fetch-retry.ts), instead of each poll of each leg re-asking every sibling. Measured in prod
+// 2026-10-08 (owner's org, warm Gold cell): the catalogue read alone cost 300-1000ms per request.
+router.get("/features/:featureSlug/workflow-projection", apiKeyAuth, (req, res) =>
+  withInteractiveReads(() => handleWorkflowProjection(req, res, "billed")),
+);
 
 // STAFF ONLY — the same ladder with every money figure at VENDOR cost (before our markup); the order is
 // the billed one. The api-service gateway mounts this path behind requireStaff; it is never proxied on
 // a customer route. See lib/actual-cost-projection.ts.
 router.get("/internal/features/:featureSlug/workflow-projection/actual-cost", apiKeyAuth, (req, res) =>
-  handleWorkflowProjection(req, res, "actual"),
+  withInteractiveReads(() => handleWorkflowProjection(req, res, "actual")),
 );
 
 /**
