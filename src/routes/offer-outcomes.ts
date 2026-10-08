@@ -48,7 +48,7 @@ const router = Router();
 
 /** The feature catalogue, parsed once on first use: which acquisition channel each slug is, and its name. */
 let catalogue: Map<string, { name: string; channel: AcquisitionChannel | null }> | null = null;
-function catalogueEntry(slug: string): { name: string; channel: AcquisitionChannel | null } | undefined {
+export function catalogueEntry(slug: string): { name: string; channel: AcquisitionChannel | null } | undefined {
   catalogue ??= new Map(
     SEED_FEATURES.map((f) => [f.slug, { name: f.name, channel: parseAcquisitionChannel(f.slug, f.acquisitionChannel) }]),
   );
