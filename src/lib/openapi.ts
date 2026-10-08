@@ -1788,8 +1788,9 @@ const offerPipelineSchema = z.object({
   coldLeads: z.object({
     count: z.number().int(),
     valueUsd: z.number().nullable(),
-    leads: z.array(coldPipelineLeadSchema).describe("Every cold lead of the offer, oldest cold first."),
-  }).nullable().describe("Leads that showed interest and went cold, priced as the pipeline prices them now. Null when who went cold could not be read."),
+    leads: z.array(coldPipelineLeadSchema).describe("Every cold lead of the offer whose interest WE caused, oldest cold first."),
+    otherCausesCount: z.number().int().describe("Cold leads of the offer NOT listed: the step they stalled on was not caused by our outreach (another cause, or before our first delivered email, or undated). Never in count, valueUsd or the ladder."),
+  }).nullable().describe("Leads that showed interest THANKS TO US and went cold, priced as the pipeline prices them now (a cold step kills every path through it, so most read $0: that is the current cold pricing, not a gap). Null when who went cold could not be read."),
   hotLeads: z.object({
     limit: z.number().int(),
     totalCount: z.number().int().describe("Every live engaged lead (reached a step, not won, not cold) the pipeline prices above 0."),
