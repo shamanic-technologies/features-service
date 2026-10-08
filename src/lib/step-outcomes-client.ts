@@ -177,6 +177,69 @@ export async function fetchStepOutcomes(
 export interface StepDisqualifications {
   byStep: Map<LeadStepOutcome, Set<string>>;
   coldByStep: Map<LeadStepOutcome, Set<string>>;
+  /**
+   * WHO went cold, one row per lead, and whether the rule applies to this brand at all — lead-service's
+   * `coldLeads` + `coldRule`, served beside `coldByStep`. Null when the producer predates them (absent),
+   * never an empty list: "the rule does not apply" and "we were not told" are different answers.
+   */
+  cold: ColdLeadsRead | null;
+}
+
+/** One lead lead-service reads as cold (its `wentCold`), joined on lead id or canonical email. */
+export interface ColdLeadRow {
+  leadId: string;
+  campaignId: string | null;
+  email: string | null;
+  /** The step that never came. */
+  step: "meeting_booked" | "meeting_attended";
+  /** When it went cold (`stalledSince` + `afterDays`). */
+  since: string;
+  /** The step reached before the silence. */
+  after: "positive_reply" | "meeting_booked";
+  stalledSince: string;
+}
+
+export interface ColdLeadsRead {
+  /** True when at least one org's CRM can prove an absence for this brand (CRM brands only). */
+  applies: boolean;
+  afterDays: number | null;
+  leads: ColdLeadRow[];
+}
+
+function parseColdLeads(data: { coldLeads?: unknown; coldRule?: unknown }): ColdLeadsRead | null {
+  if (data.coldLeads === undefined || data.coldRule === undefined) return null;
+  if (!Array.isArray(data.coldLeads) || !data.coldRule || typeof data.coldRule !== "object") {
+    throw new Error("lead-service /internal/brands/:brandId/step-disqualifications returned a malformed coldLeads/coldRule");
+  }
+  const rule = data.coldRule as { applies?: unknown; afterDays?: unknown };
+  const leads: ColdLeadRow[] = [];
+  for (const raw of data.coldLeads as Array<Record<string, unknown>>) {
+    const step = raw.step;
+    const after = raw.after;
+    if (
+      typeof raw.leadId !== "string" ||
+      (step !== "meeting_booked" && step !== "meeting_attended") ||
+      (after !== "positive_reply" && after !== "meeting_booked") ||
+      typeof raw.since !== "string" ||
+      typeof raw.stalledSince !== "string"
+    ) {
+      throw new Error("lead-service /internal/brands/:brandId/step-disqualifications returned a malformed coldLeads row");
+    }
+    leads.push({
+      leadId: raw.leadId,
+      campaignId: typeof raw.campaignId === "string" ? raw.campaignId : null,
+      email: nonEmpty(raw.email)?.trim().toLowerCase() ?? null,
+      step,
+      since: raw.since,
+      after,
+      stalledSince: raw.stalledSince,
+    });
+  }
+  return {
+    applies: rule.applies === true,
+    afterDays: typeof rule.afterDays === "number" ? rule.afterDays : null,
+    leads,
+  };
 }
 
 export async function fetchStepDisqualifications(brandId: string): Promise<StepDisqualifications> {
@@ -192,7 +255,7 @@ export async function fetchStepDisqualifications(brandId: string): Promise<StepD
     );
   }
 
-  const data = (await response.json()) as { byStep?: unknown; coldByStep?: unknown };
+  const data = (await response.json()) as { byStep?: unknown; coldByStep?: unknown; coldLeads?: unknown; coldRule?: unknown };
   if (!data.byStep || typeof data.byStep !== "object") {
     throw new Error("lead-service /internal/brands/:brandId/step-disqualifications returned no byStep object");
   }
@@ -202,6 +265,7 @@ export async function fetchStepDisqualifications(brandId: string): Promise<StepD
   return {
     byStep: parseStepEmails(data.byStep as Record<string, unknown>, "byStep"),
     coldByStep: parseStepEmails((data.coldByStep ?? {}) as Record<string, unknown>, "coldByStep"),
+    cold: parseColdLeads(data),
   };
 }
 

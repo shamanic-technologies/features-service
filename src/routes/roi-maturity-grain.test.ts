@@ -263,6 +263,19 @@ describe("ROI, %CAC and $CAC are measured on the MATURE cohort", () => {
     );
   });
 
+  it("serves the FLASH twin curve: every dollar and every lead, ending on the flash return", async () => {
+    mockFetch();
+    const res = await body();
+    const last = res.roiHistory.flash.daily.at(-1);
+    expect(last.cumulativeSpendUsd).toBeCloseTo(100, 6);
+    expect(last.cumulativePipelineUsd + res.roiHistory.flash.undatedPipelineUsd).toBeCloseTo(res.headline.totalPipelineUsd, 6);
+    // With every lead dated, the curve's last point IS the flash headline; the outer curve stays mature.
+    if (res.roiHistory.flash.undatedPipelineUsd === 0) {
+      expect(last.roiMultiple).toBeCloseTo(res.costEconomics.maturity.flash.roiMultiple, 6);
+    }
+    expect(res.roiHistory.daily.at(-1).cumulativeSpendUsd).toBeCloseTo(60, 6);
+  });
+
   it("a campaign whose every dollar is younger than the delay reads NULL ratios, reason `maturing` — never 0", async () => {
     mockFetch({ allYoung: true });
     const res = await body();

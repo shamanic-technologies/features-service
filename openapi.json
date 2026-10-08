@@ -2617,6 +2617,54 @@
               "undatedPipelineUsd": {
                 "type": "number",
                 "description": "Mature-cohort pipeline whose outcome carries NO timestamp, so it sits on no day. Reported rather than dropped or parked on a fabricated day: datedPipelineUsd + undatedPipelineUsd === the mature cohort's pipeline, which is headline.totalPipelineUsd when costEconomics.maturityDays is 0."
+              },
+              "flash": {
+                "type": "object",
+                "properties": {
+                  "daily": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "date": {
+                          "type": "string",
+                          "description": "UTC calendar day (YYYY-MM-DD) this point describes."
+                        },
+                        "cumulativeSpendUsd": {
+                          "type": "number",
+                          "description": "COMMITTED, MATURE COHORT — every dollar of committed spend (billed + open holds) from the brand's first spend up to and including this day, on the SAME basis and the SAME mature cohort costEconomics.roiMultiple divides (see costEconomics.maturityDays): from the maturity cutoff on, a maturing campaign's own spend is left out. So the curve's last point IS the headline ROI rather than a different currency or a different population. Dated by runs-service's own cost buckets (each run's started_at); nothing is spread, smoothed or amortised."
+                        },
+                        "cumulativePipelineUsd": {
+                          "type": "number",
+                          "description": "REALIZED, MATURE COHORT — every dollar of expected pipeline earned by a DATED outcome of a lead in the mature cohort (served before the maturity cutoff, or undated) up to and including this day, from the same per-lead event timestamps the leads[] table and the daily signal series use. A day with spend but no new outcome carries the previous day's value forward, so the curve correctly dips."
+                        },
+                        "roiMultiple": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "cumulativePipelineUsd / cumulativeSpendUsd. NULL — never 0 — on a day whose cumulative spend is still 0 (a dated outcome before a dollar was ever spent divides by nothing): null means 'could not be measured', 0 would mean 'returned nothing'."
+                        }
+                      },
+                      "required": [
+                        "date",
+                        "cumulativeSpendUsd",
+                        "cumulativePipelineUsd",
+                        "roiMultiple"
+                      ]
+                    }
+                  },
+                  "datedPipelineUsd": {
+                    "type": "number"
+                  },
+                  "undatedPipelineUsd": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "daily",
+                  "datedPipelineUsd",
+                  "undatedPipelineUsd"
+                ],
+                "description": "THE FLASH TWIN of this curve: the same fold over EVERY dollar committed and EVERY lead's dated pipeline (no maturity cut). Its last roiMultiple is costEconomics.maturity.flash.roiMultiple (when nothing is undated), where `daily`'s last point is maturity.mature.roiMultiple. A surface showing the FLASH return (scope not mature yet) charts this curve, never `daily`, so the line under a headline ends on that headline. Identical to the outer curve when costEconomics.maturityDays is 0."
               }
             },
             "required": [
@@ -8894,6 +8942,54 @@
               "undatedPipelineUsd": {
                 "type": "number",
                 "description": "Mature-cohort pipeline whose outcome carries NO timestamp, so it sits on no day. Reported rather than dropped or parked on a fabricated day: datedPipelineUsd + undatedPipelineUsd === the mature cohort's pipeline, which is headline.totalPipelineUsd when costEconomics.maturityDays is 0."
+              },
+              "flash": {
+                "type": "object",
+                "properties": {
+                  "daily": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "date": {
+                          "type": "string",
+                          "description": "UTC calendar day (YYYY-MM-DD) this point describes."
+                        },
+                        "cumulativeSpendUsd": {
+                          "type": "number",
+                          "description": "COMMITTED, MATURE COHORT — every dollar of committed spend (billed + open holds) from the brand's first spend up to and including this day, on the SAME basis and the SAME mature cohort costEconomics.roiMultiple divides (see costEconomics.maturityDays): from the maturity cutoff on, a maturing campaign's own spend is left out. So the curve's last point IS the headline ROI rather than a different currency or a different population. Dated by runs-service's own cost buckets (each run's started_at); nothing is spread, smoothed or amortised."
+                        },
+                        "cumulativePipelineUsd": {
+                          "type": "number",
+                          "description": "REALIZED, MATURE COHORT — every dollar of expected pipeline earned by a DATED outcome of a lead in the mature cohort (served before the maturity cutoff, or undated) up to and including this day, from the same per-lead event timestamps the leads[] table and the daily signal series use. A day with spend but no new outcome carries the previous day's value forward, so the curve correctly dips."
+                        },
+                        "roiMultiple": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "cumulativePipelineUsd / cumulativeSpendUsd. NULL — never 0 — on a day whose cumulative spend is still 0 (a dated outcome before a dollar was ever spent divides by nothing): null means 'could not be measured', 0 would mean 'returned nothing'."
+                        }
+                      },
+                      "required": [
+                        "date",
+                        "cumulativeSpendUsd",
+                        "cumulativePipelineUsd",
+                        "roiMultiple"
+                      ]
+                    }
+                  },
+                  "datedPipelineUsd": {
+                    "type": "number"
+                  },
+                  "undatedPipelineUsd": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "daily",
+                  "datedPipelineUsd",
+                  "undatedPipelineUsd"
+                ],
+                "description": "THE FLASH TWIN of this curve: the same fold over EVERY dollar committed and EVERY lead's dated pipeline (no maturity cut). Its last roiMultiple is costEconomics.maturity.flash.roiMultiple (when nothing is undated), where `daily`'s last point is maturity.mature.roiMultiple. A surface showing the FLASH return (scope not mature yet) charts this curve, never `daily`, so the line under a headline ends on that headline. Identical to the outer curve when costEconomics.maturityDays is 0."
               }
             },
             "required": [
@@ -10562,6 +10658,156 @@
                   "type": "string",
                   "nullable": true
                 },
+                "valueExplanation": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "lifetimeRevenueUsd": {
+                      "type": "number",
+                      "description": "The offer's stated lifetime revenue per paying client."
+                    },
+                    "probabilityPct": {
+                      "type": "number",
+                      "description": "P(paid client | reached the step) x 100 = the product of legs[].ratePct/100, x 100. lifetimeRevenueUsd x probabilityPct / 100 = valuePerOutcomeUsd to the cent (reconciled before serving)."
+                    },
+                    "basisFunnelKey": {
+                      "type": "string",
+                      "description": "The path the best value was found through (same rule as the value: best path, max)."
+                    },
+                    "legs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "fromStep": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "label"
+                            ]
+                          },
+                          "toStep": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "label"
+                            ]
+                          },
+                          "legKey": {
+                            "type": "string"
+                          },
+                          "ratePct": {
+                            "type": "number",
+                            "description": "The rate this leg converts at, 0..100, exactly the one the value was priced on."
+                          },
+                          "source": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "measured",
+                              "manual",
+                              "median",
+                              "default"
+                            ],
+                            "description": "Where the rate comes from: measured (on the client's CRM or on our leads, see measured.basis), manual (the client stated it), median (fleet median of what brands stated), default (industry benchmark)."
+                          },
+                          "measured": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "basis": {
+                                "type": "string",
+                                "enum": [
+                                  "crm",
+                                  "our_leads"
+                                ]
+                              },
+                              "fromReached": {
+                                "type": "integer",
+                                "nullable": true
+                              },
+                              "toReached": {
+                                "type": "integer",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "basis",
+                              "fromReached",
+                              "toReached"
+                            ],
+                            "description": "The counts a MEASURED rate was read on: toReached of fromReached (e.g. 13 of 20). Null for any other source."
+                          }
+                        },
+                        "required": [
+                          "fromStep",
+                          "toStep",
+                          "legKey",
+                          "ratePct",
+                          "source",
+                          "measured"
+                        ]
+                      },
+                      "description": "The legs multiplied, from this step to Paid client, in order. Empty on Paid client itself (probability 100%)."
+                    }
+                  },
+                  "required": [
+                    "lifetimeRevenueUsd",
+                    "probabilityPct",
+                    "basisFunnelKey",
+                    "legs"
+                  ],
+                  "description": "WHY valuePerOutcomeUsd is what it is. Null when there is no value, or the legs did not multiply back to the value to the cent (never served beside a value it does not explain)."
+                },
+                "conversionFromPrevious": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "previousSteps": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The step(s) right before this one on the offer's priced paths (`contacted` before a path's first step). Several are unioned."
+                    },
+                    "previousReached": {
+                      "type": "integer",
+                      "description": "Distinct leads that stood on at least one previous step."
+                    },
+                    "reachedFromPrevious": {
+                      "type": "integer",
+                      "description": "Of those, the distinct leads that also reached this step."
+                    },
+                    "ratePct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "reachedFromPrevious / previousReached x 100. Null when nobody stood on a previous step."
+                    }
+                  },
+                  "required": [
+                    "previousSteps",
+                    "previousReached",
+                    "reachedFromPrevious",
+                    "ratePct"
+                  ],
+                  "description": "Conversion into THIS ROW's distinct leads from the step(s) before it. Null when a previous step is not counted or unreadable."
+                },
                 "recipientsReached": {
                   "type": "integer",
                   "nullable": true,
@@ -10744,6 +10990,8 @@
               "required": [
                 "step",
                 "valueBasisFunnelKey",
+                "valueExplanation",
+                "conversionFromPrevious",
                 "recipientsReached",
                 "spentUsd",
                 "costPerOutcomeUsd",
@@ -10769,6 +11017,520 @@
               "type": "string"
             },
             "description": "Campaigns on a channel the customer operates — hidden from the rows."
+          },
+          "pipeline": {
+            "type": "object",
+            "properties": {
+              "peopleContacted": {
+                "type": "integer",
+                "description": "Distinct people contacted for the offer."
+              },
+              "companiesContacted": {
+                "type": "integer",
+                "description": "Distinct companies those people belong to."
+              },
+              "contactedWithoutCompanyCount": {
+                "type": "integer",
+                "description": "Contacted people whose company is unknown: in peopleContacted, in no company."
+              },
+              "ladder": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "step": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "label": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "label"
+                      ]
+                    },
+                    "recipientsReached": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "Distinct offer leads that reached the step (every cause). Null = the step is not counted or its producer was unreadable."
+                    },
+                    "pricedRecipientsReached": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "Of those, the ones whose step is priced (`cause`, default our outreach)."
+                    },
+                    "valuePerOutcomeUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Byte-same value per outcome as the outcome row of the same step."
+                    },
+                    "valueExplanation": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "lifetimeRevenueUsd": {
+                          "type": "number",
+                          "description": "The offer's stated lifetime revenue per paying client."
+                        },
+                        "probabilityPct": {
+                          "type": "number",
+                          "description": "P(paid client | reached the step) x 100 = the product of legs[].ratePct/100, x 100. lifetimeRevenueUsd x probabilityPct / 100 = valuePerOutcomeUsd to the cent (reconciled before serving)."
+                        },
+                        "basisFunnelKey": {
+                          "type": "string",
+                          "description": "The path the best value was found through (same rule as the value: best path, max)."
+                        },
+                        "legs": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "fromStep": {
+                                "type": "object",
+                                "properties": {
+                                  "key": {
+                                    "type": "string"
+                                  },
+                                  "label": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "label"
+                                ]
+                              },
+                              "toStep": {
+                                "type": "object",
+                                "properties": {
+                                  "key": {
+                                    "type": "string"
+                                  },
+                                  "label": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "label"
+                                ]
+                              },
+                              "legKey": {
+                                "type": "string"
+                              },
+                              "ratePct": {
+                                "type": "number",
+                                "description": "The rate this leg converts at, 0..100, exactly the one the value was priced on."
+                              },
+                              "source": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "measured",
+                                  "manual",
+                                  "median",
+                                  "default"
+                                ],
+                                "description": "Where the rate comes from: measured (on the client's CRM or on our leads, see measured.basis), manual (the client stated it), median (fleet median of what brands stated), default (industry benchmark)."
+                              },
+                              "measured": {
+                                "type": "object",
+                                "nullable": true,
+                                "properties": {
+                                  "basis": {
+                                    "type": "string",
+                                    "enum": [
+                                      "crm",
+                                      "our_leads"
+                                    ]
+                                  },
+                                  "fromReached": {
+                                    "type": "integer",
+                                    "nullable": true
+                                  },
+                                  "toReached": {
+                                    "type": "integer",
+                                    "nullable": true
+                                  }
+                                },
+                                "required": [
+                                  "basis",
+                                  "fromReached",
+                                  "toReached"
+                                ],
+                                "description": "The counts a MEASURED rate was read on: toReached of fromReached (e.g. 13 of 20). Null for any other source."
+                              }
+                            },
+                            "required": [
+                              "fromStep",
+                              "toStep",
+                              "legKey",
+                              "ratePct",
+                              "source",
+                              "measured"
+                            ]
+                          },
+                          "description": "The legs multiplied, from this step to Paid client, in order. Empty on Paid client itself (probability 100%)."
+                        }
+                      },
+                      "required": [
+                        "lifetimeRevenueUsd",
+                        "probabilityPct",
+                        "basisFunnelKey",
+                        "legs"
+                      ],
+                      "description": "WHY valuePerOutcomeUsd is what it is. Null when there is no value, or the legs did not multiply back to the value to the cent (never served beside a value it does not explain)."
+                    },
+                    "conversionFromPrevious": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "previousSteps": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "The step(s) right before this one on the offer's priced paths (`contacted` before a path's first step). Several are unioned."
+                        },
+                        "previousReached": {
+                          "type": "integer",
+                          "description": "Distinct leads that stood on at least one previous step."
+                        },
+                        "reachedFromPrevious": {
+                          "type": "integer",
+                          "description": "Of those, the distinct leads that also reached this step."
+                        },
+                        "ratePct": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "reachedFromPrevious / previousReached x 100. Null when nobody stood on a previous step."
+                        }
+                      },
+                      "required": [
+                        "previousSteps",
+                        "previousReached",
+                        "reachedFromPrevious",
+                        "ratePct"
+                      ],
+                      "description": "Conversion from the previous step, distinct leads on both sides. Null when a previous step is not counted or its producer was unreadable."
+                    },
+                    "wentCold": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "count": {
+                          "type": "integer"
+                        },
+                        "valueUsd": {
+                          "type": "number",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "count",
+                        "valueUsd"
+                      ],
+                      "description": "Leads that reached this step and then went cold (lead-service's rule), and what the pipeline prices them at now. Null when who went cold could not be read; count 0 when nobody did (always 0 for a brand the rule does not apply to, see coldRule)."
+                    }
+                  },
+                  "required": [
+                    "step",
+                    "recipientsReached",
+                    "pricedRecipientsReached",
+                    "valuePerOutcomeUsd",
+                    "valueExplanation",
+                    "conversionFromPrevious",
+                    "wentCold"
+                  ]
+                },
+                "description": "Every step a lead climbs (visit, reply, signup, form, meeting booked, meeting attended, paid client), whether or not a leg of ours lands on it — the outcome rows only carry steps a leg lands on."
+              },
+              "customersWon": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "count": {
+                    "type": "integer",
+                    "description": "Paying clients won on the PRICED causes (default: our outreach only). One organisation = one client."
+                  },
+                  "leadCount": {
+                    "type": "integer"
+                  },
+                  "valueUsd": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "Per client the amount stated on its sale, else the offer's lifetime revenue, summed. Null when a client has neither."
+                  },
+                  "otherCausesLeadCount": {
+                    "type": "integer",
+                    "description": "Paying clients counted but not priced (another cause, or unstated)."
+                  }
+                },
+                "required": [
+                  "count",
+                  "leadCount",
+                  "valueUsd",
+                  "otherCausesLeadCount"
+                ],
+                "description": "CUSTOMERS WON THANKS TO US. 0 = measured, nobody. Null = no source of closed deals could be read."
+              },
+              "coldRule": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "applies": {
+                    "type": "boolean",
+                    "description": "False = not a CRM brand (or its CRM cannot prove an absence): nothing goes cold and coldLeads is empty."
+                  },
+                  "afterDays": {
+                    "type": "integer",
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "applies",
+                  "afterDays"
+                ],
+                "description": "lead-service's went-cold rule for this brand. Null when it could not be read."
+              },
+              "coldLeads": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "count": {
+                    "type": "integer"
+                  },
+                  "valueUsd": {
+                    "type": "number",
+                    "nullable": true
+                  },
+                  "leads": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "leadId": {
+                          "type": "string"
+                        },
+                        "firstName": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "lastName": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "title": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "orgName": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "orgDomain": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "orgLogoUrl": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "step": {
+                          "type": "object",
+                          "properties": {
+                            "key": {
+                              "type": "string"
+                            },
+                            "label": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "key",
+                            "label"
+                          ],
+                          "description": "The furthest step the lead reached (for a cold lead: the step it stalled on)."
+                        },
+                        "valueUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "What the pipeline prices the lead at NOW (the engine's own per-lead value, cold-lead pricing included). Null only when the offer has no priced economics."
+                        },
+                        "probabilityPct": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "valueUsd / (the lead's stated value, else the offer's lifetime revenue) x 100."
+                        },
+                        "coldAtStep": {
+                          "type": "object",
+                          "properties": {
+                            "key": {
+                              "type": "string"
+                            },
+                            "label": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "key",
+                            "label"
+                          ],
+                          "description": "The step that never came (meeting booked, or meeting attended)."
+                        },
+                        "coldSince": {
+                          "type": "string",
+                          "description": "When the lead went cold (stalledSince + the rule's afterDays)."
+                        },
+                        "stalledSince": {
+                          "type": "string",
+                          "description": "When the lead reached `step`."
+                        }
+                      },
+                      "required": [
+                        "leadId",
+                        "firstName",
+                        "lastName",
+                        "title",
+                        "orgName",
+                        "orgDomain",
+                        "orgLogoUrl",
+                        "step",
+                        "valueUsd",
+                        "probabilityPct",
+                        "coldAtStep",
+                        "coldSince",
+                        "stalledSince"
+                      ]
+                    },
+                    "description": "Every cold lead of the offer, oldest cold first."
+                  }
+                },
+                "required": [
+                  "count",
+                  "valueUsd",
+                  "leads"
+                ],
+                "description": "Leads that showed interest and went cold, priced as the pipeline prices them now. Null when who went cold could not be read."
+              },
+              "hotLeads": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "limit": {
+                    "type": "integer"
+                  },
+                  "totalCount": {
+                    "type": "integer",
+                    "description": "Every live engaged lead (reached a step, not won, not cold) the pipeline prices above 0."
+                  },
+                  "totalValueUsd": {
+                    "type": "number"
+                  },
+                  "leads": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "leadId": {
+                          "type": "string"
+                        },
+                        "firstName": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "lastName": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "title": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "orgName": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "orgDomain": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "orgLogoUrl": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "step": {
+                          "type": "object",
+                          "properties": {
+                            "key": {
+                              "type": "string"
+                            },
+                            "label": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "key",
+                            "label"
+                          ],
+                          "description": "The furthest step the lead reached (for a cold lead: the step it stalled on)."
+                        },
+                        "valueUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "What the pipeline prices the lead at NOW (the engine's own per-lead value, cold-lead pricing included). Null only when the offer has no priced economics."
+                        },
+                        "probabilityPct": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "valueUsd / (the lead's stated value, else the offer's lifetime revenue) x 100."
+                        }
+                      },
+                      "required": [
+                        "leadId",
+                        "firstName",
+                        "lastName",
+                        "title",
+                        "orgName",
+                        "orgDomain",
+                        "orgLogoUrl",
+                        "step",
+                        "valueUsd",
+                        "probabilityPct"
+                      ]
+                    },
+                    "description": "The top `limit` of them by value, highest first."
+                  }
+                },
+                "required": [
+                  "limit",
+                  "totalCount",
+                  "totalValueUsd",
+                  "leads"
+                ],
+                "description": "The leads we think will convert. Null when the offer has no priced economics (leadValuesUnpricedReason)."
+              },
+              "leadValuesUnpricedReason": {
+                "type": "string",
+                "nullable": true
+              }
+            },
+            "required": [
+              "peopleContacted",
+              "companiesContacted",
+              "contactedWithoutCompanyCount",
+              "ladder",
+              "customersWon",
+              "coldRule",
+              "coldLeads",
+              "hotLeads",
+              "leadValuesUnpricedReason"
+            ],
+            "description": "WHAT WORKING WITH US EARNED THE OFFER, step by step and why (lib/offer-pipeline-explained.ts). Same people, same prices as the outcome rows."
           }
         },
         "required": [
@@ -10779,7 +11541,8 @@
           "maturityDays",
           "outcomes",
           "unattributedCampaignIds",
-          "hiddenCampaignIds"
+          "hiddenCampaignIds",
+          "pipeline"
         ]
       },
       "SourcingOriginsResponse": {
@@ -14888,6 +15651,54 @@
               "undatedPipelineUsd": {
                 "type": "number",
                 "description": "Mature-cohort pipeline whose outcome carries NO timestamp, so it sits on no day. Reported rather than dropped or parked on a fabricated day: datedPipelineUsd + undatedPipelineUsd === the mature cohort's pipeline, which is headline.totalPipelineUsd when costEconomics.maturityDays is 0."
+              },
+              "flash": {
+                "type": "object",
+                "properties": {
+                  "daily": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "date": {
+                          "type": "string",
+                          "description": "UTC calendar day (YYYY-MM-DD) this point describes."
+                        },
+                        "cumulativeSpendUsd": {
+                          "type": "number",
+                          "description": "COMMITTED, MATURE COHORT — every dollar of committed spend (billed + open holds) from the brand's first spend up to and including this day, on the SAME basis and the SAME mature cohort costEconomics.roiMultiple divides (see costEconomics.maturityDays): from the maturity cutoff on, a maturing campaign's own spend is left out. So the curve's last point IS the headline ROI rather than a different currency or a different population. Dated by runs-service's own cost buckets (each run's started_at); nothing is spread, smoothed or amortised."
+                        },
+                        "cumulativePipelineUsd": {
+                          "type": "number",
+                          "description": "REALIZED, MATURE COHORT — every dollar of expected pipeline earned by a DATED outcome of a lead in the mature cohort (served before the maturity cutoff, or undated) up to and including this day, from the same per-lead event timestamps the leads[] table and the daily signal series use. A day with spend but no new outcome carries the previous day's value forward, so the curve correctly dips."
+                        },
+                        "roiMultiple": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "cumulativePipelineUsd / cumulativeSpendUsd. NULL — never 0 — on a day whose cumulative spend is still 0 (a dated outcome before a dollar was ever spent divides by nothing): null means 'could not be measured', 0 would mean 'returned nothing'."
+                        }
+                      },
+                      "required": [
+                        "date",
+                        "cumulativeSpendUsd",
+                        "cumulativePipelineUsd",
+                        "roiMultiple"
+                      ]
+                    }
+                  },
+                  "datedPipelineUsd": {
+                    "type": "number"
+                  },
+                  "undatedPipelineUsd": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "daily",
+                  "datedPipelineUsd",
+                  "undatedPipelineUsd"
+                ],
+                "description": "THE FLASH TWIN of this curve: the same fold over EVERY dollar committed and EVERY lead's dated pipeline (no maturity cut). Its last roiMultiple is costEconomics.maturity.flash.roiMultiple (when nothing is undated), where `daily`'s last point is maturity.mature.roiMultiple. A surface showing the FLASH return (scope not mature yet) charts this curve, never `daily`, so the line under a headline ends on that headline. Identical to the outer curve when costEconomics.maturityDays is 0."
               }
             },
             "required": [

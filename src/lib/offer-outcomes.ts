@@ -63,6 +63,7 @@ import { sumDecimalStrings } from "./decimal.js";
 import type { SpendSplit } from "./scope-maturity.js";
 import type { DeclaredSalesFunnel } from "./sales-funnels-client.js";
 import { matchSalesFunnelKey, type SalesFunnelKey } from "./sales-funnels.js";
+import type { StepConversion, StepValueExplanation } from "./offer-pipeline-explained.js";
 
 /** The `leads[]` field each step is counted by. `purchase` has no signal anywhere in the fleet. */
 export const STEP_LEAD_FIELD: Record<ChannelStepKey, LeadStepField | null> = {
@@ -274,6 +275,14 @@ export interface OfferOutcomeRow extends OutcomeFigures {
   step: { key: ChannelStepKey; label: string; description: string };
   /** The declared funnel the best value was found through, or null when none prices the step. */
   valueBasisFunnelKey: SalesFunnelKey | null;
+  /**
+   * WHY `valuePerOutcomeUsd` is what it is: lifetime revenue × the leg rates from this step to Paid
+   * client on the basis funnel, each with its source (`lib/offer-pipeline-explained.ts`). Reconciled
+   * to the value to the cent, else null. Absent when the caller supplies no explainer.
+   */
+  valueExplanation?: StepValueExplanation | null;
+  /** Conversion into this row's distinct leads from the step(s) before it (same lead basis). */
+  conversionFromPrevious?: StepConversion | null;
   legs: OfferOutcomeLeg[];
 }
 
@@ -429,6 +438,10 @@ export function assembleOfferOutcomes(input: {
    * every mature half and every verdict: never the flash figure under the mature name.
    */
   serveDatesStated?: boolean;
+  /** The row's value explanation, by step (`explainStepValue`). Omitted ⇒ the field is not served. */
+  explainValue?: (step: ChannelStepKey) => StepValueExplanation | null;
+  /** The row's conversion from the previous step, over the row's OWN distinct leads (`stepConversion`). */
+  conversionOf?: (step: ChannelStepKey, reachedLeadIds: ReadonlySet<string> | null) => StepConversion | null;
 }): OfferOutcomeRow[] {
   const cuttable = input.serveDatesStated ?? true;
   const byStep = new Map<ChannelStepKey, OfferLegGroup[]>();
@@ -500,6 +513,8 @@ export function assembleOfferOutcomes(input: {
     rows.push({
       step: { ...CHANNEL_STEPS[step] },
       valueBasisFunnelKey: value?.basisFunnelKey ?? null,
+      ...(input.explainValue ? { valueExplanation: input.explainValue(step) } : {}),
+      ...(input.conversionOf ? { conversionFromPrevious: input.conversionOf(step, union.measured ? union.all : null) } : {}),
       // One unattributable leg is enough to make the row's count something no spend here bought on its own.
       ...figures(union, total, value, allAttributable, cuttable, rowMature),
       legs,
