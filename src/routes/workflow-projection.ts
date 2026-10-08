@@ -1398,6 +1398,20 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
     // `?offerId=` names it directly for a (brand, offer) pair that has no campaign yet.
     const scopeOfferId = campaignIdentity?.offerId ?? namedOfferId ?? null;
 
+    // The LIVE reads beside the cached evidence need nothing the pricing-funnel read below answers, so
+    // they start now and are awaited with the evidence (see the `Promise.all` below for what each is).
+    const liveReads = {
+      triggerRuns:
+        campaignScopeIds && picksLimit > 0
+          ? fetchCampaignTriggerRunsSoft(campaignScopeIds, { orgId, userId, runId, brandId }, picksLimit)
+          : Promise.resolve(null),
+      contentModels: legKey ? fetchWorkflowContentModelsSoft(featureSlug, identity) : Promise.resolve(null),
+      legAssignments: legKey ? fetchLegAssignments(featureSlug, legKey) : Promise.resolve(null),
+      audienceAvailability: fetchActiveAudienceAvailabilitySoft(brandId, { orgId, userId, runId, featureSlug: headerFeatureSlug }),
+    };
+    // Awaited below (fail-loud there); a refusal answered before then must not leave it unhandled.
+    liveReads.legAssignments.catch(() => {});
+
     let declaredFunnels: Awaited<ReturnType<typeof fetchPricingFunnels>> | null = null;
     if (legKey) {
       try {
@@ -1514,19 +1528,18 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
       legKey
         ? Promise.resolve(null)
         : fetchFunnelPricedEconomics(brandId, orgId, undefined, scopeOfferId).then((priced) => priced.economics.economics),
-      campaignScopeIds && picksLimit > 0
-        ? fetchCampaignTriggerRunsSoft(campaignScopeIds, { orgId, userId, runId, brandId }, picksLimit)
-        : Promise.resolve(null),
+      liveReads.triggerRuns,
       // Read ONLY beside a `?leg=`, so a funnel- or goal-keyed request issues ZERO extra reads and its
       // body is byte-unchanged. The model each workflow names is DISPLAY ONLY (fail-soft); the leg
       // assignment is what decides, so it is read LIVE from our own table and FAILS LOUD — a swallowed
       // read would say "nothing is assigned" and exclude every workflow on a database blip.
-      legKey ? fetchWorkflowContentModelsSoft(featureSlug, identity) : Promise.resolve(null),
-      legKey ? fetchLegAssignments(featureSlug, legKey) : Promise.resolve(null),
+      liveReads.contentModels,
+      liveReads.legAssignments,
       // HOW MANY PEOPLE EACH AUDIENCE CAN STILL BE SERVED — live, never from the snapshot: an audience
       // served out an hour ago must not be offered for a serve off a cell that predates it
-      // (features-service#1035). Shared 30s with the evidence compute's own list read; fail-soft.
-      fetchActiveAudienceAvailabilitySoft(brandId, { orgId, userId, runId, featureSlug: headerFeatureSlug }),
+      // (features-service#1035). Shared 30s (keyed on org + brand) with the evidence compute's own list
+      // read; fail-soft.
+      liveReads.audienceAvailability,
     ]);
     const { billed: evidence, vendor: vendorEvidence, unpriced: unpricedEvidence } = evidenceSet;
     // THE LEG'S BASIS FUNNEL. Ranked on the IDENTICAL `returnPerDollar` every per-brand return uses
