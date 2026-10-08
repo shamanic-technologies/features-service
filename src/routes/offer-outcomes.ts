@@ -41,6 +41,8 @@ import { mapWithConcurrency } from "../lib/concurrency.js";
 import { fetchFollowupActedLeads } from "../lib/followup-actions-client.js";
 import type { StepEvidence } from "../lib/funnel-steps.js";
 import type { EnginePerson } from "../lib/revenue-engine.js";
+import type { ColdLeadsRead } from "../lib/step-outcomes-client.js";
+import { buildOfferPipeline, explainStepValue, offerStepSets, stepConversion } from "../lib/offer-pipeline-explained.js";
 
 const router = Router();
 
@@ -67,7 +69,7 @@ export async function readOfferPersons(input: {
   pricedFunnelKeys: Parameters<typeof applySignalOverlays>[4];
   causes: readonly OutcomeCause[];
   needDates: boolean;
-}): Promise<{ persons: EnginePerson[]; evidence: StepEvidence }> {
+}): Promise<{ persons: EnginePerson[]; evidence: StepEvidence; cold: ColdLeadsRead | null }> {
   const { brandId, headers } = input;
   const scope = input.campaignIds.length === 1 ? input.campaignIds[0] : input.campaignIds;
   const persons = await fetchLeadsForRevenue(brandId, scope, headers);
@@ -98,6 +100,8 @@ export async function readOfferPersons(input: {
       signupAttribution: signupEmails !== null,
       formSubmissionAttribution: formEmails !== null,
     },
+    // Who went cold rides the statements read (one lead-service call); unreadable ⇒ null, never "nobody".
+    cold: observed?.cold ?? null,
   };
 }
 
@@ -153,6 +157,7 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
             : Promise.resolve({
                 persons: [] as EnginePerson[],
                 evidence: { observedSteps: true, legacyQualifications: true, signupAttribution: true, formSubmissionAttribution: true },
+                cold: null as ColdLeadsRead | null,
               }),
           // ONE spend read for every group: each campaign's spend on both bases, summed exactly, cut at its
           // own leg's cutoff. A campaign carries exactly one leg, so the groups partition it.
@@ -172,15 +177,20 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
             : Promise.resolve(new Map<string, Set<string>>()),
         ]);
         const spendByGroup = new Map(partition.groups.map((g) => [g, offerGroupSpend(g, spends)] as const));
+        const values = stepValues(declared);
+        const sets = offerStepSets(people.persons, people.evidence);
+        const pricedFunnelKeys = priceOnDeclaredFunnel(declared).pricedFunnelKeys;
         const outcomes = assembleOfferOutcomes({
           groups: partition.groups,
           persons: people.persons,
           evidence: people.evidence,
           spendByGroup,
-          values: stepValues(declared),
+          values,
           channelName: (slug) => catalogueEntry(slug)?.name ?? slug,
           actedLeadIdsByCampaign: acted,
           serveDatesStated: serveDatesStated(people.persons),
+          explainValue: (step) => explainStepValue(declared, step, values.get(step)),
+          conversionOf: (step, reached) => (reached ? stepConversion(step, reached, sets, pricedFunnelKeys) : null),
         });
         const maturityDays = Math.max(0, ...partition.groups.map((g) => maturityDaysForLeg(g.legKey)));
         return {
@@ -192,6 +202,14 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
           outcomes,
           unattributedCampaignIds: partition.unattributedCampaignIds,
           hiddenCampaignIds: partition.hiddenCampaignIds,
+          pipeline: buildOfferPipeline({
+            persons: people.persons,
+            evidence: people.evidence,
+            declared,
+            values,
+            cold: people.cold,
+            sets,
+          }),
         };
       },
     });

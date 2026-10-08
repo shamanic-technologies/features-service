@@ -51,6 +51,7 @@
  */
 
 import { SALES_FUNNELS, type SalesFunnelKey } from "./sales-funnels.js";
+import type { MeasuredArrowRate } from "./effective-conversion-rates.js";
 
 /**
  * One leg of a declared funnel, exactly as brand-service serves it under `arrows[]`. Shape is the
@@ -67,6 +68,12 @@ export interface DeclaredFunnelLeg {
   ratePct: number | null;
   provenance: string;
   rateKey: string | null;
+  /**
+   * features-service's OWN addition, set only on the funnels `fetchPricingFunnels` builds from the
+   * brand's effective leg rates: the measurement behind the rate (its basis and counts), so a surface
+   * can say "13 of 20". Absent on a funnel read from elsewhere. Never read by any pricing math.
+   */
+  measured?: MeasuredArrowRate | null;
 }
 
 /** A leg whose rate a human stated FOR THAT LEG, rather than one derived from a named rate. */

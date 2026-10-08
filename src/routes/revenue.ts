@@ -1936,11 +1936,15 @@ export async function computeFeatureRevenue(
     // one leg.
     roiHistory:
       spendByDay && maturingByDay && !plan.unknown
-        ? buildRoiHistory(
-            plan.cutoffIso ? matureSpendByDay(spendByDay, maturingByDay, plan.cutoffIso) : spendByDay,
-            matureResult.timeSeries,
-            matureResult.headline.totalPipelineUsd,
-          )
+        ? {
+            ...buildRoiHistory(
+              plan.cutoffIso ? matureSpendByDay(spendByDay, maturingByDay, plan.cutoffIso) : spendByDay,
+              matureResult.timeSeries,
+              matureResult.headline.totalPipelineUsd,
+            ),
+            // The flash twin: every dollar, every lead — the basis of `costEconomics.maturity.flash`.
+            flash: buildRoiHistory(spendByDay, result.timeSeries, result.headline.totalPipelineUsd),
+          }
         : null,
     // The SAME dated committed buckets, against the scope's own dated count of the step its leg
     // closes. Null when either ingredient is missing — the dated-spend read degraded, or the scope

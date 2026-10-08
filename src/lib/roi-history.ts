@@ -63,6 +63,15 @@ export interface RoiHistory {
    * scope's maturity could not be read. Set by the route, never by this fold.
    */
   isMature?: boolean | null;
+  /**
+   * THE FLASH TWIN: the same fold over EVERY dollar spent and EVERY lead's dated pipeline (no maturity
+   * cut), so its last point is `costEconomics.maturity.flash.roiMultiple` — the return a surface shows
+   * while the scope is not mature yet. `daily` stays the mature cohort's (its last point is
+   * `maturity.mature.roiMultiple`). A consumer charts the curve whose basis matches the figure it shows
+   * next to it, never one under the other's label. Equal to the outer curve when nothing waits. Set by
+   * the route; absent where the route builds no curve.
+   */
+  flash?: Omit<RoiHistory, "isMature" | "flash">;
 }
 
 /**
