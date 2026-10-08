@@ -1832,6 +1832,7 @@ const exclusiveLadderSchema = z.object({
       lost: z.object({ count: z.number().int(), leads: z.array(exclusiveLostStepPersonSchema) }),
       notOurs: z.object({ count: z.number().int(), leads: z.array(exclusiveStepPersonSchema) }).describe("No step is priced for them; they stand on the furthest step they reached."),
     }).nullable().describe("Same three groups as ladder[].people, on the exclusive basis: a person is on ONE row only."),
+    hot: z.object({ limit: z.number().int(), count: z.number().int(), leads: z.array(exclusiveStepPersonSchema) }).nullable().describe("HOT LEADS ON THIS ROW: the row's people in pipeline.hotLeads (the same verdict, every hot person counted, not only the listed top), highest value first, capped at limit. A hot person is in people.ours or people.notOurs, never lost. Σ rows[].hot.count + total.hot.onContactedRow + total.hot.onNoRow = hotLeads.totalCount. Null when hotLeads is null (unpriced offer)."),
   })).describe("The ladder's steps in climbing order. A person stands on the furthest step priced for them (else, nothing priced, the furthest reached, as notOurs; else the contacted row)."),
   total: z.object({
     people: z.number().int().describe("Distinct people on a row (contacted row included)."),
@@ -1841,6 +1842,12 @@ const exclusiveLadderSchema = z.object({
     headlinePipelineUsd: z.number().nullable().describe("GET /offers/{offerId}/revenue headline.totalPipelineUsd (same pricing and cause): the page's Pipeline figure. Null when unread."),
     gapUsd: z.number().nullable().describe("headlinePipelineUsd - pipelineUsd; 0 when they agree to the cent."),
     gapReason: z.enum(["population_differs", "headline_unreadable", "unpriced"]).nullable().describe("Why there is a gap or it could not be checked; null when they agree."),
+    hot: z.object({
+      count: z.number().int().describe("= hotLeads.totalCount."),
+      onRows: z.number().int().describe("Σ rows[].hot.count."),
+      onContactedRow: z.number().int().describe("Hot people on the contacted row: their engaged step is not counted (its producer unreadable)."),
+      onNoRow: z.number().int().describe("Hot people on no row (same cause, never contacted)."),
+    }).nullable().describe("Where the hot leads stand on the sliced ladder: onRows + onContactedRow + onNoRow = count. Null when hotLeads is null."),
   }),
 }).describe("THE PIPELINE SLICED: ladder[] is cumulative (a paying client is also on every step below), so it never adds; here every person stands on ONE row and the rows add up to the pipeline. The conversion column stays ladder[].pricedConversionFromPrevious (step to step is cumulative by nature).");
 const offerPipelineSchema = z.object({

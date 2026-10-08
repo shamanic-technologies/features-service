@@ -466,11 +466,38 @@ describe("exclusiveLadder", () => {
     expect(run(null).total.gapReason).toBe("headline_unreadable");
   });
 
+  it("serves each row's hot leads: the hotLeads verdict sliced, adding up to hotLeads.totalCount", () => {
+    const full = buildOfferPipeline({
+      persons,
+      evidence: ALL_STEP_EVIDENCE,
+      declared,
+      values,
+      cold: null,
+      sets: offerStepSets(persons, ALL_STEP_EVIDENCE),
+      contactedPricing,
+      headlinePipelineUsd: null,
+    });
+    const x = full.exclusiveLadder;
+    const hotIds = new Set(full.hotLeads!.leads.map((l) => l.leadId));
+    expect(full.hotLeads!.totalCount).toBeGreaterThan(0);
+    expect(x.rows.reduce((s, r) => s + r.hot!.count, 0)).toBe(full.hotLeads!.totalCount);
+    expect(x.total.hot).toEqual({ count: full.hotLeads!.totalCount, onRows: full.hotLeads!.totalCount, onContactedRow: 0, onNoRow: 0 });
+    for (const r of x.rows) {
+      const onRow = r.people ? [...r.people.ours.leads, ...r.people.notOurs.leads].map((l) => l.leadId) : [];
+      expect(r.hot!.leads.map((l) => l.leadId).sort()).toEqual(onRow.filter((id) => hotIds.has(id)).sort());
+      expect(r.hot!.limit).toBe(STEP_PEOPLE_LIMIT);
+    }
+    // A paying client is never hot.
+    expect(x.rows.find((r) => r.step.key === "paid_client")!.hot!.count).toBe(0);
+    expect(x.rows.find((r) => r.step.key === "meeting_booked")!.hot!.leads.map((l) => l.leadId)).toEqual(expect.arrayContaining(["booked", "booked-2"]));
+  });
+
   it("an unpriced offer serves counts with null money", () => {
     const unpriced = pricingFunnels(["sales_meetings_from_conversation"], null);
     const x = buildOfferPipeline({ persons, evidence: ALL_STEP_EVIDENCE, declared: unpriced, values: stepValues(unpriced), cold: null, sets: offerStepSets(persons, ALL_STEP_EVIDENCE), contactedPricing }).exclusiveLadder;
     expect(x.total).toEqual(expect.objectContaining({ pipelineUsd: null, gapReason: "unpriced" }));
-    expect(x.rows.every((r) => r.pipelineUsd === null)).toBe(true);
+    expect(x.rows.every((r) => r.pipelineUsd === null && r.hot === null)).toBe(true);
+    expect(x.total.hot).toBeNull();
     expect(x.contacted.count).toBe(4);
   });
 });
