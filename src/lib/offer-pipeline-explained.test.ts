@@ -225,6 +225,9 @@ describe("buildOfferPipeline", () => {
     const booked = p.ladder.find((s) => s.step.key === "meeting_booked")!;
     expect(booked.recipientsReached).toBe(2);
     expect(booked.valuePerOutcomeUsd).toBe(values.get("meeting_booked")!.valuePerOutcomeUsd);
+    expect(booked.pricedRecipientsReached).toBe(2);
+    expect(booked.pricedValueUsd).toBe(2 * values.get("meeting_booked")!.valuePerOutcomeUsd);
+    expect(p.ladder.find((s) => s.step.key === "website_visit")!.pricedValueUsd).toBeNull();
     expect(booked.valueExplanation?.legs.map((l) => l.legKey)).toEqual(["meeting_booked_to_meeting_attended", "meeting_attended_to_paid_client"]);
     expect(p.ladder.find((s) => s.step.key === "website_visit")!.valuePerOutcomeUsd).toBeNull();
   });

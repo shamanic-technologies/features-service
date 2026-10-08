@@ -265,6 +265,8 @@ export interface LadderStep {
   /** Of those, the ones whose step is priced (`?cause=`, default our outreach). */
   pricedRecipientsReached: number | null;
   valuePerOutcomeUsd: number | null;
+  /** pricedRecipientsReached × valuePerOutcomeUsd — the outcome row's `valueUsd` rule. Null when either is. */
+  pricedValueUsd: number | null;
   valueExplanation: StepValueExplanation | null;
   conversionFromPrevious: StepConversion | null;
   /** Leads that reached this step and then went cold; null when who went cold could not be read. */
@@ -396,6 +398,7 @@ export function buildOfferPipeline(input: {
       recipientsReached: reached ? reached.size : null,
       pricedRecipientsReached: pricedCount,
       valuePerOutcomeUsd: value?.valuePerOutcomeUsd ?? null,
+      pricedValueUsd: pricedCount !== null && value ? pricedCount * value.valuePerOutcomeUsd : null,
       valueExplanation: explainStepValue(input.declared, step, value),
       conversionFromPrevious: reached ? stepConversion(step, reached, input.sets, priced.pricedFunnelKeys) : null,
       wentCold: input.cold

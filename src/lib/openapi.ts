@@ -1767,6 +1767,7 @@ const offerPipelineSchema = z.object({
     recipientsReached: z.number().int().nullable().describe("Distinct offer leads that reached the step (every cause). Null = the step is not counted or its producer was unreadable."),
     pricedRecipientsReached: z.number().int().nullable().describe("Of those, the ones whose step is priced (`cause`, default our outreach)."),
     valuePerOutcomeUsd: z.number().nullable().describe("Byte-same value per outcome as the outcome row of the same step."),
+    pricedValueUsd: z.number().nullable().describe("THE STEP'S $ PIPELINE: pricedRecipientsReached x valuePerOutcomeUsd, the outcome row's valueUsd rule (equal to it on a step whose row counts the offer's own leads). Per person, like valueUsd. Null when the step is not counted or not priced. Not additive across steps: a lead that booked is also a replier."),
     valueExplanation: stepValueExplanationSchema,
     conversionFromPrevious: stepConversionSchema,
     wentCold: z.object({
