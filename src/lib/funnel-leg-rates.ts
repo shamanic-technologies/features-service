@@ -51,7 +51,7 @@
  */
 
 import { SALES_FUNNELS, type SalesFunnelKey } from "./sales-funnels.js";
-import type { MeasuredArrowRate } from "./effective-conversion-rates.js";
+import type { MeasuredArrowRate, RateCandidate } from "./effective-conversion-rates.js";
 
 /**
  * One leg of a declared funnel, exactly as brand-service serves it under `arrows[]`. Shape is the
@@ -74,6 +74,8 @@ export interface DeclaredFunnelLeg {
    * can say "13 of 20". Absent on a funnel read from elsewhere. Never read by any pricing math.
    */
   measured?: MeasuredArrowRate | null;
+  /** Same origin: every rate the precedence weighed for the leg, exactly one kept (`RateCandidate`). Never read by pricing. */
+  candidates?: RateCandidate[];
 }
 
 /** A leg whose rate a human stated FOR THAT LEG, rather than one derived from a named rate. */
