@@ -29,17 +29,17 @@ const { fetchServeRunCosts, fetchListBuildCosts, fetchHeldPersonCompanies } = aw
 const app = (await import("../index.js")).default;
 const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
 
-const leadPage = (campaignId: string, rows: Array<{ runId: string | null; leadId: string; ap: string; domain: string | null }>) => ({
-  leads: rows.map((r) => ({
-    leadId: r.leadId,
-    runId: r.runId,
-    apolloPersonId: r.ap,
-    campaignId,
-    audienceId: "A",
-    email: `${r.leadId}@x.com`,
-    lead: { firstName: "F", lastName: "L", organization: { name: "Co", primaryDomain: r.domain, websiteUrl: null } },
-  })),
-  nextCursor: null,
+const serveRecord = (campaignId: string, r: { runId: string; leadId: string; ap: string; domain: string | null }) => ({
+  runId: r.runId,
+  leadId: r.leadId,
+  campaignId,
+  audienceId: "A",
+  servedAt: null,
+  apolloPersonId: r.ap,
+  email: `${r.leadId}@x.com`,
+  firstName: "F",
+  lastName: "L",
+  company: { name: "Co", primaryDomain: r.domain, websiteUrl: null },
 });
 
 describe("GET /brands/:brandId/sourcing-investment[/people|/companies]", () => {
@@ -58,14 +58,12 @@ describe("GET /brands/:brandId/sourcing-investment[/people|/companies]", () => {
     );
     fetchMock.mockReset().mockImplementation(async (url: string) => {
       const u = new URL(url);
-      const campaignId = u.searchParams.get("campaignId")!;
-      expect(u.searchParams.get("view")).toBe("basic");
-      expect(u.searchParams.get("status")).toBe("all");
-      const rows =
-        campaignId === "c1"
-          ? [{ runId: "r1", leadId: "p1", ap: "AP1", domain: "Acme.com" }, { runId: null, leadId: "p8", ap: "AP8", domain: null }]
-          : [{ runId: "r2", leadId: "p1", ap: "AP1", domain: "acme.com" }];
-      return new Response(JSON.stringify(leadPage(campaignId, rows)), { status: 200 });
+      expect(u.pathname).toBe("/internal/brands/b1/serve-records");
+      const serves = [
+        serveRecord("c1", { runId: "r1", leadId: "p1", ap: "AP1", domain: "Acme.com" }),
+        serveRecord("c2", { runId: "r2", leadId: "p1", ap: "AP1", domain: "acme.com" }),
+      ];
+      return new Response(JSON.stringify({ serves, count: serves.length }), { status: 200 });
     });
     vi.stubGlobal("fetch", fetchMock);
   });
@@ -81,8 +79,9 @@ describe("GET /brands/:brandId/sourcing-investment[/people|/companies]", () => {
     expect(res.body.audiences[0].personCount).toBe(1);
     expect(res.body.people).toBeUndefined();
     expect(res.body.definition.basis).toBe("actual");
-    // one lead-service walk per campaign the serves ran under (flat, never the deduped brand list)
-    expect(fetchMock.mock.calls.map((c) => new URL(c[0] as string).searchParams.get("campaignId")).sort()).toEqual(["c1", "c2"]);
+    // ONE lead-service read for the whole brand (every campaign, never the deduped brand list)
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect((fetchMock.mock.calls[0][1] as RequestInit).headers).toMatchObject({ "x-org-id": "org-1" });
   });
 
   it("people: a person served by two campaigns carries both serves; keyed by apolloPersonIds", async () => {
@@ -114,6 +113,18 @@ describe("GET /brands/:brandId/sourcing-investment[/people|/companies]", () => {
 
   it("a downstream failure is a 502, never zeros", async () => {
     vi.mocked(fetchServeRunCosts).mockRejectedValueOnce(new Error("runs down"));
+    expect((await request(app).get("/brands/b1/sourcing-investment").set(AUTH)).status).toBe(502);
+  });
+
+  it("a short lead-service body (count disagrees) is a 502, never a partial figure", async () => {
+    fetchMock.mockImplementation(async () =>
+      new Response(JSON.stringify({ serves: [serveRecord("c1", { runId: "r1", leadId: "p1", ap: "AP1", domain: null })], count: 2 }), { status: 200 }),
+    );
+    expect((await request(app).get("/brands/b1/sourcing-investment").set(AUTH)).status).toBe(502);
+  });
+
+  it("a lead-service error status is a 502", async () => {
+    fetchMock.mockImplementation(async () => new Response("down", { status: 503 }));
     expect((await request(app).get("/brands/b1/sourcing-investment").set(AUTH)).status).toBe(502);
   });
 });
