@@ -139,6 +139,13 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
       });
     }
 
+    // The sliced rows' dated % Conversion rides this read only when asked (the step panel opens it).
+    const rawHistory = req.query.conversionHistory;
+    if (rawHistory !== undefined && rawHistory !== "true" && rawHistory !== "false") {
+      return res.status(400).json({ error: "conversionHistory must be true or false", reason: "conversion_history_unrecognised" });
+    }
+    const withHistory = rawHistory === "true";
+
     const headers: DownstreamHeaders = { orgId: req.orgId, userId: req.userId, runId: req.runId, featureSlug: undefined };
     const rows = await fetchBrandCampaignRows(brandId, undefined, { orgId: req.orgId, userId: req.userId, runId: req.runId });
     if (buildOfferChannelMap(rows).channelsOf(offerId).length === 0) throw new OfferHasNoChannelsError(offerId, brandId);
@@ -156,6 +163,7 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
         econ: pricedFingerprint(priceOnDeclaredFunnel(declared)),
         pricing,
         cause: causeScopeKeyPart(causes),
+        ...(withHistory ? { history: "1" } : {}),
       }),
       orgId: req.orgId,
       compute: async () => {
@@ -205,6 +213,20 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
             : Promise.resolve(new Map<string, Set<string>>()),
         ]);
         const spendByGroup = new Map(partition.groups.map((g) => [g, offerGroupSpend(g, spends)] as const));
+        // DATING ONLY: when the people were read without event timestamps (no leg waits to mature), the
+        // series reads them on its own, so no priced figure of this body moves with `conversionHistory`.
+        const historyTimestamps =
+          withHistory && !needDates && people.persons.length > 0
+            ? await soft(
+                "event timestamps (conversion history)",
+                fetchEventTimestamps(
+                  brandId,
+                  undefined,
+                  [...new Set(people.persons.map((p) => p.email).filter((e): e is string => Boolean(e)))],
+                  headers,
+                ),
+              )
+            : null;
         const values = stepValues(declared);
         const sets = offerStepSets(people.persons, people.evidence);
         const pricedFunnelKeys = priceOnDeclaredFunnel(declared).pricedFunnelKeys;
@@ -240,6 +262,15 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
             pricedCauses: causes,
             contactedPricing: await contactedPricingPromise,
             headlinePipelineUsd: await headlinePromise,
+            conversionHistory: withHistory
+              ? {
+                  dateOf: (p, signal) =>
+                    p.signalDates?.[signal] ??
+                    (p.email ? (historyTimestamps?.get(p.email) as Record<string, string | null> | undefined)?.[signal] : null) ??
+                    null,
+                  today: new Date().toISOString().slice(0, 10),
+                }
+              : null,
           }),
         };
       },

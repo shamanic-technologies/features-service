@@ -258,7 +258,12 @@ export interface PricingFunnelsOptions {
 export function buildPricingFunnels(input: {
   funnelKeys: readonly SalesFunnelKey[];
   lifetimeRevenueUsd: number | null;
-  rateOf: (fromStep: string, toStep: string) => { ratePct: number | null; provenance: string; measured?: DeclaredFunnelLeg["measured"] };
+  rateOf: (fromStep: string, toStep: string) => {
+    ratePct: number | null;
+    provenance: string;
+    measured?: DeclaredFunnelLeg["measured"];
+    candidates?: DeclaredFunnelLeg["candidates"];
+  };
 }): DeclaredSalesFunnel[] {
   return [...input.funnelKeys].sort(byCatalogue).map((funnelKey) => {
     const arrows: DeclaredFunnelLeg[] = funnelArrows(funnelKey).map(({ fromStep, toStep }) => ({
@@ -371,7 +376,7 @@ export async function fetchPricingFunnels(
         const key = legPairKey(fromStep, toStep);
         const leg = effective.legs.find((l) => legPairKey(l.fromStep, l.toStep) === key);
         return leg?.effectiveRatePct != null
-          ? { ratePct: leg.effectiveRatePct, provenance: `stated_${leg.source}`, measured: leg.measured }
+          ? { ratePct: leg.effectiveRatePct, provenance: `stated_${leg.source}`, measured: leg.measured, candidates: leg.candidates }
           : { ratePct: null, provenance: "unstated" };
       }
       const stated = statedByLeg.get(legPairKey(fromStep, toStep));

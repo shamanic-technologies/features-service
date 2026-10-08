@@ -34,6 +34,7 @@ const arrow = (fromStep: string, toStep: string, pct: number, source: EffectiveA
   manualRatePct: source === "manual" ? pct : null,
   median: { ratePct: null, brandCount: 0 },
   defaultRatePct: 10,
+  candidates: [],
 });
 
 const RATES: EffectiveArrowRate[] = [

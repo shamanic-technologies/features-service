@@ -16,6 +16,7 @@ function row(key: ChannelStepKey, pricedPeople: number | null, notOurs = 0): Exc
     people: pricedPeople === null ? null : { limit: 25, ours: group(pricedPeople), lost: group(0), notOurs: group(notOurs) },
     hot: null,
     conversionFromRowAbove: null,
+    conversionHistory: null,
   };
 }
 function contacted(count: number): ExclusiveContactedRow {
@@ -31,6 +32,7 @@ function contacted(count: number): ExclusiveContactedRow {
     explanation: null,
     people: { limit: 25, leads: [] },
     conversionFromRowAbove: null,
+    conversionHistory: null,
   };
 }
 
