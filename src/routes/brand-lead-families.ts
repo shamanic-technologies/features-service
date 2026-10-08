@@ -19,6 +19,8 @@ import { OUTCOME_CAUSES, causeScopeKeyPart, parseOutcomeCauses } from "../lib/ou
 import { BrandOwnershipError, assertBrandHeld } from "../lib/brand-ownership.js";
 import { servedCachedJson, sendSnapshotJson, buildScopeKey } from "../lib/view-cache.js";
 import { maturityDaysForLeg } from "../lib/roi-maturity.js";
+import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
+import { createHash } from "node:crypto";
 import {
   LEAD_FAMILY_RANK,
   buildOfferPipelineAndFamilies,
@@ -36,6 +38,43 @@ export interface BrandLeadFamilyRow extends LeadFamilyRow {
 }
 
 const FAMILIES: readonly LeadFamily[] = ["won", "hot", "lost", "cold"];
+
+function hashKeyPart(text: string): string {
+  return createHash("sha256").update(text).digest("hex").slice(0, 16);
+}
+
+/**
+ * PURE: the Gold cell key. Everything the body is computed ON (offers, their campaigns, the funnels and
+ * economics they are priced on) rides the `decl`/`econ` FINGERPRINT parts: when one moves, the previous
+ * cell of the same org + brand + cause is served at once and the new one is computed behind it
+ * (`familyKeyOf`), never a 9-30 s blocking compute on the read that noticed (crm-service reads with a
+ * 30 s timeout; prod 2026-10-08, brand `75d7e3e8…`, ~18k people, 4 MB).
+ */
+export function leadFamiliesScopeKey(
+  brandId: string,
+  orgId: string,
+  offers: ReadonlyArray<{
+    offerId: string;
+    partition: { groups: ReadonlyArray<{ legKey: string; featureSlug: string; campaignIds: readonly string[] }> };
+    declared: Parameters<typeof priceOnDeclaredFunnel>[0];
+  }>,
+  cause: string,
+): string {
+  return buildScopeKey(brandId, {
+    orgId,
+    decl: hashKeyPart(
+      offers
+        .map(
+          (o) =>
+            `${o.offerId}>${o.partition.groups.map((g) => `${g.legKey}@${g.featureSlug}>${g.campaignIds.join("+")}`).join(",")}` +
+            `|${o.declared.map((f) => f.funnelKey).sort().join("+") || "none"}`,
+        )
+        .join(";"),
+    ),
+    econ: hashKeyPart(offers.map((o) => `${o.offerId}>${pricedFingerprint(priceOnDeclaredFunnel(o.declared))}`).join(";")),
+    cause,
+  });
+}
 
 /** PURE: union per-offer families, strongest wins (ties: first offer, ids ascending), row ids merged. */
 export function unionBrandFamilies(perOffer: ReadonlyArray<{ offerId: string; families: readonly LeadFamilyRow[] }>) {
@@ -95,17 +134,9 @@ router.get("/brands/:brandId/lead-families", apiKeyAuth, async (rawReq, res) => 
 
     const payload = await servedCachedJson({
       view: "brand-lead-families",
-      scopeKey: buildScopeKey(brandId, {
-        orgId: req.orgId,
-        offers: offers
-          .map(
-            (o) =>
-              `${o.offerId}>${o.partition.groups.map((g) => `${g.legKey}@${g.featureSlug}>${g.campaignIds.join("+")}`).join(",")}` +
-              `|${o.declared.map((f) => f.funnelKey).sort().join("+") || "none"}|${pricedFingerprint(priceOnDeclaredFunnel(o.declared))}`,
-          )
-          .join(";"),
-        cause: causeScopeKeyPart(causes),
-      }),
+      // Keyed on THIS route's response shape only: a deploy changing another route keeps the cell warm.
+      scopeKey: leadFamiliesScopeKey(brandId, req.orgId, offers, causeScopeKeyPart(causes)),
+      responseShape: routeResponseShapeFingerprint("/brands/{brandId}/lead-families"),
       orgId: req.orgId,
       compute: async () => {
         const perOffer: Array<{ offerId: string; families: LeadFamilyRow[]; counts: Record<LeadFamily, number> }> = [];

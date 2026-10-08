@@ -40,7 +40,7 @@ const { fetchRunsCostCents, fetchMatureSpendCents } = await import("../lib/runs-
 const { fetchFollowupActedLeads } = await import("../lib/followup-actions-client.js");
 const { fetchSpendSplit } = await import("../lib/scope-maturity.js");
 const app = (await import("../index.js")).default;
-const { unionBrandFamilies } = await import("./brand-lead-families.js");
+const { unionBrandFamilies, leadFamiliesScopeKey } = await import("./brand-lead-families.js");
 const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
 
 const lead = (leadId: string, campaignId: string, signals: Record<string, boolean>, extra: Record<string, unknown> = {}) => ({
@@ -132,5 +132,31 @@ describe("unionBrandFamilies", () => {
     ]);
     expect(u.people).toEqual([{ leadId: "a", email: "a@x.com", campaignLeadIds: ["r1", "r2"], family: "won", lostReason: null, offerId: "o2" }]);
     expect(u.counts).toEqual({ won: 1, hot: 0, lost: 0, cold: 0 });
+  });
+});
+
+describe("leadFamiliesScopeKey", () => {
+  const offer = (campaignIds: string[], funnelKey = "sales_meetings_from_reply") => ({
+    offerId: "o1",
+    partition: { groups: [{ legKey: "start_to_conversation", featureSlug: "sales-cold-email-outreach", campaignIds }] },
+    declared: [{ funnelKey } as never],
+  });
+
+  it("a new campaign or funnel moves the key but NOT its family: the previous cell is served, never a blocking compute", async () => {
+    const { familyKeyOf } = await import("../lib/view-cache.js");
+    const a = leadFamiliesScopeKey("b1", "org1", [offer(["c1"])], "priced:outreach");
+    const b = leadFamiliesScopeKey("b1", "org1", [offer(["c1", "c2"])], "priced:outreach");
+    const c = leadFamiliesScopeKey("b1", "org1", [offer(["c1"], "website_purchases")], "priced:outreach");
+    expect(new Set([a, b, c]).size).toBe(3);
+    expect(familyKeyOf(b)).toBe(familyKeyOf(a));
+    expect(familyKeyOf(c)).toBe(familyKeyOf(a));
+  });
+
+  it("the question asked (cause, org, brand) is never rotated across", async () => {
+    const { familyKeyOf } = await import("../lib/view-cache.js");
+    const base = familyKeyOf(leadFamiliesScopeKey("b1", "org1", [offer(["c1"])], "priced:outreach"));
+    expect(familyKeyOf(leadFamiliesScopeKey("b1", "org1", [offer(["c1"])], "priced:outreach,other"))).not.toBe(base);
+    expect(familyKeyOf(leadFamiliesScopeKey("b1", "org2", [offer(["c1"])], "priced:outreach"))).not.toBe(base);
+    expect(familyKeyOf(leadFamiliesScopeKey("b2", "org1", [offer(["c1"])], "priced:outreach"))).not.toBe(base);
   });
 });

@@ -207,6 +207,12 @@ interface CachedViewArgs<T> {
    * rather than serving too-old data. Omit to serve any retained snapshot (see `defaultMaxStaleMs`).
    */
   maxStaleMs?: number;
+  /**
+   * The response-shape fingerprint the cell is keyed on. Omit for the whole build's
+   * (`responseShapeFingerprint`); a heavy view passes its own route's (`routeResponseShapeFingerprint`) so a
+   * deploy changing another route does not make it cold.
+   */
+  responseShape?: string;
   /** Runs the live engine fan-out and returns the response body. */
   compute: () => Promise<T>;
 }
@@ -270,10 +276,10 @@ export function sendSnapshotJson(res: import("express").Response, body: Snapshot
   return res.send(wire.buffer);
 }
 
-async function servedCachedBody<T>({ view, scopeKey: askedKey, orgId, ttlMs, maxStaleMs, compute: rawCompute }: CachedViewArgs<T>): Promise<CachedBody> {
+async function servedCachedBody<T>({ view, scopeKey: askedKey, orgId, ttlMs, maxStaleMs, responseShape, compute: rawCompute }: CachedViewArgs<T>): Promise<CachedBody> {
   // Every cell is bound to the response SHAPE of the build serving it (lib/response-shape.ts): a deploy
   // that changes a field never serves the previous build's body, not even as a stale or family hit.
-  const scopeKey = withResponseShape(askedKey);
+  const scopeKey = withResponseShape(askedKey, responseShape);
   // Every view compute reads leads through the live copy (lib/lead-copy.ts): these are the views a
   // customer polls, which is exactly the population the change feed exists for.
   const localCompute = async () => bodyFromValue(await withLiveLeadCopy(rawCompute));
