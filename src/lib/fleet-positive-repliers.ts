@@ -15,7 +15,8 @@
  *
  * COST: one whole-population lead walk per (org, brand) running the feature — a fleet sweep, so it runs
  * off any interactive view's live lead copy (lib/lead-copy.ts) and is cached per feature with
- * stale-while-revalidate (15 min fresh / 6 h stale, single-flight). The REQUESTING pair is never read
+ * stale-while-revalidate (15 min fresh / 6 h stale, single-flight). The cell is STORED (lib/fleet-cell-store.ts):
+ * the server, the refresher and every new boot start from the last build, and one process rebuilds it. The REQUESTING pair is never read
  * from the cell: the caller hands over its own live repliers and they replace that pair's cached entry,
  * so a stale cell can only under-state OTHER brands — never put the fleet below the brand beside it.
  *
@@ -27,6 +28,7 @@ import { mapWithConcurrency } from "./concurrency.js";
 import { crmRepliesBySlug, fetchScopePersons, type PositiveReplier } from "./crm-only-repliers.js";
 import { fetchFeatureMemberships } from "./feature-memberships-client.js";
 import { outsideInteractiveView } from "./lead-copy.js";
+import { claimFleetCellBuild, loadFleetCell, storeFleetCell } from "./fleet-cell-store.js";
 import { matureSlugStats, serveDatesStated } from "./mature-evidence.js";
 import type { EnginePerson } from "./revenue-engine.js";
 
@@ -98,24 +100,74 @@ async function buildCell(featureSlug: string): Promise<FleetCell> {
   });
 }
 
+/** The stored cell's key: the channel, and the stored FORMAT (bump it when {@link encodeCell} changes). */
+const storeKeyOf = (featureSlug: string) => `${featureSlug}|cell=v1`;
+/** How long one process may hold a rebuild before another takes over (a build walks the fleet: minutes). */
+const BUILD_CLAIM_MS = 10 * 60_000;
+/** How often a process whose cell has gone stale looks for a newer one another process stored. */
+const STORE_CHECK_MS = 60_000;
+const lastStoreCheck = new Map<string, number>();
+/** When this process last found another one rebuilding a cell — it does not ask again for a while. */
+const claimLostAt = new Map<string, number>();
+
+/** EXPORTED FOR TESTS. A cell as stored text — every pair, every bucket, in insertion order. */
+export function encodeCell(cell: FleetCell): string {
+  return JSON.stringify({
+    computedAt: cell.computedAt,
+    byPair: [...cell.byPair].map(([key, pair]) => [key, pair.serveDatesStated, [...pair.buckets]]),
+  });
+}
+
+/** EXPORTED FOR TESTS. The inverse of {@link encodeCell}. */
+export function decodeCell(text: string): FleetCell {
+  const raw = JSON.parse(text) as { computedAt: number; byPair: [string, boolean, [string, [number, number, number]][]][] };
+  return {
+    computedAt: raw.computedAt,
+    byPair: new Map(raw.byPair.map(([key, serveDatesStated, buckets]) => [key, { serveDatesStated, buckets: new Map(buckets) }])),
+  };
+}
+
+/** Adopt a newer cell another process (or a previous boot) stored, at most once per {@link STORE_CHECK_MS}. */
+async function adoptStoredCell(featureSlug: string): Promise<void> {
+  const now = Date.now();
+  if (now - (lastStoreCheck.get(featureSlug) ?? 0) < STORE_CHECK_MS) return;
+  lastStoreCheck.set(featureSlug, now);
+  const stored = await loadFleetCell(storeKeyOf(featureSlug));
+  if (!stored) return;
+  const held = cells.get(featureSlug);
+  if (held && held.computedAt >= stored.computedAt) return;
+  cells.set(featureSlug, decodeCell(stored.text));
+}
+
 function refresh(featureSlug: string): Promise<FleetCell> {
   const existing = inFlight.get(featureSlug);
   if (existing) return existing;
-  const p = buildCell(featureSlug)
-    .then((cell) => {
-      cells.set(featureSlug, cell);
-      return cell;
-    })
-    .finally(() => inFlight.delete(featureSlug));
+  const p = (async () => {
+    const held = cells.get(featureSlug);
+    // Another process is rebuilding this cell: keep serving the one held; its build is adopted on a
+    // later read. With nothing held at all the read must still be answered, so it builds.
+    if (held && !(await claimFleetCellBuild(storeKeyOf(featureSlug), BUILD_CLAIM_MS))) {
+      claimLostAt.set(featureSlug, Date.now());
+      return held;
+    }
+    const cell = await buildCell(featureSlug);
+    cells.set(featureSlug, cell);
+    await storeFleetCell(storeKeyOf(featureSlug), encodeCell(cell), cell.computedAt);
+    return cell;
+  })().finally(() => inFlight.delete(featureSlug));
   inFlight.set(featureSlug, p);
   return p;
 }
 
 async function getCell(featureSlug: string): Promise<FleetCell> {
+  const held = cells.get(featureSlug);
+  if (!held || Date.now() - held.computedAt >= FRESH_MS) await adoptStoredCell(featureSlug);
   const cell = cells.get(featureSlug);
   const age = cell ? Date.now() - cell.computedAt : Infinity;
   if (cell && age < FRESH_MS) return cell;
   if (cell && age < STALE_MS) {
+    // Another process holds the rebuild: its stored cell is adopted on a later read.
+    if (Date.now() - (claimLostAt.get(featureSlug) ?? 0) < STORE_CHECK_MS) return cell;
     refresh(featureSlug).catch((err) =>
       console.error(`[features-service] fleet positive repliers refresh failed (${featureSlug}), keeping previous cell:`, err),
     );
@@ -211,7 +263,8 @@ export async function fetchFleetMatureSlugStats(
 /** Build the cell ahead of the first read (boot). Fire-and-forget; a failure is logged, never thrown. */
 export async function warmFleetPositiveRepliers(featureSlug: string): Promise<void> {
   try {
-    await refresh(featureSlug);
+    // A boot starts from the stored cell and rebuilds only what is stale (getCell), never the whole fleet.
+    await getCell(featureSlug);
   } catch (err) {
     console.error(`[features-service] fleet positive repliers warm failed (${featureSlug}):`, err);
   }
@@ -221,4 +274,6 @@ export async function warmFleetPositiveRepliers(featureSlug: string): Promise<vo
 export function __resetFleetPositiveRepliers(): void {
   cells.clear();
   inFlight.clear();
+  lastStoreCheck.clear();
+  claimLostAt.clear();
 }

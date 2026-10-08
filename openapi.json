@@ -12686,6 +12686,112 @@
                             "notOurs"
                           ],
                           "description": "Same three groups as ladder[].people, on the exclusive basis: a person is on ONE row only."
+                        },
+                        "hot": {
+                          "type": "object",
+                          "nullable": true,
+                          "properties": {
+                            "limit": {
+                              "type": "integer"
+                            },
+                            "count": {
+                              "type": "integer"
+                            },
+                            "leads": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "leadId": {
+                                    "type": "string"
+                                  },
+                                  "campaignLeadId": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "description": "One `leads_campaigns` row id of the person (the first of campaignLeadIds): the id lead-service's per-lead step-statement write takes (POST /orgs/leads/{id}/step-statements). Null when lead-service stated none."
+                                  },
+                                  "campaignLeadIds": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    },
+                                    "description": "Every `leads_campaigns` row id of the person within the offer's campaigns (several when the person sits on several campaigns)."
+                                  },
+                                  "firstName": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "lastName": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "title": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "orgName": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "orgDomain": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "orgLogoUrl": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "reachedAt": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "description": "When the person first reached the step. Null when no producer dated it."
+                                  },
+                                  "valueUsd": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "What the pipeline prices the person at NOW (same per-lead value as hotLeads). Null only when the offer has no priced economics."
+                                  },
+                                  "probabilityPct": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "valueUsd / (the person's stated value, else the offer's lifetime revenue) x 100."
+                                  },
+                                  "pipelineUsd": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "What this person adds to the pipeline: valueUsd when they carry their company's value, else 0 (one company is counted once, at its most valuable member). Null when the offer is unpriced."
+                                  },
+                                  "countedWithColleague": {
+                                    "type": "boolean",
+                                    "description": "True when a colleague at the same company already carries the company's value, so this person adds 0."
+                                  }
+                                },
+                                "required": [
+                                  "leadId",
+                                  "campaignLeadId",
+                                  "campaignLeadIds",
+                                  "firstName",
+                                  "lastName",
+                                  "title",
+                                  "orgName",
+                                  "orgDomain",
+                                  "orgLogoUrl",
+                                  "reachedAt",
+                                  "valueUsd",
+                                  "probabilityPct",
+                                  "pipelineUsd",
+                                  "countedWithColleague"
+                                ],
+                                "description": "A person on the exclusive ladder. valueUsd is the pipeline engine's own per-person value (contacted value included)."
+                              }
+                            }
+                          },
+                          "required": [
+                            "limit",
+                            "count",
+                            "leads"
+                          ],
+                          "description": "HOT LEADS ON THIS ROW: the row's people in pipeline.hotLeads (the same verdict, every hot person counted, not only the listed top), highest value first, capped at limit. A hot person is in people.ours or people.notOurs, never lost. Σ rows[].hot.count + total.hot.onContactedRow + total.hot.onNoRow = hotLeads.totalCount. Null when hotLeads is null (unpriced offer)."
                         }
                       },
                       "required": [
@@ -12694,7 +12800,8 @@
                         "valuePerOutcomeUsd",
                         "pipelineUsd",
                         "countedWithColleagueUsd",
-                        "people"
+                        "people",
+                        "hot"
                       ]
                     },
                     "description": "The ladder's steps in climbing order. A person stands on the furthest step priced for them (else, nothing priced, the furthest reached, as notOurs; else the contacted row)."
@@ -12739,6 +12846,35 @@
                           "unpriced"
                         ],
                         "description": "Why there is a gap or it could not be checked; null when they agree."
+                      },
+                      "hot": {
+                        "type": "object",
+                        "nullable": true,
+                        "properties": {
+                          "count": {
+                            "type": "integer",
+                            "description": "= hotLeads.totalCount."
+                          },
+                          "onRows": {
+                            "type": "integer",
+                            "description": "Σ rows[].hot.count."
+                          },
+                          "onContactedRow": {
+                            "type": "integer",
+                            "description": "Hot people on the contacted row: their engaged step is not counted (its producer unreadable)."
+                          },
+                          "onNoRow": {
+                            "type": "integer",
+                            "description": "Hot people on no row (same cause, never contacted)."
+                          }
+                        },
+                        "required": [
+                          "count",
+                          "onRows",
+                          "onContactedRow",
+                          "onNoRow"
+                        ],
+                        "description": "Where the hot leads stand on the sliced ladder: onRows + onContactedRow + onNoRow = count. Null when hotLeads is null."
                       }
                     },
                     "required": [
@@ -12748,7 +12884,8 @@
                       "pipelineUsd",
                       "headlinePipelineUsd",
                       "gapUsd",
-                      "gapReason"
+                      "gapReason",
+                      "hot"
                     ]
                   }
                 },

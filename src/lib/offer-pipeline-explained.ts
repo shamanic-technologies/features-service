@@ -79,6 +79,9 @@
  *     its step from contact (the brand's per-(campaign × workflow) entry rate, averaged over the valued
  *     people) times that step's value, the routes combined as independent shots at one close, expiring
  *     30 days after the last email sent.
+ *   - `rows[].hot`: the row's people who are hot leads (the `hotLeads` set, not a re-derived one), so
+ *     Σ rows' hot counts = `hotLeads.totalCount` minus the few on the contacted row / no row (an engaged
+ *     step not counted), all served in `total.hot`. A hot person is in `ours` or `notOurs`, never `lost`.
  * The conversion column stays the cumulative `pricedConversionFromPrevious` (step to step is a
  * cumulative notion: of those who stood on the previous step, how many reached this one).
  */
@@ -406,6 +409,11 @@ export interface ExclusiveLadderRow {
   /** Σ the values of the row's people whose company a colleague already carries (NOT in pipelineUsd). */
   countedWithColleagueUsd: number | null;
   people: ExclusiveStepPeople | null;
+  /**
+   * The row's people who are hot leads (the `hotLeads` verdict, byte-same set), highest value first, capped
+   * at `STEP_PEOPLE_LIMIT`, counted whole. Null when `hotLeads` is null (the offer is unpriced).
+   */
+  hot: ({ limit: number } & StepPeopleGroup<ExclusiveStepPerson>) | null;
 }
 
 export interface ContactedEntryRouteExplained {
@@ -458,6 +466,12 @@ export interface ExclusiveLadder {
     gapUsd: number | null;
     /** Why there is a gap (or why it could not be checked); null when they agree. */
     gapReason: "population_differs" | "headline_unreadable" | "unpriced" | null;
+    /**
+     * Where `hotLeads.totalCount` stands on this ladder: Σ rows[].hot.count + onContactedRow + onNoRow = count.
+     * A hot person sits on the contacted row / no row only when the step they engaged on is not counted
+     * (its producer unreadable). Null when `hotLeads` is null.
+     */
+    hot: { count: number; onRows: number; onContactedRow: number; onNoRow: number } | null;
   };
 }
 
@@ -815,6 +829,7 @@ export function buildOfferPipelineAndFamilies(input: {
     pricedOn,
     card,
     coldVerdicts,
+    hotIds: hotLeads ? new Set(hot.map((l) => l.leadId)) : null,
     byValue,
     desc,
     byLeadId,
@@ -869,6 +884,8 @@ function buildExclusiveLadder(input: {
   pricedOn: (p: EnginePerson, signal: string) => boolean;
   card: (p: EnginePerson, signal: string) => StepPerson;
   coldVerdicts: ReadonlyMap<string, { coldSince: string; coldAtStep: { key: ChannelStepKey; label: string } }>;
+  /** The `hotLeads` verdict's people (every one, not only the listed top); null when hotLeads is null. */
+  hotIds: ReadonlySet<string> | null;
   byValue: (a: StepPerson, b: StepPerson) => number;
   desc: (x: string | null, y: string | null) => number;
   byLeadId: (a: { leadId: string }, b: { leadId: string }) => number;
@@ -946,6 +963,7 @@ function buildExclusiveLadder(input: {
     const ours: ExclusiveStepPerson[] = [];
     const lost: ExclusiveLostStepPerson[] = [];
     const notOurs: ExclusiveStepPerson[] = [];
+    const hot: ExclusiveStepPerson[] = [];
     const adds: number[] = [];
     const withColleague: number[] = [];
     for (const p of persons) {
@@ -955,6 +973,7 @@ function buildExclusiveLadder(input: {
       const a = addsOf(p);
       adds.push(a.pipelineUsd ?? 0);
       withColleague.push(a.withColleagueUsd);
+      if (input.hotIds?.has(p.leadId)) hot.push(c);
       if (!at.ours) {
         notOurs.push(c);
         continue;
@@ -970,6 +989,7 @@ function buildExclusiveLadder(input: {
     }
     ours.sort(input.byValue);
     notOurs.sort(input.byValue);
+    hot.sort(input.byValue);
     lost.sort((a, b) => input.desc(a.lostSince, b.lostSince) || input.byLeadId(a, b));
     return {
       step: stepWire(step),
@@ -978,6 +998,7 @@ function buildExclusiveLadder(input: {
       pipelineUsd: sumOr(adds),
       countedWithColleagueUsd: sumOr(withColleague),
       people: counted ? { limit: STEP_PEOPLE_LIMIT, ours: group(ours), lost: group(lost), notOurs: group(notOurs) } : null,
+      hot: input.hotIds ? { limit: STEP_PEOPLE_LIMIT, ...group(hot) } : null,
     };
   });
 
@@ -1051,6 +1072,18 @@ function buildExclusiveLadder(input: {
     );
   }
   const onRow = persons.filter((p) => rowOf.has(p.leadId)).length;
+  const hotIds = input.hotIds;
+  const hotTotal = hotIds
+    ? {
+        count: hotIds.size,
+        onRows: rows.reduce((s, r) => s + (r.hot?.count ?? 0), 0),
+        onContactedRow: onContacted.filter((p) => hotIds.has(p.leadId)).length,
+        onNoRow: persons.filter((p) => !rowOf.has(p.leadId) && hotIds.has(p.leadId)).length,
+      }
+    : null;
+  if (hotTotal && hotTotal.onRows + hotTotal.onContactedRow + hotTotal.onNoRow !== hotTotal.count) {
+    console.error(`[features-service] exclusive ladder hot counts do not add to hotLeads.totalCount ${hotTotal.count}`);
+  }
   return {
     contacted,
     rows,
@@ -1062,6 +1095,7 @@ function buildExclusiveLadder(input: {
       headlinePipelineUsd: headline,
       gapUsd: gapUsd === null ? null : sameCents(gapUsd, 0) ? 0 : gapUsd,
       gapReason,
+      hot: hotTotal,
     },
   };
 }

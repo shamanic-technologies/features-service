@@ -7,9 +7,23 @@ vi.mock("./crm-only-repliers.js", async (importOriginal) => ({
   fetchScopePersons: vi.fn(),
 }));
 
+// The cell store (lib/fleet-cell-store.ts) is a Postgres row in prod; here an in-memory one.
+const store = new Map<string, { text: string; computedAt: number; claimedAt: number | null }>();
+let storeClaimHeldElsewhere = false;
+vi.mock("./fleet-cell-store.js", () => ({
+  loadFleetCell: vi.fn(async (key: string) => {
+    const row = store.get(key);
+    return row ? { text: row.text, computedAt: row.computedAt } : null;
+  }),
+  claimFleetCellBuild: vi.fn(async () => !storeClaimHeldElsewhere),
+  storeFleetCell: vi.fn(async (key: string, text: string, computedAt: number) => {
+    store.set(key, { text, computedAt, claimedAt: null });
+  }),
+}));
+
 const { fetchFeatureMemberships } = await import("./feature-memberships-client.js");
 const { fetchScopePersons } = await import("./crm-only-repliers.js");
-const { fetchFleetPositiveRepliesBySlug, fetchFleetMatureSlugStats, __resetFleetPositiveRepliers } = await import(
+const { fetchFleetPositiveRepliesBySlug, fetchFleetMatureSlugStats, __resetFleetPositiveRepliers, encodeCell, decodeCell } = await import(
   "./fleet-positive-repliers.js"
 );
 
@@ -54,6 +68,8 @@ const CUTOFF = "2026-09-07T00:00:00.000Z";
 
 beforeEach(() => {
   __resetFleetPositiveRepliers();
+  store.clear();
+  storeClaimHeldElsewhere = false;
   vi.mocked(fetchFeatureMemberships).mockReset().mockResolvedValue(MEMBERSHIPS);
   vi.mocked(fetchScopePersons)
     .mockReset()
@@ -155,5 +171,55 @@ describe("fetchFleetMatureSlugStats — the fleet's mature cohort, on the SAME c
       CUTOFF,
     );
     expect(stats).toBeNull();
+  });
+});
+
+describe("the stored fleet cell (one build shared by every process and every boot)", () => {
+  const own = { orgId: "org-1", brandId: "brand-own", repliers: [replier("o1", "wf-a")] as any };
+
+  it("round-trips a cell exactly", () => {
+    const cell = {
+      computedAt: 1_760_000_000_000,
+      byPair: new Map([
+        ["org-2:brand-x", { serveDatesStated: true, buckets: new Map<string, [number, number, number]>([["c\twf-a\t2026-08-01", [3, 1, 2]], ["\t\t", [1, 0, 0]]]) }],
+        ["org-3:brand-y", { serveDatesStated: false, buckets: new Map<string, [number, number, number]>() }],
+      ]),
+    };
+    expect(decodeCell(encodeCell(cell))).toEqual(cell);
+  });
+
+  it("a new process starts from the stored cell: no fleet walk, the same figures", async () => {
+    const first = await fetchFleetPositiveRepliesBySlug("sales-cold-email-outreach", own);
+    const firstMature = await fetchFleetMatureSlugStats("sales-cold-email-outreach", null, CUTOFF);
+    expect(vi.mocked(fetchScopePersons)).toHaveBeenCalledTimes(3);
+    expect(store.size).toBe(1);
+
+    __resetFleetPositiveRepliers(); // a deploy / the other process: nothing in memory
+    vi.mocked(fetchScopePersons).mockClear();
+    const again = await fetchFleetPositiveRepliesBySlug("sales-cold-email-outreach", own);
+    const againMature = await fetchFleetMatureSlugStats("sales-cold-email-outreach", null, CUTOFF);
+    expect(vi.mocked(fetchScopePersons)).not.toHaveBeenCalled();
+    expect(again).toEqual(first);
+    expect(againMature).toEqual(firstMature);
+  });
+
+  it("a stale cell another process is rebuilding is served as held, without a walk here", async () => {
+    await fetchFleetPositiveRepliesBySlug("sales-cold-email-outreach", own);
+    const key = [...store.keys()][0];
+    __resetFleetPositiveRepliers();
+    store.set(key, { ...store.get(key)!, computedAt: Date.now() - 20 * 60_000 }); // past the 15 min fresh window
+    storeClaimHeldElsewhere = true;
+    vi.mocked(fetchScopePersons).mockClear();
+    const fleet = await fetchFleetPositiveRepliesBySlug("sales-cold-email-outreach", own);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(vi.mocked(fetchScopePersons)).not.toHaveBeenCalled();
+    expect(Object.fromEntries(fleet)).toEqual({ "wf-a": 3, "wf-b": 1 });
+  });
+
+  it("with nothing stored and nothing held, a read still builds (and stores) the cell", async () => {
+    storeClaimHeldElsewhere = true;
+    await fetchFleetPositiveRepliesBySlug("sales-cold-email-outreach", own);
+    expect(vi.mocked(fetchScopePersons)).toHaveBeenCalledTimes(3);
+    expect(store.size).toBe(1);
   });
 });
