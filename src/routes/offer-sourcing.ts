@@ -34,6 +34,7 @@ import {
   computeOfferSourcing,
   fetchAudienceListKinds,
   fetchCampaignTotalCents,
+  fetchMembershipOrigins,
   fetchOfferServeCosts,
   fetchUnrecordedCostEvidence,
   unrecordedOriginsByCampaign,
@@ -52,7 +53,9 @@ export const OFFER_SOURCING_DEFINITION = {
   campaignTotal: "committed spend of the campaign's runs on its channel slug and every sourcing origin slug (the figure the campaign's outcome reads print)",
   sourcing: "the whole cost subtree of every lead-service lead-serve run of the campaign (screening, reveal, enrichment, email finding and verification)",
   outreach: "campaign total minus sourcing, exact",
-  outreachAllocation: "per origin, each campaign's outreach is shared over its origins by the leads it served from each",
+  outreachAllocation: "each campaign's outreach is split evenly over the leads it served; each lead's share counts for every origin that lead carries",
+  leadOrigins:
+    "a lead carries EVERY origin that found it: its serve's origin plus the list kind of every audience of the offer (or of no offer) human-service records it a member of (served there, or found there while already taken). Per-origin leads, positive replies and ROI count every lead carrying the origin; offer totals count each lead once (sourceOverlap)",
   unrecordedOrigin:
     "a serve or lead that recorded no audience counts under the origin its campaign is proven to source from: a channel serving from one origin only (CRM email), else the lead-provider costs its audience-less runs bought (Apollo only, all before Apollo Buying Signals existed on 2026-10-02 -> Apollo Cold Filters; Apify search only -> Apify Search); otherwise unattributed",
   notCounted: ["audience list building (apollo-service audience-companies): it belongs to no campaign"],
@@ -136,7 +139,7 @@ export async function offerSourcingCell(input: {
       const campaignIds = campaigns.map((c) => c.id);
       const channelSlugs = [...new Set(campaigns.map((c) => c.featureSlug))];
       // Serves FIRST, campaign total second: a cost written between the two lands in the campaign total (outreach).
-      const [serves, listOfAudience, unrecordedEvidence, people] = await Promise.all([
+      const [serves, listOfAudience, unrecordedEvidence, people, memberships] = await Promise.all([
         fetchOfferServeCosts(brandId, campaignIds, identity, pricing),
         fetchAudienceListKinds(brandId, identity),
         fetchUnrecordedCostEvidence(brandId, campaignIds, channelSlugs, identity),
@@ -150,6 +153,11 @@ export async function offerSourcingCell(input: {
               needDates: false,
             })
           : Promise.resolve({ persons: [] }),
+        // Every source that found each person: unreadable degrades ONLY the overlap figures (named), loudly.
+        fetchMembershipOrigins(brandId, offerId, identity).catch((error) => {
+          console.error(`[features-service] offer sourcing ${offerId}: memberships unreadable (memberships_unavailable): ${(error as Error).message}`);
+          return null;
+        }),
       ]);
       const totalCentsByCampaign = await fetchCampaignTotalCents(brandId, campaignIds, channelSlugs, identity, pricing);
       const leads: SourcedLead[] = people.persons.map((p) => ({
@@ -157,6 +165,8 @@ export async function offerSourcingCell(input: {
         campaignId: p.campaignId ?? null,
         audienceId: p.audienceId ?? null,
         positiveReply: p.signals.positiveReply === true,
+        email: p.email ?? null,
+        servedAt: p.servedAt ?? null,
       }));
       const value = stepValues(declared).get("conversation")?.valuePerOutcomeUsd ?? null;
       const result = computeOfferSourcing({
@@ -167,6 +177,7 @@ export async function offerSourcingCell(input: {
         unrecordedOriginByCampaign: unrecordedOriginsByCampaign(campaigns, unrecordedEvidence),
         leads,
         valuePerPositiveReplyUsd: value,
+        memberships,
       });
       return {
         offerId,

@@ -319,6 +319,16 @@ export interface ColdPipelineLead extends PricedPipelineLead {
   stalledSince: string;
 }
 
+export interface LostPipelineLead extends PricedPipelineLead {
+  lostReason: "went_cold" | "ruled_out";
+  /** went_cold: coldSince. ruled_out: null (undated here). */
+  lostSince: string | null;
+  /** went_cold only (null when ruled out). */
+  coldAtStep: { key: ChannelStepKey; label: string } | null;
+  coldSince: string | null;
+  stalledSince: string | null;
+}
+
 export interface LadderStep {
   step: { key: ChannelStepKey; label: string };
   /** Distinct leads of the offer that reached the step, every cause counted. Null = not counted / unreadable. */
@@ -469,6 +479,12 @@ export interface OfferPipeline {
   /** Null when lead-service did not say who went cold. `applies: false` = not a CRM brand: nothing goes cold. */
   coldRule: { applies: boolean; afterDays: number | null } | null;
   coldLeads: { count: number; valueUsd: number | null; leads: ColdPipelineLead[]; otherCausesCount: number } | null;
+  /**
+   * TODAY'S LOST LEADS (owner 2026-10-08, option (a)): went cold on interest we caused (`coldLeads`,
+   * reason `went_cold`) + engaged, ruled out by a human and now priced at 0 (`ruled_out`). The same
+   * verdict as the `lost` family of `/brands/:id/lead-families`. Null when who went cold could not be read.
+   */
+  lostLeads: { count: number; valueUsd: number | null; wentColdCount: number; ruledOutCount: number; leads: LostPipelineLead[] } | null;
   hotLeads: { limit: number; totalCount: number; totalValueUsd: number; leads: PricedPipelineLead[] } | null;
   /** Why lead values (hot, cold values) are null: the offer has no priced economics. */
   leadValuesUnpricedReason: string | null;
@@ -739,6 +755,33 @@ export function buildOfferPipelineAndFamilies(input: {
     };
   }
 
+  // LOST — went cold on interest we caused (the cold list above), or engaged, ruled out by a human and
+  // now priced at 0. ONE verdict, served as `lostLeads` (Today's Lost leads) and as the `lost` family.
+  const ruledOut: EnginePerson[] = [];
+  for (const p of persons) {
+    if (p.signals.closeWin || coldIds.has(p.leadId)) continue;
+    const engaged = ENGAGED_SIGNALS.some((s) => p.signals[s]);
+    if (engaged && (p.deadSignals?.length ?? 0) > 0 && valueOf(p) === 0) ruledOut.push(p);
+  }
+  const lostLeads: LostPipelineLead[] = [
+    ...coldLeads.map((l) => ({ ...l, lostReason: "went_cold" as const, lostSince: l.coldSince })),
+    ...ruledOut.map((p) => {
+      const v = valueOf(p);
+      const step = furthestStep(p)!;
+      return {
+        ...identity(p),
+        step: stepWire(step),
+        valueUsd: v,
+        probabilityPct: v === null ? null : probabilityOf(p, v),
+        lostReason: "ruled_out" as const,
+        lostSince: null,
+        coldAtStep: null,
+        coldSince: null,
+        stalledSince: null,
+      };
+    }),
+  ];
+
   // FAMILIES — the verdicts above, per person, strongest first.
   const familyOf = new Map<string, { family: LeadFamily; lostReason: LeadFamilyRow["lostReason"] }>();
   const assign = (leadId: string, family: LeadFamily, lostReason: LeadFamilyRow["lostReason"] = null) => {
@@ -747,12 +790,10 @@ export function buildOfferPipelineAndFamilies(input: {
   };
   for (const p of wonOurs) assign(p.leadId, "won");
   for (const l of hot) assign(l.leadId, "hot");
-  for (const l of coldLeads) assign(l.leadId, "lost", "went_cold");
+  for (const l of lostLeads) assign(l.leadId, "lost", l.lostReason);
   for (const p of persons) {
-    const engaged = ENGAGED_SIGNALS.some((s) => p.signals[s]);
     if (p.signals.closeWin || coldIds.has(p.leadId)) continue;
-    if (engaged && (p.deadSignals?.length ?? 0) > 0 && valueOf(p) === 0) assign(p.leadId, "lost", "ruled_out");
-    else if (!engaged && p.signals.contacted) assign(p.leadId, "cold");
+    if (!ENGAGED_SIGNALS.some((s) => p.signals[s]) && p.signals.contacted) assign(p.leadId, "cold");
   }
   const families: LeadFamilyRow[] = persons
     .filter((p) => familyOf.has(p.leadId))
@@ -790,6 +831,15 @@ export function buildOfferPipelineAndFamilies(input: {
     coldRule: input.cold ? { applies: input.cold.applies, afterDays: input.cold.afterDays } : null,
     coldLeads: input.cold
       ? { count: coldLeads.length, valueUsd: sumValues(coldLeads), leads: coldLeads, otherCausesCount: coldOtherCauses }
+      : null,
+    lostLeads: input.cold
+      ? {
+          count: lostLeads.length,
+          valueUsd: sumValues(lostLeads),
+          wentColdCount: coldLeads.length,
+          ruledOutCount: ruledOut.length,
+          leads: lostLeads,
+        }
       : null,
     hotLeads,
     leadValuesUnpricedReason: paths ? null : (priced.economics.unpricedReason ?? "no_priced_funnel"),

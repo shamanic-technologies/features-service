@@ -37,7 +37,7 @@ import {
 import { campaignNamesOf, salesPathNamesFor, SalesPathNamePoolExhaustedError, withCampaignNames } from "../lib/sales-path-names.js";
 import { runLadder, type LadderBody } from "../lib/leg-ladder.js";
 import { MISSION_PRICE_GRAINS, missionPriceOf } from "../lib/mission-workflow-order.js";
-import { buildSourceCampaigns, sourceCampaignNameKeys, sourceCampaignOrigins, withSourceCampaigns } from "../lib/source-campaigns.js";
+import { buildSourceCampaigns, sourceCampaignNameKeys, sourceCampaignOrigins, sourceOverlapOf, withSourceCampaigns } from "../lib/source-campaigns.js";
 import { readOfferSourcing, type OfferSourcingPayload } from "./offer-sourcing.js";
 
 const router = Router();
@@ -184,7 +184,7 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
     // Then the source campaigns beside them (named from the same pool, in catalogue order), and `fedBy` on the outreach ones.
     const sourcing = await sourcingP;
     const sourceNames = await salesPathNamesFor(sourceCampaignNameKeys(sourceCampaignOrigins(sourcing)));
-    return res.json(withSourceCampaigns(withRois, buildSourceCampaigns({ sourcing, names: sourceNames })));
+    return res.json(withSourceCampaigns(withRois, buildSourceCampaigns({ sourcing, names: sourceNames }), sourceOverlapOf(sourcing)));
   } catch (error) {
     if (error instanceof OfferSalesPathNotFoundError) {
       return res.status(404).json({ error: error.message, reason: "offer_not_found" });

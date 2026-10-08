@@ -37,7 +37,7 @@ import {
   type SourcingOrigin,
   type SourcingProvider,
 } from "./sourcing-origins.js";
-import type { OfferSourcing, OriginStats } from "./offer-sourcing.js";
+import type { OfferSourcing, OriginStats, SourceOverlap } from "./offer-sourcing.js";
 
 export type SourceCampaignRoiUnavailableReason =
   | "no_positive_reply_value"
@@ -75,12 +75,27 @@ export interface SourceCampaign {
   roi: number | null;
   roiBasis: "measured";
   roiUnavailableReason: SourceCampaignRoiUnavailableReason | null;
+  /** Leads CARRYING this source (a lead two sources found counts in both). */
   leadsFound: number | null;
+  /** Of `leadsFound`, the leads another source found too. Null when unreadable. */
+  leadsAlsoFoundByAnotherSource: number | null;
   positiveReplies: number | null;
   costUsd: number | null;
   endToEndCostUsd: number | null;
   costPerLeadUsd: number | null;
   costByOutreachCampaign: Array<{ campaignKey: string | null; featureSlug: string; legKey: string | null; costUsd: number }>;
+}
+
+/** The offer's leads by number of sources that found them, as `/offers/:id/sourcing` serves it. */
+export interface SourceOverlapView {
+  sourceOverlap: SourceOverlap | null;
+  sourceOverlapUnavailableReason: "memberships_unavailable" | "sourcing_unavailable" | null;
+}
+
+/** PURE: the overlap block of a sourcing read (null read = `sourcing_unavailable`). */
+export function sourceOverlapOf(sourcing: OfferSourcing | null): SourceOverlapView {
+  if (!sourcing) return { sourceOverlap: null, sourceOverlapUnavailableReason: "sourcing_unavailable" };
+  return { sourceOverlap: sourcing.sourceOverlap, sourceOverlapUnavailableReason: sourcing.sourceOverlapUnavailableReason };
 }
 
 export interface FedBy {
@@ -218,6 +233,7 @@ export function buildSourceCampaigns(input: { sourcing: OfferSourcing | null; na
         roi: null,
         roiUnavailableReason: "sourcing_unavailable",
         leadsFound: null,
+        leadsAlsoFoundByAnotherSource: null,
         positiveReplies: null,
         costUsd: null,
         endToEndCostUsd: null,
@@ -232,6 +248,7 @@ export function buildSourceCampaigns(input: { sourcing: OfferSourcing | null; na
       roi: s.roi,
       roiUnavailableReason: s.roiUnavailableReason,
       leadsFound: s.leadsServed,
+      leadsAlsoFoundByAnotherSource: s.leadsAlsoFoundByAnotherSource,
       positiveReplies: s.positiveReplies,
       costUsd,
       endToEndCostUsd: s.endToEndCostUsd + own,
@@ -252,11 +269,12 @@ export function isFedByLeadFound(c: { channelSlug: string; reactive: boolean }):
 export function withSourceCampaigns<C extends { channelSlug: string; reactive: boolean }, B extends { campaigns?: C[] }>(
   body: B,
   sourceCampaigns: SourceCampaign[],
-): Omit<B, "campaigns"> & { campaigns?: Array<C & { fedBy: FedBy | null }>; sourceCampaigns: SourceCampaign[] } {
+  overlap: SourceOverlapView,
+): Omit<B, "campaigns"> & { campaigns?: Array<C & { fedBy: FedBy | null }>; sourceCampaigns: SourceCampaign[] } & SourceOverlapView {
   const keys = sourceCampaigns.map((s) => s.campaignKey);
   const campaigns = body.campaigns?.map((c) => ({
     ...c,
     fedBy: isFedByLeadFound(c) ? ({ step: leadFound(), sourceCampaignKeys: [...keys] } satisfies FedBy) : null,
   }));
-  return { ...body, ...(campaigns ? { campaigns } : {}), sourceCampaigns };
+  return { ...body, ...(campaigns ? { campaigns } : {}), sourceCampaigns, ...overlap };
 }

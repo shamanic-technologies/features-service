@@ -4,7 +4,7 @@ vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
 import { buildPricingFunnels } from "./reading-funnels.js";
 import { stepValues } from "./offer-outcomes.js";
-import { STEP_PEOPLE_LIMIT, buildOfferPipeline, explainStepValue, offerStepSets, previousStepsOf, stepConversion } from "./offer-pipeline-explained.js";
+import { STEP_PEOPLE_LIMIT, buildOfferPipeline, buildOfferPipelineAndFamilies, explainStepValue, offerStepSets, previousStepsOf, stepConversion } from "./offer-pipeline-explained.js";
 import { ALL_STEP_EVIDENCE } from "./funnel-steps.js";
 import { DISPLAY_ONLY_SALES_FUNNELS, SALES_FUNNELS, type SalesFunnelKey } from "./sales-funnels.js";
 import { funnelStepKeys } from "./acquisition-channels.js";
@@ -272,6 +272,22 @@ describe("buildOfferPipeline", () => {
       sets: offerStepSets(persons, { ...ALL_STEP_EVIDENCE, observedSteps: false, legacyQualifications: false }),
     });
     expect(unread.ladder.find((s) => s.step.key === "meeting_attended")!.people).toBeNull();
+  });
+
+  it("lost leads = went cold (ours) + ruled out, one verdict with the lost family", () => {
+    const rows = [
+      ...persons,
+      person("ruled", { positiveReply: true, meeting: true }, { deadSignals: ["positiveReply", "meeting", "meetingAttended", "closeWin"] }),
+    ];
+    const { pipeline: p, families } = buildOfferPipelineAndFamilies({ persons: rows, evidence: ALL_STEP_EVIDENCE, declared, values, cold, sets: offerStepSets(rows, ALL_STEP_EVIDENCE) });
+    expect(p.lostLeads?.wentColdCount).toBe(p.coldLeads?.count);
+    expect(p.lostLeads?.ruledOutCount).toBe(1);
+    expect(p.lostLeads?.count).toBe(p.coldLeads!.count + 1);
+    expect(p.lostLeads?.leads.map((l) => [l.leadId, l.lostReason])).toEqual([["cold1", "went_cold"], ["ruled", "ruled_out"]]);
+    expect(p.lostLeads?.leads[1]).toEqual(expect.objectContaining({ lostSince: null, coldAtStep: null, coldSince: null, stalledSince: null, valueUsd: 0 }));
+    const lostFamily = families.filter((f) => f.family === "lost").map((f) => f.leadId).sort();
+    expect(lostFamily).toEqual(p.lostLeads!.leads.map((l) => l.leadId).sort());
+    expect(run(null).lostLeads).toBeNull();
   });
 
   it("caps each group's list at STEP_PEOPLE_LIMIT and still counts every one", () => {
