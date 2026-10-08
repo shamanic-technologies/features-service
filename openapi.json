@@ -12282,6 +12282,48 @@
                           "leads"
                         ],
                         "description": "Highest value first, capped at limit; counted whole in count. reachedAt = when they were contacted."
+                      },
+                      "conversionFromRowAbove": {
+                        "type": "object",
+                        "nullable": true,
+                        "properties": {
+                          "rowAbove": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "label"
+                            ],
+                            "description": "The row above as displayed: the next DEEPER sliced row that has people (a row with no priced and no notOurs people is not displayed, so it is skipped)."
+                          },
+                          "rowAbovePeople": {
+                            "type": "integer",
+                            "description": "The row above's total: its pricedPeople."
+                          },
+                          "rowPeople": {
+                            "type": "integer",
+                            "description": "This row's total: pricedPeople (the contacted row: count)."
+                          },
+                          "ratePct": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "rowAbovePeople / (rowPeople + rowAbovePeople) x 100. Null when both are 0."
+                          }
+                        },
+                        "required": [
+                          "rowAbove",
+                          "rowAbovePeople",
+                          "rowPeople",
+                          "ratePct"
+                        ],
+                        "description": "THE SLICED LADDER'S % CONVERSION (owner 2026-10-08: \"the total of the row above / (total of that row + total above)\"). Null on the deepest displayed row (no row above) and on a row not displayed. Not ladder[].pricedConversionFromPrevious (cumulative)."
                       }
                     },
                     "required": [
@@ -12294,7 +12336,8 @@
                       "pipelineUsd",
                       "countedWithColleagueUsd",
                       "explanation",
-                      "people"
+                      "people",
+                      "conversionFromRowAbove"
                     ],
                     "description": "PEOPLE CONTACTED, NOTHING YET: on the same one-row-per-person basis."
                   },
@@ -12792,6 +12835,48 @@
                             "leads"
                           ],
                           "description": "HOT LEADS ON THIS ROW: the row's people in pipeline.hotLeads (the same verdict, every hot person counted, not only the listed top), highest value first, capped at limit. A hot person is in people.ours or people.notOurs, never lost. Σ rows[].hot.count + total.hot.onContactedRow + total.hot.onNoRow = hotLeads.totalCount. Null when hotLeads is null (unpriced offer)."
+                        },
+                        "conversionFromRowAbove": {
+                          "type": "object",
+                          "nullable": true,
+                          "properties": {
+                            "rowAbove": {
+                              "type": "object",
+                              "properties": {
+                                "key": {
+                                  "type": "string"
+                                },
+                                "label": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "key",
+                                "label"
+                              ],
+                              "description": "The row above as displayed: the next DEEPER sliced row that has people (a row with no priced and no notOurs people is not displayed, so it is skipped)."
+                            },
+                            "rowAbovePeople": {
+                              "type": "integer",
+                              "description": "The row above's total: its pricedPeople."
+                            },
+                            "rowPeople": {
+                              "type": "integer",
+                              "description": "This row's total: pricedPeople (the contacted row: count)."
+                            },
+                            "ratePct": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "rowAbovePeople / (rowPeople + rowAbovePeople) x 100. Null when both are 0."
+                            }
+                          },
+                          "required": [
+                            "rowAbove",
+                            "rowAbovePeople",
+                            "rowPeople",
+                            "ratePct"
+                          ],
+                          "description": "THE SLICED LADDER'S % CONVERSION (owner 2026-10-08: \"the total of the row above / (total of that row + total above)\"). Null on the deepest displayed row (no row above) and on a row not displayed. Not ladder[].pricedConversionFromPrevious (cumulative)."
                         }
                       },
                       "required": [
@@ -12801,7 +12886,8 @@
                         "pipelineUsd",
                         "countedWithColleagueUsd",
                         "people",
-                        "hot"
+                        "hot",
+                        "conversionFromRowAbove"
                       ]
                     },
                     "description": "The ladder's steps in climbing order. A person stands on the furthest step priced for them (else, nothing priced, the furthest reached, as notOurs; else the contacted row)."
@@ -12894,7 +12980,7 @@
                   "rows",
                   "total"
                 ],
-                "description": "THE PIPELINE SLICED: ladder[] is cumulative (a paying client is also on every step below), so it never adds; here every person stands on ONE row and the rows add up to the pipeline. The conversion column stays ladder[].pricedConversionFromPrevious (step to step is cumulative by nature)."
+                "description": "THE PIPELINE SLICED: ladder[] is cumulative (a paying client is also on every step below), so it never adds; here every person stands on ONE row and the rows add up to the pipeline. The sliced conversion column is rows[].conversionFromRowAbove and contacted.conversionFromRowAbove (row above / (row + row above)); ladder[].pricedConversionFromPrevious stays the cumulative step-to-step rate."
               }
             },
             "required": [
