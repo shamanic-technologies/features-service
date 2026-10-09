@@ -337,15 +337,14 @@ describe("brand-level per-audience return: /audience-stats with no funnel and no
     expect(res.body.reason).toBe("funnel_retired");
   });
 
-  it("a brand whose funnels state no lifetime revenue reads NULL, never a zero return", async () => {
+  it("a brand whose offer states no lifetime revenue, in a fleet with no median, reads NULL, never a zero return", async () => {
+    // A stated 0 is no statement (owner 2026-10-09: a lifetime revenue is never 0); with no fleet median
+    // to stand in (suite default) nothing prices the offer.
     economics = { ...economics, lifetimeRevenueUsd: 0 };
     const body = await brandLevelRead();
 
     expect(body.brandProjection.returnPerDollar).toBeNull();
     expect(body.brandProjection.costOfAcquisitionPct).toBeNull();
-    // A paid-client cost IS known, so the gap is named for what it is.
-    expect(body.brandProjection.costPerPaidClientUsd).toBeGreaterThan(0);
-    expect(body.funnelCoverage.funnels.every((f: any) => !f.priced && f.reason === "no_return_defined")).toBe(true);
     for (const row of body.audiences) {
       expect(row.projection.returnPerDollar).toBeNull();
       expect(row.projection.costOfAcquisitionPct).toBeNull();

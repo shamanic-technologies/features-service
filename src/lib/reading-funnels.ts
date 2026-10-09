@@ -60,6 +60,7 @@ import {
 import { DISPLAY_ONLY_SALES_FUNNELS, matchSalesFunnelKey, SALES_FUNNELS, salesFunnelIndex, type SalesFunnelKey } from "./sales-funnels.js";
 import { CHANNEL_STEPS } from "./acquisition-channels.js";
 import { SEED_FEATURES } from "../seed/features.js";
+import { offerLifetimeRevenue, type OfferLifetimeRevenueSource } from "./offer-lifetime-revenue.js";
 
 const byCatalogue = (a: SalesFunnelKey, b: SalesFunnelKey): number => salesFunnelIndex(a) - salesFunnelIndex(b);
 
@@ -258,6 +259,8 @@ export interface PricingFunnelsOptions {
 export function buildPricingFunnels(input: {
   funnelKeys: readonly SalesFunnelKey[];
   lifetimeRevenueUsd: number | null;
+  /** Where `lifetimeRevenueUsd` came from (`lib/offer-lifetime-revenue.ts`); null when there is none. */
+  lifetimeRevenueSource?: OfferLifetimeRevenueSource | null;
   rateOf: (fromStep: string, toStep: string) => {
     ratePct: number | null;
     provenance: string;
@@ -280,6 +283,7 @@ export function buildPricingFunnels(input: {
       rates: {},
       arrows,
       lifetimeRevenueUsd: input.lifetimeRevenueUsd,
+      lifetimeRevenueSource: input.lifetimeRevenueSource ?? null,
       destinationUrl: null,
       bookingUrl: null,
       updatedAt: "",
@@ -368,9 +372,12 @@ export async function fetchPricingFunnels(
   // set, which every caller already reads as "nothing to price on" — never a substituted funnel.
   if (keys.size === 0) return [];
 
+  // Every offer has a lifetime revenue: its own, else the fleet median (owner 2026-10-09).
+  const lifetimeRevenue = await offerLifetimeRevenue(offer.lifetimeRevenueUsd);
   return buildPricingFunnels({
     funnelKeys: [...keys],
-    lifetimeRevenueUsd: offer.lifetimeRevenueUsd,
+    lifetimeRevenueUsd: lifetimeRevenue.usd,
+    lifetimeRevenueSource: lifetimeRevenue.source,
     rateOf: (fromStep, toStep) => {
       if (effective) {
         const key = legPairKey(fromStep, toStep);
@@ -435,7 +442,12 @@ export async function fetchBrandStatedFunnels(
       return stated !== undefined ? { ratePct: stated, provenance: "stated_manual" } : { ratePct: null, provenance: "unstated" };
     },
   });
-  return { reading, stated: [...reading, ...extra] };
+  // `stated` is what the BRAND stated (the fleet medians are taken over it): a lifetime revenue the
+  // offer only holds as the fleet-median default is no statement, so it never feeds a median back.
+  const statedReading = reading.map((f) =>
+    f.lifetimeRevenueSource === "fleet_median" ? { ...f, lifetimeRevenueUsd: null, lifetimeRevenueSource: null } : f,
+  );
+  return { reading, stated: [...statedReading, ...extra] };
 }
 
 /** Every offer's pricing funnels (stated rates) — the reading half of `fetchBrandStatedFunnels`. */

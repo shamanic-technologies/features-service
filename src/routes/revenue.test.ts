@@ -37,6 +37,7 @@ process.env.FEATURE_VIEW_CACHE_ENABLED = "false"; // exercise the pure live-comp
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
 const { offerEconomicsFromDeclared, legCampaignRows, declaredFromEconomics } = await import("../lib/leg-economics-fixture.js");
+const { getFleetLifetimeRevenueMedian } = await import("../lib/effective-conversion-rates.js");
 
 const AUTH = {
   "x-api-key": "test-key",
@@ -496,9 +497,9 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.formSubmissions).toEqual({ total: 0, daily: [], undatedCount: 0 });
   });
 
-  it("an offer stating NO lifetime revenue reads a NULL pipeline with its reason — never an average (owner 2026-10-05)", async () => {
-    // The rates are stated, the lifetime revenue is not: brand-service's retired cross-brand average used
-    // to price this brand; now nothing does, and the read says why.
+  it("an offer stating NO lifetime revenue, in a fleet where NO offer states one, reads a NULL pipeline with its reason — never an average", async () => {
+    // The rates are stated, the lifetime revenue is not, and the fleet has no median to stand in (suite
+    // default): the one case no default exists, and the read says why.
     mockFetch({
       salesFunnels: declaredFromEconomics({ ...ECONOMICS, lifetimeRevenueUsd: null }),
       leads: HAPPY_LEADS,
@@ -511,6 +512,44 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.body.costEconomics.roiMultiple).toBeNull();
     // The volume half is still a real, measured answer.
     expect(res.body.outcomes).not.toBeNull();
+  });
+
+  it("an offer stating NO lifetime revenue is priced on the FLEET MEDIAN, provenance served (owner 2026-10-09)", async () => {
+    // Same fixture as the stated read below it, minus the stated lifetime revenue: with a fleet median equal
+    // to the stated 1000, every figure must be the stated read's, and the headline says where it came from.
+    vi.mocked(getFleetLifetimeRevenueMedian).mockResolvedValue({ usd: 1000, offerCount: 7 });
+    try {
+      const timestamps = { "both@x.com": { firstClickedAt: daysAgo(5), firstRepliedAt: daysAgo(5) } };
+      const leads = [leadRow({ leadId: "lboth", email: "both@x.com", clicked: true, replied: true, replyClassification: "positive", lead: { firstName: "Bo", lastName: "Th", photoUrl: null, organization: { id: "ob", name: "OrgB", logoUrl: null } } })];
+      mockFetch({ salesFunnels: declaredFromEconomics({ ...ECONOMICS, lifetimeRevenueUsd: null }), leads, timestamps });
+      const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
+      expect(res.status).toBe(200);
+      expect(res.body.headline.unpricedReason).toBeNull();
+      expect(res.body.headline.totalPipelineUsd).toBeCloseTo(150.536, 5);
+      expect(res.body.headline.lifetimeRevenueUsd).toBe(1000);
+      expect(res.body.headline.lifetimeRevenueSource).toBe("fleet_median");
+      expect(res.body.organizations.length).toBeGreaterThan(0);
+      expect(typeof res.body.leads[0].expectedRevenueUsd).toBe("number");
+    } finally {
+      vi.mocked(getFleetLifetimeRevenueMedian).mockResolvedValue({ usd: null, offerCount: 0 });
+    }
+  });
+
+  it("a STATED lifetime revenue never reads the fleet median and says offer_stated", async () => {
+    vi.mocked(getFleetLifetimeRevenueMedian).mockResolvedValue({ usd: 99999, offerCount: 7 });
+    try {
+      mockFetch({
+        economics: ECONOMICS,
+        leads: [leadRow({ leadId: "lboth", email: "both@x.com", clicked: true, replied: true, replyClassification: "positive", lead: { firstName: "Bo", lastName: "Th", photoUrl: null, organization: { id: "ob", name: "OrgB", logoUrl: null } } })],
+        timestamps: { "both@x.com": { firstClickedAt: daysAgo(5), firstRepliedAt: daysAgo(5) } },
+      });
+      const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
+      expect(res.status).toBe(200);
+      expect(res.body.headline.totalPipelineUsd).toBeCloseTo(150.536, 5);
+      expect(res.body.headline.lifetimeRevenueSource).toBe("offer_stated");
+    } finally {
+      vi.mocked(getFleetLifetimeRevenueMedian).mockResolvedValue({ usd: null, offerCount: 0 });
+    }
   });
 
   it("one lead with BOTH click + positive reply → combined route EV (independent-probability SUM)", async () => {

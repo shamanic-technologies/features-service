@@ -13,6 +13,7 @@ import { getFunnel, orP, restrictPathsToDeclaredLegs, singleStepRateDecimal, com
 import { matchSingleStepGoal, matchCombinedSalesGoal, matchWebsitePurchaseGoal } from "../lib/goals.js";
 import { BrandOwnershipError, assertBrandHeld } from "../lib/brand-ownership.js";
 import { offerTermsEconomics, type PipelineUnpricedReason } from "../lib/offer-priced-economics.js";
+import type { OfferLifetimeRevenueSource } from "../lib/offer-lifetime-revenue.js";
 import {
   fetchDeclaredFunnelsSoft,
   fetchFunnelPricedEconomics,
@@ -559,11 +560,17 @@ interface RevenueResponse {
    */
   maturity?: ScopeMaturity | null;
   /**
-   * totalPipelineUsd is priced on the offer's terms only (its stated lifetime revenue, the priced
-   * funnels' effective leg rates). Null with `unpricedReason` when no funnel is wired, the scope has no
-   * channel, it walks no priced funnel, or its offer states no lifetime revenue — never an average.
+   * totalPipelineUsd is priced on the offer's terms only (its lifetime revenue — stated, else the fleet
+   * median of stated offer values — and the priced funnels' effective leg rates). Null with
+   * `unpricedReason` when no funnel is wired, the scope has no channel, or it walks no priced funnel.
+   * `lifetimeRevenueUsd` / `lifetimeRevenueSource` say which lifetime revenue priced it (priced Overview body).
    */
-  headline: { totalPipelineUsd: number | null; unpricedReason: PipelineUnpricedReason | null };
+  headline: {
+    totalPipelineUsd: number | null;
+    unpricedReason: PipelineUnpricedReason | null;
+    lifetimeRevenueUsd?: number | null;
+    lifetimeRevenueSource?: OfferLifetimeRevenueSource | null;
+  };
   costEconomics: CostEconomics;
   timeSeries: TimeSeriesPoint[];
   /**
@@ -1635,6 +1642,18 @@ export async function computeFeatureRevenue(
     // Cold start: no economics, so no pipeline to price — but the leads WERE read, so the volume half
     // is a real, measured answer and is given. "We could not price this" and "this reached nobody"
     // are different statements.
+    // The people are DATED here too (2026-10-09: three unpriced brands served every contact undated,
+    // `recipientsContacted.daily: []`, while a contacted lead has a send date): the same email-gateway
+    // timestamp overlay the priced path applies, fail-soft (a failed read leaves the leads undated, loudly).
+    const coldEmails = [...new Set(persons.map((p) => p.email).filter((e): e is string => Boolean(e)))];
+    const coldTimestamps =
+      coldEmails.length > 0
+        ? await fetchEventTimestamps(brandId, campaignId, coldEmails, headers).catch((err) => {
+            console.warn(`[features-service] event-timestamp enrichment failed (unpriced read: every lead undated): ${(err as Error).message}`);
+            return null;
+          })
+        : null;
+    applySignalOverlays(persons, coldTimestamps, null);
     const coldFunnel = funnelForSteps(requestedFunnel, priced.pricedFunnelKeys);
     // The leads WERE read, so the scope's maturity is a real answer here too: counts and spend need no
     // economics. Its cost ratios are null on both bases — there is no pipeline to divide.
@@ -1920,7 +1939,12 @@ export async function computeFeatureRevenue(
   const scoped = scopeMaturityOf({ campaigns: maturityScope.campaigns, plan, split, persons, maturePersons });
 
   const body: RevenueBody = {
-    headline: { ...result.headline, unpricedReason: null },
+    headline: {
+      ...result.headline,
+      unpricedReason: null,
+      lifetimeRevenueUsd: economics.lifetimeRevenueUsd,
+      lifetimeRevenueSource: priced.economics.lifetimeRevenueSource ?? null,
+    },
     costEconomics: buildCostEconomics({
       committedCostInUsdCents: cost.committedCents,
       actualCostInUsdCents: cost.actualCents,
