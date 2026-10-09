@@ -154,19 +154,25 @@ export function matchFunnelLegKey(raw: string): string | null {
 // The same legacy keys on a NON-outbound channel (ads, SEO, organic, PR) are NOT renamed; sourcing keeps
 // `start_to_lead_found`; every other leg key is unchanged.
 //
-// WAVE 1 (now): the two spellings are ONE identity on every input (a campaign row, a ticked leg, a
-// combination key, an assignment write, `?leg=`), resolved to the spelling this fleet STORES and SERVES
-// today, the legacy one. Nothing stored moves, nothing served moves. WAVE 2 migrates the stored rows and
-// flips the served spelling; it is a data migration plus flipping the direction of this map, never a
-// rename of names or history (combination names are keyed on the combination key, re-keyed in place).
+// WAVE 1 (2026-10-09, #1449): the two spellings became ONE identity on every input.
+//
+// WAVE 2 (now): every STORED row of an outbound channel carries the new spelling (workflow leg
+// assignments + their history, sales-path combination and campaign names: `lib/outbound-leg-key-migration.ts`,
+// re-run at every boot), and every RESPONSE serves it (`lib/served-leg-keys.ts`, one choke point on
+// `res.json`). INPUT still accepts both spellings. COMPUTATION is unchanged on purpose: internally a leg
+// is still the FUNNEL's leg (`start_to_*` is the entry leg of the funnels outbound feeds), so every
+// campaign row, `?leg=`, ticked leg and selected combination resolves to it on the way in
+// (`matchFunnelLegKey` / `storedLegKeyOf` / `storedCombinationKeyOf`, names kept from wave 1) and is
+// translated to the channel's spelling on the way out (`servedLegKeyOf` and siblings below). A
+// non-outbound channel's `start_to_*` (Google Ads, SEO, organic LinkedIn) is never translated.
 
 /** One pair of the correspondence, as published on `/public/channels` `legKeyCorrespondence`. */
 export interface LegKeyCorrespondence {
   /** The channel type the rename applies to — `outbound`, and only it. */
   channelType: "outbound";
-  /** The key stored and served today (wave 1). */
+  /** The legacy key: still ACCEPTED on input, no longer stored nor served (wave 2). */
   legacyLegKey: string;
-  /** The LOCKED key wave 2 stores and serves. */
+  /** The LOCKED key stored and served for an outbound channel (wave 2). */
   legKey: string;
   fromStep: ChannelStepDef;
   toStep: ChannelStepDef;
@@ -182,7 +188,7 @@ export const OUTBOUND_LEG_KEY_CORRESPONDENCE: readonly LegKeyCorrespondence[] = 
   }),
 );
 
-/** new outbound spelling -> the spelling stored today. */
+/** new outbound spelling -> the funnel-leg spelling every computation runs on. */
 const STORED_SPELLING_OF_OUTBOUND_LEG_KEY: Record<string, string> = Object.fromEntries(
   OUTBOUND_LEG_KEY_CORRESPONDENCE.map((c) => [c.legKey, c.legacyLegKey]),
 );
@@ -204,15 +210,15 @@ export function matchChannelLegKey(featureSlug: string | null | undefined, raw: 
   return matchFunnelLegKey(raw);
 }
 
-/** A leg key as STORED today: a new outbound spelling resolved to its legacy twin, every other key
- *  returned VERBATIM (so every read of a legacy-spelled input stays byte-identical). */
+/** A leg key as COMPUTED on (the funnel's leg): a new outbound spelling resolved to its legacy twin, every
+ *  other key returned VERBATIM. Input side only; `servedLegKeyOf` is the output side. */
 export function storedLegKeyOf(raw: string): string {
   return isOutboundLegKeySpelling(raw) ? STORED_SPELLING_OF_OUTBOUND_LEG_KEY[normaliseLegKey(raw)] : raw;
 }
 
 /**
  * A combination key (`lib/offer-sales-paths.ts` `combinationKeyOf`: legs `+`-joined, a platform leg
- * `@<slug>`) as STORED today: each leg's key resolved through `storedLegKeyOf`, so a combination a
+ * `@<slug>`) as COMPUTED on: each leg's key resolved through `storedLegKeyOf`, so a combination a
  * caller spells with the new outbound keys names the same row, name and selection as the legacy one.
  * This service minted the format, so reading it back is not splitting somebody else's identifier.
  */
@@ -227,6 +233,55 @@ export function storedCombinationKeyOf(raw: string): string {
       return `${isOutboundLegKeySpelling(leg) && !isOutboundChannel(slug) ? leg : storedLegKeyOf(leg)}@${slug}`;
     })
     .join("+");
+}
+
+/** legacy funnel-leg spelling -> the new outbound spelling. */
+const OUTBOUND_SPELLING_OF_LEGACY_LEG_KEY: Record<string, string> = Object.fromEntries(
+  OUTBOUND_LEG_KEY_CORRESPONDENCE.map((c) => [c.legacyLegKey, c.legKey]),
+);
+
+/** The two legacy spellings an outbound channel no longer stores nor serves. */
+export const LEGACY_OUTBOUND_LEG_KEYS: readonly string[] = OUTBOUND_LEG_KEY_CORRESPONDENCE.map((c) => c.legacyLegKey);
+
+/**
+ * A leg key as STORED and SERVED for one channel (wave 2): the legacy `start_to_conversation` /
+ * `start_to_website_visit` of an OUTBOUND channel becomes `lead_found_to_*`; every other (channel, key)
+ * is returned VERBATIM. `featureSlug` null/unknown = no channel = verbatim (a funnel's own entry leg).
+ */
+export function servedLegKeyOf(featureSlug: string | null | undefined, legKey: string): string {
+  return isOutboundChannel(featureSlug) && Object.hasOwn(OUTBOUND_SPELLING_OF_LEGACY_LEG_KEY, legKey)
+    ? OUTBOUND_SPELLING_OF_LEGACY_LEG_KEY[legKey]
+    : legKey;
+}
+
+/** A combination key as STORED and SERVED: each `leg@<outbound slug>` part through `servedLegKeyOf`. A bare
+ *  leg (the customer's team) names no channel and stays verbatim. Inverse of `storedCombinationKeyOf`. */
+export function servedCombinationKeyOf(key: string): string {
+  return key
+    .split("+")
+    .map((part) => {
+      const at = part.indexOf("@");
+      return at < 0 ? part : `${servedLegKeyOf(part.slice(at + 1), part.slice(0, at))}@${part.slice(at + 1)}`;
+    })
+    .join("+");
+}
+
+/** A campaign key `campaign:<slug>|<legKey>` (`campaignNameKeyOf`) as STORED and SERVED. Anything else verbatim. */
+export function servedCampaignKeyOf(key: string): string {
+  const m = /^campaign:([^|]+)\|(.+)$/.exec(key);
+  return m ? `campaign:${m[1]}|${servedLegKeyOf(m[1], m[2])}` : key;
+}
+
+/** A key of `sales_path_combination_names` (a combination key or a campaign key) as STORED. */
+export function servedNameKeyOf(key: string): string {
+  return key.startsWith("campaign:") ? servedCampaignKeyOf(key) : servedCombinationKeyOf(key);
+}
+
+/** The channel slug of a combination's ENTRY leg (`leg@slug` first part), null when the entry leg is bare. */
+export function entryChannelOfCombinationKey(key: string): string | null {
+  const first = key.split("+")[0] ?? "";
+  const at = first.indexOf("@");
+  return at < 0 ? null : first.slice(at + 1);
 }
 
 /** The leg itself, or null when nothing names it. */

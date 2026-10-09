@@ -286,7 +286,8 @@ describe("a leg-keyed ladder prices a MATURE workflow on its mature evidence (fe
     const res = await get(`leg=${VISIT}`);
     expect(res.status).toBe(200);
     expect(res.body.maturity).toMatchObject({
-      legKey: VISIT,
+      // The legacy `?leg=` still reads; an outbound channel's leg is served in its new spelling (wave 2).
+      legKey: "lead_found_to_website_visit",
       durationDays: 21,
       outcomesRequired: 10,
       outcomeSignal: "clicked",

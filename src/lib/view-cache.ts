@@ -1,3 +1,4 @@
+import { hasLegacyOutboundLegKey, routeChannelOf, servedJsonTextOf } from "./served-leg-keys.js";
 import { and, desc, eq, gte, isNull, lt, or, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { featureViewSnapshots } from "../db/schema.js";
@@ -247,6 +248,10 @@ export async function servedCachedJson<T>(args: CachedViewArgs<T>): Promise<Snap
 export interface WireForm {
   buffer?: Buffer;
   etag?: string;
+  /** Whether the stored text holds a legacy outbound leg key (`lib/served-leg-keys.ts`), checked once. */
+  hasLegacyLegKeys?: boolean;
+  /** The served (re-spelled) wire form per route channel, when the stored text needs one. */
+  served?: Map<string, WireForm>;
 }
 
 /** A served body as the JSON text a response carries. */
@@ -265,7 +270,20 @@ export class SnapshotJson {
  * body re-sent on every poll is neither re-encoded nor re-hashed.
  */
 export function sendSnapshotJson(res: import("express").Response, body: SnapshotJson): import("express").Response {
-  const wire = body.wire;
+  // The outbound leg rename (wave 2): a stored body is served in the same spelling `res.json` serves
+  // (`lib/served-leg-keys.ts`); the re-spelled bytes are memoized per route channel beside the stored ones.
+  let wire = body.wire;
+  wire.hasLegacyLegKeys ??= hasLegacyOutboundLegKey(body.json);
+  if (wire.hasLegacyLegKeys) {
+    const channel = routeChannelOf(res.req);
+    wire.served ??= new Map();
+    let served = wire.served.get(channel ?? "");
+    if (!served) {
+      served = { buffer: Buffer.from(servedJsonTextOf(body.json, channel), "utf8") };
+      wire.served.set(channel ?? "", served);
+    }
+    wire = served;
+  }
   wire.buffer ??= Buffer.from(body.json, "utf8");
   if (!res.get("Content-Type")) res.set("Content-Type", "application/json; charset=utf-8");
   const etagFn = res.app?.get("etag fn") as ((chunk: Buffer) => string | undefined) | undefined;

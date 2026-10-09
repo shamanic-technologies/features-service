@@ -33,6 +33,8 @@ import workflowLegAssignmentsRoutes from "./routes/workflow-leg-assignments.js";
 import transferBrandRoutes from "./routes/transfer-brand.js";
 import orgPeriodRecapRoutes from "./routes/org-period-recap.js";
 import { registerSeedFeatures } from "./seed/register.js";
+import { servedLegKeysMiddleware } from "./lib/served-leg-keys.js";
+import { migrateOutboundLegKeys } from "./lib/outbound-leg-key-migration.js";
 import { startViewKeeper } from "./lib/view-keeper.js";
 import {
   announceViewRefresherReady,
@@ -62,6 +64,8 @@ app.use(cors({
 app.use(express.json());
 // Every view compute is asked of the refresher process (lib/view-refresher.ts), which needs the request.
 app.use(captureRequestReplay);
+// Outbound leg rename, wave 2: every JSON body goes out with outbound legs in their served spelling.
+app.use(servedLegKeysMiddleware);
 
 // Routes
 app.use(healthRoutes);
@@ -136,6 +140,9 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
     .then(async () => {
       console.log("[features-service] Migrations complete");
       await registerSeedFeatures();
+      // Re-key every stored outbound leg to its new spelling (idempotent, three small tables; re-run at
+      // every boot so a row an older process wrote during a deploy is moved on the next one).
+      await migrateOutboundLegKeys();
       app.listen(Number(PORT), "::", () => {
         console.log(`Features service running on port ${PORT}`);
         // Fork the view refresher after the port binds: its boot must never hold up the health check.

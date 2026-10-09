@@ -58,6 +58,9 @@ const SALES = "sales-cold-email-outreach";
 const CONVERSATION_LEG = "start_to_conversation";
 const VISIT_LEG = "start_to_website_visit";
 const MEETING_LEG = "conversation_to_meeting_booked";
+// Outbound leg rename, wave 2: an outbound channel's leg is SERVED in its new spelling (lib/served-leg-keys.ts).
+const SERVED_CONVERSATION_LEG = "lead_found_to_conversation";
+const SERVED_VISIT_LEG = "lead_found_to_website_visit";
 const FUNNEL = "sales_meetings_from_conversation";
 
 function feature(slug: string): Record<string, unknown> {
@@ -285,7 +288,7 @@ describe("the countdown a browser could not compute", () => {
 
     expect(phase.status).toBe("learning");
     expect(phase.unmeasuredReason).toBeNull();
-    expect(phase.legKey).toBe(VISIT_LEG);
+    expect(phase.legKey).toBe(SERVED_VISIT_LEG);
     expect(phase.outcomeStep.key).toBe("website_visit");
     expect(phase.outcomesObserved).toBe(4);
     expect(phase.outcomesRequired).toBe(10);
@@ -366,7 +369,7 @@ describe("the countdown a browser could not compute", () => {
     });
     const phase = await learningPhase();
     expect(phase.status).toBe("priced");
-    expect(phase.legKey).toBe(CONVERSATION_LEG);
+    expect(phase.legKey).toBe(SERVED_CONVERSATION_LEG);
     expect(phase.outcomesRequired).toBe(1);
     expect(phase.outcomeLagDays).toBe(21);
     expect(phase.outcomesObserved).toBe(4);

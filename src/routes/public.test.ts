@@ -2361,7 +2361,8 @@ describe("GET /public/stats/workflow-return-history", () => {
     const res = await request(app).get(`${LEG_PATH}&leg=start_to_conversation`);
     expect(res.status).toBe(200);
     // brand-1's pipeline alone (300), not the fleet 340; c-conv's $2 net spend, not the fleet $9.
-    expect(res.body).toMatchObject({ legKey: "start_to_conversation", totalPipelineUsd: 300, totalSpendUsd: 2 });
+    // The legacy `?leg=` still answers, echoed in the outbound channel's served spelling (wave 2).
+    expect(res.body).toMatchObject({ legKey: "lead_found_to_conversation", totalPipelineUsd: 300, totalSpendUsd: 2 });
     expect(res.body.roiHistory.daily.at(-1)).toMatchObject({ cumulativeSpendUsd: 2, cumulativePipelineUsd: 250 });
     expect(res.body.valueCoverage).toEqual({ pairsPriced: 1, pairsFailed: 0 });
     // The pair is narrowed to the leg's campaigns (the legacy leg-less row and the other channel never join).
@@ -2373,7 +2374,7 @@ describe("GET /public/stats/workflow-return-history", () => {
   it("?leg=start_to_website_visit reads the OTHER crew's figures — the two legs diverge on one dynasty", async () => {
     const res = await request(app).get(`${LEG_PATH}&leg=start_to_website_visit`);
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ legKey: "start_to_website_visit", totalPipelineUsd: 40, totalSpendUsd: 5 });
+    expect(res.body).toMatchObject({ legKey: "lead_found_to_website_visit", totalPipelineUsd: 40, totalSpendUsd: 5 });
     expect(mockComputeWorkflowRevenueGroups.mock.calls[0][0]).toMatchObject({ brandId: "brand-2", campaignScope: ["c-visit"] });
   });
 
@@ -2408,7 +2409,7 @@ describe("GET /public/stats/workflow-return-history", () => {
     const path = "/internal/stats/workflow-return-history/actual-cost?featureSlug=sales-cold-email-outreach&workflowDynastySlug=dyn-1&leg=start_to_conversation";
     const res = await request(app).get(path).set("x-api-key", "test-key");
     expect(res.status).toBe(200);
-    expect(res.body.legKey).toBe("start_to_conversation");
+    expect(res.body.legKey).toBe("lead_found_to_conversation");
     expect(res.body.totalPipelineUsd).toBe(300);
     expect(res.body.actualCostHistory.daily.at(-1)).toMatchObject({ cumulativeSpendUsd: 0.4, cumulativePipelineUsd: 250 });
   });

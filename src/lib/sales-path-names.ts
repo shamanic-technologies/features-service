@@ -32,6 +32,7 @@ import { db } from "../db/index.js";
 import { salesPathCombinationNames } from "../db/schema.js";
 import type { ChannelStepTransitionWire, PublicChannel } from "./channel-catalogue.js";
 import { campaignNameKeyOf } from "./offer-sales-paths.js";
+import { servedNameKeyOf } from "./funnel-legs.js";
 
 /** Append-only in spirit: add words at the END; a word already given stays given whatever happens here. */
 export const SALES_PATH_NAME_POOL: readonly string[] = [
@@ -78,13 +79,21 @@ export function nextUnusedNames(pool: readonly string[], used: ReadonlySet<strin
 }
 
 /** Lock id of the assignment (any constant; scoped to this one table's writes). */
-const NAME_ASSIGNMENT_LOCK = 784_530_071;
+export const NAME_ASSIGNMENT_LOCK = 784_530_071;
 
 /**
  * The name of every combination in `keysInRankOrder`, assigning the unnamed ones on first sight.
  * Fail-loud: a DB error or an exhausted pool throws (the route answers 502); never an invented name.
  */
 export async function salesPathNamesFor(keysInRankOrder: readonly string[]): Promise<Map<string, string>> {
+  // Stored in the served spelling (outbound leg rename, wave 2: `lib/outbound-leg-key-migration.ts`); the
+  // map answers under the key the caller asked with.
+  const stored = new Map(keysInRankOrder.map((k) => [k, servedNameKeyOf(k)]));
+  const byStored = await namesByStoredKey([...new Set(stored.values())]);
+  return new Map([...stored].flatMap(([asked, key]) => (byStored.has(key) ? [[asked, byStored.get(key)!] as const] : [])));
+}
+
+async function namesByStoredKey(keysInRankOrder: readonly string[]): Promise<Map<string, string>> {
   const keys = [...new Set(keysInRankOrder)];
   if (keys.length === 0) return new Map();
   const read = async (q: Pick<typeof db, "select">) =>
