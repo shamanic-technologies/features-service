@@ -35,7 +35,7 @@ describe("sourcing origins", () => {
       const f = SEED_FEATURES.find((s) => s.slug === o.slug);
       expect(f, o.slug).toBeDefined();
       expect(f!.channelType).toBe("sourcing");
-      expect(f!.acquisitionChannel?.stepTransitions).toEqual([{ from: null, to: "lead_found" }]);
+      expect(f!.acquisitionChannel?.stepTransitions).toEqual([{ from: null, to: "lead_found", mode: "reactive", triggerId: "lead_requested" }]);
       expect(f!.salesFunnels).toEqual([]);
     }
   });

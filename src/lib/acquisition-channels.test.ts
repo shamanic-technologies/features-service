@@ -128,8 +128,8 @@ describe("a funnel read as its legs", () => {
 describe("from nothing is the SPECIAL case, written as one", () => {
   it("`producesFromNothing` states a null `from` for each step", () => {
     expect(producesFromNothing("conversation", "website_visit")).toEqual([
-      { from: null, to: "conversation" },
-      { from: null, to: "website_visit" },
+      { from: null, to: "conversation", mode: "proactive", triggerId: null },
+      { from: null, to: "website_visit", mode: "proactive", triggerId: null },
     ]);
   });
 

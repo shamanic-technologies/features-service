@@ -371,7 +371,7 @@ describe("what each channel can produce, and what follows from it", () => {
   });
 
   it("a cold call sells the conversation funnel ALONE — there is no link in a phone call", () => {
-    expect(bySlug("cold-call-outreach")!.acquisitionChannel!.stepTransitions).toEqual([
+    expect(bySlug("cold-call-outreach")!.acquisitionChannel!.stepTransitions).toMatchObject([
       { from: null, to: "conversation" },
     ]);
     expect(bySlug("cold-call-outreach")!.salesFunnels).toEqual([
@@ -442,14 +442,14 @@ describe("A FUNNEL IS SOLD LEG BY LEG — a channel states where it picks a lead
   it("the three legs of a meeting funnel are three separate things to buy", () => {
     // Booking it, getting it held, and closing it. Each has its own channel, its own budget and its own
     // stats, which is the entire reason the catalogue had to stop describing only entry steps.
-    expect(bySlug("agency-meeting-booking")!.acquisitionChannel!.stepTransitions).toEqual([
+    expect(bySlug("agency-meeting-booking")!.acquisitionChannel!.stepTransitions).toMatchObject([
       { from: "conversation", to: "meeting_booked" },
       { from: "website_visit", to: "meeting_booked" },
     ]);
-    expect(bySlug("agency-meeting-attendance")!.acquisitionChannel!.stepTransitions).toEqual([
+    expect(bySlug("agency-meeting-attendance")!.acquisitionChannel!.stepTransitions).toMatchObject([
       { from: "meeting_booked", to: "meeting_attended" },
     ]);
-    expect(bySlug("agency-closing-calls")!.acquisitionChannel!.stepTransitions).toEqual([
+    expect(bySlug("agency-closing-calls")!.acquisitionChannel!.stepTransitions).toMatchObject([
       { from: "meeting_attended", to: "paid_client" },
     ]);
 
@@ -648,7 +648,7 @@ describe("THE AI BOOKS THE MEETING BY ANSWERING THE PROSPECT'S OWN EMAIL", () =>
   it("performs the sales-interest leg, and ONLY that leg", () => {
     // The website-visit variant is deliberately absent: a visit produces no email to reply to, so
     // publishing it would sell a leg nothing performs. It is a later ship.
-    expect(ai().acquisitionChannel!.stepTransitions).toEqual([
+    expect(ai().acquisitionChannel!.stepTransitions).toMatchObject([
       { from: "conversation", to: "meeting_booked" },
     ]);
   });

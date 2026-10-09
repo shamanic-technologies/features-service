@@ -25,7 +25,12 @@ export function malformedIdentityHeaders(headers: Record<string, unknown>): stri
   return IDENTITY_HEADERS.filter((name) => headers[name] !== undefined && headers[name] !== "" && !isUuid(headers[name]));
 }
 
-/** TRUE ⟺ all three identity headers are present and UUIDs: a request another caller may be replayed under. */
+/** The all-zero UUID: well-formed, and nobody's. A probe's placeholder, never a person or a run. */
+const NIL_UUID = "00000000-0000-0000-0000-000000000000";
+
+/** TRUE ⟺ all three identity headers are present, UUIDs, and not the nil placeholder: a request another
+ *  caller may be replayed under (a probe sending the nil UUID once left it on 11 cells of org d4cbcbd5,
+ *  2026-10-09). */
 export function isReplayableIdentity(headers: Record<string, unknown>): boolean {
-  return IDENTITY_HEADERS.every((name) => isUuid(headers[name]));
+  return IDENTITY_HEADERS.every((name) => isUuid(headers[name]) && headers[name] !== NIL_UUID);
 }

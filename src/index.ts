@@ -32,7 +32,7 @@ import viewCacheAdminRoutes from "./routes/view-cache-admin.js";
 import workflowLegAssignmentsRoutes from "./routes/workflow-leg-assignments.js";
 import transferBrandRoutes from "./routes/transfer-brand.js";
 import orgPeriodRecapRoutes from "./routes/org-period-recap.js";
-import { registerSeedFeatures } from "./seed/register.js";
+import { registerChannelTriggerTypes, registerSeedFeatures } from "./seed/register.js";
 import { servedLegKeysMiddleware } from "./lib/served-leg-keys.js";
 import { migrateOutboundLegKeys } from "./lib/outbound-leg-key-migration.js";
 import { startViewKeeper } from "./lib/view-keeper.js";
@@ -140,6 +140,7 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
     .then(async () => {
       console.log("[features-service] Migrations complete");
       await registerSeedFeatures();
+      await registerChannelTriggerTypes();
       // Re-key every stored outbound leg to its new spelling (idempotent, three small tables; re-run at
       // every boot so a row an older process wrote during a deploy is moved on the next one).
       await migrateOutboundLegKeys();

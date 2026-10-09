@@ -391,3 +391,24 @@ export const salesPathCombinationNames = pgTable("sales_path_combination_names",
   name: text("name").notNull().unique(),
   assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * THE TRIGGER TYPES (`lib/channel-triggers.ts`, owner 2026-10-09): one row per KIND of event that runs a
+ * reactive leg ("a positive reply was received", "a campaign asked for a lead"). Code-stated and upserted on
+ * every boot (`registerChannelTriggerTypes`), so every trigger a leg names has a row here. `coded` says the
+ * event is fired by a service today. The EVENTS themselves (one per occurrence, fired or skipped) and the
+ * per-campaign On/Off live in campaign-service.
+ */
+export const channelTriggerTypes = pgTable("channel_trigger_types", {
+  id: text("id").primaryKey(),
+  label: text("label").notNull(),
+  description: text("description").notNull(),
+  icon: text("icon").notNull(),
+  /** The step a lead reached that fires it; null when it is not a step (a campaign asking for a lead). */
+  fromStep: text("from_step"),
+  /** The service that detects the event and rings campaign-service's door. */
+  firedBy: text("fired_by").notNull(),
+  coded: boolean("coded").notNull(),
+  displayOrder: integer("display_order").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
