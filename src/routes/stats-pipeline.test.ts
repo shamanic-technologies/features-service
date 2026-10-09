@@ -179,9 +179,9 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
     await request(app)
       .get("/features/sales-cold-email-outreach/stats")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-1")
-      .set("x-user-id", "user-1")
-      .set("x-run-id", "run-1")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000001")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000001")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000001")
       .expect(200);
 
     const leadCalls = fetchSpy.mock.calls.filter(
@@ -197,9 +197,9 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
     await request(app)
       .get("/features/sales-cold-email-outreach/stats")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-1")
-      .set("x-user-id", "user-1")
-      .set("x-run-id", "run-1")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000001")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000001")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000001")
       .expect(200);
 
     const pipelineCalls = fetchSpy.mock.calls.filter(
@@ -232,9 +232,9 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
     const res = await request(app)
       .get("/features/sales-cold-email-outreach/stats")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-1")
-      .set("x-user-id", "user-1")
-      .set("x-run-id", "run-1")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000001")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000001")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000001")
       .expect(200);
 
     expect(res.body.stats.leadsServed).toBe(42);
@@ -267,9 +267,9 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
     const res = await request(app)
       .get("/features/pr-cold-email-outreach/stats")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-1")
-      .set("x-user-id", "user-1")
-      .set("x-run-id", "run-1")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000001")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000001")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000001")
       .expect(200);
 
     expect(res.body.stats.journalistsFound).toBe(25);
@@ -292,9 +292,9 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
     await request(app)
       .get("/features/pr-cold-email-outreach/stats?brandId=brand-1&campaignId=camp-1")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-1")
-      .set("x-user-id", "user-1")
-      .set("x-run-id", "run-1")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000001")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000001")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000001")
       .expect(200);
 
     const journalistsCalls = fetchSpy.mock.calls.filter(
@@ -331,9 +331,9 @@ describe("pipeline stats (leadsServed, emailsGenerated, journalistsContacted)", 
     const res = await request(app)
       .get("/features/sales-cold-email-outreach/stats?groupBy=campaignId")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-1")
-      .set("x-user-id", "user-1")
-      .set("x-run-id", "run-1")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000001")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000001")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000001")
       .expect(200);
 
     const campA = res.body.groups.find((g: any) => g.campaignId === "camp-a");
@@ -383,9 +383,9 @@ describe("Bug fix: campaignId filter forwarded to runs-service", () => {
     await request(app)
       .get("/features/sales-cold-email-outreach/stats?campaignId=camp-123")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-1")
-      .set("x-user-id", "user-1")
-      .set("x-run-id", "run-1")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000001")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000001")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000001")
       .expect(200);
 
     const costsCalls = fetchSpy.mock.calls.filter(
@@ -408,9 +408,9 @@ describe("Bug fix: campaignId filter forwarded to runs-service", () => {
     await request(app)
       .get("/features/sales-cold-email-outreach/stats?campaignId=camp-456")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-1")
-      .set("x-user-id", "user-1")
-      .set("x-run-id", "run-1")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000001")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000001")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000001")
       .expect(200);
 
     // lead-service /stats should receive campaignId
@@ -493,9 +493,9 @@ describe("Bug fix: pipeline stats aggregate to __total__ when no groupBy", () =>
     const res = await request(app)
       .get("/features/sales-cold-email-outreach/stats")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-1")
-      .set("x-user-id", "user-1")
-      .set("x-run-id", "run-1")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000001")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000001")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000001")
       .expect(200);
 
     expect(res.body.stats.leadsServed).toBe(3);
@@ -542,9 +542,9 @@ describe("Bug fix: pipeline stats aggregate to __total__ when no groupBy", () =>
     const res = await request(app)
       .get("/features/sales-cold-email-outreach/stats")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-1")
-      .set("x-user-id", "user-1")
-      .set("x-run-id", "run-1")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000001")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000001")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000001")
       .expect(200);
 
     expect(res.body.stats.leadsServed).toBe(12);
@@ -637,9 +637,9 @@ describe("reply aggregate extraction", () => {
     const res = await request(app)
       .get("/features/pr-cold-email-outreach/stats")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-1")
-      .set("x-user-id", "user-1")
-      .set("x-run-id", "run-1")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000001")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000001")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000001")
       .expect(200);
 
     expect(res.body.stats.recipientsRepliesPositive).toBe(12);
@@ -706,9 +706,9 @@ describe("activeCampaigns in systemStats", () => {
     const res = await request(app)
       .get("/features/sales-cold-email-outreach/stats")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-1")
-      .set("x-user-id", "user-1")
-      .set("x-run-id", "run-1")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000001")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000001")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000001")
       .expect(200);
 
     expect(res.body.systemStats.activeCampaigns).toBe(5);
@@ -779,9 +779,9 @@ describe("firstRunAt / lastRunAt in systemStats", () => {
     const res = await request(app)
       .get("/features/sales-cold-email-outreach/stats")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-1")
-      .set("x-user-id", "user-1")
-      .set("x-run-id", "run-1")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000001")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000001")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000001")
       .expect(200);
 
     expect(res.body.systemStats.firstRunAt).toBe("2026-01-10T08:00:00.000Z");
@@ -821,9 +821,9 @@ describe("firstRunAt / lastRunAt in systemStats", () => {
     const res = await request(app)
       .get("/features/sales-cold-email-outreach/stats")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-1")
-      .set("x-user-id", "user-1")
-      .set("x-run-id", "run-1")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000001")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000001")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000001")
       .expect(200);
 
     expect(res.body.systemStats.firstRunAt).toBeNull();

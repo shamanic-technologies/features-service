@@ -55,7 +55,7 @@ process.env.NODE_ENV = "test";
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
 
-const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
+const AUTH = { "x-api-key": "test-key", "x-org-id": "0e9a0000-0000-4000-8000-000000000001", "x-user-id": "05e40000-0000-4000-8000-000000000001", "x-run-id": "07a00000-0000-4000-8000-000000000001" };
 const FEATURE = {
   id: "feat-1", slug: "sales-cold-email-outreach", name: "Sales", description: "x",
   status: "active", createdAt: new Date(), updatedAt: new Date(),
@@ -112,10 +112,10 @@ const LEGS: Leg[] = [
 ];
 
 const CAMPAIGN_ROWS = [
-  { id: LIVE, orgId: "org-1", brandId: "brand-1", featureSlug: FEATURE.slug, legKey: "start_to_conversation", acquisitionChannel: "cold_email", offerId: "offer-1", status: "ongoing", createdAt: "2026-09-01T00:00:00.000Z" },
-  { id: OLD_1, orgId: "org-1", brandId: "brand-1", featureSlug: FEATURE.slug, legKey: "start_to_conversation", acquisitionChannel: "cold_email", offerId: "offer-1", status: "stopped", createdAt: "2026-08-01T00:00:00.000Z" },
-  { id: OLD_2, orgId: "org-1", brandId: "brand-1", featureSlug: FEATURE.slug, legKey: "start_to_conversation", acquisitionChannel: "cold_email", offerId: "offer-1", status: "stopped", createdAt: "2026-07-01T00:00:00.000Z" },
-  { id: SOLO, orgId: "org-1", brandId: "brand-1", featureSlug: FEATURE.slug, legKey: "start_to_website_visit", acquisitionChannel: "cold_email", offerId: "offer-1", status: "ongoing", createdAt: "2026-08-15T00:00:00.000Z" },
+  { id: LIVE, orgId: "0e9a0000-0000-4000-8000-000000000001", brandId: "brand-1", featureSlug: FEATURE.slug, legKey: "start_to_conversation", acquisitionChannel: "cold_email", offerId: "offer-1", status: "ongoing", createdAt: "2026-09-01T00:00:00.000Z" },
+  { id: OLD_1, orgId: "0e9a0000-0000-4000-8000-000000000001", brandId: "brand-1", featureSlug: FEATURE.slug, legKey: "start_to_conversation", acquisitionChannel: "cold_email", offerId: "offer-1", status: "stopped", createdAt: "2026-08-01T00:00:00.000Z" },
+  { id: OLD_2, orgId: "0e9a0000-0000-4000-8000-000000000001", brandId: "brand-1", featureSlug: FEATURE.slug, legKey: "start_to_conversation", acquisitionChannel: "cold_email", offerId: "offer-1", status: "stopped", createdAt: "2026-07-01T00:00:00.000Z" },
+  { id: SOLO, orgId: "0e9a0000-0000-4000-8000-000000000001", brandId: "brand-1", featureSlug: FEATURE.slug, legKey: "start_to_website_visit", acquisitionChannel: "cold_email", offerId: "offer-1", status: "ongoing", createdAt: "2026-08-15T00:00:00.000Z" },
 ];
 
 const IDENTITY_MEMBERS = [LIVE, OLD_1, OLD_2].sort();

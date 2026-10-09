@@ -40,9 +40,9 @@ const { offerEconomicsFromDeclared, legCampaignRows, declaredFromEconomics } = a
 
 const AUTH = {
   "x-api-key": "test-key",
-  "x-org-id": "org-1",
-  "x-user-id": "user-1",
-  "x-run-id": "run-1",
+  "x-org-id": "0e9a0000-0000-4000-8000-000000000001",
+  "x-user-id": "05e40000-0000-4000-8000-000000000001",
+  "x-run-id": "07a00000-0000-4000-8000-000000000001",
 };
 
 const SALES_FEATURE = { id: "feat-1", slug: "sales-cold-email-outreach", name: "Sales", description: "x", status: "active", createdAt: new Date(), updatedAt: new Date() };
@@ -112,8 +112,8 @@ const STEP_OF: Record<string, "meeting_booked" | "meeting_attended" | "sale"> = 
 function qualRows(quals: Qualifications): unknown[] {
   const rows: unknown[] = [];
   for (const [email, q] of Object.entries(quals)) {
-    if (q.meetingBookedAt) rows.push({ id: `q-${email}-m`, orgId: "org-1", campaignId: "c1", instantlyCampaignId: "ic1", email, status: "lead_meeting_booked", qualifiedBy: "u1", notes: null, qualifiedAt: q.meetingBookedAt });
-    if (q.closedAt) rows.push({ id: `q-${email}-c`, orgId: "org-1", campaignId: "c1", instantlyCampaignId: "ic1", email, status: "lead_closed", qualifiedBy: "u1", notes: null, qualifiedAt: q.closedAt });
+    if (q.meetingBookedAt) rows.push({ id: `q-${email}-m`, orgId: "0e9a0000-0000-4000-8000-000000000001", campaignId: "c1", instantlyCampaignId: "ic1", email, status: "lead_meeting_booked", qualifiedBy: "u1", notes: null, qualifiedAt: q.meetingBookedAt });
+    if (q.closedAt) rows.push({ id: `q-${email}-c`, orgId: "0e9a0000-0000-4000-8000-000000000001", campaignId: "c1", instantlyCampaignId: "ic1", email, status: "lead_closed", qualifiedBy: "u1", notes: null, qualifiedAt: q.closedAt });
   }
   return rows;
 }
@@ -1201,7 +1201,7 @@ describe("GET /features/:featureSlug/revenue", () => {
   it("logs a warning (no silent truncation) when the LEGACY manual-qualifications hits its row cap", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const capped = Array.from({ length: 500 }, (_, i) => ({
-      id: `q${i}`, orgId: "org-1", campaignId: "c1", instantlyCampaignId: "ic1",
+      id: `q${i}`, orgId: "0e9a0000-0000-4000-8000-000000000001", campaignId: "c1", instantlyCampaignId: "ic1",
       email: `lead${i}@x.com`, status: "lead_meeting_booked", qualifiedBy: "u1", notes: null, qualifiedAt: daysAgo(1),
     }));
     mockFetch({ economics: ECONOMICS, leads: HAPPY_LEADS, qualRowsRaw: capped });

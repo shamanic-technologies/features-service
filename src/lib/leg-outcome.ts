@@ -173,6 +173,24 @@ export function legOutcomeTerms(
 }
 
 /**
+ * The terms of an ENTRY leg, which need NO economics: the leg's own step IS the funnel's driver signal,
+ * so its count is a raw observation and its cost is the driver's own unit cost (spend ÷ clicks, or spend
+ * ÷ positive replies). Null for any other step: walking past the entry needs the brand's declared rates.
+ *
+ * Exists for a brand whose offer states no return economics (no lifetime revenue, nothing priced): its
+ * leg read has no projected figure (no paid-client cost, return or %CAC), but a cost per CONVERSATION or
+ * per WEBSITE VISIT is a measurement, not a projection. Serving it null left every row unrankable, so the
+ * campaign's bandit ran its configured fallback forever (prod 2026-10-09: 217 rows, 0 priced, on a brand
+ * with 48 grains of observed replies and spend). Byte-identical to `legOutcomeTerms` on an entry step.
+ */
+export function entryLegOutcomeTerms(funnelKey: SalesFunnelKey, outcomeStep: ChannelStepKey): LegOutcomeTerms | null {
+  const steps = funnelStepKeys(funnelKey);
+  const driver = FUNNEL_DRIVER[funnelKey];
+  if (driver == null || steps[0] !== outcomeStep) return null;
+  return { funnelKey, outcomeStep, driver, rateFromDriver: 1, outcomeObserved: true };
+}
+
+/**
  * The SHOW-UP rate, derived from the two rates brand-service does state. See `legOutcomeTerms`.
  * Clamped to 1: a composition that reads above 1 is two rates that disagree, and a probability
  * above certainty is not a number we may serve.

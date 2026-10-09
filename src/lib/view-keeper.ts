@@ -5,6 +5,7 @@ import { SEED_FEATURES } from "../seed/features.js";
 import { fetchBrandCampaignRows } from "./campaign-identity-client.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { fetchFeatureMemberships } from "./feature-memberships-client.js";
+import { isReplayableIdentity } from "./identity-headers.js";
 import { decodeSnapshotBody, factsGateStats, familyKeyOf } from "./view-cache.js";
 import { brandIdOfRequest, factsFingerprint } from "./view-facts.js";
 import {
@@ -211,7 +212,9 @@ export async function materializeRound(): Promise<PrecomputeReport> {
     if (!cell.lastReadAt) continue;
     const readMs = new Date(cell.lastReadAt).getTime();
     const headers = (cell.replayHeaders ?? {}) as Record<string, string>;
-    if (headers["x-user-id"] && headers["x-run-id"] && readMs > (identity.get(cell.orgId)?.at ?? 0)) {
+    // Only a well-formed identity is ever replayed for OTHER reads of the org: a malformed one stored by
+    // a probe made every precompute of its org fail and parked those cells for hours (2026-10-09).
+    if (isReplayableIdentity(headers) && readMs > (identity.get(cell.orgId)?.at ?? 0)) {
       identity.set(cell.orgId, { headers, at: readMs });
     }
     if (cell.brandId) {

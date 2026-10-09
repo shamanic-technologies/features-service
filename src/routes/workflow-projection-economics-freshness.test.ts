@@ -91,8 +91,8 @@ const { offerEconomicsFromDeclared, legCampaignRows, declaredFromEconomics } = a
 const AUTH = {
   "x-api-key": "test-key",
   "x-org-id": "a81327ee-727a-4978-ab5d-6503658a9abf",
-  "x-user-id": "user-1",
-  "x-run-id": "run-1",
+  "x-user-id": "05e40000-0000-4000-8000-000000000001",
+  "x-run-id": "07a00000-0000-4000-8000-000000000001",
 };
 
 const BRAND_ID = "7604c385-1f02-4016-b42f-344565bcd36d";

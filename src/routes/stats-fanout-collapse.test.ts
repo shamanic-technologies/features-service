@@ -114,9 +114,9 @@ describe("runs-service fanout collapse: features-stats endpoint", () => {
     await request(app)
       .get("/features/sales-cold-email-outreach/stats")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-1")
-      .set("x-user-id", "user-1")
-      .set("x-run-id", "run-1")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000001")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000001")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000001")
       .expect(200);
 
     const costsGets = fetchSpy.mock.calls.filter(
@@ -131,9 +131,9 @@ describe("runs-service fanout collapse: features-stats endpoint", () => {
     await request(app)
       .get("/features/sales-cold-email-outreach/stats")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-1")
-      .set("x-user-id", "user-1")
-      .set("x-run-id", "run-1")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000001")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000001")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000001")
       .expect(200);
 
     const costsGets = fetchSpy.mock.calls.filter(
@@ -151,9 +151,9 @@ describe("runs-service fanout collapse: features-stats endpoint", () => {
     await request(app)
       .get("/features/sales-cold-email-outreach/stats")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-1")
-      .set("x-user-id", "user-1")
-      .set("x-run-id", "run-1")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000001")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000001")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000001")
       .expect(200);
 
     const pipelinePosts = fetchSpy.mock.calls.filter(
@@ -176,9 +176,9 @@ describe("runs-service fanout collapse: features-stats endpoint", () => {
     await request(app)
       .get("/features/sales-cold-email-outreach/stats")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-1")
-      .set("x-user-id", "user-1")
-      .set("x-run-id", "run-1")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000001")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000001")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000001")
       .expect(200);
 
     const runsCalls = fetchSpy.mock.calls.filter(
@@ -192,9 +192,9 @@ describe("runs-service fanout collapse: features-stats endpoint", () => {
     await request(app)
       .get("/features/sales-cold-email-outreach/stats?brandId=brand-9&campaignId=camp-9")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-1")
-      .set("x-user-id", "user-1")
-      .set("x-run-id", "run-1")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000001")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000001")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000001")
       .expect(200);
 
     const pipelinePosts = fetchSpy.mock.calls.filter(
@@ -211,9 +211,9 @@ describe("runs-service fanout collapse: features-stats endpoint", () => {
     await request(app)
       .get("/features/sales-cold-email-outreach/stats")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-42")
-      .set("x-user-id", "user-42")
-      .set("x-run-id", "run-42")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000042")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000042")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000042")
       .expect(200);
 
     const pipelinePosts = fetchSpy.mock.calls.filter(
@@ -221,9 +221,9 @@ describe("runs-service fanout collapse: features-stats endpoint", () => {
     );
     expect(pipelinePosts.length).toBe(1);
     const headers = pipelinePosts[0][1].headers as Record<string, string>;
-    expect(headers["x-org-id"]).toBe("org-42");
-    expect(headers["x-user-id"]).toBe("user-42");
-    expect(headers["x-run-id"]).toBe("run-42");
+    expect(headers["x-org-id"]).toBe("0e9a0000-0000-4000-8000-000000000042");
+    expect(headers["x-user-id"]).toBe("05e40000-0000-4000-8000-000000000042");
+    expect(headers["x-run-id"]).toBe("07a00000-0000-4000-8000-000000000042");
     expect(headers["content-type"]).toBe("application/json");
   });
 
@@ -232,9 +232,9 @@ describe("runs-service fanout collapse: features-stats endpoint", () => {
     await request(app)
       .get("/features/sales-cold-email-outreach/stats?workflowDynastySlug=some-dynasty")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-1")
-      .set("x-user-id", "user-1")
-      .set("x-run-id", "run-1")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000001")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000001")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000001")
       .expect(200);
 
     const pipelinePosts = fetchSpy.mock.calls.filter(
@@ -294,9 +294,9 @@ describe("runs-service fanout collapse: global /stats endpoint", () => {
     await request(app)
       .get("/stats")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-1")
-      .set("x-user-id", "user-1")
-      .set("x-run-id", "run-1")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000001")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000001")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000001")
       .expect(200);
 
     const costsGets = fetchSpy.mock.calls.filter(

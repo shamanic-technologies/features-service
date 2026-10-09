@@ -43,7 +43,7 @@ const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
 const { offerEconomicsFromDeclared, declaredFromEconomics, legCampaignRows } = await import("../lib/leg-economics-fixture.js");
 
-const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
+const AUTH = { "x-api-key": "test-key", "x-org-id": "0e9a0000-0000-4000-8000-000000000001", "x-user-id": "05e40000-0000-4000-8000-000000000001", "x-run-id": "07a00000-0000-4000-8000-000000000001" };
 // The feature must DECLARE the recipient keys — /stats scopes its fan-out to a feature's declared
 // outputs, so a mock without them skips email-gateway AND the engagement snapshot entirely.
 const RECIPIENT_KEYS = [
@@ -188,9 +188,9 @@ function mockFetch(fixture: Fixture): void {
 
 /** 2 stopped ancestors + 1 live campaign, all on ONE identity — the reported prod shape. */
 const FAMILY = [
-  { id: "stopped-1", orgId: "org-1", brandId: "b1", brandIds: ["b1"], featureSlug: "sales-cold-email-outreach", funnelKey: null, acquisitionChannel: "cold_email", status: "stopped", createdAt: "2026-06-01T00:00:00.000Z" },
-  { id: "stopped-2", orgId: "org-1", brandId: "b1", brandIds: ["b1"], featureSlug: "sales-cold-email-outreach", funnelKey: null, acquisitionChannel: "cold_email", status: "stopped", createdAt: "2026-06-15T00:00:00.000Z" },
-  { id: "live", orgId: "org-1", brandId: "b1", brandIds: ["b1"], featureSlug: "sales-cold-email-outreach", funnelKey: null, acquisitionChannel: "cold_email", status: "ongoing", createdAt: "2026-07-01T00:00:00.000Z" },
+  { id: "stopped-1", orgId: "0e9a0000-0000-4000-8000-000000000001", brandId: "b1", brandIds: ["b1"], featureSlug: "sales-cold-email-outreach", funnelKey: null, acquisitionChannel: "cold_email", status: "stopped", createdAt: "2026-06-01T00:00:00.000Z" },
+  { id: "stopped-2", orgId: "0e9a0000-0000-4000-8000-000000000001", brandId: "b1", brandIds: ["b1"], featureSlug: "sales-cold-email-outreach", funnelKey: null, acquisitionChannel: "cold_email", status: "stopped", createdAt: "2026-06-15T00:00:00.000Z" },
+  { id: "live", orgId: "0e9a0000-0000-4000-8000-000000000001", brandId: "b1", brandIds: ["b1"], featureSlug: "sales-cold-email-outreach", funnelKey: null, acquisitionChannel: "cold_email", status: "ongoing", createdAt: "2026-07-01T00:00:00.000Z" },
 ];
 
 describe("campaign figures are the campaign IDENTITY's figures", () => {
@@ -261,8 +261,8 @@ describe("campaign figures are the campaign IDENTITY's figures", () => {
   it("a brand with ONE campaign per identity is unchanged — each campaign still reports only its own", async () => {
     mockFetch({
       campaigns: [
-        { id: "cold", orgId: "org-1", brandId: "b1", brandIds: ["b1"], featureSlug: "sales-cold-email-outreach", funnelKey: "sales_meetings_from_conversation", acquisitionChannel: "cold_email", status: "ongoing", createdAt: "2026-07-01T00:00:00.000Z" },
-        { id: "crm", orgId: "org-1", brandId: "b1", brandIds: ["b1"], featureSlug: "sales-cold-email-outreach", funnelKey: "sales_meetings_from_conversation", acquisitionChannel: "crm_email", status: "ongoing", createdAt: "2026-07-01T00:00:00.000Z" },
+        { id: "cold", orgId: "0e9a0000-0000-4000-8000-000000000001", brandId: "b1", brandIds: ["b1"], featureSlug: "sales-cold-email-outreach", funnelKey: "sales_meetings_from_conversation", acquisitionChannel: "cold_email", status: "ongoing", createdAt: "2026-07-01T00:00:00.000Z" },
+        { id: "crm", orgId: "0e9a0000-0000-4000-8000-000000000001", brandId: "b1", brandIds: ["b1"], featureSlug: "sales-cold-email-outreach", funnelKey: "sales_meetings_from_conversation", acquisitionChannel: "crm_email", status: "ongoing", createdAt: "2026-07-01T00:00:00.000Z" },
       ],
       costByCampaign: { cold: 3000, crm: 5000 },
       leads: [replyLead("cold", "l1"), replyLead("crm", "l2")],
@@ -357,8 +357,8 @@ describe("campaign figures are the campaign IDENTITY's figures", () => {
   it("a brand with ONE campaign per identity still reports each campaign's own people", async () => {
     mockFetch({
       campaigns: [
-        { id: "cold", orgId: "org-1", brandId: "b1", brandIds: ["b1"], featureSlug: "sales-cold-email-outreach", funnelKey: "sales_meetings_from_conversation", acquisitionChannel: "cold_email", status: "ongoing", createdAt: "2026-07-01T00:00:00.000Z" },
-        { id: "crm", orgId: "org-1", brandId: "b1", brandIds: ["b1"], featureSlug: "sales-cold-email-outreach", funnelKey: "sales_meetings_from_conversation", acquisitionChannel: "crm_email", status: "ongoing", createdAt: "2026-07-01T00:00:00.000Z" },
+        { id: "cold", orgId: "0e9a0000-0000-4000-8000-000000000001", brandId: "b1", brandIds: ["b1"], featureSlug: "sales-cold-email-outreach", funnelKey: "sales_meetings_from_conversation", acquisitionChannel: "cold_email", status: "ongoing", createdAt: "2026-07-01T00:00:00.000Z" },
+        { id: "crm", orgId: "0e9a0000-0000-4000-8000-000000000001", brandId: "b1", brandIds: ["b1"], featureSlug: "sales-cold-email-outreach", funnelKey: "sales_meetings_from_conversation", acquisitionChannel: "crm_email", status: "ongoing", createdAt: "2026-07-01T00:00:00.000Z" },
       ],
       costByCampaign: { cold: 3000, crm: 5000 },
       leads: [replyLead("cold", "l1"), replyLead("cold", "l2"), replyLead("crm", "l3")],
@@ -418,8 +418,8 @@ describe("a campaign is priced on the funnels ITS OWN leg is read through, not t
 
   /** Two campaigns on the same brand, each stating a different funnel. */
   const TWO_FUNNELS = [
-    { id: "conv", orgId: "org-1", brandId: "b1", brandIds: ["b1"], featureSlug: "sales-cold-email-outreach", funnelKey: "sales_meetings_from_conversation", legKey: "start_to_conversation", acquisitionChannel: "cold_email", status: "ongoing", createdAt: "2026-06-01T00:00:00.000Z" },
-    { id: "web", orgId: "org-1", brandId: "b1", brandIds: ["b1"], featureSlug: "sales-cold-email-outreach", funnelKey: "website_purchases", legKey: "start_to_website_visit", acquisitionChannel: "cold_email", status: "ongoing", createdAt: "2026-06-02T00:00:00.000Z" },
+    { id: "conv", orgId: "0e9a0000-0000-4000-8000-000000000001", brandId: "b1", brandIds: ["b1"], featureSlug: "sales-cold-email-outreach", funnelKey: "sales_meetings_from_conversation", legKey: "start_to_conversation", acquisitionChannel: "cold_email", status: "ongoing", createdAt: "2026-06-01T00:00:00.000Z" },
+    { id: "web", orgId: "0e9a0000-0000-4000-8000-000000000001", brandId: "b1", brandIds: ["b1"], featureSlug: "sales-cold-email-outreach", funnelKey: "website_purchases", legKey: "start_to_website_visit", acquisitionChannel: "cold_email", status: "ongoing", createdAt: "2026-06-02T00:00:00.000Z" },
   ];
   // The conversation funnel is FIRST in catalogue order, so it is what the brand-scoped read prices on.
   const DECLARED = [

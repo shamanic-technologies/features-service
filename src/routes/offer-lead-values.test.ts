@@ -151,7 +151,7 @@ const dealsRoutes = (await import("./deals-value.js")).default;
 const contactedRoutes = (await import("./contacted-value.js")).default;
 const app = express();
 app.use(offerRoutes, dealsRoutes, contactedRoutes);
-const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
+const AUTH = { "x-api-key": "test-key", "x-org-id": "0e9a0000-0000-4000-8000-000000000001", "x-user-id": "05e40000-0000-4000-8000-000000000001", "x-run-id": "07a00000-0000-4000-8000-000000000001" };
 const get = (path: string) => request(app).get(path).set(AUTH);
 const column = (body: { columns: Array<{ standing: string; valueUsd: number | null; leads: Array<{ leadId: string }> }> }, s: string) =>
   body.columns.find((c) => c.standing === s)!;

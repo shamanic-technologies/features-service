@@ -40,7 +40,7 @@ process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
 
-const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
+const AUTH = { "x-api-key": "test-key", "x-org-id": "0e9a0000-0000-4000-8000-000000000001", "x-user-id": "05e40000-0000-4000-8000-000000000001", "x-run-id": "07a00000-0000-4000-8000-000000000001" };
 const SALES = "sales-cold-email-outreach";
 const BRAND = "brand-1";
 const FEATURE = {
@@ -74,9 +74,9 @@ const dynastyOf = (slug: string) => WORKFLOWS.find((w) => w.workflowSlug === slu
  * `other` is a different campaign — and it is what makes the brand's numbers diverge from this one's.
  */
 const CAMPAIGNS = [
-  { id: "stopped", orgId: "org-1", brandId: BRAND, featureSlug: SALES, legKey: "start_to_conversation", acquisitionChannel: SALES, status: "stopped", createdAt: "2026-01-01T00:00:00.000Z" },
-  { id: "live", orgId: "org-1", brandId: BRAND, featureSlug: SALES, legKey: "start_to_conversation", acquisitionChannel: SALES, status: "ongoing", createdAt: "2026-02-01T00:00:00.000Z" },
-  { id: "other", orgId: "org-1", brandId: BRAND, featureSlug: SALES, legKey: "start_to_conversation", acquisitionChannel: "crm_email", status: "ongoing", createdAt: "2026-02-01T00:00:00.000Z" },
+  { id: "stopped", orgId: "0e9a0000-0000-4000-8000-000000000001", brandId: BRAND, featureSlug: SALES, legKey: "start_to_conversation", acquisitionChannel: SALES, status: "stopped", createdAt: "2026-01-01T00:00:00.000Z" },
+  { id: "live", orgId: "0e9a0000-0000-4000-8000-000000000001", brandId: BRAND, featureSlug: SALES, legKey: "start_to_conversation", acquisitionChannel: SALES, status: "ongoing", createdAt: "2026-02-01T00:00:00.000Z" },
+  { id: "other", orgId: "0e9a0000-0000-4000-8000-000000000001", brandId: BRAND, featureSlug: SALES, legKey: "start_to_conversation", acquisitionChannel: "crm_email", status: "ongoing", createdAt: "2026-02-01T00:00:00.000Z" },
 ];
 
 type LeadShape = { clicked?: boolean; positive?: boolean };
@@ -335,7 +335,7 @@ describe("GET /internal/features/:slug/revenue/actual-cost — the return curve 
     // The vendor read is the SERVICE-AUTH route, narrowed by the same dynasty.
     const vendorCall = seen.find((u) => u.includes("/internal/stats/costs/timeseries/vendor"));
     expect(vendorCall).toContain("workflowDynastySlug=dawn");
-    expect(vendorCall).toContain("orgId=org-1");
+    expect(vendorCall).toContain("orgId=0e9a0000-0000-4000-8000-000000000001");
   });
 
   it("an unpriced day reads NULL spend and return, and names the billed amount — never the billed figure", async () => {

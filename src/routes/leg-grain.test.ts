@@ -58,7 +58,7 @@ process.env.NODE_ENV = "test";
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
 
-const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
+const AUTH = { "x-api-key": "test-key", "x-org-id": "0e9a0000-0000-4000-8000-000000000001", "x-user-id": "05e40000-0000-4000-8000-000000000001", "x-run-id": "07a00000-0000-4000-8000-000000000001" };
 const FEATURE = { id: "feat-1", slug: "x", name: "X", description: "x", status: "active", createdAt: new Date(), updatedAt: new Date() };
 const BRAND = "75d7e3e8-6926-4f85-a557-976895400666";
 const URL_BASE = "/features/sales-cold-email-outreach/workflow-projection";
@@ -264,5 +264,77 @@ describe("workflow-projection: a LEG is answerable with no sales funnel named", 
     expect(goal.body.leg).toBeUndefined();
     expect(goal.body.funnelKey).toBeUndefined();
     expect(goal.body.goal).toBe("meetingBooked");
+  });
+});
+
+describe("workflow-projection: an offer with NO return economics still prices an ENTRY leg on its observed signal", () => {
+  // The offer states its rates but no lifetime revenue: nothing is PROJECTED (no paid-client cost, no
+  // return, no %CAC), yet a cost per conversation / per website visit is a MEASUREMENT (spend ÷ the
+  // observed signal) and needs no rate. Served null, every row was unrankable and campaign-service ran its
+  // configured fallback forever (prod 2026-10-09, brand 933d4abb…: 217 rows, 0 priced).
+  const UNPRICED = [
+    { ...CONVERSATION_FUNNEL, lifetimeRevenueUsd: null },
+    { ...WEBSITE_FUNNEL, lifetimeRevenueUsd: null },
+  ];
+  beforeEach(() => {
+    vi.mocked(db.query.features.findFirst).mockResolvedValue(FEATURE as any);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("a conversation leg costs spend ÷ positive replies, a website-visit leg spend ÷ clicks", async () => {
+    mockFetch({ funnels: UNPRICED });
+    // $100 spent, 100 positive replies, 10 clicks (mockFetch).
+    for (const [leg, cost] of [["lead_found_to_conversation", 1], ["lead_found_to_website_visit", 10]] as const) {
+      const res = await get(`leg=${leg}`);
+      expect(res.status).toBe(200);
+      expect(res.body.economics).toBeNull();
+      const brandRow = res.body.rows.find((r: any) => r.audienceId === null);
+      expect(brandRow.resolved.costPerOutcomeUsd).toBeCloseTo(cost, 6);
+      // A measurement, never a projection: no return is invented without the offer's terms.
+      expect(brandRow.resolved.costPerPaidClientUsd).toBeNull();
+      expect(brandRow.resolved.roiMultiple).toBeNull();
+      expect(brandRow.resolved.cacPct).toBeNull();
+      expect(res.body.recommendedWorkflowDynastySlug).toBe("dyn-a");
+    }
+  });
+
+  it("a leg PAST the entry still needs the declared walk, so it stays unpriced without the terms", async () => {
+    mockFetch({ funnels: UNPRICED });
+    const res = await get("leg=conversation_to_meeting_booked");
+    expect(res.status).toBe(200);
+    expect(res.body.economics).toBeNull();
+    for (const row of res.body.rows) expect(row.resolved.costPerOutcomeUsd).toBeNull();
+  });
+});
+
+describe("workflow-projection: a caller with a MALFORMED identity gets its own answer and changes nobody else's", () => {
+  beforeEach(() => {
+    vi.mocked(db.query.features.findFirst).mockResolvedValue(FEATURE as any);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("a non-UUID x-user-id / x-run-id is refused at the door, before any sibling is read; the next real caller is answered", async () => {
+    // prod 2026-10-09: a probe sending `x-user-id: x` was recorded as its org's replay identity, and the
+    // keeper's precomputes (and the reads joining them) 502'd at runs-service for ~9 minutes.
+    mockFetch();
+    const sibling = vi.mocked(globalThis.fetch);
+    const bad = await request(app)
+      .get(`${URL_BASE}?brandId=${BRAND}&leg=lead_found_to_conversation`)
+      .set({ ...AUTH, "x-user-id": "x", "x-run-id": "x" });
+    expect(bad.status).toBe(400);
+    expect(bad.body.reason).toBe("invalid_identity");
+    expect(bad.body.invalidHeaders).toEqual(["x-user-id", "x-run-id"]);
+    expect(sibling).not.toHaveBeenCalled();
+
+    const good = await get("leg=lead_found_to_conversation");
+    expect(good.status).toBe(200);
+    expect(good.body.rows.length).toBeGreaterThan(0);
+  });
+
+  it("a malformed x-org-id is refused the same way", async () => {
+    mockFetch();
+    const res = await request(app).get(`${URL_BASE}?brandId=${BRAND}&leg=lead_found_to_conversation`).set({ ...AUTH, "x-org-id": "org_2abc" });
+    expect(res.status).toBe(400);
+    expect(res.body.invalidHeaders).toEqual(["x-org-id"]);
   });
 });
