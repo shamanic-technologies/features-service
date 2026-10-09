@@ -55,6 +55,8 @@ const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-
 const SALES = "sales-cold-email-outreach";
 const VISIT_LEG = "start_to_website_visit";
 const FORM_LEG = "website_visit_to_form_submitted";
+// Outbound leg rename, wave 2: an outbound channel's leg is SERVED in its new spelling (lib/served-leg-keys.ts).
+const SERVED_VISIT_LEG = "lead_found_to_website_visit";
 const FUNNEL = "form_magnet";
 
 function feature(slug: string): Record<string, unknown> {
@@ -420,7 +422,7 @@ describe("what share of this campaign's outreach converts, day by day", () => {
     const expected = (CLICK_TOTAL / CONTACTED_TOTAL) * 100;
     expect(expected).toBeCloseTo(5.0925925925, 9);
     expect(history.scopeConversionRatePct).toBeCloseTo(expected, 9);
-    const rung = res.funnelSteps.steps.find((s: { legKey: string }) => s.legKey === VISIT_LEG);
+    const rung = res.funnelSteps.steps.find((s: { legKey: string }) => s.legKey === SERVED_VISIT_LEG);
     expect(rung.fromStep).toBe("Contacted");
     expect(rung.conversionFromPreviousPct).toBeCloseTo(history.scopeConversionRatePct, 9);
     expect(history.daily.at(-1).conversionRatePct).toBeCloseTo(expected, 9);
@@ -467,7 +469,7 @@ describe("what share of this campaign's outreach converts, day by day", () => {
     const res = await body();
     expect(res.conversionRateHistory.outcomeStep).toEqual(res.learningPhase.outcomeStep);
     expect(res.conversionRateHistory.outcomeStep).toEqual(res.costPerOutcomeHistory.outcomeStep);
-    expect(res.conversionRateHistory.legKey).toBe(VISIT_LEG);
+    expect(res.conversionRateHistory.legKey).toBe(SERVED_VISIT_LEG);
     expect(res.conversionRateHistory.outcomeObserved).toBe(true);
   });
 

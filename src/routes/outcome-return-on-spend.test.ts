@@ -104,7 +104,8 @@ describe("GET /public/stats/outcome-return-on-spend", () => {
     expect(res.status).toBe(200);
     const pair = (funnel.body.pairs as Array<Figures & { funnelKey: string }>).find((p) => p.funnelKey === CONVERSATION)!;
     const ch = res.body.channels[0] as { legs: Array<Figures & { legKey: string }>; outcomes: Array<Figures & { step: { key: string }; legKeys: string[] }> };
-    const leg = ch.legs.find((l) => l.legKey === "start_to_conversation")!;
+    // An outbound channel's legs are served in their new spelling (wave 2, lib/served-leg-keys.ts).
+    const leg = ch.legs.find((l) => l.legKey === "lead_found_to_conversation")!;
     const outcome = ch.outcomes.find((o) => o.step.key === "conversation")!;
     for (const f of [leg, outcome]) {
       expect(f.measured).toBe(true);
@@ -113,7 +114,7 @@ describe("GET /public/stats/outcome-return-on-spend", () => {
       expect(f.medianCostPerPaidClientUsd).toBe(pair.medianCostPerPaidClientUsd);
     }
     // A thin leg says so, while its neighbour answers — never widened.
-    const web = ch.legs.find((l) => l.legKey === "start_to_website_visit")!;
+    const web = ch.legs.find((l) => l.legKey === "lead_found_to_website_visit")!;
     expect([web.measured, web.reason, web.brandCount]).toEqual([false, "not_enough_brands", 1]);
     expect(res.body.costBasis).toBe("charged");
     const keys: string[] = [];
@@ -125,7 +126,7 @@ describe("GET /public/stats/outcome-return-on-spend", () => {
     mockReadChannel.mockResolvedValue({ brands: [...ROWS, brand("y1", ["start_to_conversation"], 50, false)], computedAt: new Date() });
     const res = await request(app).get("/public/stats/outcome-return-on-spend?minSpendUsd=0");
     const leg = (res.body.channels[0].legs as Array<Figures & { legKey: string; maturity: { mature: { median: number } } }>).find(
-      (l) => l.legKey === "start_to_conversation",
+      (l) => l.legKey === "lead_found_to_conversation",
     )!;
     expect([leg.measured, leg.brandCount]).toEqual([true, 4]);
     expect(leg.medianReturnPerDollar).toBeCloseTo(1.9, 10); // 2.0 with the young brand in

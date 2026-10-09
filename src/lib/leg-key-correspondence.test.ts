@@ -9,7 +9,7 @@ import {
 } from "./funnel-legs.js";
 import { isProactiveTransition } from "./acquisition-channels.js";
 
-describe("the LOCKED outbound leg rename, wave 1: both spellings are one identity, the legacy one is stored", () => {
+describe("the LOCKED outbound leg rename: both spellings are one identity on input, computed on the funnel leg", () => {
   it("publishes the correspondence", () => {
     expect(OUTBOUND_LEG_KEY_CORRESPONDENCE.map((c) => [c.channelType, c.legacyLegKey, c.legKey, c.fromStep.key, c.toStep.key])).toEqual([
       ["outbound", "start_to_conversation", "lead_found_to_conversation", "lead_found", "conversation"],

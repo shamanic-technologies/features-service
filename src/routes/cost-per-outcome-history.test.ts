@@ -55,6 +55,8 @@ const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-
 const SALES = "sales-cold-email-outreach";
 const VISIT_LEG = "start_to_website_visit";
 const MEETING_LEG = "website_visit_to_meeting_booked";
+// Outbound leg rename, wave 2: an outbound channel's leg is SERVED in its new spelling (lib/served-leg-keys.ts).
+const SERVED_VISIT_LEG = "lead_found_to_website_visit";
 const FUNNEL = "sales_meetings_from_website";
 
 function feature(slug: string): Record<string, unknown> {
@@ -296,7 +298,7 @@ describe("what one outcome has cost, day by day", () => {
     mockFetch({});
     const res = await body();
     expect(res.costPerOutcomeHistory.outcomeStep).toEqual(res.learningPhase.outcomeStep);
-    expect(res.costPerOutcomeHistory.legKey).toBe(VISIT_LEG);
+    expect(res.costPerOutcomeHistory.legKey).toBe(SERVED_VISIT_LEG);
     expect(res.costPerOutcomeHistory.outcomeObserved).toBe(true);
   });
 

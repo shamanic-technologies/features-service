@@ -25808,7 +25808,7 @@
             "items": {
               "$ref": "#/components/schemas/FunnelLeg"
             },
-            "description": "The LEG vocabulary — every leg of every declared sales funnel, each with its single canonical identifier, the two steps it connects, and the funnels it is a leg of. Published so a consumer never derives a leg from a pair of steps and never hardcodes the list. A leg usually belongs to SEVERAL funnels (a booked meeting becomes an attended meeting in both meeting funnels), which is exactly why a campaign is bought per LEG rather than per funnel — and why two funnels' figures OVERLAP on their shared legs and must never be summed."
+            "description": "The LEG vocabulary — every leg of every declared sales funnel, each with its single canonical identifier, the two steps it connects, and the funnels it is a leg of. Published so a consumer never derives a leg from a pair of steps and never hardcodes the list. A leg usually belongs to SEVERAL funnels (a booked meeting becomes an attended meeting in both meeting funnels), which is exactly why a campaign is bought per LEG rather than per funnel — and why two funnels' figures OVERLAP on their shared legs and must never be summed. The two OUTBOUND legs (`lead_found_to_conversation` / `lead_found_to_website_visit`, wave 2 of the outbound leg rename) are appended after the funnel legs: same funnels and maturity rule as the funnel entry leg each feeds, `fromStep` = Lead found, proactive."
           },
           "steps": {
             "type": "array",
@@ -25864,11 +25864,11 @@
                 },
                 "legacyLegKey": {
                   "type": "string",
-                  "description": "The key stored and served today (wave 1): `start_to_conversation` / `start_to_website_visit`."
+                  "description": "The legacy key: `start_to_conversation` / `start_to_website_visit`. Still ACCEPTED on input, no longer stored nor served for an outbound channel (wave 2)."
                 },
                 "legKey": {
                   "type": "string",
-                  "description": "The LOCKED key the outbound leg moves to in wave 2: `lead_found_to_conversation` / `lead_found_to_website_visit`."
+                  "description": "The LOCKED key stored and served for an outbound channel (wave 2): `lead_found_to_conversation` / `lead_found_to_website_visit`."
                 },
                 "fromStep": {
                   "type": "object",
@@ -25952,7 +25952,7 @@
                 "toStep"
               ]
             },
-            "description": "THE OUTBOUND LEG RENAME (LOCKED, owner 2026-10-09), legacy key <-> new key. Wave 1 (now): every service treats both spellings as ONE identity on input while storing and serving the legacy one (this service serves `legs[]` / `stepTransitions[].legKey` unchanged). Wave 2 migrates stored rows and serves the new key. A consumer joining a key read from campaign-service or billing to a name or a leg from here matches both spellings through this list."
+            "description": "THE OUTBOUND LEG RENAME (LOCKED, owner 2026-10-09), legacy key <-> new key. Wave 1: every service treats both spellings as ONE identity on input. Wave 2 (now, this service): every stored outbound row carries the new key and every response serves it wherever the leg is an outbound channel's (`stepTransitions[].legKey` of an outbound channel, with `from` = Lead found; `legs[]` lists the two outbound legs beside the funnel entry legs they feed; sales-path combination/campaign keys, workflow-projection `?leg=` echoes, assignments, campaign rows). A funnel's own entry leg (`funnels[]`, a leg read with no channel) and every non-outbound channel keep `start_to_*`; the legacy spelling is still accepted on every input. A consumer joining a key read from campaign-service or billing to a name or a leg from here matches both spellings through this list."
           }
         },
         "required": [

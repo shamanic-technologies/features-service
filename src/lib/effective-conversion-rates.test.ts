@@ -308,7 +308,9 @@ describe("each arrow is named in brand-service's own step wording", () => {
 
 describe("every leg between two steps of the PUBLIC catalogue joins the served legs by the catalogue's own identity", () => {
   // The public catalogue (/public/channels `legs`) is what every dashboard surface names legs with.
-  const catalogue = funnelLegCatalogue().filter((l) => l.fromStep !== null);
+  // Every REACTIVE leg (one out of a step a lead reached by engaging). The outbound legs out of Lead found
+  // are proactive entry legs (wave 2): they carry no conversion rate, like the funnel entry legs they feed.
+  const catalogue = funnelLegCatalogue().filter((l) => l.reactive);
   const EMPTY: BrandStepMeasurement = { contactedRecipients: 0, evidence: ALL_STEP_EVIDENCE, reached: [] };
 
   it("a brand with no statement and no measurement still gets a non-null rate on every catalogue leg, joinable by legKey AND by catalogue labels", () => {

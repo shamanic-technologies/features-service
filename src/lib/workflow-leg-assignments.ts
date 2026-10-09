@@ -24,7 +24,8 @@
  * answer. Reads and writes FAIL LOUD: the assignment decides what may run, so a swallowed read would
  * report "nothing is assigned" — i.e. exclude every workflow — on a database blip.
  */
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
+import { OUTBOUND_LEG_KEY_CORRESPONDENCE, servedLegKeyOf, storedLegKeyOf } from "./funnel-legs.js";
 import { db } from "../db/index.js";
 import { workflowLegAssignmentChanges, workflowLegAssignments } from "../db/schema.js";
 
@@ -76,11 +77,21 @@ function toRow(r: typeof workflowLegAssignments.$inferSelect): LegAssignmentRow 
   };
 }
 
+/** The stored spellings a leg named for `featureSlug` (or for no channel) can be under. */
+function storedSpellingsOf(featureSlug: string | undefined, legKey: string): string[] {
+  const computed = storedLegKeyOf(legKey);
+  if (featureSlug) return [servedLegKeyOf(featureSlug, computed)];
+  const outbound = OUTBOUND_LEG_KEY_CORRESPONDENCE.find((c) => c.legacyLegKey === computed);
+  return outbound ? [computed, outbound.legKey] : [computed];
+}
+
 /** Every assignment, optionally narrowed to a channel and/or a leg, in a stable order. */
 export async function listLegAssignments(filter: { featureSlug?: string; legKey?: string } = {}): Promise<LegAssignmentRow[]> {
   const conds = [];
   if (filter.featureSlug) conds.push(eq(workflowLegAssignments.featureSlug, filter.featureSlug));
-  if (filter.legKey) conds.push(eq(workflowLegAssignments.legKey, filter.legKey));
+  // Rows are stored in the served spelling (outbound leg rename, wave 2): a leg named without a channel
+  // matches both an outbound channel's `lead_found_to_*` row and any other channel's `start_to_*` one.
+  if (filter.legKey) conds.push(inArray(workflowLegAssignments.legKey, storedSpellingsOf(filter.featureSlug, filter.legKey)));
   const rows = await db
     .select()
     .from(workflowLegAssignments)
@@ -111,7 +122,7 @@ export async function listLegAssignmentChanges(key: {
     .where(
       and(
         eq(workflowLegAssignmentChanges.featureSlug, key.featureSlug),
-        eq(workflowLegAssignmentChanges.legKey, key.legKey),
+        eq(workflowLegAssignmentChanges.legKey, servedLegKeyOf(key.featureSlug, storedLegKeyOf(key.legKey))),
         eq(workflowLegAssignmentChanges.workflowDynastySlug, key.workflowDynastySlug),
       ),
     )
@@ -138,6 +149,8 @@ export async function setLegAssignment(input: {
   decidedBy: string;
   note?: string | null;
 }): Promise<{ assignment: LegAssignmentRow; previousState: LegAssignmentStoredState | null }> {
+  // Stored in the served spelling (outbound leg rename, wave 2): either spelling writes the same row.
+  input = { ...input, legKey: servedLegKeyOf(input.featureSlug, storedLegKeyOf(input.legKey)) };
   const decidedAt = new Date();
   return db.transaction(async (tx) => {
     const key = and(
