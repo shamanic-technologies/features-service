@@ -8,6 +8,7 @@
  * `workflow-projection` ladder (`?leg=&offerId=&pricing=net`) campaign-service ranks on, invoked
  * in-process: the best MATURE workflow's mature price (`priceFromLadder`), never a learning one's flash.
  */
+import { offerLifetimeRevenue } from "../lib/offer-lifetime-revenue.js";
 import { StoreNotComputedError } from "../lib/await-warm-store.js";
 import { Router } from "express";
 import { eq } from "drizzle-orm";
@@ -137,6 +138,9 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
       return res.status(404).json({ error: `offer ${offerId} is not an offer of brand ${brandId}`, reason: "offer_not_found" });
     }
 
+    // Every offer has a lifetime revenue: its own, else the fleet median (owner 2026-10-09).
+    const lifetimeRevenue = await offerLifetimeRevenue(offer.lifetimeRevenueUsd);
+
     const [rates, rows] = await Promise.all([
       getBrandEffectiveRates(brandId, req.orgId, legEconomics),
       db.query.features.findMany({ where: eq(features.status, "active") }),
@@ -185,7 +189,7 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
       stated: salesPath.stated,
       statedAt: salesPath.statedAt,
       legKeys: salesPath.legKeys,
-      lifetimeRevenueUsd: offer.lifetimeRevenueUsd,
+      lifetimeRevenueUsd: lifetimeRevenue.usd,
       rates: rates.legs,
       channels,
       prices,
@@ -200,7 +204,10 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
     // Then the source campaigns beside them (named from the same pool, in catalogue order), and `fedBy` on the outreach ones.
     const sourcing = await sourcingP;
     const sourceNames = await salesPathNamesFor(sourceCampaignNameKeys(sourceCampaignOrigins(sourcing)));
-    return res.json(withSourceCampaigns(withRois, buildSourceCampaigns({ sourcing, names: sourceNames }), sourceOverlapOf(sourcing)));
+    return res.json({
+      ...withSourceCampaigns(withRois, buildSourceCampaigns({ sourcing, names: sourceNames }), sourceOverlapOf(sourcing)),
+      lifetimeRevenueSource: lifetimeRevenue.source,
+    });
   } catch (error) {
     if (error instanceof OfferSalesPathNotFoundError) {
       return res.status(404).json({ error: error.message, reason: "offer_not_found" });

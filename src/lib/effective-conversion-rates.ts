@@ -93,7 +93,7 @@ import {
   type StepEvidence,
 } from "./funnel-steps.js";
 import { SALES_FUNNELS, SALES_FUNNEL_KEYS, salesFunnelIndex, type SalesFunnelKey } from "./sales-funnels.js";
-import { fetchBrandLegEconomics, type BrandLegEconomics, type BrandLegRate } from "./brand-leg-economics-client.js";
+import { fetchBrandLegEconomics, type BrandLegEconomics, type BrandLegRate, type BrandOfferEconomics } from "./brand-leg-economics-client.js";
 import { CHANNEL_STEP_KEYS, FUNNEL_STEP_LABEL_TO_KEY, type ChannelStepKey } from "./acquisition-channels.js";
 import { FUNNEL_LEGS, funnelLeg, legKeyBetween } from "./funnel-legs.js";
 import { defaultLegRatePct } from "./default-leg-rates.js";
@@ -593,11 +593,39 @@ export function buildFleetArrowMedians(perBrand: readonly (readonly BrandLegRate
   return out;
 }
 
+/**
+ * PURE: the fleet median of the lifetime revenues OFFERS stated — one data point per offer (a stated value
+ * is > 0 by brand-service's contract; anything else is not a statement). Null when no offer states one.
+ * The default every unstated offer is priced on (owner 2026-10-09: "We always need a LTR, it can never
+ * be 0. Fill it by default with our median value"). Never an average, never per brand.
+ */
+export function buildFleetLifetimeRevenueMedian(perBrandOffers: readonly (readonly BrandOfferEconomics[])[]): {
+  usd: number | null;
+  offerCount: number;
+} {
+  const seen = new Set<string>();
+  const values: number[] = [];
+  for (const offers of perBrandOffers) {
+    for (const offer of offers) {
+      if (seen.has(offer.offerId)) continue;
+      seen.add(offer.offerId);
+      const v = offer.lifetimeRevenueUsd;
+      if (typeof v === "number" && Number.isFinite(v) && v > 0) values.push(v);
+    }
+  }
+  return { usd: median(values), offerCount: values.length };
+}
+
+interface FleetStatedMedians {
+  arrows: FleetArrowMedians;
+  lifetimeRevenue: { usd: number | null; offerCount: number };
+}
+
 const FLEET_MEDIAN_FRESH_MS = 15 * 60_000;
 const FLEET_MEDIAN_STALE_MS = 6 * 60 * 60_000;
 const FLEET_BRAND_CONCURRENCY = 8;
-let fleetMedianCache: { value: FleetArrowMedians; at: number } | null = null;
-let fleetMedianInFlight: Promise<FleetArrowMedians> | null = null;
+let fleetMedianCache: { value: FleetStatedMedians; at: number } | null = null;
+let fleetMedianInFlight: Promise<FleetStatedMedians> | null = null;
 
 /** Test seam. */
 export function __resetFleetArrowMediansCache(): void {
@@ -605,7 +633,7 @@ export function __resetFleetArrowMediansCache(): void {
   fleetMedianInFlight = null;
 }
 
-async function computeFleetArrowMedians(): Promise<FleetArrowMedians> {
+async function computeFleetStatedMedians(): Promise<FleetStatedMedians> {
   // Every brand any feature has leads for, under its first claiming org — the same enumeration the
   // showcase uses, so a brand running any channel is in the population.
   const allSlugs = (await db.query.features.findMany()).map((f) => f.slug);
@@ -615,14 +643,15 @@ async function computeFleetArrowMedians(): Promise<FleetArrowMedians> {
 
   // One brand's unreadable statements cost the median ONE data point, loudly — never the whole fleet.
   const perBrand = await mapWithConcurrency([...orgByBrand.entries()], FLEET_BRAND_CONCURRENCY, ([brandId, orgId]) =>
-    fetchBrandLegEconomics(brandId, orgId)
-      .then((e) => e.legRates)
-      .catch((err) => {
-        console.warn(`[features-service] fleet conversion-rate median: brand ${brandId} (org ${orgId}) leg rates unreadable, contributes no data point: ${(err as Error).message}`);
-        return [] as BrandLegRate[];
-      }),
+    fetchBrandLegEconomics(brandId, orgId).catch((err) => {
+      console.warn(`[features-service] fleet stated median: brand ${brandId} (org ${orgId}) statements unreadable, contributes no data point: ${(err as Error).message}`);
+      return { legRates: [], offers: [] } as BrandLegEconomics;
+    }),
   );
-  return buildFleetArrowMedians(perBrand);
+  return {
+    arrows: buildFleetArrowMedians(perBrand.map((e) => e.legRates)),
+    lifetimeRevenue: buildFleetLifetimeRevenueMedian(perBrand.map((e) => e.offers)),
+  };
 }
 
 /**
@@ -638,11 +667,11 @@ export function warmFleetArrowMediansOnBoot(): void {
   getFleetArrowMedians().catch((err) => console.error(`[features-service] fleet conversion-rate median boot warm failed: ${(err as Error).message}`));
 }
 
-export async function getFleetArrowMedians(): Promise<FleetArrowMedians> {
+async function getFleetStatedMedians(): Promise<FleetStatedMedians> {
   const now = Date.now();
-  const refresh = (): Promise<FleetArrowMedians> => {
+  const refresh = (): Promise<FleetStatedMedians> => {
     if (!fleetMedianInFlight) {
-      fleetMedianInFlight = computeFleetArrowMedians()
+      fleetMedianInFlight = computeFleetStatedMedians()
         .then((value) => {
           fleetMedianCache = { value, at: Date.now() };
           return value;
@@ -655,10 +684,19 @@ export async function getFleetArrowMedians(): Promise<FleetArrowMedians> {
   };
   if (fleetMedianCache && now - fleetMedianCache.at < FLEET_MEDIAN_FRESH_MS) return fleetMedianCache.value;
   if (fleetMedianCache && now - fleetMedianCache.at < FLEET_MEDIAN_STALE_MS) {
-    refresh().catch((err) => console.error(`[features-service] fleet conversion-rate median refresh failed (serving the last value): ${(err as Error).message}`));
+    refresh().catch((err) => console.error(`[features-service] fleet stated median refresh failed (serving the last value): ${(err as Error).message}`));
     return fleetMedianCache.value;
   }
   return refresh();
+}
+
+export async function getFleetArrowMedians(): Promise<FleetArrowMedians> {
+  return (await getFleetStatedMedians()).arrows;
+}
+
+/** The fleet median of the offers' stated lifetime revenues (same sweep, same cell as the leg medians). */
+export async function getFleetLifetimeRevenueMedian(): Promise<{ usd: number | null; offerCount: number }> {
+  return (await getFleetStatedMedians()).lifetimeRevenue;
 }
 
 // ── Resolution ────────────────────────────────────────────────────────────────────────────────
