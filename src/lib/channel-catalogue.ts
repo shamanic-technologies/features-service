@@ -23,6 +23,7 @@ import {
   CHANNEL_STEPS,
   CHANNEL_STEP_KEYS,
   matchChannelStepKey,
+  legRunStatementOf,
   isProactiveTransition,
   producibleStepsOf,
   sellableFunnelsFor,
@@ -36,6 +37,7 @@ import {
 } from "./acquisition-channels.js";
 import { legKeyFor, FUNNEL_LEGS, OUTBOUND_LEG_KEY_CORRESPONDENCE, type FunnelLegDef } from "./funnel-legs.js";
 import { channelTypeOf, type ChannelType } from "./channel-types.js";
+import { assertLegTriggersDeclared, LEG_MODES, type LegMode } from "./channel-triggers.js";
 import { sourcingOriginBySlug } from "./sourcing-origins.js";
 import { SALES_PATH_CATALOGUE_CHANNEL_SLUGS } from "./sales-path-cost-benchmarks.js";
 import { MANAGED_CHANNEL_SLUGS, channelLegMinimumMonthlyCents } from "./channel-leg-minimums.js";
@@ -83,8 +85,12 @@ export interface ChannelStepTransitionWire {
    *  the same pool as the sales path names and never equal to one (`lib/sales-path-names.ts`). Set on every
    *  leg of a `salesPathEligible` channel; null otherwise, and on the PURE build's output. */
   campaignName: string | null;
-  /** True when the leg moves a lead out of a step it already reached (`from` set); false on an entry leg. */
+  /** True on a REACTIVE leg (runs on demand, see `triggerId`); false on a PROACTIVE one. */
   reactive: boolean;
+  /** `proactive` (its own budget, checked every tick, no trigger) or `reactive` (runs on demand). */
+  mode: LegMode;
+  /** The trigger that asks for a reactive leg (`/public/channels` `triggers[].id`); null on a proactive leg. */
+  triggerId: string | null;
   /** The minimum monthly budget a customer commits to this (channel × leg) item, whole cents (`lib/channel-leg-minimums.ts`). */
   minimumMonthlyBudgetCents: number;
 }
@@ -183,7 +189,21 @@ function parseTransition(slug: string, raw: unknown): ChannelStepTransition {
   // A leg that ends where it starts moves nobody anywhere.
   if (from === to) throw new MalformedAcquisitionChannelError(slug, `a step transition goes from ${to} to itself`);
 
-  return { from, to };
+  // How it runs (`lib/channel-triggers.ts`): stated, else the rule of a blob predating the statement.
+  if (entry.mode !== undefined && !(LEG_MODES as readonly unknown[]).includes(entry.mode)) {
+    throw new MalformedAcquisitionChannelError(slug, `unknown leg mode ${JSON.stringify(entry.mode)}`);
+  }
+  if (entry.triggerId !== undefined && entry.triggerId !== null && typeof entry.triggerId !== "string") {
+    throw new MalformedAcquisitionChannelError(slug, "a step transition's triggerId is neither a trigger id nor null");
+  }
+  const statement = legRunStatementOf({
+    from,
+    to,
+    ...(entry.mode !== undefined ? { mode: entry.mode as LegMode, triggerId: (entry.triggerId as string | null | undefined) ?? null } : {}),
+  });
+  if (!statement) throw new MalformedAcquisitionChannelError(slug, `the leg ${from}>${to} states no mode and its step has no declared trigger`);
+
+  return { from, to, ...statement };
 }
 
 /** Read one row's stored blob into a channel, or throw. `null` means "not an acquisition channel" and
@@ -295,8 +315,10 @@ export function buildChannelCatalogue(
         to: stepWire(t.to),
         crewName: null,
         campaignName: null,
-        reactive: !isProactiveTransition(t),
-        minimumMonthlyBudgetCents: channelLegMinimumMonthlyCents({ slug: row.slug, operatedBy: channel.operatedBy }, !isProactiveTransition(t)),
+        reactive: t.mode === "reactive",
+        mode: t.mode!,
+        triggerId: t.triggerId ?? null,
+        minimumMonthlyBudgetCents: channelLegMinimumMonthlyCents({ slug: row.slug, operatedBy: channel.operatedBy }, t.mode === "reactive"),
       })),
       producibleSteps: producibleStepsOf(channel.stepTransitions).map(stepWire),
       salesFunnels: sellableFunnelsFor(channel.stepTransitions).map((key) => ({
@@ -307,6 +329,9 @@ export function buildChannelCatalogue(
       })),
     });
   }
+  assertLegTriggersDeclared(
+    channels.flatMap((c) => c.stepTransitions.map((t) => ({ slug: c.slug, legKey: t.legKey, managed: c.managed, mode: t.mode, triggerId: t.triggerId }))),
+  );
   return channels.sort((a, b) => a.displayOrder - b.displayOrder || a.slug.localeCompare(b.slug));
 }
 

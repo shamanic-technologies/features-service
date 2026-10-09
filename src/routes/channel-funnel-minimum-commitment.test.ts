@@ -2,7 +2,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
 
 vi.mock("../db/index.js", () => ({
-  db: { query: { features: { findFirst: vi.fn(), findMany: vi.fn() } } },
+  db: {
+    query: { features: { findFirst: vi.fn(), findMany: vi.fn() } },
+    // `/public/channels` `triggers[]` reads `channel_trigger_types`.
+    select: () => ({ from: () => ({ orderBy: async () => [] }) }),
+  },
   sql: {},
 }));
 vi.mock("../lib/env.js", () => ({ validateRequiredEnv: vi.fn(), REQUIRED_ENV: [] }));
@@ -375,6 +379,6 @@ describe("GET /public/channel-outcome-economics (wave C4)", () => {
       );
     }
     const cat = await request(app).get("/public/channels");
-    expect(Object.keys(cat.body).sort()).toEqual(["channels", "funnels", "legKeyCorrespondence", "legs", "steps"]);
+    expect(Object.keys(cat.body).sort()).toEqual(["channels", "funnels", "legKeyCorrespondence", "legs", "steps", "triggers"]);
   });
 });
