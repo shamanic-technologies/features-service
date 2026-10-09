@@ -20,6 +20,7 @@
  */
 import { fetchWithRetry } from "./fetch-retry.js";
 import { funnelLeg, matchFunnelLegKey } from "./funnel-legs.js";
+import { isProactiveTransition, type ChannelStepKey } from "./acquisition-channels.js";
 
 const BRAND_BATCH_CAP = 100;
 
@@ -147,7 +148,7 @@ export function splitRunningCents(
         `[features-service] spendable budget ${pair.orgId}/${pair.brandId}: running ceiling of ${cents} cents names no published leg (${rawLeg ?? "none"}) — counted PROACTIVE`,
       );
       proactiveCents += cents;
-    } else if (leg.fromStep === null) {
+    } else if (isProactiveTransition({ from: (leg.fromStep?.key as ChannelStepKey | undefined) ?? null })) {
       proactiveCents += cents;
     } else {
       reactiveCents += cents;

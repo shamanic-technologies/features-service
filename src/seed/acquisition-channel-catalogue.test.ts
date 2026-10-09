@@ -323,6 +323,9 @@ describe("what each channel can produce, and what follows from it", () => {
     for (const channel of channels) {
       const sold = new Set(channel.salesFunnels);
       for (const produced of producibleStepsOf(channel.acquisitionChannel!.stepTransitions)) {
+        // `lead_found` is the SOURCING hand-off (2026-10-09): what it leads into is the outbound channels'
+        // legs out of it (wave 2 keys them `lead_found_to_*`), never a funnel's entry.
+        if (produced === "lead_found") continue;
         const started = funnels.filter((f) => f.entryStep.key === produced);
         expect(started.length, `${channel.slug} produces ${produced}, which starts no funnel`).toBeGreaterThan(0);
         expect(
@@ -588,7 +591,8 @@ describe("the catalogue reads as a price list a buyer can act on", () => {
     for (const channel of channels) {
       expect(channel.name.length, channel.slug).toBeGreaterThan(0);
       expect(channel.description.length, channel.slug).toBeGreaterThan(0);
-      expect((channel.inputs as unknown[]).length, channel.slug).toBeGreaterThan(0);
+      // A SOURCING channel asks nothing on its own: what it searches for is the audience it serves from.
+      if (channel.channelType !== "sourcing") expect((channel.inputs as unknown[]).length, channel.slug).toBeGreaterThan(0);
     }
   });
 

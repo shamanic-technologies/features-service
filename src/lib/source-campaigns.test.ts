@@ -1,3 +1,4 @@
+import { FUNNEL_LEG_KEYS } from "./funnel-legs.js";
 import { readFileSync } from "node:fs";
 import { describe, it, expect, vi } from "vitest";
 
@@ -75,9 +76,11 @@ describe("source campaign identity (the contract campaign-service and billing ke
     });
   });
 
-  it("lead_found is the hand-off, never a funnel step (no existing leg or funnel moves)", () => {
+  it("lead_found is a normal step of the vocabulary (2026-10-09), same copy, and no funnel leg moves", () => {
     expect(LEAD_FOUND_STEP.key).toBe("lead_found");
-    expect((CHANNEL_STEP_KEYS as readonly string[]).includes("lead_found")).toBe(false);
+    expect(LEAD_FOUND_STEP.label).toBe("Lead found");
+    expect((CHANNEL_STEP_KEYS as readonly string[]).includes("lead_found")).toBe(true);
+    expect(FUNNEL_LEG_KEYS.some((k) => k.includes("lead_found"))).toBe(false);
   });
 
   it("every live origin is a source campaign; a retired one only when the offer used it", () => {

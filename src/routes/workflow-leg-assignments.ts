@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { apiKeyOnly } from "../middleware/auth.js";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
-import { funnelLeg } from "../lib/funnel-legs.js";
+import { funnelLeg, matchChannelLegKey, storedLegKeyOf } from "../lib/funnel-legs.js";
 import { fetchPublicWorkflows } from "../lib/public-stats-clients.js";
 import {
   isLegAssignmentState,
@@ -21,7 +21,8 @@ const router = Router();
 
 router.get("/internal/workflow-leg-assignments", apiKeyOnly, async (req, res) => {
   const featureSlug = typeof req.query.featureSlug === "string" ? req.query.featureSlug : undefined;
-  const legKey = typeof req.query.legKey === "string" ? req.query.legKey : undefined;
+  // Both spellings of an outbound leg name the same stored rows (wave 1, `lib/funnel-legs.ts`).
+  const legKey = typeof req.query.legKey === "string" ? storedLegKeyOf(req.query.legKey) : undefined;
   try {
     res.json({ assignments: await listLegAssignments({ featureSlug, legKey }) });
   } catch (err) {
@@ -37,7 +38,7 @@ router.get("/internal/workflow-leg-assignments/history", apiKeyOnly, async (req,
     return;
   }
   try {
-    res.json({ changes: await listLegAssignmentChanges({ featureSlug, legKey, workflowDynastySlug }) });
+    res.json({ changes: await listLegAssignmentChanges({ featureSlug, legKey: storedLegKeyOf(legKey), workflowDynastySlug }) });
   } catch (err) {
     console.error("[features-service] workflow-leg-assignments history failed:", err);
     res.status(500).json({ error: "Internal server error" });
@@ -50,13 +51,16 @@ router.get("/internal/workflow-leg-assignments/history", apiKeyOnly, async (req,
  */
 router.put("/internal/workflow-leg-assignments", apiKeyOnly, async (req, res) => {
   const body = (req.body ?? {}) as Record<string, unknown>;
-  const { featureSlug, legKey, workflowDynastySlug, state, decidedBy, note } = body;
+  const { featureSlug, legKey: rawLegKey, workflowDynastySlug, state, decidedBy, note } = body;
   if (typeof featureSlug !== "string" || featureSlug === "") {
     res.status(400).json({ error: "featureSlug (the acquisition channel) is required", reason: "feature_slug_required" });
     return;
   }
-  if (typeof legKey !== "string" || !funnelLeg(legKey)) {
-    res.status(400).json({ error: `legKey must be a leg of the funnel catalogue, got ${JSON.stringify(legKey)}`, reason: "leg_unrecognised" });
+  // The stored spelling: the new outbound spelling (`lead_found_to_*`) of an outbound channel writes the
+  // same row as the legacy one (wave 1); an exact catalogue key is unchanged.
+  const legKey = typeof rawLegKey === "string" ? matchChannelLegKey(featureSlug, rawLegKey) : null;
+  if (typeof rawLegKey !== "string" || !legKey || !funnelLeg(legKey)) {
+    res.status(400).json({ error: `legKey must be a leg of the funnel catalogue, got ${JSON.stringify(rawLegKey)}`, reason: "leg_unrecognised" });
     return;
   }
   if (typeof workflowDynastySlug !== "string" || workflowDynastySlug === "") {

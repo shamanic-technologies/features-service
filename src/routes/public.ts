@@ -96,7 +96,8 @@ import { matureBasisOf, type CostEconomics } from "../lib/cost-economics.js";
 import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel } from "./revenue.js";
 import { distinctChannelFunnels } from "./offer-economics.js";
 import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
-import { FUNNEL_LEG_KEYS, matchFunnelLegKey } from "../lib/funnel-legs.js";
+import { FUNNEL_LEG_KEYS, matchChannelLegKey, matchFunnelLegKey, OUTBOUND_LEG_KEY_CORRESPONDENCE } from "../lib/funnel-legs.js";
+import { withChannelType } from "../lib/channel-types.js";
 import { fetchFleetLegCampaigns, type FleetLegCampaign } from "../lib/fleet-leg-campaigns.js";
 import { computeWorkflowRevenueGroups } from "../lib/workflow-revenue.js";
 import { buildRoiHistory, type RoiHistory } from "../lib/roi-history.js";
@@ -424,7 +425,7 @@ router.get("/public/features", async (_req, res) => {
       where: eq(features.status, "active"),
     });
 
-    res.json({ features: results });
+    res.json({ features: results.map(withChannelType) });
   } catch (error) {
     console.error("[features-service] Public list features error:", error);
     res.status(500).json({ error: "Internal server error" });
@@ -3319,6 +3320,10 @@ interface ChannelCataloguePayload {
    *  funnel's. It spans EVERY step of every funnel, not only the ones a funnel can start from — a channel
    *  that performs an internal leg names the step it moves a lead OUT of, and that step is never one. */
   steps: ReturnType<typeof channelStepCatalogue>;
+  /** The LOCKED outbound leg rename (`lib/funnel-legs.ts`): legacy key <-> new key, outbound channels only.
+   *  Wave 1 serves the legacy keys everywhere; a consumer joining a key from campaign-service or billing
+   *  matches both spellings through this list. */
+  legKeyCorrespondence: typeof OUTBOUND_LEG_KEY_CORRESPONDENCE;
 }
 
 export async function handlePublicChannels(res: import("express").Response): Promise<void> {
@@ -3332,6 +3337,7 @@ export async function handlePublicChannels(res: import("express").Response): Pro
       funnels: salesFunnelCatalogue(),
       legs: funnelLegCatalogue(),
       steps: channelStepCatalogue(),
+      legKeyCorrespondence: OUTBOUND_LEG_KEY_CORRESPONDENCE,
     }),
   });
   res.json(payload);
@@ -4311,7 +4317,7 @@ export async function handleWorkflowReturnHistory(
   // `?leg=` restricts BOTH legs of the curve to the campaigns performing that leg. Empty = not named.
   let legKey: string | undefined;
   if (legParam != null && legParam !== "") {
-    const matched = matchFunnelLegKey(legParam);
+    const matched = matchChannelLegKey(featureSlug, legParam);
     if (!matched) {
       res.status(400).json({ error: `leg must be one of: ${FUNNEL_LEG_KEYS.join(", ")}`, reason: "leg_unrecognised" });
       return;
@@ -4475,7 +4481,7 @@ router.get("/public/stats/workflow-cost-per-outcome", async (req, res) => {
 // the gateway does not proxy it. Computes in whichever process answers.
 router.get("/internal/fleet-leg-maturity", apiKeyOnly, async (req, res) => {
   const featureSlug = req.query.featureSlug as string | undefined;
-  const legKey = matchFunnelLegKey(String(req.query.legKey ?? ""));
+  const legKey = matchChannelLegKey(featureSlug, String(req.query.legKey ?? ""));
   if (!featureSlug || !legKey) {
     res.status(400).json({ error: "featureSlug and a known legKey are required" });
     return;
@@ -4756,7 +4762,7 @@ export function __resetLegWorkflowRanking(): void {
 
 router.get("/public/stats/leg-workflow-ranking", async (req, res) => {
   const featureSlug = req.query.featureSlug as string | undefined;
-  const legKey = matchFunnelLegKey(String(req.query.leg ?? ""));
+  const legKey = matchChannelLegKey(featureSlug, String(req.query.leg ?? ""));
   if (!featureSlug || !legKey) {
     res.status(400).json({ error: `featureSlug and leg are required; leg must be one of: ${FUNNEL_LEG_KEYS.join(", ")}` });
     return;

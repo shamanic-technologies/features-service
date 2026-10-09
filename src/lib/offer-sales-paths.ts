@@ -86,7 +86,7 @@
  * priced as free. Pure: every input is read by the route.
  */
 import type { ChannelStepDefWire } from "./channel-catalogue.js";
-import { CHANNEL_STEPS } from "./acquisition-channels.js";
+import { CHANNEL_STEPS, isProactiveTransition, type ChannelStepKey } from "./acquisition-channels.js";
 import { funnelLeg } from "./funnel-legs.js";
 import { legPairKey, type EffectiveArrowRate } from "./effective-conversion-rates.js";
 import {
@@ -677,8 +677,10 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
         return {
           legKey: d.legKey,
           ticked: true,
-          reactive: d.fromStep !== null,
-          minimumMonthlyBudgetCents: picked ? channelLegMinimumMonthlyCents(picked, d.fromStep !== null) : null,
+          reactive: !isProactiveTransition({ from: (d.fromStep?.key as ChannelStepKey | undefined) ?? null }),
+          minimumMonthlyBudgetCents: picked
+            ? channelLegMinimumMonthlyCents(picked, !isProactiveTransition({ from: (d.fromStep?.key as ChannelStepKey | undefined) ?? null }))
+            : null,
           fromStep: d.fromStep ? stepWire(d.fromStep.key) : null,
           toStep: stepWire(d.toStep.key),
           conversionRatePct: arrow?.effectiveRatePct ?? null,

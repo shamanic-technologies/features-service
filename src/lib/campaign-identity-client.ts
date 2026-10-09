@@ -9,6 +9,7 @@
  * grouping (the customer sees one line per stopped row again for as long as the outage lasts) and
  * never a number — the opposite of the fail-loud rule's target, which is a fabricated figure.
  */
+import { isOutboundLegKeySpelling, storedLegKeyOf } from "./funnel-legs.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import {
   buildCampaignFamilies,
@@ -64,7 +65,12 @@ export async function fetchBrandCampaignRows(
   if (!Array.isArray(data.campaigns)) {
     throw new Error("[features-service] campaign-service /campaigns returned no campaigns array");
   }
-  return data.campaigns;
+  // Both spellings of an outbound leg are ONE identity (wave 1, `lib/funnel-legs.ts`): a row campaign-service
+  // re-keys `lead_found_to_*` reads as the `start_to_*` this service stores and serves. Any other row is
+  // returned as is.
+  return data.campaigns.map((row) =>
+    typeof row.legKey === "string" && isOutboundLegKeySpelling(row.legKey) ? { ...row, legKey: storedLegKeyOf(row.legKey) } : row,
+  );
 }
 
 export async function fetchCampaignFamilies(

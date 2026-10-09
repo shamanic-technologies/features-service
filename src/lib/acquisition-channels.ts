@@ -108,6 +108,8 @@ export const CHANNEL_STEP_KEYS = [
   "form_submitted",
   "purchase",
   "paid_client",
+  // Appended (2026-10-09), so every key published before it keeps its position on `steps[]`.
+  "lead_found",
 ] as const;
 
 export type ChannelStepKey = (typeof CHANNEL_STEP_KEYS)[number];
@@ -128,6 +130,18 @@ export interface ChannelStepDef {
 }
 
 export const CHANNEL_STEPS: Record<ChannelStepKey, ChannelStepDef> = {
+  lead_found: {
+    key: "lead_found",
+    // A NORMAL step (owner 2026-10-09): every channel and every leg is the same kind of thing. A sourcing
+    // channel (Apollo Cold Filters, LinkedIn Engagement Signals, your CRM contacts) performs Start -> Lead
+    // found; an outbound channel performs Lead found -> Positive reply / Website visit once its legs are
+    // re-keyed (wave 2, `lib/leg-key-correspondence.ts`). No declared funnel names it yet, so no funnel
+    // leg starts or ends on it and nothing on a funnel read moves. Same copy `/public/sourcing-origins`
+    // has served as `leadFoundStep` since 2026-10-07.
+    label: "Lead found",
+    description: "A person who matches your target is found, with a verified email.",
+    shortDescription: "Finds the right people",
+  },
   conversation: {
     key: "conversation",
     // "Positive reply" — brand-service's OWN wording for this rung, and the word every funnel that
@@ -274,6 +288,18 @@ export const producesFromNothing = (...steps: readonly ChannelStepKey[]): readon
   steps.map((to) => ({ from: null, to }));
 
 /**
+ * PROACTIVE vs REACTIVE, the ONE rule (owner 2026-10-09: "proactive is never 'from nothing'"). A leg is
+ * PROACTIVE when it goes and finds or contacts people on its own budget: a leg from nothing (sourcing,
+ * ads, an outbound leg while it is still keyed `start_to_*`) or a leg out of `lead_found` (an outbound
+ * leg once re-keyed `lead_found_to_*`, wave 2: a found lead is not an engagement to react to). It is
+ * REACTIVE when it works a lead who already engaged (a reply, a visit, a meeting). Every decision that
+ * used to read `from === null` reads this, so wave 2's re-keying moves no verdict.
+ */
+export function isProactiveTransition(t: { from: ChannelStepKey | null }): boolean {
+  return t.from === null || t.from === "lead_found";
+}
+
+/**
  * The steps a channel produces FROM NOTHING — derived from its transitions, never stated beside them.
  * This is what the catalogue published as `producibleSteps` before a channel could state an internal
  * leg, and it keeps that name on the wire because it keeps that exact meaning.
@@ -307,6 +333,8 @@ export const FUNNEL_STEP_LABEL_TO_KEY: Record<string, ChannelStepKey> = {
   "Form filled": "form_submitted",
   "Lead form submitted": "form_submitted",
   "Paid client": "paid_client",
+  // No deployed funnel names it yet; a funnel that does resolves here (2026-10-09).
+  "Lead found": "lead_found",
 };
 
 /** Thrown when a deployed funnel contains a step this module cannot name. FAIL LOUD: a silently-dropped
@@ -381,8 +409,11 @@ export interface ChannelCommercialTerms {
   maxDaysToFirstProduction: number;
 }
 
-/** How a channel does its work. Descriptive grouping for the catalogue; nothing prices off it. */
-export const CHANNEL_FAMILIES = ["outbound_one_to_one", "paid_reach", "earned", "conversion"] as const;
+/** How a channel does its work. Descriptive grouping for the catalogue; nothing prices off it.
+ *  SUPERSEDED by `channelType` (`lib/channel-types.ts`, owner 2026-10-09: one typology). Still stated on
+ *  the stored blob and served as `family` for its current readers; `sourcing` added for the sourcing
+ *  channels. Do not key anything new on it. */
+export const CHANNEL_FAMILIES = ["outbound_one_to_one", "paid_reach", "earned", "conversion", "sourcing"] as const;
 export type ChannelFamily = (typeof CHANNEL_FAMILIES)[number];
 
 /**

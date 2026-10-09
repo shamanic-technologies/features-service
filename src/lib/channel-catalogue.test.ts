@@ -37,7 +37,7 @@ const CLOSER = {
 };
 
 /** Fixture slugs are invented, so captions are stubbed; the real map is guarded in channel-short-descriptions.test.ts. */
-const build = (rows: CatalogueFeatureRow[]) => buildChannelCatalogue(rows, () => "A caption.");
+const build = (rows: CatalogueFeatureRow[]) => buildChannelCatalogue(rows, () => "A caption.", () => "outbound");
 
 const row = (over: Partial<CatalogueFeatureRow> = {}): CatalogueFeatureRow => ({
   slug: "cold-email",
