@@ -25580,6 +25580,19 @@
                   "type": "boolean",
                   "description": "True when the leg works a lead who already ENGAGED (a reply, a visit, a meeting): its work starts when a lead arrives. False on a PROACTIVE leg, one that goes and finds or contacts people: from nothing (sourcing, ads, today's outbound `start_to_*`) or from `lead_found` (the outbound `lead_found_to_*` legs of wave 2)."
                 },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "proactive",
+                    "reactive"
+                  ],
+                  "description": "How the leg runs (owner 2026-10-09). `proactive`: it goes and finds or contacts people on its own budget; campaign-service checks it every tick against its budget and billing; it has NO trigger. `reactive`: it runs ON DEMAND when its `triggerId` asks for it (a campaign asking for a lead, a positive reply received, a meeting booked...)."
+                },
+                "triggerId": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The trigger that asks for a REACTIVE leg: an id of `triggers[]` on this payload (label, icon, the service that fires it). Null exactly on a proactive leg. A leg of a channel we run (`managed`) always names a trigger a service fires today (`coded`)."
+                },
                 "minimumMonthlyBudgetCents": {
                   "type": "integer",
                   "description": "The MINIMUM monthly budget a customer commits to this (channel × leg) item, whole cents (owner 2026-10-04). Channel we run, entry (proactive) leg: 9900 ($99/month, cold email on start_to_website_visit and start_to_conversation). Channel we run, reactive leg (ai-meeting-booking, ai-instant-call): 0, its spend follows the leads earlier legs deliver so no monthly floor can be enforced. Channel we do not run yet (managed false): 150000 ($1,500/month) on every leg. Customer-operated (your-team-*): 0. Billing enforces it and the dashboard renders it; nobody hard-codes the figures."
@@ -25592,6 +25605,8 @@
                 "crewName",
                 "campaignName",
                 "reactive",
+                "mode",
+                "triggerId",
                 "minimumMonthlyBudgetCents"
               ]
             },
@@ -25850,6 +25865,53 @@
             },
             "description": "The step vocabulary itself, published so a consumer never hardcodes it to join a channel's legs against a funnel's. It spans EVERY step of every funnel, not only the ones a funnel can start from — a channel performing an internal leg names the step it moves a lead OUT of, and that step is never one a funnel starts at. `lead_found` ('Lead found') is a normal step since 2026-10-09: the sourcing channels move a lead from nothing to it; no declared funnel names it yet."
           },
+          "triggers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "The trigger's id, what `stepTransitions[].triggerId` names. Stable."
+                },
+                "label": {
+                  "type": "string",
+                  "description": "Customer-facing name, e.g. 'Positive reply', 'Lead requested'."
+                },
+                "description": {
+                  "type": "string",
+                  "description": "One line a customer reads under the label."
+                },
+                "icon": {
+                  "type": "string",
+                  "description": "Icon token (Phosphor name), like a channel's `icon`."
+                },
+                "fromStep": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The step a lead reached that fires it (`steps[].key`); null when it is not a step (a campaign asking for a lead)."
+                },
+                "firedBy": {
+                  "type": "string",
+                  "description": "The service that detects the event and asks campaign-service to run the campaign."
+                },
+                "coded": {
+                  "type": "boolean",
+                  "description": "A service fires it today. False = declared, not fired yet: no channel we run names it."
+                }
+              },
+              "required": [
+                "id",
+                "label",
+                "description",
+                "icon",
+                "fromStep",
+                "firedBy",
+                "coded"
+              ]
+            },
+            "description": "THE TRIGGER TYPES (owner 2026-10-09): every kind of event that runs a REACTIVE leg, one row each in this service's database, the same for every client. The events themselves (one per occurrence, fired or skipped, per org x brand x offer) and each campaign's On/Off live in campaign-service."
+          },
           "legKeyCorrespondence": {
             "type": "array",
             "items": {
@@ -25960,6 +26022,7 @@
           "funnels",
           "legs",
           "steps",
+          "triggers",
           "legKeyCorrespondence"
         ]
       },

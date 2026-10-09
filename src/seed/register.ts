@@ -1,6 +1,8 @@
 import { eq, notInArray } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { features } from "../db/schema.js";
+import { channelTriggerTypes, features } from "../db/schema.js";
+import { CHANNEL_TRIGGER_TYPES } from "../lib/channel-triggers.js";
+import { buildChannelCatalogue } from "../lib/channel-catalogue.js";
 import { SEED_FEATURES } from "./features.js";
 
 /**
@@ -78,4 +80,29 @@ export async function registerSeedFeatures(): Promise<void> {
   }
 
   console.log(`[features-service] Seed registration complete (${SEED_FEATURES.length} features, ${deleted.length} pruned)`);
+}
+
+/**
+ * Upsert every trigger type (`lib/channel-triggers.ts`) and delete any row the code no longer declares, so
+ * the table is exactly the list. Then build the channel catalogue once: a leg naming an unknown trigger, or a
+ * channel we run on a trigger nothing fires, THROWS here, on the boot path, and the deploy rolls back rather
+ * than publishing a leg that waits forever (`assertLegTriggersDeclared`). Tiny N (7 rows), safe before listen.
+ */
+export async function registerChannelTriggerTypes(): Promise<void> {
+  buildChannelCatalogue(SEED_FEATURES.filter((f) => f.status === "active"));
+  await db.delete(channelTriggerTypes).where(notInArray(channelTriggerTypes.id, CHANNEL_TRIGGER_TYPES.map((t) => t.id)));
+  for (const [displayOrder, t] of CHANNEL_TRIGGER_TYPES.entries()) {
+    const row = {
+      label: t.label,
+      description: t.description,
+      icon: t.icon,
+      fromStep: t.fromStep,
+      firedBy: t.firedBy,
+      coded: t.coded,
+      displayOrder,
+      updatedAt: new Date(),
+    };
+    await db.insert(channelTriggerTypes).values({ id: t.id, ...row }).onConflictDoUpdate({ target: channelTriggerTypes.id, set: row });
+  }
+  console.log(`[features-service] Trigger types registered (${CHANNEL_TRIGGER_TYPES.length})`);
 }

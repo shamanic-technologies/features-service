@@ -1,8 +1,8 @@
 import { Router } from "express";
 import { awaitWarmStore } from "../lib/await-warm-store.js";
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { features, type Feature } from "../db/schema.js";
+import { channelTriggerTypes, features, type Feature } from "../db/schema.js";
 import { STATS_REGISTRY } from "../lib/stats-registry.js";
 import {
   fetchPublicWorkflows,
@@ -3324,6 +3324,24 @@ interface ChannelCataloguePayload {
    *  Wave 2: an outbound channel's leg is stored and served in the new key (`lib/served-leg-keys.ts`); a
    *  consumer joining a key from campaign-service or billing still matches both spellings through this list. */
   legKeyCorrespondence: typeof OUTBOUND_LEG_KEY_CORRESPONDENCE;
+  /** The TRIGGER TYPES (`lib/channel-triggers.ts`), read from `channel_trigger_types`: what a reactive leg's
+   *  `triggerId` names, with its label and icon. */
+  triggers: PublicChannelTrigger[];
+}
+
+interface PublicChannelTrigger {
+  id: string;
+  label: string;
+  description: string;
+  icon: string;
+  fromStep: string | null;
+  firedBy: string;
+  coded: boolean;
+}
+
+async function loadChannelTriggers(): Promise<PublicChannelTrigger[]> {
+  const rows = await db.select().from(channelTriggerTypes).orderBy(asc(channelTriggerTypes.displayOrder));
+  return rows.map(({ id, label, description, icon, fromStep, firedBy, coded }) => ({ id, label, description, icon, fromStep, firedBy, coded }));
 }
 
 export async function handlePublicChannels(res: import("express").Response): Promise<void> {
@@ -3338,6 +3356,7 @@ export async function handlePublicChannels(res: import("express").Response): Pro
       legs: funnelLegCatalogue(),
       steps: channelStepCatalogue(),
       legKeyCorrespondence: OUTBOUND_LEG_KEY_CORRESPONDENCE,
+      triggers: await loadChannelTriggers(),
     }),
   });
   res.json(payload);

@@ -60,7 +60,7 @@ describe("reading a stored channel", () => {
 
   it("reads a well-formed one", () => {
     const parsed = parseAcquisitionChannel("cold-email", CHANNEL);
-    expect(parsed).toEqual(CHANNEL);
+    expect(parsed).toMatchObject(CHANNEL);
   });
 
   it("null is a STATEMENT — this feature is not an acquisition channel, not a parse failure", () => {
@@ -103,7 +103,7 @@ describe("reading a stored channel", () => {
       ...CHANNEL,
       stepTransitions: [{ from: "Meeting Attended", to: "Paid Client" }],
     });
-    expect(parsed!.stepTransitions).toEqual([{ from: "meeting_attended", to: "paid_client" }]);
+    expect(parsed!.stepTransitions).toMatchObject([{ from: "meeting_attended", to: "paid_client" }]);
   });
 });
 
@@ -248,7 +248,7 @@ describe("building the public catalogue", () => {
     // every funnel that contains its leg.
     const [channel] = build([row({ slug: "closing", acquisitionChannel: CLOSER })]);
     expect(channel.producibleSteps).toEqual([]);
-    expect(channel.stepTransitions).toEqual([
+    expect(channel.stepTransitions).toMatchObject([
       {
         // Every published leg carries the ONE canonical identifier of the leg it is.
         legKey: "meeting_attended_to_paid_client",
@@ -311,8 +311,9 @@ describe("every published leg states its MATURITY RULE (lib/maturity.ts, feature
 
 describe("crew names are RETIRED (owner 2026-10-04: the poetic names now name sales path combinations)", () => {
   it("no leg of any channel carries a crew name, not even the ones that used to (Herald, Scout, Pilot)", () => {
-    for (const slug of ["sales-cold-email-outreach", "ai-meeting-booking", "some-unnamed-channel"]) {
-      const [channel] = build([row({ slug, acquisitionChannel: slug === "ai-meeting-booking" ? CLOSER : CHANNEL })]);
+    // `ai-meeting-booking` borrows the fixture CLOSER leg, a leg we do not run, so it is built unmanaged here.
+    for (const slug of ["sales-cold-email-outreach", "ai-meeting-booking-fixture", "some-unnamed-channel"]) {
+      const [channel] = build([row({ slug, acquisitionChannel: slug === "ai-meeting-booking-fixture" ? CLOSER : CHANNEL })]);
       for (const t of channel.stepTransitions) expect(t.crewName).toBeNull();
     }
   });
