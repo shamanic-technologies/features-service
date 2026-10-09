@@ -20,6 +20,7 @@ import { getBrandEffectiveRates } from "../lib/effective-conversion-rates.js";
 import { SalesFunnelsUnavailableError } from "../lib/sales-funnels-client.js";
 import { fetchOfferChannels, fetchOfferSalesPath, fetchOfferSelectedSalesPaths, OfferSalesPathNotFoundError } from "../lib/offer-sales-path-client.js";
 import { storedCombinationKeyOf, storedLegKeyOf } from "../lib/funnel-legs.js";
+import { legacyOutboundLegKeysIn, noteLegacyOutboundLegKeys } from "../lib/legacy-leg-key-arrivals.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
 import {
   acceptedCatalogueChannels,
@@ -119,6 +120,12 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
     // ticked legs and selected combinations are read in the spelling this service stores and serves, so a
     // `lead_found_to_*` one finds the same chain, row, name and selection as its `start_to_*` twin. A
     // legacy spelling reads byte-identical (resolution is the identity on it).
+    // A selected combination brand-service still states in the LEGACY outbound spelling is logged (switch-off measurement).
+    noteLegacyOutboundLegKeys(legacyOutboundLegKeysIn(statedSelectedPaths?.combinationKeys ?? []), {
+      source: "brand-service",
+      route: `GET /internal/offers/${offerId}/selected-sales-paths`,
+      caller: { service: "brand-service", orgId: req.orgId },
+    });
     const salesPath = statedSalesPath.legKeys ? { ...statedSalesPath, legKeys: statedSalesPath.legKeys.map(storedLegKeyOf) } : statedSalesPath;
     const selectedPaths = statedSelectedPaths?.combinationKeys
       ? { ...statedSelectedPaths, combinationKeys: statedSelectedPaths.combinationKeys.map(storedCombinationKeyOf) }

@@ -34,6 +34,7 @@ import transferBrandRoutes from "./routes/transfer-brand.js";
 import orgPeriodRecapRoutes from "./routes/org-period-recap.js";
 import { registerChannelTriggerTypes, registerSeedFeatures } from "./seed/register.js";
 import { servedLegKeysMiddleware } from "./lib/served-leg-keys.js";
+import { legacyLegKeyArrivalsMiddleware } from "./lib/legacy-leg-key-arrivals.js";
 import { migrateOutboundLegKeys } from "./lib/outbound-leg-key-migration.js";
 import { startViewKeeper } from "./lib/view-keeper.js";
 import {
@@ -66,6 +67,8 @@ app.use(express.json());
 app.use(captureRequestReplay);
 // Outbound leg rename, wave 2: every JSON body goes out with outbound legs in their served spelling.
 app.use(servedLegKeysMiddleware);
+// Every legacy outbound leg key a caller still sends is logged (`legacy-outbound-leg-key`): the switch-off waits on 7 days of zero.
+app.use(legacyLegKeyArrivalsMiddleware);
 
 // Routes
 app.use(healthRoutes);
