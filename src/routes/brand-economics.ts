@@ -70,6 +70,7 @@
  * and `?groupBy=` (the only grouping here is the channel breakdown, which is unconditional). Both stay
  * available per channel on the existing reads, which are untouched and still mean what they mean.
  */
+import { fetchPerOfferPricing, perOfferFingerprint } from "../lib/per-offer-pricing.js";
 import { Router } from "express";
 import { computeRevenueWindow, parseWindowDays, WINDOW_DAYS_ERROR } from "../lib/revenue-window.js";
 import { FUNNEL_RETIRED_BODY, namesRetiredFunnel } from "../lib/retired-funnel-param.js";
@@ -285,7 +286,12 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
     // replaying the pre-write answer.
     const [declaredFunnels] = funnel ? await Promise.all([speculative.declared, speculative.held]) : [[]];
     const brandPriced: FunnelPricedEconomics | undefined = funnel ? priceOnDeclaredFunnel(declaredFunnels) : undefined;
+    // A brand whose campaigns sell SEVERAL offers prices each person on their own campaign's offer
+    // (owner 2026-10-09); read only when the brand-wide terms price nothing.
+    const perOffer =
+      brandPriced && brandPriced.economics.economics === null ? await fetchPerOfferPricing(brandId, headers.orgId) : null;
     const econ = brandPriced ? pricedFingerprint(brandPriced) : undefined;
+    const offersEcon = perOfferFingerprint(perOffer);
     const decl = funnel ? declaredFunnels.map((f) => f.funnelKey).sort().join("+") || "none" : undefined;
 
     const payload = await servedCachedJson({
@@ -298,6 +304,8 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
         decl,
         pricing,
         econ,
+        // Absent unless the brand's campaigns sell several offers → every other brand's key is unmoved.
+        offersEcon,
         // Two different answers ⇒ two cells, which also keeps the stored snapshot narrow for the
         // read every browser makes.
         leads: leadDetail,
@@ -328,6 +336,7 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
           undefined,
           // Today's spend counts the brand's own campaign-less work too (what the credit was charged).
           true,
+          perOffer,
         );
         const window = windowDays
           ? await computeRevenueWindow({
@@ -370,6 +379,10 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
             undefined,
             undefined,
             causes,
+            undefined,
+            undefined,
+            false,
+            perOffer,
           );
           return {
             featureSlug: channel.featureSlug,
