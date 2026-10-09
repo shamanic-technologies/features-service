@@ -467,7 +467,7 @@ async function serveCell(
 ): Promise<CachedBody> {
   // Server role, inside a request: every compute runs in the refresher process, never on the serving
   // event loop (lib/view-refresher.ts). Outside a request (boot warms, fleet sweeps) it runs here.
-  const delegation = refresherDelegation(view, family);
+  const delegation = refresherDelegation(view, family, orgId);
   const compute: () => Promise<Computed> =
     delegation
       ? async () => {

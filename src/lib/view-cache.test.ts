@@ -539,6 +539,23 @@ describe("servedCached with the view refresher", () => {
     }
   });
 
+  it("a cell of ANOTHER org than the request's (a public cross-org read) computes in-process, never replays the outer URL", async () => {
+    try {
+      const compute = vi.fn().mockResolvedValue({ pipeline: 4 });
+      const body = await inRequest(() => servedCached({ view: "brand-revenue", scopeKey: "k-other", orgId: "other-org", compute }));
+      expect(body).toEqual({ pipeline: 4 });
+      expect(compute).toHaveBeenCalledTimes(1);
+      expect(fetchCalls).toHaveLength(0);
+      // A request with no org at all (a /public/* read) is the same case.
+      storedRow = undefined;
+      const anon = vi.fn().mockResolvedValue({ pipeline: 5 });
+      expect(await inRequest(() => servedCached({ view: "brand-revenue", scopeKey: "k-anon", orgId: "o2", compute: anon }), { "x-org-id": "" })).toEqual({ pipeline: 5 });
+      expect(fetchCalls).toHaveLength(0);
+    } finally {
+      restore();
+    }
+  });
+
   it("a caller outside any request (boot warm, fleet sweep) computes in-process", async () => {
     try {
       const compute = vi.fn().mockResolvedValue({ pipeline: 3 });
