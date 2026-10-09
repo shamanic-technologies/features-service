@@ -25994,6 +25994,31 @@
                 "coded": {
                   "type": "boolean",
                   "description": "A service fires it today. False = declared, not fired yet: no channel we run names it."
+                },
+                "origin": {
+                  "type": "string",
+                  "enum": [
+                    "code",
+                    "declared"
+                  ],
+                  "description": "`code`: stated in this service's code. `declared`: created at run time through POST /internal/declarations/trigger-types (never coded until a service runs a generic detector for its `kind`)."
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "event",
+                    "delay",
+                    "poll"
+                  ],
+                  "description": "`event`: a service detects something on a lead. `delay`: N days after a step, if nothing happened. `poll`: a new item appeared at a source."
+                },
+                "params": {
+                  "type": "object",
+                  "nullable": true,
+                  "additionalProperties": {
+                    "nullable": true
+                  },
+                  "description": "The kind's parameters: `delay` `{afterStep, days}`, `poll` `{source, everyMinutes}`; null on an event."
                 }
               },
               "required": [
@@ -26003,7 +26028,10 @@
                 "icon",
                 "fromStep",
                 "firedBy",
-                "coded"
+                "coded",
+                "origin",
+                "kind",
+                "params"
               ]
             },
             "description": "THE TRIGGER TYPES (owner 2026-10-09): every kind of event that runs a REACTIVE leg, one row each in this service's database, the same for every client. The events themselves (one per occurrence, fired or skipped, per org x brand x offer) and each campaign's On/Off live in campaign-service."
@@ -26426,6 +26454,235 @@
           "mature"
         ],
         "description": "THE SAME MEDIAN OVER MATURE SCOPES ONLY, on both versions (features-service#1196). The legacy median fields beside it are taken over the SAME mature population and equal `mature` (since 2026-09-28)."
+      },
+      "DeclaredChannelView": {
+        "type": "object",
+        "properties": {
+          "slug": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "declared": {
+            "type": "boolean",
+            "description": "Created at run time (false = stated in code, read-only here)."
+          },
+          "published": {
+            "type": "boolean",
+            "description": "Always true on a channel stated in code."
+          },
+          "visibleToClients": {
+            "type": "boolean",
+            "description": "Served on /public/channels now (published, performing at least one published leg)."
+          },
+          "declaration": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "slug": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "shortDescription": {
+                "type": "string"
+              },
+              "icon": {
+                "type": "string"
+              },
+              "channelType": {
+                "type": "string",
+                "enum": [
+                  "sourcing",
+                  "outbound",
+                  "conversion",
+                  "paid",
+                  "earned",
+                  "pr"
+                ]
+              },
+              "operatedBy": {
+                "type": "string",
+                "enum": [
+                  "platform",
+                  "customer"
+                ]
+              },
+              "performedBy": {
+                "type": "string",
+                "enum": [
+                  "software",
+                  "person"
+                ]
+              },
+              "dailyOperatingCostCents": {
+                "type": "integer"
+              },
+              "minimumCommitmentDays": {
+                "type": "integer"
+              },
+              "maxDaysToFirstProduction": {
+                "type": "integer"
+              },
+              "displayOrder": {
+                "type": "integer"
+              },
+              "published": {
+                "type": "boolean"
+              },
+              "publishedAt": {
+                "type": "string",
+                "nullable": true
+              },
+              "publishedBy": {
+                "type": "string",
+                "nullable": true
+              },
+              "createdBy": {
+                "type": "string"
+              },
+              "requestedByOrgId": {
+                "type": "string",
+                "nullable": true
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "updatedAt": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "slug",
+              "name",
+              "description",
+              "shortDescription",
+              "icon",
+              "channelType",
+              "operatedBy",
+              "performedBy",
+              "dailyOperatingCostCents",
+              "minimumCommitmentDays",
+              "maxDaysToFirstProduction",
+              "displayOrder",
+              "published",
+              "publishedAt",
+              "publishedBy",
+              "createdBy",
+              "requestedByOrgId",
+              "createdAt",
+              "updatedAt"
+            ],
+            "description": "The stored declaration; null on a channel stated in code."
+          },
+          "channel": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PublicAcquisitionChannel"
+              },
+              {
+                "nullable": true,
+                "description": "The catalogue entry built from EVERY leg (published or not), exactly as /public/channels will serve it once published; null while a declared channel performs no leg."
+              }
+            ]
+          },
+          "legs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "legKey": {
+                  "type": "string"
+                },
+                "fromStep": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "`steps[].key`; null = from nothing."
+                },
+                "toStep": {
+                  "type": "string"
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "proactive",
+                    "reactive"
+                  ]
+                },
+                "triggerId": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "declared": {
+                  "type": "boolean",
+                  "description": "Created at run time (false = stated in code)."
+                },
+                "published": {
+                  "type": "boolean"
+                },
+                "visibleToClients": {
+                  "type": "boolean",
+                  "description": "Served to clients now: the leg AND its channel are published."
+                },
+                "pricing": {
+                  "type": "object",
+                  "properties": {
+                    "source": {
+                      "type": "string",
+                      "enum": [
+                        "workflow_ladder",
+                        "benchmark",
+                        "customer_time",
+                        "learning"
+                      ],
+                      "description": "`workflow_ladder`: a channel we run, priced per offer on its workflows (/offers/:id/sales-paths). `benchmark`: a sourced market figure. `customer_time`: the customer's own team, no cost to us. `learning`: nothing prices it yet; null until its campaigns record cost and outcomes (runs cost rows, per-campaign stats, exactly like any leg)."
+                    },
+                    "costPerOutcomeUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Only a benchmark carries a figure here; never a made-up number."
+                    },
+                    "benchmarkSource": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "source",
+                    "costPerOutcomeUsd",
+                    "benchmarkSource"
+                  ]
+                }
+              },
+              "required": [
+                "legKey",
+                "fromStep",
+                "toStep",
+                "mode",
+                "triggerId",
+                "declared",
+                "published",
+                "visibleToClients",
+                "pricing"
+              ]
+            }
+          }
+        },
+        "required": [
+          "slug",
+          "name",
+          "declared",
+          "published",
+          "visibleToClients",
+          "declaration",
+          "channel",
+          "legs"
+        ]
       }
     },
     "parameters": {}
@@ -42955,6 +43212,1738 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/internal/declarations/channels": {
+      "get": {
+        "summary": "List every channel, stated in code or declared (internal, api-key)",
+        "description": "RUN-TIME DECLARATIONS (owner 2026-10-09: a declaration is DATA, never a PR). A staff caller (the dashboard Copilot through the gateway) creates channels, legs on a channel, trigger types and sales paths. Service-key only: a channel is shared by every client, so a write changes what every org can buy; `requestedByOrgId` records which client asked (provenance, never scope). A declared channel or leg is INVISIBLE to every client read (`/public/channels`, `/offers/:id/sales-paths`) until staff publishes it (`published: true` on the channel AND the leg). Every write states `createdBy` / `updatedBy`. Errors answer `{error, reason}` with a named `reason`.",
+        "tags": [
+          "Internal"
+        ],
+        "responses": {
+          "200": {
+            "description": "Every channel, published or not.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "channels": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/DeclaredChannelView"
+                      }
+                    }
+                  },
+                  "required": [
+                    "channels"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Declare a channel (internal, api-key)",
+        "description": "RUN-TIME DECLARATIONS (owner 2026-10-09: a declaration is DATA, never a PR). A staff caller (the dashboard Copilot through the gateway) creates channels, legs on a channel, trigger types and sales paths. Service-key only: a channel is shared by every client, so a write changes what every org can buy; `requestedByOrgId` records which client asked (provenance, never scope). A declared channel or leg is INVISIBLE to every client read (`/public/channels`, `/offers/:id/sales-paths`) until staff publishes it (`published: true` on the channel AND the leg). Every write states `createdBy` / `updatedBy`. Errors answer `{error, reason}` with a named `reason`. Created UNPUBLISHED with no leg; add legs, then publish.",
+        "tags": [
+          "Internal"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "slug": {
+                    "type": "string",
+                    "description": "kebab-case, unique across every feature and channel."
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "shortDescription": {
+                    "type": "string",
+                    "description": "The one-line card caption (<= 80 chars)."
+                  },
+                  "icon": {
+                    "type": "string",
+                    "description": "A Phosphor icon name."
+                  },
+                  "channelType": {
+                    "type": "string",
+                    "enum": [
+                      "sourcing",
+                      "outbound",
+                      "conversion",
+                      "paid",
+                      "earned",
+                      "pr"
+                    ]
+                  },
+                  "operatedBy": {
+                    "type": "string",
+                    "enum": [
+                      "platform",
+                      "customer"
+                    ]
+                  },
+                  "performedBy": {
+                    "type": "string",
+                    "enum": [
+                      "software",
+                      "person"
+                    ],
+                    "description": "A customer-operated channel is performed by a person."
+                  },
+                  "dailyOperatingCostCents": {
+                    "type": "integer",
+                    "description": "Whole cents >= 0; 0 on a customer-operated channel."
+                  },
+                  "minimumCommitmentDays": {
+                    "type": "integer",
+                    "description": ">= 1."
+                  },
+                  "maxDaysToFirstProduction": {
+                    "type": "integer",
+                    "description": ">= 0."
+                  },
+                  "createdBy": {
+                    "type": "string",
+                    "description": "The staff identity making the write."
+                  },
+                  "requestedByOrgId": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "The client org that asked for it (provenance only, never scope)."
+                  }
+                },
+                "required": [
+                  "slug",
+                  "name",
+                  "description",
+                  "shortDescription",
+                  "icon",
+                  "channelType",
+                  "operatedBy",
+                  "performedBy",
+                  "dailyOperatingCostCents",
+                  "minimumCommitmentDays",
+                  "maxDaysToFirstProduction",
+                  "createdBy"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The declared channel.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeclaredChannelView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A field is missing or invalid (`reason` names it, e.g. `slug_invalid`, `step_unrecognised`, `trigger_required`, `path_not_chained`)."
+          },
+          "401": {
+            "description": "Missing or wrong service key."
+          },
+          "409": {
+            "description": "`channel_exists` (slug taken by a feature or channel) or `channel_name_taken`."
+          }
+        }
+      }
+    },
+    "/internal/declarations/channels/{slug}": {
+      "get": {
+        "summary": "Get one channel (internal, api-key)",
+        "description": "RUN-TIME DECLARATIONS (owner 2026-10-09: a declaration is DATA, never a PR). A staff caller (the dashboard Copilot through the gateway) creates channels, legs on a channel, trigger types and sales paths. Service-key only: a channel is shared by every client, so a write changes what every org can buy; `requestedByOrgId` records which client asked (provenance, never scope). A declared channel or leg is INVISIBLE to every client read (`/public/channels`, `/offers/:id/sales-paths`) until staff publishes it (`published: true` on the channel AND the leg). Every write states `createdBy` / `updatedBy`. Errors answer `{error, reason}` with a named `reason`.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "slug",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The channel.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeclaredChannelView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`channel_not_found`."
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update or publish a declared channel (internal, api-key)",
+        "description": "RUN-TIME DECLARATIONS (owner 2026-10-09: a declaration is DATA, never a PR). A staff caller (the dashboard Copilot through the gateway) creates channels, legs on a channel, trigger types and sales paths. Service-key only: a channel is shared by every client, so a write changes what every org can buy; `requestedByOrgId` records which client asked (provenance, never scope). A declared channel or leg is INVISIBLE to every client read (`/public/channels`, `/offers/:id/sales-paths`) until staff publishes it (`published: true` on the channel AND the leg). Every write states `createdBy` / `updatedBy`. Errors answer `{error, reason}` with a named `reason`. slug, channelType, operatedBy and performedBy are its identity and never change.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "slug",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "shortDescription": {
+                    "type": "string"
+                  },
+                  "icon": {
+                    "type": "string"
+                  },
+                  "dailyOperatingCostCents": {
+                    "type": "integer"
+                  },
+                  "minimumCommitmentDays": {
+                    "type": "integer"
+                  },
+                  "maxDaysToFirstProduction": {
+                    "type": "integer"
+                  },
+                  "published": {
+                    "type": "boolean",
+                    "description": "true publishes it to every client; false withdraws it."
+                  },
+                  "updatedBy": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "updatedBy"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The channel after the write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeclaredChannelView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A field is missing or invalid (`reason` names it, e.g. `slug_invalid`, `step_unrecognised`, `trigger_required`, `path_not_chained`)."
+          },
+          "401": {
+            "description": "Missing or wrong service key."
+          },
+          "404": {
+            "description": "`channel_not_found`."
+          },
+          "409": {
+            "description": "`channel_coded` (stated in code, change it there) or `channel_name_taken`."
+          }
+        }
+      }
+    },
+    "/internal/declarations/legs": {
+      "get": {
+        "summary": "List every leg of every channel (internal, api-key)",
+        "description": "RUN-TIME DECLARATIONS (owner 2026-10-09: a declaration is DATA, never a PR). A staff caller (the dashboard Copilot through the gateway) creates channels, legs on a channel, trigger types and sales paths. Service-key only: a channel is shared by every client, so a write changes what every org can buy; `requestedByOrgId` records which client asked (provenance, never scope). A declared channel or leg is INVISIBLE to every client read (`/public/channels`, `/offers/:id/sales-paths`) until staff publishes it (`published: true` on the channel AND the leg). Every write states `createdBy` / `updatedBy`. Errors answer `{error, reason}` with a named `reason`.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "channelSlug",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Every leg, with its channel.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "legs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "legKey": {
+                            "type": "string"
+                          },
+                          "fromStep": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "`steps[].key`; null = from nothing."
+                          },
+                          "toStep": {
+                            "type": "string"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "proactive",
+                              "reactive"
+                            ]
+                          },
+                          "triggerId": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "declared": {
+                            "type": "boolean",
+                            "description": "Created at run time (false = stated in code)."
+                          },
+                          "published": {
+                            "type": "boolean"
+                          },
+                          "visibleToClients": {
+                            "type": "boolean",
+                            "description": "Served to clients now: the leg AND its channel are published."
+                          },
+                          "pricing": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "enum": [
+                                  "workflow_ladder",
+                                  "benchmark",
+                                  "customer_time",
+                                  "learning"
+                                ],
+                                "description": "`workflow_ladder`: a channel we run, priced per offer on its workflows (/offers/:id/sales-paths). `benchmark`: a sourced market figure. `customer_time`: the customer's own team, no cost to us. `learning`: nothing prices it yet; null until its campaigns record cost and outcomes (runs cost rows, per-campaign stats, exactly like any leg)."
+                              },
+                              "costPerOutcomeUsd": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Only a benchmark carries a figure here; never a made-up number."
+                              },
+                              "benchmarkSource": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "costPerOutcomeUsd",
+                              "benchmarkSource"
+                            ]
+                          },
+                          "channelSlug": {
+                            "type": "string"
+                          },
+                          "channelName": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "legKey",
+                          "fromStep",
+                          "toStep",
+                          "mode",
+                          "triggerId",
+                          "declared",
+                          "published",
+                          "visibleToClients",
+                          "pricing",
+                          "channelSlug",
+                          "channelName"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "legs"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/declarations/channels/{slug}/legs": {
+      "post": {
+        "summary": "Declare a leg on a channel (internal, api-key)",
+        "description": "RUN-TIME DECLARATIONS (owner 2026-10-09: a declaration is DATA, never a PR). A staff caller (the dashboard Copilot through the gateway) creates channels, legs on a channel, trigger types and sales paths. Service-key only: a channel is shared by every client, so a write changes what every org can buy; `requestedByOrgId` records which client asked (provenance, never scope). A declared channel or leg is INVISIBLE to every client read (`/public/channels`, `/offers/:id/sales-paths`) until staff publishes it (`published: true` on the channel AND the leg). Every write states `createdBy` / `updatedBy`. Errors answer `{error, reason}` with a named `reason`. Works on a declared channel or one stated in code. A proactive leg names no trigger; a reactive leg names ONE trigger that something FIRES today: a trigger nothing fires is refused with 409 `trigger_not_fired` (a leg on it would wait forever). Created UNPUBLISHED.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "slug",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "fromStep": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "`steps[].key` of /public/channels; null = from nothing. Required."
+                  },
+                  "toStep": {
+                    "type": "string"
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "proactive",
+                      "reactive"
+                    ]
+                  },
+                  "triggerId": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Required on a reactive leg; absent/null on a proactive one."
+                  },
+                  "createdBy": {
+                    "type": "string"
+                  },
+                  "requestedByOrgId": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "The client org that asked for it (provenance only, never scope)."
+                  }
+                },
+                "required": [
+                  "fromStep",
+                  "toStep",
+                  "mode",
+                  "createdBy"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The leg and its channel.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "leg": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "legKey": {
+                          "type": "string"
+                        },
+                        "fromStep": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "`steps[].key`; null = from nothing."
+                        },
+                        "toStep": {
+                          "type": "string"
+                        },
+                        "mode": {
+                          "type": "string",
+                          "enum": [
+                            "proactive",
+                            "reactive"
+                          ]
+                        },
+                        "triggerId": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "declared": {
+                          "type": "boolean",
+                          "description": "Created at run time (false = stated in code)."
+                        },
+                        "published": {
+                          "type": "boolean"
+                        },
+                        "visibleToClients": {
+                          "type": "boolean",
+                          "description": "Served to clients now: the leg AND its channel are published."
+                        },
+                        "pricing": {
+                          "type": "object",
+                          "properties": {
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "workflow_ladder",
+                                "benchmark",
+                                "customer_time",
+                                "learning"
+                              ],
+                              "description": "`workflow_ladder`: a channel we run, priced per offer on its workflows (/offers/:id/sales-paths). `benchmark`: a sourced market figure. `customer_time`: the customer's own team, no cost to us. `learning`: nothing prices it yet; null until its campaigns record cost and outcomes (runs cost rows, per-campaign stats, exactly like any leg)."
+                            },
+                            "costPerOutcomeUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "Only a benchmark carries a figure here; never a made-up number."
+                            },
+                            "benchmarkSource": {
+                              "type": "string",
+                              "nullable": true
+                            }
+                          },
+                          "required": [
+                            "source",
+                            "costPerOutcomeUsd",
+                            "benchmarkSource"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "legKey",
+                        "fromStep",
+                        "toStep",
+                        "mode",
+                        "triggerId",
+                        "declared",
+                        "published",
+                        "visibleToClients",
+                        "pricing"
+                      ]
+                    },
+                    "channel": {
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/DeclaredChannelView"
+                        },
+                        {
+                          "nullable": true
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "leg",
+                    "channel"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A field is missing or invalid (`reason` names it, e.g. `slug_invalid`, `step_unrecognised`, `trigger_required`, `path_not_chained`)."
+          },
+          "401": {
+            "description": "Missing or wrong service key."
+          },
+          "404": {
+            "description": "`channel_not_found` or `trigger_not_found`."
+          },
+          "409": {
+            "description": "`leg_exists` or `trigger_not_fired`."
+          }
+        }
+      }
+    },
+    "/internal/declarations/channels/{slug}/legs/{legKey}": {
+      "patch": {
+        "summary": "Update or publish a declared leg (internal, api-key)",
+        "description": "RUN-TIME DECLARATIONS (owner 2026-10-09: a declaration is DATA, never a PR). A staff caller (the dashboard Copilot through the gateway) creates channels, legs on a channel, trigger types and sales paths. Service-key only: a channel is shared by every client, so a write changes what every org can buy; `requestedByOrgId` records which client asked (provenance, never scope). A declared channel or leg is INVISIBLE to every client read (`/public/channels`, `/offers/:id/sales-paths`) until staff publishes it (`published: true` on the channel AND the leg). Every write states `createdBy` / `updatedBy`. Errors answer `{error, reason}` with a named `reason`. Its steps are its identity and never change; a change of mode/trigger re-runs the trigger guarantee.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "slug",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "legKey",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "published": {
+                    "type": "boolean"
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "proactive",
+                      "reactive"
+                    ]
+                  },
+                  "triggerId": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "updatedBy": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "updatedBy"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The leg and its channel.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "leg": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "legKey": {
+                          "type": "string"
+                        },
+                        "fromStep": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "`steps[].key`; null = from nothing."
+                        },
+                        "toStep": {
+                          "type": "string"
+                        },
+                        "mode": {
+                          "type": "string",
+                          "enum": [
+                            "proactive",
+                            "reactive"
+                          ]
+                        },
+                        "triggerId": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "declared": {
+                          "type": "boolean",
+                          "description": "Created at run time (false = stated in code)."
+                        },
+                        "published": {
+                          "type": "boolean"
+                        },
+                        "visibleToClients": {
+                          "type": "boolean",
+                          "description": "Served to clients now: the leg AND its channel are published."
+                        },
+                        "pricing": {
+                          "type": "object",
+                          "properties": {
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "workflow_ladder",
+                                "benchmark",
+                                "customer_time",
+                                "learning"
+                              ],
+                              "description": "`workflow_ladder`: a channel we run, priced per offer on its workflows (/offers/:id/sales-paths). `benchmark`: a sourced market figure. `customer_time`: the customer's own team, no cost to us. `learning`: nothing prices it yet; null until its campaigns record cost and outcomes (runs cost rows, per-campaign stats, exactly like any leg)."
+                            },
+                            "costPerOutcomeUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "Only a benchmark carries a figure here; never a made-up number."
+                            },
+                            "benchmarkSource": {
+                              "type": "string",
+                              "nullable": true
+                            }
+                          },
+                          "required": [
+                            "source",
+                            "costPerOutcomeUsd",
+                            "benchmarkSource"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "legKey",
+                        "fromStep",
+                        "toStep",
+                        "mode",
+                        "triggerId",
+                        "declared",
+                        "published",
+                        "visibleToClients",
+                        "pricing"
+                      ]
+                    },
+                    "channel": {
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/DeclaredChannelView"
+                        },
+                        {
+                          "nullable": true
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "leg",
+                    "channel"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A field is missing or invalid (`reason` names it, e.g. `slug_invalid`, `step_unrecognised`, `trigger_required`, `path_not_chained`)."
+          },
+          "401": {
+            "description": "Missing or wrong service key."
+          },
+          "404": {
+            "description": "`channel_not_found`, `leg_not_found` or `trigger_not_found`."
+          },
+          "409": {
+            "description": "`leg_coded` (stated in code) or `trigger_not_fired`."
+          }
+        }
+      }
+    },
+    "/internal/declarations/trigger-types": {
+      "get": {
+        "summary": "List every trigger type (internal, api-key)",
+        "description": "RUN-TIME DECLARATIONS (owner 2026-10-09: a declaration is DATA, never a PR). A staff caller (the dashboard Copilot through the gateway) creates channels, legs on a channel, trigger types and sales paths. Service-key only: a channel is shared by every client, so a write changes what every org can buy; `requestedByOrgId` records which client asked (provenance, never scope). A declared channel or leg is INVISIBLE to every client read (`/public/channels`, `/offers/:id/sales-paths`) until staff publishes it (`published: true` on the channel AND the leg). Every write states `createdBy` / `updatedBy`. Errors answer `{error, reason}` with a named `reason`.",
+        "tags": [
+          "Internal"
+        ],
+        "responses": {
+          "200": {
+            "description": "Coded and declared.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "triggerTypes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "icon": {
+                            "type": "string"
+                          },
+                          "fromStep": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "firedBy": {
+                            "type": "string"
+                          },
+                          "coded": {
+                            "type": "boolean",
+                            "description": "A service fires it today. A leg may only name a coded trigger."
+                          },
+                          "origin": {
+                            "type": "string",
+                            "enum": [
+                              "code",
+                              "declared"
+                            ]
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "event",
+                              "delay",
+                              "poll"
+                            ]
+                          },
+                          "params": {
+                            "type": "object",
+                            "nullable": true,
+                            "additionalProperties": {
+                              "nullable": true
+                            }
+                          },
+                          "displayOrder": {
+                            "type": "integer"
+                          },
+                          "createdBy": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "requestedByOrgId": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "label",
+                          "description",
+                          "icon",
+                          "fromStep",
+                          "firedBy",
+                          "coded",
+                          "origin",
+                          "kind",
+                          "params",
+                          "displayOrder",
+                          "createdBy",
+                          "requestedByOrgId"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "triggerTypes"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Declare a trigger type (internal, api-key)",
+        "description": "RUN-TIME DECLARATIONS (owner 2026-10-09: a declaration is DATA, never a PR). A staff caller (the dashboard Copilot through the gateway) creates channels, legs on a channel, trigger types and sales paths. Service-key only: a channel is shared by every client, so a write changes what every org can buy; `requestedByOrgId` records which client asked (provenance, never scope). A declared channel or leg is INVISIBLE to every client read (`/public/channels`, `/offers/:id/sales-paths`) until staff publishes it (`published: true` on the channel AND the leg). Every write states `createdBy` / `updatedBy`. Errors answer `{error, reason}` with a named `reason`. A declared trigger is NEVER coded on its own say-so: it is `coded: false` (no leg may name it) until a service runs a generic detector for its kind. `delay` and `poll` detectors belong to campaign-service (it owns the trigger events and their due times); none runs yet.",
+        "tags": [
+          "Internal"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "description": "snake_case, unique."
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "icon": {
+                    "type": "string",
+                    "description": "A Phosphor icon name."
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "event",
+                      "delay",
+                      "poll"
+                    ]
+                  },
+                  "fromStep": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "`event` only: the step a lead reached that fires it."
+                  },
+                  "firedBy": {
+                    "type": "string",
+                    "description": "`event` only: the service that would detect it (default `not_built`)."
+                  },
+                  "params": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "nullable": true
+                    },
+                    "description": "`delay`: `{afterStep, days}` (days >= 1). `poll`: `{source, everyMinutes}` (everyMinutes >= 5)."
+                  },
+                  "createdBy": {
+                    "type": "string"
+                  },
+                  "requestedByOrgId": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "The client org that asked for it (provenance only, never scope)."
+                  }
+                },
+                "required": [
+                  "id",
+                  "label",
+                  "description",
+                  "icon",
+                  "kind",
+                  "createdBy"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The trigger type.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "icon": {
+                      "type": "string"
+                    },
+                    "fromStep": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "firedBy": {
+                      "type": "string"
+                    },
+                    "coded": {
+                      "type": "boolean",
+                      "description": "A service fires it today. A leg may only name a coded trigger."
+                    },
+                    "origin": {
+                      "type": "string",
+                      "enum": [
+                        "code",
+                        "declared"
+                      ]
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "event",
+                        "delay",
+                        "poll"
+                      ]
+                    },
+                    "params": {
+                      "type": "object",
+                      "nullable": true,
+                      "additionalProperties": {
+                        "nullable": true
+                      }
+                    },
+                    "displayOrder": {
+                      "type": "integer"
+                    },
+                    "createdBy": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "requestedByOrgId": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "label",
+                    "description",
+                    "icon",
+                    "fromStep",
+                    "firedBy",
+                    "coded",
+                    "origin",
+                    "kind",
+                    "params",
+                    "displayOrder",
+                    "createdBy",
+                    "requestedByOrgId"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A field is missing or invalid (`reason` names it, e.g. `slug_invalid`, `step_unrecognised`, `trigger_required`, `path_not_chained`)."
+          },
+          "401": {
+            "description": "Missing or wrong service key."
+          },
+          "409": {
+            "description": "`trigger_exists` or `trigger_exists_for_step`."
+          }
+        }
+      }
+    },
+    "/internal/declarations/trigger-types/{id}": {
+      "get": {
+        "summary": "Get one trigger type (internal, api-key)",
+        "description": "RUN-TIME DECLARATIONS (owner 2026-10-09: a declaration is DATA, never a PR). A staff caller (the dashboard Copilot through the gateway) creates channels, legs on a channel, trigger types and sales paths. Service-key only: a channel is shared by every client, so a write changes what every org can buy; `requestedByOrgId` records which client asked (provenance, never scope). A declared channel or leg is INVISIBLE to every client read (`/public/channels`, `/offers/:id/sales-paths`) until staff publishes it (`published: true` on the channel AND the leg). Every write states `createdBy` / `updatedBy`. Errors answer `{error, reason}` with a named `reason`.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The trigger type.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "icon": {
+                      "type": "string"
+                    },
+                    "fromStep": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "firedBy": {
+                      "type": "string"
+                    },
+                    "coded": {
+                      "type": "boolean",
+                      "description": "A service fires it today. A leg may only name a coded trigger."
+                    },
+                    "origin": {
+                      "type": "string",
+                      "enum": [
+                        "code",
+                        "declared"
+                      ]
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "event",
+                        "delay",
+                        "poll"
+                      ]
+                    },
+                    "params": {
+                      "type": "object",
+                      "nullable": true,
+                      "additionalProperties": {
+                        "nullable": true
+                      }
+                    },
+                    "displayOrder": {
+                      "type": "integer"
+                    },
+                    "createdBy": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "requestedByOrgId": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "label",
+                    "description",
+                    "icon",
+                    "fromStep",
+                    "firedBy",
+                    "coded",
+                    "origin",
+                    "kind",
+                    "params",
+                    "displayOrder",
+                    "createdBy",
+                    "requestedByOrgId"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`trigger_not_found`."
+          }
+        }
+      },
+      "patch": {
+        "summary": "Reword a declared trigger type (internal, api-key)",
+        "description": "RUN-TIME DECLARATIONS (owner 2026-10-09: a declaration is DATA, never a PR). A staff caller (the dashboard Copilot through the gateway) creates channels, legs on a channel, trigger types and sales paths. Service-key only: a channel is shared by every client, so a write changes what every org can buy; `requestedByOrgId` records which client asked (provenance, never scope). A declared channel or leg is INVISIBLE to every client read (`/public/channels`, `/offers/:id/sales-paths`) until staff publishes it (`published: true` on the channel AND the leg). Every write states `createdBy` / `updatedBy`. Errors answer `{error, reason}` with a named `reason`. id, kind, params, fromStep and firedBy never change.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "icon": {
+                    "type": "string"
+                  },
+                  "updatedBy": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "updatedBy"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The trigger type.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "icon": {
+                      "type": "string"
+                    },
+                    "fromStep": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "firedBy": {
+                      "type": "string"
+                    },
+                    "coded": {
+                      "type": "boolean",
+                      "description": "A service fires it today. A leg may only name a coded trigger."
+                    },
+                    "origin": {
+                      "type": "string",
+                      "enum": [
+                        "code",
+                        "declared"
+                      ]
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "event",
+                        "delay",
+                        "poll"
+                      ]
+                    },
+                    "params": {
+                      "type": "object",
+                      "nullable": true,
+                      "additionalProperties": {
+                        "nullable": true
+                      }
+                    },
+                    "displayOrder": {
+                      "type": "integer"
+                    },
+                    "createdBy": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "requestedByOrgId": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "label",
+                    "description",
+                    "icon",
+                    "fromStep",
+                    "firedBy",
+                    "coded",
+                    "origin",
+                    "kind",
+                    "params",
+                    "displayOrder",
+                    "createdBy",
+                    "requestedByOrgId"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A field is missing or invalid (`reason` names it, e.g. `slug_invalid`, `step_unrecognised`, `trigger_required`, `path_not_chained`)."
+          },
+          "401": {
+            "description": "Missing or wrong service key."
+          },
+          "404": {
+            "description": "`trigger_not_found`."
+          },
+          "409": {
+            "description": "`trigger_coded` (stated in code)."
+          }
+        }
+      }
+    },
+    "/internal/declarations/sales-paths": {
+      "get": {
+        "summary": "List declared sales paths (internal, api-key)",
+        "description": "RUN-TIME DECLARATIONS (owner 2026-10-09: a declaration is DATA, never a PR). A staff caller (the dashboard Copilot through the gateway) creates channels, legs on a channel, trigger types and sales paths. Service-key only: a channel is shared by every client, so a write changes what every org can buy; `requestedByOrgId` records which client asked (provenance, never scope). A declared channel or leg is INVISIBLE to every client read (`/public/channels`, `/offers/:id/sales-paths`) until staff publishes it (`published: true` on the channel AND the leg). Every write states `createdBy` / `updatedBy`. Errors answer `{error, reason}` with a named `reason`.",
+        "tags": [
+          "Internal"
+        ],
+        "responses": {
+          "200": {
+            "description": "Every declared sales path.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "salesPaths": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "combinationKey": {
+                            "type": "string",
+                            "description": "The same identity (`combinationKeyOf`: legs `+`-joined, a platform channel's leg `@<slug>`) and the same NAME /offers/:id/sales-paths serves for these legs."
+                          },
+                          "name": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "visibleToClients": {
+                            "type": "boolean",
+                            "description": "Every leg is served to clients now."
+                          },
+                          "legs": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "channelSlug": {
+                                  "type": "string"
+                                },
+                                "legKey": {
+                                  "type": "string"
+                                },
+                                "channelName": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "fromStep": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "toStep": {
+                                  "type": "string"
+                                },
+                                "mode": {
+                                  "type": "string",
+                                  "enum": [
+                                    "proactive",
+                                    "reactive"
+                                  ]
+                                },
+                                "triggerId": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "visibleToClients": {
+                                  "type": "boolean"
+                                },
+                                "pricing": {
+                                  "type": "object",
+                                  "properties": {
+                                    "source": {
+                                      "type": "string",
+                                      "enum": [
+                                        "workflow_ladder",
+                                        "benchmark",
+                                        "customer_time",
+                                        "learning"
+                                      ],
+                                      "description": "`workflow_ladder`: a channel we run, priced per offer on its workflows (/offers/:id/sales-paths). `benchmark`: a sourced market figure. `customer_time`: the customer's own team, no cost to us. `learning`: nothing prices it yet; null until its campaigns record cost and outcomes (runs cost rows, per-campaign stats, exactly like any leg)."
+                                    },
+                                    "costPerOutcomeUsd": {
+                                      "type": "number",
+                                      "nullable": true,
+                                      "description": "Only a benchmark carries a figure here; never a made-up number."
+                                    },
+                                    "benchmarkSource": {
+                                      "type": "string",
+                                      "nullable": true
+                                    }
+                                  },
+                                  "required": [
+                                    "source",
+                                    "costPerOutcomeUsd",
+                                    "benchmarkSource"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "channelSlug",
+                                "legKey",
+                                "channelName",
+                                "visibleToClients"
+                              ]
+                            }
+                          },
+                          "createdBy": {
+                            "type": "string"
+                          },
+                          "requestedByOrgId": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "combinationKey",
+                          "name",
+                          "visibleToClients",
+                          "legs",
+                          "createdBy",
+                          "requestedByOrgId",
+                          "createdAt"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "salesPaths"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Declare a sales path (internal, api-key)",
+        "description": "RUN-TIME DECLARATIONS (owner 2026-10-09: a declaration is DATA, never a PR). A staff caller (the dashboard Copilot through the gateway) creates channels, legs on a channel, trigger types and sales paths. Service-key only: a channel is shared by every client, so a write changes what every org can buy; `requestedByOrgId` records which client asked (provenance, never scope). A declared channel or leg is INVISIBLE to every client read (`/public/channels`, `/offers/:id/sales-paths`) until staff publishes it (`published: true` on the channel AND the leg). Every write states `createdBy` / `updatedBy`. Errors answer `{error, reason}` with a named `reason`. An ordered chain of EXISTING (channel x leg) pairs (published or not), from nothing to `paid_client`, each leg starting where the previous one ends, no step twice. Named from the shared sales-path name pool on first sight.",
+        "tags": [
+          "Internal"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "legs": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "channelSlug": {
+                          "type": "string"
+                        },
+                        "legKey": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "channelSlug",
+                        "legKey"
+                      ]
+                    },
+                    "description": "1 to 12 legs, in order."
+                  },
+                  "createdBy": {
+                    "type": "string"
+                  },
+                  "requestedByOrgId": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "The client org that asked for it (provenance only, never scope)."
+                  }
+                },
+                "required": [
+                  "legs",
+                  "createdBy"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The sales path.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "combinationKey": {
+                      "type": "string",
+                      "description": "The same identity (`combinationKeyOf`: legs `+`-joined, a platform channel's leg `@<slug>`) and the same NAME /offers/:id/sales-paths serves for these legs."
+                    },
+                    "name": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "visibleToClients": {
+                      "type": "boolean",
+                      "description": "Every leg is served to clients now."
+                    },
+                    "legs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "channelSlug": {
+                            "type": "string"
+                          },
+                          "legKey": {
+                            "type": "string"
+                          },
+                          "channelName": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "fromStep": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "toStep": {
+                            "type": "string"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "proactive",
+                              "reactive"
+                            ]
+                          },
+                          "triggerId": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "visibleToClients": {
+                            "type": "boolean"
+                          },
+                          "pricing": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "enum": [
+                                  "workflow_ladder",
+                                  "benchmark",
+                                  "customer_time",
+                                  "learning"
+                                ],
+                                "description": "`workflow_ladder`: a channel we run, priced per offer on its workflows (/offers/:id/sales-paths). `benchmark`: a sourced market figure. `customer_time`: the customer's own team, no cost to us. `learning`: nothing prices it yet; null until its campaigns record cost and outcomes (runs cost rows, per-campaign stats, exactly like any leg)."
+                              },
+                              "costPerOutcomeUsd": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Only a benchmark carries a figure here; never a made-up number."
+                              },
+                              "benchmarkSource": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "costPerOutcomeUsd",
+                              "benchmarkSource"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "channelSlug",
+                          "legKey",
+                          "channelName",
+                          "visibleToClients"
+                        ]
+                      }
+                    },
+                    "createdBy": {
+                      "type": "string"
+                    },
+                    "requestedByOrgId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "combinationKey",
+                    "name",
+                    "visibleToClients",
+                    "legs",
+                    "createdBy",
+                    "requestedByOrgId",
+                    "createdAt"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A field is missing or invalid (`reason` names it, e.g. `slug_invalid`, `step_unrecognised`, `trigger_required`, `path_not_chained`)."
+          },
+          "401": {
+            "description": "Missing or wrong service key."
+          },
+          "404": {
+            "description": "`channel_not_found` or `leg_not_found`."
+          },
+          "409": {
+            "description": "`sales_path_exists`."
+          }
+        }
+      }
+    },
+    "/internal/declarations/sales-paths/{combinationKey}": {
+      "get": {
+        "summary": "Get one declared sales path (internal, api-key)",
+        "description": "RUN-TIME DECLARATIONS (owner 2026-10-09: a declaration is DATA, never a PR). A staff caller (the dashboard Copilot through the gateway) creates channels, legs on a channel, trigger types and sales paths. Service-key only: a channel is shared by every client, so a write changes what every org can buy; `requestedByOrgId` records which client asked (provenance, never scope). A declared channel or leg is INVISIBLE to every client read (`/public/channels`, `/offers/:id/sales-paths`) until staff publishes it (`published: true` on the channel AND the leg). Every write states `createdBy` / `updatedBy`. Errors answer `{error, reason}` with a named `reason`.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "URL-encoded."
+            },
+            "required": true,
+            "description": "URL-encoded.",
+            "name": "combinationKey",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The sales path.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "combinationKey": {
+                      "type": "string",
+                      "description": "The same identity (`combinationKeyOf`: legs `+`-joined, a platform channel's leg `@<slug>`) and the same NAME /offers/:id/sales-paths serves for these legs."
+                    },
+                    "name": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "visibleToClients": {
+                      "type": "boolean",
+                      "description": "Every leg is served to clients now."
+                    },
+                    "legs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "channelSlug": {
+                            "type": "string"
+                          },
+                          "legKey": {
+                            "type": "string"
+                          },
+                          "channelName": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "fromStep": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "toStep": {
+                            "type": "string"
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "proactive",
+                              "reactive"
+                            ]
+                          },
+                          "triggerId": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "visibleToClients": {
+                            "type": "boolean"
+                          },
+                          "pricing": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "enum": [
+                                  "workflow_ladder",
+                                  "benchmark",
+                                  "customer_time",
+                                  "learning"
+                                ],
+                                "description": "`workflow_ladder`: a channel we run, priced per offer on its workflows (/offers/:id/sales-paths). `benchmark`: a sourced market figure. `customer_time`: the customer's own team, no cost to us. `learning`: nothing prices it yet; null until its campaigns record cost and outcomes (runs cost rows, per-campaign stats, exactly like any leg)."
+                              },
+                              "costPerOutcomeUsd": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Only a benchmark carries a figure here; never a made-up number."
+                              },
+                              "benchmarkSource": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "costPerOutcomeUsd",
+                              "benchmarkSource"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "channelSlug",
+                          "legKey",
+                          "channelName",
+                          "visibleToClients"
+                        ]
+                      }
+                    },
+                    "createdBy": {
+                      "type": "string"
+                    },
+                    "requestedByOrgId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "combinationKey",
+                    "name",
+                    "visibleToClients",
+                    "legs",
+                    "createdBy",
+                    "requestedByOrgId",
+                    "createdAt"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`sales_path_not_found`."
           }
         }
       }

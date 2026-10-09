@@ -411,4 +411,71 @@ export const channelTriggerTypes = pgTable("channel_trigger_types", {
   coded: boolean("coded").notNull(),
   displayOrder: integer("display_order").notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  /** `code` = stated in `lib/channel-triggers.ts` (upserted and pruned on boot); `declared` = created at run
+   *  time through `/internal/declarations/trigger-types` (never pruned, never `coded` until a detector fires
+   *  its kind, `lib/channel-declarations.ts`). */
+  origin: text("origin").notNull().default("code"),
+  /** `event` (a service detects it), `delay` (N days after a step, if nothing happened), `poll` (a new item at a source). */
+  kind: text("kind").notNull().default("event"),
+  /** The kind's parameters (`delay`: `{afterStep, days}`; `poll`: `{source, everyMinutes}`); null on an event. */
+  params: jsonb("params"),
+  createdBy: text("created_by"),
+  requestedByOrgId: text("requested_by_org_id"),
+});
+
+/**
+ * CHANNELS DECLARED AT RUN TIME (`lib/channel-declarations.ts`, owner 2026-10-09: a declaration is DATA,
+ * never a PR). Same statement a seeded feature's acquisition-channel blob makes; merged into the catalogue
+ * builder beside the feature rows. Invisible to every client read until `published`. The slug shares the
+ * feature-slug namespace (a declared slug never equals a feature's).
+ */
+export const declaredChannels = pgTable("declared_channels", {
+  slug: text("slug").primaryKey(),
+  name: text("name").notNull().unique(),
+  description: text("description").notNull(),
+  shortDescription: text("short_description").notNull(),
+  icon: text("icon").notNull(),
+  channelType: text("channel_type").notNull(),
+  operatedBy: text("operated_by").notNull(),
+  performedBy: text("performed_by").notNull(),
+  dailyOperatingCostCents: integer("daily_operating_cost_cents").notNull(),
+  minimumCommitmentDays: integer("minimum_commitment_days").notNull(),
+  maxDaysToFirstProduction: integer("max_days_to_first_production").notNull(),
+  displayOrder: integer("display_order").notNull(),
+  published: boolean("published").notNull().default(false),
+  publishedAt: timestamp("published_at", { withTimezone: true }),
+  publishedBy: text("published_by"),
+  createdBy: text("created_by").notNull(),
+  requestedByOrgId: text("requested_by_org_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** A leg declared at run time on ANY channel (seeded or declared). Public only when `published` AND its channel is. */
+export const declaredChannelLegs = pgTable(
+  "declared_channel_legs",
+  {
+    channelSlug: text("channel_slug").notNull(),
+    legKey: text("leg_key").notNull(),
+    fromStep: text("from_step"),
+    toStep: text("to_step").notNull(),
+    mode: text("mode").notNull(),
+    triggerId: text("trigger_id"),
+    published: boolean("published").notNull().default(false),
+    createdBy: text("created_by").notNull(),
+    requestedByOrgId: text("requested_by_org_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.channelSlug, t.legKey] })],
+);
+
+/** A sales path declared at run time: an ordered chain of existing (channel x leg) pairs, start to paid client. */
+export const declaredSalesPaths = pgTable("declared_sales_paths", {
+  /** `combinationKeyOf` (`lib/offer-sales-paths.ts`), the same identity (and name) the offer listing serves. */
+  combinationKey: text("combination_key").primaryKey(),
+  legs: jsonb("legs").notNull(),
+  createdBy: text("created_by").notNull(),
+  requestedByOrgId: text("requested_by_org_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

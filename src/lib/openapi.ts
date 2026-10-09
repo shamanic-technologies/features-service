@@ -4993,6 +4993,9 @@ const channelCatalogueResponseSchema = registry.register(
           fromStep: z.string().nullable().describe("The step a lead reached that fires it (`steps[].key`); null when it is not a step (a campaign asking for a lead)."),
           firedBy: z.string().describe("The service that detects the event and asks campaign-service to run the campaign."),
           coded: z.boolean().describe("A service fires it today. False = declared, not fired yet: no channel we run names it."),
+          origin: z.enum(["code", "declared"]).describe("`code`: stated in this service's code. `declared`: created at run time through POST /internal/declarations/trigger-types (never coded until a service runs a generic detector for its `kind`)."),
+          kind: z.enum(["event", "delay", "poll"]).describe("`event`: a service detects something on a lead. `delay`: N days after a step, if nothing happened. `poll`: a new item appeared at a source."),
+          params: z.record(z.unknown()).nullable().describe("The kind's parameters: `delay` `{afterStep, days}`, `poll` `{source, everyMinutes}`; null on an event."),
         }),
       )
       .describe("THE TRIGGER TYPES (owner 2026-10-09): every kind of event that runs a REACTIVE leg, one row each in this service's database, the same for every client. The events themselves (one per occurrence, fired or skipped, per org x brand x offer) and each campaign's On/Off live in campaign-service."),
@@ -5650,6 +5653,399 @@ registry.registerPath({
     400: { description: "Invalid query", content: { "application/json": { schema: errorResponse } } },
     401: { description: "Invalid or missing API key", content: { "application/json": { schema: errorResponse } } },
     502: { description: "No refresher up", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+// ── Run-time declarations: channels, legs, trigger types, sales paths ────────
+
+const DECLARATIONS_DESCRIPTION =
+  "RUN-TIME DECLARATIONS (owner 2026-10-09: a declaration is DATA, never a PR). A staff caller (the dashboard Copilot through the gateway) creates channels, legs on a channel, trigger types and sales paths. Service-key only: a channel is shared by every client, so a write changes what every org can buy; `requestedByOrgId` records which client asked (provenance, never scope). A declared channel or leg is INVISIBLE to every client read (`/public/channels`, `/offers/:id/sales-paths`) until staff publishes it (`published: true` on the channel AND the leg). Every write states `createdBy` / `updatedBy`. Errors answer `{error, reason}` with a named `reason`.";
+
+const declarationErrors = {
+  400: { description: "A field is missing or invalid (`reason` names it, e.g. `slug_invalid`, `step_unrecognised`, `trigger_required`, `path_not_chained`)." },
+  401: { description: "Missing or wrong service key." },
+};
+
+const legPricingSchema = z.object({
+  source: z.enum(["workflow_ladder", "benchmark", "customer_time", "learning"]).describe("`workflow_ladder`: a channel we run, priced per offer on its workflows (/offers/:id/sales-paths). `benchmark`: a sourced market figure. `customer_time`: the customer's own team, no cost to us. `learning`: nothing prices it yet; null until its campaigns record cost and outcomes (runs cost rows, per-campaign stats, exactly like any leg)."),
+  costPerOutcomeUsd: z.number().nullable().describe("Only a benchmark carries a figure here; never a made-up number."),
+  benchmarkSource: z.string().nullable(),
+});
+
+const declaredLegViewSchema = z.object({
+  legKey: z.string(),
+  fromStep: z.string().nullable().describe("`steps[].key`; null = from nothing."),
+  toStep: z.string(),
+  mode: z.enum(["proactive", "reactive"]),
+  triggerId: z.string().nullable(),
+  declared: z.boolean().describe("Created at run time (false = stated in code)."),
+  published: z.boolean(),
+  visibleToClients: z.boolean().describe("Served to clients now: the leg AND its channel are published."),
+  pricing: legPricingSchema,
+});
+
+const declaredChannelRecordSchema = z.object({
+  slug: z.string(),
+  name: z.string(),
+  description: z.string(),
+  shortDescription: z.string(),
+  icon: z.string(),
+  channelType: z.enum(["sourcing", "outbound", "conversion", "paid", "earned", "pr"]),
+  operatedBy: z.enum(["platform", "customer"]),
+  performedBy: z.enum(["software", "person"]),
+  dailyOperatingCostCents: z.number().int(),
+  minimumCommitmentDays: z.number().int(),
+  maxDaysToFirstProduction: z.number().int(),
+  displayOrder: z.number().int(),
+  published: z.boolean(),
+  publishedAt: z.string().nullable(),
+  publishedBy: z.string().nullable(),
+  createdBy: z.string(),
+  requestedByOrgId: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+const declaredChannelViewSchema = registry.register(
+  "DeclaredChannelView",
+  z.object({
+    slug: z.string(),
+    name: z.string(),
+    declared: z.boolean().describe("Created at run time (false = stated in code, read-only here)."),
+    published: z.boolean().describe("Always true on a channel stated in code."),
+    visibleToClients: z.boolean().describe("Served on /public/channels now (published, performing at least one published leg)."),
+    declaration: declaredChannelRecordSchema.nullable().describe("The stored declaration; null on a channel stated in code."),
+    channel: publicChannelSchema.nullable().describe("The catalogue entry built from EVERY leg (published or not), exactly as /public/channels will serve it once published; null while a declared channel performs no leg."),
+    legs: z.array(declaredLegViewSchema),
+  }),
+);
+
+const triggerTypeViewSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  description: z.string(),
+  icon: z.string(),
+  fromStep: z.string().nullable(),
+  firedBy: z.string(),
+  coded: z.boolean().describe("A service fires it today. A leg may only name a coded trigger."),
+  origin: z.enum(["code", "declared"]),
+  kind: z.enum(["event", "delay", "poll"]),
+  params: z.record(z.unknown()).nullable(),
+  displayOrder: z.number().int(),
+  createdBy: z.string().nullable(),
+  requestedByOrgId: z.string().nullable(),
+});
+
+const declaredSalesPathViewSchema = z.object({
+  combinationKey: z.string().describe("The same identity (`combinationKeyOf`: legs `+`-joined, a platform channel's leg `@<slug>`) and the same NAME /offers/:id/sales-paths serves for these legs."),
+  name: z.string().nullable(),
+  visibleToClients: z.boolean().describe("Every leg is served to clients now."),
+  legs: z.array(z.object({
+    channelSlug: z.string(),
+    legKey: z.string(),
+    channelName: z.string().nullable(),
+    fromStep: z.string().nullable().optional(),
+    toStep: z.string().optional(),
+    mode: z.enum(["proactive", "reactive"]).optional(),
+    triggerId: z.string().nullable().optional(),
+    visibleToClients: z.boolean(),
+    pricing: legPricingSchema.optional(),
+  })),
+  createdBy: z.string(),
+  requestedByOrgId: z.string().nullable(),
+  createdAt: z.string(),
+});
+
+const actorFields = {
+  requestedByOrgId: z.string().nullable().optional().describe("The client org that asked for it (provenance only, never scope)."),
+};
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/declarations/channels",
+  summary: "List every channel, stated in code or declared (internal, api-key)",
+  description: DECLARATIONS_DESCRIPTION,
+  tags: ["Internal"],
+  responses: { 200: { description: "Every channel, published or not.", content: { "application/json": { schema: z.object({ channels: z.array(declaredChannelViewSchema) }) } } } },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/declarations/channels/{slug}",
+  summary: "Get one channel (internal, api-key)",
+  description: DECLARATIONS_DESCRIPTION,
+  tags: ["Internal"],
+  request: { params: z.object({ slug: z.string() }) },
+  responses: {
+    200: { description: "The channel.", content: { "application/json": { schema: declaredChannelViewSchema } } },
+    404: { description: "`channel_not_found`." },
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/internal/declarations/channels",
+  summary: "Declare a channel (internal, api-key)",
+  description: `${DECLARATIONS_DESCRIPTION} Created UNPUBLISHED with no leg; add legs, then publish.`,
+  tags: ["Internal"],
+  request: {
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            slug: z.string().describe("kebab-case, unique across every feature and channel."),
+            name: z.string(),
+            description: z.string(),
+            shortDescription: z.string().describe("The one-line card caption (<= 80 chars)."),
+            icon: z.string().describe("A Phosphor icon name."),
+            channelType: z.enum(["sourcing", "outbound", "conversion", "paid", "earned", "pr"]),
+            operatedBy: z.enum(["platform", "customer"]),
+            performedBy: z.enum(["software", "person"]).describe("A customer-operated channel is performed by a person."),
+            dailyOperatingCostCents: z.number().int().describe("Whole cents >= 0; 0 on a customer-operated channel."),
+            minimumCommitmentDays: z.number().int().describe(">= 1."),
+            maxDaysToFirstProduction: z.number().int().describe(">= 0."),
+            createdBy: z.string().describe("The staff identity making the write."),
+            ...actorFields,
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    201: { description: "The declared channel.", content: { "application/json": { schema: declaredChannelViewSchema } } },
+    ...declarationErrors,
+    409: { description: "`channel_exists` (slug taken by a feature or channel) or `channel_name_taken`." },
+  },
+});
+
+registry.registerPath({
+  method: "patch",
+  path: "/internal/declarations/channels/{slug}",
+  summary: "Update or publish a declared channel (internal, api-key)",
+  description: `${DECLARATIONS_DESCRIPTION} slug, channelType, operatedBy and performedBy are its identity and never change.`,
+  tags: ["Internal"],
+  request: {
+    params: z.object({ slug: z.string() }),
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            name: z.string().optional(),
+            description: z.string().optional(),
+            shortDescription: z.string().optional(),
+            icon: z.string().optional(),
+            dailyOperatingCostCents: z.number().int().optional(),
+            minimumCommitmentDays: z.number().int().optional(),
+            maxDaysToFirstProduction: z.number().int().optional(),
+            published: z.boolean().optional().describe("true publishes it to every client; false withdraws it."),
+            updatedBy: z.string(),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: { description: "The channel after the write.", content: { "application/json": { schema: declaredChannelViewSchema } } },
+    ...declarationErrors,
+    404: { description: "`channel_not_found`." },
+    409: { description: "`channel_coded` (stated in code, change it there) or `channel_name_taken`." },
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/declarations/legs",
+  summary: "List every leg of every channel (internal, api-key)",
+  description: DECLARATIONS_DESCRIPTION,
+  tags: ["Internal"],
+  request: { query: z.object({ channelSlug: z.string().optional() }) },
+  responses: {
+    200: {
+      description: "Every leg, with its channel.",
+      content: { "application/json": { schema: z.object({ legs: z.array(declaredLegViewSchema.extend({ channelSlug: z.string(), channelName: z.string() })) }) } },
+    },
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/internal/declarations/channels/{slug}/legs",
+  summary: "Declare a leg on a channel (internal, api-key)",
+  description: `${DECLARATIONS_DESCRIPTION} Works on a declared channel or one stated in code. A proactive leg names no trigger; a reactive leg names ONE trigger that something FIRES today: a trigger nothing fires is refused with 409 \`trigger_not_fired\` (a leg on it would wait forever). Created UNPUBLISHED.`,
+  tags: ["Internal"],
+  request: {
+    params: z.object({ slug: z.string() }),
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            fromStep: z.string().nullable().describe("`steps[].key` of /public/channels; null = from nothing. Required."),
+            toStep: z.string(),
+            mode: z.enum(["proactive", "reactive"]),
+            triggerId: z.string().nullable().optional().describe("Required on a reactive leg; absent/null on a proactive one."),
+            createdBy: z.string(),
+            ...actorFields,
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    201: { description: "The leg and its channel.", content: { "application/json": { schema: z.object({ leg: declaredLegViewSchema.nullable(), channel: declaredChannelViewSchema.nullable() }) } } },
+    ...declarationErrors,
+    404: { description: "`channel_not_found` or `trigger_not_found`." },
+    409: { description: "`leg_exists` or `trigger_not_fired`." },
+  },
+});
+
+registry.registerPath({
+  method: "patch",
+  path: "/internal/declarations/channels/{slug}/legs/{legKey}",
+  summary: "Update or publish a declared leg (internal, api-key)",
+  description: `${DECLARATIONS_DESCRIPTION} Its steps are its identity and never change; a change of mode/trigger re-runs the trigger guarantee.`,
+  tags: ["Internal"],
+  request: {
+    params: z.object({ slug: z.string(), legKey: z.string() }),
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            published: z.boolean().optional(),
+            mode: z.enum(["proactive", "reactive"]).optional(),
+            triggerId: z.string().nullable().optional(),
+            updatedBy: z.string(),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: { description: "The leg and its channel.", content: { "application/json": { schema: z.object({ leg: declaredLegViewSchema.nullable(), channel: declaredChannelViewSchema.nullable() }) } } },
+    ...declarationErrors,
+    404: { description: "`channel_not_found`, `leg_not_found` or `trigger_not_found`." },
+    409: { description: "`leg_coded` (stated in code) or `trigger_not_fired`." },
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/declarations/trigger-types",
+  summary: "List every trigger type (internal, api-key)",
+  description: DECLARATIONS_DESCRIPTION,
+  tags: ["Internal"],
+  responses: { 200: { description: "Coded and declared.", content: { "application/json": { schema: z.object({ triggerTypes: z.array(triggerTypeViewSchema) }) } } } },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/declarations/trigger-types/{id}",
+  summary: "Get one trigger type (internal, api-key)",
+  description: DECLARATIONS_DESCRIPTION,
+  tags: ["Internal"],
+  request: { params: z.object({ id: z.string() }) },
+  responses: {
+    200: { description: "The trigger type.", content: { "application/json": { schema: triggerTypeViewSchema } } },
+    404: { description: "`trigger_not_found`." },
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/internal/declarations/trigger-types",
+  summary: "Declare a trigger type (internal, api-key)",
+  description: `${DECLARATIONS_DESCRIPTION} A declared trigger is NEVER coded on its own say-so: it is \`coded: false\` (no leg may name it) until a service runs a generic detector for its kind. \`delay\` and \`poll\` detectors belong to campaign-service (it owns the trigger events and their due times); none runs yet.`,
+  tags: ["Internal"],
+  request: {
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            id: z.string().describe("snake_case, unique."),
+            label: z.string(),
+            description: z.string(),
+            icon: z.string().describe("A Phosphor icon name."),
+            kind: z.enum(["event", "delay", "poll"]),
+            fromStep: z.string().nullable().optional().describe("`event` only: the step a lead reached that fires it."),
+            firedBy: z.string().optional().describe("`event` only: the service that would detect it (default `not_built`)."),
+            params: z.record(z.unknown()).optional().describe("`delay`: `{afterStep, days}` (days >= 1). `poll`: `{source, everyMinutes}` (everyMinutes >= 5)."),
+            createdBy: z.string(),
+            ...actorFields,
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    201: { description: "The trigger type.", content: { "application/json": { schema: triggerTypeViewSchema } } },
+    ...declarationErrors,
+    409: { description: "`trigger_exists` or `trigger_exists_for_step`." },
+  },
+});
+
+registry.registerPath({
+  method: "patch",
+  path: "/internal/declarations/trigger-types/{id}",
+  summary: "Reword a declared trigger type (internal, api-key)",
+  description: `${DECLARATIONS_DESCRIPTION} id, kind, params, fromStep and firedBy never change.`,
+  tags: ["Internal"],
+  request: {
+    params: z.object({ id: z.string() }),
+    body: { content: { "application/json": { schema: z.object({ label: z.string().optional(), description: z.string().optional(), icon: z.string().optional(), updatedBy: z.string() }) } } },
+  },
+  responses: {
+    200: { description: "The trigger type.", content: { "application/json": { schema: triggerTypeViewSchema } } },
+    ...declarationErrors,
+    404: { description: "`trigger_not_found`." },
+    409: { description: "`trigger_coded` (stated in code)." },
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/declarations/sales-paths",
+  summary: "List declared sales paths (internal, api-key)",
+  description: DECLARATIONS_DESCRIPTION,
+  tags: ["Internal"],
+  responses: { 200: { description: "Every declared sales path.", content: { "application/json": { schema: z.object({ salesPaths: z.array(declaredSalesPathViewSchema) }) } } } },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/declarations/sales-paths/{combinationKey}",
+  summary: "Get one declared sales path (internal, api-key)",
+  description: DECLARATIONS_DESCRIPTION,
+  tags: ["Internal"],
+  request: { params: z.object({ combinationKey: z.string().describe("URL-encoded.") }) },
+  responses: {
+    200: { description: "The sales path.", content: { "application/json": { schema: declaredSalesPathViewSchema } } },
+    404: { description: "`sales_path_not_found`." },
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/internal/declarations/sales-paths",
+  summary: "Declare a sales path (internal, api-key)",
+  description: `${DECLARATIONS_DESCRIPTION} An ordered chain of EXISTING (channel x leg) pairs (published or not), from nothing to \`paid_client\`, each leg starting where the previous one ends, no step twice. Named from the shared sales-path name pool on first sight.`,
+  tags: ["Internal"],
+  request: {
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            legs: z.array(z.object({ channelSlug: z.string(), legKey: z.string() })).describe("1 to 12 legs, in order."),
+            createdBy: z.string(),
+            ...actorFields,
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    201: { description: "The sales path.", content: { "application/json": { schema: declaredSalesPathViewSchema } } },
+    ...declarationErrors,
+    404: { description: "`channel_not_found` or `leg_not_found`." },
+    409: { description: "`sales_path_exists`." },
   },
 });
 

@@ -10,7 +10,11 @@ import request from "supertest";
 
 const mockFindMany = vi.fn(async () => [] as unknown[]);
 vi.mock("../db/index.js", () => ({
-  db: { query: { features: { findFirst: vi.fn(), findMany: (...a: unknown[]) => mockFindMany(...(a as [])) } } },
+  db: {
+    query: { features: { findFirst: vi.fn(), findMany: (...a: unknown[]) => mockFindMany(...(a as [])) } },
+    // The catalogue also reads the run-time declarations (`lib/channel-declarations-store.ts`): none here.
+    select: () => ({ from: () => ({ orderBy: async () => [] }) }),
+  },
   sql: {},
 }));
 vi.mock("../lib/env.js", () => ({ validateRequiredEnv: vi.fn(), REQUIRED_ENV: [] }));

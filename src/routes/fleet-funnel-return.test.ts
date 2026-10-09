@@ -25,6 +25,8 @@ vi.mock("../db/index.js", () => ({
     query: {
       features: { findFirst: (...a: unknown[]) => mockFindFirst(...a), findMany: (...a: unknown[]) => mockFindMany() },
     },
+    // The catalogue also reads the run-time declarations (`lib/channel-declarations-store.ts`): none here.
+    select: () => ({ from: () => ({ orderBy: async () => [] }) }),
   },
   sql: {},
 }));
