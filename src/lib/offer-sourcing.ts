@@ -39,6 +39,7 @@
  * bought). Only WHICH origin a serve counts under moves: every campaign total and sourcing figure is
  * the same sum. Serves and leads nothing proves sit in `unattributed`, never spread.
  */
+import { OUTBOUND_LEG_KEY_CORRESPONDENCE } from "./funnel-legs.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { addDecimals, decimalCentsToUsd, sumDecimalStrings } from "./decimal.js";
 import { mapWithConcurrency } from "./concurrency.js";
@@ -427,6 +428,9 @@ export function computeOfferSourcing(input: {
 
 /** The leg whose maturity rule a positive-reply rate follows. */
 const REPLY_LEG = "start_to_conversation";
+/** The same leg as an OUTBOUND channel's (the leads sources find are worked by outbound): the spelling the
+ *  rule is served under (outbound leg rename, wave 2, `lib/funnel-legs.ts`). The rule itself is read on REPLY_LEG. */
+const SERVED_REPLY_LEG = OUTBOUND_LEG_KEY_CORRESPONDENCE.find((c) => c.legacyLegKey === REPLY_LEG)!.legKey;
 
 const replyFigures = (leads: number, positiveReplies: number): ReplyFigures => ({
   leads,
@@ -467,7 +471,7 @@ export function buildSourceOverlap(
     sourceCreditTotal: credits,
     multiSourceLeads: multi,
     extraSourceCredits: credits - (leads.length - unattributed),
-    maturityRule: { legKey: REPLY_LEG, durationDays: rule.durationDays, outcomesRequired: rule.outcomesRequired, cutoff },
+    maturityRule: { legKey: SERVED_REPLY_LEG, durationDays: rule.durationDays, outcomesRequired: rule.outcomesRequired, cutoff },
     buckets: counts.map((c, i) => {
       const flash = replyFigures(c.flash[0]!, c.flash[1]!);
       const mature = replyFigures(c.mature[0]!, c.mature[1]!);
