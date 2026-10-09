@@ -66,6 +66,7 @@
  */
 
 import { SALES_FUNNELS, SALES_FUNNEL_KEYS, type SalesFunnelKey } from "./sales-funnels.js";
+import { triggerForStep, type LegMode, type LegRunStatement } from "./channel-triggers.js";
 
 // ── The steps a channel can move a lead between ─────────────────────────────────────────────────────
 
@@ -281,11 +282,35 @@ export function matchChannelStepKey(raw: string): ChannelStepKey | null {
 export interface ChannelStepTransition {
   from: ChannelStepKey | null;
   to: ChannelStepKey;
+  /** PROACTIVE (its own budget, no trigger) or REACTIVE (on demand, `triggerId` names what asks for it),
+   *  `lib/channel-triggers.ts`. Stated on every seeded leg; a blob predating it reads `legRunStatementOf`. */
+  mode?: LegMode;
+  triggerId?: string | null;
 }
+
+/**
+ * How one leg runs: what it STATES, else (a blob predating the statement) the rule every leg followed before
+ * it was stated: from nothing or from `lead_found` = proactive, else reactive on the trigger of its from step.
+ * Null when a reactive leg's step has no declared trigger (the caller fails loud).
+ */
+export function legRunStatementOf(t: ChannelStepTransition): LegRunStatement | null {
+  if (t.mode) return { mode: t.mode, triggerId: t.mode === "proactive" ? null : (t.triggerId ?? null) };
+  if (isProactiveTransition(t)) return { mode: "proactive", triggerId: null };
+  const trigger = t.from ? triggerForStep(t.from) : null;
+  return trigger ? { mode: "reactive", triggerId: trigger.id } : null;
+}
+
+/** Reactive legs, each on the trigger fired when a lead reaches its from step. */
+export const reactsToStep = (...legs: ReadonlyArray<{ from: ChannelStepKey; to: ChannelStepKey }>): readonly ChannelStepTransition[] =>
+  legs.map(({ from, to }) => {
+    const trigger = triggerForStep(from);
+    if (!trigger) throw new Error(`[features-service] no trigger is declared for the step ${from}`);
+    return { from, to, mode: "reactive" as const, triggerId: trigger.id };
+  });
 
 /** Sugar for the special case, so a catalogue entry that produces an entry step reads as one line. */
 export const producesFromNothing = (...steps: readonly ChannelStepKey[]): readonly ChannelStepTransition[] =>
-  steps.map((to) => ({ from: null, to }));
+  steps.map((to) => ({ from: null, to, mode: "proactive" as const, triggerId: null }));
 
 /**
  * PROACTIVE vs REACTIVE, the ONE rule (owner 2026-10-09: "proactive is never 'from nothing'"). A leg is

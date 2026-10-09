@@ -6,6 +6,7 @@
 import { type SalesFunnelKey } from "../lib/sales-funnels.js";
 import {
   producesFromNothing,
+  reactsToStep,
   sellableFunnelsFor,
   type AcquisitionChannel,
   type ChannelStepTransition,
@@ -61,25 +62,25 @@ const VISIT_AND_AD_DELIVERED_STEPS = producesFromNothing("website_visit", "form_
  * them span both meeting funnels, because the meeting funnels differ only in what buys the first meeting
  * and share every leg after it.
  */
-const BOOKS_THE_MEETING: readonly ChannelStepTransition[] = [
+const BOOKS_THE_MEETING: readonly ChannelStepTransition[] = reactsToStep(
   // A conversation that was opened, and a visit that landed, are the two things a booked meeting comes
   // from — one per meeting funnel.
   { from: "conversation", to: "meeting_booked" },
   { from: "website_visit", to: "meeting_booked" },
-];
+);
 // The AI answers the prospect's own email, so the only lead it can move is one who has already answered
 // ours. A website visit produces no email to reply to, so it is deliberately NOT one of these legs —
 // that variant is a later ship, and stating it now would sell a leg nothing performs.
-const AI_BOOKS_THE_MEETING: readonly ChannelStepTransition[] = [{ from: "conversation", to: "meeting_booked" }];
+const AI_BOOKS_THE_MEETING: readonly ChannelStepTransition[] = reactsToStep({ from: "conversation", to: "meeting_booked" });
 // The instant call: the moment a reply is qualified as a sales interest, we ring the brand's sales rep and
 // connect them to the buyer (instantly-service `ring-rep-on-sales-interest`). Positive reply -> Booking call.
-const RINGS_THE_REP: readonly ChannelStepTransition[] = [{ from: "conversation", to: "booking_call" }];
-const GETS_THE_MEETING_HELD: readonly ChannelStepTransition[] = [{ from: "meeting_booked", to: "meeting_attended" }];
-const CLOSES_THE_MEETING: readonly ChannelStepTransition[] = [{ from: "meeting_attended", to: "paid_client" }];
-const CONVERTS_THE_SELF_SERVE_LEAD: readonly ChannelStepTransition[] = [
+const RINGS_THE_REP: readonly ChannelStepTransition[] = reactsToStep({ from: "conversation", to: "booking_call" });
+const GETS_THE_MEETING_HELD: readonly ChannelStepTransition[] = reactsToStep({ from: "meeting_booked", to: "meeting_attended" });
+const CLOSES_THE_MEETING: readonly ChannelStepTransition[] = reactsToStep({ from: "meeting_attended", to: "paid_client" });
+const CONVERTS_THE_SELF_SERVE_LEAD: readonly ChannelStepTransition[] = reactsToStep(
   { from: "signup", to: "paid_client" },
   { from: "form_submitted", to: "paid_client" },
-];
+);
 
 /** Commercial terms, written the way they are set: a daily operating cost in whole cents, a minimum
  *  booking in days, and the promise on how long until the channel starts producing. */
@@ -1046,7 +1047,8 @@ for (const origin of SOURCING_ORIGINS) {
       family: "sourcing",
       operatedBy: "platform",
       performedBy: "software",
-      stepTransitions: producesFromNothing("lead_found"),
+      // REACTIVE, on demand (owner 2026-10-09): it finds a lead when an outbound campaign asks for one.
+      stepTransitions: [{ from: null, to: "lead_found", mode: "reactive", triggerId: "lead_requested" }],
       terms: terms(0, 1, 1),
     },
     supersededBySlug: null,
