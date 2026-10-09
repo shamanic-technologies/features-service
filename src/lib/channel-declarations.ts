@@ -28,9 +28,10 @@
  *    belong to campaign-service, which owns the trigger EVENTS and their due times.
  *  - `poll`: "a new item appeared at this source". The polling loop and its cursor belong to campaign-service
  *    too (same door, same events table), reading the source through treg.
- * None of the three generic detectors runs today, so the set is EMPTY: when campaign-service ships one, the
- * kind is added here (one line: the capability now exists) and every declared trigger of that kind becomes
- * coded at once.
+ * campaign-service runs the `delay` and `poll` detectors since #601 (deployed 2026-10-10), so both kinds are
+ * in the set and every declared trigger of those kinds is coded. Their params are validated HERE with the
+ * detector's own rules (`parseDelayParams`, `parsePollParams`), so a malformed declaration never reaches it.
+ * A declared `event` stays uncoded: no generic detector can know what an arbitrary event means.
  *
  * ── PRICE ──────────────────────────────────────────────────────────────────────────────────────────
  *
@@ -98,7 +99,60 @@ export const TRIGGER_KINDS = ["event", "delay", "poll"] as const;
 export type TriggerKind = (typeof TRIGGER_KINDS)[number];
 
 /** The kinds a service fires GENERICALLY for any declared trigger of that kind. Empty today: see the header. */
-export const GENERIC_DETECTOR_KINDS: ReadonlySet<TriggerKind> = new Set<TriggerKind>();
+export const GENERIC_DETECTOR_KINDS: ReadonlySet<TriggerKind> = new Set<TriggerKind>(["delay", "poll"]);
+
+const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+
+/** campaign-service's ceiling on one poll call (`POLL_MAX_MICRO_CEILING`, micro-USD). */
+export const POLL_MAX_MICRO_CEILING = 1_000_000;
+
+const badParams = (reason: string, message: string) => new DeclarationError(400, reason, message);
+
+/** PURE: `delay` params `{afterStep, days}`, the shape campaign-service's `parseDelayParams` reads. */
+export function parseDelayParams(raw: unknown): { afterStep: ChannelStepKey; days: number } {
+  if (!isRecord(raw)) throw badParams("params_required", "a delay trigger states params {afterStep, days}");
+  const afterStep = step(raw.afterStep, "params.afterStep");
+  if (typeof raw.days !== "number" || !Number.isInteger(raw.days) || raw.days < 1) {
+    throw badParams("delay_days_invalid", "params.days must be a whole number of days >= 1");
+  }
+  return { afterStep, days: raw.days };
+}
+
+/**
+ * PURE: `poll` params `{source, everyMinutes}`, campaign-service's `parsePollParams` rules (#601): `source`
+ * is ONE treg call `{endpoint, method?, query?, body?, items, itemId?, maxMicro}`, given as an object or as
+ * JSON text; stored as JSON text (what the detector parses). Every violation is a named 400.
+ */
+export function parsePollParams(raw: unknown): { source: string; everyMinutes: number } {
+  if (!isRecord(raw)) throw badParams("params_required", "a poll trigger states params {source, everyMinutes}");
+  const { everyMinutes } = raw;
+  if (typeof everyMinutes !== "number" || !Number.isInteger(everyMinutes) || everyMinutes < 5) {
+    throw badParams("poll_every_minutes_invalid", "params.everyMinutes must be a whole number >= 5");
+  }
+  let source: unknown = raw.source;
+  if (typeof source === "string") {
+    try {
+      source = JSON.parse(source);
+    } catch {
+      throw badParams("poll_source_invalid", "params.source must be a JSON treg call {endpoint, method?, query?, body?, items, itemId?, maxMicro}");
+    }
+  }
+  if (!isRecord(source)) throw badParams("poll_source_invalid", "params.source must be a treg call object");
+  const { endpoint, method = "GET", query, body, items, itemId, maxMicro } = source;
+  const fail = (detail: string) => badParams("poll_source_invalid", `params.source.${detail}`);
+  if (typeof endpoint !== "string" || !/^[A-Za-z0-9_.-]+$/.test(endpoint)) throw fail("endpoint must be a treg endpoint id");
+  if (method !== "GET" && method !== "POST") throw fail("method must be GET or POST");
+  if (query !== undefined && (!isRecord(query) || Object.values(query).some((v) => typeof v !== "string"))) throw fail("query must be an object of strings");
+  if (body !== undefined && !isRecord(body)) throw fail("body must be an object");
+  if (typeof items !== "string") throw fail("items must be a dot path ('' = the answer itself)");
+  if (itemId !== undefined && (typeof itemId !== "string" || itemId.length === 0)) throw fail("itemId must be a dot path");
+  if (typeof maxMicro !== "number" || !Number.isInteger(maxMicro) || maxMicro < 1 || maxMicro > POLL_MAX_MICRO_CEILING) {
+    throw fail(`maxMicro must be a whole number of micro-USD in 1..${POLL_MAX_MICRO_CEILING}`);
+  }
+  const extra = Object.keys(source).filter((k) => !["endpoint", "method", "query", "body", "items", "itemId", "maxMicro"].includes(k));
+  if (extra.length > 0) throw fail(`has unknown fields: ${extra.join(", ")}`);
+  return { source: JSON.stringify(source), everyMinutes };
+}
 
 export interface TriggerTypeRecord {
   id: string;
@@ -336,15 +390,12 @@ export function parseTriggerInput(body: Body, existing: readonly TriggerTypeReco
     // Nothing fires a declared event: the service that will is named by the request, or stays unknown.
     firedBy = body.firedBy === undefined ? "not_built" : text(body, "firedBy", 64);
   } else if (kind === "delay") {
-    const p = (body.params ?? {}) as Body;
-    const afterStep = step(p.afterStep, "params.afterStep");
-    const days = wholeNumber(p, "days", 1);
-    fromStep = afterStep;
-    params = { afterStep, days };
+    const delay = parseDelayParams(body.params);
+    fromStep = delay.afterStep;
+    params = delay;
     firedBy = "campaign-service";
   } else {
-    const p = (body.params ?? {}) as Body;
-    params = { source: text(p, "source", 500), everyMinutes: wholeNumber(p, "everyMinutes", 5) };
+    params = parsePollParams(body.params);
     firedBy = "campaign-service";
   }
   return { id, label: text(body, "label", 80), description: text(body, "description", 500), icon: icon(body), kind: kind as TriggerKind, fromStep, params, firedBy };
