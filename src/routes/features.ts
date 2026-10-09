@@ -6,6 +6,7 @@ import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { extractBrandFields, BrandFieldExtractionError } from "../lib/brand-client.js";
 import { flattenValue } from "../lib/flatten.js";
 import { traceEvent } from "../lib/trace-event.js";
+import { withChannelType } from "../lib/channel-types.js";
 
 const router = Router();
 
@@ -19,7 +20,7 @@ router.get("/features", apiKeyAuth, async (req, res) => {
       where: eq(features.status, status),
     });
 
-    res.json({ features: results });
+    res.json({ features: results.map(withChannelType) });
   } catch (error) {
     console.error("[features-service] List features error:", error);
     res.status(500).json({ error: "Internal server error" });
@@ -40,7 +41,7 @@ router.get("/features/:slug", apiKeyAuth, async (req, res) => {
       return res.status(404).json({ error: "Feature not found" });
     }
 
-    res.json({ feature });
+    res.json({ feature: withChannelType(feature) });
   } catch (error) {
     console.error("[features-service] Get feature error:", error);
     res.status(500).json({ error: "Internal server error" });

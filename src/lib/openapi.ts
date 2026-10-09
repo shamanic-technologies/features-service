@@ -2,6 +2,7 @@ import { PIPELINE_UNPRICED_REASONS } from "./offer-priced-economics.js";
 import { OpenAPIRegistry, OpenApiGeneratorV3 } from "@asteasolutions/zod-to-openapi";
 import { z } from "zod";
 import { featureResponseSchema } from "./schemas.js";
+import { CHANNEL_TYPES } from "./channel-types.js";
 import { SALES_FUNNEL_KEYS } from "./sales-funnels.js";
 
 const registry = new OpenAPIRegistry();
@@ -764,6 +765,7 @@ const outcomeCausesSchema = z.object({
 /** One funnel step, as every leg-keyed and step-keyed surface names it. */
 const channelStepSchema = z.object({
   key: z.enum([
+    "lead_found",
     "conversation",
     "website_visit",
     "booking_call",
@@ -2244,7 +2246,7 @@ const salesPathCandidateSchema = z.object({
 const salesPathLegSchema = z.object({
   legKey: z.string(),
   ticked: z.boolean().describe("Whether the customer ticked this leg on the offer (always true: both scopes list ticked legs only)."),
-  reactive: z.boolean().describe("True when the leg moves a lead out of a step it already reached (from/fromStep set): its work starts when a lead arrives. False on an entry leg (from nothing): proactive, it goes and finds people."),
+  reactive: z.boolean().describe("True when the leg works a lead who already ENGAGED (a reply, a visit, a meeting): its work starts when a lead arrives. False on a PROACTIVE leg, one that goes and finds or contacts people: from nothing (sourcing, ads, today's outbound `start_to_*`) or from `lead_found` (the outbound `lead_found_to_*` legs of wave 2)."),
   minimumMonthlyBudgetCents: z.number().int().nullable().describe("The MINIMUM monthly budget a customer commits to this (channel × leg) item, whole cents (owner 2026-10-04). Channel we run, entry (proactive) leg: 9900 ($99/month, cold email on start_to_website_visit and start_to_conversation). Channel we run, reactive leg (ai-meeting-booking, ai-instant-call): 0, its spend follows the leads earlier legs deliver so no monthly floor can be enforced. Channel we do not run yet (managed false): 150000 ($1,500/month) on every leg. Customer-operated (your-team-*): 0. Billing enforces it and the dashboard renders it; nobody hard-codes the figures. Null when no channel works the leg."),
   fromStep: salesPathStepSchema.nullable().describe("Null on the ENTRY leg (from nothing)."),
   toStep: salesPathStepSchema,
@@ -4916,7 +4918,7 @@ const funnelLegSchema = registry.register(
     fromStep: channelStepSchema.nullable().describe("The step a lead is taken OUT of. NULL is 'from nothing' — this leg STARTS a funnel. That is the special case in the DATA only: the identifier is as ordinary as any other, so a caller never spells an entry leg differently."),
     toStep: channelStepSchema.describe("The step a lead is moved TO."),
     funnelKeys: z.array(salesFunnelKeyEnum).describe("EVERY declared sales funnel this leg is a leg of, in catalogue order. Usually several — an ENTRY leg feeds every funnel that contains it AT ONCE, since nobody can buy traffic that travels down only one of them. Their figures therefore overlap and must never be summed."),
-    reactive: z.boolean().describe("True when the leg moves a lead out of a step it already reached (from/fromStep set): its work starts when a lead arrives. False on an entry leg (from nothing): proactive, it goes and finds people."),
+    reactive: z.boolean().describe("True when the leg works a lead who already ENGAGED (a reply, a visit, a meeting): its work starts when a lead arrives. False on a PROACTIVE leg, one that goes and finds or contacts people: from nothing (sourcing, ads, today's outbound `start_to_*`) or from `lead_found` (the outbound `lead_found_to_*` legs of wave 2)."),
     maturity: legMaturityRuleSchema.describe("THE LEG'S MATURITY RULE (features-service#1196). The workflow picker prices a workflow on its MATURE figures once it holds outcomesRequired mature outcomes on the fleet of this leg, and on its flash figures before that. Read from the same module every figure is cut on, so a published rule and a served figure never disagree."),
   }),
 );
@@ -4927,7 +4929,7 @@ const channelStepTransitionSchema = z.object({
   to: channelStepSchema.describe("The step this channel moves the lead TO."),
   crewName: z.null().describe("RETIRED 2026-10-04: always null. Crew names (Herald, Scout, Pilot, …) no longer name a (channel, leg); the poetic names now name sales path COMBINATIONS (`GET /offers/{offerId}/sales-paths` `paths[].name`). Superseded by campaignName. Kept as null so no reader breaks."),
   campaignName: z.string().nullable().describe("The CAMPAIGN's name: this channel on this leg (owner 2026-10-04; the offer's Sales path page lists its campaigns, each with a name and a face). One curated English word from the same pool as the sales path names, shared across every client, written once and never changed nor reused, and never equal to any sales path name (`GET /offers/{offerId}/sales-paths` `paths[].name`). Set on every leg of a salesPathEligible channel; null otherwise. The same word rides each sales path leg as `legs[].channel.campaignName`."),
-  reactive: z.boolean().describe("True when the leg moves a lead out of a step it already reached (from/fromStep set): its work starts when a lead arrives. False on an entry leg (from nothing): proactive, it goes and finds people."),
+  reactive: z.boolean().describe("True when the leg works a lead who already ENGAGED (a reply, a visit, a meeting): its work starts when a lead arrives. False on a PROACTIVE leg, one that goes and finds or contacts people: from nothing (sourcing, ads, today's outbound `start_to_*`) or from `lead_found` (the outbound `lead_found_to_*` legs of wave 2)."),
   minimumMonthlyBudgetCents: z.number().int().describe("The MINIMUM monthly budget a customer commits to this (channel × leg) item, whole cents (owner 2026-10-04). Channel we run, entry (proactive) leg: 9900 ($99/month, cold email on start_to_website_visit and start_to_conversation). Channel we run, reactive leg (ai-meeting-booking, ai-instant-call): 0, its spend follows the leads earlier legs deliver so no monthly floor can be enforced. Channel we do not run yet (managed false): 150000 ($1,500/month) on every leg. Customer-operated (your-team-*): 0. Billing enforces it and the dashboard renders it; nobody hard-codes the figures."),
 });
 
@@ -4940,7 +4942,8 @@ const publicChannelSchema = registry.register(
     shortDescription: z.string().describe("One plain line (about 8 words) printed under the channel's name on a small selectable card (onboarding 'Which channels may we use?', the offer's sales path page), so a visitor knows what ticking it means. The channel twin of a step's `shortDescription`; never hard-code it. Example: 'We find your buyers and email them for you.' under 'Sales Cold Email Outreach'."),
     icon: z.string(),
     displayOrder: z.number().int(),
-    family: z.enum(["outbound_one_to_one", "paid_reach", "earned", "conversion"]),
+    channelType: z.enum(CHANNEL_TYPES).describe("WHAT KIND of channel this is — the ONE typology (owner 2026-10-09), stated on EVERY feature. `sourcing` (finds people: Start -> Lead found), `outbound` (contacts them one to one: cold email, call, LinkedIn...), `conversion` (moves a lead who engaged one step further), `paid`, `earned`, `pr`, `fundraising`, `hiring`, `tool` (not a channel). Group or exclude channels by this, never by whether a feature carries an acquisition-channel block or by a slug list. Supersedes `family`."),
+    family: z.enum(["outbound_one_to_one", "paid_reach", "earned", "conversion", "sourcing"]).describe("DEPRECATED, superseded by `channelType` (one typology). Served unchanged for its current readers; `sourcing` on the sourcing channels."),
     operatedBy: z.enum(["platform", "customer"]).describe("WHO puts the hours in. `platform` is us — either our software or a specialist of ours, and the channel's NAME says which. `customer` is their own founder or team, so the platform puts nobody on it and the daily operating cost is 0 — a stated fact, not a blank. What such a leg costs THEM is declared per lead against lead-service; this catalogue never guesses at it. A zero daily operating cost does NOT imply `customer`: a platform-run channel can carry no standing day-rate either, so read this field rather than the price."),
     managed: z.boolean().describe("True when the platform runs this channel today (sales-cold-email-outreach, ai-meeting-booking, ai-instant-call). A channel we do not run yet carries the $1,500/month minimum on every leg (stepTransitions[].minimumMonthlyBudgetCents)."),
     salesPathEligible: z.boolean().describe("True when the channel can appear in a sales path (the owner's shortlist read by GET /offers/{offerId}/sales-paths?scope=catalogue; no agency channel, seo-content off for now). The list of channels an offer can accept; never hard-code it."),
@@ -4974,7 +4977,18 @@ const channelCatalogueResponseSchema = registry.register(
     channels: z.array(publicChannelSchema),
     funnels: z.array(publicSalesFunnelSchema).describe("EVERY declared sales funnel, mirrored from brand-service, in the catalogue's canonical order and whether or not a channel sells it today — so a funnel's absence from a channel's list is readable as a restriction rather than as a catalogue we never published. Each states the STEP IT STARTS ON in the SAME vocabulary a channel's `producibleSteps` use, which is what makes 'which funnels does this outcome lead into' a lookup in this payload (`funnels.filter(f => f.entryStep.key === step.key)`) instead of a translation table the consumer keeps and lets go stale."),
     legs: z.array(funnelLegSchema).describe("The LEG vocabulary — every leg of every declared sales funnel, each with its single canonical identifier, the two steps it connects, and the funnels it is a leg of. Published so a consumer never derives a leg from a pair of steps and never hardcodes the list. A leg usually belongs to SEVERAL funnels (a booked meeting becomes an attended meeting in both meeting funnels), which is exactly why a campaign is bought per LEG rather than per funnel — and why two funnels' figures OVERLAP on their shared legs and must never be summed."),
-    steps: z.array(channelStepSchema).describe("The step vocabulary itself, published so a consumer never hardcodes it to join a channel's legs against a funnel's. It spans EVERY step of every funnel, not only the ones a funnel can start from — a channel performing an internal leg names the step it moves a lead OUT of, and that step is never one a funnel starts at."),
+    steps: z.array(channelStepSchema).describe("The step vocabulary itself, published so a consumer never hardcodes it to join a channel's legs against a funnel's. It spans EVERY step of every funnel, not only the ones a funnel can start from — a channel performing an internal leg names the step it moves a lead OUT of, and that step is never one a funnel starts at. `lead_found` ('Lead found') is a normal step since 2026-10-09: the sourcing channels move a lead from nothing to it; no declared funnel names it yet."),
+    legKeyCorrespondence: z
+      .array(
+        z.object({
+          channelType: z.literal("outbound").describe("The rename applies to the OUTBOUND channels only. The same legacy key on any other channel (ads, SEO, organic, PR) is NOT renamed."),
+          legacyLegKey: z.string().describe("The key stored and served today (wave 1): `start_to_conversation` / `start_to_website_visit`."),
+          legKey: z.string().describe("The LOCKED key the outbound leg moves to in wave 2: `lead_found_to_conversation` / `lead_found_to_website_visit`."),
+          fromStep: channelStepSchema.describe("`lead_found`: an outbound leg starts on the lead a sourcing channel found."),
+          toStep: channelStepSchema,
+        }),
+      )
+      .describe("THE OUTBOUND LEG RENAME (LOCKED, owner 2026-10-09), legacy key <-> new key. Wave 1 (now): every service treats both spellings as ONE identity on input while storing and serving the legacy one (this service serves `legs[]` / `stepTransitions[].legKey` unchanged). Wave 2 migrates stored rows and serves the new key. A consumer joining a key read from campaign-service or billing to a name or a leg from here matches both spellings through this list."),
   }),
 );
 

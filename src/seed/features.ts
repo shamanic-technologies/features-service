@@ -11,6 +11,7 @@ import {
   type ChannelStepTransition,
 } from "../lib/acquisition-channels.js";
 import { SOURCING_ORIGINS } from "../lib/sourcing-origins.js";
+import { channelTypeOf, type ChannelType } from "../lib/channel-types.js";
 
 /**
  * WHICH SALES FUNNELS A FEATURE MAY BE SOLD THROUGH — stated on EVERY feature, never omitted, and
@@ -141,6 +142,9 @@ export interface SeedFeatureDef {
 export interface SeedFeature extends SeedFeatureDef {
   /** DERIVED from `acquisitionChannel.stepTransitions` — see the block above. Never hand-written. */
   salesFunnels: readonly SalesFunnelKey[];
+  /** WHAT KIND of channel this is (`lib/channel-types.ts`), stated on every feature. Served beside the
+   *  stored row; never stored (the typology is code, guarded by `channel-types.test.ts`). */
+  channelType: ChannelType;
 }
 
 const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
@@ -1021,8 +1025,9 @@ for (const channel of PUBLISHED_CHANNELS) {
 /**
  * THE SOURCING ORIGINS (`lib/sourcing-origins.ts`): where a lead comes from, one feature per origin, so
  * a serve run can carry the origin's slug and its cost reads under the origin instead of the outreach
- * channel. Not acquisition channels (`acquisitionChannel: null`): an origin produces no funnel step, it
- * hands a person to a channel that does, so no channel picker lists one. Measured nowhere by `/stats`
+ * channel. Since 2026-10-09 each is a CHANNEL like any other (`channelType: sourcing`): its one leg is
+ * Start -> Lead found. No declared funnel names `lead_found` yet, so it sells through no funnel
+ * (`salesFunnels: []`) and is on no sales path. Measured nowhere by `/stats`
  * (no outputs): the origin reads are `GET /offers/:offerId/sourcing` and `GET /public/sourcing-origins`.
  */
 for (const origin of SOURCING_ORIGINS) {
@@ -1034,7 +1039,16 @@ for (const origin of SOURCING_ORIGINS) {
     implemented: true,
     displayOrder: origin.displayOrder,
     status: origin.live ? "active" : "deprecated",
-    acquisitionChannel: null,
+    // A channel like any other (owner 2026-10-09): one leg, Start -> Lead found, funded on a daily budget
+    // ("on demand, up to $X/day"). No standing day-rate (what a lead costs is metered per serve on
+    // runs-service), bookable for a single day, producing from the first day.
+    acquisitionChannel: {
+      family: "sourcing",
+      operatedBy: "platform",
+      performedBy: "software",
+      stepTransitions: producesFromNothing("lead_found"),
+      terms: terms(0, 1, 1),
+    },
     supersededBySlug: null,
     inputs: [],
     outputs: [],
@@ -1050,5 +1064,6 @@ for (const origin of SOURCING_ORIGINS) {
  */
 export const SEED_FEATURES: SeedFeature[] = SEED_FEATURE_DEFS.map((def) => ({
   ...def,
+  channelType: channelTypeOf(def.slug),
   salesFunnels: def.acquisitionChannel ? sellableFunnelsFor(def.acquisitionChannel.stepTransitions) : [],
 }));

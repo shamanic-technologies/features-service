@@ -57,6 +57,12 @@ export const CHANNEL_SHORT_DESCRIPTIONS: Readonly<Record<string, string>> = {
   "organic-reddit-publishing": "We post where your buyers talk on Reddit.",
   "organic-youtube-publishing": "We publish videos your buyers search for.",
 
+  // Sourcing (2026-10-09: channels like any other, Start -> Lead found)
+  "sourcing-apollo-cold-filters": "We find people who match your target.",
+  "sourcing-apollo-buying-signals": "We find people showing a buying signal now.",
+  "sourcing-linkedin-engagement-signals": "People who engage with your competitors' posts.",
+  "sourcing-crm-contacts": "We work the contacts you already have.",
+  "sourcing-apify-search": "Our former search provider, kept for its history.",
   // Conversion
   "agency-meeting-booking": "Our team turns replies into booked meetings.",
   "your-team-meeting-booking": "Your team answers replies and books meetings.",
