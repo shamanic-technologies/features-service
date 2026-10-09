@@ -15,6 +15,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
+import { serveOutboundLegKeys } from "../lib/served-leg-keys.js";
 
 vi.mock("../db/index.js", () => ({
   db: { query: { features: { findFirst: vi.fn(), findMany: vi.fn() } } },
@@ -433,7 +434,9 @@ describe("GET /offers/:offerId/audience-stats — per-audience economics across 
     const offer = await request(app).get(`/offers/${OFFER}/audience-stats?brandId=b1&goal=positiveReply`).set(AUTH);
     expect(offer.status).toBe(200);
 
-    expect(offer.body.audiences).toEqual(perFeature.body.audiences);
+    // The brand/offer read names no channel, so its legs keep the funnel spelling; the channel read serves
+    // the outbound one (wave 2, lib/served-leg-keys.ts). Same figures, read in one spelling.
+    expect(serveOutboundLegKeys(offer.body.audiences, PITCH)).toEqual(perFeature.body.audiences);
   });
 });
 

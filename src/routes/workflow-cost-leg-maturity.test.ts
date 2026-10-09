@@ -125,7 +125,8 @@ describe("workflow-cost-per-outcome — the leg's flash, mature and verdict per 
 
     const bySlug = new Map(second.body.workflows.map((r: { workflowDynastySlug: string }) => [r.workflowDynastySlug, r]));
     const a = bySlug.get("wf-a") as { maturity: Record<string, any> };
-    expect(a.maturity.legKey).toBe(LEG);
+    // Served in the outbound spelling (wave 2, lib/served-leg-keys.ts); the legacy `?leg=` above still reads it.
+    expect(a.maturity.legKey).toBe("lead_found_to_conversation");
     expect(a.maturity.durationDays).toBe(21);
     expect(a.maturity.outcomesRequired).toBe(1);
     // Flash: the leg's whole-history spend EXACTLY over its PEOPLE who replied (4, never email-gateway's 99).
@@ -146,7 +147,7 @@ describe("workflow-cost-per-outcome — the leg's flash, mature and verdict per 
     mockLegEvidence();
     const { second } = await readWarmed();
     const fleet = second.body.fleet;
-    expect(fleet).toMatchObject({ legKey: LEG, basis: "mature", measured: true, cutoffIso: CUTOFF, matureWorkflowCount: 2 });
+    expect(fleet).toMatchObject({ legKey: "lead_found_to_conversation", basis: "mature", measured: true, cutoffIso: CUTOFF, matureWorkflowCount: 2 });
     // wf-b reads $5 to date and would be named on flash; the mature best is wf-c at $15.
     expect(fleet.best).toEqual({ workflowDynastySlug: "wf-c", costPerOutcomeUsd: 15 });
     expect(fleet.median.costPerOutcomeUsd).toBeCloseTo((15 + 30) / 2, 9);

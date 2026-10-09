@@ -21,7 +21,7 @@ const router = Router();
 
 router.get("/internal/workflow-leg-assignments", apiKeyOnly, async (req, res) => {
   const featureSlug = typeof req.query.featureSlug === "string" ? req.query.featureSlug : undefined;
-  // Both spellings of an outbound leg name the same stored rows (wave 1, `lib/funnel-legs.ts`).
+  // Both spellings of an outbound leg name the same rows, stored in the new one (wave 2, `lib/funnel-legs.ts`).
   const legKey = typeof req.query.legKey === "string" ? storedLegKeyOf(req.query.legKey) : undefined;
   try {
     res.json({ assignments: await listLegAssignments({ featureSlug, legKey }) });
@@ -57,7 +57,7 @@ router.put("/internal/workflow-leg-assignments", apiKeyOnly, async (req, res) =>
     return;
   }
   // The stored spelling: the new outbound spelling (`lead_found_to_*`) of an outbound channel writes the
-  // same row as the legacy one (wave 1); an exact catalogue key is unchanged.
+  // same row as the legacy one; the row is stored in the new spelling (wave 2, `lib/workflow-leg-assignments.ts`).
   const legKey = typeof rawLegKey === "string" ? matchChannelLegKey(featureSlug, rawLegKey) : null;
   if (typeof rawLegKey !== "string" || !legKey || !funnelLeg(legKey)) {
     res.status(400).json({ error: `legKey must be a leg of the funnel catalogue, got ${JSON.stringify(rawLegKey)}`, reason: "leg_unrecognised" });

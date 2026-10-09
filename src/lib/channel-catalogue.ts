@@ -34,7 +34,7 @@ import {
   type ChannelStepTransition,
   type AcquisitionChannel,
 } from "./acquisition-channels.js";
-import { legKeyFor, FUNNEL_LEGS, type FunnelLegDef } from "./funnel-legs.js";
+import { legKeyFor, FUNNEL_LEGS, OUTBOUND_LEG_KEY_CORRESPONDENCE, type FunnelLegDef } from "./funnel-legs.js";
 import { channelTypeOf, type ChannelType } from "./channel-types.js";
 import { sourcingOriginBySlug } from "./sourcing-origins.js";
 import { SALES_PATH_CATALOGUE_CHANNEL_SLUGS } from "./sales-path-cost-benchmarks.js";
@@ -325,7 +325,7 @@ export type PublicFunnelLeg = FunnelLegDef & { reactive: boolean; maturity: Publ
  *  maturity rule, read from the one module every figure is cut on, so a published parameter and a
  *  served figure can never disagree. */
 export function funnelLegCatalogue(): PublicFunnelLeg[] {
-  return FUNNEL_LEGS.map((a) => {
+  const funnelLegs = FUNNEL_LEGS.map((a) => {
     const { legKey: _legKey, ...maturity } = legMaturity(a.legKey);
     return {
       ...a,
@@ -334,6 +334,16 @@ export function funnelLegCatalogue(): PublicFunnelLeg[] {
       maturity,
     };
   });
+  // The OUTBOUND legs (wave 2, `lib/funnel-legs.ts`): what an outbound channel's entry leg is served as,
+  // Lead found -> Positive reply / Website visit. Same funnels and maturity rule as the funnel's own entry
+  // leg it feeds (a non-outbound channel still performs that one, `start_to_*`), appended so every leg
+  // published before keeps its position.
+  const outboundLegs = OUTBOUND_LEG_KEY_CORRESPONDENCE.map((c) => {
+    const twin = funnelLegs.find((l) => l.legKey === c.legacyLegKey);
+    if (!twin) throw new Error(`[features-service] outbound leg ${c.legKey}: the funnel leg ${c.legacyLegKey} is not in the catalogue`);
+    return { ...twin, legKey: c.legKey, fromStep: { ...c.fromStep }, funnelKeys: [...twin.funnelKeys], reactive: false };
+  });
+  return [...funnelLegs, ...outboundLegs];
 }
 
 /** The step vocabulary itself, published beside the channels so a consumer never has to hardcode it. */

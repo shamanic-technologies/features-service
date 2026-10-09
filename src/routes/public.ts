@@ -3321,8 +3321,8 @@ interface ChannelCataloguePayload {
    *  that performs an internal leg names the step it moves a lead OUT of, and that step is never one. */
   steps: ReturnType<typeof channelStepCatalogue>;
   /** The LOCKED outbound leg rename (`lib/funnel-legs.ts`): legacy key <-> new key, outbound channels only.
-   *  Wave 1 serves the legacy keys everywhere; a consumer joining a key from campaign-service or billing
-   *  matches both spellings through this list. */
+   *  Wave 2: an outbound channel's leg is stored and served in the new key (`lib/served-leg-keys.ts`); a
+   *  consumer joining a key from campaign-service or billing still matches both spellings through this list. */
   legKeyCorrespondence: typeof OUTBOUND_LEG_KEY_CORRESPONDENCE;
 }
 

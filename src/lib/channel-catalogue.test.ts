@@ -291,8 +291,17 @@ describe("every published leg states its MATURITY RULE (lib/maturity.ts, feature
     });
   });
 
+  it("the two OUTBOUND legs (wave 2) carry the rule of the funnel entry leg they feed", () => {
+    expect(legs.get("lead_found_to_conversation")!.maturity).toEqual(legs.get("start_to_conversation")!.maturity);
+    expect(legs.get("lead_found_to_website_visit")!.maturity).toEqual(legs.get("start_to_website_visit")!.maturity);
+    expect(legs.get("lead_found_to_conversation")!.fromStep!.key).toBe("lead_found");
+    expect(legs.get("lead_found_to_conversation")!.reactive).toBe(false);
+    expect(legs.get("lead_found_to_website_visit")!.funnelKeys).toEqual(legs.get("start_to_website_visit")!.funnelKeys);
+  });
+
   it("every other leg matures the day it is bought, on the bar of 10, and says the rule is a default", () => {
-    const others = [...legs.values()].filter((l) => !["start_to_conversation", "start_to_website_visit"].includes(l.legKey));
+    const entry = ["start_to_conversation", "start_to_website_visit", "lead_found_to_conversation", "lead_found_to_website_visit"];
+    const others = [...legs.values()].filter((l) => !entry.includes(l.legKey));
     expect(others.length).toBeGreaterThan(0);
     for (const leg of others) {
       expect(leg.maturity).toEqual({ durationDays: 0, outcomesRequired: 10, outcomeSignal: null, source: "default" });
