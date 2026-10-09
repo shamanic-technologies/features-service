@@ -17,9 +17,10 @@
  *     why): campaign-service, the single door that fires them.
  *  3. ON/OFF: per campaign (org x brand x offer x leg x channel), campaign-service's existing switch.
  *
- * GUARANTEE: a leg can only name a trigger on this list, and a leg of a channel we RUN (managed) can only
- * name a CODED one. `assertLegTriggersDeclared` runs on boot and in the seed guard test: a leg on an unknown
- * or uncoded trigger fails the deploy rather than waiting forever for an event nobody sends.
+ * GUARANTEE: a leg can only name a trigger on this list (or one declared at run time,
+ * `lib/channel-declarations.ts`), and a leg of a channel we RUN (managed) can only name a CODED one.
+ * `assertLegTriggersDeclared` runs on boot, in the seed guard test and on every catalogue build; a leg
+ * DECLARED at run time is refused at creation on any trigger nothing fires (409 `trigger_not_fired`).
  */
 import type { ChannelStepKey } from "./acquisition-channels.js";
 
@@ -136,6 +137,8 @@ export class UndeclaredLegTriggerError extends Error {
  */
 export function assertLegTriggersDeclared(
   legs: ReadonlyArray<{ slug: string; legKey: string; managed: boolean } & LegRunStatement>,
+  // The coded list, plus (on a catalogue build that merges run-time declarations) the declared trigger types.
+  triggerOf: (id: string) => Pick<ChannelTriggerType, "coded"> | null = channelTriggerType,
 ): void {
   for (const leg of legs) {
     const where = `${leg.slug} ${leg.legKey}`;
@@ -144,7 +147,7 @@ export function assertLegTriggersDeclared(
       continue;
     }
     if (leg.triggerId === null) throw new UndeclaredLegTriggerError(`${where} is reactive and names no trigger`);
-    const type = channelTriggerType(leg.triggerId);
+    const type = triggerOf(leg.triggerId);
     if (!type) throw new UndeclaredLegTriggerError(`${where} names unknown trigger ${leg.triggerId}`);
     if (leg.managed && !type.coded) throw new UndeclaredLegTriggerError(`${where} is run by us and names ${leg.triggerId}, which nothing fires yet`);
   }

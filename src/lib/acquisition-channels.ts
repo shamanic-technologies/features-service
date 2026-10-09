@@ -3,7 +3,8 @@
  * IT MOVES A LEAD FROM AND TO.
  *
  * distribute sells reach through more than one channel, and a channel in this fleet's vocabulary IS a
- * feature slug — there is no channel table, no channel concept and none may be introduced. What this
+ * feature slug (or, since 2026-10-09, a run-time declaration in the same slug namespace stating the same
+ * blob, `lib/channel-declarations.ts`). What this
  * module adds to a feature is the two things a BUYER needs before booking one, and neither of them is a
  * measured figure:
  *
