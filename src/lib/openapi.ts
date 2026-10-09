@@ -5953,7 +5953,7 @@ registry.registerPath({
   method: "post",
   path: "/internal/declarations/trigger-types",
   summary: "Declare a trigger type (internal, api-key)",
-  description: `${DECLARATIONS_DESCRIPTION} A declared trigger is NEVER coded on its own say-so: it is \`coded: false\` (no leg may name it) until a service runs a generic detector for its kind. \`delay\` and \`poll\` detectors belong to campaign-service (it owns the trigger events and their due times); none runs yet.`,
+  description: `${DECLARATIONS_DESCRIPTION} A declared trigger is NEVER coded on its own say-so: \`coded\` follows its KIND. campaign-service's generic detectors fire \`delay\` and \`poll\` (coded: true, a leg may name them); a declared \`event\` stays uncoded. Params are validated with the detectors' own rules (named 400: \`params_required\`, \`delay_days_invalid\`, \`poll_every_minutes_invalid\`, \`poll_source_invalid\`, \`step_unrecognised\`).`,
   tags: ["Internal"],
   request: {
     body: {
@@ -5967,7 +5967,7 @@ registry.registerPath({
             kind: z.enum(["event", "delay", "poll"]),
             fromStep: z.string().nullable().optional().describe("`event` only: the step a lead reached that fires it."),
             firedBy: z.string().optional().describe("`event` only: the service that would detect it (default `not_built`)."),
-            params: z.record(z.unknown()).optional().describe("`delay`: `{afterStep, days}` (days >= 1). `poll`: `{source, everyMinutes}` (everyMinutes >= 5)."),
+            params: z.record(z.unknown()).optional().describe("`delay`: `{afterStep, days}` (a step key; days >= 1). `poll`: `{source, everyMinutes}` (everyMinutes >= 5); `source` = ONE treg call, object or JSON text, `{endpoint, method? GET|POST, query? (strings), body? (object), items (dot path, '' = the answer), itemId? (dot path), maxMicro (1..1000000 micro-USD per call)}`, stored as JSON text."),
             createdBy: z.string(),
             ...actorFields,
           }),
