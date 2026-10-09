@@ -10,6 +10,7 @@
  * never a number — the opposite of the fail-loud rule's target, which is a fabricated figure.
  */
 import { isOutboundLegKeySpelling, storedLegKeyOf } from "./funnel-legs.js";
+import { legacyOutboundLegKeysIn, noteLegacyOutboundLegKeys } from "./legacy-leg-key-arrivals.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import {
   buildCampaignFamilies,
@@ -68,6 +69,11 @@ export async function fetchBrandCampaignRows(
   // Both spellings of an outbound leg are ONE identity (wave 1, `lib/funnel-legs.ts`): a row campaign-service
   // re-keys `lead_found_to_*` reads as the `start_to_*` this service stores and serves. Any other row is
   // returned as is.
+  // A row campaign-service still serves in the LEGACY outbound spelling is logged (the switch-off measurement).
+  noteLegacyOutboundLegKeys(
+    data.campaigns.flatMap((row) => (typeof row.legKey === "string" ? legacyOutboundLegKeysIn(row.legKey, row.featureSlug ?? featureSlug ?? null) : [])),
+    { source: "campaign-service", route: "GET /campaigns", caller: { service: "campaign-service", orgId: headers.orgId } },
+  );
   return data.campaigns.map((row) =>
     typeof row.legKey === "string" && isOutboundLegKeySpelling(row.legKey) ? { ...row, legKey: storedLegKeyOf(row.legKey) } : row,
   );
