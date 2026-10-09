@@ -786,6 +786,13 @@ export function computeRevenue(
    * such a lead is worth nothing, as a bare delivery always was.
    */
   contacted: ContactedPricing | null = null,
+  /**
+   * PER-PERSON PRICING (a brand whose campaigns sell several offers, owner 2026-10-09): each person is
+   * priced on the offer of the campaign that reached them — its own paths and lifetime revenue. `paths`
+   * above is then the UNION (it only orders the stages). Null for a person = no offer prices them (EV 0,
+   * still counted in the series). Omitted → every person on `paths` / `closeValueUsd`, byte-identical.
+   */
+  pricingOf?: (person: EnginePerson) => { paths: ResolvedPath[]; closeValueUsd: number } | null,
 ): RevenueResult {
   const persons = dedupPersonsByLead(rawPersons);
 
@@ -801,7 +808,13 @@ export function computeRevenue(
   // delivery milestone — the milestone-only lead carries 0 and is filtered out of the organizations,
   // the time series and the total below, but stays in `leads[]` so the count series stay whole.
   const scored = persons
-    .map((person) => evForPerson(person, paths, milestones, closeValueUsd, contacted))
+    .map((person) => {
+      if (!pricingOf) return evForPerson(person, paths, milestones, closeValueUsd, contacted);
+      const own = pricingOf(person);
+      return own
+        ? evForPerson(person, own.paths, milestones, own.closeValueUsd, contacted)
+        : evForPerson(person, [], milestones, 0, null);
+    })
     .filter((p) => p.ev > 0 || p.reachedMilestone);
 
   // Leads table — one row per engaged person.

@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { perOfferPricer } from "../lib/per-offer-revenue.js";
+import type { OfferPricing } from "../lib/per-offer-pricing.js";
 import { fetchBrandLegEconomics } from "../lib/brand-leg-economics-client.js";
 import { FUNNEL_RETIRED_BODY, namesRetiredFunnel } from "../lib/retired-funnel-param.js";
 import { contactedPricingSoft } from "./contacted-value.js";
@@ -1459,6 +1461,10 @@ export async function computeFeatureRevenue(
   // THE OFFER AND BRAND GRAINS ONLY: today's spend also counts the brand's own work no campaign
   // carries (setup, notifications) — see `fetchSpendBreakdown`'s `brandLevelToday`. Omitted → today.
   brandLevelSpend = false,
+  // THE BRAND READ OF A BRAND WHOSE CAMPAIGNS SELL SEVERAL OFFERS (`lib/per-offer-pricing.ts`, owner
+  // 2026-10-09): each person is priced on the offer of the campaign that reached them. Used only where
+  // the scope's own economics are null; omitted → byte-identical.
+  perOfferPricing?: readonly OfferPricing[] | null,
 ): Promise<RevenueBody> {
   // The single campaign id the campaign-SCOPED downstream reads still take: the requested campaign
   // for a single scope, `undefined` for a family (no producer accepts a campaign list). The reads
@@ -1710,6 +1716,71 @@ export async function computeFeatureRevenue(
       causes,
       unpricedReason ?? "no_priced_funnel",
     );
+    // A brand whose campaigns sell SEVERAL offers: every person priced on the offer of the campaign that
+    // reached them (owner 2026-10-09, its Companies page read 0 companies over 8,673 contacts).
+    const pricer = !lens && perOfferPricing ? perOfferPricer(perOfferPricing, funnel) : null;
+    if (pricer) {
+      const [observed, quals, contactedPricing] = await Promise.all([
+        fetchObservedStepFacts(brandId, causes).catch((err) => {
+          console.warn(`[features-service] observed step statements failed (per-offer read, projection alone): ${(err as Error).message}`);
+          return null;
+        }),
+        fetchQualifications(brandId, campaignId, coldEmails, headers).catch((err) => {
+          console.warn(`[features-service] qualification enrichment failed (per-offer read): ${(err as Error).message}`);
+          return null;
+        }),
+        contactedPricingPromise,
+      ]);
+      applySignalOverlays(persons, null, observed?.byEmail ?? null, quals, pricer.pricedFunnelKeys, causes);
+      const run = (people: EnginePerson[]) => computeRevenue(pricer.paths, people, 0, funnel.milestones, contactedPricing, pricer.pricingOf);
+      const result = run(persons);
+      const matureResult = coldBasis.kind === "mature" ? run(coldMaturePersons) : result;
+      const total = result.headline.totalPipelineUsd;
+      // Expected paying clients = Σ over offers of (that offer's pipeline ÷ its lifetime revenue); the
+      // lifetime revenue the cost of acquisition divides is the one that reproduces it exactly.
+      const ltr = pricer.lifetimeRevenueOver(persons, (people, paths, offerLtr) =>
+        computeRevenue(paths, people, offerLtr, funnel.milestones, contactedPricing).headline.totalPipelineUsd,
+      );
+      const realized = observed === null && quals === null ? null : pricer.closedWon(coldMaturePersons);
+      const pricedBody: RevenueBody = {
+        ...coldBody,
+        headline: { totalPipelineUsd: total, unpricedReason: null },
+        costEconomics: buildCostEconomics({
+          committedCostInUsdCents: cost.committedCents,
+          actualCostInUsdCents: cost.actualCents,
+          totalPipelineUsd: total,
+          lifetimeRevenueUsd: ltr,
+          maturity: plan.unknown
+            ? ({ unknown: true } as const)
+            : coldBasis.kind === "mature"
+              ? { days: coldBasis.days, committedCostInUsdCents: coldBasis.cost.committedCents, totalPipelineUsd: matureResult.headline.totalPipelineUsd }
+              : undefined,
+          realized: plan.unknown ? null : realized,
+        }),
+        timeSeries: result.timeSeries,
+        organizations: result.organizations,
+        leads: result.leads,
+        events: result.events,
+        recipientsContacted: buildContactedSeries(result.leads),
+        ...buildOutcomeSeries(result.leads),
+        spend: breakdown
+          ? buildSpend(
+              breakdown,
+              result.leads,
+              counts,
+              parents,
+              coldBasis.kind === "mature" ? { kind: "mature", days: coldBasis.days, cost: coldBasis.cost, leads: matureResult.leads } : coldBasis,
+            )
+          : null,
+      };
+      return attachMaturity(
+        pricedBody,
+        coldScoped,
+        { flash: total, mature: matureResult.headline.totalPipelineUsd },
+        ltr,
+        null,
+      );
+    }
     return attachMaturity(
       { ...coldBody, recipientsContacted: buildContactedSeries(coldRows), ...buildOutcomeSeries(coldRows) },
       coldScoped,
