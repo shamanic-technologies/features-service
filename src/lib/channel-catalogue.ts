@@ -23,6 +23,7 @@ import {
   CHANNEL_STEPS,
   CHANNEL_STEP_KEYS,
   matchChannelStepKey,
+  isProactiveTransition,
   producibleStepsOf,
   sellableFunnelsFor,
   SALES_FUNNEL_ENTRY_STEP,
@@ -34,6 +35,8 @@ import {
   type AcquisitionChannel,
 } from "./acquisition-channels.js";
 import { legKeyFor, FUNNEL_LEGS, type FunnelLegDef } from "./funnel-legs.js";
+import { channelTypeOf, type ChannelType } from "./channel-types.js";
+import { sourcingOriginBySlug } from "./sourcing-origins.js";
 import { SALES_PATH_CATALOGUE_CHANNEL_SLUGS } from "./sales-path-cost-benchmarks.js";
 import { MANAGED_CHANNEL_SLUGS, channelLegMinimumMonthlyCents } from "./channel-leg-minimums.js";
 import { legMaturity, type LegMaturity } from "./maturity.js";
@@ -95,6 +98,9 @@ export interface PublicChannel {
   shortDescription: string;
   icon: string;
   displayOrder: number;
+  /** WHAT KIND of channel this is, the ONE typology (`lib/channel-types.ts`). Supersedes `family`. */
+  channelType: ChannelType;
+  /** DEPRECATED, superseded by `channelType`. Served unchanged for its current readers. */
   family: ChannelFamily;
   /** Who puts the hours in: `platform` is us (our software, or a specialist of ours — the channel's NAME
    *  says which), `customer` is their own founder or team. A `customer`-operated channel puts nobody of
@@ -239,6 +245,10 @@ export function parseAcquisitionChannel(slug: string, raw: unknown): Acquisition
 
 const stepWire = (key: ChannelStepKey): ChannelStepDefWire => ({ ...CHANNEL_STEPS[key] });
 
+/** We run it today: the managed channels, and every LIVE sourcing origin (billing has treated a live
+ *  origin's source campaign as managed since 2026-10-07). */
+const isManagedChannel = (slug: string): boolean => MANAGED_CHANNEL_SLUGS.has(slug) || sourcingOriginBySlug(slug)?.live === true;
+
 /**
  * Every acquisition channel among these feature rows, ordered as the catalogue orders features. A row
  * that is not a channel is simply not one of them.
@@ -257,6 +267,7 @@ const stepWire = (key: ChannelStepKey): ChannelStepDefWire => ({ ...CHANNEL_STEP
 export function buildChannelCatalogue(
   rows: readonly CatalogueFeatureRow[],
   shortDescriptionOf: (slug: string) => string = channelShortDescription,
+  channelTypeOfSlug: (slug: string) => ChannelType = channelTypeOf,
 ): PublicChannel[] {
   const channels: PublicChannel[] = [];
   for (const row of rows) {
@@ -270,9 +281,10 @@ export function buildChannelCatalogue(
       shortDescription: shortDescriptionOf(row.slug),
       icon: row.icon,
       displayOrder: row.displayOrder,
+      channelType: channelTypeOfSlug(row.slug),
       family: channel.family,
       operatedBy: channel.operatedBy,
-      managed: MANAGED_CHANNEL_SLUGS.has(row.slug),
+      managed: isManagedChannel(row.slug),
       salesPathEligible: SALES_PATH_CATALOGUE_CHANNEL_SLUGS.has(row.slug),
       performedBy: channel.performedBy,
       trigger: channel.trigger ?? "daily_budget",
@@ -283,8 +295,8 @@ export function buildChannelCatalogue(
         to: stepWire(t.to),
         crewName: null,
         campaignName: null,
-        reactive: t.from != null,
-        minimumMonthlyBudgetCents: channelLegMinimumMonthlyCents({ slug: row.slug, operatedBy: channel.operatedBy }, t.from != null),
+        reactive: !isProactiveTransition(t),
+        minimumMonthlyBudgetCents: channelLegMinimumMonthlyCents({ slug: row.slug, operatedBy: channel.operatedBy }, !isProactiveTransition(t)),
       })),
       producibleSteps: producibleStepsOf(channel.stepTransitions).map(stepWire),
       salesFunnels: sellableFunnelsFor(channel.stepTransitions).map((key) => ({
@@ -315,7 +327,12 @@ export type PublicFunnelLeg = FunnelLegDef & { reactive: boolean; maturity: Publ
 export function funnelLegCatalogue(): PublicFunnelLeg[] {
   return FUNNEL_LEGS.map((a) => {
     const { legKey: _legKey, ...maturity } = legMaturity(a.legKey);
-    return { ...a, funnelKeys: [...a.funnelKeys], reactive: a.fromStep !== null, maturity };
+    return {
+      ...a,
+      funnelKeys: [...a.funnelKeys],
+      reactive: !isProactiveTransition({ from: (a.fromStep?.key as ChannelStepKey | undefined) ?? null }),
+      maturity,
+    };
   });
 }
 

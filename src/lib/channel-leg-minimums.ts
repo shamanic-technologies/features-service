@@ -3,8 +3,9 @@
  * (owner 2026-10-04: the customer activates several sales paths per offer and budgets each channel × leg
  * item; billing-service enforces the minimum, the dashboard renders it, nobody hard-codes it).
  *
- * - A leg is REACTIVE when it moves a lead out of a step the lead already reached (`fromStep` set), and
- *   PROACTIVE when it starts from nothing (an entry leg). Read from the leg catalogue, never per channel.
+ * - A leg is REACTIVE when it works a lead who already engaged, PROACTIVE when it goes and finds or
+ *   contacts people (from nothing, or from `lead_found`): `isProactiveTransition`, never per channel.
+ * - A SOURCING channel's leg (Start -> Lead found): $0, the source campaign is "on demand".
  * - A channel the customer's own team works (`operatedBy: customer`) costs us nothing: $0.
  * - A channel we do not run yet: $1,500/month on every leg ("we only code it if enough money comes in").
  * - A channel we run, on a PROACTIVE leg: $99/month (cold email's website-visit and conversation entries).
@@ -12,6 +13,8 @@
  *   leads the earlier legs deliver, so billing cannot hold a monthly floor against it; a floor it cannot
  *   enforce would be a figure nobody keeps.
  */
+import { sourcingOriginBySlug } from "./sourcing-origins.js";
+
 /** The ONLY channels the platform manages today. A leg nothing here publishes is the customer's team. */
 export const MANAGED_CHANNEL_SLUGS: ReadonlySet<string> = new Set([
   "sales-cold-email-outreach",
@@ -28,6 +31,9 @@ export function channelLegMinimumMonthlyCents(
   reactive: boolean,
 ): number {
   if (channel.operatedBy === "customer") return 0;
+  // A SOURCE campaign is "on demand, up to $X/day" (owner 2026-10-07): no floor, which is what billing
+  // has enforced on it since (minimum 0) while the catalogue did not list the sourcing channels.
+  if (sourcingOriginBySlug(channel.slug)) return 0;
   if (!MANAGED_CHANNEL_SLUGS.has(channel.slug)) return NOT_RUN_YET_MINIMUM_MONTHLY_CENTS;
   return reactive ? 0 : MANAGED_PROACTIVE_MINIMUM_MONTHLY_CENTS;
 }

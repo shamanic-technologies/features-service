@@ -98,6 +98,21 @@
             },
             "description": "WHICH SALES FUNNELS THIS FEATURE MAY BE SOLD THROUGH, in brand-service's own funnel keys. A product statement about the feature, owned by this service: the dashboard offers only valid (funnel, feature) pairs from it and campaign-service refuses to provision a pair that is not in it. ALWAYS PRESENT, so an absent answer can never be mistaken for 'all of them' — a feature that sells through no sales funnel states `[]` (every non-sales feature: PR, hiring, VC, accelerators, AI visibility, press kit, outlet discovery, expert quotes) and one that sells through every declared funnel states every one of those keys explicitly. A shorter list is a real restriction, not a gap: the feedback-request cold email states `sales_meetings_from_conversation` alone, because its offer buys a conversation and has no website step to sell."
           },
+          "channelType": {
+            "type": "string",
+            "enum": [
+              "sourcing",
+              "outbound",
+              "conversion",
+              "paid",
+              "earned",
+              "pr",
+              "fundraising",
+              "hiring",
+              "tool"
+            ],
+            "description": "WHAT KIND of channel this feature is — the ONE typology (owner 2026-10-09), stated on EVERY feature, active and deprecated: `sourcing`, `outbound`, `conversion`, `paid`, `earned`, `pr`, `fundraising`, `hiring`, `tool` (not a channel: scoring, page generation, outlet discovery). A surface groups or excludes features by this, never by whether `acquisitionChannel` is null and never by a slug list of its own. Supersedes the acquisition channel's `family`."
+          },
           "supersededBySlug": {
             "type": "string",
             "nullable": true,
@@ -126,6 +141,7 @@
           "charts",
           "entities",
           "salesFunnels",
+          "channelType",
           "supersededBySlug",
           "createdAt",
           "updatedAt"
@@ -3548,6 +3564,7 @@
                   "key": {
                     "type": "string",
                     "enum": [
+                      "lead_found",
                       "conversation",
                       "website_visit",
                       "booking_call",
@@ -3647,6 +3664,7 @@
                   "key": {
                     "type": "string",
                     "enum": [
+                      "lead_found",
                       "conversation",
                       "website_visit",
                       "booking_call",
@@ -3805,6 +3823,7 @@
                   "key": {
                     "type": "string",
                     "enum": [
+                      "lead_found",
                       "conversation",
                       "website_visit",
                       "booking_call",
@@ -3957,6 +3976,7 @@
                         "key": {
                           "type": "string",
                           "enum": [
+                            "lead_found",
                             "conversation",
                             "website_visit",
                             "booking_call",
@@ -9873,6 +9893,7 @@
                   "key": {
                     "type": "string",
                     "enum": [
+                      "lead_found",
                       "conversation",
                       "website_visit",
                       "booking_call",
@@ -9972,6 +9993,7 @@
                   "key": {
                     "type": "string",
                     "enum": [
+                      "lead_found",
                       "conversation",
                       "website_visit",
                       "booking_call",
@@ -10130,6 +10152,7 @@
                   "key": {
                     "type": "string",
                     "enum": [
+                      "lead_found",
                       "conversation",
                       "website_visit",
                       "booking_call",
@@ -10282,6 +10305,7 @@
                         "key": {
                           "type": "string",
                           "enum": [
+                            "lead_found",
                             "conversation",
                             "website_visit",
                             "booking_call",
@@ -14563,7 +14587,7 @@
                       },
                       "reactive": {
                         "type": "boolean",
-                        "description": "True when the leg moves a lead out of a step it already reached (from/fromStep set): its work starts when a lead arrives. False on an entry leg (from nothing): proactive, it goes and finds people."
+                        "description": "True when the leg works a lead who already ENGAGED (a reply, a visit, a meeting): its work starts when a lead arrives. False on a PROACTIVE leg, one that goes and finds or contacts people: from nothing (sourcing, ads, today's outbound `start_to_*`) or from `lead_found` (the outbound `lead_found_to_*` legs of wave 2)."
                       },
                       "minimumMonthlyBudgetCents": {
                         "type": "integer",
@@ -18753,6 +18777,7 @@
                   "key": {
                     "type": "string",
                     "enum": [
+                      "lead_found",
                       "conversation",
                       "website_visit",
                       "booking_call",
@@ -18852,6 +18877,7 @@
                   "key": {
                     "type": "string",
                     "enum": [
+                      "lead_found",
                       "conversation",
                       "website_visit",
                       "booking_call",
@@ -19010,6 +19036,7 @@
                   "key": {
                     "type": "string",
                     "enum": [
+                      "lead_found",
                       "conversation",
                       "website_visit",
                       "booking_call",
@@ -19162,6 +19189,7 @@
                         "key": {
                           "type": "string",
                           "enum": [
+                            "lead_found",
                             "conversation",
                             "website_visit",
                             "booking_call",
@@ -25250,6 +25278,7 @@
               "key": {
                 "type": "string",
                 "enum": [
+                  "lead_found",
                   "conversation",
                   "website_visit",
                   "booking_call",
@@ -25286,6 +25315,7 @@
               "key": {
                 "type": "string",
                 "enum": [
+                  "lead_found",
                   "conversation",
                   "website_visit",
                   "booking_call",
@@ -25335,7 +25365,7 @@
           },
           "reactive": {
             "type": "boolean",
-            "description": "True when the leg moves a lead out of a step it already reached (from/fromStep set): its work starts when a lead arrives. False on an entry leg (from nothing): proactive, it goes and finds people."
+            "description": "True when the leg works a lead who already ENGAGED (a reply, a visit, a meeting): its work starts when a lead arrives. False on a PROACTIVE leg, one that goes and finds or contacts people: from nothing (sourcing, ads, today's outbound `start_to_*`) or from `lead_found` (the outbound `lead_found_to_*` legs of wave 2)."
           },
           "maturity": {
             "allOf": [
@@ -25381,14 +25411,31 @@
           "displayOrder": {
             "type": "integer"
           },
+          "channelType": {
+            "type": "string",
+            "enum": [
+              "sourcing",
+              "outbound",
+              "conversion",
+              "paid",
+              "earned",
+              "pr",
+              "fundraising",
+              "hiring",
+              "tool"
+            ],
+            "description": "WHAT KIND of channel this is — the ONE typology (owner 2026-10-09), stated on EVERY feature. `sourcing` (finds people: Start -> Lead found), `outbound` (contacts them one to one: cold email, call, LinkedIn...), `conversion` (moves a lead who engaged one step further), `paid`, `earned`, `pr`, `fundraising`, `hiring`, `tool` (not a channel). Group or exclude channels by this, never by whether a feature carries an acquisition-channel block or by a slug list. Supersedes `family`."
+          },
           "family": {
             "type": "string",
             "enum": [
               "outbound_one_to_one",
               "paid_reach",
               "earned",
-              "conversion"
-            ]
+              "conversion",
+              "sourcing"
+            ],
+            "description": "DEPRECATED, superseded by `channelType` (one typology). Served unchanged for its current readers; `sourcing` on the sourcing channels."
           },
           "operatedBy": {
             "type": "string",
@@ -25452,6 +25499,7 @@
                     "key": {
                       "type": "string",
                       "enum": [
+                        "lead_found",
                         "conversation",
                         "website_visit",
                         "booking_call",
@@ -25488,6 +25536,7 @@
                     "key": {
                       "type": "string",
                       "enum": [
+                        "lead_found",
                         "conversation",
                         "website_visit",
                         "booking_call",
@@ -25529,7 +25578,7 @@
                 },
                 "reactive": {
                   "type": "boolean",
-                  "description": "True when the leg moves a lead out of a step it already reached (from/fromStep set): its work starts when a lead arrives. False on an entry leg (from nothing): proactive, it goes and finds people."
+                  "description": "True when the leg works a lead who already ENGAGED (a reply, a visit, a meeting): its work starts when a lead arrives. False on a PROACTIVE leg, one that goes and finds or contacts people: from nothing (sourcing, ads, today's outbound `start_to_*`) or from `lead_found` (the outbound `lead_found_to_*` legs of wave 2)."
                 },
                 "minimumMonthlyBudgetCents": {
                   "type": "integer",
@@ -25564,6 +25613,7 @@
                 "key": {
                   "type": "string",
                   "enum": [
+                    "lead_found",
                     "conversation",
                     "website_visit",
                     "booking_call",
@@ -25649,6 +25699,7 @@
           "shortDescription",
           "icon",
           "displayOrder",
+          "channelType",
           "family",
           "operatedBy",
           "managed",
@@ -25706,6 +25757,7 @@
                     "key": {
                       "type": "string",
                       "enum": [
+                        "lead_found",
                         "conversation",
                         "website_visit",
                         "booking_call",
@@ -25766,6 +25818,7 @@
                 "key": {
                   "type": "string",
                   "enum": [
+                    "lead_found",
                     "conversation",
                     "website_visit",
                     "booking_call",
@@ -25795,14 +25848,119 @@
                 "shortDescription"
               ]
             },
-            "description": "The step vocabulary itself, published so a consumer never hardcodes it to join a channel's legs against a funnel's. It spans EVERY step of every funnel, not only the ones a funnel can start from — a channel performing an internal leg names the step it moves a lead OUT of, and that step is never one a funnel starts at."
+            "description": "The step vocabulary itself, published so a consumer never hardcodes it to join a channel's legs against a funnel's. It spans EVERY step of every funnel, not only the ones a funnel can start from — a channel performing an internal leg names the step it moves a lead OUT of, and that step is never one a funnel starts at. `lead_found` ('Lead found') is a normal step since 2026-10-09: the sourcing channels move a lead from nothing to it; no declared funnel names it yet."
+          },
+          "legKeyCorrespondence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "channelType": {
+                  "type": "string",
+                  "enum": [
+                    "outbound"
+                  ],
+                  "description": "The rename applies to the OUTBOUND channels only. The same legacy key on any other channel (ads, SEO, organic, PR) is NOT renamed."
+                },
+                "legacyLegKey": {
+                  "type": "string",
+                  "description": "The key stored and served today (wave 1): `start_to_conversation` / `start_to_website_visit`."
+                },
+                "legKey": {
+                  "type": "string",
+                  "description": "The LOCKED key the outbound leg moves to in wave 2: `lead_found_to_conversation` / `lead_found_to_website_visit`."
+                },
+                "fromStep": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "enum": [
+                        "lead_found",
+                        "conversation",
+                        "website_visit",
+                        "booking_call",
+                        "meeting_booked",
+                        "meeting_attended",
+                        "signup",
+                        "form_submitted",
+                        "purchase",
+                        "paid_client"
+                      ]
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "shortDescription": {
+                      "type": "string",
+                      "description": "A 3-to-5-word caption printed under the step's label (onboarding cards, the offer's sales-path cards) and read by the AI that pre-ticks a visitor's steps, so every consumer reads the same words. Example: 'Buys online, no sales call' under 'Direct purchase'."
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "label",
+                    "description",
+                    "shortDescription"
+                  ],
+                  "description": "`lead_found`: an outbound leg starts on the lead a sourcing channel found."
+                },
+                "toStep": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "enum": [
+                        "lead_found",
+                        "conversation",
+                        "website_visit",
+                        "booking_call",
+                        "meeting_booked",
+                        "meeting_attended",
+                        "signup",
+                        "form_submitted",
+                        "purchase",
+                        "paid_client"
+                      ]
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "shortDescription": {
+                      "type": "string",
+                      "description": "A 3-to-5-word caption printed under the step's label (onboarding cards, the offer's sales-path cards) and read by the AI that pre-ticks a visitor's steps, so every consumer reads the same words. Example: 'Buys online, no sales call' under 'Direct purchase'."
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "label",
+                    "description",
+                    "shortDescription"
+                  ]
+                }
+              },
+              "required": [
+                "channelType",
+                "legacyLegKey",
+                "legKey",
+                "fromStep",
+                "toStep"
+              ]
+            },
+            "description": "THE OUTBOUND LEG RENAME (LOCKED, owner 2026-10-09), legacy key <-> new key. Wave 1 (now): every service treats both spellings as ONE identity on input while storing and serving the legacy one (this service serves `legs[]` / `stepTransitions[].legKey` unchanged). Wave 2 migrates stored rows and serves the new key. A consumer joining a key read from campaign-service or billing to a name or a leg from here matches both spellings through this list."
           }
         },
         "required": [
           "channels",
           "funnels",
           "legs",
-          "steps"
+          "steps",
+          "legKeyCorrespondence"
         ]
       },
       "ChannelFunnelPair": {
@@ -26258,6 +26416,21 @@
                             },
                             "description": "WHICH SALES FUNNELS THIS FEATURE MAY BE SOLD THROUGH, in brand-service's own funnel keys. A product statement about the feature, owned by this service: the dashboard offers only valid (funnel, feature) pairs from it and campaign-service refuses to provision a pair that is not in it. ALWAYS PRESENT, so an absent answer can never be mistaken for 'all of them' — a feature that sells through no sales funnel states `[]` (every non-sales feature: PR, hiring, VC, accelerators, AI visibility, press kit, outlet discovery, expert quotes) and one that sells through every declared funnel states every one of those keys explicitly. A shorter list is a real restriction, not a gap: the feedback-request cold email states `sales_meetings_from_conversation` alone, because its offer buys a conversation and has no website step to sell."
                           },
+                          "channelType": {
+                            "type": "string",
+                            "enum": [
+                              "sourcing",
+                              "outbound",
+                              "conversion",
+                              "paid",
+                              "earned",
+                              "pr",
+                              "fundraising",
+                              "hiring",
+                              "tool"
+                            ],
+                            "description": "WHAT KIND of channel this feature is — the ONE typology (owner 2026-10-09), stated on EVERY feature, active and deprecated: `sourcing`, `outbound`, `conversion`, `paid`, `earned`, `pr`, `fundraising`, `hiring`, `tool` (not a channel: scoring, page generation, outlet discovery). A surface groups or excludes features by this, never by whether `acquisitionChannel` is null and never by a slug list of its own. Supersedes the acquisition channel's `family`."
+                          },
                           "supersededBySlug": {
                             "type": "string",
                             "nullable": true,
@@ -26286,6 +26459,7 @@
                           "charts",
                           "entities",
                           "salesFunnels",
+                          "channelType",
                           "supersededBySlug",
                           "createdAt",
                           "updatedAt"
@@ -26697,6 +26871,21 @@
                           },
                           "description": "WHICH SALES FUNNELS THIS FEATURE MAY BE SOLD THROUGH, in brand-service's own funnel keys. A product statement about the feature, owned by this service: the dashboard offers only valid (funnel, feature) pairs from it and campaign-service refuses to provision a pair that is not in it. ALWAYS PRESENT, so an absent answer can never be mistaken for 'all of them' — a feature that sells through no sales funnel states `[]` (every non-sales feature: PR, hiring, VC, accelerators, AI visibility, press kit, outlet discovery, expert quotes) and one that sells through every declared funnel states every one of those keys explicitly. A shorter list is a real restriction, not a gap: the feedback-request cold email states `sales_meetings_from_conversation` alone, because its offer buys a conversation and has no website step to sell."
                         },
+                        "channelType": {
+                          "type": "string",
+                          "enum": [
+                            "sourcing",
+                            "outbound",
+                            "conversion",
+                            "paid",
+                            "earned",
+                            "pr",
+                            "fundraising",
+                            "hiring",
+                            "tool"
+                          ],
+                          "description": "WHAT KIND of channel this feature is — the ONE typology (owner 2026-10-09), stated on EVERY feature, active and deprecated: `sourcing`, `outbound`, `conversion`, `paid`, `earned`, `pr`, `fundraising`, `hiring`, `tool` (not a channel: scoring, page generation, outlet discovery). A surface groups or excludes features by this, never by whether `acquisitionChannel` is null and never by a slug list of its own. Supersedes the acquisition channel's `family`."
+                        },
                         "supersededBySlug": {
                           "type": "string",
                           "nullable": true,
@@ -26725,6 +26914,7 @@
                         "charts",
                         "entities",
                         "salesFunnels",
+                        "channelType",
                         "supersededBySlug",
                         "createdAt",
                         "updatedAt"
@@ -35537,6 +35727,21 @@
                             },
                             "description": "WHICH SALES FUNNELS THIS FEATURE MAY BE SOLD THROUGH, in brand-service's own funnel keys. A product statement about the feature, owned by this service: the dashboard offers only valid (funnel, feature) pairs from it and campaign-service refuses to provision a pair that is not in it. ALWAYS PRESENT, so an absent answer can never be mistaken for 'all of them' — a feature that sells through no sales funnel states `[]` (every non-sales feature: PR, hiring, VC, accelerators, AI visibility, press kit, outlet discovery, expert quotes) and one that sells through every declared funnel states every one of those keys explicitly. A shorter list is a real restriction, not a gap: the feedback-request cold email states `sales_meetings_from_conversation` alone, because its offer buys a conversation and has no website step to sell."
                           },
+                          "channelType": {
+                            "type": "string",
+                            "enum": [
+                              "sourcing",
+                              "outbound",
+                              "conversion",
+                              "paid",
+                              "earned",
+                              "pr",
+                              "fundraising",
+                              "hiring",
+                              "tool"
+                            ],
+                            "description": "WHAT KIND of channel this feature is — the ONE typology (owner 2026-10-09), stated on EVERY feature, active and deprecated: `sourcing`, `outbound`, `conversion`, `paid`, `earned`, `pr`, `fundraising`, `hiring`, `tool` (not a channel: scoring, page generation, outlet discovery). A surface groups or excludes features by this, never by whether `acquisitionChannel` is null and never by a slug list of its own. Supersedes the acquisition channel's `family`."
+                          },
                           "supersededBySlug": {
                             "type": "string",
                             "nullable": true,
@@ -35565,6 +35770,7 @@
                           "charts",
                           "entities",
                           "salesFunnels",
+                          "channelType",
                           "supersededBySlug",
                           "createdAt",
                           "updatedAt"

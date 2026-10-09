@@ -44,6 +44,7 @@ import {
   type ChannelStepTransition,
 } from "./acquisition-channels.js";
 import { SALES_FUNNEL_KEYS, type SalesFunnelKey } from "./sales-funnels.js";
+import { isOutboundChannel } from "./channel-types.js";
 
 /**
  * MINT the canonical identifier of one leg.
@@ -139,8 +140,93 @@ export function matchFunnelLegKey(raw: string): string | null {
   const normalised = raw.trim().toLowerCase().replace(/[\s-]+/g, "_");
   const direct = LEGS_BY_KEY.get(normalised);
   if (direct) return direct.legKey;
-  const legacy = LEGACY_FUNNEL_LEG_KEYS[normalised];
+  const legacy = LEGACY_FUNNEL_LEG_KEYS[normalised] ?? STORED_SPELLING_OF_OUTBOUND_LEG_KEY[normalised];
   return legacy != null && LEGS_BY_KEY.has(legacy) ? legacy : null;
+}
+
+// ── THE OUTBOUND LEG RENAME (LOCKED, owner 2026-10-09; one identity shared by six codebases) ─────────
+//
+// Once "Lead found" is a normal step, an OUTBOUND channel (cold email, cold call, LinkedIn...) no longer
+// moves a lead from nothing: a sourcing channel does (Start -> Lead found), and the outbound leg starts
+// on the found lead. So, for the OUTBOUND channels ONLY (`OUTBOUND_CHANNEL_SLUGS`, `lib/channel-types.ts`):
+//     start_to_conversation   ->  lead_found_to_conversation
+//     start_to_website_visit  ->  lead_found_to_website_visit
+// The same legacy keys on a NON-outbound channel (ads, SEO, organic, PR) are NOT renamed; sourcing keeps
+// `start_to_lead_found`; every other leg key is unchanged.
+//
+// WAVE 1 (now): the two spellings are ONE identity on every input (a campaign row, a ticked leg, a
+// combination key, an assignment write, `?leg=`), resolved to the spelling this fleet STORES and SERVES
+// today, the legacy one. Nothing stored moves, nothing served moves. WAVE 2 migrates the stored rows and
+// flips the served spelling; it is a data migration plus flipping the direction of this map, never a
+// rename of names or history (combination names are keyed on the combination key, re-keyed in place).
+
+/** One pair of the correspondence, as published on `/public/channels` `legKeyCorrespondence`. */
+export interface LegKeyCorrespondence {
+  /** The channel type the rename applies to — `outbound`, and only it. */
+  channelType: "outbound";
+  /** The key stored and served today (wave 1). */
+  legacyLegKey: string;
+  /** The LOCKED key wave 2 stores and serves. */
+  legKey: string;
+  fromStep: ChannelStepDef;
+  toStep: ChannelStepDef;
+}
+
+export const OUTBOUND_LEG_KEY_CORRESPONDENCE: readonly LegKeyCorrespondence[] = (["conversation", "website_visit"] as const).map(
+  (to) => ({
+    channelType: "outbound" as const,
+    legacyLegKey: legKeyFor({ from: null, to }),
+    legKey: legKeyFor({ from: "lead_found", to }),
+    fromStep: { ...CHANNEL_STEPS.lead_found },
+    toStep: { ...CHANNEL_STEPS[to] },
+  }),
+);
+
+/** new outbound spelling -> the spelling stored today. */
+const STORED_SPELLING_OF_OUTBOUND_LEG_KEY: Record<string, string> = Object.fromEntries(
+  OUTBOUND_LEG_KEY_CORRESPONDENCE.map((c) => [c.legKey, c.legacyLegKey]),
+);
+
+/** True when `raw` is a new (wave 2) outbound spelling. */
+export function isOutboundLegKeySpelling(raw: string): boolean {
+  return Object.hasOwn(STORED_SPELLING_OF_OUTBOUND_LEG_KEY, normaliseLegKey(raw));
+}
+
+const normaliseLegKey = (raw: string): string => raw.trim().toLowerCase().replace(/[\s-]+/g, "_");
+
+/**
+ * Resolve a leg key a caller sends FOR ONE CHANNEL. Same as `matchFunnelLegKey`, except that the new
+ * outbound spelling names no leg of a channel that is not outbound (a Google Ads campaign never performs
+ * Lead found -> Website visit): null there, so the caller refuses it as an unknown leg.
+ */
+export function matchChannelLegKey(featureSlug: string | null | undefined, raw: string): string | null {
+  if (isOutboundLegKeySpelling(raw) && !isOutboundChannel(featureSlug)) return null;
+  return matchFunnelLegKey(raw);
+}
+
+/** A leg key as STORED today: a new outbound spelling resolved to its legacy twin, every other key
+ *  returned VERBATIM (so every read of a legacy-spelled input stays byte-identical). */
+export function storedLegKeyOf(raw: string): string {
+  return isOutboundLegKeySpelling(raw) ? STORED_SPELLING_OF_OUTBOUND_LEG_KEY[normaliseLegKey(raw)] : raw;
+}
+
+/**
+ * A combination key (`lib/offer-sales-paths.ts` `combinationKeyOf`: legs `+`-joined, a platform leg
+ * `@<slug>`) as STORED today: each leg's key resolved through `storedLegKeyOf`, so a combination a
+ * caller spells with the new outbound keys names the same row, name and selection as the legacy one.
+ * This service minted the format, so reading it back is not splitting somebody else's identifier.
+ */
+export function storedCombinationKeyOf(raw: string): string {
+  return raw
+    .split("+")
+    .map((part) => {
+      const at = part.indexOf("@");
+      if (at < 0) return storedLegKeyOf(part);
+      const slug = part.slice(at + 1);
+      const leg = part.slice(0, at);
+      return `${isOutboundLegKeySpelling(leg) && !isOutboundChannel(slug) ? leg : storedLegKeyOf(leg)}@${slug}`;
+    })
+    .join("+");
 }
 
 /** The leg itself, or null when nothing names it. */

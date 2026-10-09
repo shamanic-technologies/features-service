@@ -38,6 +38,7 @@ describe("the steps a channel can move a lead between", () => {
       "form_submitted",
       "purchase",
       "paid_client",
+      "lead_found",
     ]);
     for (const key of CHANNEL_STEP_KEYS) {
       expect(CHANNEL_STEPS[key].key).toBe(key);
@@ -260,7 +261,7 @@ describe("which pairings are possible", () => {
   });
 
   it("names four families and two operators, and no more", () => {
-    expect([...CHANNEL_FAMILIES]).toEqual(["outbound_one_to_one", "paid_reach", "earned", "conversion"]);
+    expect([...CHANNEL_FAMILIES]).toEqual(["outbound_one_to_one", "paid_reach", "earned", "conversion", "sourcing"]);
     expect([...CHANNEL_OPERATORS]).toEqual(["platform", "customer"]);
   });
 });
@@ -388,6 +389,7 @@ describe("what a VISITOR reads on a step", () => {
       "form_submitted",
       "purchase",
       "paid_client",
+      "lead_found",
     ]);
     expect(matchChannelStepKey("conversation")).toBe("conversation");
     expect(CHANNEL_STEPS.conversation.key).toBe("conversation");

@@ -67,6 +67,9 @@ import type { StepConversion, StepValueExplanation } from "./offer-pipeline-expl
 
 /** The `leads[]` field each step is counted by. `purchase` has no signal anywhere in the fleet. */
 export const STEP_LEAD_FIELD: Record<ChannelStepKey, LeadStepField | null> = {
+  // A found lead is counted (and priced: cost per lead found) per source campaign on the sourcing read
+  // (`GET /offers/:offerId/sourcing`), not by a `leads[]` signal: every lead row is a found lead.
+  lead_found: null,
   conversation: "repliedPositive",
   // Nothing counts a lead as called yet (the instant call records no conversion event here).
   booking_call: null,

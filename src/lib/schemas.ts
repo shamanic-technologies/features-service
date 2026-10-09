@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { extendZodWithOpenApi } from "@asteasolutions/zod-to-openapi";
 import { SALES_FUNNEL_KEYS } from "./sales-funnels.js";
+import { CHANNEL_TYPES } from "./channel-types.js";
 
 extendZodWithOpenApi(z);
 
@@ -23,6 +24,11 @@ export const featureResponseSchema = z.object({
     .array(z.enum(SALES_FUNNEL_KEYS as unknown as [string, ...string[]]))
     .describe(
       "WHICH SALES FUNNELS THIS FEATURE MAY BE SOLD THROUGH, in brand-service's own funnel keys. A product statement about the feature, owned by this service: the dashboard offers only valid (funnel, feature) pairs from it and campaign-service refuses to provision a pair that is not in it. ALWAYS PRESENT, so an absent answer can never be mistaken for 'all of them' — a feature that sells through no sales funnel states `[]` (every non-sales feature: PR, hiring, VC, accelerators, AI visibility, press kit, outlet discovery, expert quotes) and one that sells through every declared funnel states every one of those keys explicitly. A shorter list is a real restriction, not a gap: the feedback-request cold email states `sales_meetings_from_conversation` alone, because its offer buys a conversation and has no website step to sell.",
+    ),
+  channelType: z
+    .enum(CHANNEL_TYPES)
+    .describe(
+      "WHAT KIND of channel this feature is — the ONE typology (owner 2026-10-09), stated on EVERY feature, active and deprecated: `sourcing`, `outbound`, `conversion`, `paid`, `earned`, `pr`, `fundraising`, `hiring`, `tool` (not a channel: scoring, page generation, outlet discovery). A surface groups or excludes features by this, never by whether `acquisitionChannel` is null and never by a slug list of its own. Supersedes the acquisition channel's `family`.",
     ),
   supersededBySlug: z
     .string()

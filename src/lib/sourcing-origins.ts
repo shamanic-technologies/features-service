@@ -24,6 +24,8 @@
  *     A run carries exactly ONE slug, so an `IN (...)` filter counts it once either way.
  */
 
+import { CHANNEL_STEPS } from "./acquisition-channels.js";
+
 /** human-service's `channels[].list` values (GET /orgs/audiences). */
 export type AudienceListKind = "apollo_search" | "apollo_buying_signal" | "linkedin_engagement" | "crm_contacts" | "apify_search";
 
@@ -122,18 +124,14 @@ export const SOURCING_ORIGIN_SLUGS: readonly string[] = SOURCING_ORIGINS.map((o)
 // with featureSlug = the ORIGIN's slug and legKey = `SOURCE_LEG_KEY`. Its name comes from the same pool
 // and table as every campaign name (`campaignNameKeyOf(originSlug, SOURCE_LEG_KEY)`).
 //
-// `lead_found` is NOT a funnel step: no funnel names it, nothing prices it, `CHANNEL_STEP_KEYS` does not hold
-// it (the entry legs of the funnels stay `start_to_*`, so no existing campaign, budget or leg key moves). It is
-// the shared hand-off between the sources and the outreach: every ON source puts people on it, every ON
+// `lead_found` is a NORMAL step of the step vocabulary since 2026-10-09 (`CHANNEL_STEPS.lead_found`; each origin
+// is a channel whose one leg is Start -> Lead found). No declared funnel names it yet, so no funnel leg moves
+// and the entry legs of the funnels stay `start_to_*` (the outbound re-key is wave 2, `lib/funnel-legs.ts`).
+// It is the shared hand-off between the sources and the outreach: every ON source puts people on it, every ON
 // outreach campaign of the offer works them, a person found by two sources is contacted once.
 
 /** The step every source campaign ends on and every outreach entry campaign is fed from. Customer copy. */
-export const LEAD_FOUND_STEP = {
-  key: "lead_found",
-  label: "Lead found",
-  description: "A person who matches your target is found, with a verified email.",
-  shortDescription: "Finds the right people",
-} as const;
+export const LEAD_FOUND_STEP = { ...CHANNEL_STEPS.lead_found, key: "lead_found" as const };
 
 /** The leg a source campaign works: from nothing to `lead_found`. The leg key of every source campaign. */
 export const SOURCE_LEG_KEY = "start_to_lead_found" as const;

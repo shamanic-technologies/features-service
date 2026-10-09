@@ -29,6 +29,11 @@ vi.mock("../lib/funnel-commercial-terms.js", async (importOriginal) => ({
 // The two channels below are invented, so their card captions are stubbed; the real map is guarded in
 // lib/channel-short-descriptions.test.ts.
 vi.mock("../lib/channel-short-descriptions.js", () => ({ channelShortDescription: () => "A caption." }));
+// Same for their type; the real typology is guarded in lib/channel-types.test.ts.
+vi.mock("../lib/channel-types.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  channelTypeOf: () => "outbound",
+}));
 
 process.env.FEATURES_SERVICE_API_KEY = "test-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
@@ -194,7 +199,7 @@ describe("the public catalogue states ONE composed minimum run length per pair",
     const res = await request(app).get("/public/channels");
     expect(res.status).toBe(200);
     const steps = res.body.steps as Array<{ key: string; shortDescription: string }>;
-    expect(steps.length).toBe(9);
+    expect(steps.length).toBe(10);
     for (const step of steps) {
       const words = step.shortDescription.trim().split(/\s+/).length;
       expect(words, step.key).toBeGreaterThanOrEqual(3);
@@ -370,6 +375,6 @@ describe("GET /public/channel-outcome-economics (wave C4)", () => {
       );
     }
     const cat = await request(app).get("/public/channels");
-    expect(Object.keys(cat.body).sort()).toEqual(["channels", "funnels", "legs", "steps"]);
+    expect(Object.keys(cat.body).sort()).toEqual(["channels", "funnels", "legKeyCorrespondence", "legs", "steps"]);
   });
 });

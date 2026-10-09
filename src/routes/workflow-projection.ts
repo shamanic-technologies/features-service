@@ -28,6 +28,7 @@ import {
   funnelLeg,
   funnelsContainingLeg,
   matchFunnelLegKey,
+  matchChannelLegKey,
   type FunnelLegDef,
 } from "../lib/funnel-legs.js";
 import {
@@ -1237,7 +1238,8 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
   const legParam = req.query.leg as string | undefined;
   let legKey: string | null = null;
   if (legParam != null && legParam !== "") {
-    legKey = matchFunnelLegKey(legParam);
+    // Both spellings of an outbound leg are one identity (wave 1, `lib/funnel-legs.ts`): resolved to the stored one.
+    legKey = matchChannelLegKey(featureSlug, legParam);
     if (!legKey) {
       return res.status(400).json({
         error: `leg must be one of: ${FUNNEL_LEG_KEYS.join(", ")}`,

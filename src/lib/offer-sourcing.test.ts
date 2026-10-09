@@ -30,11 +30,12 @@ const campaigns = [
 ];
 
 describe("sourcing origins", () => {
-  it("every origin is a seeded feature that is not an acquisition channel", () => {
+  it("every origin is a seeded feature, a SOURCING channel whose one leg is Start -> Lead found, sold through no funnel", () => {
     for (const o of SOURCING_ORIGINS) {
       const f = SEED_FEATURES.find((s) => s.slug === o.slug);
       expect(f, o.slug).toBeDefined();
-      expect(f!.acquisitionChannel).toBeNull();
+      expect(f!.channelType).toBe("sourcing");
+      expect(f!.acquisitionChannel?.stepTransitions).toEqual([{ from: null, to: "lead_found" }]);
       expect(f!.salesFunnels).toEqual([]);
     }
   });

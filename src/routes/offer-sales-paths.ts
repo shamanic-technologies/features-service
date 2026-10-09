@@ -19,6 +19,7 @@ import { fetchBrandLegEconomics } from "../lib/brand-leg-economics-client.js";
 import { getBrandEffectiveRates } from "../lib/effective-conversion-rates.js";
 import { SalesFunnelsUnavailableError } from "../lib/sales-funnels-client.js";
 import { fetchOfferChannels, fetchOfferSalesPath, fetchOfferSelectedSalesPaths, OfferSalesPathNotFoundError } from "../lib/offer-sales-path-client.js";
+import { storedCombinationKeyOf, storedLegKeyOf } from "../lib/funnel-legs.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
 import {
   acceptedCatalogueChannels,
@@ -108,12 +109,20 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
   });
 
   try {
-    const [salesPath, legEconomics, offerChannels, selectedPaths] = await Promise.all([
+    const [statedSalesPath, legEconomics, offerChannels, statedSelectedPaths] = await Promise.all([
       fetchOfferSalesPath(offerId),
       fetchBrandLegEconomics(brandId, req.orgId),
       scope === "catalogue" ? fetchOfferChannels(offerId) : Promise.resolve(null),
       fetchOfferSelectedSalesPaths(offerId),
     ]);
+    // Both spellings of an outbound leg are ONE identity (wave 1, `lib/funnel-legs.ts`): brand-service's
+    // ticked legs and selected combinations are read in the spelling this service stores and serves, so a
+    // `lead_found_to_*` one finds the same chain, row, name and selection as its `start_to_*` twin. A
+    // legacy spelling reads byte-identical (resolution is the identity on it).
+    const salesPath = statedSalesPath.legKeys ? { ...statedSalesPath, legKeys: statedSalesPath.legKeys.map(storedLegKeyOf) } : statedSalesPath;
+    const selectedPaths = statedSelectedPaths?.combinationKeys
+      ? { ...statedSelectedPaths, combinationKeys: statedSelectedPaths.combinationKeys.map(storedCombinationKeyOf) }
+      : statedSelectedPaths;
     // The catalogue lists only the channels the offer accepts (never stated = the three we run).
     const catalogueChannelSlugs = offerChannels ? acceptedCatalogueChannels(offerChannels) : undefined;
     const offer = legEconomics.offers.find((o) => o.offerId === offerId);
