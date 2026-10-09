@@ -159,11 +159,21 @@ export function captureRequestReplay(req: Request, res: Response, next: NextFunc
  * Server role: where this request's compute of `view` may be asked — the refresher, replaying the
  * request with this view as its target. `null` outside a request (boot warms, fleet sweeps), for a
  * non-GET, in the refresher itself, or while no refresher is up: the ordinary in-process path.
+ *
+ * Also `null` when the cell belongs to ANOTHER org than the request's own `x-org-id`: a cross-org read
+ * (a `/public/*` showcase forwarding each owning org's identity) replayed in the refresher answers
+ * from its own in-memory cache without ever reaching the nested cell, so the round trip only ever
+ * came back empty ("computed nothing", prod 2026-10-09) before the same local compute ran anyway.
  */
-export function refresherDelegation(view: string, familyKey: string): { url: string; headers: Record<string, string> } | null {
+export function refresherDelegation(
+  view: string,
+  familyKey: string,
+  orgId: string,
+): { url: string; headers: Record<string, string> } | null {
   const replay = replayStore.getStore();
   const port = process.env.VIEW_REFRESHER_PORT;
   if (!replay?.url || !replay.headers || viewCacheRole() !== "server" || !port) return null;
+  if (replay.headers["x-org-id"] !== orgId) return null;
   return {
     url: `http://127.0.0.1:${port}${replay.url}`,
     headers: { ...replay.headers, [REFRESH_HEADER]: encodeTarget({ view, familyKey }) },
