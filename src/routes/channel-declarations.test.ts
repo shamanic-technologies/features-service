@@ -174,7 +174,7 @@ describe("/internal/declarations: a staff caller declares a channel, a reactive 
     expect(after.body.salesPaths[0].visibleToClients).toBe(true);
   });
 
-  it("refuses a leg on a trigger nothing fires, with a named error, and stores nothing", async () => {
+  it("refuses a leg on a trigger nothing fires; a declared delay trigger is fired, malformed params refused", async () => {
     await request(app).post("/internal/declarations/channels").set(KEY).send(channelBody).expect(201);
     const res = await request(app)
       .post(`/internal/declarations/channels/${SLUG}/legs`)
@@ -184,19 +184,28 @@ describe("/internal/declarations: a staff caller declares a channel, a reactive 
     expect(res.body.reason).toBe("trigger_not_fired");
     expect(mem.legs).toHaveLength(0);
 
-    // A declared time-based trigger is accepted as a TYPE, uncoded, and no leg may name it yet.
+    // A declared time-based trigger is fired by campaign-service's generic delay detector (#601): a leg may name it.
     const t = await request(app)
       .post("/internal/declarations/trigger-types")
       .set(KEY)
       .send({ id: "no_reply_after_3_days", label: "No reply in 3 days", description: "Nobody replied within 3 days.", icon: "clock", kind: "delay", params: { afterStep: "lead_found", days: 3 }, createdBy: "kevin@distribute.you" });
     expect(t.status).toBe(201);
-    expect(t.body).toMatchObject({ origin: "declared", kind: "delay", coded: false, firedBy: "campaign-service" });
+    expect(t.body).toMatchObject({ origin: "declared", kind: "delay", coded: true, firedBy: "campaign-service" });
     const onDelay = await request(app)
       .post(`/internal/declarations/channels/${SLUG}/legs`)
       .set(KEY)
       .send({ fromStep: "lead_found", toStep: "conversation", mode: "reactive", triggerId: "no_reply_after_3_days", createdBy: "kevin@distribute.you" });
-    expect(onDelay.status).toBe(409);
-    expect(onDelay.body.reason).toBe("trigger_not_fired");
+    expect(onDelay.status).toBe(201);
+    expect(onDelay.body.leg).toMatchObject({ legKey: "lead_found_to_conversation", mode: "reactive", triggerId: "no_reply_after_3_days" });
+
+    // Malformed params never reach a detector.
+    const bad = await request(app)
+      .post("/internal/declarations/trigger-types")
+      .set(KEY)
+      .send({ id: "broken_delay", label: "Broken", description: "x", icon: "clock", kind: "delay", params: { afterStep: "lead_found", days: 0 }, createdBy: "kevin@distribute.you" });
+    expect(bad.status).toBe(400);
+    expect(bad.body.reason).toBe("delay_days_invalid");
+    expect(mem.triggers.some((x) => x.id === "broken_delay")).toBe(false);
   });
 
   it("a channel stated in code is read-only here", async () => {

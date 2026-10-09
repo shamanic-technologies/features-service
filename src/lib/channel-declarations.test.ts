@@ -118,8 +118,15 @@ describe("a leg can only name a trigger something FIRES, checked at creation (ow
   it("refuses a reactive leg on a trigger nothing fires, with a named 409", () => {
     // `meeting_booked` is coded in the list but no service fires it yet.
     refused(() => parseLegInput({ fromStep: "meeting_booked", toStep: "meeting_attended", mode: "reactive", triggerId: "meeting_booked" }, channel, TRIGGERS), 409, "trigger_not_fired");
-    // A declared delay trigger: campaign-service runs no delay detector yet.
-    refused(() => parseLegInput({ fromStep: "lead_found", toStep: "conversation", mode: "reactive", triggerId: "no_reply_after_3_days" }, channel, TRIGGERS), 409, "trigger_not_fired");
+    // A declared EVENT trigger: no generic detector can fire an arbitrary event.
+    const declaredEvent: TriggerTypeRecord = { ...delayTrigger, id: "invoice_paid", kind: "event", params: null, fromStep: null };
+    refused(() => parseLegInput({ fromStep: "lead_found", toStep: "conversation", mode: "reactive", triggerId: "invoice_paid" }, channel, [...TRIGGERS, declaredEvent]), 409, "trigger_not_fired");
+  });
+
+  it("accepts a reactive leg on a declared delay or poll trigger: campaign-service fires both kinds (#601)", () => {
+    expect(parseLegInput({ fromStep: "lead_found", toStep: "conversation", mode: "reactive", triggerId: "no_reply_after_3_days" }, channel, TRIGGERS).triggerId).toBe("no_reply_after_3_days");
+    const poll: TriggerTypeRecord = { ...delayTrigger, id: "new_job_post", kind: "poll", fromStep: null, params: { source: "{}", everyMinutes: 60 } };
+    expect(parseLegInput({ fromStep: null, toStep: "lead_found", mode: "reactive", triggerId: "new_job_post" }, channel, [...TRIGGERS, poll]).triggerId).toBe("new_job_post");
   });
 
   it("accepts a reactive leg on a coded trigger", () => {
@@ -153,7 +160,7 @@ describe("a leg can only name a trigger something FIRES, checked at creation (ow
 });
 
 describe("declared trigger types are never coded on their own say-so", () => {
-  it("a delay trigger is campaign-service's, uncoded, with its parameters", () => {
+  it("a delay trigger is campaign-service's, with its parameters", () => {
     const t = parseTriggerInput({ id: "no_reply_3d", label: "No reply", description: "x", icon: "clock", kind: "delay", params: { afterStep: "lead_found", days: 3 } }, TRIGGERS);
     expect(t).toMatchObject({ kind: "delay", fromStep: "lead_found", params: { afterStep: "lead_found", days: 3 }, firedBy: "campaign-service" });
   });
@@ -161,7 +168,40 @@ describe("declared trigger types are never coded on their own say-so", () => {
     refused(() => parseTriggerInput({ id: "lead_requested", label: "x", description: "x", icon: "x", kind: "event" }, TRIGGERS), 409, "trigger_exists");
     refused(() => parseTriggerInput({ id: "new_one", label: "x", description: "x", icon: "x", kind: "event", coded: true }, TRIGGERS), 400, "coded_not_declarable");
     refused(() => parseTriggerInput({ id: "new_one", label: "x", description: "x", icon: "x", kind: "event", fromStep: "conversation" }, TRIGGERS), 409, "trigger_exists_for_step");
-    refused(() => parseTriggerInput({ id: "new_one", label: "x", description: "x", icon: "x", kind: "poll", params: { source: "rss", everyMinutes: 1 } }, TRIGGERS), 400, "everyMinutes_invalid");
+  });
+
+  const SOURCE = { endpoint: "linkedin.jobs.search", method: "GET", query: { keywords: "cfo" }, items: "data.jobs", itemId: "id", maxMicro: 20_000 };
+  const pollBody = (params: unknown) => ({ id: "new_job_post", label: "New job post", description: "x", icon: "briefcase", kind: "poll", params });
+  const delayBody = (params: unknown) => ({ id: "no_reply_3d", label: "No reply", description: "x", icon: "clock", kind: "delay", params });
+
+  it("a poll trigger stores its treg call as JSON text, from an object or from text", () => {
+    const t = parseTriggerInput(pollBody({ source: SOURCE, everyMinutes: 60 }), TRIGGERS);
+    expect(t).toMatchObject({ kind: "poll", fromStep: null, firedBy: "campaign-service", params: { everyMinutes: 60 } });
+    expect(JSON.parse((t.params as { source: string }).source)).toEqual(SOURCE);
+    expect(parseTriggerInput(pollBody({ source: JSON.stringify(SOURCE), everyMinutes: 5 }), TRIGGERS).params).toEqual(t.params && { ...t.params, everyMinutes: 5 });
+  });
+
+  it("refuses malformed delay / poll params with a named error, so no detector ever reads them", () => {
+    refused(() => parseTriggerInput(delayBody(undefined), TRIGGERS), 400, "params_required");
+    refused(() => parseTriggerInput(delayBody({ afterStep: "nowhere", days: 3 }), TRIGGERS), 400, "step_unrecognised");
+    refused(() => parseTriggerInput(delayBody({ afterStep: "lead_found", days: 0 }), TRIGGERS), 400, "delay_days_invalid");
+    refused(() => parseTriggerInput(delayBody({ afterStep: "lead_found", days: 1.5 }), TRIGGERS), 400, "delay_days_invalid");
+    refused(() => parseTriggerInput(pollBody(undefined), TRIGGERS), 400, "params_required");
+    refused(() => parseTriggerInput(pollBody({ source: SOURCE, everyMinutes: 1 }), TRIGGERS), 400, "poll_every_minutes_invalid");
+    refused(() => parseTriggerInput(pollBody({ source: "rss", everyMinutes: 60 }), TRIGGERS), 400, "poll_source_invalid");
+    for (const broken of [
+      { ...SOURCE, endpoint: "bad endpoint/x" },
+      { ...SOURCE, method: "DELETE" },
+      { ...SOURCE, query: { n: 3 } },
+      { ...SOURCE, body: [] },
+      { ...SOURCE, items: undefined },
+      { ...SOURCE, itemId: "" },
+      { ...SOURCE, maxMicro: 0 },
+      { ...SOURCE, maxMicro: 1_000_001 },
+      { ...SOURCE, url: "https://x" },
+    ]) {
+      refused(() => parseTriggerInput(pollBody({ source: broken, everyMinutes: 60 }), TRIGGERS), 400, "poll_source_invalid");
+    }
   });
 });
 
