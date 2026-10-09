@@ -382,7 +382,7 @@ describe("a lead carries EVERY source that found it (owner 2026-10-08: no first-
 
   it("bucket rates follow the conversation leg's maturity rule: a lead served inside 21 days is flash only", () => {
     const o = r.sourceOverlap!;
-    expect(o.maturityRule).toEqual({ legKey: "start_to_conversation", durationDays: 21, outcomesRequired: 1, cutoff: "2026-09-17T00:00:00.000Z" });
+    expect(o.maturityRule).toEqual({ legKey: "lead_found_to_conversation", durationDays: 21, outcomesRequired: 1, cutoff: "2026-09-17T00:00:00.000Z" });
     const two = o.buckets.find((b) => b.label === "2")!;
     expect(two.positiveReplyRatePct).toBe(100);
     expect(two.maturity).toEqual({ flash: { leads: 1, positiveReplies: 1, positiveReplyRatePct: 100 }, mature: null, isMature: false });
