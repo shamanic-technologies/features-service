@@ -53,7 +53,7 @@ const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
 const { declaredFromEconomics, offerEconomicsFromDeclared } = await import("../lib/leg-economics-fixture.js");
 
-const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
+const AUTH = { "x-api-key": "test-key", "x-org-id": "0e9a0000-0000-4000-8000-000000000001", "x-user-id": "05e40000-0000-4000-8000-000000000001", "x-run-id": "07a00000-0000-4000-8000-000000000001" };
 const PITCH = "sales-cold-email-outreach";
 const FEEDBACK = "feedback-request-cold-email-outreach";
 const BRAND = "b1";
@@ -144,7 +144,7 @@ function mockFetch(fixture: Fixture): void {
           .filter(([, row]) => !narrowed || row.featureSlug === narrowed)
           .map(([id, row]) => ({
             id,
-            orgId: "org-1",
+            orgId: "0e9a0000-0000-4000-8000-000000000001",
             brandId: BRAND,
             featureSlug: row.featureSlug,
             funnelKey: "sales_meetings_from_conversation",

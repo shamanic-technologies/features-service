@@ -50,7 +50,7 @@ const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
 const { offerEconomicsFromDeclared, declaredFromEconomics } = await import("../lib/leg-economics-fixture.js");
 
-const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
+const AUTH = { "x-api-key": "test-key", "x-org-id": "0e9a0000-0000-4000-8000-000000000001", "x-user-id": "05e40000-0000-4000-8000-000000000001", "x-run-id": "07a00000-0000-4000-8000-000000000001" };
 const SALES = "sales-cold-email-outreach";
 const BRAND = "brand-1";
 const OFFER_A = "offer-a";
@@ -89,11 +89,11 @@ const WORKFLOWS = [
  * none: it is in no offer's scope, with its spend and its leads, exactly as `?groupBy=offerId` has it.
  */
 const CAMPAIGNS = [
-  { id: "a1", orgId: "org-1", brandId: BRAND, featureSlug: SALES, offerId: OFFER_A, funnelKey: "sales_meetings_from_conversation", legKey: "start_to_conversation", acquisitionChannel: SALES, status: "ongoing", createdAt: "2026-01-01T00:00:00.000Z" },
-  { id: "a2", orgId: "org-1", brandId: BRAND, featureSlug: SALES, offerId: OFFER_A, funnelKey: "sales_meetings_from_conversation", legKey: "start_to_conversation", acquisitionChannel: "crm_email", status: "stopped", createdAt: "2026-01-02T00:00:00.000Z" },
-  { id: "b1", orgId: "org-1", brandId: BRAND, featureSlug: SALES, offerId: OFFER_B, funnelKey: "sales_meetings_from_conversation", legKey: "start_to_conversation", acquisitionChannel: "linkedin", status: "ongoing", createdAt: "2026-02-01T00:00:00.000Z" },
-  { id: "q1", orgId: "org-1", brandId: BRAND, featureSlug: SALES, offerId: OFFER_QUIET, funnelKey: "sales_meetings_from_conversation", legKey: "start_to_conversation", acquisitionChannel: "phone", status: "ongoing", createdAt: "2026-02-02T00:00:00.000Z" },
-  { id: "n1", orgId: "org-1", brandId: BRAND, featureSlug: SALES, offerId: null, funnelKey: "sales_meetings_from_conversation", legKey: "start_to_conversation", acquisitionChannel: "sms", status: "ongoing", createdAt: "2026-02-03T00:00:00.000Z" },
+  { id: "a1", orgId: "0e9a0000-0000-4000-8000-000000000001", brandId: BRAND, featureSlug: SALES, offerId: OFFER_A, funnelKey: "sales_meetings_from_conversation", legKey: "start_to_conversation", acquisitionChannel: SALES, status: "ongoing", createdAt: "2026-01-01T00:00:00.000Z" },
+  { id: "a2", orgId: "0e9a0000-0000-4000-8000-000000000001", brandId: BRAND, featureSlug: SALES, offerId: OFFER_A, funnelKey: "sales_meetings_from_conversation", legKey: "start_to_conversation", acquisitionChannel: "crm_email", status: "stopped", createdAt: "2026-01-02T00:00:00.000Z" },
+  { id: "b1", orgId: "0e9a0000-0000-4000-8000-000000000001", brandId: BRAND, featureSlug: SALES, offerId: OFFER_B, funnelKey: "sales_meetings_from_conversation", legKey: "start_to_conversation", acquisitionChannel: "linkedin", status: "ongoing", createdAt: "2026-02-01T00:00:00.000Z" },
+  { id: "q1", orgId: "0e9a0000-0000-4000-8000-000000000001", brandId: BRAND, featureSlug: SALES, offerId: OFFER_QUIET, funnelKey: "sales_meetings_from_conversation", legKey: "start_to_conversation", acquisitionChannel: "phone", status: "ongoing", createdAt: "2026-02-02T00:00:00.000Z" },
+  { id: "n1", orgId: "0e9a0000-0000-4000-8000-000000000001", brandId: BRAND, featureSlug: SALES, offerId: null, funnelKey: "sales_meetings_from_conversation", legKey: "start_to_conversation", acquisitionChannel: "sms", status: "ongoing", createdAt: "2026-02-03T00:00:00.000Z" },
 ];
 
 type LeadShape = { clicked?: boolean; positive?: boolean };

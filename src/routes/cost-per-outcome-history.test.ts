@@ -51,7 +51,7 @@ process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
 
-const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
+const AUTH = { "x-api-key": "test-key", "x-org-id": "0e9a0000-0000-4000-8000-000000000001", "x-user-id": "05e40000-0000-4000-8000-000000000001", "x-run-id": "07a00000-0000-4000-8000-000000000001" };
 const SALES = "sales-cold-email-outreach";
 const VISIT_LEG = "start_to_website_visit";
 const MEETING_LEG = "website_visit_to_meeting_booked";
@@ -170,7 +170,7 @@ function mockFetch(fixture: Fixture): void {
     if (url.includes("/campaigns?")) {
       return json({
         campaigns: [{
-          id: "c-live", orgId: "org-1", brandId: "b1", brandIds: ["b1"], featureSlug: SALES,
+          id: "c-live", orgId: "0e9a0000-0000-4000-8000-000000000001", brandId: "b1", brandIds: ["b1"], featureSlug: SALES,
           funnelKey: FUNNEL, acquisitionChannel: "cold_email",
           legKey: fixture.legKey === undefined ? VISIT_LEG : fixture.legKey,
           status: "ongoing", createdAt: "2026-09-01T00:00:00.000Z",

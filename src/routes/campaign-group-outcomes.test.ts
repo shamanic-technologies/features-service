@@ -45,7 +45,7 @@ process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
 
-const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
+const AUTH = { "x-api-key": "test-key", "x-org-id": "0e9a0000-0000-4000-8000-000000000001", "x-user-id": "05e40000-0000-4000-8000-000000000001", "x-run-id": "07a00000-0000-4000-8000-000000000001" };
 
 const RECIPIENT_KEYS = [
   "recipientsContacted", "recipientsSent", "recipientsDelivered", "recipientsOpened", "recipientsClicked",
@@ -141,7 +141,7 @@ function mockFetch(fixture: Fixture): void {
 
 function campaign(id: string, over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    id, orgId: "org-1", brandId: "b1", brandIds: ["b1"], featureSlug: SALES,
+    id, orgId: "0e9a0000-0000-4000-8000-000000000001", brandId: "b1", brandIds: ["b1"], featureSlug: SALES,
     funnelKey: null, acquisitionChannel: "cold_email", status: "ongoing",
     createdAt: "2026-07-01T00:00:00.000Z",
     ...over,

@@ -27,7 +27,7 @@ process.env.NODE_ENV = "test";
 const { getBrandEffectiveRates } = await import("../lib/effective-conversion-rates.js");
 const { fetchPricingFunnelsAllOffers } = await import("../lib/reading-funnels.js");
 const app = (await import("../index.js")).default;
-const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
+const AUTH = { "x-api-key": "test-key", "x-org-id": "0e9a0000-0000-4000-8000-000000000001", "x-user-id": "05e40000-0000-4000-8000-000000000001", "x-run-id": "07a00000-0000-4000-8000-000000000001" };
 
 const funnel = (funnelKey: string) => ({
   funnelKey,
@@ -67,7 +67,7 @@ describe("GET /brands/:brandId/conversion-rates", () => {
   it("serves the brand's rates under the caller's org, every source beside the effective one", async () => {
     const res = await request(app).get("/brands/brand-1/conversion-rates").set(AUTH);
     expect(res.status).toBe(200);
-    expect(vi.mocked(getBrandEffectiveRates)).toHaveBeenCalledWith("brand-1", "org-1");
+    expect(vi.mocked(getBrandEffectiveRates)).toHaveBeenCalledWith("brand-1", "0e9a0000-0000-4000-8000-000000000001");
     expect(res.body.funnels).toHaveLength(2);
     expect(res.body.funnels[0].arrows[0]).toMatchObject({ effectiveRatePct: 40, source: "measured", manualRatePct: 70, median: { ratePct: 22 } });
   });

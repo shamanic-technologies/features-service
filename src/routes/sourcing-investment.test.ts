@@ -27,7 +27,7 @@ process.env.LEAD_SERVICE_API_KEY = "lk";
 
 const { fetchServeRunCosts, fetchListBuildCosts, fetchHeldPersonCompanies } = await import("../lib/sourcing-investment.js");
 const app = (await import("../index.js")).default;
-const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
+const AUTH = { "x-api-key": "test-key", "x-org-id": "0e9a0000-0000-4000-8000-000000000001", "x-user-id": "05e40000-0000-4000-8000-000000000001", "x-run-id": "07a00000-0000-4000-8000-000000000001" };
 
 const serveRecord = (campaignId: string, r: { runId: string; leadId: string; ap: string; domain: string | null }) => ({
   runId: r.runId,
@@ -81,7 +81,7 @@ describe("GET /brands/:brandId/sourcing-investment[/people|/companies]", () => {
     expect(res.body.definition.basis).toBe("actual");
     // ONE lead-service read for the whole brand (every campaign, never the deduped brand list)
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect((fetchMock.mock.calls[0][1] as RequestInit).headers).toMatchObject({ "x-org-id": "org-1" });
+    expect((fetchMock.mock.calls[0][1] as RequestInit).headers).toMatchObject({ "x-org-id": "0e9a0000-0000-4000-8000-000000000001" });
   });
 
   it("people: a person served by two campaigns carries both serves; keyed by apolloPersonIds", async () => {

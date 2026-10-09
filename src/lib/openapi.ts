@@ -1114,7 +1114,7 @@ const grainBlockSchema = z.object({
     cacPct: z.number().nullable().describe("100 / roiMultiple. Null when economics are absent or the paid-client cost is null/0."),
   }).describe("All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."),
   legOutcome: z.object({
-    costPerOutcomeUsd: z.number().nullable().describe("What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0."),
+    costPerOutcomeUsd: z.number().nullable().describe("What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0. An ENTRY leg (its step is the funnel's observed signal: conversation, website visit) walks no rate, so it is served even when the offer states no return economics (`economics: null`)."),
     outcomeCount: z.number().nullable().describe("How many of the leg's own outcomes this grain's evidence accounts for. A raw OBSERVATION on an entry leg (outcomeObserved=true); otherwise the driver's observed count walked through the funnel's rates. Null when unpriceable. A measured 0 is a real answer."),
     outcomeObserved: z.boolean().describe("TRUE ⟺ the leg's step IS the observed signal (an ENTRY leg), so outcomeCount was COUNTED rather than projected."),
     spentUsd: z.number().describe("The spend behind them, at this grain — the third figure a panel comparing grains needs and may not derive."),

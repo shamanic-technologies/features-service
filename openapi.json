@@ -5652,7 +5652,7 @@
                             "costPerOutcomeUsd": {
                               "type": "number",
                               "nullable": true,
-                              "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0."
+                              "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0. An ENTRY leg (its step is the funnel's observed signal: conversation, website visit) walks no rate, so it is served even when the offer states no return economics (`economics: null`)."
                             },
                             "outcomeCount": {
                               "type": "number",
@@ -5824,7 +5824,7 @@
                             "costPerOutcomeUsd": {
                               "type": "number",
                               "nullable": true,
-                              "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0."
+                              "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0. An ENTRY leg (its step is the funnel's observed signal: conversation, website visit) walks no rate, so it is served even when the offer states no return economics (`economics: null`)."
                             },
                             "outcomeCount": {
                               "type": "number",
@@ -5996,7 +5996,7 @@
                             "costPerOutcomeUsd": {
                               "type": "number",
                               "nullable": true,
-                              "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0."
+                              "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0. An ENTRY leg (its step is the funnel's observed signal: conversation, website visit) walks no rate, so it is served even when the offer states no return economics (`economics: null`)."
                             },
                             "outcomeCount": {
                               "type": "number",
@@ -6168,7 +6168,7 @@
                             "costPerOutcomeUsd": {
                               "type": "number",
                               "nullable": true,
-                              "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0."
+                              "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0. An ENTRY leg (its step is the funnel's observed signal: conversation, website visit) walks no rate, so it is served even when the offer states no return economics (`economics: null`)."
                             },
                             "outcomeCount": {
                               "type": "number",
@@ -6340,7 +6340,7 @@
                             "costPerOutcomeUsd": {
                               "type": "number",
                               "nullable": true,
-                              "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0."
+                              "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0. An ENTRY leg (its step is the funnel's observed signal: conversation, website visit) walks no rate, so it is served even when the offer states no return economics (`economics: null`)."
                             },
                             "outcomeCount": {
                               "type": "number",
@@ -28828,7 +28828,7 @@
                                       "costPerOutcomeUsd": {
                                         "type": "number",
                                         "nullable": true,
-                                        "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0."
+                                        "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0. An ENTRY leg (its step is the funnel's observed signal: conversation, website visit) walks no rate, so it is served even when the offer states no return economics (`economics: null`)."
                                       },
                                       "outcomeCount": {
                                         "type": "number",
@@ -29000,7 +29000,7 @@
                                       "costPerOutcomeUsd": {
                                         "type": "number",
                                         "nullable": true,
-                                        "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0."
+                                        "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0. An ENTRY leg (its step is the funnel's observed signal: conversation, website visit) walks no rate, so it is served even when the offer states no return economics (`economics: null`)."
                                       },
                                       "outcomeCount": {
                                         "type": "number",
@@ -29172,7 +29172,7 @@
                                       "costPerOutcomeUsd": {
                                         "type": "number",
                                         "nullable": true,
-                                        "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0."
+                                        "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0. An ENTRY leg (its step is the funnel's observed signal: conversation, website visit) walks no rate, so it is served even when the offer states no return economics (`economics: null`)."
                                       },
                                       "outcomeCount": {
                                         "type": "number",
@@ -29344,7 +29344,7 @@
                                       "costPerOutcomeUsd": {
                                         "type": "number",
                                         "nullable": true,
-                                        "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0."
+                                        "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0. An ENTRY leg (its step is the funnel's observed signal: conversation, website visit) walks no rate, so it is served even when the offer states no return economics (`economics: null`)."
                                       },
                                       "outcomeCount": {
                                         "type": "number",
@@ -29516,7 +29516,7 @@
                                       "costPerOutcomeUsd": {
                                         "type": "number",
                                         "nullable": true,
-                                        "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0."
+                                        "description": "What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0. An ENTRY leg (its step is the funnel's observed signal: conversation, website visit) walks no rate, so it is served even when the offer states no return economics (`economics: null`)."
                                       },
                                       "outcomeCount": {
                                         "type": "number",
