@@ -38,3 +38,14 @@ vi.mock("./lib/leg-fleet-evidence.js", () => ({
   mergeEmailStats: vi.fn(),
   mergeMatureCostGroups: vi.fn(),
 }));
+
+/**
+ * Suite-wide default: the fleet median of stated offer lifetime revenues (lib/effective-conversion-rates.ts)
+ * sweeps every brand through lead-service's feature memberships, which no route fixture answers. Null here
+ * (no offer in the fleet states one), so a fixture's unstated offer stays unpriced as it states. Suites
+ * asserting the fleet-median default set their own return.
+ */
+vi.mock("./lib/effective-conversion-rates.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./lib/effective-conversion-rates.js")>()),
+  getFleetLifetimeRevenueMedian: vi.fn(async () => ({ usd: null, offerCount: 0 })),
+}));

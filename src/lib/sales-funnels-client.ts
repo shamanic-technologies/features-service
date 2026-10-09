@@ -110,6 +110,12 @@ export interface DeclaredSalesFunnel {
    */
   arrows?: DeclaredFunnelLeg[];
   lifetimeRevenueUsd: number | null;
+  /**
+   * Where `lifetimeRevenueUsd` came from: the offer stated it, or the fleet median of stated offer values
+   * stands in (owner 2026-10-09, `lib/offer-lifetime-revenue.ts`). Absent on a funnel not built by the
+   * pricing read (test fixtures, the stated-only extras).
+   */
+  lifetimeRevenueSource?: "offer_stated" | "fleet_median" | null;
   destinationUrl: string | null;
   bookingUrl: string | null;
   updatedAt: string;

@@ -37,10 +37,11 @@
  *   - The rest of the return block is that one multiple restated, so nothing in it can disagree with it:
  *     `expectedRevenueUsd` = roi × window spend, `expectedPaidClients` = that ÷ lifetime revenue per client.
  *   - LIFETIME REVENUE per client (`lifetimeRevenuePerClientUsd`, shown beside the return) is the one the
- *     customer STATED ON THEIR OFFER (brand-service `offer-economics`), never a brand/cross-brand average:
- *     every offer states it and they agree → `offer_stated`; none does → null + `economics_missing` (owner
- *     2026-10-05: the brand-level sales economics are no input any more); offers disagree or only some state
- *     one → null + `lifetime_revenue_differs_across_offers`.
+ *     customer STATED ON THEIR OFFER (brand-service `offer-economics`), else the FLEET MEDIAN of stated offer
+ *     values (owner 2026-10-09: every offer always has one, `lib/offer-lifetime-revenue.ts`), never a
+ *     brand/cross-brand average. Every offer resolves to the same value → that value, source `offer_stated`
+ *     / `fleet_median` (null when offers mix both); values differ → null + `lifetime_revenue_differs_across_offers`;
+ *     no value at all (no offer, or no fleet median) → null + `economics_missing`.
  *   - SPEND = the org's whole COMMITTED spend in the window on the NET basis (runs-service dated
  *     `netTotalCostInUsdCents`, every brand, setup included) — what the month's credit was consumed by.
  *   - +$100 is LINEAR AT THE SERVED RETURN: `expectedAdditionalRevenueUsd` = 100 × roiMultiple exactly;
@@ -58,6 +59,7 @@
  *   - UNKNOWN IS NULL WITH A REASON, NEVER 0. A zero is served only where it is TRUE (nothing sent in the
  *     window ⇒ 0 emails, 0 expected replies).
  */
+import { offerLifetimeRevenue, resolveLifetimeRevenue, type OfferLifetimeRevenueSource } from "./offer-lifetime-revenue.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { legMaturity, maturityCutoffIso } from "./maturity.js";
@@ -115,7 +117,7 @@ export type RecapNullReason =
   | "undated_outcomes";
 
 /** Where a brand's lifetime revenue per client was read. */
-export type LifetimeRevenueSource = "offer_stated";
+export type LifetimeRevenueSource = OfferLifetimeRevenueSource;
 
 /** Window sending verdict: did anything actually go out, or is it only lined up in the sending queue? */
 export type SendStatus = "emails_sent" | "lined_up_not_sent" | "nothing_sent";
@@ -278,6 +280,19 @@ export interface RecapOffer {
   offerId: string;
   lifetimeRevenueUsd: number | null;
   lifetimeRevenueStatedAt: string | null;
+  /** Absent = `offer_stated` when a value is present. `fleet_median` = the default stood in for an unstated offer. */
+  lifetimeRevenueSource?: OfferLifetimeRevenueSource;
+}
+
+/** The offers with every unstated lifetime revenue filled by the fleet median (stated values untouched). */
+export function withFleetMedianLifetimeRevenue(offers: RecapOffer[] | null, fleetMedianUsd: number | null): RecapOffer[] | null {
+  if (!offers) return offers;
+  return offers.map((o) => {
+    const resolved = resolveLifetimeRevenue(o.lifetimeRevenueUsd, fleetMedianUsd);
+    return resolved.source === "fleet_median"
+      ? { ...o, lifetimeRevenueUsd: resolved.usd, lifetimeRevenueStatedAt: null, lifetimeRevenueSource: "fleet_median" }
+      : o;
+  });
 }
 
 /** PURE. The lifetime revenue a brand's sends are valued at (rule in the header). */
@@ -292,9 +307,10 @@ export function resolveRecapLifetimeRevenue(
     return { usd: null, source: null, offerId: null, statedAt: null, nullReason: "lifetime_revenue_differs_across_offers" };
   }
   const only = stated.length === 1 ? stated[0] : null;
+  const sources = new Set(stated.map((o) => o.lifetimeRevenueSource ?? "offer_stated"));
   return {
     usd: stated[0].lifetimeRevenueUsd,
-    source: "offer_stated",
+    source: sources.size === 1 ? [...sources][0] : null,
     offerId: only?.offerId ?? null,
     statedAt: only?.lifetimeRevenueStatedAt ?? null,
     nullReason: null,
@@ -660,7 +676,12 @@ export const defaultRecapDeps = (
 ): RecapDeps => ({
   brandIds: fetchOrgBroadcastBrandIds,
   brandDays: fetchBrandBroadcastDays,
-  offers: fetchBrandOffersForRecap,
+  // Every unstated offer is valued at the fleet median (owner 2026-10-09).
+  offers: async (orgId, brandId) => {
+    const offers = await fetchBrandOffersForRecap(orgId, brandId);
+    if (!offers || offers.every((o) => o.lifetimeRevenueUsd !== null)) return offers;
+    return withFleetMedianLifetimeRevenue(offers, (await offerLifetimeRevenue(null)).usd);
+  },
   spendByDay: fetchOrgNetSpendByDay,
   offerReturn,
   fleetRate,

@@ -2437,7 +2437,7 @@
               "totalPipelineUsd": {
                 "type": "number",
                 "nullable": true,
-                "description": "Org-deduped expected pipeline. Null (with headline.unpricedReason) when nothing is priced: no funnel wired, no priced funnel, or the offer states no lifetime revenue."
+                "description": "Org-deduped expected pipeline. Null (with headline.unpricedReason) when nothing is priced: no funnel wired, or no priced funnel (an offer that states no lifetime revenue is priced on the fleet median, see headline.lifetimeRevenueSource)."
               },
               "unpricedReason": {
                 "type": "string",
@@ -2448,7 +2448,21 @@
                   "no_funnel_wired",
                   "no_channel"
                 ],
-                "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = the offer being priced states no lifetime revenue; no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
+                "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
+              },
+              "lifetimeRevenueUsd": {
+                "type": "number",
+                "nullable": true,
+                "description": "The lifetime revenue per paying client this pipeline was priced on: the offer's own stated value, else the fleet median of every offer's stated lifetime revenue (owner 2026-10-09: every offer always has one, never 0). Present on the priced Overview body; absent/null when nothing is priced."
+              },
+              "lifetimeRevenueSource": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "offer_stated",
+                  "fleet_median"
+                ],
+                "description": "Where lifetimeRevenueUsd came from: offer_stated = the customer stated it on the offer; fleet_median = the offer states none, so the fleet median of stated offer lifetime revenues stands in (say 'fleet median', not 'you stated'). Absent/null when nothing is priced."
               }
             },
             "required": [
@@ -4181,7 +4195,7 @@
                     "totalPipelineUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Org-deduped expected pipeline for this campaign. Null (with headline.unpricedReason) when nothing is priced: no funnel wired, no priced funnel, or the offer states no lifetime revenue."
+                      "description": "Org-deduped expected pipeline for this campaign. Null (with headline.unpricedReason) when nothing is priced: no funnel wired, or no priced funnel (an offer that states no lifetime revenue is priced on the fleet median, see headline.lifetimeRevenueSource)."
                     },
                     "unpricedReason": {
                       "type": "string",
@@ -4192,7 +4206,7 @@
                         "no_funnel_wired",
                         "no_channel"
                       ],
-                      "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = the offer being priced states no lifetime revenue; no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
+                      "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
                     }
                   },
                   "required": [
@@ -4591,7 +4605,7 @@
                     "totalPipelineUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Org-deduped expected pipeline for the leads this workflow served. Null (with headline.unpricedReason) when nothing is priced: no funnel wired, no priced funnel, or the offer states no lifetime revenue — null is 'we could not price this', never 'it returned nothing'."
+                      "description": "Org-deduped expected pipeline for the leads this workflow served. Null (with headline.unpricedReason) when nothing is priced: no funnel wired, or no priced funnel (an offer that states no lifetime revenue is priced on the fleet median, see headline.lifetimeRevenueSource) — null is 'we could not price this', never 'it returned nothing'."
                     },
                     "unpricedReason": {
                       "type": "string",
@@ -4602,7 +4616,7 @@
                         "no_funnel_wired",
                         "no_channel"
                       ],
-                      "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = the offer being priced states no lifetime revenue; no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
+                      "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
                     }
                   },
                   "required": [
@@ -4956,7 +4970,7 @@
                     "totalPipelineUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Org-deduped expected pipeline for the leads this offer's campaigns served. Null (with headline.unpricedReason) when nothing is priced: no funnel wired, no priced funnel, or the offer states no lifetime revenue — null is 'we could not price this', never 'it returned nothing'."
+                      "description": "Org-deduped expected pipeline for the leads this offer's campaigns served. Null (with headline.unpricedReason) when nothing is priced: no funnel wired, or no priced funnel (an offer that states no lifetime revenue is priced on the fleet median, see headline.lifetimeRevenueSource) — null is 'we could not price this', never 'it returned nothing'."
                     },
                     "unpricedReason": {
                       "type": "string",
@@ -4967,7 +4981,7 @@
                         "no_funnel_wired",
                         "no_channel"
                       ],
-                      "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = the offer being priced states no lifetime revenue; no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
+                      "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
                     }
                   },
                   "required": [
@@ -8766,7 +8780,7 @@
               "totalPipelineUsd": {
                 "type": "number",
                 "nullable": true,
-                "description": "Org-deduped expected pipeline. Null (with headline.unpricedReason) when nothing is priced: no funnel wired, no priced funnel, or the offer states no lifetime revenue."
+                "description": "Org-deduped expected pipeline. Null (with headline.unpricedReason) when nothing is priced: no funnel wired, or no priced funnel (an offer that states no lifetime revenue is priced on the fleet median, see headline.lifetimeRevenueSource)."
               },
               "unpricedReason": {
                 "type": "string",
@@ -8777,7 +8791,21 @@
                   "no_funnel_wired",
                   "no_channel"
                 ],
-                "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = the offer being priced states no lifetime revenue; no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
+                "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
+              },
+              "lifetimeRevenueUsd": {
+                "type": "number",
+                "nullable": true,
+                "description": "The lifetime revenue per paying client this pipeline was priced on: the offer's own stated value, else the fleet median of every offer's stated lifetime revenue (owner 2026-10-09: every offer always has one, never 0). Present on the priced Overview body; absent/null when nothing is priced."
+              },
+              "lifetimeRevenueSource": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "offer_stated",
+                  "fleet_median"
+                ],
+                "description": "Where lifetimeRevenueUsd came from: offer_stated = the customer stated it on the offer; fleet_median = the offer states none, so the fleet median of stated offer lifetime revenues stands in (say 'fleet median', not 'you stated'). Absent/null when nothing is priced."
               }
             },
             "required": [
@@ -10435,7 +10463,7 @@
                     "totalPipelineUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Org-deduped expected pipeline. Null (with headline.unpricedReason) when nothing is priced: no funnel wired, no priced funnel, or the offer states no lifetime revenue."
+                      "description": "Org-deduped expected pipeline. Null (with headline.unpricedReason) when nothing is priced: no funnel wired, or no priced funnel (an offer that states no lifetime revenue is priced on the fleet median, see headline.lifetimeRevenueSource)."
                     },
                     "unpricedReason": {
                       "type": "string",
@@ -10446,7 +10474,21 @@
                         "no_funnel_wired",
                         "no_channel"
                       ],
-                      "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = the offer being priced states no lifetime revenue; no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
+                      "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
+                    },
+                    "lifetimeRevenueUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "The lifetime revenue per paying client this pipeline was priced on: the offer's own stated value, else the fleet median of every offer's stated lifetime revenue (owner 2026-10-09: every offer always has one, never 0). Present on the priced Overview body; absent/null when nothing is priced."
+                    },
+                    "lifetimeRevenueSource": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "offer_stated",
+                        "fleet_median"
+                      ],
+                      "description": "Where lifetimeRevenueUsd came from: offer_stated = the customer stated it on the offer; fleet_median = the offer states none, so the fleet median of stated offer lifetime revenues stands in (say 'fleet median', not 'you stated'). Absent/null when nothing is priced."
                     }
                   },
                   "required": [
@@ -14497,7 +14539,17 @@
           },
           "lifetimeRevenueUsd": {
             "type": "number",
-            "nullable": true
+            "nullable": true,
+            "description": "The offer's lifetime revenue per paying client every ROI divides: stated, else the fleet median of stated offer values (owner 2026-10-09). Null only when no offer in the fleet states one."
+          },
+          "lifetimeRevenueSource": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "offer_stated",
+              "fleet_median"
+            ],
+            "description": "Where lifetimeRevenueUsd came from: offer_stated = the customer stated it; fleet_median = the fleet median stands in for an unstated offer."
           },
           "pricing": {
             "type": "string",
@@ -17650,7 +17702,7 @@
               "totalPipelineUsd": {
                 "type": "number",
                 "nullable": true,
-                "description": "Org-deduped expected pipeline. Null (with headline.unpricedReason) when nothing is priced: no funnel wired, no priced funnel, or the offer states no lifetime revenue."
+                "description": "Org-deduped expected pipeline. Null (with headline.unpricedReason) when nothing is priced: no funnel wired, or no priced funnel (an offer that states no lifetime revenue is priced on the fleet median, see headline.lifetimeRevenueSource)."
               },
               "unpricedReason": {
                 "type": "string",
@@ -17661,7 +17713,21 @@
                   "no_funnel_wired",
                   "no_channel"
                 ],
-                "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = the offer being priced states no lifetime revenue; no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
+                "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
+              },
+              "lifetimeRevenueUsd": {
+                "type": "number",
+                "nullable": true,
+                "description": "The lifetime revenue per paying client this pipeline was priced on: the offer's own stated value, else the fleet median of every offer's stated lifetime revenue (owner 2026-10-09: every offer always has one, never 0). Present on the priced Overview body; absent/null when nothing is priced."
+              },
+              "lifetimeRevenueSource": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "offer_stated",
+                  "fleet_median"
+                ],
+                "description": "Where lifetimeRevenueUsd came from: offer_stated = the customer stated it on the offer; fleet_median = the offer states none, so the fleet median of stated offer lifetime revenues stands in (say 'fleet median', not 'you stated'). Absent/null when nothing is priced."
               }
             },
             "required": [
@@ -19316,7 +19382,7 @@
                     "totalPipelineUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Org-deduped expected pipeline. Null (with headline.unpricedReason) when nothing is priced: no funnel wired, no priced funnel, or the offer states no lifetime revenue."
+                      "description": "Org-deduped expected pipeline. Null (with headline.unpricedReason) when nothing is priced: no funnel wired, or no priced funnel (an offer that states no lifetime revenue is priced on the fleet median, see headline.lifetimeRevenueSource)."
                     },
                     "unpricedReason": {
                       "type": "string",
@@ -19327,7 +19393,21 @@
                         "no_funnel_wired",
                         "no_channel"
                       ],
-                      "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = the offer being priced states no lifetime revenue; no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
+                      "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
+                    },
+                    "lifetimeRevenueUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "The lifetime revenue per paying client this pipeline was priced on: the offer's own stated value, else the fleet median of every offer's stated lifetime revenue (owner 2026-10-09: every offer always has one, never 0). Present on the priced Overview body; absent/null when nothing is priced."
+                    },
+                    "lifetimeRevenueSource": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "offer_stated",
+                        "fleet_median"
+                      ],
+                      "description": "Where lifetimeRevenueUsd came from: offer_stated = the customer stated it on the offer; fleet_median = the offer states none, so the fleet median of stated offer lifetime revenues stands in (say 'fleet median', not 'you stated'). Absent/null when nothing is priced."
                     }
                   },
                   "required": [
@@ -19569,7 +19649,7 @@
                     "totalPipelineUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Org-deduped expected pipeline. Null (with headline.unpricedReason) when nothing is priced: no funnel wired, no priced funnel, or the offer states no lifetime revenue."
+                      "description": "Org-deduped expected pipeline. Null (with headline.unpricedReason) when nothing is priced: no funnel wired, or no priced funnel (an offer that states no lifetime revenue is priced on the fleet median, see headline.lifetimeRevenueSource)."
                     },
                     "unpricedReason": {
                       "type": "string",
@@ -19580,7 +19660,21 @@
                         "no_funnel_wired",
                         "no_channel"
                       ],
-                      "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = the offer being priced states no lifetime revenue; no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
+                      "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
+                    },
+                    "lifetimeRevenueUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "The lifetime revenue per paying client this pipeline was priced on: the offer's own stated value, else the fleet median of every offer's stated lifetime revenue (owner 2026-10-09: every offer always has one, never 0). Present on the priced Overview body; absent/null when nothing is priced."
+                    },
+                    "lifetimeRevenueSource": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "offer_stated",
+                        "fleet_median"
+                      ],
+                      "description": "Where lifetimeRevenueUsd came from: offer_stated = the customer stated it on the offer; fleet_median = the offer states none, so the fleet median of stated offer lifetime revenues stands in (say 'fleet median', not 'you stated'). Absent/null when nothing is priced."
                     }
                   },
                   "required": [
@@ -22593,9 +22687,10 @@
                 "type": "string",
                 "nullable": true,
                 "enum": [
-                  "offer_stated"
+                  "offer_stated",
+                  "fleet_median"
                 ],
-                "description": "Where the lifetime revenue per client was read. offer_stated = the value the customer stated on their offer (brand-service offer-economics, every offer of the brand agreeing). No offer stating one = null + economics_missing (the brand-level sales economics are no input, owner 2026-10-05)."
+                "description": "Where the lifetime revenue per client was read. offer_stated = the value the customer stated on their offer (brand-service offer-economics, every offer of the brand agreeing); fleet_median = the offers state none, so the fleet median of stated offer lifetime revenues stands in (owner 2026-10-09: every offer always has one). Null when offers mix both, or no value exists at all (economics_missing)."
               },
               "lifetimeRevenueNullReason": {
                 "type": "string",
@@ -22799,9 +22894,10 @@
                   "type": "string",
                   "nullable": true,
                   "enum": [
-                    "offer_stated"
+                    "offer_stated",
+                    "fleet_median"
                   ],
-                  "description": "Where the lifetime revenue per client was read. offer_stated = the value the customer stated on their offer (brand-service offer-economics, every offer of the brand agreeing). No offer stating one = null + economics_missing (the brand-level sales economics are no input, owner 2026-10-05)."
+                  "description": "Where the lifetime revenue per client was read. offer_stated = the value the customer stated on their offer (brand-service offer-economics, every offer of the brand agreeing); fleet_median = the offers state none, so the fleet median of stated offer lifetime revenues stands in (owner 2026-10-09: every offer always has one). Null when offers mix both, or no value exists at all (economics_missing)."
                 },
                 "lifetimeRevenueOfferId": {
                   "type": "string",
