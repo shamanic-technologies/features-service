@@ -1,8 +1,10 @@
 import { Router } from "express";
 import { awaitWarmStore } from "../lib/await-warm-store.js";
-import { asc, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { channelTriggerTypes, features, type Feature } from "../db/schema.js";
+import { features, type Feature } from "../db/schema.js";
+import { listTriggerTypes, loadChannelCatalogue } from "../lib/channel-declarations-store.js";
+import { isTriggerCoded } from "../lib/channel-declarations.js";
 import { STATS_REGISTRY } from "../lib/stats-registry.js";
 import {
   fetchPublicWorkflows,
@@ -133,7 +135,6 @@ import {
 import { fetchBrandFirstBilledDay } from "../lib/revenue-history-client.js";
 import { servedCached, PLATFORM_SCOPE_ORG_ID } from "../lib/view-cache.js";
 import {
-  buildChannelCatalogue,
   channelStepCatalogue,
   funnelLegCatalogue,
   salesFunnelCatalogue,
@@ -3300,8 +3301,8 @@ export function __resetChannelCatalogueCache(): void {
 }
 
 async function loadPublishedChannels(): Promise<PublicChannel[]> {
-  const rows = await db.query.features.findMany({ where: eq(features.status, "active") });
-  return buildChannelCatalogue(rows);
+  // Seeded channels + every PUBLISHED run-time declaration (`lib/channel-declarations.ts`).
+  return (await loadChannelCatalogue({ publishedOnly: true })).channels;
 }
 
 interface ChannelCataloguePayload {
@@ -3337,11 +3338,31 @@ interface PublicChannelTrigger {
   fromStep: string | null;
   firedBy: string;
   coded: boolean;
+  /** `code` (stated in `lib/channel-triggers.ts`) or `declared` (created at run time). */
+  origin: "code" | "declared";
+  /** `event` | `delay` (N days after a step, if nothing happened) | `poll` (a new item at a source). */
+  kind: "event" | "delay" | "poll";
+  params: Record<string, unknown> | null;
 }
 
 async function loadChannelTriggers(): Promise<PublicChannelTrigger[]> {
-  const rows = await db.select().from(channelTriggerTypes).orderBy(asc(channelTriggerTypes.displayOrder));
-  return rows.map(({ id, label, description, icon, fromStep, firedBy, coded }) => ({ id, label, description, icon, fromStep, firedBy, coded }));
+  return (await listTriggerTypes()).map((t) => ({
+    id: t.id,
+    label: t.label,
+    description: t.description,
+    icon: t.icon,
+    fromStep: t.fromStep,
+    firedBy: t.firedBy,
+    coded: isTriggerCoded(t),
+    origin: t.origin ?? "code",
+    kind: t.kind ?? "event",
+    params: t.params ?? null,
+  }));
+}
+
+/** Test/write seam: a declaration write drops the cached public catalogue so the next read shows it. */
+export function invalidateChannelCatalogue(): void {
+  clearPublicCache(channelCatalogueCache);
 }
 
 export async function handlePublicChannels(res: import("express").Response): Promise<void> {

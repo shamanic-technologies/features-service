@@ -11,11 +11,8 @@
 import { offerLifetimeRevenue } from "../lib/offer-lifetime-revenue.js";
 import { StoreNotComputedError } from "../lib/await-warm-store.js";
 import { Router } from "express";
-import { eq } from "drizzle-orm";
 import { apiKeyAuth, type AuthenticatedRequest } from "../middleware/auth.js";
-import { db } from "../db/index.js";
-import { features } from "../db/schema.js";
-import { buildChannelCatalogue } from "../lib/channel-catalogue.js";
+import { loadChannelCatalogue } from "../lib/channel-declarations-store.js";
 import { fetchBrandLegEconomics } from "../lib/brand-leg-economics-client.js";
 import { getBrandEffectiveRates } from "../lib/effective-conversion-rates.js";
 import { SalesFunnelsUnavailableError } from "../lib/sales-funnels-client.js";
@@ -141,12 +138,13 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
     // Every offer has a lifetime revenue: its own, else the fleet median (owner 2026-10-09).
     const lifetimeRevenue = await offerLifetimeRevenue(offer.lifetimeRevenueUsd);
 
-    const [rates, rows] = await Promise.all([
+    const [rates, catalogue] = await Promise.all([
       getBrandEffectiveRates(brandId, req.orgId, legEconomics),
-      db.query.features.findMany({ where: eq(features.status, "active") }),
+      // Seeded channels + every PUBLISHED run-time declaration (`lib/channel-declarations.ts`).
+      loadChannelCatalogue({ publishedOnly: true }),
     ]);
     // Every sales-path campaign named first, in catalogue order (the same names `/public/channels` serves).
-    const published = await withCampaignNames(buildChannelCatalogue(rows));
+    const published = await withCampaignNames(catalogue.channels);
     const channels: SalesPathChannelInput[] = published.map((c) => ({
       slug: c.slug,
       name: c.name,

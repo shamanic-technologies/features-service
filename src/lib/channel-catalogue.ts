@@ -288,6 +288,8 @@ export function buildChannelCatalogue(
   rows: readonly CatalogueFeatureRow[],
   shortDescriptionOf: (slug: string) => string = channelShortDescription,
   channelTypeOfSlug: (slug: string) => ChannelType = channelTypeOf,
+  // Run-time declarations (`lib/channel-declarations.ts`): the declared trigger types beside the coded ones.
+  triggerOf?: (id: string) => { coded: boolean } | null,
 ): PublicChannel[] {
   const channels: PublicChannel[] = [];
   for (const row of rows) {
@@ -331,6 +333,7 @@ export function buildChannelCatalogue(
   }
   assertLegTriggersDeclared(
     channels.flatMap((c) => c.stepTransitions.map((t) => ({ slug: c.slug, legKey: t.legKey, managed: c.managed, mode: t.mode, triggerId: t.triggerId }))),
+    triggerOf,
   );
   return channels.sort((a, b) => a.displayOrder - b.displayOrder || a.slug.localeCompare(b.slug));
 }
