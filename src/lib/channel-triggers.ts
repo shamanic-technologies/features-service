@@ -44,7 +44,7 @@ export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
     id: "lead_requested",
     label: "Lead requested",
     description: "A campaign needs a new person to contact.",
-    icon: "user-search",
+    icon: "user-focus",
     fromStep: null,
     // lead-service serves a lead the moment an outbound run asks for one (its `lead-serve` run).
     firedBy: "lead-service",
@@ -54,7 +54,7 @@ export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
     id: "positive_reply_received",
     label: "Positive reply",
     description: "A prospect replied with interest.",
-    icon: "chat-circle-check",
+    icon: "thumbs-up",
     fromStep: "conversation",
     // instantly-service asks campaign-service to run the legs out of it (`trigger-for-step`).
     firedBy: "instantly-service",

@@ -46,6 +46,13 @@ describe("every leg states proactive or reactive, and a reactive leg names one d
     expect(() => assertLegTriggersDeclared([{ ...leg, mode: "reactive", triggerId: "meeting_booked" }])).not.toThrow();
   });
 
+  it("every icon is a REAL Phosphor icon name (verified against @phosphor-icons/core 2.x assets, 2026-10-09)", () => {
+    // The dashboard maps Phosphor names only; an unknown token renders the label alone. A new trigger's icon
+    // is checked against https://unpkg.com/@phosphor-icons/core@2/assets/regular/<name>.svg, then added here.
+    const VERIFIED_PHOSPHOR = new Set(["user-focus", "thumbs-up", "cursor-click", "calendar-check", "handshake", "user-plus", "clipboard-text"]);
+    for (const t of CHANNEL_TRIGGER_TYPES) expect(VERIFIED_PHOSPHOR.has(t.icon), `${t.id}: ${t.icon}`).toBe(true);
+  });
+
   it("trigger ids are unique and every one has a label and an icon", () => {
     expect(new Set(CHANNEL_TRIGGER_TYPES.map((t) => t.id)).size).toBe(CHANNEL_TRIGGER_TYPES.length);
     for (const t of CHANNEL_TRIGGER_TYPES) expect(t.label.length * t.icon.length * t.description.length).toBeGreaterThan(0);
