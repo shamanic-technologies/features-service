@@ -110,9 +110,9 @@ describe("stats exclude transactional emails", () => {
     const res = await request(app)
       .get("/features/sales-cold-email-outreach/stats")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-123")
-      .set("x-user-id", "user-1")
-      .set("x-run-id", "run-1")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000123")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000001")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000001")
       .expect(200);
 
     // Should only include broadcast numbers, not broadcast + transactional
@@ -160,9 +160,9 @@ describe("stats exclude transactional emails", () => {
     const res = await request(app)
       .get("/features/sales-cold-email-outreach/stats")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-123")
-      .set("x-user-id", "user-1")
-      .set("x-run-id", "run-1")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000123")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000001")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000001")
       .expect(200);
 
     // No broadcast data → all null (transactional values not included)
@@ -214,9 +214,9 @@ describe("stats exclude transactional emails", () => {
     const res = await request(app)
       .get("/features/sales-cold-email-outreach/stats?groupBy=brandId")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-123")
-      .set("x-user-id", "user-1")
-      .set("x-run-id", "run-1")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000123")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000001")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000001")
       .expect(200);
 
     const group = res.body.groups[0];
@@ -263,9 +263,9 @@ describe("stats exclude transactional emails", () => {
     const res = await request(app)
       .get("/features/sales-cold-email-outreach/stats")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-123")
-      .set("x-user-id", "user-1")
-      .set("x-run-id", "run-1")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000123")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000001")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000001")
       .expect(200);
 
     // broadcast absent → all recipient stats should be null
@@ -317,9 +317,9 @@ describe("stats exclude transactional emails", () => {
     const res = await request(app)
       .get("/features/sales-cold-email-outreach/stats?groupBy=brandId")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-123")
-      .set("x-user-id", "user-1")
-      .set("x-run-id", "run-1")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000123")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000001")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000001")
       .expect(200);
 
     const group = res.body.groups[0];

@@ -46,7 +46,7 @@ process.env.NODE_ENV = "test";
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
 
-const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
+const AUTH = { "x-api-key": "test-key", "x-org-id": "0e9a0000-0000-4000-8000-000000000001", "x-user-id": "05e40000-0000-4000-8000-000000000001", "x-run-id": "07a00000-0000-4000-8000-000000000001" };
 const FEATURE = { id: "feat-1", slug: "x", name: "X", description: "x", status: "active", createdAt: new Date(), updatedAt: new Date() };
 
 // The brand's declared conversation-funnel rates, as brand-service serves them.
@@ -181,7 +181,7 @@ describe("workflow-projection: each audience row states how many people it can s
     const { withAudienceAvailability } = await import("./workflow-projection.js");
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("boom", { status: 500 }));
     vi.spyOn(console, "error").mockImplementation(() => {});
-    const availability = await fetchActiveAudienceAvailabilitySoft("brand-1", { orgId: "org-1" });
+    const availability = await fetchActiveAudienceAvailabilitySoft("brand-1", { orgId: "0e9a0000-0000-4000-8000-000000000001" });
     expect(availability).toBeNull();
     const rows = withAudienceAvailability(
       [

@@ -63,10 +63,10 @@ const { db } = await import("../db/index.js");
 const { __resetLegFleetEvidence } = await import("../lib/leg-fleet-evidence.js");
 const app = (await import("../index.js")).default;
 
-const ORG = "org-1";
+const ORG = "0e9a0000-0000-4000-8000-000000000001";
 const BRAND = "75d7e3e8-6926-4f85-a557-976895400666";
 const OTHER_BRAND = "b2";
-const AUTH = { "x-api-key": "test-key", "x-org-id": ORG, "x-user-id": "user-1", "x-run-id": "run-1" };
+const AUTH = { "x-api-key": "test-key", "x-org-id": ORG, "x-user-id": "05e40000-0000-4000-8000-000000000001", "x-run-id": "07a00000-0000-4000-8000-000000000001" };
 const FEATURE = { id: "feat-1", slug: "x", name: "X", description: "x", status: "active", createdAt: new Date(), updatedAt: new Date() };
 const SLUG = "sales-cold-email-outreach";
 const URL_BASE = `/features/${SLUG}/workflow-projection`;

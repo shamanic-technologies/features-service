@@ -48,9 +48,9 @@ const app = (await import("../index.js")).default;
 
 const AUTH_HEADERS = {
   "x-api-key": "test-key",
-  "x-org-id": "org-1",
-  "x-user-id": "user-1",
-  "x-run-id": "run-1",
+  "x-org-id": "0e9a0000-0000-4000-8000-000000000001",
+  "x-user-id": "05e40000-0000-4000-8000-000000000001",
+  "x-run-id": "07a00000-0000-4000-8000-000000000001",
 };
 
 // Declares EVERY registry key so the fan-out scoping (GET /features/:slug/stats only calls the

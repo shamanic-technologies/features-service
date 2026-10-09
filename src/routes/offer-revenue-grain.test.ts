@@ -49,7 +49,7 @@ const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
 const { offerEconomicsFromDeclared, declaredFromEconomics } = await import("../lib/leg-economics-fixture.js");
 
-const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
+const AUTH = { "x-api-key": "test-key", "x-org-id": "0e9a0000-0000-4000-8000-000000000001", "x-user-id": "05e40000-0000-4000-8000-000000000001", "x-run-id": "07a00000-0000-4000-8000-000000000001" };
 const SALES_FEATURE = {
   id: "feat-1", slug: "sales-cold-email-outreach", name: "Sales", description: "x", status: "active",
   outputs: [], charts: [], entities: [],
@@ -117,7 +117,7 @@ function mockFetch(fixture: Fixture): void {
       return json({
         campaigns: Object.entries(fixture.campaigns).map(([id, offerId]) => ({
           id,
-          orgId: "org-1",
+          orgId: "0e9a0000-0000-4000-8000-000000000001",
           brandId: "b1",
           featureSlug: "sales-cold-email-outreach",
           funnelKey: "sales_meetings_from_conversation",

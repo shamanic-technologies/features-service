@@ -60,7 +60,7 @@ process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
 
-const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
+const AUTH = { "x-api-key": "test-key", "x-org-id": "0e9a0000-0000-4000-8000-000000000001", "x-user-id": "05e40000-0000-4000-8000-000000000001", "x-run-id": "07a00000-0000-4000-8000-000000000001" };
 const PITCH = "sales-cold-email-outreach";
 const BRAND = "b1";
 const OFFER = "offer-a";
@@ -159,7 +159,7 @@ function mockFetch(degraded: Degraded = {}): void {
     if (path.endsWith("/campaigns")) {
       return json({
         campaigns: [{
-          id: "c1", orgId: "org-1", brandId: BRAND, featureSlug: PITCH,
+          id: "c1", orgId: "0e9a0000-0000-4000-8000-000000000001", brandId: BRAND, featureSlug: PITCH,
           // The leg the campaign performs is what the read is priced on (wave C1).
           funnelKey: CONVERSATION, legKey: "start_to_conversation", acquisitionChannel: PITCH, offerId: OFFER,
           status: "ongoing", createdAt: "2026-01-01T00:00:00.000Z",

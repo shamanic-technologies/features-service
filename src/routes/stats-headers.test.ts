@@ -87,18 +87,18 @@ describe("stats routes forward identity headers to downstream services", () => {
     await request(app)
       .get("/features/sales-cold-email-outreach/stats")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-123")
-      .set("x-user-id", "user-456")
-      .set("x-run-id", "run-789")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000123")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000456")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000789")
       .expect(200);
 
     // Verify all downstream fetch calls (excluding traceEvent) include identity headers
     for (const [url, opts] of fetchSpy.mock.calls) {
       if (typeof url === "string" && url.includes("/events")) continue;
       const headers = opts?.headers ?? {};
-      expect(headers["x-org-id"]).toBe("org-123");
-      expect(headers["x-user-id"]).toBe("user-456");
-      expect(headers["x-run-id"]).toBe("run-789");
+      expect(headers["x-org-id"]).toBe("0e9a0000-0000-4000-8000-000000000123");
+      expect(headers["x-user-id"]).toBe("05e40000-0000-4000-8000-000000000456");
+      expect(headers["x-run-id"]).toBe("07a00000-0000-4000-8000-000000000789");
     }
   });
 
@@ -108,17 +108,17 @@ describe("stats routes forward identity headers to downstream services", () => {
     await request(app)
       .get("/stats")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-123")
-      .set("x-user-id", "user-456")
-      .set("x-run-id", "run-789")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000123")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000456")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000789")
       .expect(200);
 
     for (const [url, opts] of fetchSpy.mock.calls) {
       if (typeof url === "string" && url.includes("/events")) continue;
       const headers = opts?.headers ?? {};
-      expect(headers["x-org-id"]).toBe("org-123");
-      expect(headers["x-user-id"]).toBe("user-456");
-      expect(headers["x-run-id"]).toBe("run-789");
+      expect(headers["x-org-id"]).toBe("0e9a0000-0000-4000-8000-000000000123");
+      expect(headers["x-user-id"]).toBe("05e40000-0000-4000-8000-000000000456");
+      expect(headers["x-run-id"]).toBe("07a00000-0000-4000-8000-000000000789");
     }
   });
 
@@ -128,9 +128,9 @@ describe("stats routes forward identity headers to downstream services", () => {
     await request(app)
       .get("/features/sales-cold-email-outreach/stats")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-123")
-      .set("x-user-id", "user-456")
-      .set("x-run-id", "run-789")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000123")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000456")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000789")
       .set("x-campaign-id", "camp-42")
       .set("x-feature-slug", "sales-cold-email-outreach")
       .expect(200);
@@ -149,9 +149,9 @@ describe("stats routes forward identity headers to downstream services", () => {
     await request(app)
       .get("/features/sales-cold-email-outreach/stats")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-123")
-      .set("x-user-id", "user-456")
-      .set("x-run-id", "run-789")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000123")
+      .set("x-user-id", "05e40000-0000-4000-8000-000000000456")
+      .set("x-run-id", "07a00000-0000-4000-8000-000000000789")
       .expect(200);
 
     for (const [_url, opts] of fetchSpy.mock.calls) {
@@ -169,7 +169,7 @@ describe("stats routes forward identity headers to downstream services", () => {
     const res1 = await request(app)
       .get("/features/sales-cold-email-outreach/stats")
       .set("x-api-key", "test-key")
-      .set("x-org-id", "org-123")
+      .set("x-org-id", "0e9a0000-0000-4000-8000-000000000123")
       .expect(400);
 
     expect(res1.body.error).toMatch(/x-user-id/);

@@ -57,9 +57,9 @@ const { fetchBrandWorkflowEvidence } = await import("../lib/workflow-projection-
 
 const AUTH = {
   "x-api-key": "test-key",
-  "x-org-id": "org-1",
-  "x-user-id": "user-1",
-  "x-run-id": "run-1",
+  "x-org-id": "0e9a0000-0000-4000-8000-000000000001",
+  "x-user-id": "05e40000-0000-4000-8000-000000000001",
+  "x-run-id": "07a00000-0000-4000-8000-000000000001",
 };
 
 const FEATURE = { id: "feat-1", slug: "x", name: "X", description: "x", status: "active", createdAt: new Date(), updatedAt: new Date() };
@@ -207,7 +207,7 @@ describe("comped spend: the CHARGED and INCURRED bases must diverge on the same 
     // ratio, so it reads this same brand grain on the INCURRED basis: a dollar buys the same number of
     // sends whether or not we later comped it. The DISPLAYED brand grain keeps the charged default.
     mockFetch(costGroup());
-    const identity = { orgId: "org-1", userId: "user-1", runId: "run-1", featureSlug: "x" };
+    const identity = { orgId: "0e9a0000-0000-4000-8000-000000000001", userId: "05e40000-0000-4000-8000-000000000001", runId: "07a00000-0000-4000-8000-000000000001", featureSlug: "x" };
     const displayed = await fetchBrandWorkflowEvidence("brand-1", "x", WORKFLOWS as any, identity, "gross");
     const projection = await fetchBrandWorkflowEvidence("brand-1", "x", WORKFLOWS as any, identity, "gross", "incurred");
     expect(displayed.get("wf-a")!.totalCostInUsdCents).toBe(BILLED_CENTS);

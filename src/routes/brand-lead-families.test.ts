@@ -41,7 +41,7 @@ const { fetchFollowupActedLeads } = await import("../lib/followup-actions-client
 const { fetchSpendSplit } = await import("../lib/scope-maturity.js");
 const app = (await import("../index.js")).default;
 const { unionBrandFamilies, leadFamiliesScopeKey } = await import("./brand-lead-families.js");
-const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
+const AUTH = { "x-api-key": "test-key", "x-org-id": "0e9a0000-0000-4000-8000-000000000001", "x-user-id": "05e40000-0000-4000-8000-000000000001", "x-run-id": "07a00000-0000-4000-8000-000000000001" };
 
 const lead = (leadId: string, campaignId: string, signals: Record<string, boolean>, extra: Record<string, unknown> = {}) => ({
   leadId,

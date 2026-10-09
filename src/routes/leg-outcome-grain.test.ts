@@ -60,7 +60,7 @@ process.env.NODE_ENV = "test";
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
 
-const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
+const AUTH = { "x-api-key": "test-key", "x-org-id": "0e9a0000-0000-4000-8000-000000000001", "x-user-id": "05e40000-0000-4000-8000-000000000001", "x-run-id": "07a00000-0000-4000-8000-000000000001" };
 const FEATURE = { id: "feat-1", slug: "x", name: "X", description: "x", status: "active", createdAt: new Date(), updatedAt: new Date() };
 const BRAND = "75d7e3e8-6926-4f85-a557-976895400666";
 const LIVE_CAMPAIGN = "f7b1b610-4fa1-4b54-8fec-f7be124dc32b";
@@ -175,8 +175,8 @@ function mockFetch(opts: MockOpts = {}): void {
       if (opts.campaigns === null) return new Response("boom", { status: 502 });
       return json({
         campaigns: opts.campaigns ?? [
-          { id: LIVE_CAMPAIGN, orgId: "org-1", brandId: BRAND, funnelKey: "sales_meetings_from_conversation", acquisitionChannel: "sales-cold-email-outreach", status: "ongoing", createdAt: "2026-09-01T00:00:00.000Z" },
-          { id: STOPPED_CAMPAIGN, orgId: "org-1", brandId: BRAND, funnelKey: "sales_meetings_from_conversation", acquisitionChannel: "sales-cold-email-outreach", status: "stopped", createdAt: "2026-08-01T00:00:00.000Z" },
+          { id: LIVE_CAMPAIGN, orgId: "0e9a0000-0000-4000-8000-000000000001", brandId: BRAND, funnelKey: "sales_meetings_from_conversation", acquisitionChannel: "sales-cold-email-outreach", status: "ongoing", createdAt: "2026-09-01T00:00:00.000Z" },
+          { id: STOPPED_CAMPAIGN, orgId: "0e9a0000-0000-4000-8000-000000000001", brandId: BRAND, funnelKey: "sales_meetings_from_conversation", acquisitionChannel: "sales-cold-email-outreach", status: "stopped", createdAt: "2026-08-01T00:00:00.000Z" },
         ],
       });
     }

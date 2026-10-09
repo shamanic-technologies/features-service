@@ -50,7 +50,7 @@ process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
 
-const AUTH = { "x-api-key": "test-key", "x-org-id": "org-1", "x-user-id": "user-1", "x-run-id": "run-1" };
+const AUTH = { "x-api-key": "test-key", "x-org-id": "0e9a0000-0000-4000-8000-000000000001", "x-user-id": "05e40000-0000-4000-8000-000000000001", "x-run-id": "07a00000-0000-4000-8000-000000000001" };
 const SALES = "sales-cold-email-outreach";
 const NOW = "2026-10-01T12:00:00.000Z";
 const CUTOFF = "2026-09-10T00:00:00.000Z";
@@ -115,7 +115,7 @@ function mockFetch(fixture: Fixture = {}): void {
       if (fixture.campaignsDown) return new Response("boom", { status: 500 });
       return json({
         campaigns: [{
-          id: "c-live", orgId: "org-1", brandId: "b1", brandIds: ["b1"], featureSlug: SALES,
+          id: "c-live", orgId: "0e9a0000-0000-4000-8000-000000000001", brandId: "b1", brandIds: ["b1"], featureSlug: SALES,
           funnelKey: "sales_meetings_from_website", acquisitionChannel: "cold_email", legKey,
           status: "ongoing", createdAt: "2026-08-25T00:00:00.000Z",
         },

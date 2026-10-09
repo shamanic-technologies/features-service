@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction, RequestHandler } from "express";
+import { malformedIdentityHeaders } from "../lib/identity-headers.js";
 
 export interface AuthenticatedRequest extends Request {
   orgId: string;
@@ -37,6 +38,18 @@ export const apiKeyAuth: RequestHandler = (
 
   if (missing.length > 0) {
     res.status(400).json({ error: `Missing required headers: ${missing.join(", ")}` });
+    return;
+  }
+
+  // A malformed identity is refused HERE, before it can reach a sibling or be recorded as a cell's
+  // replay template that other callers' reads are then computed under (lib/identity-headers.ts).
+  const malformed = malformedIdentityHeaders(req.headers);
+  if (malformed.length > 0) {
+    res.status(400).json({
+      error: `Identity headers must be UUIDs: ${malformed.join(", ")}`,
+      reason: "invalid_identity",
+      invalidHeaders: malformed,
+    });
     return;
   }
 

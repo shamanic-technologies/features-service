@@ -33,9 +33,9 @@ const { offerEconomicsFromDeclared, legCampaignRows, declaredFromEconomics } = a
 
 const AUTH = {
   "x-api-key": "test-key",
-  "x-org-id": "org-1",
-  "x-user-id": "user-1",
-  "x-run-id": "run-1",
+  "x-org-id": "0e9a0000-0000-4000-8000-000000000001",
+  "x-user-id": "05e40000-0000-4000-8000-000000000001",
+  "x-run-id": "07a00000-0000-4000-8000-000000000001",
 };
 
 const SALES_FEATURE = {
@@ -146,8 +146,8 @@ function mockFetch(opts: Opts = {}): void {
     if (url.includes("/manual-qualifications")) {
       const rows: unknown[] = [];
       for (const [email, q] of Object.entries(opts.legacy ?? {})) {
-        if (q.meetingBookedAt) rows.push({ id: `q-${email}-m`, orgId: "org-1", campaignId: "c1", instantlyCampaignId: "ic1", email, status: "lead_meeting_booked", qualifiedBy: "u1", notes: null, qualifiedAt: q.meetingBookedAt });
-        if (q.closedAt) rows.push({ id: `q-${email}-c`, orgId: "org-1", campaignId: "c1", instantlyCampaignId: "ic1", email, status: "lead_closed", qualifiedBy: "u1", notes: null, qualifiedAt: q.closedAt });
+        if (q.meetingBookedAt) rows.push({ id: `q-${email}-m`, orgId: "0e9a0000-0000-4000-8000-000000000001", campaignId: "c1", instantlyCampaignId: "ic1", email, status: "lead_meeting_booked", qualifiedBy: "u1", notes: null, qualifiedAt: q.meetingBookedAt });
+        if (q.closedAt) rows.push({ id: `q-${email}-c`, orgId: "0e9a0000-0000-4000-8000-000000000001", campaignId: "c1", instantlyCampaignId: "ic1", email, status: "lead_closed", qualifiedBy: "u1", notes: null, qualifiedAt: q.closedAt });
       }
       return json({ qualifications: rows });
     }

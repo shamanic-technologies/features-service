@@ -24,7 +24,13 @@ vi.mock("./campaign-identity-client.js", () => ({
 
 const { materializeRound, __resetKeeperStateForTest } = await import("./view-keeper.js");
 
-const HEADERS = { "x-org-id": "org-a", "x-user-id": "u", "x-run-id": "r", "x-brand-id": READ_BRAND };
+const ORG_A_UUID = "0a0a0a0a-0000-4000-8000-00000000000a";
+const HEADERS = {
+  "x-org-id": ORG_A_UUID,
+  "x-user-id": "0b0b0b0b-0000-4000-8000-00000000000b",
+  "x-run-id": "0c0c0c0c-0000-4000-8000-00000000000c",
+  "x-brand-id": READ_BRAND,
+};
 const now = Date.now();
 const recent = new Date(now - 60_000).toISOString();
 
@@ -65,7 +71,7 @@ describe("materializeRound", () => {
     for (const a of asked) {
       expect(a.headers["x-view-precompute"]).toBe("1");
       expect(a.headers["x-api-key"]).toBe("svc-key");
-      expect(a.headers["x-org-id"]).toBe("org-a");
+      expect(a.headers["x-org-id"]).toBe(ORG_A_UUID);
       expect(a.headers["x-brand-id"]).toBe(B);
     }
     expect(report.computed).toBe(2);
@@ -79,5 +85,31 @@ describe("materializeRound", () => {
     const report = await materializeRound();
     expect(report.stale).toBe(1);
     expect(report.refreshedStale + report.computed).toBe(asked.length);
+  });
+
+  it("never replays the org under a MALFORMED identity a probe left on a cell (prod 2026-10-09, x-user-id: x)", async () => {
+    // The org's most recent read is a probe's, with non-UUID ids. Adopting it made every precompute of
+    // the org fail at runs-service and parked those cells for hours; the older WELL-FORMED read wins.
+    cells.push({
+      replayUrl: `/brands/${READ_BRAND}/revenue?pricing=gross`,
+      replayHeaders: { "x-org-id": ORG_A_UUID, "x-user-id": "x", "x-run-id": "x", "x-brand-id": READ_BRAND },
+      orgId: "org-a",
+      brandId: READ_BRAND,
+      lastReadAt: new Date(now - 1_000).toISOString(),
+      computedAt: recent,
+    });
+    await materializeRound();
+    expect(asked.length).toBeGreaterThan(0);
+    for (const a of asked) {
+      expect(a.headers["x-user-id"]).toBe(HEADERS["x-user-id"]);
+      expect(a.headers["x-run-id"]).toBe(HEADERS["x-run-id"]);
+    }
+  });
+
+  it("an org whose ONLY recorded identity is malformed has nobody to replay as", async () => {
+    cells = cells.map((c) => ({ ...c, replayHeaders: { ...HEADERS, "x-user-id": "system-probe" } }));
+    const report = await materializeRound();
+    expect(asked).toEqual([]);
+    expect(report.noIdentity).toBe(3);
   });
 });

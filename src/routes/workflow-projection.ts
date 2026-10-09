@@ -33,6 +33,7 @@ import {
 } from "../lib/funnel-legs.js";
 import {
   bookedToAttendedRate,
+  entryLegOutcomeTerms,
   grainLegOutcome,
   legOutcomeTerms,
   type GrainLegOutcome,
@@ -1160,7 +1161,9 @@ function channelOutreachPriceUsd(
  */
 function exploreResolved(
   outreachUsd: number,
-  econ: ProjectionEconomics,
+  // Null only on a LEG read (`legTerms` present), whose allowance is denominated in the leg's step and
+  // reads no economics.
+  econ: ProjectionEconomics | null,
   objective: Objective,
   singleStepGoal: SingleStepGoal | null,
   formSubmissionGoal: boolean,
@@ -1181,7 +1184,9 @@ function exploreResolved(
     costPerClickUsd: outreachUsd,
     costPerOutcomeUsd: legTerms
       ? legAllowance
-      : outcomeCostForGoal(econ, unitCosts, objective, singleStepGoal, formSubmissionGoal, meetingChannel),
+      : econ
+        ? outcomeCostForGoal(econ, unitCosts, objective, singleStepGoal, formSubmissionGoal, meetingChannel)
+        : null,
     costPerPaidClientUsd: null,
     costPerMeetingBookedUsd: null,
     roiMultiple: null,
@@ -1600,6 +1605,12 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
       : goalEconomics;
     if (legKey && legBasisFunnelKey && mergedEconomics) {
       legTerms = legTermsForFunnel(legKey, legBasisFunnelKey, mergedEconomics);
+    } else if (legKey && legBasisFunnelKey) {
+      // No offer terms: nothing is PROJECTED (no paid-client cost, return, %CAC), but an ENTRY leg's cost
+      // per outcome is the observed signal's own unit cost and needs no rate, so it is still served
+      // (`entryLegOutcomeTerms`). A later leg walks declared rates and stays unpriced (null).
+      const leg = funnelLeg(legKey);
+      legTerms = leg ? entryLegOutcomeTerms(legBasisFunnelKey, leg.toStep.key) : null;
     }
 
     // ── IS EACH WORKFLOW ASSIGNED TO THIS LEG ─────────────────────────────────────────────────────
@@ -2626,7 +2637,7 @@ export function projectFromEvidence(input: {
     const unprovenDynasties = [...activeSlugByDynasty.keys()].filter((d) => !measuredDynasties.has(d)).sort();
     const outreachUsd = channelOutreachPriceUsd(brandGrain, costMap, aggregatedOutcomes);
     const unprovenResolved: ResolvedBlock =
-      outreachUsd != null && econ
+      outreachUsd != null && (econ || legTerms)
         ? exploreResolved(outreachUsd, econ, objective, singleStepGoal, formSubmissionGoal, meetingChannel, legTerms)
         : UNMEASURED_RESOLVED;
 
