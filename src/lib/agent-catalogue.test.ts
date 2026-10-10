@@ -4,6 +4,8 @@ vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
 import {
   buildCatalogueModel,
+  byRoi,
+  roiBasisOf,
   channelEconomics,
   funnelById,
   funnelEconomics,
@@ -74,7 +76,8 @@ describe("the agent catalogue model", () => {
 
   it("prices a measured pipe on its mature cost, roi = value of its step / cost; unmeasured is learning", () => {
     const cold = model.pipes.get("sales-cold-email-outreach|lead_found_to_conversation")!;
-    expect(cold.economics).toEqual({ status: "measured", costUsd: 40, roi: 3.75, reason: null });
+    // The COST is measured; the ROI divides a step value (stated lifetime revenue): estimated.
+    expect(cold.economics).toEqual({ status: "measured", costUsd: 40, roi: 3.75, reason: null, estimates: ["step_value"] });
     const ads = model.pipes.get("google-ads|start_to_website_visit")!;
     expect(ads.economics.status).toBe("learning");
     expect(ads.economics.costUsd).toBeNull();
@@ -85,7 +88,14 @@ describe("the agent catalogue model", () => {
   it("prices a funnel per paying client with the sales-path formula", () => {
     const f = funnelById(model, "lead_found_to_conversation@sales-cold-email-outreach+conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client")!;
     // needed: paid 1, attended 5, booked 6.667, conversation 22.22. cost = 2 x 6.667 + 40 x 22.22 = 902.22.
-    expect(f.economics.status).toBe("measured");
+    // Both pipes are measured, but legs 2-4 convert at default rates: the cost per paying client is ESTIMATED.
+    expect(f.economics.status).toBe("estimated");
+    expect(f.economics.estimates).toEqual([
+      "rate:conversation_to_meeting_booked",
+      "rate:meeting_booked_to_meeting_attended",
+      "rate:meeting_attended_to_paid_client",
+      "lifetime_revenue",
+    ]);
     expect(f.economics.costUsd).toBeCloseTo(902.22, 1);
     expect(f.economics.roi).toBeCloseTo(3000 / 902.22, 2);
   });
@@ -101,10 +111,25 @@ describe("the agent catalogue model", () => {
     const path = [...model.paths.values()].find((p) => p.id === "lead_found_to_conversation+conversation_to_meeting_booked+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client")!;
     expect(pathLine(model, path)).toBe("Lead found → Positive reply → Meeting booked → Meeting attended → Paid client");
     const e = pathEconomics(model, path);
-    expect(e.status).toBe("measured");
+    expect(e.status).toBe("estimated");
     expect(e.bestFunnelId).toContain("@sales-cold-email-outreach");
     expect(channelEconomics(model, "ai-meeting-booking").costUsd).toBe(2);
     expect(stepEconomics(model, "meeting_booked")).toMatchObject({ status: "measured", costUsd: 2, roi: 225 });
+  });
+
+  it("ranks a fully measured figure above any estimate, however high the estimate", () => {
+    const measured = { status: "measured" as const, costUsd: 100, roi: 1.1, reason: null, estimates: [] };
+    const estimate = { status: "estimated" as const, costUsd: 10, roi: 50, reason: null, estimates: ["rate:x"] };
+    const learning = { status: "learning" as const, costUsd: null, roi: null, reason: "x", estimates: [] };
+    const rows = [
+      { id: "e", e: estimate },
+      { id: "l", e: learning },
+      { id: "m", e: measured },
+    ].sort(byRoi((r) => r.e, (r) => r.id));
+    expect(rows.map((r) => r.id)).toEqual(["m", "e", "l"]);
+    expect(roiBasisOf(measured)).toBe("measured");
+    expect(roiBasisOf(estimate)).toBe("estimated");
+    expect(roiBasisOf(learning)).toBeNull();
   });
 
   it("figures a channel on the legs it is listed for, never on a pipe the path does not use", () => {
