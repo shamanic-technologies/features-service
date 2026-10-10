@@ -3,12 +3,14 @@ import { eq } from "drizzle-orm";
 import { apiKeyOnly } from "../middleware/auth.js";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
-import { funnelLeg, matchChannelLegKey, storedLegKeyOf } from "../lib/funnel-legs.js";
+import { funnelLeg, matchChannelLegKey, servedLegKeyOf, storedLegKeyOf } from "../lib/funnel-legs.js";
+import { loadChannelCatalogue } from "../lib/channel-declarations-store.js";
 import { fetchPublicWorkflows } from "../lib/public-stats-clients.js";
 import {
   isLegAssignmentState,
   listLegAssignmentChanges,
   listLegAssignments,
+  registerLegAssignment,
   setLegAssignment,
 } from "../lib/workflow-leg-assignments.js";
 
@@ -106,6 +108,81 @@ router.put("/internal/workflow-leg-assignments", apiKeyOnly, async (req, res) =>
     res.json(result);
   } catch (err) {
     console.error("[features-service] workflow-leg-assignments write failed:", err);
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+/**
+ * REGISTER "workflow X serves pipe Y" (owner 2026-10-10: the pipe <-> workflow link lives in features-service
+ * ONLY; option A: a workflow created for a pipe is ACTIVE at once). workflow-service calls this when it
+ * creates a workflow for a pipe, service-to-service. Body: `{pipeId: "<channel slug>|<leg key>",
+ * workflowDynastySlug, registeredBy, note?}`. The pipe must be one the channel performs (seeded or declared);
+ * the dynasty one workflow-service describes for that channel. Insert-if-absent: 201 `created: true` with the
+ * new active row; 200 `created: false` with the EXISTING row untouched (a staff `deprecated` stays). The
+ * answer carries the pipe itself (`fromStep`, `toStep` = what the workflow produces, `mode`, `triggerId`):
+ * read it here, never store a copy.
+ */
+router.post("/internal/workflow-leg-assignments/register", apiKeyOnly, async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const { pipeId, workflowDynastySlug, registeredBy, note } = body;
+  if (typeof pipeId !== "string" || !pipeId.includes("|")) {
+    res.status(400).json({ error: "pipeId is required: `<channel slug>|<leg key>`", reason: "pipe_id_required" });
+    return;
+  }
+  if (typeof workflowDynastySlug !== "string" || workflowDynastySlug === "") {
+    res.status(400).json({ error: "workflowDynastySlug is required", reason: "workflow_dynasty_required" });
+    return;
+  }
+  if (typeof registeredBy !== "string" || registeredBy.trim() === "") {
+    res.status(400).json({ error: "registeredBy (the caller, e.g. workflow-service) is required", reason: "registered_by_required" });
+    return;
+  }
+  if (note != null && typeof note !== "string") {
+    res.status(400).json({ error: "note must be a string", reason: "note_invalid" });
+    return;
+  }
+  const at = pipeId.indexOf("|");
+  const featureSlug = pipeId.slice(0, at);
+  const rawLeg = pipeId.slice(at + 1);
+  try {
+    const cat = await loadChannelCatalogue({ publishedOnly: false });
+    const channel = cat.channels.find((c) => c.slug === featureSlug);
+    const computed = storedLegKeyOf(rawLeg);
+    const transition = channel?.stepTransitions.find((t) => t.legKey === computed || t.legKey === rawLeg);
+    if (!channel || !transition) {
+      res.status(404).json({ error: `no pipe ${pipeId}: the channel does not perform that leg`, reason: "pipe_not_found" });
+      return;
+    }
+    const catalogue = await fetchPublicWorkflows(featureSlug, "all", true);
+    if (!catalogue.some((w) => w.workflowDynastySlug === workflowDynastySlug)) {
+      res.status(404).json({ error: `workflow-service describes no dynasty ${workflowDynastySlug} for ${featureSlug}`, reason: "workflow_dynasty_not_found" });
+      return;
+    }
+    const result = await registerLegAssignment({
+      featureSlug,
+      legKey: transition.legKey,
+      workflowDynastySlug,
+      registeredBy: registeredBy.trim(),
+      note: (note as string | null | undefined) ?? null,
+    });
+    const servedLeg = servedLegKeyOf(featureSlug, transition.legKey);
+    console.log(`[features-service] workflow ${workflowDynastySlug} ${result.created ? "registered ACTIVE on" : "already stated on"} pipe ${featureSlug}|${servedLeg} (${result.assignment.state}) by ${registeredBy}`);
+    res.status(result.created ? 201 : 200).json({
+      created: result.created,
+      assignment: result.assignment,
+      pipe: {
+        id: `${featureSlug}|${servedLeg}`,
+        channelSlug: featureSlug,
+        legKey: servedLeg,
+        // An outbound channel's entry leg is served from Lead found (wave 2).
+        fromStep: servedLeg !== transition.legKey ? "lead_found" : (transition.from?.key ?? null),
+        toStep: transition.to.key,
+        mode: transition.mode,
+        triggerId: transition.triggerId,
+      },
+    });
+  } catch (err) {
+    console.error("[features-service] workflow-leg-assignments register failed:", err);
     res.status(502).json({ error: (err as Error).message });
   }
 });
