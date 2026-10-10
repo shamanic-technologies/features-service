@@ -23030,7 +23030,7 @@
                 },
                 "runningDailyBudgetUsd": {
                   "type": "number",
-                  "description": "The part of the configured ceiling standing behind a PROACTIVE campaign that is ONGOING right now, in USD (campaign-service joins the campaign status to billing's per-funnel rows; the leg's kind comes from this service's leg catalogue). This is the money in play, what the active verdict and every fleet total read. RE-BASED 2026-10-01 to proactive only: it used to fold in reactive caps (AI meeting booking), which read an account with its cold email stopped as running. The reactive cap is reactiveRunningDailyCapUsd."
+                  "description": "The part of the configured ceiling standing behind a PROACTIVE campaign that is ONGOING right now, in USD (campaign-service joins the campaign status to billing's per-funnel rows; the leg's kind comes from this service's leg catalogue). This is the money in play, what the active verdict and every fleet total read. RE-BASED 2026-10-01 to proactive only: it used to fold in reactive caps (AI meeting booking), which read an account with its cold email stopped as running. The reactive cap is reactiveRunningDailyCapUsd. Includes every running SALES FUNNEL by its max budget per day (campaign-service v0.75.18: weekly / 7, monthly / 30, so it can be fractional), counted proactive: a funnel is a whole campaign from Start."
                 },
                 "proactiveRunningDailyBudgetUsd": {
                   "type": "number",

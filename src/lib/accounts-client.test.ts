@@ -84,14 +84,14 @@ describe("fetchSpendableBudgets", () => {
       jsonRes({
         brands: [
           {
-            orgId: "o1", brandId: "b1", configuredDailyBudgetCents: 6000, runningDailyBudgetCents: 5000,
+            orgId: "o1", brandId: "b1", configuredDailyBudgetCents: 6000, runningDailyBudgetCents: 5000, salesFunnels: [],
             rows: [
               { legKey: "start_to_conversation", dailyBudgetCents: 5000, running: true, campaignId: "c1" },
               { legKey: "start_to_website_visit", dailyBudgetCents: 1000, running: false, campaignId: "c2" },
             ],
           },
           {
-            orgId: "o2", brandId: "b2", configuredDailyBudgetCents: 1000, runningDailyBudgetCents: 0,
+            orgId: "o2", brandId: "b2", configuredDailyBudgetCents: 1000, runningDailyBudgetCents: 0, salesFunnels: [],
             rows: [{ legKey: "start_to_conversation", dailyBudgetCents: 1000, running: false, campaignId: null }],
           },
         ],
@@ -102,8 +102,8 @@ describe("fetchSpendableBudgets", () => {
       { orgId: "o1", brandId: "b1" },
       { orgId: "o2", brandId: "b2" },
     ]);
-    expect(out.get(spendableKey("o1", "b1"))).toEqual({ configuredUsd: 60, runningUsd: 50, proactiveRunningUsd: 50, reactiveRunningUsd: 0 });
-    expect(out.get(spendableKey("o2", "b2"))).toEqual({ configuredUsd: 10, runningUsd: 0, proactiveRunningUsd: 0, reactiveRunningUsd: 0 });
+    expect(out.get(spendableKey("o1", "b1"))).toEqual({ configuredUsd: 60, runningUsd: 50, proactiveRunningUsd: 50, reactiveRunningUsd: 0, salesFunnelRunningUsd: 0 });
+    expect(out.get(spendableKey("o2", "b2"))).toEqual({ configuredUsd: 10, runningUsd: 0, proactiveRunningUsd: 0, reactiveRunningUsd: 0, salesFunnelRunningUsd: 0 });
   });
 
   it("keys on the PAIR, so one brand claimed by two orgs keeps each org's own money", async () => {
@@ -111,11 +111,11 @@ describe("fetchSpendableBudgets", () => {
       jsonRes({
         brands: [
           {
-            orgId: "oA", brandId: "shared", configuredDailyBudgetCents: 2000, runningDailyBudgetCents: 2000,
+            orgId: "oA", brandId: "shared", configuredDailyBudgetCents: 2000, runningDailyBudgetCents: 2000, salesFunnels: [],
             rows: [{ legKey: "start_to_conversation", dailyBudgetCents: 2000, running: true, campaignId: "cA" }],
           },
           {
-            orgId: "oB", brandId: "shared", configuredDailyBudgetCents: 500, runningDailyBudgetCents: 0,
+            orgId: "oB", brandId: "shared", configuredDailyBudgetCents: 500, runningDailyBudgetCents: 0, salesFunnels: [],
             rows: [{ legKey: "start_to_conversation", dailyBudgetCents: 500, running: false, campaignId: "cB" }],
           },
         ],
@@ -137,7 +137,7 @@ describe("fetchSpendableBudgets", () => {
       jsonRes({
         brands: [
           {
-            orgId: "oDoc", brandId: "doc", configuredDailyBudgetCents: 13700, runningDailyBudgetCents: 2000,
+            orgId: "oDoc", brandId: "doc", configuredDailyBudgetCents: 13700, runningDailyBudgetCents: 2000, salesFunnels: [],
             rows: [
               { legKey: "conversation_to_meeting_booked", dailyBudgetCents: 2000, running: true, campaignId: "cMeet" },
               { legKey: "start_to_conversation", dailyBudgetCents: 1000, running: false, campaignId: "cFb" },
@@ -145,7 +145,7 @@ describe("fetchSpendableBudgets", () => {
             ],
           },
           {
-            orgId: "oOlive", brandId: "olive", configuredDailyBudgetCents: 2000, runningDailyBudgetCents: 2000,
+            orgId: "oOlive", brandId: "olive", configuredDailyBudgetCents: 2000, runningDailyBudgetCents: 2000, salesFunnels: [],
             rows: [{ legKey: "start_to_website_visit", dailyBudgetCents: 2000, running: true, campaignId: "cOl" }],
           },
         ],
@@ -156,8 +156,8 @@ describe("fetchSpendableBudgets", () => {
       { orgId: "oDoc", brandId: "doc" },
       { orgId: "oOlive", brandId: "olive" },
     ]);
-    expect(out.get(spendableKey("oDoc", "doc"))).toEqual({ configuredUsd: 137, runningUsd: 20, proactiveRunningUsd: 0, reactiveRunningUsd: 20 });
-    expect(out.get(spendableKey("oOlive", "olive"))).toEqual({ configuredUsd: 20, runningUsd: 20, proactiveRunningUsd: 20, reactiveRunningUsd: 0 });
+    expect(out.get(spendableKey("oDoc", "doc"))).toEqual({ configuredUsd: 137, runningUsd: 20, proactiveRunningUsd: 0, reactiveRunningUsd: 20, salesFunnelRunningUsd: 0 });
+    expect(out.get(spendableKey("oOlive", "olive"))).toEqual({ configuredUsd: 20, runningUsd: 20, proactiveRunningUsd: 20, reactiveRunningUsd: 0, salesFunnelRunningUsd: 0 });
   });
 
   it("reads the leg of the campaign behind a leg-less ceiling (brand-grain pot)", async () => {
@@ -165,7 +165,7 @@ describe("fetchSpendableBudgets", () => {
       jsonRes({
         brands: [
           {
-            orgId: "o1", brandId: "b1", configuredDailyBudgetCents: 3000, runningDailyBudgetCents: 3000,
+            orgId: "o1", brandId: "b1", configuredDailyBudgetCents: 3000, runningDailyBudgetCents: 3000, salesFunnels: [],
             rows: [{ legKey: null, dailyBudgetCents: 3000, running: true, campaignId: "cMeet" }],
             campaigns: [{ campaignId: "cMeet", legKey: "conversation_to_meeting_booked" }],
           },
@@ -183,7 +183,7 @@ describe("fetchSpendableBudgets", () => {
       jsonRes({
         brands: [
           {
-            orgId: "o1", brandId: "b1", configuredDailyBudgetCents: 1500, runningDailyBudgetCents: 1500,
+            orgId: "o1", brandId: "b1", configuredDailyBudgetCents: 1500, runningDailyBudgetCents: 1500, salesFunnels: [],
             rows: [{ legKey: null, dailyBudgetCents: 1500, running: true, campaignId: null }],
           },
         ],
@@ -197,11 +197,57 @@ describe("fetchSpendableBudgets", () => {
   it("THROWS when the producer sends no ceiling rows (the split cannot be made)", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonRes({
-        brands: [{ orgId: "o1", brandId: "b1", configuredDailyBudgetCents: 1000, runningDailyBudgetCents: 1000 }],
+        brands: [{ orgId: "o1", brandId: "b1", configuredDailyBudgetCents: 1000, runningDailyBudgetCents: 1000, salesFunnels: [] }],
         unavailable: [],
       }),
     );
     await expect(fetchSpendableBudgets([{ orgId: "o1", brandId: "b1" }])).rejects.toThrow(/no ceiling rows/);
+  });
+
+  it("counts a running SALES FUNNEL proactive by its daily figure (fractional), units carrying 0", async () => {
+    // campaign-service v0.75.18: a $50/week funnel = 714.2857 cents a day; its unit campaign's row is 0.
+    const weekly = 5000 / 7;
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonRes({
+        brands: [
+          {
+            orgId: "o1", brandId: "b1",
+            configuredDailyBudgetCents: 2000 + weekly + weekly,
+            runningDailyBudgetCents: 2000 + weekly,
+            rows: [{ legKey: "conversation_to_meeting_booked", dailyBudgetCents: 2000, running: true, campaignId: "cMeet" }],
+            salesFunnels: [
+              { salesFunnelId: "f-on", running: true, dailyBudgetCents: weekly, unitCampaignIds: ["u1"] },
+              { salesFunnelId: "f-off", running: false, dailyBudgetCents: weekly, unitCampaignIds: [] },
+            ],
+          },
+        ],
+        unavailable: [],
+      }),
+    );
+    const got = (await fetchSpendableBudgets([{ orgId: "o1", brandId: "b1" }])).get(spendableKey("o1", "b1"))!;
+    expect(got.salesFunnelRunningUsd).toBeCloseTo(weekly / 100, 10);
+    expect(got.proactiveRunningUsd).toBeCloseTo(weekly / 100, 10);
+    expect(got.reactiveRunningUsd).toBe(20);
+    expect(got.runningUsd).toBeCloseTo((2000 + weekly) / 100, 10);
+    expect(got.configuredUsd).toBeCloseTo((2000 + 2 * weekly) / 100, 10);
+  });
+
+  it("THROWS when the producer sends no salesFunnels list, or a funnel with no figure", async () => {
+    const brand = { orgId: "o1", brandId: "b1", configuredDailyBudgetCents: 0, runningDailyBudgetCents: 0, rows: [] };
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(jsonRes({ brands: [brand], unavailable: [] }));
+    await expect(fetchSpendableBudgets([{ orgId: "o1", brandId: "b1" }])).rejects.toThrow(/no salesFunnels list/);
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(jsonRes({ brands: [{ ...brand, salesFunnels: [{ running: true }] }], unavailable: [] }));
+    await expect(fetchSpendableBudgets([{ orgId: "o1", brandId: "b1" }])).rejects.toThrow(/no running flag or daily figure/);
+  });
+
+  it("THROWS when the parts do not add back to the producer's running total", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonRes({
+        brands: [{ orgId: "o1", brandId: "b1", configuredDailyBudgetCents: 1000, runningDailyBudgetCents: 1000, rows: [], salesFunnels: [{ running: true, dailyBudgetCents: 999 }] }],
+        unavailable: [],
+      }),
+    );
+    await expect(fetchSpendableBudgets([{ orgId: "o1", brandId: "b1" }])).rejects.toThrow(/≠ running 1000/);
   });
 
   it("THROWS on an unavailable pair rather than reading it as zero", async () => {
