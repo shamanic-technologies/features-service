@@ -130,6 +130,7 @@ import {
   furthestRungReached,
   pickShowcaseClients,
   showcaseChainHasOutcome,
+  SHOWCASE_MIN_OUTCOME_PEOPLE,
   SHOWCASE_GROUP_SIZE,
   type ShowcaseGroupPick,
 } from "../lib/showcase-clients.js";
@@ -3569,8 +3570,8 @@ export function __resetShowcaseFunnelsCache(): void {
  *  each one drives (leads, runs, brand, email-gateway), not about the list's length. */
 const SHOWCASE_BRAND_CONCURRENCY = 2;
 
-/** The most recency candidates one refresh will walk while confirming the row on their own chains. */
-const SHOWCASE_RECENT_MAX_WALKS = 12;
+/** The most candidates one refresh will walk PER GROUP while confirming the row on their own chains. */
+const SHOWCASE_MAX_WALKS_PER_GROUP = 20;
 
 /** Walk every funnel one showcase brand's campaigns sell, under the org that owns its leads. */
 async function computeShowcaseBrand(
@@ -3743,14 +3744,16 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
     (snap): snap is NonNullable<typeof snap> => snap !== null,
   );
   const candidates = snapshots.length === 0 ? null : buildShowcaseCandidates(snapshots.map((snap) => snap.brands));
-  const picks = pickShowcaseClients(candidates, DEFAULT_MIN_SPEND_USD, SHOWCASE_GROUP_SIZE);
+  const picks = pickShowcaseClients(candidates, DEFAULT_MIN_SPEND_USD, SHOWCASE_GROUP_SIZE, SHOWCASE_MIN_OUTCOME_PEOPLE);
 
-  // The recency row is CONFIRMED on each candidate's own walked chain — the one the homepage draws —
-  // before it is named, so the row can never carry a card showing a contacted count and nothing after
-  // it. The walk is bounded: the snapshot prefilter already reads rungs, so a rejection is rare, and a
-  // cap keeps a stale snapshot from turning one refresh into a fleet-wide fan-out.
-  const recentWalkable = picks.recentlyStarted.rankedBrandIds.slice(0, SHOWCASE_RECENT_MAX_WALKS);
-  const infoIds = [...new Set([...picks.highestReturn.brandIds, ...recentWalkable])];
+  // BOTH rows are CONFIRMED on each candidate's own walked chain — the one the homepage draws — before
+  // a client is named, so no card ever leads with a contacted count and fewer than
+  // `SHOWCASE_MIN_OUTCOME_PEOPLE` on every rung after it. The walk is bounded: the snapshot prefilter
+  // already reads rungs, so a rejection is rare, and a cap keeps a stale snapshot from turning one
+  // refresh into a fleet-wide fan-out.
+  const recentWalkable = picks.recentlyStarted.rankedBrandIds.slice(0, SHOWCASE_MAX_WALKS_PER_GROUP);
+  const returnWalkable = picks.highestReturn.rankedBrandIds.slice(0, SHOWCASE_MAX_WALKS_PER_GROUP);
+  const infoIds = [...new Set([...returnWalkable, ...recentWalkable])];
   const brandInfo = infoIds.length > 0 ? await fetchBrandInfoBatch(infoIds) : new Map();
 
   // A client picked by BOTH questions is walked ONCE and its identical entry appears in both groups —
@@ -3787,46 +3790,48 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
     }
   };
 
-  await walkAll(picks.highestReturn.brandIds);
-
-  // Walk down the recency order in batches of exactly what is still missing, keeping a client only
-  // when its chain shows a MEASURED, POSITIVE count past the base. A client whose chain could not be
-  // read at all shows nothing either, and is not named on this read. Every rejection is subtracted
-  // from the group's `qualifyingCount`, so a short row states how many clients honestly qualified
-  // rather than being padded with one that produced nothing.
-  const confirmedRecent: string[] = [];
-  let rejectedRecent = 0;
-  let cursor = 0;
-  while (confirmedRecent.length < picks.recentlyStarted.requestedCount && cursor < recentWalkable.length) {
-    const batch = recentWalkable.slice(cursor, cursor + (picks.recentlyStarted.requestedCount - confirmedRecent.length));
-    cursor += batch.length;
-    await walkAll(batch);
-    for (const id of batch) {
-      const entry = walked.get(id);
-      if (entry && showcaseChainHasOutcome(entry.funnels)) confirmedRecent.push(id);
-      else rejectedRecent += 1;
+  // Walk down one group's order in batches of exactly what is still missing, keeping a client only when
+  // its chain shows at least the minimum on one rung past the base. A client whose chain could not be
+  // read at all shows nothing either, and is not named on this read. Every rejection is subtracted from
+  // the group's `qualifyingCount`, so a short row states how many clients honestly qualified rather
+  // than being padded with one that did not.
+  const confirmGroup = async (label: string, pick: ShowcaseGroupPick, walkable: string[]): Promise<ShowcaseGroupPick> => {
+    const confirmed: string[] = [];
+    let rejected = 0;
+    let cursor = 0;
+    while (confirmed.length < pick.requestedCount && cursor < walkable.length) {
+      const batch = walkable.slice(cursor, cursor + (pick.requestedCount - confirmed.length));
+      cursor += batch.length;
+      await walkAll(batch);
+      for (const id of batch) {
+        const entry = walked.get(id);
+        if (entry && showcaseChainHasOutcome(entry.funnels, SHOWCASE_MIN_OUTCOME_PEOPLE)) confirmed.push(id);
+        else rejected += 1;
+      }
     }
-  }
-  if (rejectedRecent > 0) {
-    console.log(
-      `[features-service] showcase: ${rejectedRecent} recency candidate(s) showed nothing past the outreach base on their own chain and were not named`,
-    );
-  }
-  const recentQualifying = picks.recentlyStarted.qualifyingCount - rejectedRecent;
-  const recentPick: ShowcaseGroupPick =
-    confirmedRecent.length > 0
-      ? { ...picks.recentlyStarted, brandIds: confirmedRecent, qualifyingCount: recentQualifying }
+    if (rejected > 0) {
+      console.log(
+        `[features-service] showcase ${label}: ${rejected} candidate(s) showed fewer than ${SHOWCASE_MIN_OUTCOME_PEOPLE} people on every rung past the outreach base on their own chain and were not named`,
+      );
+    }
+    const qualifying = Math.max(0, pick.qualifyingCount - rejected);
+    return confirmed.length > 0
+      ? { ...pick, brandIds: confirmed, qualifyingCount: qualifying }
       : {
-          ...picks.recentlyStarted,
+          ...pick,
           brandIds: [],
           measured: false,
-          // A snapshot with no candidates keeps its own silence; candidates that all showed nothing are
+          // A snapshot with no candidates keeps its own silence; candidates that all fell short are
           // "nobody qualifies", which is what they are.
-          unmeasuredReason: picks.recentlyStarted.unmeasuredReason ?? "no_qualifying_clients",
-          qualifyingCount: Math.max(0, recentQualifying),
+          unmeasuredReason: pick.unmeasuredReason ?? "no_qualifying_clients",
+          qualifyingCount: qualifying,
         };
+  };
 
-  const named = [...new Set([...recentPick.brandIds, ...picks.highestReturn.brandIds])];
+  const returnPick = await confirmGroup("highestReturn", picks.highestReturn, returnWalkable);
+  const recentPick = await confirmGroup("recentlyStarted", picks.recentlyStarted, recentWalkable);
+
+  const named = [...new Set([...recentPick.brandIds, ...returnPick.brandIds])];
   const brands = named
     .map((id) => walked.get(id))
     .filter((entry): entry is ShowcaseBrandFunnels => entry !== undefined);
@@ -3848,7 +3853,7 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
     brands,
     groups: {
       recentlyStarted: groupOf(recentPick),
-      highestReturn: groupOf(picks.highestReturn),
+      highestReturn: groupOf(returnPick),
     },
     minSpendUsd: picks.minSpendUsd,
   };

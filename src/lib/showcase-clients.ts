@@ -17,7 +17,10 @@
  *
  * ── TWO GROUPS, TWO QUESTIONS, AND A CLIENT MAY BE IN BOTH ──────────────────────────────────────
  *
- *   - **recentlyStarted** — the most recently begun clients that have produced at least one outcome.
+ *   - **recentlyStarted** — the most recently begun clients whose chain shows at least
+ *     `SHOWCASE_MIN_OUTCOME_PEOPLE` (5) people on one rung past the base, active or not (owner
+ *     2026-10-10: "Pas besoin de prendre des actives, tu prends juste les 3 plus récentes"). The same
+ *     minimum gates highestReturn: one positive reply is an anecdote, never the card a client leads with.
  *     The card row's question is "who else is on this right now", so a client that started last week
  *     and has something to show beats one that started a year ago and has more.
  *
@@ -80,6 +83,14 @@ import type { FunnelStepBreakdown } from "./funnel-steps.js";
 
 /** How many clients each group names. Both groups of the homepage show three. */
 export const SHOWCASE_GROUP_SIZE = 3;
+
+/**
+ * The fewest PEOPLE one rung past the outreach base must hold for a client to be named in EITHER group
+ * (owner 2026-10-10: "ne pars jamais de 1 unité d'outcome ... Tjs minimum 3 ... Ou minimum 5"). One
+ * positive reply is an anecdote, not proof: a card leading with "1 positive reply" sells nothing. The
+ * landing refuses a client below it too, so serving one would only make the row short on the page.
+ */
+export const SHOWCASE_MIN_OUTCOME_PEOPLE = 5;
 
 /** Why a group named nobody. Both are real answers; neither is an error. */
 export type ShowcaseGroupUnmeasuredReason =
@@ -233,17 +244,24 @@ export function furthestRungReached(breakdown: FunnelStepBreakdown | null | unde
 const OUTREACH_BASE_STEP_KEY = "contacted";
 
 /**
- * PURE: does a client's walked showcase chain show anything past the outreach base? True iff SOME
- * funnel carries a step other than `contacted` with a MEASURED, POSITIVE count. A measured 0 is
- * nothing produced; a null is nothing counted; neither qualifies. This is the check the recency row is
- * finally decided on, because it reads the exact chain the homepage draws under the client's name.
+ * PURE: does a client's walked showcase chain show a real outcome past the outreach base? True iff SOME
+ * funnel carries a step other than `contacted` with a MEASURED count of at least
+ * `SHOWCASE_MIN_OUTCOME_PEOPLE`. A null is nothing counted and never qualifies; a count under the
+ * minimum is an anecdote. This is the check BOTH groups are finally decided on, because it reads the
+ * exact chain the homepage draws under the client's name.
  */
 export function showcaseChainHasOutcome(
   funnels: ReadonlyArray<{ steps: ReadonlyArray<{ key: string; peopleReached: number | null }> }>,
+  minPeople: number = SHOWCASE_MIN_OUTCOME_PEOPLE,
 ): boolean {
   return funnels.some((f) =>
-    f.steps.some((s) => s.key !== OUTREACH_BASE_STEP_KEY && s.peopleReached !== null && s.peopleReached > 0),
+    f.steps.some((s) => s.key !== OUTREACH_BASE_STEP_KEY && s.peopleReached !== null && s.peopleReached >= minPeople),
   );
+}
+
+/** PURE: the snapshot prefilter both groups share — a rung count that COULD clear the minimum. */
+function mayShowOutcome(c: ShowcaseCandidate, minPeople: number): boolean {
+  return c.outcomeCount !== null && c.outcomeCount >= minPeople;
 }
 
 /**
@@ -259,6 +277,7 @@ export function pickShowcaseClients(
   candidates: readonly ShowcaseCandidate[] | null,
   minSpendUsd: number,
   requestedCount: number = SHOWCASE_GROUP_SIZE,
+  minOutcomePeople: number = SHOWCASE_MIN_OUTCOME_PEOPLE,
 ): ShowcaseClientPicks {
   if (candidates === null) {
     return {
@@ -274,7 +293,7 @@ export function pickShowcaseClients(
   // claim what we did not count). This is the PREFILTER; the route confirms each pick on its own
   // walked chain before naming it.
   const recent = candidates
-    .filter((c) => c.startedOn !== null && c.outcomeCount !== null && c.outcomeCount > 0)
+    .filter((c) => c.startedOn !== null && mayShowOutcome(c, minOutcomePeople))
     .sort((a, b) =>
       a.startedOn === b.startedOn
         ? a.brandId.localeCompare(b.brandId)
@@ -283,10 +302,15 @@ export function pickShowcaseClients(
 
   // RETURN — a client past the spend floor whose pipeline is priced. A brand below the floor is not a
   // weaker answer, it is no answer: its ratio is decided by whichever single outcome happened to land.
+  // The same outcome minimum as recency holds: a client the homepage names never leads with fewer than
+  // `SHOWCASE_MIN_OUTCOME_PEOPLE` of an outcome, whichever question named it.
   const byReturn = candidates
     .filter(
       (c) =>
-        c.expectedPipelineUsd !== null && c.committedSpendUsd > 0 && c.committedSpendUsd >= minSpendUsd,
+        c.expectedPipelineUsd !== null &&
+        c.committedSpendUsd > 0 &&
+        c.committedSpendUsd >= minSpendUsd &&
+        mayShowOutcome(c, minOutcomePeople),
     )
     .map((c) => ({ c, ratio: (c.expectedPipelineUsd as number) / c.committedSpendUsd }))
     .sort((a, b) => (a.ratio === b.ratio ? a.c.brandId.localeCompare(b.c.brandId) : b.ratio - a.ratio))
