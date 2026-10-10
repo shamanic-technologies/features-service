@@ -46,6 +46,19 @@ vi.mock("../db/index.js", () => ({
   },
   sql: {},
 }));
+// The fixtures below are hand-sized (a client with 1-2 replies), so the suite runs the picks under a
+// minimum of 1 and the "minimum of 5" describe block at the end sets the production value.
+const outcomeMinimum = vi.hoisted(() => ({ people: 1 }));
+vi.mock("../lib/showcase-clients.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/showcase-clients.js")>();
+  return {
+    ...actual,
+    get SHOWCASE_MIN_OUTCOME_PEOPLE() {
+      return outcomeMinimum.people;
+    },
+  };
+});
+
 vi.mock("../lib/env.js", () => ({ validateRequiredEnv: vi.fn(), REQUIRED_ENV: [] }));
 vi.mock("../instrument.js", () => ({}));
 vi.mock("@sentry/node", () => ({
@@ -489,7 +502,7 @@ describe("GET /public/stats/showcase-funnels", () => {
   });
 
   it("names each client ONCE in the union, carrying the identical entry both groups carry", async () => {
-    mockFetch(BASE);
+    mockFetch(READABLE_SHOCK);
     const body = await get();
 
     // The deduped union — the field the existing consumer reads, unchanged in shape. A client picked
@@ -659,32 +672,38 @@ describe("GET /public/stats/showcase-funnels", () => {
     expect(byLabel["Positive reply"]).toBe(2);
   });
 
-  it("a brand with no lead membership says so, and never guesses an org", async () => {
+  // A client whose chain could not be walked shows no outcome, so NEITHER group names it (owner
+  // 2026-10-10: a named client always leads with at least the minimum of an outcome). Each silence
+  // below used to ride the wire as an unmeasured entry; it is now a refusal that never blanks the rest.
+  const refusedEverywhere = (body: Body, id: string) => {
+    expect(body.brands.map((b) => b.brand.id)).not.toContain(id);
+    expect(body.groups.highestReturn.brands.map((b) => b.brand.id)).not.toContain(id);
+    expect(body.groups.recentlyStarted.brands.map((b) => b.brand.id)).not.toContain(id);
+    expect(brandOf(body, DOC).measured).toBe(true);
+    expect(brandOf(body, OPS).measured).toBe(true);
+  };
+
+  it("a brand with no lead membership is never read under a guessed org, and is not named", async () => {
     mockFetch(BASE);
-    const shock = brandOf(await get(), SHOCK);
-    expect(shock.funnels).toEqual([]);
-    expect(shock.measured).toBe(false);
-    expect(shock.unmeasuredReason).toBe("no_lead_membership");
+    refusedEverywhere(await get(), SHOCK);
   });
 
-  it("a brand campaign-service lists no campaign for says so", async () => {
+  it("a brand campaign-service lists no campaign for is not named", async () => {
     mockFetch({
       ...BASE,
       memberships: [DOC, OPS, SHOCK],
       brands: { ...BASE.brands, [SHOCK]: { funnelKey: CONVERSATION, leads: [], noCampaigns: true } },
     });
-    const shock = brandOf(await get(), SHOCK);
-    expect(shock.unmeasuredReason).toBe("brand_has_no_channels");
+    refusedEverywhere(await get(), SHOCK);
   });
 
-  it("a brand whose campaigns state no funnel says so", async () => {
+  it("a brand whose campaigns state no funnel is not named", async () => {
     mockFetch({
       ...BASE,
       memberships: [DOC, OPS, SHOCK],
       brands: { ...BASE.brands, [SHOCK]: { funnelKey: null, leads: [] } },
     });
-    const shock = brandOf(await get(), SHOCK);
-    expect(shock.unmeasuredReason).toBe("no_funnel_sold");
+    refusedEverywhere(await get(), SHOCK);
   });
 
   it("ONE brand's failed read never blanks the others", async () => {
@@ -693,11 +712,7 @@ describe("GET /public/stats/showcase-funnels", () => {
       memberships: [DOC, OPS, SHOCK],
       brands: { ...BASE.brands, [SHOCK]: { funnelKey: CONVERSATION, leads: [], campaignsFail: true } },
     });
-    const body = await get();
-    expect(brandOf(body, SHOCK).unmeasuredReason).toBe("read_failed");
-    expect(brandOf(body, SHOCK).funnels).toEqual([]);
-    expect(brandOf(body, DOC).measured).toBe(true);
-    expect(brandOf(body, OPS).measured).toBe(true);
+    refusedEverywhere(await get(), SHOCK);
   });
 
   // ── THE MONEY HALF ────────────────────────────────────────────────────────────────────────────
@@ -826,6 +841,73 @@ describe("GET /public/stats/showcase-funnels", () => {
     // FLOOR — a fact about the question, not about any client's money.)
     expect(JSON.stringify(body.brands)).not.toContain("committedSpent");
     expect(JSON.stringify(body.brands)).not.toContain("SpendUsd");
+  });
+});
+
+// ── THE PRODUCTION MINIMUM: 5 PEOPLE ON ONE OUTCOME ───────────────────────────────────────────────
+//
+// Production 2026-10-10: the recency row led with legistai.com and obra.cam on ONE positive reply each,
+// and the landing (which refuses a client under 5) showed a single card. The owner: never lead with one
+// unit of outcome, take the 3 most recent clients that clear 5, active or not. Each client below has a
+// snapshot row that CLAIMS 5 (a stale warm), so the refusals are decided on the client's own chain.
+describe("showcase picks under the production minimum of 5", () => {
+  const ANECDOTE = "aaaaaaaa-0000-4000-8000-000000000001"; // newest, 1 positive reply
+  const FOUR = "aaaaaaaa-0000-4000-8000-000000000002"; // 4 positive replies: still under
+  const P5 = "aaaaaaaa-0000-4000-8000-000000000003";
+  const P6 = "aaaaaaaa-0000-4000-8000-000000000004";
+  const P7 = "aaaaaaaa-0000-4000-8000-000000000005";
+  const OLDEST = "aaaaaaaa-0000-4000-8000-000000000006";
+  const replies = (id: string, n: number) => [
+    ...Array.from({ length: n }, (_, i) => lead(id, `r${i}`, "reply")),
+    lead(id, "quiet", "none"),
+  ];
+  const brandsOf = (spec: Array<[string, number]>) =>
+    Object.fromEntries(spec.map(([id, n]) => [id, { funnelKey: CONVERSATION, leads: replies(id, n) }]));
+  const SPEC: Array<[string, number]> = [[ANECDOTE, 1], [FOUR, 4], [P5, 5], [P6, 6], [P7, 7], [OLDEST, 9]];
+  const FIXTURE: Fixture = {
+    brands: brandsOf(SPEC),
+    memberships: SPEC.map(([id]) => id),
+    snapshot: [
+      // Newest first by start day; ANECDOTE and FOUR return best — so both rankings would lead with them.
+      { brandId: ANECDOTE, committedSpendUsd: 300, expectedPipelineUsd: 30000, startedOn: "2026-10-01", outcomeCount: 5 },
+      { brandId: FOUR, committedSpendUsd: 300, expectedPipelineUsd: 20000, startedOn: "2026-09-25", outcomeCount: 5 },
+      { brandId: P5, committedSpendUsd: 300, expectedPipelineUsd: 900, startedOn: "2026-09-20", outcomeCount: 5 },
+      { brandId: P6, committedSpendUsd: 300, expectedPipelineUsd: 1200, startedOn: "2026-09-10", outcomeCount: 6 },
+      { brandId: P7, committedSpendUsd: 300, expectedPipelineUsd: 1500, startedOn: "2026-09-01", outcomeCount: 7 },
+      { brandId: OLDEST, committedSpendUsd: 300, expectedPipelineUsd: 600, startedOn: "2026-03-01", outcomeCount: 9 },
+    ],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    __resetShowcaseFunnelsCache();
+    withFeatures();
+    outcomeMinimum.people = 5;
+  });
+  afterEach(() => {
+    outcomeMinimum.people = 1;
+    vi.restoreAllMocks();
+  });
+
+  const bestPastBase = (entry: Body["brands"][number]) =>
+    Math.max(...entry.funnels.flatMap((f) => f.steps.filter((st) => st.key !== "contacted").map((st) => st.peopleReached ?? 0)));
+
+  it("recency names the 3 NEWEST clients that clear 5, skipping the newer anecdotes", async () => {
+    mockFetch(FIXTURE);
+    const recent = (await get()).groups.recentlyStarted;
+    expect(recent.brands.map((b) => b.brand.id)).toEqual([P5, P6, P7]);
+    expect(recent.qualifyingCount).toBe(4);
+    for (const entry of recent.brands) expect(bestPastBase(entry)).toBeGreaterThanOrEqual(5);
+  });
+
+  it("highest return never names a client under 5, however well its money came back", async () => {
+    mockFetch(FIXTURE);
+    const body = await get();
+    const ret = body.groups.highestReturn.brands.map((b) => b.brand.id);
+    expect(ret).toEqual([P7, P6, P5]);
+    expect(ret).not.toContain(ANECDOTE);
+    expect(ret).not.toContain(FOUR);
+    for (const entry of body.brands) expect(bestPastBase(entry)).toBeGreaterThanOrEqual(5);
   });
 });
 

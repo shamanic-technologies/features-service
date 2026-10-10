@@ -15,6 +15,7 @@ import {
   buildShowcaseCandidates,
   pickShowcaseClients,
   SHOWCASE_GROUP_SIZE,
+  SHOWCASE_MIN_OUTCOME_PEOPLE,
   type ShowcaseCandidate,
   furthestRungReached,
   showcaseChainHasOutcome,
@@ -35,8 +36,8 @@ const SILENT = "brand-silent";
 const CANDIDATES: ShowcaseCandidate[] = [
   { brandId: DOC, committedSpendUsd: 5046.42, expectedPipelineUsd: 8250, startedOn: "2026-03-01", outcomeCount: 40 },
   { brandId: OPS, committedSpendUsd: 354.96, expectedPipelineUsd: 19750, startedOn: "2026-06-01", outcomeCount: 12 },
-  { brandId: SHOCK, committedSpendUsd: 497.65, expectedPipelineUsd: 1800, startedOn: "2026-08-01", outcomeCount: 3 },
-  { brandId: TINY, committedSpendUsd: 4.12, expectedPipelineUsd: 88.74, startedOn: null, outcomeCount: 1 },
+  { brandId: SHOCK, committedSpendUsd: 497.65, expectedPipelineUsd: 1800, startedOn: "2026-08-01", outcomeCount: 6 },
+  { brandId: TINY, committedSpendUsd: 4.12, expectedPipelineUsd: 88.74, startedOn: null, outcomeCount: 5 },
   { brandId: SILENT, committedSpendUsd: 900, expectedPipelineUsd: 1200, startedOn: "2026-09-15", outcomeCount: 0 },
 ];
 
@@ -81,9 +82,24 @@ describe("pickShowcaseClients", () => {
     expect(ids(picks.recentlyStarted)).not.toContain(SILENT);
     expect(picks.recentlyStarted.brandIds[0]).toBe(SHOCK);
 
-    // Give it ONE outcome and nothing else, and it leads. The gate is the only thing keeping it out.
-    const withOne = CANDIDATES.map((c) => (c.brandId === SILENT ? { ...c, outcomeCount: 1 } : c));
-    expect(pickShowcaseClients(withOne, FLOOR).recentlyStarted.brandIds[0]).toBe(SILENT);
+    // Give it the MINIMUM and nothing else, and it leads. The gate is the only thing keeping it out.
+    const withMin = CANDIDATES.map((c) => (c.brandId === SILENT ? { ...c, outcomeCount: SHOWCASE_MIN_OUTCOME_PEOPLE } : c));
+    expect(pickShowcaseClients(withMin, FLOOR).recentlyStarted.brandIds[0]).toBe(SILENT);
+  });
+
+  it("ONE positive reply is an anecdote: under 5 people on a rung, a client is in NEITHER group", () => {
+    // Production 2026-10-10: legistai.com and obra.cam led the row on a single positive reply each.
+    for (const n of [1, 4]) {
+      const anecdote = CANDIDATES.map((c) => (c.brandId === SILENT ? { ...c, outcomeCount: n } : c));
+      const picks = pickShowcaseClients(anecdote, FLOOR);
+      expect(ids(picks.recentlyStarted)).not.toContain(SILENT);
+      expect(picks.recentlyStarted.rankedBrandIds).not.toContain(SILENT);
+      expect(picks.highestReturn.rankedBrandIds).not.toContain(SILENT);
+    }
+    // The same client at 5 is named by BOTH questions it answers (it clears the spend floor too).
+    const proven = CANDIDATES.map((c) => (c.brandId === SILENT ? { ...c, outcomeCount: 5 } : c));
+    expect(pickShowcaseClients(proven, FLOOR).recentlyStarted.rankedBrandIds).toContain(SILENT);
+    expect(pickShowcaseClients(proven, FLOOR).highestReturn.rankedBrandIds).toContain(SILENT);
   });
 
   it("an UNMEASURED outcome count is not an outcome — we cannot claim what we did not count", () => {
@@ -104,7 +120,8 @@ describe("pickShowcaseClients", () => {
   it("a client whose pipeline we could not price is in NO return ranking, and is not a 0", () => {
     const unpriced = CANDIDATES.map((c) => (c.brandId === OPS ? { ...c, expectedPipelineUsd: null } : c));
     const picks = pickShowcaseClients(unpriced, FLOOR);
-    expect(ids(picks.highestReturn)).toEqual([SHOCK, DOC, SILENT]);
+    // SILENT clears the floor but shows no outcome, so the return row is short rather than padded.
+    expect(ids(picks.highestReturn)).toEqual([SHOCK, DOC]);
     // A 0 would have ranked it LAST — a measurement nobody made. It is absent instead.
     expect(ids(picks.highestReturn)).not.toContain(OPS);
     // And it is still a recency candidate: the two rankings gate on different things.
@@ -115,8 +132,9 @@ describe("pickShowcaseClients", () => {
     const picks = pickShowcaseClients(CANDIDATES, FLOOR, 2);
     expect(ids(picks.highestReturn)).toEqual([OPS, SHOCK]);
     expect(picks.highestReturn.requestedCount).toBe(2);
-    // Four clients passed the floor; the cut is a display decision, not a narrowing of the population.
-    expect(picks.highestReturn.qualifyingCount).toBe(4);
+    // Three clients passed the floor AND the outcome minimum (SILENT shows nothing); the cut is a
+    // display decision, not a narrowing of the population.
+    expect(picks.highestReturn.qualifyingCount).toBe(3);
   });
 
   it("a SHORT group is a stated fact, not an empty one", () => {
@@ -145,8 +163,8 @@ describe("pickShowcaseClients", () => {
 
   it("both orders are TOTAL, so identical evidence always names the same clients in the same order", () => {
     const tied: ShowcaseCandidate[] = [
-      { brandId: "b", committedSpendUsd: 200, expectedPipelineUsd: 400, startedOn: "2026-05-01", outcomeCount: 1 },
-      { brandId: "a", committedSpendUsd: 500, expectedPipelineUsd: 1000, startedOn: "2026-05-01", outcomeCount: 1 },
+      { brandId: "b", committedSpendUsd: 200, expectedPipelineUsd: 400, startedOn: "2026-05-01", outcomeCount: 5 },
+      { brandId: "a", committedSpendUsd: 500, expectedPipelineUsd: 1000, startedOn: "2026-05-01", outcomeCount: 5 },
     ];
     // Same ratio, same day — the brand id breaks both ties, so neither list can wobble between reads.
     expect(ids(pickShowcaseClients(tied, FLOOR).highestReturn)).toEqual(["a", "b"]);
@@ -202,9 +220,10 @@ describe("buildShowcaseCandidates", () => {
     // began at the epoch or produced nothing.
     expect(legacy.startedOn).toBeNull();
     expect(legacy.outcomeCount).toBeNull();
-    // So it ranks on return and NOT on recency — the field it lacks costs it one list, not both.
+    // With no rung counted it can show no outcome, so neither question names it (owner 2026-10-10: a
+    // client the homepage names never leads with fewer than 5 of an outcome — an uncounted rung is not 5).
     const picks = pickShowcaseClients([legacy], FLOOR);
-    expect(ids(picks.highestReturn)).toEqual([DOC]);
+    expect(picks.highestReturn.unmeasuredReason).toBe("no_qualifying_clients");
     expect(picks.recentlyStarted.unmeasuredReason).toBe("no_qualifying_clients");
   });
 
@@ -255,8 +274,12 @@ describe("showcaseChainHasOutcome", () => {
     ).toBe(false);
   });
 
-  it("one measured person on one rung past the base is an outcome", () => {
-    expect(showcaseChainHasOutcome(chain(["contacted", 876], ["start_to_conversation", 1]))).toBe(true);
+  it("ONE measured person on one rung is an anecdote; 5 is an outcome", () => {
+    expect(showcaseChainHasOutcome(chain(["contacted", 876], ["start_to_conversation", 1]))).toBe(false);
+    expect(showcaseChainHasOutcome(chain(["contacted", 876], ["start_to_conversation", 4]))).toBe(false);
+    expect(showcaseChainHasOutcome(chain(["contacted", 876], ["start_to_conversation", 5]))).toBe(true);
+    // The base never counts, however large.
+    expect(showcaseChainHasOutcome(chain(["contacted", 5000], ["start_to_conversation", 0]))).toBe(false);
     expect(showcaseChainHasOutcome(chain(["contacted", 1146], ["start_to_website_visit", 51], ["website_visit_to_signup", 0]))).toBe(true);
   });
 
@@ -272,7 +295,7 @@ describe("showcaseChainHasOutcome", () => {
     expect(
       showcaseChainHasOutcome([
         { steps: [{ key: "contacted", peopleReached: 10 }, { key: "start_to_conversation", peopleReached: 0 }] },
-        { steps: [{ key: "contacted", peopleReached: 10 }, { key: "start_to_website_visit", peopleReached: 2 }] },
+        { steps: [{ key: "contacted", peopleReached: 10 }, { key: "start_to_website_visit", peopleReached: 7 }] },
       ]),
     ).toBe(true);
   });
