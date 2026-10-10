@@ -104,6 +104,21 @@ describe("the agent catalogue model", () => {
     expect(stepEconomics(model, "meeting_booked")).toMatchObject({ status: "measured", costUsd: 2, roi: 225 });
   });
 
+  it("figures a channel on the legs it is listed for, never on a pipe the path does not use", () => {
+    const m = buildCatalogueModel(
+      inputs({
+        measurements: new Map([
+          ["sales-cold-email-outreach|lead_found_to_conversation", mature(40, 1)],
+          ["sales-cold-email-outreach|lead_found_to_website_visit", mature(3, 5)],
+        ]),
+      }),
+    );
+    const all = channelEconomics(m, "sales-cold-email-outreach");
+    expect(all.bestPipeId).toBe("sales-cold-email-outreach|lead_found_to_website_visit");
+    const onReplyPath = channelEconomics(m, "sales-cold-email-outreach", new Set(["lead_found_to_conversation"]));
+    expect(onReplyPath).toMatchObject({ costUsd: 40, bestPipeId: "sales-cold-email-outreach|lead_found_to_conversation" });
+  });
+
   it("matches a query word by word, case-insensitive", () => {
     expect(matchesQuery("cold EMAIL", ["Sales Cold Email"])).toBe(true);
     expect(matchesQuery("linkedin post", ["LinkedIn Ads"])).toBe(false);

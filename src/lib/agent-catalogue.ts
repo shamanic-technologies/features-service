@@ -472,9 +472,13 @@ export function pathEconomics(model: CatalogueModel, path: CataloguePath): Econo
   return { ...LEARNING("no_measured_funnel"), bestFunnelId: null };
 }
 
-/** PURE: a channel's economics = its best measured pipe; else its customer-time or learning status. */
-export function channelEconomics(model: CatalogueModel, slug: string): Economics & { bestPipeId: string | null } {
-  const pipes = [...model.pipes.values()].filter((p) => p.channelSlug === slug);
+/**
+ * PURE: a channel's economics = its best measured pipe; else its customer-time or learning status. `legKeys`
+ * narrows it to the pipes on those legs (a channel listed for a path is figured on that path's legs, never on
+ * a pipe the path does not use).
+ */
+export function channelEconomics(model: CatalogueModel, slug: string, legKeys: ReadonlySet<string> | null = null): Economics & { bestPipeId: string | null } {
+  const pipes = [...model.pipes.values()].filter((p) => p.channelSlug === slug && (!legKeys || legKeys.has(p.legKey)));
   const measured = pipes.filter((p) => p.economics.status === "measured").sort((a, b) => (b.economics.roi ?? -1) - (a.economics.roi ?? -1) || a.id.localeCompare(b.id));
   if (measured.length > 0) return { ...measured[0].economics, bestPipeId: measured[0].id };
   if (pipes.length > 0 && pipes.every((p) => p.economics.status === "customer_time")) return { status: "customer_time", costUsd: null, roi: null, reason: null, bestPipeId: null };
