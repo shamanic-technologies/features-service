@@ -1,8 +1,9 @@
 /**
  * EVERY SALES PATH AN OFFER CAN SELL THROUGH, RANKED BY ROI — `GET /offers/:offerId/sales-paths`.
  *
- * Owner decision 2026-09-29 (phase 2 of "how an offer sells"). brand-service stores, per offer, the
- * steps and legs the customer ticked (`GET /internal/offers/:offerId/sales-path`). A SALES PATH is a
+ * Owner decision 2026-09-29 (phase 2 of "how an offer sells"). The legs an offer sells through are the legs of
+ * its SALES FUNNEL CAMPAIGNS (owner 2026-10-10, `lib/offer-funnel-campaigns.ts`; brand-service's per-offer
+ * ticked legs, accepted channels and ticked paths are retired), called "ticked" below. A SALES PATH is a
  * chain of those ticked legs that starts with an ENTRY leg (a leg from nothing) and ends on `paid_client`,
  * never visiting a step twice. Nothing else is a path: an offer that ticked nothing, or whose ticked
  * legs form no complete chain, is told so (`status`) and served no path — none is invented.
@@ -302,7 +303,7 @@ export interface OfferSalesPathsBody {
 
 /** Where the customer's selected paths came from. */
 export type SalesPathSelectionBasis =
-  /** The customer selected them (brand-service `GET /internal/offers/:id/selected-sales-paths`, stated). */
+  /** The offer runs them: the funnels whose campaign is on (`lib/offer-funnel-campaigns.ts`). */
   | "customer_selected"
   /** Never stated: the paths returning more than they cost (roi > 1), the dashboard's pre-tick. */
   | "default_roi_above_1"

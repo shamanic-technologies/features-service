@@ -46,6 +46,12 @@ export interface CampaignIdentityRow {
    * LEG's step (see `lib/learning-phase.ts`). Null / absent is a real state.
    */
   legKey?: string | null;
+  /**
+   * The SALES FUNNEL this row is a unit of (this service's catalogue id), stamped by campaign-service on every
+   * unit of a funnel campaign; null on a campaign predating funnels. What an offer sells through is read off it
+   * (`lib/offer-funnel-campaigns.ts`).
+   */
+  salesFunnelId?: string | null;
   status?: string | null;
   createdAt?: string | null;
 }

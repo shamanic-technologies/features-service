@@ -50,7 +50,7 @@ import {
 import { funnelLeg, funnelsContainingLeg, legKeyFor, matchFunnelLegKey } from "./funnel-legs.js";
 import type { DeclaredFunnelLeg } from "./funnel-leg-rates.js";
 import { buildOfferLegPartition } from "./offer-outcomes.js";
-import { fetchOfferSalesPath } from "./offer-sales-path-client.js";
+import { offerFunnelSelection } from "./offer-funnel-campaigns.js";
 import {
   SalesFunnelsUnavailableError,
   SeveralOffersDeclaredError,
@@ -214,10 +214,10 @@ export function resolvePricedOffer(offers: readonly BrandOfferEconomics[], offer
 }
 
 /**
- * PURE: the catalogue funnels an offer's TICKED sales path walks — every funnel each of whose legs the
- * customer ticked (brand-service `/internal/offers/:id/sales-path`), in catalogue order. The SAME set of
- * chains `GET /offers/:id/sales-paths` lists (entry → paid client over ticked legs), so the pipeline and
- * the Sales funnel page price the same paths. A display-only funnel is never a reading funnel.
+ * PURE: the catalogue funnels an offer's sales path walks — every funnel each of whose legs the offer sells
+ * through (the legs of its SALES FUNNEL CAMPAIGNS, `lib/offer-funnel-campaigns.ts`), in catalogue order. The
+ * SAME set of chains `GET /offers/:id/sales-paths` lists (entry → paid client over those legs), so the pipeline
+ * and the Sales funnel page price the same paths. A display-only funnel is never a reading funnel.
  */
 export function offerPathFunnels(tickedLegKeys: readonly string[]): SalesFunnelKey[] {
   const ticked = new Set(tickedLegKeys.map((k) => matchFunnelLegKey(k)).filter((k): k is string => k !== null));
@@ -227,21 +227,18 @@ export function offerPathFunnels(tickedLegKeys: readonly string[]): SalesFunnelK
 }
 
 /**
- * The offer's ticked paths, or null when the customer ticked none (or the selection cannot be read: the
- * campaigns' reading funnels then stand, loudly — the pre-2026-10-04 answer, never a 502 on a pricing read).
+ * PURE: the paths of the offer's sales funnel campaigns (owner 2026-10-10: a campaign IS a sales funnel), or
+ * null when it runs none (its campaigns' reading funnels then stand). Replaces the brand-service ticked path.
  */
-async function tickedPathFunnels(offerId: string): Promise<SalesFunnelKey[] | null> {
-  try {
-    const selection = await fetchOfferSalesPath(offerId);
-    if (!selection.stated || !selection.legKeys) return null;
-    const funnels = offerPathFunnels(selection.legKeys);
-    return funnels.length > 0 ? funnels : null;
-  } catch (error) {
-    console.error(
-      `[features-service] offer ${offerId} sales-path unreadable; pricing on its campaigns' reading funnels: ${(error as Error).message}`,
-    );
-    return null;
-  }
+export function funnelCampaignPathFunnels(
+  rows: readonly CampaignIdentityRow[],
+  offerId: string,
+  soleOffer: boolean,
+): SalesFunnelKey[] | null {
+  const { salesPath } = offerFunnelSelection(rows, offerId, soleOffer);
+  if (!salesPath.stated || !salesPath.legKeys) return null;
+  const funnels = offerPathFunnels(salesPath.legKeys);
+  return funnels.length > 0 ? funnels : null;
 }
 
 export interface PricingFunnelsOptions {
@@ -326,7 +323,8 @@ export async function fetchPricingFunnels(
   const soleOffer = legEconomics.offers.length === 1;
   let legKeys: readonly string[] = opts.legKeys ?? [];
   if (!opts.legKeys) {
-    legKeys = offerLegKeys(rows ?? (await readRows()), offer.offerId, soleOffer);
+    rows = rows ?? (await readRows());
+    legKeys = offerLegKeys(rows, offer.offerId, soleOffer);
   }
 
   let effective: BrandEffectiveRates | null = null;
@@ -356,10 +354,10 @@ export async function fetchPricingFunnels(
     return statedByLeg.get(`${from}>${to}`) ?? null;
   };
 
-  // An offer whose customer TICKED its sales path is priced on exactly those paths (owner 2026-10-04:
-  // the Today pipeline and the Sales funnel page walk the same chains). A leg-keyed read names its own
-  // legs and keeps them; an offer that ticked nothing keeps its campaigns' reading funnels.
-  const ticked = !opts.legKeys && legKeys.length > 0 ? await tickedPathFunnels(offer.offerId) : null;
+  // An offer running SALES FUNNEL campaigns is priced on exactly those funnels' paths (owner 2026-10-04: the
+  // Today pipeline and the Sales funnel page walk the same chains; 2026-10-10: a campaign IS a sales funnel).
+  // A leg-keyed read names its own legs and keeps them; an offer with no funnel keeps its campaigns' reading funnels.
+  const ticked = !opts.legKeys && legKeys.length > 0 && rows ? funnelCampaignPathFunnels(rows, offer.offerId, soleOffer) : null;
   const keys = new Set(
     ticked ??
       readingFunnelsForLegs(
