@@ -24,7 +24,7 @@ vi.mock("./agent-catalogue.js", () => ({
         id,
         id === "unknown"
           ? null
-          : { name: "Bliss", face: "/f", type: "proactive", description: "We email your buyers until they reply with interest, and your team takes it from there.", triggerLabel: null, path: { items: [{ kind: "step", key: "lead_found", label: "Lead found" }], legs: [] } },
+          : { name: "Bliss", face: "/f", type: "proactive", triggerLabel: null, path: { items: [{ kind: "step", key: "lead_found", label: "Lead found" }], legs: [] } },
       ]),
     ),
   ),
@@ -69,7 +69,7 @@ describe("GET /brands/:brandId/sales-funnel-campaigns", () => {
     expect(args[10]).toBe("of1");
     const row = res.body.salesFunnelCampaigns[0];
     expect(row).toMatchObject({ id: "fc1", name: "Bliss", typeLabel: "Daily", type: "proactive", triggerLabel: null, investedUsd: 12.34, roiMultiple: 2.5, moneyUnavailableReason: null, copyUnavailableReason: null });
-    expect(row.description).toMatch(/^We email your buyers/);
+    expect(row).not.toHaveProperty("description");
     expect(row.maturity).toEqual({ isMature: false, legs: [] });
     expect(row.path.items[0]).toEqual({ kind: "step", key: "lead_found", label: "Lead found" });
     expect(fetchWithRetry.mock.calls[0][0]).toBe("http://campaign:3000/sales-funnel-campaigns?brandId=b1");
@@ -91,7 +91,7 @@ describe("GET /brands/:brandId/sales-funnel-campaigns", () => {
     const res = await request(app).get("/brands/b1/sales-funnel-campaigns?offerId=of1").set(AUTH);
     expect(res.body.offerId).toBe("of1");
     expect(fetchWithRetry.mock.calls[0][0]).toContain("offerId=of1");
-    expect(res.body.salesFunnelCampaigns[0]).toMatchObject({ description: null, copyUnavailableReason: "sales_funnel_not_in_catalogue", investedUsd: 0, costEconomics: null });
+    expect(res.body.salesFunnelCampaigns[0]).toMatchObject({ path: null, copyUnavailableReason: "sales_funnel_not_in_catalogue", investedUsd: 0, costEconomics: null });
     expect(computeFeatureRevenue).not.toHaveBeenCalled();
   });
 

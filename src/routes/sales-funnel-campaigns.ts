@@ -5,10 +5,8 @@
  *
  * A customer campaign is a SALES FUNNEL CAMPAIGN (campaign-service `GET /sales-funnel-campaigns`: brand x offer x
  * sales funnel, one UNIT campaign per pipe). Each row serves, so the browser composes and computes nothing:
- *   - the funnel's NAME (campaign-service's) and FACE, its one-sentence customer DESCRIPTION, its TYPE, its
- *     trigger label and the Type column's label ("Daily", or a reactive funnel's trigger: "Positive replies"):
- *     the SAME copy its catalogue funnel row serves (`lib/funnel-descriptions.ts`, stored once given); and its
- *     PATH as structured items ("Lead found -> Sales Cold Email Outreach -> Positive reply -> Paid client",
+ *   - the funnel's NAME (campaign-service's) and FACE, its TYPE, its trigger label and the Type column's label ("Daily", or a reactive funnel's trigger: "Positive replies"):
+ *     the SAME trigger label its catalogue funnel row serves; and its PATH as structured items ("Lead found -> Sales Cold Email Outreach -> Positive reply -> Paid client",
  *     `funnelPathView`), so the dashboard never parses an id;
  *   - its MONEY SINCE INCEPTION over its units together: ONE engine pass (`computeFeatureRevenue`) over the
  *     units' campaign ids and channels, exactly as the offer grain combines its channels: spend ADDS (every
@@ -143,7 +141,6 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
         status: r.status,
         stopReason: r.stopReason,
         createdAt: r.createdAt,
-        description: copy?.description ?? null,
         type: copy?.type ?? null,
         triggerLabel: copy?.triggerLabel ?? null,
         // The Type column (owner 2026-10-11): "Daily" for a proactive funnel, its trigger for a reactive one.

@@ -1092,8 +1092,8 @@ router.get("/public/catalogue/faces/:file", (req, res) => {
 
 /**
  * THE CUSTOMER COPY OF SALES FUNNELS BY ID, for the org-scoped funnel campaign read
- * (`routes/sales-funnel-campaigns.ts`): name, face, the funnel's one sentence (the SAME stored-once sentence its
- * catalogue row serves), type, trigger label. Built on the catalogue's STRUCTURE only (channels, legs, steps),
+ * (`routes/sales-funnel-campaigns.ts`): name, face, type, trigger label (the SAME one its catalogue row
+ * serves), path. Built on the catalogue's STRUCTURE only (channels, legs, steps),
  * never on its fleet figures, so a read never waits on the economics build. An id the catalogue does not know
  * maps to null (logged by the caller).
  */
@@ -1101,7 +1101,6 @@ export interface FunnelCopy {
   name: string | null;
   face: string | null;
   type: "proactive" | "reactive";
-  description: string;
   triggerLabel: string | null;
   path: FunnelPathView;
 }
@@ -1144,12 +1143,10 @@ export async function funnelCopiesFor(ids: readonly string[]): Promise<Map<strin
     const f = funnelById(model, id);
     return f ? [[id, f] as const] : [];
   });
-  const descriptions = await describedFunnels(model, found.map(([, f]) => f));
   const out = new Map<string, FunnelCopy | null>(ids.map((id) => [id, null]));
   for (const [id, f] of found) {
     const name = names.get(f.id) ?? null;
-    const copy = funnelCopy(model, f, descriptions);
-    out.set(id, { name, face: name ? faceOf(name).svgPath : null, type: funnelTypeOf(f), description: copy.description, triggerLabel: copy.triggerLabel, path: funnelPathView(model, f) });
+    out.set(id, { name, face: name ? faceOf(name).svgPath : null, type: funnelTypeOf(f), triggerLabel: funnelTriggerLabel(f, (k) => stepLabel(model, k)), path: funnelPathView(model, f) });
   }
   return out;
 }
