@@ -45033,7 +45033,12 @@
                           "costUsd": {
                             "type": "number",
                             "nullable": true,
-                            "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                            "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                          },
+                          "costPer": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The unit of `costUsd` in words, on every row: `per <outcome step>` for a step, pipe, channel (its best pipe's step) or workflow (its pipe's step), e.g. `per positive reply`; `per paying client` for a sales path or funnel. Quote it with the figure. Null when `costUsd` is null."
                           },
                           "roi": {
                             "type": "number",
@@ -45060,6 +45065,7 @@
                           "line",
                           "valueUsd",
                           "costUsd",
+                          "costPer",
                           "roi",
                           "status"
                         ]
@@ -45375,7 +45381,12 @@
                     "costUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                    },
+                    "costPer": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The unit of `costUsd` in words, on every row: `per <outcome step>` for a step, pipe, channel (its best pipe's step) or workflow (its pipe's step), e.g. `per positive reply`; `per paying client` for a sales path or funnel. Quote it with the figure. Null when `costUsd` is null."
                     },
                     "roi": {
                       "type": "number",
@@ -45425,6 +45436,7 @@
                     "valueBasis",
                     "lifetimeRevenueUsd",
                     "costUsd",
+                    "costPer",
                     "roi",
                     "status",
                     "learningReason",
@@ -45559,7 +45571,12 @@
                           "costUsd": {
                             "type": "number",
                             "nullable": true,
-                            "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                            "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                          },
+                          "costPer": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The unit of `costUsd` in words, on every row: `per <outcome step>` for a step, pipe, channel (its best pipe's step) or workflow (its pipe's step), e.g. `per positive reply`; `per paying client` for a sales path or funnel. Quote it with the figure. Null when `costUsd` is null."
                           },
                           "roi": {
                             "type": "number",
@@ -45586,6 +45603,7 @@
                           "color",
                           "line",
                           "costUsd",
+                          "costPer",
                           "roi",
                           "status"
                         ]
@@ -45682,7 +45700,12 @@
                     "costUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                    },
+                    "costPer": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The unit of `costUsd` in words, on every row: `per <outcome step>` for a step, pipe, channel (its best pipe's step) or workflow (its pipe's step), e.g. `per positive reply`; `per paying client` for a sales path or funnel. Quote it with the figure. Null when `costUsd` is null."
                     },
                     "roi": {
                       "type": "number",
@@ -45712,6 +45735,7 @@
                     "color",
                     "line",
                     "costUsd",
+                    "costPer",
                     "roi",
                     "status",
                     "created"
@@ -45747,7 +45771,12 @@
                     "costUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                    },
+                    "costPer": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The unit of `costUsd` in words, on every row: `per <outcome step>` for a step, pipe, channel (its best pipe's step) or workflow (its pipe's step), e.g. `per positive reply`; `per paying client` for a sales path or funnel. Quote it with the figure. Null when `costUsd` is null."
                     },
                     "roi": {
                       "type": "number",
@@ -45777,6 +45806,7 @@
                     "color",
                     "line",
                     "costUsd",
+                    "costPer",
                     "roi",
                     "status",
                     "created"
@@ -45908,7 +45938,12 @@
                     "costUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                    },
+                    "costPer": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The unit of `costUsd` in words, on every row: `per <outcome step>` for a step, pipe, channel (its best pipe's step) or workflow (its pipe's step), e.g. `per positive reply`; `per paying client` for a sales path or funnel. Quote it with the figure. Null when `costUsd` is null."
                     },
                     "roi": {
                       "type": "number",
@@ -45960,6 +45995,7 @@
                     "steps",
                     "legs",
                     "costUsd",
+                    "costPer",
                     "roi",
                     "status",
                     "learningReason",
@@ -46102,7 +46138,12 @@
                           "costUsd": {
                             "type": "number",
                             "nullable": true,
-                            "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                            "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                          },
+                          "costPer": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The unit of `costUsd` in words, on every row: `per <outcome step>` for a step, pipe, channel (its best pipe's step) or workflow (its pipe's step), e.g. `per positive reply`; `per paying client` for a sales path or funnel. Quote it with the figure. Null when `costUsd` is null."
                           },
                           "roi": {
                             "type": "number",
@@ -46128,6 +46169,7 @@
                           "icon",
                           "line",
                           "costUsd",
+                          "costPer",
                           "roi",
                           "status",
                           "runnable"
@@ -46237,7 +46279,12 @@
                     "costUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                    },
+                    "costPer": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The unit of `costUsd` in words, on every row: `per <outcome step>` for a step, pipe, channel (its best pipe's step) or workflow (its pipe's step), e.g. `per positive reply`; `per paying client` for a sales path or funnel. Quote it with the figure. Null when `costUsd` is null."
                     },
                     "roi": {
                       "type": "number",
@@ -46292,7 +46339,12 @@
                           "costUsd": {
                             "type": "number",
                             "nullable": true,
-                            "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                            "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                          },
+                          "costPer": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The unit of `costUsd` in words, on every row: `per <outcome step>` for a step, pipe, channel (its best pipe's step) or workflow (its pipe's step), e.g. `per positive reply`; `per paying client` for a sales path or funnel. Quote it with the figure. Null when `costUsd` is null."
                           },
                           "roi": {
                             "type": "number",
@@ -46329,6 +46381,7 @@
                           "color",
                           "line",
                           "costUsd",
+                          "costPer",
                           "roi",
                           "status",
                           "runnable",
@@ -46350,6 +46403,7 @@
                     "managed",
                     "runnable",
                     "costUsd",
+                    "costPer",
                     "roi",
                     "status",
                     "learningReason",
@@ -46502,7 +46556,12 @@
                           "costUsd": {
                             "type": "number",
                             "nullable": true,
-                            "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                            "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                          },
+                          "costPer": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The unit of `costUsd` in words, on every row: `per <outcome step>` for a step, pipe, channel (its best pipe's step) or workflow (its pipe's step), e.g. `per positive reply`; `per paying client` for a sales path or funnel. Quote it with the figure. Null when `costUsd` is null."
                           },
                           "roi": {
                             "type": "number",
@@ -46539,6 +46598,7 @@
                           "color",
                           "line",
                           "costUsd",
+                          "costPer",
                           "roi",
                           "status",
                           "runnable",
@@ -46707,7 +46767,12 @@
                     "costUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                    },
+                    "costPer": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The unit of `costUsd` in words, on every row: `per <outcome step>` for a step, pipe, channel (its best pipe's step) or workflow (its pipe's step), e.g. `per positive reply`; `per paying client` for a sales path or funnel. Quote it with the figure. Null when `costUsd` is null."
                     },
                     "roi": {
                       "type": "number",
@@ -46773,6 +46838,7 @@
                     "runnable",
                     "draft",
                     "costUsd",
+                    "costPer",
                     "roi",
                     "status",
                     "learningReason",
@@ -46861,7 +46927,12 @@
                     "costUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                    },
+                    "costPer": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The unit of `costUsd` in words, on every row: `per <outcome step>` for a step, pipe, channel (its best pipe's step) or workflow (its pipe's step), e.g. `per positive reply`; `per paying client` for a sales path or funnel. Quote it with the figure. Null when `costUsd` is null."
                     },
                     "roi": {
                       "type": "number",
@@ -46927,6 +46998,7 @@
                     "runnable",
                     "draft",
                     "costUsd",
+                    "costPer",
                     "roi",
                     "status",
                     "learningReason",
@@ -47053,7 +47125,12 @@
                     "costUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                    },
+                    "costPer": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The unit of `costUsd` in words, on every row: `per <outcome step>` for a step, pipe, channel (its best pipe's step) or workflow (its pipe's step), e.g. `per positive reply`; `per paying client` for a sales path or funnel. Quote it with the figure. Null when `costUsd` is null."
                     },
                     "roi": {
                       "type": "number",
@@ -47119,6 +47196,7 @@
                     "runnable",
                     "draft",
                     "costUsd",
+                    "costPer",
                     "roi",
                     "status",
                     "learningReason",
@@ -47262,7 +47340,12 @@
                           "costUsd": {
                             "type": "number",
                             "nullable": true,
-                            "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                            "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                          },
+                          "costPer": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The unit of `costUsd` in words, on every row: `per <outcome step>` for a step, pipe, channel (its best pipe's step) or workflow (its pipe's step), e.g. `per positive reply`; `per paying client` for a sales path or funnel. Quote it with the figure. Null when `costUsd` is null."
                           },
                           "roi": {
                             "type": "number",
@@ -47291,6 +47374,7 @@
                           "face",
                           "line",
                           "costUsd",
+                          "costPer",
                           "roi",
                           "status",
                           "runnable"
@@ -47461,7 +47545,12 @@
                               "costUsd": {
                                 "type": "number",
                                 "nullable": true,
-                                "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                                "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                              },
+                              "costPer": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "The unit of `costUsd` in words, on every row: `per <outcome step>` for a step, pipe, channel (its best pipe's step) or workflow (its pipe's step), e.g. `per positive reply`; `per paying client` for a sales path or funnel. Quote it with the figure. Null when `costUsd` is null."
                               },
                               "roi": {
                                 "type": "number",
@@ -47483,6 +47572,7 @@
                               "line",
                               "mode",
                               "costUsd",
+                              "costPer",
                               "roi",
                               "status"
                             ],
@@ -47500,7 +47590,12 @@
                     "costUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                    },
+                    "costPer": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The unit of `costUsd` in words, on every row: `per <outcome step>` for a step, pipe, channel (its best pipe's step) or workflow (its pipe's step), e.g. `per positive reply`; `per paying client` for a sales path or funnel. Quote it with the figure. Null when `costUsd` is null."
                     },
                     "roi": {
                       "type": "number",
@@ -47551,6 +47646,7 @@
                     "salesPathName",
                     "legs",
                     "costUsd",
+                    "costPer",
                     "roi",
                     "status",
                     "learningReason",
@@ -47664,7 +47760,12 @@
                               "costUsd": {
                                 "type": "number",
                                 "nullable": true,
-                                "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                                "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                              },
+                              "costPer": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "The unit of `costUsd` in words, on every row: `per <outcome step>` for a step, pipe, channel (its best pipe's step) or workflow (its pipe's step), e.g. `per positive reply`; `per paying client` for a sales path or funnel. Quote it with the figure. Null when `costUsd` is null."
                               },
                               "roi": {
                                 "type": "number",
@@ -47686,6 +47787,7 @@
                               "line",
                               "mode",
                               "costUsd",
+                              "costPer",
                               "roi",
                               "status"
                             ],
@@ -47703,7 +47805,12 @@
                     "costUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                    },
+                    "costPer": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The unit of `costUsd` in words, on every row: `per <outcome step>` for a step, pipe, channel (its best pipe's step) or workflow (its pipe's step), e.g. `per positive reply`; `per paying client` for a sales path or funnel. Quote it with the figure. Null when `costUsd` is null."
                     },
                     "roi": {
                       "type": "number",
@@ -47754,6 +47861,7 @@
                     "salesPathName",
                     "legs",
                     "costUsd",
+                    "costPer",
                     "roi",
                     "status",
                     "learningReason",
@@ -47905,7 +48013,12 @@
                               "costUsd": {
                                 "type": "number",
                                 "nullable": true,
-                                "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                                "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                              },
+                              "costPer": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "The unit of `costUsd` in words, on every row: `per <outcome step>` for a step, pipe, channel (its best pipe's step) or workflow (its pipe's step), e.g. `per positive reply`; `per paying client` for a sales path or funnel. Quote it with the figure. Null when `costUsd` is null."
                               },
                               "roi": {
                                 "type": "number",
@@ -47927,6 +48040,7 @@
                               "line",
                               "mode",
                               "costUsd",
+                              "costPer",
                               "roi",
                               "status"
                             ],
@@ -47944,7 +48058,12 @@
                     "costUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                    },
+                    "costPer": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The unit of `costUsd` in words, on every row: `per <outcome step>` for a step, pipe, channel (its best pipe's step) or workflow (its pipe's step), e.g. `per positive reply`; `per paying client` for a sales path or funnel. Quote it with the figure. Null when `costUsd` is null."
                     },
                     "roi": {
                       "type": "number",
@@ -47992,6 +48111,7 @@
                     "salesPathName",
                     "legs",
                     "costUsd",
+                    "costPer",
                     "roi",
                     "status",
                     "learningReason",
@@ -48113,7 +48233,12 @@
                           "costUsd": {
                             "type": "number",
                             "nullable": true,
-                            "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                            "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                          },
+                          "costPer": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The unit of `costUsd` in words, on every row: `per <outcome step>` for a step, pipe, channel (its best pipe's step) or workflow (its pipe's step), e.g. `per positive reply`; `per paying client` for a sales path or funnel. Quote it with the figure. Null when `costUsd` is null."
                           },
                           "roi": {
                             "type": "number",
@@ -48140,6 +48265,7 @@
                           "color",
                           "line",
                           "costUsd",
+                          "costPer",
                           "roi",
                           "status"
                         ]
@@ -48274,7 +48400,12 @@
                     "costUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                    },
+                    "costPer": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The unit of `costUsd` in words, on every row: `per <outcome step>` for a step, pipe, channel (its best pipe's step) or workflow (its pipe's step), e.g. `per positive reply`; `per paying client` for a sales path or funnel. Quote it with the figure. Null when `costUsd` is null."
                     },
                     "roi": {
                       "type": "number",
@@ -48319,6 +48450,7 @@
                     "conversionRatePct",
                     "holdsTheMoney",
                     "costUsd",
+                    "costPer",
                     "roi",
                     "status",
                     "learningReason",

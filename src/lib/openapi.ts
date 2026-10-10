@@ -6056,7 +6056,8 @@ const CATALOGUE_DESCRIPTION =
 
 const catalogueStatus = z.enum(["measured", "learning", "customer_time"]);
 const catalogueEcon = {
-  costUsd: z.number().nullable().describe("Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."),
+  costUsd: z.number().nullable().describe("Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."),
+  costPer: z.string().nullable().describe("The unit of `costUsd` in words, on every row: `per <outcome step>` for a step, pipe, channel (its best pipe's step) or workflow (its pipe's step), e.g. `per positive reply`; `per paying client` for a sales path or funnel. Quote it with the figure. Null when `costUsd` is null."),
   roi: z.number().nullable().describe("Average fleet return multiple. Null unless measured."),
   status: catalogueStatus,
 };
