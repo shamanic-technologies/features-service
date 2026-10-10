@@ -3,6 +3,7 @@ import { apiKeyOnly } from "../middleware/auth.js";
 import {
   buildCatalogueModel,
   byRoi,
+  isMeasuredRate,
   roiBasisOf,
   STEP_VALUE_ESTIMATES,
   channelEconomics,
@@ -57,7 +58,9 @@ import {
 import { actorOf, DeclarationError, parseLegInput, requestedByOrgIdOf } from "../lib/channel-declarations.js";
 import { allNamesByKey, salesPathNamesFor, SalesPathNamePoolExhaustedError } from "../lib/sales-path-names.js";
 import { campaignNameKeyOf } from "../lib/offer-sales-paths.js";
-import { getFleetArrowMedians, getFleetLifetimeRevenueMedian, peekFleetStatedMedians, type FleetArrowMedians } from "../lib/effective-conversion-rates.js";
+import { getBrandEffectiveRates, getFleetArrowMedians, getFleetLifetimeRevenueMedian, legPairKey, peekFleetStatedMedians, type FleetArrowMedians } from "../lib/effective-conversion-rates.js";
+import { fetchBrandLegEconomics } from "../lib/brand-leg-economics-client.js";
+import { offerLifetimeRevenue } from "../lib/offer-lifetime-revenue.js";
 import { loadFleetCell, storeFleetCell } from "../lib/fleet-cell-store.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
 import { awaitWarmStore, StoreNotComputedError } from "../lib/await-warm-store.js";
@@ -253,7 +256,46 @@ async function fleetMediansFor(stored: MeasurementStore["fleet"]): Promise<NonNu
   return { arrows, lifetimeRevenue };
 }
 
-async function loadModel(): Promise<Loaded> {
+/**
+ * A PER-OFFER read (2026-10-10: the signup's "Your campaign" step and payment wall priced the proposed funnel
+ * on the FLEET estimate, while the old flow showed THIS offer's return on the client value the visitor
+ * typed). `?offerId=&brandId=` + the `x-org-id` header: the same formula as the catalogue, with the OFFER's
+ * lifetime revenue (stated, else the fleet median, `lib/offer-lifetime-revenue.ts`) and its brand's own leg
+ * rates where it has them (measured on its leads / CRM, or stated), else the fleet's. Pipe costs stay the
+ * fleet's measured ones. Null when the read names no offer.
+ */
+export interface OfferContext {
+  offerId: string;
+  brandId: string;
+  lifetimeRevenueUsd: number | null;
+  lifetimeRevenueSource: "offer_stated" | "fleet_median" | null;
+  rates: Map<string, { ratePct: number; source: "offer_measured" | "offer_stated" }>;
+}
+
+async function offerContextOf(req: Request): Promise<OfferContext | null> {
+  const offerId = typeof req.query.offerId === "string" && req.query.offerId !== "" ? req.query.offerId : null;
+  if (!offerId) return null;
+  const brandId = typeof req.query.brandId === "string" && req.query.brandId !== "" ? req.query.brandId : null;
+  const orgId = typeof req.headers["x-org-id"] === "string" ? req.headers["x-org-id"] : null;
+  if (!brandId) throw new BadQuery("brand_required", "a per-offer read (offerId) also names its brandId");
+  if (!orgId) throw new BadQuery("org_required", "a per-offer read needs the x-org-id header (the offer's org)");
+  const legEconomics = await fetchBrandLegEconomics(brandId, orgId);
+  const offer = legEconomics.offers.find((o) => o.offerId === offerId);
+  if (!offer) throw new DeclarationError(404, "offer_not_found", `offer ${offerId} is not an offer of brand ${brandId}`);
+  const [ltr, effective] = await Promise.all([offerLifetimeRevenue(offer.lifetimeRevenueUsd), getBrandEffectiveRates(brandId, orgId, legEconomics)]);
+  const rates = new Map<string, { ratePct: number; source: "offer_measured" | "offer_stated" }>();
+  for (const r of effective.legs) {
+    if (r.effectiveRatePct === null || (r.source !== "measured" && r.source !== "manual")) continue;
+    rates.set(legPairKey(r.fromStep, r.toStep), { ratePct: r.effectiveRatePct, source: r.source === "measured" ? "offer_measured" : "offer_stated" });
+  }
+  return { offerId, brandId, lifetimeRevenueUsd: ltr.usd, lifetimeRevenueSource: ltr.source, rates };
+}
+
+/** The `offer` block a per-offer read answers with (null on the fleet catalogue). */
+const offerEcho = (o: OfferContext | null) =>
+  o ? { offerId: o.offerId, brandId: o.brandId, lifetimeRevenueUsd: o.lifetimeRevenueUsd, lifetimeRevenueSource: o.lifetimeRevenueSource, ownRateLegs: o.rates.size } : null;
+
+async function loadModel(offer: OfferContext | null = null): Promise<Loaded> {
   await installPersistedFigures();
   void warmCatalogueMeasurements();
   const [measurements, all, pub, declaredSteps, names] = await Promise.all([
@@ -271,7 +313,8 @@ async function loadModel(): Promise<Loaded> {
     declaredSteps,
     measurements: measurements.byPipe,
     fleetMedians: medians,
-    lifetimeRevenueUsd: ltr.usd,
+    lifetimeRevenueUsd: offer ? offer.lifetimeRevenueUsd : ltr.usd,
+    ...(offer ? { offerRates: offer.rates } : {}),
   });
   for (const id of measurements.unreadable) {
     const p = model.pipes.get(id);
@@ -510,7 +553,7 @@ router.get("/internal/catalogue/sales-paths/:id", apiKeyOnly, async (req, res) =
         ratePct: path.rates[i].ratePct,
         rateSource: path.rates[i].source,
         // Only a measured fleet conversion is measured; a stated median, a default or a declared rate is an estimate.
-        rateMeasured: path.rates[i].source === "measured_pipe",
+        rateMeasured: isMeasuredRate(path.rates[i].source),
         pipeIds: [...model.pipes.values()].filter((p) => p.legKey === legKey).map((p) => p.id),
       })),
       ...econDetail(e, PER_PAYING_CLIENT),
@@ -685,7 +728,9 @@ async function listSalesFunnels(req: Request, res: Response, forceRunnable: bool
     const paths = listOf(req, "paths");
     const containsChannels = listOf(req, "containsChannels");
     const runnable = forceRunnable || runnableOf(req);
-    const { model, names } = await loadModel();
+    // Per-offer pricing only on the service-key read (it needs the offer's org).
+    const offer = forceRunnable ? null : await offerContextOf(req);
+    const { model, names } = await loadModel(offer);
     const onPaths: CataloguePath[] = paths
       ? paths.map((id) => {
           const p = model.paths.get(id);
@@ -708,6 +753,7 @@ async function listSalesFunnels(req: Request, res: Response, forceRunnable: bool
       total: candidates.length,
       truncated: candidates.length > limit,
       rows: shown.map((f) => funnelRowOf(f, n.get(f.id)!)),
+      ...(offer ? { offer: offerEcho(offer) } : {}),
     });
   } catch (err) {
     fail(res, err, "list sales funnels");
@@ -719,7 +765,7 @@ router.get("/internal/catalogue/sales-funnels", apiKeyOnly, (req, res) => listSa
 /** Public: the runnable sales funnels only (same rows, same filters, `runnable` forced on). */
 router.get("/public/catalogue/sales-funnels", (req, res) => listSalesFunnels(req, res, true));
 
-function funnelDetail(model: CatalogueModel, f: CatalogueFunnel, names: Map<string, string>) {
+function funnelDetail(model: CatalogueModel, f: CatalogueFunnel, names: Map<string, string>, offer: OfferContext | null = null) {
   const name = names.get(f.id)!;
   const path = model.paths.get(f.pathId)!;
   const needed = outcomesNeededPerPayingClient(path);
@@ -736,7 +782,7 @@ function funnelDetail(model: CatalogueModel, f: CatalogueFunnel, names: Map<stri
       legKey: l.legKey,
       ratePct: path.rates[i].ratePct,
       rateSource: path.rates[i].source,
-      rateMeasured: path.rates[i].source === "measured_pipe",
+      rateMeasured: isMeasuredRate(path.rates[i].source),
       outcomesNeededPerPayingClient: needed[i],
       pipe: l.pipe
         ? { id: l.pipe.id, name: names.get(nameKeyOfPipe(l.pipe)) ?? null, line: pipeLine(model, l.pipe), mode: l.pipe.mode, ...econWire(l.pipe.economics, perStep(model, l.pipe.toStep)) }
@@ -745,7 +791,8 @@ function funnelDetail(model: CatalogueModel, f: CatalogueFunnel, names: Map<stri
     ...econDetail(f.economics, PER_PAYING_CLIENT),
     costUnit: "per_paying_client",
     lifetimeRevenueUsd: model.lifetimeRevenueUsd,
-    lifetimeRevenueSource: "fleet_median_stated",
+    lifetimeRevenueSource: offer ? offer.lifetimeRevenueSource : "fleet_median_stated",
+    ...(offer ? { offer: offerEcho(offer) } : {}),
     runnable: funnelRunnable(f),
   mixed: funnelMixed(f),
     draft: !funnelPublished(f),
@@ -757,11 +804,12 @@ const funnelPipes = (f: CatalogueFunnel): CataloguePipe[] => f.legs.flatMap((l) 
 
 router.get("/internal/catalogue/sales-funnels/:id", apiKeyOnly, async (req, res) => {
   try {
-    const { model, names } = await loadModel();
+    const offer = await offerContextOf(req);
+    const { model, names } = await loadModel(offer);
     const f = funnelById(model, req.params.id);
     if (!f) return void res.status(404).json({ error: `no sales funnel ${req.params.id}`, reason: "sales_funnel_not_found" });
     const n = await named([f.id, salesPathNameKeyOf(f.pathId), ...funnelPipes(f).map(nameKeyOfPipe)], names);
-    res.json(funnelDetail(model, f, n));
+    res.json(funnelDetail(model, f, n, offer));
   } catch (err) {
     fail(res, err, "get sales funnel");
   }

@@ -160,8 +160,14 @@ export interface CatalogueInputs {
   /** Pipe id -> fleet measurement. Absent = nothing measured. */
   measurements: ReadonlyMap<string, PipeMeasurement>;
   fleetMedians: FleetArrowMedians;
-  /** The fleet median lifetime revenue of an offer, USD. Null = nothing anywhere states one. */
+  /** The fleet median lifetime revenue of an offer, USD (or ONE offer's own, on a per-offer read). Null = nothing anywhere states one. */
   lifetimeRevenueUsd: number | null;
+  /**
+   * A PER-OFFER read (`?offerId=`): the offer's brand's own rate of a leg where it HAS one (measured on its
+   * own leads / CRM, or stated by the customer), keyed `${fromStep}>${toStep}`; a leg absent here keeps
+   * the fleet rate. Absent on the fleet catalogue.
+   */
+  offerRates?: ReadonlyMap<string, { ratePct: number; source: "offer_measured" | "offer_stated" }>;
 }
 
 // ── Model ─────────────────────────────────────────────────────────────────────────────────────────
@@ -229,7 +235,7 @@ export interface CataloguePath {
    */
   type: "proactive" | "reactive";
   /** The rate of each leg (null on an entry leg out of nothing). */
-  rates: Array<{ legKey: string; ratePct: number | null; source: "fleet_median" | "default" | "measured_pipe" | null }>;
+  rates: Array<{ legKey: string; ratePct: number | null; source: CatalogueRateSource }>;
 }
 
 /** One leg of a funnel: the pipe working it, or null when no channel performs the leg (the buyer or the
@@ -311,6 +317,12 @@ function buildPipes(inputs: CatalogueInputs, valueOf: (step: string) => number |
 }
 
 /** PURE: the rate of a non-entry leg between two steps (fleet median > default incl. declared). */
+/** Where a leg rate comes from. `offer_*` only on a per-offer read (the offer's brand's own rate). */
+export type CatalogueRateSource = "fleet_median" | "default" | "measured_pipe" | "offer_measured" | "offer_stated" | null;
+
+/** A rate that is a measured outcome (never an estimate): the fleet's measured conversion, or the brand's own measured one. */
+export const isMeasuredRate = (source: CatalogueRateSource): boolean => source === "measured_pipe" || source === "offer_measured";
+
 export function legRateOf(medians: FleetArrowMedians, from: string, to: string): { ratePct: number | null; source: "fleet_median" | "default" | null } {
   const median = medians.get(legPairKey(from, to));
   if (median && fleetMedianApplies(median) && median.ratePct !== null) return { ratePct: median.ratePct, source: "fleet_median" };
@@ -331,6 +343,9 @@ function measuredEntryRate(pipes: Iterable<CataloguePipe>, legKey: string): numb
 
 /** PURE: the whole model. */
 export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
+  // A per-offer read prices a leg on the offer's brand's own rate where it has one, else the fleet's.
+  const rateOf = (from: string, to: string): { ratePct: number | null; source: CatalogueRateSource } =>
+    inputs.offerRates?.get(`${from}>${to}`) ?? legRateOf(inputs.fleetMedians, from, to);
   // Step defs: coded + declared (registered into CHANNEL_STEPS by the catalogue load).
   const declared = new Map(inputs.declaredSteps.map((d) => [d.key, d]));
   const stepKeys = new Set<string>([...Object.keys(CHANNEL_STEPS), ...declared.keys()]);
@@ -350,9 +365,9 @@ export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
   for (const p of bare.values()) {
     if (p.fromStep === null) continue;
     if (p.fromStep === "lead_found") addArrow("lead_found", p.toStep, measuredEntryRate(bare.values(), p.legKey));
-    else addArrow(p.fromStep, p.toStep, legRateOf(inputs.fleetMedians, p.fromStep, p.toStep).ratePct);
+    else addArrow(p.fromStep, p.toStep, rateOf(p.fromStep, p.toStep).ratePct);
   }
-  for (const l of FUNNEL_LEGS) if (l.fromStep) addArrow(l.fromStep.key, l.toStep.key, legRateOf(inputs.fleetMedians, l.fromStep.key, l.toStep.key).ratePct);
+  for (const l of FUNNEL_LEGS) if (l.fromStep) addArrow(l.fromStep.key, l.toStep.key, rateOf(l.fromStep.key, l.toStep.key).ratePct);
   for (const d of inputs.declaredSteps) addArrow(d.key, d.towardStep, d.towardRatePct);
 
   const values = new Map<string, { value: number | null; via: { toStep: string; ratePct: number } | null }>();
@@ -431,7 +446,7 @@ export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
             }
             return { legKey: l.legKey, ratePct: null, source: null };
           }
-          const r = legRateOf(inputs.fleetMedians, l.fromStep!, l.toStep);
+          const r = rateOf(l.fromStep!, l.toStep);
           return { legKey: l.legKey, ratePct: r.ratePct, source: r.source };
         }),
       });
@@ -482,7 +497,7 @@ export function funnelEconomics(path: CataloguePath, legs: readonly FunnelLeg[],
     const rate = path.rates[i].ratePct;
     if (!usable(rate)) return LEARNING(`leg_unrated:${path.legKeys[i]}`);
     // Only a measured fleet conversion is a measured rate; a stated median, a default or a declared rate is not.
-    if (path.rates[i].source !== "measured_pipe") estimates.unshift(`rate:${path.legKeys[i]}`);
+    if (!isMeasuredRate(path.rates[i].source)) estimates.unshift(`rate:${path.legKeys[i]}`);
     needed /= rate / 100;
   }
   if (platformLegs === 0 || !(cost > 0)) return CUSTOMER_TIME();

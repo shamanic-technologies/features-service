@@ -31,6 +31,18 @@ vi.mock("../lib/effective-conversion-rates.js", async (importOriginal) => ({
   getFleetArrowMedians: async () => new Map(),
   getFleetLifetimeRevenueMedian: async () => ({ usd: 3000, offerCount: 12 }),
   peekFleetStatedMedians: () => null,
+  // One brand's own rates: conversation -> meeting booked MEASURED at 50%, meeting attended -> paid STATED at 40%.
+  getBrandEffectiveRates: async () => ({
+    legs: [
+      { fromStep: "Positive reply", toStep: "Meeting booked", effectiveRatePct: 50, source: "measured" },
+      { fromStep: "Meeting attended", toStep: "Paid client", effectiveRatePct: 40, source: "manual" },
+      { fromStep: "Meeting booked", toStep: "Meeting attended", effectiveRatePct: 75, source: "default" },
+    ],
+  }),
+}));
+vi.mock("../lib/brand-leg-economics-client.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  fetchBrandLegEconomics: async () => ({ legRates: [], offers: [{ offerId: "offer-1", lifetimeRevenueUsd: 12000 }] }),
 }));
 
 const mem = vi.hoisted(() => ({ legs: [] as any[], steps: [] as any[], rates: [] as any[], chains: [] as any[], paths: [] as any[] }));
@@ -176,6 +188,39 @@ describe("agent catalogue lists (context-window sized)", () => {
     expect(funnels.status).toBe(200);
     expect(funnels.body.rows[0]).toMatchObject({ name: "Victory", face: "/public/catalogue/faces/Victory.svg", status: "estimated", roiBasis: "estimated", type: "proactive" });
     expect(tokens(funnels.body)).toBeLessThan(2000);
+  });
+
+  it("prices a funnel PER OFFER: the offer's own client value and its brand's own rates, else the fleet's", async () => {
+    const victory = "lead_found_to_conversation@sales-cold-email-outreach+conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client";
+    const fleet = (await request(app).get(`/internal/catalogue/sales-funnels/${encodeURIComponent(victory)}`).set(KEY)).body;
+    const offer = (
+      await request(app)
+        .get(`/internal/catalogue/sales-funnels/${encodeURIComponent(victory)}`)
+        .query({ offerId: "offer-1", brandId: "b1" })
+        .set({ ...KEY, "x-org-id": "o1" })
+    ).body;
+    expect(offer.offer).toMatchObject({ offerId: "offer-1", lifetimeRevenueUsd: 12000, lifetimeRevenueSource: "offer_stated", ownRateLegs: 2 });
+    expect(offer.lifetimeRevenueSource).toBe("offer_stated");
+    // Own measured rate (50%) and own stated rate (40%); the default show-up stays the fleet's (75%).
+    expect(offer.legs.map((l: { ratePct: number | null; rateSource: string | null }) => [l.ratePct, l.rateSource])).toEqual([
+      [1, "measured_pipe"],
+      [50, "offer_measured"],
+      [75, "default"],
+      [40, "offer_stated"],
+    ]);
+    // needed: paid 1, attended 2.5, booked 3.333, reply 6.667 -> 2 x 3.333 + 40 x 6.667 = 273.33; roi 12000 / 273.33.
+    expect(offer.costUsd).toBeCloseTo(273.33, 1);
+    expect(offer.roi).toBeCloseTo(43.9, 1);
+    expect(offer.status).toBe("estimated");
+    expect(offer.estimates).toEqual(["rate:meeting_booked_to_meeting_attended", "rate:meeting_attended_to_paid_client", "lifetime_revenue"]);
+    expect(fleet.costUsd).not.toBeCloseTo(offer.costUsd, 0);
+    expect(fleet.offer).toBeUndefined();
+
+    const list = (await request(app).get("/internal/catalogue/sales-funnels").query({ offerId: "offer-1", brandId: "b1", limit: 3 }).set({ ...KEY, "x-org-id": "o1" })).body;
+    expect(list.offer).toMatchObject({ offerId: "offer-1", lifetimeRevenueSource: "offer_stated" });
+    expect((await request(app).get("/internal/catalogue/sales-funnels").query({ offerId: "offer-1" }).set(KEY)).body.reason).toBe("brand_required");
+    expect((await request(app).get("/internal/catalogue/sales-funnels").query({ offerId: "offer-1", brandId: "b1" }).set(KEY)).body.reason).toBe("org_required");
+    expect((await request(app).get("/internal/catalogue/sales-funnels").query({ offerId: "nope", brandId: "b1" }).set({ ...KEY, "x-org-id": "o1" })).status).toBe(404);
   });
 
   it("serves a detail read per id", async () => {
