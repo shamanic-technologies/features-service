@@ -39,6 +39,8 @@ import { servedLegKeysMiddleware } from "./lib/served-leg-keys.js";
 import { legacyLegKeyArrivalsMiddleware } from "./lib/legacy-leg-key-arrivals.js";
 import { migrateOutboundLegKeys } from "./lib/outbound-leg-key-migration.js";
 import { renamePipesToBirds } from "./lib/sales-path-names.js";
+import { listLegAssignments } from "./lib/workflow-leg-assignments.js";
+import { storedLegKeyOf } from "./lib/funnel-legs.js";
 import { startViewKeeper } from "./lib/view-keeper.js";
 import {
   announceViewRefresherReady,
@@ -171,9 +173,16 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
         void warmOutcomePrices();
         // The agent catalogue's pipe economics are fleet walks too: built off the request path.
         void warmCatalogueMeasurements();
-        // Research reads the cold-email legs' fleet ranking; warm both so its first read is not empty.
-        void warmLegWorkflowRanking("sales-cold-email-outreach", "start_to_conversation");
-        void warmLegWorkflowRanking("sales-cold-email-outreach", "start_to_website_visit");
+        // Every pipe a workflow is assigned to gets its fleet ranking warmed, whatever its channel (owner
+        // 2026-10-10: no special case; this used to warm the two cold-email pipes only).
+        void listLegAssignments()
+          .then((rows) => {
+            for (const key of new Set(rows.map((r) => `${r.featureSlug}\u0000${r.legKey}`))) {
+              const [featureSlug, legKey] = key.split("\u0000");
+              void warmLegWorkflowRanking(featureSlug, storedLegKeyOf(legKey));
+            }
+          })
+          .catch((err) => console.error("[features-service] leg workflow ranking boot warm: assignments unreadable:", err));
         // Every priced read (lead families' cache key included) reads the fleet medians first.
         warmFleetArrowMediansOnBoot();
         // With the refresher off, projections compute in this process — warm its fleet cell instead.
