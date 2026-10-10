@@ -259,6 +259,18 @@ describe("agent catalogue lists (context-window sized)", () => {
     expect(reactive.length).toBeGreaterThan(0);
   });
 
+  it("the PUBLIC sales funnel list needs no key and serves only runnable funnels, whatever the query says (owner 2026-10-10)", async () => {
+    const pub = await request(app).get("/public/catalogue/sales-funnels").query({ containsChannels: "ai-meeting-booking", runnable: "false", limit: 25 });
+    expect(pub.status).toBe(200);
+    expect(pub.body.rows.length).toBeGreaterThan(0);
+    expect(pub.body.rows.every((r: { runnable: boolean; mixed: boolean }) => r.runnable && !r.mixed)).toBe(true);
+    const internal = await request(app).get("/internal/catalogue/sales-funnels").query({ containsChannels: "ai-meeting-booking", runnable: "true", limit: 25 }).set(KEY);
+    expect(pub.body.rows.map((r: { id: string }) => r.id)).toEqual(internal.body.rows.map((r: { id: string }) => r.id));
+    const all = await request(app).get("/internal/catalogue/sales-funnels").query({ containsChannels: "ai-meeting-booking", limit: 25 }).set(KEY);
+    expect(all.body.rows.length).toBeGreaterThan(pub.body.rows.length);
+    expect((await request(app).get("/public/catalogue/sales-funnels").query({ limit: "x" })).status).toBe(400);
+  });
+
   it("serves a face as an SVG image", async () => {
     const res = await request(app).get("/public/catalogue/faces/Victory.svg");
     expect(res.status).toBe(200);
