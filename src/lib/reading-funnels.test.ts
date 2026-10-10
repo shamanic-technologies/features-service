@@ -189,12 +189,17 @@ describe("offerPathFunnels — the funnels an offer's TICKED sales path walks (s
       "website_purchases",
     ]);
   });
+  it("reads a funnel campaign's legs in either outbound spelling (funnel ids carry lead_found_to_*)", () => {
+    const legacy = offerPathFunnels(["start_to_website_visit", "website_visit_to_purchase", "purchase_to_paid_client"]);
+    expect(legacy.length).toBeGreaterThan(0);
+    expect(offerPathFunnels(["lead_found_to_website_visit", "website_visit_to_purchase", "purchase_to_paid_client"])).toEqual(legacy);
+  });
   it("a funnel missing one ticked leg is not walked", () => {
     expect(offerPathFunnels(["start_to_conversation", "conversation_to_meeting_booked", "meeting_booked_to_meeting_attended"])).toEqual([]);
   });
 });
 
-describe("fetchPricingFunnels — an offer with a TICKED sales path is priced on exactly those paths", () => {
+describe("fetchPricingFunnels — an offer running SALES FUNNEL campaigns is priced on exactly those paths (owner 2026-10-10)", () => {
   afterEach(() => vi.restoreAllMocks());
   const ECONOMICS = {
     legRates: [],
@@ -204,30 +209,32 @@ describe("fetchPricingFunnels — an offer with a TICKED sales path is priced on
     { id: "c1", featureSlug: "sales-cold-email-outreach", legKey: "start_to_conversation", offerId: "offer-legistai", status: "ongoing" },
     { id: "c2", featureSlug: "sales-cold-email-outreach", legKey: "start_to_website_visit", offerId: "offer-legistai", status: "ongoing" },
   ];
-  const mock = (salesPath: unknown) =>
+  // A funnel campaign's units carry its funnel id (`salesFunnelId`); the legs it sells through are that id's legs.
+  const mock = (salesFunnelId: string | null) =>
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as { url: string }).url;
       const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
       if (url.includes("/offer-economics")) return json(ECONOMICS);
-      if (url.includes("/sales-path")) return json(salesPath);
-      if (url.includes("campaign:3000/campaigns")) return json({ campaigns: CAMPAIGNS });
+      // brand-service's per-offer sales path is retired: never read again.
+      if (url.includes("/sales-path")) throw new Error(`retired read: ${url}`);
+      if (url.includes("campaign:3000/campaigns")) return json({ campaigns: CAMPAIGNS.map((c) => ({ ...c, salesFunnelId })) });
       return json({});
     });
 
-  it("ticked → the ticked chains; nothing stated → the campaigns' reading funnels (which DIFFER here)", async () => {
-    mock({ offerId: "offer-legistai", stated: true, steps: [], legKeys: LEGISTAI_TICKED, statedAt: "x" });
+  it("funnel campaigns → their chains; no funnel → the campaigns' reading funnels (which DIFFER here)", async () => {
+    mock(LEGISTAI_TICKED.join("+"));
     const ticked = await fetchPricingFunnels("b1", "org-1", "offer-legistai", { rates: "stated" });
     expect(ticked.map((f) => f.funnelKey)).toEqual(["sales_meetings_from_conversation", "sales_meetings_from_website", "website_purchases"]);
     vi.restoreAllMocks();
 
-    mock({ offerId: "offer-legistai", stated: false, steps: null, legKeys: null, statedAt: null });
+    mock(null);
     const reading = await fetchPricingFunnels("b1", "org-1", "offer-legistai", { rates: "stated" });
     expect(reading.map((f) => f.funnelKey)).not.toEqual(ticked.map((f) => f.funnelKey));
     expect(reading.map((f) => f.funnelKey)).toContain("sales_from_conversation");
   });
 
-  it("a leg-keyed read keeps the legs it names, whatever the offer ticked", async () => {
-    mock({ offerId: "offer-legistai", stated: true, steps: [], legKeys: LEGISTAI_TICKED, statedAt: "x" });
+  it("a leg-keyed read keeps the legs it names, whatever the offer's funnels", async () => {
+    mock(LEGISTAI_TICKED.join("+"));
     const leg = await fetchPricingFunnels("b1", "org-1", "offer-legistai", { rates: "stated", legKeys: ["start_to_conversation"] });
     expect(leg.map((f) => f.funnelKey)).toContain("sales_from_conversation");
   });
