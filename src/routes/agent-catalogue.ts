@@ -4,6 +4,10 @@ import {
   buildCatalogueModel,
   byRoi,
   channelEconomics,
+  channelRunnable,
+  funnelRunnable,
+  pathRunnable,
+  pipeRunnable,
   FAMILY_GLYPHS,
   funnelById,
   funnelIdOf,
@@ -222,6 +226,14 @@ function listOf(req: Request, field: string, ids = true): string[] | null {
 
 const qOf = (req: Request): string | undefined => (typeof req.query.q === "string" ? req.query.q : undefined);
 
+/** `?runnable=true` keeps only what we run today (a customer surface); absent or `false` keeps everything. */
+function runnableOf(req: Request): boolean {
+  const raw = req.query.runnable;
+  if (raw === undefined || raw === "" || raw === "false") return false;
+  if (raw === "true") return true;
+  throw new BadQuery("runnable_unrecognised", "runnable must be true or false");
+}
+
 /** A step named by key or label ("LinkedIn post", "linkedin_post", "Positive reply"). */
 function resolveStep(model: CatalogueModel, raw: string): string | null {
   const key = matchChannelStepKey(raw);
@@ -260,7 +272,7 @@ async function named(keys: string[], known: Map<string, string>): Promise<Map<st
 
 const pathRowOf = (m: CatalogueModel, p: CataloguePath, name: string) => {
   const e = pathEconomics(m, p);
-  return { id: p.id, name, icon: FAMILY_GLYPHS.sales_path, color: glyphColorOf(name), line: pathLine(m, p), ...econWire(e) };
+  return { id: p.id, name, icon: FAMILY_GLYPHS.sales_path, color: glyphColorOf(name), line: pathLine(m, p), ...econWire(e), runnable: pathRunnable(m, p) };
 };
 
 const pipeRowOf = (m: CatalogueModel, p: CataloguePipe, name: string) => ({
@@ -271,6 +283,7 @@ const pipeRowOf = (m: CatalogueModel, p: CataloguePipe, name: string) => ({
   line: pipeLine(m, p),
   mode: p.mode,
   ...econWire(p.economics),
+  runnable: pipeRunnable(p),
   ...(p.published ? {} : { draft: true }),
 });
 
@@ -280,6 +293,7 @@ const funnelRowOf = (f: CatalogueFunnel, name: string) => ({
   face: faceOf(name).svgPath,
   line: funnelLine(f),
   ...econWire(f.economics),
+  runnable: funnelRunnable(f),
   ...(funnelPublished(f) ? {} : { draft: true }),
 });
 
@@ -339,6 +353,7 @@ router.get("/internal/catalogue/sales-paths", apiKeyOnly, async (req, res) => {
     const limit = limitOf(req);
     const q = qOf(req);
     const containsRaw = listOf(req, "containsSteps", false);
+    const runnable = runnableOf(req);
     const { model, names } = await loadModel();
     let contains: string[] | null = null;
     if (containsRaw) {
@@ -350,6 +365,7 @@ router.get("/internal/catalogue/sales-paths", apiKeyOnly, async (req, res) => {
     }
     const candidates = [...model.paths.values()]
       .filter((p) => !contains || p.steps.some((s) => contains!.includes(s)))
+      .filter((p) => !runnable || pathRunnable(model, p))
       .filter((p) => matchesQuery(q, [pathLine(model, p), names.get(salesPathNameKeyOf(p.id)), p.id]))
       .map((p) => ({ p, e: pathEconomics(model, p) }))
       .sort(byRoi((x) => x.e, (x) => x.p.id));
@@ -388,6 +404,7 @@ router.get("/internal/catalogue/sales-paths/:id", apiKeyOnly, async (req, res) =
       ...econDetail(e),
       costUnit: "per_paying_client",
       bestSalesFunnelId: e.bestFunnelId,
+      runnable: pathRunnable(model, path),
       salesFunnelCount: funnels.length,
       lifetimeRevenueUsd: model.lifetimeRevenueUsd,
     });
@@ -404,6 +421,7 @@ router.get("/internal/catalogue/channels", apiKeyOnly, async (req, res) => {
     const q = qOf(req);
     const forPaths = listOf(req, "forPaths");
     const legKeys = listOf(req, "legKeys");
+    const runnable = runnableOf(req);
     const { model } = await loadModel();
     let legs: Set<string> | null = null;
     if (forPaths) {
@@ -417,10 +435,11 @@ router.get("/internal/catalogue/channels", apiKeyOnly, async (req, res) => {
     if (legKeys) legs = legs ? new Set(legKeys.filter((l) => legs!.has(l))) : new Set(legKeys);
     const rows = model.channels
       .filter((c) => !legs || [...model.pipes.values()].some((p) => p.channelSlug === c.slug && legs!.has(p.legKey)))
+      .filter((c) => !runnable || channelRunnable(model, c.slug))
       .filter((c) => matchesQuery(q, [c.name, c.slug, c.shortDescription, c.description, c.channelType]))
       .map((c) => ({ c, e: channelEconomics(model, c.slug, legs) }))
       .sort(byRoi((x) => x.e, (x) => x.c.slug))
-      .map(({ c, e }) => ({ id: c.slug, name: c.name, icon: phosphorIconOf(c.icon), line: c.shortDescription, ...econWire(e) }));
+      .map(({ c, e }) => ({ id: c.slug, name: c.name, icon: phosphorIconOf(c.icon), line: c.shortDescription, ...econWire(e), runnable: channelRunnable(model, c.slug) }));
     res.json({ object: "channel", costUnit: "per_outcome", order: "roi_desc", ...page(rows, limit) });
   } catch (err) {
     fail(res, err, "list channels");
@@ -446,6 +465,7 @@ router.get("/internal/catalogue/channels/:id", apiKeyOnly, async (req, res) => {
       operatedBy: c.operatedBy,
       performedBy: c.performedBy,
       managed: c.managed,
+      runnable: channelRunnable(model, c.slug),
       ...econDetail(e),
       costUnit: "per_outcome",
       bestPipeId: e.bestPipeId,
@@ -465,6 +485,7 @@ router.get("/internal/catalogue/pipes", apiKeyOnly, async (req, res) => {
     const paths = listOf(req, "paths");
     const channels = listOf(req, "channels");
     const legKeys = listOf(req, "legKeys");
+    const runnable = runnableOf(req);
     const { model, names } = await loadModel();
     let legs: Set<string> | null = legKeys ? new Set(legKeys) : null;
     if (paths) {
@@ -479,6 +500,7 @@ router.get("/internal/catalogue/pipes", apiKeyOnly, async (req, res) => {
     const candidates = [...model.pipes.values()]
       .filter((p) => !legs || legs.has(p.legKey))
       .filter((p) => !channels || channels.includes(p.channelSlug))
+      .filter((p) => !runnable || pipeRunnable(p))
       .filter((p) => matchesQuery(q, [pipeLine(model, p), names.get(nameKeyOfPipe(p)), p.id]))
       .sort(byRoi((p) => p.economics, (p) => p.id));
     const shown = candidates.slice(0, limit);
@@ -514,6 +536,7 @@ function pipeDetail(model: CatalogueModel, p: CataloguePipe, name: string) {
     triggerId: p.triggerId,
     operatedBy: p.operatedBy,
     managed: p.managed,
+    runnable: pipeRunnable(p),
     draft: !p.published,
     ...econDetail(p.economics),
     costUnit: "per_outcome",
@@ -544,6 +567,7 @@ router.get("/internal/catalogue/sales-funnels", apiKeyOnly, async (req, res) => 
     const q = qOf(req);
     const paths = listOf(req, "paths");
     const containsChannels = listOf(req, "containsChannels");
+    const runnable = runnableOf(req);
     const { model, names } = await loadModel();
     const onPaths: CataloguePath[] = paths
       ? paths.map((id) => {
@@ -555,6 +579,7 @@ router.get("/internal/catalogue/sales-funnels", apiKeyOnly, async (req, res) => 
     const candidates = onPaths
       .flatMap((p) => funnelsOfPath(model, p))
       .filter((f) => !containsChannels || f.channelSlugs.some((s) => containsChannels.includes(s)))
+      .filter((f) => !runnable || funnelRunnable(f))
       .filter((f) => matchesQuery(q, [funnelLine(f), names.get(f.id), f.id]))
       .sort(byRoi((f) => f.economics, (f) => f.id));
     const shown = candidates.slice(0, limit);
@@ -595,6 +620,7 @@ function funnelDetail(model: CatalogueModel, f: CatalogueFunnel, names: Map<stri
     ...econDetail(f.economics),
     costUnit: "per_paying_client",
     lifetimeRevenueUsd: model.lifetimeRevenueUsd,
+    runnable: funnelRunnable(f),
     draft: !funnelPublished(f),
   };
 }
