@@ -35,6 +35,8 @@ vi.mock("../lib/sales-path-names.js", async (importOriginal) => {
       return new Map(keys.map((k) => [k, names.rows.get(k)!]));
     },
     withCampaignNames: async (channels: unknown[]) => channels,
+    // The sentence table, in memory: the first sentence given to a funnel is kept.
+    funnelDescriptionsFor: async (wanted: ReadonlyMap<string, string>) => new Map(wanted),
   };
 });
 
