@@ -65,6 +65,9 @@ export interface MeetingLegFleet {
   campaignCount: number;
   byDynasty: Array<[string, LegMaturityFigures]>;
   unattributableCampaignIds: string[];
+  /** Per attributed campaign: its dynasty and the people (`brandId:leadId`) it acted on / that reached the
+   *  pipe's `to` step. What a finer grain (brand, campaign, offer) of the workflow ladder sums. */
+  perCampaign: Array<{ campaignId: string; orgId: string; brandId: string | null; dynasty: string; acted: string[]; reached: string[] }>;
 }
 
 /** One (org, brand)'s answered leads per acting campaign, and which of them reached a booked meeting. */
@@ -100,6 +103,7 @@ export function buildMeetingLegFleet(input: {
 
   const agg = new Map<string, { cents: number; acted: Set<string>; meetings: Set<string> }>();
   const unattributable: string[] = [];
+  const perCampaign: MeetingLegFleet["perCampaign"] = [];
   for (const c of input.campaigns) {
     const byDyn = spendByCampaign.get(c.campaignId);
     if (!byDyn || byDyn.size === 0) continue; // never ran: nothing spent, nothing answered
@@ -111,11 +115,17 @@ export function buildMeetingLegFleet(input: {
     const entry = agg.get(dynasty) ?? { cents: 0, acted: new Set<string>(), meetings: new Set<string>() };
     entry.cents += cents;
     const pair = c.brandId ? input.pairs.get(c.brandId) : undefined;
+    const mine = { campaignId: c.campaignId, orgId: c.orgId, brandId: c.brandId, dynasty, acted: [] as string[], reached: [] as string[] };
     for (const leadId of pair?.actedByCampaign.get(c.campaignId) ?? []) {
       const key = `${c.brandId}:${leadId}`;
       entry.acted.add(key);
-      if (pair!.meetingLeadIds.has(leadId)) entry.meetings.add(key);
+      mine.acted.push(key);
+      if (pair!.meetingLeadIds.has(leadId)) {
+        entry.meetings.add(key);
+        mine.reached.push(key);
+      }
     }
+    perCampaign.push(mine);
     agg.set(dynasty, entry);
   }
 
@@ -130,6 +140,7 @@ export function buildMeetingLegFleet(input: {
     campaignCount: input.campaigns.length,
     byDynasty,
     unattributableCampaignIds: unattributable.sort(),
+    perCampaign,
   };
 }
 
@@ -167,7 +178,7 @@ export async function computeInternalPipeFleet(featureSlug: string, legKey: stri
   if (!STEP_REACHED[toStep]) throw new StepNotReadableError(toStep);
   const campaigns = await fetchFleetLegCampaigns(featureSlug, legKey);
   const ids = [...new Set(campaigns.map((c) => c.campaignId))].sort();
-  if (ids.length === 0) return { legKey, campaignCount: 0, byDynasty: [], unattributableCampaignIds: [] };
+  if (ids.length === 0) return { legKey, campaignCount: 0, byDynasty: [], unattributableCampaignIds: [], perCampaign: [] };
 
   const byPair = new Map<string, { orgId: string; brandId: string; campaignIds: string[] }>();
   for (const c of campaigns) {
@@ -190,3 +201,64 @@ export async function computeInternalPipeFleet(featureSlug: string, legKey: stri
   ]);
   return buildMeetingLegFleet({ campaigns, workflows, costGroups: costChunks.flat(), pairs: new Map(pairResults), legKey });
 }
+
+const INTERNAL_FLEET_FRESH_MS = 15 * 60_000;
+const INTERNAL_FLEET_STALE_MS = 6 * 60 * 60_000;
+const internalFleetCells = new Map<string, { value: MeetingLegFleet; at: number }>();
+const internalFleetInFlight = new Map<string, Promise<MeetingLegFleet>>();
+
+/**
+ * `computeInternalPipeFleet` held per pipe, stale-while-revalidate (15 min fresh / 6 h stale, single-flight):
+ * the freshness of every fleet evidence read on a request path (`lib/leg-fleet-evidence.ts`). A cold cell
+ * whose build fails throws; a failed background refresh keeps the previous cell, loudly.
+ */
+export async function getInternalPipeFleet(featureSlug: string, legKey: string, toStep: string): Promise<MeetingLegFleet> {
+  const key = `${featureSlug}|${legKey}`;
+  const refresh = (): Promise<MeetingLegFleet> => {
+    let p = internalFleetInFlight.get(key);
+    if (!p) {
+      p = computeInternalPipeFleet(featureSlug, legKey, toStep)
+        .then((value) => {
+          internalFleetCells.set(key, { value, at: Date.now() });
+          return value;
+        })
+        .finally(() => internalFleetInFlight.delete(key));
+      internalFleetInFlight.set(key, p);
+    }
+    return p;
+  };
+  const cell = internalFleetCells.get(key);
+  const age = cell ? Date.now() - cell.at : Infinity;
+  if (cell && age < INTERNAL_FLEET_FRESH_MS) return cell.value;
+  if (cell && age < INTERNAL_FLEET_STALE_MS) {
+    refresh().catch((err) => console.error(`[features-service] internal pipe ${key} refresh failed (serving the last value): ${(err as Error).message}`));
+    return cell.value;
+  }
+  return refresh();
+}
+
+/** Test seam. */
+export function __resetInternalPipeFleet(): void {
+  internalFleetCells.clear();
+  internalFleetInFlight.clear();
+}
+
+/**
+ * PURE: the people a scope's campaigns acted on and that reached the pipe's step, per dynasty. `inScope`
+ * picks the campaigns of the grain (every one for the fleet; the brand's, the identity's, the offer's).
+ */
+export function internalPipeCountsByDynasty(
+  fleet: Pick<MeetingLegFleet, "perCampaign">,
+  inScope: (c: MeetingLegFleet["perCampaign"][number]) => boolean,
+): Map<string, { contacted: number; reached: number }> {
+  const sets = new Map<string, { acted: Set<string>; reached: Set<string> }>();
+  for (const c of fleet.perCampaign) {
+    if (!inScope(c)) continue;
+    const e = sets.get(c.dynasty) ?? { acted: new Set<string>(), reached: new Set<string>() };
+    for (const k of c.acted) e.acted.add(k);
+    for (const k of c.reached) e.reached.add(k);
+    sets.set(c.dynasty, e);
+  }
+  return new Map([...sets].map(([d, e]) => [d, { contacted: e.acted.size, reached: e.reached.size }]));
+}
+
