@@ -578,7 +578,8 @@ describe("GET /features/:featureSlug/revenue", () => {
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBe(0);
-    expect(res.body.organizations).toEqual([]);
+    // Still LISTED (every contacted company is, owner 2026-10-09), at $0.
+    expect(res.body.organizations.map((o: any) => [o.orgId, o.expectedRevenueUsd])).toEqual([["o3", 0]]);
     expect(res.body.events).toEqual([]);
     // The lead itself stays in the snapshot — every Overview count series is built from it — but it
     // claims no expected revenue, and its position tag still reads honestly.
@@ -1153,7 +1154,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     const conversation = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
     expect(conversation.status).toBe(200);
     expect(conversation.body.headline.totalPipelineUsd).toBe(120); // the reply alone, 40% × 30%
-    expect(conversation.body.organizations.map((o: any) => o.orgId)).toEqual(["or"]);
+    expect(conversation.body.organizations.map((o: any) => [o.orgId, o.expectedRevenueUsd > 0])).toEqual([["or", true], ["oc", false]]);
 
     // Declares ONLY a website funnel: now the visit is a leg and the reply is not.
     mockFetch({ leads: CLICK_AND_REPLY, salesFunnels: [WEBSITE] });
@@ -1161,7 +1162,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(website.status).toBe(200);
     // The click alone, on ITS chain (20% × 10%): the meeting route is not walked by this funnel.
     expect(website.body.headline.totalPipelineUsd).toBeCloseTo(20, 5);
-    expect(website.body.organizations.map((o: any) => o.orgId)).toEqual(["oc"]);
+    expect(website.body.organizations.map((o: any) => [o.orgId, o.expectedRevenueUsd > 0])).toEqual([["oc", true], ["or", false]]);
 
     // Declares BOTH: a brand that declared several funnels is priced on ALL of their legs.
     mockFetch({ leads: CLICK_AND_REPLY, salesFunnels: [CONVERSATION, WEBSITE] });

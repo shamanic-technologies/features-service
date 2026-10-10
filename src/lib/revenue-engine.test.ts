@@ -135,7 +135,8 @@ describe("computeRevenue — tag collapse (furthest delivery milestone, funnel-l
     expect(r.leads[0].tags).toEqual(["contacted"]);
     expect(r.leads[0].expectedRevenueUsd).toBe(0);
     // …and it claims no expected revenue anywhere else either.
-    expect(r.organizations).toEqual([]);
+    // Listed (every contacted company is, owner 2026-10-09) at $0, adding nothing to the pipeline.
+    expect(r.organizations.map((o) => [o.orgId, o.expectedRevenueUsd])).toEqual([["o1", 0]]);
     expect(r.headline.totalPipelineUsd).toBe(0);
     expect(r.timeSeries).toEqual([]);
   });
@@ -208,7 +209,7 @@ describe("computeRevenue — default sort (most-advanced status desc, then date 
       person({ leadId: "l3", orgId: "repB", signals: { contacted: true, sent: true, delivered: true, clicked: false, positiveReply: true }, signalDates: { positiveReply: D("2026-02-01T00:00:00Z") } }),
     ]);
     // The merely-delivered org is absent entirely; the reply orgs sort by recent date desc.
-    expect(r.organizations.map((o) => o.orgId)).toEqual(["repB", "repA"]);
+    expect(r.organizations.map((o) => o.orgId)).toEqual(["repB", "repA", "deliv"]); // the $0 company last
   });
 
   it("events: most-advanced status desc, then most-recent date desc across leads", () => {

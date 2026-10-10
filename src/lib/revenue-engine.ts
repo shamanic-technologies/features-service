@@ -943,12 +943,21 @@ export function computeRevenue(
   let totalPipelineUsd = 0;
   const organizations: OrganizationRow[] = [];
   for (const agg of orgAggs) {
-    if (agg.ev <= 0) continue;
-    totalPipelineUsd += agg.ev; // SUM between distinct orgs
-    organizations.push(agg.row);
+    if (agg.ev > 0) {
+      totalPipelineUsd += agg.ev; // SUM between distinct orgs
+      organizations.push(agg.row);
+    } else if (agg.row.orgId) {
+      // EVERY COMPANY WE CONTACTED IS LISTED (owner 2026-10-09): one worth nothing today (never engaged,
+      // its contacted value expired) stays a row at $0, after every valued company. It adds nothing to
+      // the pipeline, the time series or the headline. A person with no company is not a company.
+      organizations.push(agg.row);
+    }
   }
-  // Default sort: most-advanced status first, then most-recent conversion date, then EV (deterministic).
+  // Default sort: companies worth something first; then most-advanced status, then most-recent
+  // conversion date, then EV (deterministic).
   organizations.sort((a, b) => {
+    const v = Number(b.expectedRevenueUsd > 0) - Number(a.expectedRevenueUsd > 0);
+    if (v !== 0) return v;
     const r = rankOfTags(b.tags) - rankOfTags(a.tags);
     if (r !== 0) return r;
     const d = cmpDateDesc(a.mostAdvancedDate, b.mostAdvancedDate);
