@@ -16,12 +16,12 @@ import { loadChannelCatalogue } from "../lib/channel-declarations-store.js";
 import { fetchBrandLegEconomics } from "../lib/brand-leg-economics-client.js";
 import { getBrandEffectiveRates } from "../lib/effective-conversion-rates.js";
 import { SalesFunnelsUnavailableError } from "../lib/sales-funnels-client.js";
-import { fetchOfferChannels, fetchOfferSalesPath, fetchOfferSelectedSalesPaths, OfferSalesPathNotFoundError } from "../lib/offer-sales-path-client.js";
+import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
+import { offerFunnelSelection } from "../lib/offer-funnel-campaigns.js";
 import { storedCombinationKeyOf, storedLegKeyOf } from "../lib/funnel-legs.js";
 import { legacyOutboundLegKeysIn, noteLegacyOutboundLegKeys } from "../lib/legacy-leg-key-arrivals.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
 import {
-  acceptedCatalogueChannels,
   buildOfferSalesPaths,
   DEFAULT_OUTCOMES_CREDIT_USD,
   enumerateSalesPaths,
@@ -108,28 +108,30 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
   });
 
   try {
-    const [statedSalesPath, legEconomics, offerChannels, statedSelectedPaths] = await Promise.all([
-      fetchOfferSalesPath(offerId),
+    // HOW THE OFFER SELLS is read off its SALES FUNNEL CAMPAIGNS (owner 2026-10-10, `lib/offer-funnel-campaigns.ts`):
+    // the legs of every funnel it has a campaign on, the funnels whose campaign is on as its selection. brand-service's
+    // per-offer ticked legs, accepted channels and ticked paths are retired; the catalogue scope lists the shortlist.
+    const [rows, legEconomics] = await Promise.all([
+      fetchBrandCampaignRows(brandId, undefined, { orgId: req.orgId, userId: req.userId, runId: req.runId }),
       fetchBrandLegEconomics(brandId, req.orgId),
-      scope === "catalogue" ? fetchOfferChannels(offerId) : Promise.resolve(null),
-      fetchOfferSelectedSalesPaths(offerId),
     ]);
-    // Both spellings of an outbound leg are ONE identity (wave 1, `lib/funnel-legs.ts`): brand-service's
-    // ticked legs and selected combinations are read in the spelling this service stores and serves, so a
-    // `lead_found_to_*` one finds the same chain, row, name and selection as its `start_to_*` twin. A
-    // legacy spelling reads byte-identical (resolution is the identity on it).
-    // A selected combination brand-service still states in the LEGACY outbound spelling is logged (switch-off measurement).
-    noteLegacyOutboundLegKeys(legacyOutboundLegKeysIn(statedSelectedPaths?.combinationKeys ?? []), {
-      source: "brand-service",
-      route: `GET /internal/offers/${offerId}/selected-sales-paths`,
-      caller: { service: "brand-service", orgId: req.orgId },
+    const fromFunnels = offerFunnelSelection(rows, offerId, legEconomics.offers.length === 1);
+    const statedSalesPath = fromFunnels.salesPath;
+    const statedSelectedPaths = fromFunnels.selected;
+    // Both spellings of an outbound leg are ONE identity (wave 1, `lib/funnel-legs.ts`): the funnels' legs and ids are
+    // read in the spelling this service stores and serves, so a `lead_found_to_*` one finds the same chain, row, name
+    // and selection as its `start_to_*` twin. A legacy spelling reads byte-identical (resolution is the identity on it).
+    noteLegacyOutboundLegKeys(legacyOutboundLegKeysIn(statedSelectedPaths.combinationKeys ?? []), {
+      source: "campaign-service",
+      route: "GET /campaigns (salesFunnelId)",
+      caller: { service: "campaign-service", orgId: req.orgId },
     });
     const salesPath = statedSalesPath.legKeys ? { ...statedSalesPath, legKeys: statedSalesPath.legKeys.map(storedLegKeyOf) } : statedSalesPath;
     const selectedPaths = statedSelectedPaths?.combinationKeys
       ? { ...statedSelectedPaths, combinationKeys: statedSelectedPaths.combinationKeys.map(storedCombinationKeyOf) }
       : statedSelectedPaths;
-    // The catalogue lists only the channels the offer accepts (never stated = the three we run).
-    const catalogueChannelSlugs = offerChannels ? acceptedCatalogueChannels(offerChannels) : undefined;
+    // The catalogue scope lists the shortlist (the per-offer accepted channels are retired with brand-service's store).
+    const catalogueChannelSlugs = undefined;
     const offer = legEconomics.offers.find((o) => o.offerId === offerId);
     if (!offer) {
       return res.status(404).json({ error: `offer ${offerId} is not an offer of brand ${brandId}`, reason: "offer_not_found" });
@@ -207,9 +209,6 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
       lifetimeRevenueSource: lifetimeRevenue.source,
     });
   } catch (error) {
-    if (error instanceof OfferSalesPathNotFoundError) {
-      return res.status(404).json({ error: error.message, reason: "offer_not_found" });
-    }
     if (error instanceof StoreNotComputedError) {
       console.error(`[features-service] sales-paths for offer ${offerId}: ${error.message}`);
       res.setHeader("Retry-After", "60");
