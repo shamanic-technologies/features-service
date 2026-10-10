@@ -690,6 +690,16 @@ async function getFleetStatedMedians(): Promise<FleetStatedMedians> {
   return refresh();
 }
 
+/**
+ * NON-BLOCKING: the last computed fleet medians (any age within the stale window), or null while none has
+ * been computed in this process. Kicks the refresh it would need. For a read that must never wait on the
+ * fleet sweep (the agent catalogue serves its persisted copy instead).
+ */
+export function peekFleetStatedMedians(): { arrows: FleetArrowMedians; lifetimeRevenue: { usd: number | null; offerCount: number } } | null {
+  getFleetStatedMedians().catch((err) => console.error(`[features-service] fleet stated median refresh failed: ${(err as Error).message}`));
+  return fleetMedianCache && Date.now() - fleetMedianCache.at < FLEET_MEDIAN_STALE_MS ? fleetMedianCache.value : null;
+}
+
 export async function getFleetArrowMedians(): Promise<FleetArrowMedians> {
   return (await getFleetStatedMedians()).arrows;
 }

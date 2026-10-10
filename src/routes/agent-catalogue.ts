@@ -53,7 +53,8 @@ import {
 import { actorOf, DeclarationError, parseLegInput, requestedByOrgIdOf } from "../lib/channel-declarations.js";
 import { allNamesByKey, salesPathNamesFor, SalesPathNamePoolExhaustedError } from "../lib/sales-path-names.js";
 import { campaignNameKeyOf } from "../lib/offer-sales-paths.js";
-import { getFleetArrowMedians, getFleetLifetimeRevenueMedian } from "../lib/effective-conversion-rates.js";
+import { getFleetArrowMedians, getFleetLifetimeRevenueMedian, peekFleetStatedMedians, type FleetArrowMedians } from "../lib/effective-conversion-rates.js";
+import { loadFleetCell, storeFleetCell } from "../lib/fleet-cell-store.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
 import { awaitWarmStore, StoreNotComputedError } from "../lib/await-warm-store.js";
 import { servedLegKeyOf, storedCombinationKeyOf } from "../lib/funnel-legs.js";
@@ -92,6 +93,67 @@ interface MeasurementStore {
   /** Pipes whose fleet read failed: served `learning` with reason `measurement_unreadable`, logged loud. */
   unreadable: Set<string>;
   computedAt: string;
+  /** The fleet medians the figures were built with, kept beside them so a fresh process can serve them
+   *  before its own fleet sweep ends (null on a store built before this field existed). */
+  fleet: { arrows: FleetArrowMedians; lifetimeRevenue: { usd: number | null; offerCount: number } } | null;
+}
+
+/**
+ * THE PERSISTED WARM COPY (2026-10-10: after each deploy, catalogue reads waited up to 150 s on the rebuild
+ * and chat-service's 30 s calls timed out three times in a row). Every build is stored
+ * (`lib/fleet-cell-store.ts`); a fresh process installs the stored copy on its first read and rebuilds
+ * BEHIND it, swapping when the new build is ready. A read waits on a build only when no copy was ever
+ * stored (the very first boot): never served empty, never blocked while a copy exists.
+ */
+const FIGURES_CELL_KEY = "agent-catalogue-figures";
+
+interface StoredFigures {
+  computedAt: string;
+  byPipe: Array<[string, PipeMeasurement]>;
+  unreadable: string[];
+  fleet: { arrows: Array<[string, { ratePct: number | null; brandCount: number }]>; lifetimeRevenue: { usd: number | null; offerCount: number } } | null;
+}
+
+export function serializeFigures(v: MeasurementStore): string {
+  const out: StoredFigures = {
+    computedAt: v.computedAt,
+    byPipe: [...v.byPipe],
+    unreadable: [...v.unreadable],
+    fleet: v.fleet ? { arrows: [...v.fleet.arrows], lifetimeRevenue: v.fleet.lifetimeRevenue } : null,
+  };
+  return JSON.stringify(out);
+}
+
+export function parseFigures(text: string): MeasurementStore {
+  const s = JSON.parse(text) as StoredFigures;
+  if (!Array.isArray(s.byPipe) || !Array.isArray(s.unreadable) || typeof s.computedAt !== "string") throw new Error("not a stored catalogue figures cell");
+  return {
+    byPipe: new Map(s.byPipe),
+    unreadable: new Set(s.unreadable),
+    computedAt: s.computedAt,
+    fleet: s.fleet ? { arrows: new Map(s.fleet.arrows), lifetimeRevenue: s.fleet.lifetimeRevenue } : null,
+  };
+}
+
+let persistedLoad: Promise<void> | null = null;
+
+/** Install the stored copy when this process holds none (single-flight; a failed read is logged and the
+ *  process builds as before). */
+function installPersistedFigures(): Promise<void> {
+  if (measurementStore) return Promise.resolve();
+  persistedLoad ??= (async () => {
+    const stored = await loadFleetCell(FIGURES_CELL_KEY);
+    if (!stored || measurementStore) return;
+    try {
+      measurementStore = { value: parseFigures(stored.text), at: stored.computedAt };
+      console.log(`[features-service] agent catalogue: serving the stored figures of ${new Date(stored.computedAt).toISOString()} while this process rebuilds`);
+    } catch (error) {
+      console.error("[features-service] agent catalogue: stored figures unreadable, rebuilding before serving:", error);
+    }
+  })().finally(() => {
+    persistedLoad = null;
+  });
+  return persistedLoad;
 }
 
 let measurementStore: { value: MeasurementStore; at: number } | null = null;
@@ -122,7 +184,9 @@ async function computeMeasurements(): Promise<MeasurementStore> {
       console.error(`[features-service] agent catalogue: fleet measurement of pipe ${p.id} failed; it reads learning (measurement_unreadable):`, error);
     }
   });
-  return { byPipe, unreadable, computedAt: new Date().toISOString() };
+  // The medians beside the figures (a background build may wait on the fleet sweep; a read never does).
+  const [arrows, lifetimeRevenue] = await Promise.all([getFleetArrowMedians(), getFleetLifetimeRevenueMedian()]);
+  return { byPipe, unreadable, computedAt: new Date().toISOString(), fleet: { arrows, lifetimeRevenue } };
 }
 
 /** Rebuild in the background when absent or past its fresh window (single-flight). */
@@ -130,8 +194,10 @@ export function warmCatalogueMeasurements(): Promise<void> {
   if (measurementStore && Date.now() - measurementStore.at < MEASUREMENTS_FRESH_MS) return Promise.resolve();
   if (measurementWarm) return measurementWarm;
   measurementWarm = computeMeasurements()
-    .then((value) => {
-      measurementStore = { value, at: Date.now() };
+    .then(async (value) => {
+      const at = Date.now();
+      measurementStore = { value, at };
+      await storeFleetCell(FIGURES_CELL_KEY, serializeFigures(value), at);
     })
     .catch((error) => console.error("[features-service] agent catalogue measurements warm failed, keeping the previous value:", error))
     .finally(() => {
@@ -142,11 +208,12 @@ export function warmCatalogueMeasurements(): Promise<void> {
 
 /** Test seams. */
 export function __setCatalogueMeasurementsForTest(byPipe: Map<string, PipeMeasurement>): void {
-  measurementStore = { value: { byPipe, unreadable: new Set(), computedAt: new Date(0).toISOString() }, at: Date.now() };
+  measurementStore = { value: { byPipe, unreadable: new Set(), computedAt: new Date(0).toISOString(), fleet: null }, at: Date.now() };
 }
 export function __resetCatalogueMeasurements(): void {
   measurementStore = null;
   measurementWarm = null;
+  persistedLoad = null;
 }
 
 // The served spelling of a pipe's leg (an outbound channel's entry leg reads `lead_found_to_*`).
@@ -161,17 +228,27 @@ interface Loaded {
   cat: LoadedCatalogue;
 }
 
+/** The fleet medians a read prices on: this process's own when computed, else the stored copy's, else (the
+ *  very first boot only) the sweep itself. */
+async function fleetMediansFor(stored: MeasurementStore["fleet"]): Promise<NonNullable<MeasurementStore["fleet"]>> {
+  const own = peekFleetStatedMedians();
+  if (own) return { arrows: own.arrows, lifetimeRevenue: own.lifetimeRevenue };
+  if (stored) return stored;
+  const [arrows, lifetimeRevenue] = await Promise.all([getFleetArrowMedians(), getFleetLifetimeRevenueMedian()]);
+  return { arrows, lifetimeRevenue };
+}
+
 async function loadModel(): Promise<Loaded> {
+  await installPersistedFigures();
   void warmCatalogueMeasurements();
-  const [measurements, all, pub, declaredSteps, medians, ltr, names] = await Promise.all([
+  const [measurements, all, pub, declaredSteps, names] = await Promise.all([
     awaitWarmStore(() => measurementStore?.value ?? null, warmCatalogueMeasurements, MEASUREMENTS_BOOT_WAIT_MS, "catalogue economics"),
     loadChannelCatalogue({ publishedOnly: false }),
     loadChannelCatalogue({ publishedOnly: true }),
     listDeclaredSteps(),
-    getFleetArrowMedians(),
-    getFleetLifetimeRevenueMedian(),
     allNamesByKey(),
   ]);
+  const { arrows: medians, lifetimeRevenue: ltr } = await fleetMediansFor(measurements.fleet);
   const publishedPipeIds = new Set(pub.channels.flatMap((c) => c.stepTransitions.map((t) => pipeIdOf(c.slug, servedPipeLegKey(c.slug, t.legKey)))));
   const model = buildCatalogueModel({
     channels: all.channels,

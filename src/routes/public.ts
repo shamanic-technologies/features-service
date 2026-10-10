@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { awaitWarmStore } from "../lib/await-warm-store.js";
+import { loadFleetCell, storeFleetCell } from "../lib/fleet-cell-store.js";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features, type Feature } from "../db/schema.js";
@@ -4790,6 +4791,9 @@ export async function computeLegWorkflowRanking(featureSlug: string, legKey: str
   };
 }
 
+/** The persisted copy of one leg's ranking (`lib/fleet-cell-store.ts`). */
+const legRankingCellKey = (key: string): string => `leg-workflow-ranking:${key}`;
+
 /** Rebuild one leg's ranking in the background when absent or past its fresh window (single-flight). */
 export function warmLegWorkflowRanking(featureSlug: string, legKey: string): Promise<void> {
   const key = `${featureSlug}|${legKey}`;
@@ -4798,8 +4802,11 @@ export function warmLegWorkflowRanking(featureSlug: string, legKey: string): Pro
   const inFlight = legRankingWarm.get(key);
   if (inFlight) return inFlight;
   const warm = withTimeout(computeLegWorkflowRanking(featureSlug, legKey), LEG_RANKING_WARM_TIMEOUT_MS, `leg workflow ranking ${key}`)
-    .then((value) => {
-      legRankingStore.set(key, { value, computedAt: Date.now() });
+    .then(async (value) => {
+      const computedAt = Date.now();
+      legRankingStore.set(key, { value, computedAt });
+      // The persisted warm copy a fresh process serves while it rebuilds (`readLegWorkflowRanking`).
+      await storeFleetCell(legRankingCellKey(key), JSON.stringify(value), computedAt);
     })
     .catch((error) => {
       console.error(`[features-service] leg workflow ranking warm failed (${key}), keeping the previous value:`, error);
@@ -4817,6 +4824,22 @@ export function warmLegWorkflowRanking(featureSlug: string, legKey: string): Pro
  */
 export async function readLegWorkflowRanking(featureSlug: string, legKey: string, waitMs = 60_000): Promise<LegWorkflowRankingPayload | null> {
   const key = `${featureSlug}|${legKey}`;
+  // A fresh process (every deploy) serves the LAST build persisted by any process, and rebuilds behind it:
+  // a read never waits on the fleet walk while a copy exists (the agent catalogue's 30 s callers timed out).
+  if (!legRankingStore.has(key)) {
+    const stored = await loadFleetCell(legRankingCellKey(key));
+    if (stored && !legRankingStore.has(key)) {
+      try {
+        legRankingStore.set(key, { value: JSON.parse(stored.text) as LegWorkflowRankingPayload, computedAt: stored.computedAt });
+      } catch (error) {
+        console.error(`[features-service] leg workflow ranking ${key}: persisted copy unreadable, rebuilding:`, error);
+      }
+    }
+  }
+  if (legRankingStore.has(key)) {
+    void warmLegWorkflowRanking(featureSlug, legKey);
+    return legRankingStore.get(key)!.value;
+  }
   try {
     return await awaitWarmStore(() => legRankingStore.get(key)?.value ?? null, () => warmLegWorkflowRanking(featureSlug, legKey), waitMs, `leg workflow ranking ${key}`);
   } catch (error) {

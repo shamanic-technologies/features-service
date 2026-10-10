@@ -30,6 +30,7 @@ vi.mock("../lib/effective-conversion-rates.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   getFleetArrowMedians: async () => new Map(),
   getFleetLifetimeRevenueMedian: async () => ({ usd: 3000, offerCount: 12 }),
+  peekFleetStatedMedians: () => null,
 }));
 
 const mem = vi.hoisted(() => ({ legs: [] as any[], steps: [] as any[], rates: [] as any[], chains: [] as any[], paths: [] as any[] }));
