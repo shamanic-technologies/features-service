@@ -6,7 +6,18 @@
  */
 import { asc, eq, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { channelTriggerTypes, declaredChannelLegs, declaredChannels, declaredSalesPaths, features } from "../db/schema.js";
+import {
+  channelTriggerTypes,
+  declaredChannelLegs,
+  declaredChannels,
+  declaredLegRates,
+  declaredSalesPathChains,
+  declaredSalesPaths,
+  declaredSteps,
+  features,
+} from "../db/schema.js";
+import { registerDeclaredSteps, type ChannelStepKey } from "./acquisition-channels.js";
+import { registerDeclaredLegRates } from "./default-leg-rates.js";
 import { buildChannelCatalogue, type PublicChannel } from "./channel-catalogue.js";
 import { channelShortDescription } from "./channel-short-descriptions.js";
 import { channelTypeOf } from "./channel-types.js";
@@ -104,6 +115,8 @@ export async function loadChannelCatalogue(opts: { publishedOnly: boolean }): Pr
     listDeclaredChannels(),
     listDeclaredLegs(),
     listTriggerTypes(),
+    // Declared steps and leg rates are registered BEFORE the build parses a leg that names them.
+    registerStepDeclarations(),
   ]);
   const declared = { channels, legs, triggers };
   const merged = mergeDeclarations(rows, declared, opts, { shortDescriptionOf: channelShortDescription, channelTypeOfSlug: channelTypeOf });
@@ -218,4 +231,75 @@ export async function insertSalesPath(
 ): Promise<DeclaredSalesPath> {
   const [row] = await db.insert(declaredSalesPaths).values({ combinationKey, legs, createdBy, requestedByOrgId }).returning();
   return { combinationKey: row.combinationKey, legs: row.legs as DeclaredSalesPathLeg[], createdBy: row.createdBy, requestedByOrgId: row.requestedByOrgId, createdAt: row.createdAt.toISOString() };
+}
+
+// ── Steps, leg rates, sales path chains (owner 2026-10-10, "chat first") ─────────────────────────────
+
+export interface DeclaredStep {
+  key: string;
+  label: string;
+  description: string;
+  shortDescription: string;
+  icon: string;
+  towardStep: string;
+  towardRatePct: number;
+  producedBy: string | null;
+  createdBy: string;
+  requestedByOrgId: string | null;
+  createdAt: string;
+}
+
+export interface DeclaredLegRate {
+  fromStep: string;
+  toStep: string;
+  ratePct: number;
+}
+
+export interface DeclaredSalesPathChain {
+  pathId: string;
+  legKeys: string[];
+  createdBy: string;
+  requestedByOrgId: string | null;
+  createdAt: string;
+}
+
+export async function listDeclaredSteps(): Promise<DeclaredStep[]> {
+  return (await db.select().from(declaredSteps).orderBy(asc(declaredSteps.createdAt))).map((r) => ({ ...r, createdAt: r.createdAt.toISOString() }));
+}
+
+export async function listDeclaredLegRates(): Promise<DeclaredLegRate[]> {
+  return (await db.select().from(declaredLegRates).orderBy(asc(declaredLegRates.createdAt))).map((r) => ({ fromStep: r.fromStep, toStep: r.toStep, ratePct: r.ratePct }));
+}
+
+export async function listDeclaredSalesPathChains(): Promise<DeclaredSalesPathChain[]> {
+  return (await db.select().from(declaredSalesPathChains).orderBy(asc(declaredSalesPathChains.createdAt))).map((r) => ({
+    pathId: r.pathId,
+    legKeys: r.legKeys as string[],
+    createdBy: r.createdBy,
+    requestedByOrgId: r.requestedByOrgId,
+    createdAt: r.createdAt.toISOString(),
+  }));
+}
+
+/** Read the declared steps and leg rates and register them (`registerDeclaredSteps`, `registerDeclaredLegRates`). */
+export async function registerStepDeclarations(): Promise<{ steps: DeclaredStep[]; rates: DeclaredLegRate[] }> {
+  const [steps, rates] = await Promise.all([listDeclaredSteps(), listDeclaredLegRates()]);
+  registerDeclaredSteps(steps.map((s) => ({ key: s.key as ChannelStepKey, label: s.label, description: s.description, shortDescription: s.shortDescription })));
+  registerDeclaredLegRates([...steps.map((s) => ({ fromStep: s.key, toStep: s.towardStep, ratePct: s.towardRatePct })), ...rates]);
+  return { steps, rates };
+}
+
+export async function insertStep(input: Omit<DeclaredStep, "createdAt">): Promise<DeclaredStep> {
+  const [row] = await db.insert(declaredSteps).values(input).returning();
+  return { ...row, createdAt: row.createdAt.toISOString() };
+}
+
+/** First statement wins: a rate already stated for the leg is kept (ON CONFLICT DO NOTHING). */
+export async function insertLegRate(rate: DeclaredLegRate, createdBy: string): Promise<void> {
+  await db.insert(declaredLegRates).values({ ...rate, createdBy }).onConflictDoNothing();
+}
+
+export async function insertSalesPathChain(pathId: string, legKeys: string[], createdBy: string, requestedByOrgId: string | null): Promise<DeclaredSalesPathChain> {
+  const [row] = await db.insert(declaredSalesPathChains).values({ pathId, legKeys, createdBy, requestedByOrgId }).returning();
+  return { pathId: row.pathId, legKeys: row.legKeys as string[], createdBy: row.createdBy, requestedByOrgId: row.requestedByOrgId, createdAt: row.createdAt.toISOString() };
 }

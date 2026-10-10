@@ -4585,6 +4585,23 @@ async function coldEmailLegPrice(legKey: string): Promise<LegPrice> {
   });
 }
 
+/**
+ * ONE PIPE's fleet price (channel x leg): the best workflow's figures on the leg, mature when any is
+ * (`pickLegPrice`). The AI meeting-booking leg reads its own fleet walk (`computeMeetingLegFleet`, reactive
+ * attribution); every other pipe the generic leg maturity. A pipe nobody runs answers `no_campaigns_on_leg`
+ * without walking anything. (Read by the agent catalogue, `routes/agent-catalogue.ts`.)
+ */
+export async function fleetLegPrice(featureSlug: string, legKey: string): Promise<LegPrice> {
+  if (featureSlug === MEETING_BOOKING_FEATURE_SLUG && legKey === MEETING_BOOKING_LEG_KEY) {
+    const [fleet, excluded] = await Promise.all([computeMeetingLegFleet(), deprecatedOnLeg(featureSlug, legKey)]);
+    return pickLegPrice({ legKey, featureSlug, byDynasty: new Map(fleet.byDynasty), excluded, campaignCount: fleet.campaignCount });
+  }
+  const campaigns = await getFleetLegCampaigns(featureSlug, legKey);
+  if (campaigns.length === 0) return pickLegPrice({ legKey, featureSlug, byDynasty: new Map(), excluded: new Set(), campaignCount: 0 });
+  const [maturity, excluded] = await Promise.all([fetchFleetLegWorkflowMaturity(featureSlug, legKey), deprecatedOnLeg(featureSlug, legKey)]);
+  return pickLegPrice({ legKey, featureSlug, byDynasty: new Map(maturity.byDynasty), excluded, campaignCount: campaigns.length });
+}
+
 export async function computeOutcomePrices(): Promise<OutcomePricesPayload> {
   const [visitLeg, replyLeg, meetingFleet, meetingExcluded] = await Promise.all([
     coldEmailLegPrice("start_to_website_visit"),
@@ -4792,6 +4809,20 @@ export function warmLegWorkflowRanking(featureSlug: string, legKey: string): Pro
     });
   legRankingWarm.set(key, warm);
   return warm;
+}
+
+/**
+ * One pipe's workflow ranking from the last build (kicks a warm when stale). A pipe never built yet awaits
+ * its first build, bounded by `waitMs`; still nothing after that = null (the caller says "not computed yet").
+ */
+export async function readLegWorkflowRanking(featureSlug: string, legKey: string, waitMs = 60_000): Promise<LegWorkflowRankingPayload | null> {
+  const key = `${featureSlug}|${legKey}`;
+  try {
+    return await awaitWarmStore(() => legRankingStore.get(key)?.value ?? null, () => warmLegWorkflowRanking(featureSlug, legKey), waitMs, `leg workflow ranking ${key}`);
+  } catch (error) {
+    console.error(`[features-service] leg workflow ranking ${key} not built after ${Math.round(waitMs / 1000)}s:`, (error as Error).message);
+    return null;
+  }
 }
 
 /** Test seam. */

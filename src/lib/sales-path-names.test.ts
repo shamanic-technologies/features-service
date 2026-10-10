@@ -26,7 +26,9 @@ vi.mock("../db/index.js", () => {
   return { db: { ...tx, transaction: async (fn: (t: typeof tx) => unknown) => fn(tx) }, sql: {} };
 });
 
+import { isGivableWord, PIPE_BIRD_WORDS } from "./catalogue-names.js";
 import {
+  FAMILY_WORDS,
   campaignNamesOf,
   nextUnusedNames,
   SALES_PATH_NAME_POOL,
@@ -77,7 +79,10 @@ describe("the name pool", () => {
       .filter((c) => c.salesPathEligible)
       .reduce((n, c) => n + c.stepTransitions.length, 0);
     expect(campaigns).toBeGreaterThan(10);
-    expect(SALES_PATH_NAME_POOL.length).toBeGreaterThanOrEqual(2 * (combinations + campaigns));
+    // Each family draws from its own words (lib/catalogue-names.ts): funnels the uplifting pool, campaigns
+    // (pipes) the birds; workflow-service's dynasty words are never given.
+    expect(FAMILY_WORDS.sales_funnel.filter(isGivableWord).length).toBeGreaterThanOrEqual(2 * combinations);
+    expect(FAMILY_WORDS.pipe.filter(isGivableWord).length).toBeGreaterThanOrEqual(2 * campaigns);
   });
 
   it("hands out the first unused words in pool order, and fails loud when short", () => {
@@ -100,7 +105,8 @@ describe("salesPathNamesFor — shared, stable forever, never reused", () => {
     expect([first.get(k1), first.get(k2)]).toEqual(["Victory", "Sol"]);
     // Another brand reads the same combinations in the opposite rank, plus a new one.
     const second = await salesPathNamesFor([k3, k2, k1]);
-    expect([second.get(k1), second.get(k2), second.get(k3)]).toEqual(["Victory", "Sol", "Herald"]);
+    // "Herald" is a workflow dynasty word (lib/workflow-dynasty-words.ts): never given again.
+    expect([second.get(k1), second.get(k2), second.get(k3)]).toEqual(["Victory", "Sol", "Epiphany"]);
     expect(store.rows).toHaveLength(3);
   });
 
@@ -126,14 +132,14 @@ describe("withCampaignNames — every sales-path campaign (channel × leg) named
     expect(eligible.length).toBeGreaterThan(0);
     for (const c of named) {
       for (const t of c.stepTransitions) {
-        if (c.salesPathEligible) expect(t.campaignName).toMatch(/^[A-Z][a-z]+$/);
+        if (c.salesPathEligible) expect(PIPE_BIRD_WORDS).toContain(t.campaignName);
         else expect(t.campaignName).toBeNull();
       }
     }
     const names = campaignNamesOf(named);
     expect(names.size).toBe(eligible.reduce((n, c) => n + c.stepTransitions.length, 0));
-    // First eligible campaign in catalogue order took the first word left after the path's.
-    expect(eligible[0].stepTransitions[0].campaignName).toBe("Sol");
+    // A new campaign (pipe) takes a bird, in the bird list's order (owner 2026-10-10).
+    expect(eligible[0].stepTransitions[0].campaignName).toBe(PIPE_BIRD_WORDS[0]);
     expect([...names.values()]).not.toContain("Victory");
     expect(new Set(store.rows.map((r) => r.name)).size).toBe(store.rows.length);
     // A re-read writes nothing and returns the same names.

@@ -253,7 +253,31 @@ export const CHANNEL_STEPS: Record<ChannelStepKey, ChannelStepDef> = {
 };
 
 const isChannelStepKey = (value: string): value is ChannelStepKey =>
-  (CHANNEL_STEP_KEYS as readonly string[]).includes(value);
+  (CHANNEL_STEP_KEYS as readonly string[]).includes(value) || DECLARED_STEP_KEYS.has(value);
+
+/**
+ * STEPS DECLARED AT RUN TIME (owner 2026-10-10, "chat first": the agent names a stage on the fly, "LinkedIn
+ * post", "Email found"). Stored in `declared_steps` (`lib/catalogue-declarations-store.ts`) and REGISTERED
+ * here by every catalogue load, so a declared leg on a declared step parses, keys and prices through the same
+ * code as a coded one (`matchChannelStepKey`, `CHANNEL_STEPS[key]`). A declared key never shadows a coded one
+ * (refused at creation, ignored here) and no coded list (`CHANNEL_STEP_KEYS`, funnels, default rates) grows:
+ * a declared step lives only on the legs and paths that name it.
+ */
+const DECLARED_STEP_KEYS = new Set<string>();
+
+export function registerDeclaredSteps(defs: readonly ChannelStepDef[]): void {
+  for (const def of defs) {
+    if ((CHANNEL_STEP_KEYS as readonly string[]).includes(def.key)) continue;
+    DECLARED_STEP_KEYS.add(def.key);
+    (CHANNEL_STEPS as Record<string, ChannelStepDef>)[def.key] = { ...def };
+  }
+}
+
+/** True for a step declared at run time (never a coded one). */
+export const isDeclaredStepKey = (key: string): boolean => DECLARED_STEP_KEYS.has(key);
+
+/** Every registered declared step key, in registration order. */
+export const declaredStepKeys = (): string[] => [...DECLARED_STEP_KEYS];
 
 /**
  * Every pre-merge spelling of the ONE form step, resolved to it. Accepted FOREVER on the way IN — a

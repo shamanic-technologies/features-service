@@ -33,6 +33,7 @@ import { salesPathCombinationNames } from "../db/schema.js";
 import type { ChannelStepTransitionWire, PublicChannel } from "./channel-catalogue.js";
 import { campaignNameKeyOf } from "./offer-sales-paths.js";
 import { servedNameKeyOf } from "./funnel-legs.js";
+import { FUNNEL_EXTRA_WORDS, PATH_RIVER_WORDS, PIPE_BIRD_WORDS, familyNameCandidates, nameFamilyOfKey, type NameFamily } from "./catalogue-names.js";
 
 /** Append-only in spirit: add words at the END; a word already given stays given whatever happens here. */
 export const SALES_PATH_NAME_POOL: readonly string[] = [
@@ -65,8 +66,11 @@ export const SALES_PATH_NAME_POOL: readonly string[] = [
 ];
 
 export class SalesPathNamePoolExhaustedError extends Error {
-  constructor(public readonly missing: number) {
-    super(`sales path name pool exhausted: ${missing} new combination(s) need a name and every word of SALES_PATH_NAME_POOL is given — add words at the end of the pool`);
+  constructor(
+    public readonly missing: number,
+    public readonly families: readonly string[] = ["sales_funnel"],
+  ) {
+    super(`name family exhausted (${families.join(", ")}): ${missing} new object(s) need a name and every name of the family is given — add words at the end of its list (lib/catalogue-names.ts)`);
     this.name = "SalesPathNamePoolExhaustedError";
   }
 }
@@ -76,6 +80,43 @@ export function nextUnusedNames(pool: readonly string[], used: ReadonlySet<strin
   const free = pool.filter((w) => !used.has(w));
   if (free.length < count) throw new SalesPathNamePoolExhaustedError(count - free.length);
   return free.slice(0, count);
+}
+
+/** Each family's single words (`lib/catalogue-names.ts`): a sales funnel's are the original pool, then the extra words. */
+export const FAMILY_WORDS: Readonly<Record<NameFamily, readonly string[]>> = {
+  sales_funnel: [...SALES_PATH_NAME_POOL, ...FUNNEL_EXTRA_WORDS],
+  pipe: PIPE_BIRD_WORDS,
+  sales_path: PATH_RIVER_WORDS,
+};
+
+/**
+ * PURE: one new name per key, in key order, each from the key's OWN family (`nameFamilyOfKey`), never one
+ * `used` holds nor one given earlier in the same call. Throws when a family is exhausted.
+ */
+export function nextNamesForKeys(keys: readonly string[], used: ReadonlySet<string>): string[] {
+  const taken = new Set(used);
+  const iterators = new Map<NameFamily, Generator<string>>();
+  const missingByFamily = new Map<NameFamily, number>();
+  const out: string[] = [];
+  for (const key of keys) {
+    const family = nameFamilyOfKey(key);
+    let it = iterators.get(family);
+    if (!it) {
+      it = familyNameCandidates(family, FAMILY_WORDS[family]);
+      iterators.set(family, it);
+    }
+    let next = it.next();
+    while (!next.done && taken.has(next.value)) next = it.next();
+    if (next.done) {
+      missingByFamily.set(family, (missingByFamily.get(family) ?? 0) + 1);
+      continue;
+    }
+    taken.add(next.value);
+    out.push(next.value);
+  }
+  const missing = [...missingByFamily.values()].reduce((a, b) => a + b, 0);
+  if (missing > 0) throw new SalesPathNamePoolExhaustedError(missing, [...missingByFamily.keys()]);
+  return out;
 }
 
 /** Lock id of the assignment (any constant; scoped to this one table's writes). */
@@ -114,12 +155,18 @@ async function namesByStoredKey(keysInRankOrder: readonly string[]): Promise<Map
     const missing = keys.filter((k) => !named.has(k));
     if (missing.length === 0) return named;
     const used = new Set((await tx.select({ name: salesPathCombinationNames.name }).from(salesPathCombinationNames)).map((r) => r.name));
-    const words = nextUnusedNames(SALES_PATH_NAME_POOL, used, missing.length);
+    const words = nextNamesForKeys(missing, used);
     await tx.insert(salesPathCombinationNames).values(missing.map((combinationKey, i) => ({ combinationKey, name: words[i] })));
     missing.forEach((k, i) => named.set(k, words[i]));
     console.log(`[features-service] sales-path names: named ${missing.map((k, i) => `${words[i]}=${k}`).join(", ")}`);
     return named;
   });
+}
+
+/** Every name given so far, keyed by its stored key (one small table: read whole, ~1 row per named object). */
+export async function allNamesByKey(): Promise<Map<string, string>> {
+  const rows = await db.select({ key: salesPathCombinationNames.combinationKey, name: salesPathCombinationNames.name }).from(salesPathCombinationNames);
+  return new Map(rows.map((r) => [r.key, r.name]));
 }
 
 /** The key a CAMPAIGN's name is stored under: its own namespace, never a combination key. */
