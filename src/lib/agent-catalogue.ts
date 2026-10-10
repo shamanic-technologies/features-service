@@ -561,8 +561,18 @@ export type FunnelType = "proactive" | "reactive";
 export const funnelTypeOf = (f: Pick<CatalogueFunnel, "legs">): FunnelType =>
   f.legs.some((l) => l.pipe?.mode === "proactive") ? "proactive" : "reactive";
 
-/** PURE: a funnel we can run today: every leg is bare (the buyer acts) or worked by a runnable pipe. */
-export const funnelRunnable = (f: CatalogueFunnel): boolean => f.legs.every((l) => l.pipe === null || pipeRunnable(l.pipe));
+/**
+ * PURE: a MIXED funnel (owner 2026-10-10): a proactive pipe AND a reactive pipe WE run (platform-operated,
+ * e.g. AI meeting booking on a reply). The funnel's budget caps every pipe, so the reactive one can starve
+ * the proactive part. A reactive pipe the customer's own team works spends nothing of ours: not a mix.
+ */
+export const funnelMixed = (f: Pick<CatalogueFunnel, "legs">): boolean =>
+  f.legs.some((l) => l.pipe?.mode === "proactive") &&
+  f.legs.some((l) => l.pipe?.mode === "reactive" && l.pipe.operatedBy === "platform");
+
+/** PURE: a funnel we can run today: one kind (never mixed), every leg bare (the buyer acts) or worked by a runnable pipe. */
+export const funnelRunnable = (f: CatalogueFunnel): boolean =>
+  !funnelMixed(f) && f.legs.every((l) => l.pipe === null || pipeRunnable(l.pipe));
 
 /** PURE: a channel we can run today: at least one of its pipes is runnable. */
 export const channelRunnable = (model: CatalogueModel, slug: string): boolean =>
