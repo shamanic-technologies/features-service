@@ -40,7 +40,8 @@ import {
   type MeetingPriceArithmetic,
   type OutcomePrice,
 } from "../lib/outcome-prices.js";
-import { computeInternalPipeFleet, computeMeetingLegFleet, isInternalPipe, MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY } from "../lib/meeting-leg-fleet.js";
+import { computeMeetingLegFleet, getInternalPipeFleet, MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY } from "../lib/meeting-leg-fleet.js";
+import { internalPipeToStep } from "../lib/pipe-kind.js";
 import { fetchLegAssignments } from "../lib/workflow-leg-assignments.js";
 import { getFunnel, type SalesEconomics } from "../lib/funnel-registry.js";
 import { projectedCostPerOutcome } from "../lib/cost-engine.js";
@@ -4763,10 +4764,9 @@ export async function fleetPipeFigures(
   featureSlug: string,
   legKey: string,
 ): Promise<{ byDynasty: Array<[string, LegMaturityFigures]>; cutoffIso: string | null; measured: boolean; campaignCount: number }> {
-  const leg = funnelLeg(legKey);
-  const fromStep = leg ? (leg.fromStep?.key ?? null) : null;
-  if (leg && isInternalPipe(fromStep)) {
-    const fleet = await computeInternalPipeFleet(featureSlug, legKey, leg.toStep.key);
+  const internalToStep = await internalPipeToStep(featureSlug, legKey);
+  if (internalToStep) {
+    const fleet = await getInternalPipeFleet(featureSlug, legKey, internalToStep);
     if (fleet.unattributableCampaignIds.length > 0) {
       console.warn(
         `[features-service] pipe ${featureSlug}|${legKey}: ${fleet.unattributableCampaignIds.length} campaign(s) ran several workflows and are left out of every workflow: ${fleet.unattributableCampaignIds.join(",")}`,
