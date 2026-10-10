@@ -52,11 +52,13 @@ export interface WorkflowEngagementLatency {
 export async function fetchPublicWorkflows(
   featureSlugs: string,
   status = "all",
+  /** Skip the 30s shared read (a caller checking a workflow created a second ago). */
+  fresh = false,
 ): Promise<WorkflowMetadata[]> {
   const url = `${process.env.WORKFLOW_SERVICE_URL}/public/workflows?featureSlugs=${encodeURIComponent(featureSlugs)}&status=${status}`;
   // Slow-moving catalogue read: an interactive view reuses it 30s, re-read behind the answer
   // (fetch-retry.ts `shareForMs`, features-service#1045).
-  const response = await fetchWithRetry(url, { headers: { "x-api-key": process.env.WORKFLOW_SERVICE_API_KEY! } }, { shareForMs: 30_000 });
+  const response = await fetchWithRetry(url, { headers: { "x-api-key": process.env.WORKFLOW_SERVICE_API_KEY! } }, fresh ? {} : { shareForMs: 30_000 });
 
   if (!response.ok) {
     const body = await response.text();
