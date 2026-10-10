@@ -39,6 +39,8 @@ describe("the name families (owner 2026-10-10)", () => {
   it("never GIVE a workflow dynasty word (an old word already given stays given)", () => {
     const wf = new Set(lower(WORKFLOW_DYNASTY_WORDS));
     for (const w of [...FUNNEL_EXTRA_WORDS, ...PIPE_BIRD_WORDS, ...PATH_RIVER_WORDS, ...Object.values(FAMILY_ADJECTIVES).flat()]) expect(wf.has(w.toLowerCase()), w).toBe(false);
+    // The snapshot holds the STAR pool and its two-word adjectives too (workflow-service #514), not only the old words.
+    for (const star of ["vega", "bright", "bold", "twinkling", "clear"]) expect(wf.has(star), star).toBe(true);
     // The original pool predates the rule: its dynasty words are skipped, never handed out again.
     expect(isGivableWord("Aurora")).toBe(false);
     expect([...familyNameCandidates("sales_funnel", SALES_PATH_NAME_POOL)].slice(0, 3)).toEqual(["Victory", "Sol", "Epiphany"]);
