@@ -23,6 +23,8 @@ vi.mock("../lib/sales-path-names.js", async (importOriginal) => {
       return new Map(keys.map((k) => [k, names.rows.get(k)!]));
     },
     withCampaignNames: async (channels: unknown[]) => channels,
+    // The sentence table, in memory: the first sentence given to a funnel is kept.
+    funnelDescriptionsFor: async (wanted: ReadonlyMap<string, string>) => new Map(wanted),
   };
 });
 
@@ -221,6 +223,21 @@ describe("agent catalogue lists (context-window sized)", () => {
     expect((await request(app).get("/internal/catalogue/sales-funnels").query({ offerId: "offer-1" }).set(KEY)).body.reason).toBe("brand_required");
     expect((await request(app).get("/internal/catalogue/sales-funnels").query({ offerId: "offer-1", brandId: "b1" }).set(KEY)).body.reason).toBe("org_required");
     expect((await request(app).get("/internal/catalogue/sales-funnels").query({ offerId: "nope", brandId: "b1" }).set({ ...KEY, "x-org-id": "o1" })).status).toBe(404);
+  });
+
+  it("every funnel says what it does for the client in one sentence; a reactive one names its trigger", async () => {
+    const list = (await request(app).get("/internal/catalogue/sales-funnels").query({ limit: 25 }).set(KEY)).body;
+    for (const r of list.rows) {
+      expect(r.description).toMatch(/^[A-Z].*\.$/);
+      expect(r.description).not.toMatch(/funnel|pipe|\bleg\b|workflow|—|–/i);
+    }
+    expect(new Set(list.rows.map((r: { description: string }) => r.description)).size).toBe(list.rows.length);
+    const motivate = (await request(app).get(`/internal/catalogue/sales-funnels/${encodeURIComponent("conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client")}`).set(KEY)).body;
+    expect(motivate).toMatchObject({
+      type: "reactive",
+      triggerLabel: "Positive replies",
+      description: "When a buyer replies with interest, our AI books a meeting with them, your team makes sure they show up, and your team closes the deal.",
+    });
   });
 
   it("serves a detail read per id", async () => {

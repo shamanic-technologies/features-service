@@ -403,6 +403,9 @@ export const salesPathCombinationNames = pgTable("sales_path_combination_names",
   combinationKey: text("combination_key").primaryKey(),
   name: text("name").notNull().unique(),
   assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(),
+  /** A SALES FUNNEL's one customer sentence (`lib/funnel-descriptions.ts`), written once at first sight and
+   *  never updated, so a later wording change never moves a sentence a customer has seen. Null on pipes and paths. */
+  description: text("description"),
 });
 
 /**

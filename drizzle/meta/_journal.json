@@ -169,6 +169,13 @@
       "when": 1791763200000,
       "tag": "0023_retired_names",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1791849600000,
+      "tag": "0024_funnel_descriptions",
+      "breakpoints": true
     }
   ]
 }
