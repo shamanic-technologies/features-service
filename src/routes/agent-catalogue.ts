@@ -1090,4 +1090,68 @@ router.get("/public/catalogue/faces/:file", (req, res) => {
   res.set("Content-Type", "image/svg+xml").set("Cache-Control", "public, max-age=86400").send(faceSvg(m[1]));
 });
 
+/**
+ * THE CUSTOMER COPY OF SALES FUNNELS BY ID, for the org-scoped funnel campaign read
+ * (`routes/sales-funnel-campaigns.ts`): name, face, the funnel's one sentence (the SAME stored-once sentence its
+ * catalogue row serves), type, trigger label. Built on the catalogue's STRUCTURE only (channels, legs, steps),
+ * never on its fleet figures, so a read never waits on the economics build. An id the catalogue does not know
+ * maps to null (logged by the caller).
+ */
+export interface FunnelCopy {
+  name: string | null;
+  face: string | null;
+  type: "proactive" | "reactive";
+  description: string;
+  triggerLabel: string | null;
+  path: FunnelPathView;
+}
+
+/**
+ * A funnel's PATH as the dashboard draws it (owner 2026-10-11: "Lead found -> Sales Cold Email Outreach ->
+ * Positive reply -> Paid client"): `items` in reading order, the first step, then per leg the channel's display
+ * name when WE run the leg, then the leg's next step (a leg the client's own team works, or the buyer alone,
+ * shows only its next step); always ends at Paid client. `legs` states the same per leg, structured.
+ */
+export interface FunnelPathView {
+  items: Array<{ kind: "step"; key: string; label: string } | { kind: "channel"; slug: string; name: string }>;
+  legs: Array<{ legKey: string; fromStep: string; toStep: string; runByUs: boolean; channelSlug: string | null; channelName: string | null }>;
+}
+
+/** PURE: the path view of a funnel (its sales path's steps, its legs' pipes). */
+export function funnelPathView(model: CatalogueModel, f: CatalogueFunnel): FunnelPathView {
+  const steps = model.paths.get(f.pathId)!.steps;
+  const step = (key: string) => ({ kind: "step" as const, key, label: stepLabel(model, key) });
+  const items: FunnelPathView["items"] = [step(steps[0])];
+  const legs: FunnelPathView["legs"] = f.legs.map((l, i) => {
+    const runByUs = !!l.pipe && l.pipe.operatedBy === "platform";
+    if (runByUs) items.push({ kind: "channel", slug: l.pipe!.channelSlug, name: l.pipe!.channelName });
+    items.push(step(steps[i + 1]));
+    return { legKey: l.legKey, fromStep: steps[i], toStep: steps[i + 1], runByUs, channelSlug: l.pipe?.channelSlug ?? null, channelName: l.pipe?.channelName ?? null };
+  });
+  return { items, legs };
+}
+
+export async function funnelCopiesFor(ids: readonly string[]): Promise<Map<string, FunnelCopy | null>> {
+  const [all, pub, declaredSteps, names] = await Promise.all([
+    loadChannelCatalogue({ publishedOnly: false }),
+    loadChannelCatalogue({ publishedOnly: true }),
+    listDeclaredSteps(),
+    allNamesByKey(),
+  ]);
+  const publishedPipeIds = new Set(pub.channels.flatMap((c) => c.stepTransitions.map((t) => pipeIdOf(c.slug, servedPipeLegKey(c.slug, t.legKey)))));
+  const model = buildCatalogueModel({ channels: all.channels, publishedPipeIds, declaredSteps, measurements: new Map(), fleetMedians: new Map(), lifetimeRevenueUsd: null });
+  const found = ids.flatMap((id) => {
+    const f = funnelById(model, id);
+    return f ? [[id, f] as const] : [];
+  });
+  const descriptions = await describedFunnels(model, found.map(([, f]) => f));
+  const out = new Map<string, FunnelCopy | null>(ids.map((id) => [id, null]));
+  for (const [id, f] of found) {
+    const name = names.get(f.id) ?? null;
+    const copy = funnelCopy(model, f, descriptions);
+    out.set(id, { name, face: name ? faceOf(name).svgPath : null, type: funnelTypeOf(f), description: copy.description, triggerLabel: copy.triggerLabel, path: funnelPathView(model, f) });
+  }
+  return out;
+}
+
 export default router;

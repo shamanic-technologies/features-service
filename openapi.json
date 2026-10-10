@@ -19821,6 +19821,410 @@
           "offers"
         ]
       },
+      "SalesFunnelCampaignsResponse": {
+        "type": "object",
+        "properties": {
+          "brandId": {
+            "type": "string"
+          },
+          "offerId": {
+            "type": "string",
+            "nullable": true,
+            "description": "The `?offerId=` filter echoed; null = every offer of the brand."
+          },
+          "pricing": {
+            "type": "string",
+            "enum": [
+              "gross",
+              "net"
+            ]
+          },
+          "costBasis": {
+            "type": "string",
+            "enum": [
+              "charged"
+            ]
+          },
+          "salesFunnelCampaigns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "campaign-service's sales funnel campaign id."
+                },
+                "brandId": {
+                  "type": "string"
+                },
+                "offerId": {
+                  "type": "string"
+                },
+                "salesFunnelId": {
+                  "type": "string",
+                  "description": "The catalogue sales funnel id (`GET /internal/catalogue/sales-funnels` rows[].id)."
+                },
+                "name": {
+                  "type": "string",
+                  "description": "The funnel campaign's name, as campaign-service serves it (`salesFunnelName`)."
+                },
+                "face": {
+                  "type": "string",
+                  "description": "Path of the name's face SVG on this service (`GET /public/catalogue/faces/{name}.svg`)."
+                },
+                "status": {
+                  "type": "string",
+                  "description": "campaign-service's status (`ongoing` | `stopped`), relayed."
+                },
+                "stopReason": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "What this campaign does, in ONE plain customer sentence: the catalogue funnel's own `description` (stored once given). Null only with `copyUnavailableReason`."
+                },
+                "type": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "proactive",
+                    "reactive"
+                  ],
+                  "description": "The funnel's type (catalogue `type`). Null only with `copyUnavailableReason`."
+                },
+                "triggerLabel": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "What starts a REACTIVE funnel, in customer words (\"Positive replies\"): the catalogue funnel's `triggerLabel`. Null on a proactive funnel."
+                },
+                "typeLabel": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The Campaigns table's Type column (owner 2026-10-11): \"Daily\" for a proactive funnel, `triggerLabel` for a reactive one. Null only with `copyUnavailableReason`."
+                },
+                "path": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "step"
+                                ]
+                              },
+                              "key": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string",
+                                "description": "The step's customer label (\"Positive reply\")."
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "key",
+                              "label"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "channel"
+                                ]
+                              },
+                              "slug": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string",
+                                "description": "The channel's display name (\"Sales Cold Email Outreach\")."
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "slug",
+                              "name"
+                            ]
+                          }
+                        ]
+                      },
+                      "description": "The path in reading order: the first step, then per leg the channel's display name when WE run the leg, then the leg's next step (a leg the client's own team works, or the buyer alone, shows only its next step). Always ends at Paid client. Render the items joined by arrows; never parse an id."
+                    },
+                    "legs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "legKey": {
+                            "type": "string"
+                          },
+                          "fromStep": {
+                            "type": "string"
+                          },
+                          "toStep": {
+                            "type": "string"
+                          },
+                          "runByUs": {
+                            "type": "boolean",
+                            "description": "We run this leg (a platform channel)."
+                          },
+                          "channelSlug": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The channel working the leg; null when no channel performs it (the buyer acts)."
+                          },
+                          "channelName": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "legKey",
+                          "fromStep",
+                          "toStep",
+                          "runByUs",
+                          "channelSlug",
+                          "channelName"
+                        ]
+                      },
+                      "description": "The same path, one entry per leg, in order."
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "legs"
+                  ],
+                  "description": "The funnel's PATH as structured data (owner 2026-10-11: the Campaigns table shows it under the name). Null only with `copyUnavailableReason`."
+                },
+                "copyUnavailableReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "sales_funnel_not_in_catalogue"
+                  ],
+                  "description": "Why the copy fields are null: the funnel id is not in this service's catalogue (logged). Null when they are served."
+                },
+                "units": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "campaignId": {
+                        "type": "string"
+                      },
+                      "pipeId": {
+                        "type": "string"
+                      },
+                      "featureSlug": {
+                        "type": "string"
+                      },
+                      "legKey": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "campaignId",
+                      "pipeId",
+                      "featureSlug",
+                      "legKey",
+                      "status"
+                    ]
+                  },
+                  "description": "The unit campaigns (one per pipe) the money is computed over, as campaign-service serves them."
+                },
+                "investedUsd": {
+                  "type": "number",
+                  "description": "$ Invested since inception: the COMMITTED spend of every unit together (= `costEconomics.committedCostUsd`). Every cost row belongs to one unit, so this is exactly the sum of the units' own `committedCostUsd` (each unit's `/features/{slug}/revenue?campaignId=` read), on the requested pricing basis."
+                },
+                "roiMultiple": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "The funnel campaign's ROI (= `costEconomics.roiMultiple`): ONE engine pass over the units' people (deduped) and spend together, on the offer's terms; never a sum or an average of unit ROIs. Null with a reason in `costEconomics.unmeasuredReason` (e.g. `maturing`: still learning) or `moneyUnavailableReason`. Read `maturity` for the flash/mature pair and the verdict, as on a campaign row."
+                },
+                "moneyUnavailableReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "units_price_differently"
+                  ],
+                  "description": "`units_price_differently`: the units' channels price on two different funnel definitions, so no ROI can be one figure (investedUsd is still served). Null otherwise."
+                },
+                "costEconomics": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "committedCostUsd": {
+                      "type": "number",
+                      "description": "COMMITTED run spend for the brand (+ optional campaign), feature-scoped, in dollars (>= 0) — billed `actual` PLUS the open `provisioned` holds. THE spend basis: every money figure below divides by it, and it is byte the same total the `spend` block reports as totalSpentCents, so the ROI a campaign row shows and the 'Total spent' the Overview shows can never describe different money. This is the field a consumer renders as '$ Invested'. features-service serves EXACTLY ONE spend basis and it is COMMITTED (billed `actual` + the open `provisioned` holds). A split basis was a bug, not a tradeoff: while ROI rode billed-only and the `spend` block rode committed, one payload answered 'how much did this cost' two ways at once and a brand with a single campaign read $202 on its Overview beside $191 on its campaigns table. Do NOT reintroduce a second basis and do NOT add a parameter to pick one. (features-service#779)"
+                    },
+                    "actualCostUsd": {
+                      "type": "number",
+                      "description": "Billed-only run spend for the same scope, in dollars (>= 0) — EXCLUDES the open provisioned holds. TRANSITIONAL AND REPORTED ONLY: it is kept populated (and still honestly billed-only, because a field whose name asserts 'actual' must never start carrying a committed value) so a consumer rendering money off this field has a gap-free path onto committedCostUsd. NOTHING divides by it any more — ROI, %CAC, cost per acquisition and cost per conversion all ride committedCostUsd. (features-service#396, naming features-service#402, single basis features-service#779)"
+                    },
+                    "costOfAcquisitionPct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "(mature committed spend / mature pipeline) * 100 — the MATURE cohort, see maturityDays. Null when that pipeline is null or 0, or when unmeasuredReason is 'maturing'."
+                    },
+                    "roiMultiple": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "mature pipeline / mature committed spend — the MATURE cohort, see maturityDays. Null when that spend is 0 or that pipeline is null; with unmeasuredReason 'maturing' when the scope spent but nothing it spent is mature yet. Never 0 in place of null."
+                    },
+                    "costPerAcquisitionUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Cost of winning ONE customer, on COMMITTED spend, for the scope this body describes — present on EVERY response including the default un-lensed brand read (the brand Overview is not lensed; it is the whole brand, every funnel). = committedCostUsd / expected paying clients, where expected paying clients = totalPipelineUsd / lifetimeRevenueUsd. Equivalently (costOfAcquisitionPct / 100) x lifetimeRevenueUsd, i.e. lifetimeRevenueUsd / roiMultiple — the same statement as ROI and %CAC in a third unit, which is why it MATCHES the lensed costPerConversionUsd for the same scope rather than being a second opinion (the lens divides the same committed spend by the same expected-client count). Uses the brand's own declared-funnel-priced economics — the same economics that produced totalPipelineUsd. NULL, never 0, when the brand states no lifetime revenue (or it is 0), when the pipeline is null/0, or when no funnel is wired: null means 'we could not measure this', a 0 would mean 'a customer costs nothing'."
+                    },
+                    "expectedConversions": {
+                      "type": "number",
+                      "description": "LENS ONLY — expected conversion count = sum of per-lead conversion probability (decimal) across the lensed leads (totalPipelineUsd = expectedConversions × LTR). Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                    },
+                    "costPerConversionUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "LENS ONLY — the mature cohort's committed spend / its expected conversions (see maturityDays). Null when that count is 0 or the scope is maturing. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
+                    },
+                    "maturityDays": {
+                      "type": "integer",
+                      "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 21 days for its replies and visits (lib/maturity.ts); every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads those runs SERVED (a lead served before it, on the run-start clock; their outcomes count whenever they happened; a lead with no serve date stated is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
+                    },
+                    "unmeasuredReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "maturing",
+                        "maturity_unknown"
+                      ],
+                      "description": "Why the ratios are null for a reason other than having nothing to divide. 'maturing' = the scope has spent, but none of that spend is older than maturityDays yet, so there is no mature cohort to measure — a young campaign, not a bad one. 'maturity_unknown' = campaign-service could not say which campaigns wait for their outcomes, so the mature cohort could not be separated (a degraded read, not a property of the scope). Null otherwise."
+                    },
+                    "ratioBasis": {
+                      "type": "object",
+                      "properties": {
+                        "committedCostUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The committed spend (dollars) the ratios divide: the MATURE cohort's when maturityDays > 0 (runs old enough to have produced their outcomes), the whole scope's otherwise. Smaller than committedCostUsd by exactly the spend still maturing. Null under maturity_unknown."
+                        },
+                        "totalPipelineUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads served before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
+                        }
+                      },
+                      "required": [
+                        "committedCostUsd",
+                        "totalPipelineUsd"
+                      ],
+                      "description": "THE TOTALS THE RATIOS DIVIDE, served so nobody inverts a ratio: roiMultiple = totalPipelineUsd / committedCostUsd; costOfAcquisitionPct = committedCostUsd / totalPipelineUsd × 100. Every cost per outcome on this body (spend.*Cents, outcomes.cpcCents/cpprCents, funnelSteps costPerReachCents, costPerOutcomeHistory) divides this same spend."
+                    },
+                    "realizedReturn": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "closedWonCount": {
+                          "type": "integer",
+                          "description": "Deals actually CLOSED WON in the same cohort the ratios divide, PRICED to our outreach (?cause=, default outreach) — the rule the pipeline's won rung follows. 0 is measured."
+                        },
+                        "closedWonRevenueUsd": {
+                          "type": "number",
+                          "description": "What those deals are worth: each at the amount stated on it, else the lifetime revenue a paying client is priced at."
+                        },
+                        "roiMultiple": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "closedWonRevenueUsd / ratioBasis.committedCostUsd — the MEASURED return, beside the pipeline ROI and never instead of it. Null when that spend is 0 (maturing)."
+                        }
+                      },
+                      "required": [
+                        "closedWonCount",
+                        "closedWonRevenueUsd",
+                        "roiMultiple"
+                      ],
+                      "description": "THE MEASURED RETURN — revenue from deals actually closed won over the same matured spend the ROI divides. NULL when it cannot be measured on this read: no source of closed deals could be read, the legs are unknown, or the grain never computes it (lens, per-workflow, cross-org reads). Never a fabricated 0."
+                    },
+                    "maturity": {
+                      "$ref": "#/components/schemas/CostRatiosMaturity"
+                    }
+                  },
+                  "required": [
+                    "committedCostUsd",
+                    "actualCostUsd",
+                    "costOfAcquisitionPct",
+                    "roiMultiple",
+                    "costPerAcquisitionUsd",
+                    "maturityDays",
+                    "unmeasuredReason",
+                    "ratioBasis",
+                    "realizedReturn"
+                  ],
+                  "description": "The full cost economics of the units together (the block a campaign row serves). Null when the funnel campaign has no unit."
+                },
+                "maturity": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ScopeMaturity"
+                    },
+                    {
+                      "nullable": true,
+                      "description": "Per-leg figures and the maturity verdict of the units together (the object a campaign row serves). Null when unreadable or no unit."
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "brandId",
+                "offerId",
+                "salesFunnelId",
+                "name",
+                "face",
+                "status",
+                "stopReason",
+                "createdAt",
+                "description",
+                "type",
+                "triggerLabel",
+                "typeLabel",
+                "path",
+                "copyUnavailableReason",
+                "units",
+                "investedUsd",
+                "roiMultiple",
+                "moneyUnavailableReason",
+                "costEconomics",
+                "maturity"
+              ]
+            },
+            "description": "One row per sales funnel campaign, in campaign-service's order (newest first)."
+          }
+        },
+        "required": [
+          "brandId",
+          "offerId",
+          "pricing",
+          "costBasis",
+          "salesFunnelCampaigns"
+        ]
+      },
       "BrandConversionRatesResponse": {
         "type": "object",
         "properties": {
@@ -34625,6 +35029,158 @@
           },
           "502": {
             "description": "Downstream service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/brands/{brandId}/sales-funnel-campaigns": {
+      "get": {
+        "summary": "A brand's sales funnel campaigns, one row each, with their customer copy and money since inception",
+        "description": "The dashboard Campaigns table (owner 2026-10-11): one row per SALES FUNNEL CAMPAIGN (campaign-service `GET /sales-funnel-campaigns`, brand x offer x sales funnel, one unit campaign per pipe). Each row serves the funnel's name and face, its one-sentence customer description, its type, trigger label and Type label (\"Daily\" or the trigger: \"Positive replies\"), and its money since inception over its units together: invested (the units' committed spend, which adds exactly) and the ROI of ONE engine pass over the units' people and spend (never a sum of unit ROIs), with the maturity verdict. The browser composes and computes nothing. Org-scoped (`x-org-id`).",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Only this offer's funnel campaigns. Omitted: every offer of the brand, each priced on its own offer's terms."
+            },
+            "required": false,
+            "description": "Only this offer's funnel campaigns. Omitted: every offer of the brand, each priced on its own offer's terms.",
+            "name": "offerId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gross",
+                "net"
+              ],
+              "description": "Pricing basis for every money figure (omitted = gross). The dashboard reads `net`. NET fails loud (502) when runs' frozen net amounts are absent."
+            },
+            "required": false,
+            "description": "Pricing basis for every money figure (omitted = gross). The dashboard reads `net`. NET fails loud (502) when runs' frozen net amounts are absent.",
+            "name": "pricing",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One row per funnel campaign (an empty array when the brand has none).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SalesFunnelCampaignsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An invalid pricing value (reason: pricing_unrecognised).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The caller does not hold this brand (reason: brand_not_found).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "campaign-service or a money read failed (no row is ever guessed).",
             "content": {
               "application/json": {
                 "schema": {
