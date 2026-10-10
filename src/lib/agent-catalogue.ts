@@ -69,6 +69,38 @@ const GLYPH_COLORS = ["#E0784B", "#8E6CD8", "#3FA27E", "#D6A21E", "#3D7FD0", "#D
 /** PURE: the colour a name shows its family glyph in (stable: a hash of the name). */
 export const glyphColorOf = (name: string): string => GLYPH_COLORS[stableHash(name.toLowerCase()) % GLYPH_COLORS.length];
 
+/**
+ * The catalogue serves PHOSPHOR icon names only (owner 2026-10-10). Some channel seeds state an
+ * icon in another set's spelling (`mail`, `share-2`, `mic`, ...), which `/public/channels` and
+ * `/features` keep serving as stored; the catalogue translates them to the Phosphor name of the
+ * same picture so a reader keys ONE vocabulary. A name not listed is already Phosphor.
+ */
+export const NON_PHOSPHOR_ICONS: Readonly<Record<string, string>> = {
+  "at-sign": "at",
+  award: "medal",
+  contact: "address-book",
+  facebook: "facebook-logo",
+  filter: "funnel",
+  "help-circle": "question",
+  inbox: "tray",
+  instagram: "instagram-logo",
+  linkedin: "linkedin-logo",
+  list: "list-bullets",
+  mail: "envelope",
+  "message-circle": "chat-circle",
+  "message-square": "chat-text",
+  mic: "microphone",
+  radar: "target",
+  search: "magnifying-glass",
+  "share-2": "share-network",
+  sparkles: "sparkle",
+  "trending-up": "trend-up",
+  youtube: "youtube-logo",
+};
+
+/** PURE: a stored icon name as the catalogue serves it (Phosphor). */
+export const phosphorIconOf = (icon: string): string => NON_PHOSPHOR_ICONS[icon] ?? icon;
+
 /** A step's Phosphor icon (a declared step states its own). */
 export const STEP_ICONS: Readonly<Record<string, string>> = {
   lead_found: "user-focus",
