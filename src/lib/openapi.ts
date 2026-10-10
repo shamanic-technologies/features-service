@@ -4285,6 +4285,35 @@ registry.registerPath({
 });
 
 registry.registerPath({
+  method: "post",
+  path: "/internal/workflow-leg-assignments/register",
+  summary: "Register a workflow on the pipe it was created for: active at once (internal, api-key; workflow-service at creation)",
+  description:
+    "Owner 2026-10-10: the pipe <-> workflow link lives in features-service ONLY (this table is its single source), and a workflow created for a pipe is ACTIVE at once (option A; the explore allowance caps what an unproven workflow spends). workflow-service calls this when it creates a workflow (a new dynasty or a new version) for a pipe. Insert-if-absent: 201 `created: true` with the new `active` row; 200 `created: false` with the EXISTING row untouched (a staff `deprecated` is never undone by a new version). The answer carries the PIPE (`toStep` = the step the workflow produces): read it from here or `GET /internal/catalogue/pipes/{id}`, never store a copy. Staff decisions stay on PUT /internal/workflow-leg-assignments.",
+  tags: ["Internal"],
+  request: {
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            pipeId: z.string().describe("`<channel slug>|<leg key>` (either spelling of an outbound entry leg), a pipe the channel performs (seeded or declared)."),
+            workflowDynastySlug: z.string().describe("A dynasty workflow-service describes for that channel (read fresh)."),
+            registeredBy: z.string().describe("The caller, e.g. `workflow-service`."),
+            note: z.string().nullable().optional(),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    201: { description: "Registered active.", content: { "application/json": { schema: z.object({ created: z.literal(true), assignment: legAssignmentRowSchema, pipe: z.object({ id: z.string(), channelSlug: z.string(), legKey: z.string(), fromStep: z.string().nullable(), toStep: z.string(), mode: z.enum(["proactive", "reactive"]), triggerId: z.string().nullable() }) }) } } },
+    200: { description: "Already stated on the pipe: the existing row, unchanged (`created: false`)." },
+    400: { description: "`pipe_id_required`, `workflow_dynasty_required`, `registered_by_required`, `note_invalid`." },
+    404: { description: "`pipe_not_found` (the channel does not perform that leg) or `workflow_dynasty_not_found`." },
+  },
+});
+
+registry.registerPath({
   method: "get",
   path: "/internal/stated-monthly-amounts",
   summary: "List stated monthly amounts (internal, api-key; staff-gated at api-service)",
