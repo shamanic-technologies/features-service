@@ -44951,7 +44951,7 @@
     "/internal/catalogue/steps": {
       "get": {
         "summary": "List steps (internal, api-key)",
-        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`.",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`).",
         "tags": [
           "Internal"
         ],
@@ -45033,7 +45033,7 @@
                           "costUsd": {
                             "type": "number",
                             "nullable": true,
-                            "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                            "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured or estimated."
                           },
                           "costPer": {
                             "type": "string",
@@ -45043,15 +45043,26 @@
                           "roi": {
                             "type": "number",
                             "nullable": true,
-                            "description": "Average fleet return multiple. Null unless measured."
+                            "description": "Average fleet return multiple. Null unless measured or estimated."
+                          },
+                          "roiBasis": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "measured",
+                              "estimated"
+                            ],
+                            "description": "`estimated` when anything the ROI rests on is not a measured fleet outcome: every ROI today, since it divides a step value or a lifetime revenue that ends on the fleet median of STATED lifetime revenues. Null with no roi."
                           },
                           "status": {
                             "type": "string",
                             "enum": [
                               "measured",
+                              "estimated",
                               "learning",
                               "customer_time"
-                            ]
+                            ],
+                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                           },
                           "declared": {
                             "type": "boolean",
@@ -45067,6 +45078,7 @@
                           "costUsd",
                           "costPer",
                           "roi",
+                          "roiBasis",
                           "status"
                         ]
                       }
@@ -45100,7 +45112,7 @@
       },
       "post": {
         "summary": "Declare a step (internal, api-key)",
-        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`. A step names what something produces (\"LinkedIn post\", \"Email found\"); declared legs (pipes) may then start or end on it. It states where it leads (`towardStep` reached at `towardRatePct`), so it has a value from the start: towardRatePct/100 x value(towardStep).",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`). A step names what something produces (\"LinkedIn post\", \"Email found\"); declared legs (pipes) may then start or end on it. It states where it leads (`towardStep` reached at `towardRatePct`), so it has a value from the start: towardRatePct/100 x value(towardStep).",
         "tags": [
           "Internal"
         ],
@@ -45294,7 +45306,7 @@
     "/internal/catalogue/steps/{id}": {
       "get": {
         "summary": "One step (internal, api-key)",
-        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`.",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`).",
         "tags": [
           "Internal"
         ],
@@ -45381,7 +45393,7 @@
                     "costUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured or estimated."
                     },
                     "costPer": {
                       "type": "string",
@@ -45391,15 +45403,33 @@
                     "roi": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet return multiple. Null unless measured."
+                      "description": "Average fleet return multiple. Null unless measured or estimated."
+                    },
+                    "roiBasis": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "measured",
+                        "estimated"
+                      ],
+                      "description": "`estimated` when anything the ROI rests on is not a measured fleet outcome: every ROI today, since it divides a step value or a lifetime revenue that ends on the fleet median of STATED lifetime revenues. Null with no roi."
                     },
                     "status": {
                       "type": "string",
                       "enum": [
                         "measured",
+                        "estimated",
                         "learning",
                         "customer_time"
-                      ]
+                      ],
+                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                    },
+                    "estimates": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "What the figures rest on that is NOT a measured fleet outcome: `rate:<legKey>` (a leg rate: stated fleet median, default or declared), `lifetime_revenue` (fleet median of stated lifetime revenues), `step_value` (a step's value, which ends on that lifetime revenue). Empty = all measured."
                     },
                     "learningReason": {
                       "type": "string",
@@ -45438,7 +45468,9 @@
                     "costUsd",
                     "costPer",
                     "roi",
+                    "roiBasis",
                     "status",
+                    "estimates",
                     "learningReason",
                     "costUnit",
                     "producingPipeIds",
@@ -45466,7 +45498,7 @@
     "/internal/catalogue/sales-paths": {
       "get": {
         "summary": "List sales paths (internal, api-key)",
-        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`.",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`).",
         "tags": [
           "Internal"
         ],
@@ -45571,7 +45603,7 @@
                           "costUsd": {
                             "type": "number",
                             "nullable": true,
-                            "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                            "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured or estimated."
                           },
                           "costPer": {
                             "type": "string",
@@ -45581,15 +45613,26 @@
                           "roi": {
                             "type": "number",
                             "nullable": true,
-                            "description": "Average fleet return multiple. Null unless measured."
+                            "description": "Average fleet return multiple. Null unless measured or estimated."
+                          },
+                          "roiBasis": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "measured",
+                              "estimated"
+                            ],
+                            "description": "`estimated` when anything the ROI rests on is not a measured fleet outcome: every ROI today, since it divides a step value or a lifetime revenue that ends on the fleet median of STATED lifetime revenues. Null with no roi."
                           },
                           "status": {
                             "type": "string",
                             "enum": [
                               "measured",
+                              "estimated",
                               "learning",
                               "customer_time"
-                            ]
+                            ],
+                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                           },
                           "runnable": {
                             "type": "boolean",
@@ -45605,6 +45648,7 @@
                           "costUsd",
                           "costPer",
                           "roi",
+                          "roiBasis",
                           "status"
                         ]
                       }
@@ -45638,7 +45682,7 @@
       },
       "post": {
         "summary": "Declare a sales path (internal, api-key)",
-        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`. The legs in order (a chain the catalogue holds: GET /internal/catalogue/sales-paths lists them). Persisted and named with a never-given river; an existing path answers 200 `created: false` with its name.",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`). The legs in order (a chain the catalogue holds: GET /internal/catalogue/sales-paths lists them). Persisted and named with a never-given river; an existing path answers 200 `created: false` with its name.",
         "tags": [
           "Internal"
         ],
@@ -45700,7 +45744,7 @@
                     "costUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured or estimated."
                     },
                     "costPer": {
                       "type": "string",
@@ -45710,15 +45754,26 @@
                     "roi": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet return multiple. Null unless measured."
+                      "description": "Average fleet return multiple. Null unless measured or estimated."
+                    },
+                    "roiBasis": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "measured",
+                        "estimated"
+                      ],
+                      "description": "`estimated` when anything the ROI rests on is not a measured fleet outcome: every ROI today, since it divides a step value or a lifetime revenue that ends on the fleet median of STATED lifetime revenues. Null with no roi."
                     },
                     "status": {
                       "type": "string",
                       "enum": [
                         "measured",
+                        "estimated",
                         "learning",
                         "customer_time"
-                      ]
+                      ],
+                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                     },
                     "runnable": {
                       "type": "boolean",
@@ -45737,6 +45792,7 @@
                     "costUsd",
                     "costPer",
                     "roi",
+                    "roiBasis",
                     "status",
                     "created"
                   ]
@@ -45771,7 +45827,7 @@
                     "costUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured or estimated."
                     },
                     "costPer": {
                       "type": "string",
@@ -45781,15 +45837,26 @@
                     "roi": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet return multiple. Null unless measured."
+                      "description": "Average fleet return multiple. Null unless measured or estimated."
+                    },
+                    "roiBasis": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "measured",
+                        "estimated"
+                      ],
+                      "description": "`estimated` when anything the ROI rests on is not a measured fleet outcome: every ROI today, since it divides a step value or a lifetime revenue that ends on the fleet median of STATED lifetime revenues. Null with no roi."
                     },
                     "status": {
                       "type": "string",
                       "enum": [
                         "measured",
+                        "estimated",
                         "learning",
                         "customer_time"
-                      ]
+                      ],
+                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                     },
                     "runnable": {
                       "type": "boolean",
@@ -45808,6 +45875,7 @@
                     "costUsd",
                     "costPer",
                     "roi",
+                    "roiBasis",
                     "status",
                     "created"
                   ]
@@ -45836,7 +45904,7 @@
     "/internal/catalogue/sales-paths/{id}": {
       "get": {
         "summary": "One sales path (internal, api-key)",
-        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`.",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`).",
         "tags": [
           "Internal"
         ],
@@ -45920,6 +45988,10 @@
                               "measured_pipe"
                             ]
                           },
+                          "rateMeasured": {
+                            "type": "boolean",
+                            "description": "True only for a measured fleet conversion (`measured_pipe`)."
+                          },
                           "pipeIds": {
                             "type": "array",
                             "items": {
@@ -45931,6 +46003,7 @@
                           "legKey",
                           "ratePct",
                           "rateSource",
+                          "rateMeasured",
                           "pipeIds"
                         ]
                       }
@@ -45938,7 +46011,7 @@
                     "costUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured or estimated."
                     },
                     "costPer": {
                       "type": "string",
@@ -45948,15 +46021,33 @@
                     "roi": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet return multiple. Null unless measured."
+                      "description": "Average fleet return multiple. Null unless measured or estimated."
+                    },
+                    "roiBasis": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "measured",
+                        "estimated"
+                      ],
+                      "description": "`estimated` when anything the ROI rests on is not a measured fleet outcome: every ROI today, since it divides a step value or a lifetime revenue that ends on the fleet median of STATED lifetime revenues. Null with no roi."
                     },
                     "status": {
                       "type": "string",
                       "enum": [
                         "measured",
+                        "estimated",
                         "learning",
                         "customer_time"
-                      ]
+                      ],
+                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                    },
+                    "estimates": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "What the figures rest on that is NOT a measured fleet outcome: `rate:<legKey>` (a leg rate: stated fleet median, default or declared), `lifetime_revenue` (fleet median of stated lifetime revenues), `step_value` (a step's value, which ends on that lifetime revenue). Empty = all measured."
                     },
                     "learningReason": {
                       "type": "string",
@@ -45997,7 +46088,9 @@
                     "costUsd",
                     "costPer",
                     "roi",
+                    "roiBasis",
                     "status",
+                    "estimates",
                     "learningReason",
                     "costUnit",
                     "bestSalesFunnelId",
@@ -46027,7 +46120,7 @@
     "/internal/catalogue/channels": {
       "get": {
         "summary": "List channels (internal, api-key)",
-        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`.",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`).",
         "tags": [
           "Internal"
         ],
@@ -46138,7 +46231,7 @@
                           "costUsd": {
                             "type": "number",
                             "nullable": true,
-                            "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                            "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured or estimated."
                           },
                           "costPer": {
                             "type": "string",
@@ -46148,15 +46241,26 @@
                           "roi": {
                             "type": "number",
                             "nullable": true,
-                            "description": "Average fleet return multiple. Null unless measured."
+                            "description": "Average fleet return multiple. Null unless measured or estimated."
+                          },
+                          "roiBasis": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "measured",
+                              "estimated"
+                            ],
+                            "description": "`estimated` when anything the ROI rests on is not a measured fleet outcome: every ROI today, since it divides a step value or a lifetime revenue that ends on the fleet median of STATED lifetime revenues. Null with no roi."
                           },
                           "status": {
                             "type": "string",
                             "enum": [
                               "measured",
+                              "estimated",
                               "learning",
                               "customer_time"
-                            ]
+                            ],
+                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                           },
                           "runnable": {
                             "type": "boolean",
@@ -46171,6 +46275,7 @@
                           "costUsd",
                           "costPer",
                           "roi",
+                          "roiBasis",
                           "status",
                           "runnable"
                         ]
@@ -46207,7 +46312,7 @@
     "/internal/catalogue/channels/{id}": {
       "get": {
         "summary": "One channel and its pipes (internal, api-key)",
-        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`.",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`).",
         "tags": [
           "Internal"
         ],
@@ -46279,7 +46384,7 @@
                     "costUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured or estimated."
                     },
                     "costPer": {
                       "type": "string",
@@ -46289,15 +46394,33 @@
                     "roi": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet return multiple. Null unless measured."
+                      "description": "Average fleet return multiple. Null unless measured or estimated."
+                    },
+                    "roiBasis": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "measured",
+                        "estimated"
+                      ],
+                      "description": "`estimated` when anything the ROI rests on is not a measured fleet outcome: every ROI today, since it divides a step value or a lifetime revenue that ends on the fleet median of STATED lifetime revenues. Null with no roi."
                     },
                     "status": {
                       "type": "string",
                       "enum": [
                         "measured",
+                        "estimated",
                         "learning",
                         "customer_time"
-                      ]
+                      ],
+                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                    },
+                    "estimates": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "What the figures rest on that is NOT a measured fleet outcome: `rate:<legKey>` (a leg rate: stated fleet median, default or declared), `lifetime_revenue` (fleet median of stated lifetime revenues), `step_value` (a step's value, which ends on that lifetime revenue). Empty = all measured."
                     },
                     "learningReason": {
                       "type": "string",
@@ -46339,7 +46462,7 @@
                           "costUsd": {
                             "type": "number",
                             "nullable": true,
-                            "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                            "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured or estimated."
                           },
                           "costPer": {
                             "type": "string",
@@ -46349,15 +46472,26 @@
                           "roi": {
                             "type": "number",
                             "nullable": true,
-                            "description": "Average fleet return multiple. Null unless measured."
+                            "description": "Average fleet return multiple. Null unless measured or estimated."
+                          },
+                          "roiBasis": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "measured",
+                              "estimated"
+                            ],
+                            "description": "`estimated` when anything the ROI rests on is not a measured fleet outcome: every ROI today, since it divides a step value or a lifetime revenue that ends on the fleet median of STATED lifetime revenues. Null with no roi."
                           },
                           "status": {
                             "type": "string",
                             "enum": [
                               "measured",
+                              "estimated",
                               "learning",
                               "customer_time"
-                            ]
+                            ],
+                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                           },
                           "runnable": {
                             "type": "boolean",
@@ -46383,6 +46517,7 @@
                           "costUsd",
                           "costPer",
                           "roi",
+                          "roiBasis",
                           "status",
                           "runnable",
                           "mode"
@@ -46405,7 +46540,9 @@
                     "costUsd",
                     "costPer",
                     "roi",
+                    "roiBasis",
                     "status",
+                    "estimates",
                     "learningReason",
                     "costUnit",
                     "bestPipeId",
@@ -46433,7 +46570,7 @@
     "/internal/catalogue/pipes": {
       "get": {
         "summary": "List pipes (internal, api-key)",
-        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`.",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`).",
         "tags": [
           "Internal"
         ],
@@ -46556,7 +46693,7 @@
                           "costUsd": {
                             "type": "number",
                             "nullable": true,
-                            "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                            "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured or estimated."
                           },
                           "costPer": {
                             "type": "string",
@@ -46566,15 +46703,26 @@
                           "roi": {
                             "type": "number",
                             "nullable": true,
-                            "description": "Average fleet return multiple. Null unless measured."
+                            "description": "Average fleet return multiple. Null unless measured or estimated."
+                          },
+                          "roiBasis": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "measured",
+                              "estimated"
+                            ],
+                            "description": "`estimated` when anything the ROI rests on is not a measured fleet outcome: every ROI today, since it divides a step value or a lifetime revenue that ends on the fleet median of STATED lifetime revenues. Null with no roi."
                           },
                           "status": {
                             "type": "string",
                             "enum": [
                               "measured",
+                              "estimated",
                               "learning",
                               "customer_time"
-                            ]
+                            ],
+                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                           },
                           "runnable": {
                             "type": "boolean",
@@ -46600,6 +46748,7 @@
                           "costUsd",
                           "costPer",
                           "roi",
+                          "roiBasis",
                           "status",
                           "runnable",
                           "mode"
@@ -46635,7 +46784,7 @@
       },
       "post": {
         "summary": "Declare a pipe (internal, api-key)",
-        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`. One leg on one channel (a declared leg, `POST /internal/declarations/channels/{slug}/legs` rules: a reactive pipe names a trigger something fires). A leg out of a step nothing rates states `conversionRatePct` (400 `conversion_rate_required`). Named with a never-given bird. Created as a draft: clients see it once staff publishes the leg.",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`). One leg on one channel (a declared leg, `POST /internal/declarations/channels/{slug}/legs` rules: a reactive pipe names a trigger something fires). A leg out of a step nothing rates states `conversionRatePct` (400 `conversion_rate_required`). Named with a never-given bird. Created as a draft: clients see it once staff publishes the leg.",
         "tags": [
           "Internal"
         ],
@@ -46767,7 +46916,7 @@
                     "costUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured or estimated."
                     },
                     "costPer": {
                       "type": "string",
@@ -46777,15 +46926,33 @@
                     "roi": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet return multiple. Null unless measured."
+                      "description": "Average fleet return multiple. Null unless measured or estimated."
+                    },
+                    "roiBasis": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "measured",
+                        "estimated"
+                      ],
+                      "description": "`estimated` when anything the ROI rests on is not a measured fleet outcome: every ROI today, since it divides a step value or a lifetime revenue that ends on the fleet median of STATED lifetime revenues. Null with no roi."
                     },
                     "status": {
                       "type": "string",
                       "enum": [
                         "measured",
+                        "estimated",
                         "learning",
                         "customer_time"
-                      ]
+                      ],
+                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                    },
+                    "estimates": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "What the figures rest on that is NOT a measured fleet outcome: `rate:<legKey>` (a leg rate: stated fleet median, default or declared), `lifetime_revenue` (fleet median of stated lifetime revenues), `step_value` (a step's value, which ends on that lifetime revenue). Empty = all measured."
                     },
                     "learningReason": {
                       "type": "string",
@@ -46840,7 +47007,9 @@
                     "costUsd",
                     "costPer",
                     "roi",
+                    "roiBasis",
                     "status",
+                    "estimates",
                     "learningReason",
                     "costUnit",
                     "toStepValueUsd",
@@ -46927,7 +47096,7 @@
                     "costUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured or estimated."
                     },
                     "costPer": {
                       "type": "string",
@@ -46937,15 +47106,33 @@
                     "roi": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet return multiple. Null unless measured."
+                      "description": "Average fleet return multiple. Null unless measured or estimated."
+                    },
+                    "roiBasis": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "measured",
+                        "estimated"
+                      ],
+                      "description": "`estimated` when anything the ROI rests on is not a measured fleet outcome: every ROI today, since it divides a step value or a lifetime revenue that ends on the fleet median of STATED lifetime revenues. Null with no roi."
                     },
                     "status": {
                       "type": "string",
                       "enum": [
                         "measured",
+                        "estimated",
                         "learning",
                         "customer_time"
-                      ]
+                      ],
+                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                    },
+                    "estimates": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "What the figures rest on that is NOT a measured fleet outcome: `rate:<legKey>` (a leg rate: stated fleet median, default or declared), `lifetime_revenue` (fleet median of stated lifetime revenues), `step_value` (a step's value, which ends on that lifetime revenue). Empty = all measured."
                     },
                     "learningReason": {
                       "type": "string",
@@ -47000,7 +47187,9 @@
                     "costUsd",
                     "costPer",
                     "roi",
+                    "roiBasis",
                     "status",
+                    "estimates",
                     "learningReason",
                     "costUnit",
                     "toStepValueUsd",
@@ -47033,7 +47222,7 @@
     "/internal/catalogue/pipes/{id}": {
       "get": {
         "summary": "One pipe (internal, api-key)",
-        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`.",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`).",
         "tags": [
           "Internal"
         ],
@@ -47125,7 +47314,7 @@
                     "costUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured or estimated."
                     },
                     "costPer": {
                       "type": "string",
@@ -47135,15 +47324,33 @@
                     "roi": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet return multiple. Null unless measured."
+                      "description": "Average fleet return multiple. Null unless measured or estimated."
+                    },
+                    "roiBasis": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "measured",
+                        "estimated"
+                      ],
+                      "description": "`estimated` when anything the ROI rests on is not a measured fleet outcome: every ROI today, since it divides a step value or a lifetime revenue that ends on the fleet median of STATED lifetime revenues. Null with no roi."
                     },
                     "status": {
                       "type": "string",
                       "enum": [
                         "measured",
+                        "estimated",
                         "learning",
                         "customer_time"
-                      ]
+                      ],
+                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                    },
+                    "estimates": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "What the figures rest on that is NOT a measured fleet outcome: `rate:<legKey>` (a leg rate: stated fleet median, default or declared), `lifetime_revenue` (fleet median of stated lifetime revenues), `step_value` (a step's value, which ends on that lifetime revenue). Empty = all measured."
                     },
                     "learningReason": {
                       "type": "string",
@@ -47198,7 +47405,9 @@
                     "costUsd",
                     "costPer",
                     "roi",
+                    "roiBasis",
                     "status",
+                    "estimates",
                     "learningReason",
                     "costUnit",
                     "toStepValueUsd",
@@ -47228,7 +47437,7 @@
     "/internal/catalogue/sales-funnels": {
       "get": {
         "summary": "List sales funnels (internal, api-key)",
-        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`.",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`).",
         "tags": [
           "Internal"
         ],
@@ -47340,7 +47549,7 @@
                           "costUsd": {
                             "type": "number",
                             "nullable": true,
-                            "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                            "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured or estimated."
                           },
                           "costPer": {
                             "type": "string",
@@ -47350,15 +47559,26 @@
                           "roi": {
                             "type": "number",
                             "nullable": true,
-                            "description": "Average fleet return multiple. Null unless measured."
+                            "description": "Average fleet return multiple. Null unless measured or estimated."
+                          },
+                          "roiBasis": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "measured",
+                              "estimated"
+                            ],
+                            "description": "`estimated` when anything the ROI rests on is not a measured fleet outcome: every ROI today, since it divides a step value or a lifetime revenue that ends on the fleet median of STATED lifetime revenues. Null with no roi."
                           },
                           "status": {
                             "type": "string",
                             "enum": [
                               "measured",
+                              "estimated",
                               "learning",
                               "customer_time"
-                            ]
+                            ],
+                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                           },
                           "runnable": {
                             "type": "boolean",
@@ -47376,6 +47596,7 @@
                           "costUsd",
                           "costPer",
                           "roi",
+                          "roiBasis",
                           "status",
                           "runnable"
                         ]
@@ -47410,7 +47631,7 @@
       },
       "post": {
         "summary": "Declare a sales funnel (internal, api-key)",
-        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`. One entry per leg of a sales path, in order: a pipe id, or the leg key of a leg no channel performs. Persisted (the declared sales path store the offer read already knows) and named with a never-given uplifting word + a face; an existing funnel answers 200 `created: false` with its name. Campaign-service and billing-service key a campaign on this id.",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`). One entry per leg of a sales path, in order: a pipe id, or the leg key of a leg no channel performs. Persisted (the declared sales path store the offer read already knows) and named with a never-given uplifting word + a face; an existing funnel answers 200 `created: false` with its name. Campaign-service and billing-service key a campaign on this id.",
         "tags": [
           "Internal"
         ],
@@ -47517,6 +47738,19 @@
                             "type": "number",
                             "nullable": true
                           },
+                          "rateSource": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "fleet_median",
+                              "default",
+                              "measured_pipe"
+                            ],
+                            "description": "`fleet_median` = median of the rates brands STATED (>= 5 brands); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion. Null on the entry leg (not used by the cost)."
+                          },
+                          "rateMeasured": {
+                            "type": "boolean"
+                          },
                           "outcomesNeededPerPayingClient": {
                             "type": "number",
                             "nullable": true
@@ -47545,7 +47779,7 @@
                               "costUsd": {
                                 "type": "number",
                                 "nullable": true,
-                                "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                                "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured or estimated."
                               },
                               "costPer": {
                                 "type": "string",
@@ -47555,15 +47789,26 @@
                               "roi": {
                                 "type": "number",
                                 "nullable": true,
-                                "description": "Average fleet return multiple. Null unless measured."
+                                "description": "Average fleet return multiple. Null unless measured or estimated."
+                              },
+                              "roiBasis": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "measured",
+                                  "estimated"
+                                ],
+                                "description": "`estimated` when anything the ROI rests on is not a measured fleet outcome: every ROI today, since it divides a step value or a lifetime revenue that ends on the fleet median of STATED lifetime revenues. Null with no roi."
                               },
                               "status": {
                                 "type": "string",
                                 "enum": [
                                   "measured",
+                                  "estimated",
                                   "learning",
                                   "customer_time"
-                                ]
+                                ],
+                                "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                               }
                             },
                             "required": [
@@ -47574,6 +47819,7 @@
                               "costUsd",
                               "costPer",
                               "roi",
+                              "roiBasis",
                               "status"
                             ],
                             "description": "Null on a leg no channel performs."
@@ -47582,6 +47828,8 @@
                         "required": [
                           "legKey",
                           "ratePct",
+                          "rateSource",
+                          "rateMeasured",
                           "outcomesNeededPerPayingClient",
                           "pipe"
                         ]
@@ -47590,7 +47838,7 @@
                     "costUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured or estimated."
                     },
                     "costPer": {
                       "type": "string",
@@ -47600,15 +47848,33 @@
                     "roi": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet return multiple. Null unless measured."
+                      "description": "Average fleet return multiple. Null unless measured or estimated."
+                    },
+                    "roiBasis": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "measured",
+                        "estimated"
+                      ],
+                      "description": "`estimated` when anything the ROI rests on is not a measured fleet outcome: every ROI today, since it divides a step value or a lifetime revenue that ends on the fleet median of STATED lifetime revenues. Null with no roi."
                     },
                     "status": {
                       "type": "string",
                       "enum": [
                         "measured",
+                        "estimated",
                         "learning",
                         "customer_time"
-                      ]
+                      ],
+                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                    },
+                    "estimates": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "What the figures rest on that is NOT a measured fleet outcome: `rate:<legKey>` (a leg rate: stated fleet median, default or declared), `lifetime_revenue` (fleet median of stated lifetime revenues), `step_value` (a step's value, which ends on that lifetime revenue). Empty = all measured."
                     },
                     "learningReason": {
                       "type": "string",
@@ -47624,6 +47890,13 @@
                     "lifetimeRevenueUsd": {
                       "type": "number",
                       "nullable": true
+                    },
+                    "lifetimeRevenueSource": {
+                      "type": "string",
+                      "enum": [
+                        "fleet_median_stated"
+                      ],
+                      "description": "The lifetime revenue the roi divides: the fleet median of the lifetime revenues offers STATED (never measured)."
                     },
                     "runnable": {
                       "type": "boolean",
@@ -47648,10 +47921,13 @@
                     "costUsd",
                     "costPer",
                     "roi",
+                    "roiBasis",
                     "status",
+                    "estimates",
                     "learningReason",
                     "costUnit",
                     "lifetimeRevenueUsd",
+                    "lifetimeRevenueSource",
                     "runnable",
                     "draft",
                     "created"
@@ -47732,6 +48008,19 @@
                             "type": "number",
                             "nullable": true
                           },
+                          "rateSource": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "fleet_median",
+                              "default",
+                              "measured_pipe"
+                            ],
+                            "description": "`fleet_median` = median of the rates brands STATED (>= 5 brands); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion. Null on the entry leg (not used by the cost)."
+                          },
+                          "rateMeasured": {
+                            "type": "boolean"
+                          },
                           "outcomesNeededPerPayingClient": {
                             "type": "number",
                             "nullable": true
@@ -47760,7 +48049,7 @@
                               "costUsd": {
                                 "type": "number",
                                 "nullable": true,
-                                "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                                "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured or estimated."
                               },
                               "costPer": {
                                 "type": "string",
@@ -47770,15 +48059,26 @@
                               "roi": {
                                 "type": "number",
                                 "nullable": true,
-                                "description": "Average fleet return multiple. Null unless measured."
+                                "description": "Average fleet return multiple. Null unless measured or estimated."
+                              },
+                              "roiBasis": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "measured",
+                                  "estimated"
+                                ],
+                                "description": "`estimated` when anything the ROI rests on is not a measured fleet outcome: every ROI today, since it divides a step value or a lifetime revenue that ends on the fleet median of STATED lifetime revenues. Null with no roi."
                               },
                               "status": {
                                 "type": "string",
                                 "enum": [
                                   "measured",
+                                  "estimated",
                                   "learning",
                                   "customer_time"
-                                ]
+                                ],
+                                "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                               }
                             },
                             "required": [
@@ -47789,6 +48089,7 @@
                               "costUsd",
                               "costPer",
                               "roi",
+                              "roiBasis",
                               "status"
                             ],
                             "description": "Null on a leg no channel performs."
@@ -47797,6 +48098,8 @@
                         "required": [
                           "legKey",
                           "ratePct",
+                          "rateSource",
+                          "rateMeasured",
                           "outcomesNeededPerPayingClient",
                           "pipe"
                         ]
@@ -47805,7 +48108,7 @@
                     "costUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured or estimated."
                     },
                     "costPer": {
                       "type": "string",
@@ -47815,15 +48118,33 @@
                     "roi": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet return multiple. Null unless measured."
+                      "description": "Average fleet return multiple. Null unless measured or estimated."
+                    },
+                    "roiBasis": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "measured",
+                        "estimated"
+                      ],
+                      "description": "`estimated` when anything the ROI rests on is not a measured fleet outcome: every ROI today, since it divides a step value or a lifetime revenue that ends on the fleet median of STATED lifetime revenues. Null with no roi."
                     },
                     "status": {
                       "type": "string",
                       "enum": [
                         "measured",
+                        "estimated",
                         "learning",
                         "customer_time"
-                      ]
+                      ],
+                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                    },
+                    "estimates": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "What the figures rest on that is NOT a measured fleet outcome: `rate:<legKey>` (a leg rate: stated fleet median, default or declared), `lifetime_revenue` (fleet median of stated lifetime revenues), `step_value` (a step's value, which ends on that lifetime revenue). Empty = all measured."
                     },
                     "learningReason": {
                       "type": "string",
@@ -47839,6 +48160,13 @@
                     "lifetimeRevenueUsd": {
                       "type": "number",
                       "nullable": true
+                    },
+                    "lifetimeRevenueSource": {
+                      "type": "string",
+                      "enum": [
+                        "fleet_median_stated"
+                      ],
+                      "description": "The lifetime revenue the roi divides: the fleet median of the lifetime revenues offers STATED (never measured)."
                     },
                     "runnable": {
                       "type": "boolean",
@@ -47863,10 +48191,13 @@
                     "costUsd",
                     "costPer",
                     "roi",
+                    "roiBasis",
                     "status",
+                    "estimates",
                     "learningReason",
                     "costUnit",
                     "lifetimeRevenueUsd",
+                    "lifetimeRevenueSource",
                     "runnable",
                     "draft",
                     "created"
@@ -47896,7 +48227,7 @@
     "/internal/catalogue/sales-funnels/{id}": {
       "get": {
         "summary": "One sales funnel (internal, api-key)",
-        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`.",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`).",
         "tags": [
           "Internal"
         ],
@@ -47985,6 +48316,19 @@
                             "type": "number",
                             "nullable": true
                           },
+                          "rateSource": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "fleet_median",
+                              "default",
+                              "measured_pipe"
+                            ],
+                            "description": "`fleet_median` = median of the rates brands STATED (>= 5 brands); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion. Null on the entry leg (not used by the cost)."
+                          },
+                          "rateMeasured": {
+                            "type": "boolean"
+                          },
                           "outcomesNeededPerPayingClient": {
                             "type": "number",
                             "nullable": true
@@ -48013,7 +48357,7 @@
                               "costUsd": {
                                 "type": "number",
                                 "nullable": true,
-                                "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                                "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured or estimated."
                               },
                               "costPer": {
                                 "type": "string",
@@ -48023,15 +48367,26 @@
                               "roi": {
                                 "type": "number",
                                 "nullable": true,
-                                "description": "Average fleet return multiple. Null unless measured."
+                                "description": "Average fleet return multiple. Null unless measured or estimated."
+                              },
+                              "roiBasis": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "measured",
+                                  "estimated"
+                                ],
+                                "description": "`estimated` when anything the ROI rests on is not a measured fleet outcome: every ROI today, since it divides a step value or a lifetime revenue that ends on the fleet median of STATED lifetime revenues. Null with no roi."
                               },
                               "status": {
                                 "type": "string",
                                 "enum": [
                                   "measured",
+                                  "estimated",
                                   "learning",
                                   "customer_time"
-                                ]
+                                ],
+                                "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                               }
                             },
                             "required": [
@@ -48042,6 +48397,7 @@
                               "costUsd",
                               "costPer",
                               "roi",
+                              "roiBasis",
                               "status"
                             ],
                             "description": "Null on a leg no channel performs."
@@ -48050,6 +48406,8 @@
                         "required": [
                           "legKey",
                           "ratePct",
+                          "rateSource",
+                          "rateMeasured",
                           "outcomesNeededPerPayingClient",
                           "pipe"
                         ]
@@ -48058,7 +48416,7 @@
                     "costUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured or estimated."
                     },
                     "costPer": {
                       "type": "string",
@@ -48068,15 +48426,33 @@
                     "roi": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet return multiple. Null unless measured."
+                      "description": "Average fleet return multiple. Null unless measured or estimated."
+                    },
+                    "roiBasis": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "measured",
+                        "estimated"
+                      ],
+                      "description": "`estimated` when anything the ROI rests on is not a measured fleet outcome: every ROI today, since it divides a step value or a lifetime revenue that ends on the fleet median of STATED lifetime revenues. Null with no roi."
                     },
                     "status": {
                       "type": "string",
                       "enum": [
                         "measured",
+                        "estimated",
                         "learning",
                         "customer_time"
-                      ]
+                      ],
+                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                    },
+                    "estimates": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "What the figures rest on that is NOT a measured fleet outcome: `rate:<legKey>` (a leg rate: stated fleet median, default or declared), `lifetime_revenue` (fleet median of stated lifetime revenues), `step_value` (a step's value, which ends on that lifetime revenue). Empty = all measured."
                     },
                     "learningReason": {
                       "type": "string",
@@ -48092,6 +48468,13 @@
                     "lifetimeRevenueUsd": {
                       "type": "number",
                       "nullable": true
+                    },
+                    "lifetimeRevenueSource": {
+                      "type": "string",
+                      "enum": [
+                        "fleet_median_stated"
+                      ],
+                      "description": "The lifetime revenue the roi divides: the fleet median of the lifetime revenues offers STATED (never measured)."
                     },
                     "runnable": {
                       "type": "boolean",
@@ -48113,10 +48496,13 @@
                     "costUsd",
                     "costPer",
                     "roi",
+                    "roiBasis",
                     "status",
+                    "estimates",
                     "learningReason",
                     "costUnit",
                     "lifetimeRevenueUsd",
+                    "lifetimeRevenueSource",
                     "runnable",
                     "draft"
                   ]
@@ -48142,7 +48528,7 @@
     "/internal/catalogue/workflows": {
       "get": {
         "summary": "List the workflows of one pipe (internal, api-key)",
-        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`.",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`).",
         "tags": [
           "Internal"
         ],
@@ -48233,7 +48619,7 @@
                           "costUsd": {
                             "type": "number",
                             "nullable": true,
-                            "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                            "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured or estimated."
                           },
                           "costPer": {
                             "type": "string",
@@ -48243,15 +48629,26 @@
                           "roi": {
                             "type": "number",
                             "nullable": true,
-                            "description": "Average fleet return multiple. Null unless measured."
+                            "description": "Average fleet return multiple. Null unless measured or estimated."
+                          },
+                          "roiBasis": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "measured",
+                              "estimated"
+                            ],
+                            "description": "`estimated` when anything the ROI rests on is not a measured fleet outcome: every ROI today, since it divides a step value or a lifetime revenue that ends on the fleet median of STATED lifetime revenues. Null with no roi."
                           },
                           "status": {
                             "type": "string",
                             "enum": [
                               "measured",
+                              "estimated",
                               "learning",
                               "customer_time"
-                            ]
+                            ],
+                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                           },
                           "runnable": {
                             "type": "boolean",
@@ -48267,6 +48664,7 @@
                           "costUsd",
                           "costPer",
                           "roi",
+                          "roiBasis",
                           "status"
                         ]
                       }
@@ -48306,7 +48704,7 @@
     "/internal/catalogue/workflows/{id}": {
       "get": {
         "summary": "One workflow on one pipe (internal, api-key)",
-        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`.",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`).",
         "tags": [
           "Internal"
         ],
@@ -48400,7 +48798,7 @@
                     "costUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured."
+                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured or estimated."
                     },
                     "costPer": {
                       "type": "string",
@@ -48410,15 +48808,33 @@
                     "roi": {
                       "type": "number",
                       "nullable": true,
-                      "description": "Average fleet return multiple. Null unless measured."
+                      "description": "Average fleet return multiple. Null unless measured or estimated."
+                    },
+                    "roiBasis": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "measured",
+                        "estimated"
+                      ],
+                      "description": "`estimated` when anything the ROI rests on is not a measured fleet outcome: every ROI today, since it divides a step value or a lifetime revenue that ends on the fleet median of STATED lifetime revenues. Null with no roi."
                     },
                     "status": {
                       "type": "string",
                       "enum": [
                         "measured",
+                        "estimated",
                         "learning",
                         "customer_time"
-                      ]
+                      ],
+                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                    },
+                    "estimates": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "What the figures rest on that is NOT a measured fleet outcome: `rate:<legKey>` (a leg rate: stated fleet median, default or declared), `lifetime_revenue` (fleet median of stated lifetime revenues), `step_value` (a step's value, which ends on that lifetime revenue). Empty = all measured."
                     },
                     "learningReason": {
                       "type": "string",
@@ -48452,7 +48868,9 @@
                     "costUsd",
                     "costPer",
                     "roi",
+                    "roiBasis",
                     "status",
+                    "estimates",
                     "learningReason",
                     "costUnit"
                   ]

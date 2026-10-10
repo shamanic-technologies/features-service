@@ -141,12 +141,12 @@ describe("agent catalogue lists (context-window sized)", () => {
     expect(res.body.rows.length).toBeGreaterThan(3);
     expect(tokens(res.body)).toBeLessThan(2000);
     for (const r of res.body.rows) {
-      expect(Object.keys(r).sort()).toEqual(["color", "costPer", "costUsd", "icon", "id", "line", "name", "roi", "runnable", "status"]);
+      expect(Object.keys(r).sort()).toEqual(["color", "costPer", "costUsd", "icon", "id", "line", "name", "roi", "roiBasis", "runnable", "status"]);
       expect(r.line).toContain("Meeting booked");
       expect(r.icon).toBe("waves");
     }
-    // The measured path ranks first (roi desc, learning last).
-    expect(res.body.rows[0]).toMatchObject({ status: "measured", line: "Lead found → Positive reply → Meeting booked → Meeting attended → Paid client" });
+    // The priced path ranks first (its cost per paying client rests on default rates: estimated; learning last).
+    expect(res.body.rows[0]).toMatchObject({ status: "estimated", roiBasis: "estimated", line: "Lead found → Positive reply → Meeting booked → Meeting attended → Paid client" });
     expect(res.body.rows[0].name).toBe("Danube");
   });
 
@@ -174,7 +174,7 @@ describe("agent catalogue lists (context-window sized)", () => {
     // `+` sent unencoded arrives as a space: still the same path.
     const funnels = await request(app).get(`/internal/catalogue/sales-funnels?paths=${path}&containsChannels=ai-meeting-booking&limit=5`).set(KEY);
     expect(funnels.status).toBe(200);
-    expect(funnels.body.rows[0]).toMatchObject({ name: "Victory", face: "/public/catalogue/faces/Victory.svg", status: "measured" });
+    expect(funnels.body.rows[0]).toMatchObject({ name: "Victory", face: "/public/catalogue/faces/Victory.svg", status: "estimated", roiBasis: "estimated" });
     expect(tokens(funnels.body)).toBeLessThan(2000);
   });
 
@@ -186,6 +186,10 @@ describe("agent catalogue lists (context-window sized)", () => {
     expect(f.body.face).toMatchObject({ svgPath: "/public/catalogue/faces/Victory.svg" });
     expect(f.body.legs).toHaveLength(4);
     expect(f.body.costUsd).toBeCloseTo(902.22, 1);
+    // What is measured vs estimated, per leg and in total (owner 2026-10-10: never "measured" on an estimate).
+    expect(f.body).toMatchObject({ status: "estimated", roiBasis: "estimated", lifetimeRevenueSource: "fleet_median_stated" });
+    expect(f.body.estimates).toContain("rate:conversation_to_meeting_booked");
+    expect(f.body.legs[1]).toMatchObject({ rateSource: "default", rateMeasured: false, pipe: { status: "measured", roiBasis: "estimated" } });
     const pipe = await request(app).get(`/internal/catalogue/pipes/${encodeURIComponent(MEET)}`).set(KEY);
     expect(pipe.body).toMatchObject({ name: "Prism", costUsd: 2, roi: 225, toStepValueUsd: 450 });
     const channel = await request(app).get("/internal/catalogue/channels/ai-meeting-booking").set(KEY);
