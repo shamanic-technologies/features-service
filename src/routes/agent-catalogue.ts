@@ -3,6 +3,8 @@ import { apiKeyOnly } from "../middleware/auth.js";
 import {
   buildCatalogueModel,
   byRoi,
+  roiBasisOf,
+  STEP_VALUE_ESTIMATES,
   channelEconomics,
   channelRunnable,
   funnelRunnable,
@@ -327,8 +329,8 @@ function resolveStep(model: CatalogueModel, raw: string): string | null {
  * when there is no cost. A list's `costUnit` alone let an agent quote a channel's cost per positive reply
  * as "per paying client" (prod 2026-10-10): every figure carries its own unit.
  */
-const econWire = (e: Economics, per: string | null) => ({ costUsd: e.costUsd, costPer: e.costUsd === null ? null : per, roi: e.roi, status: e.status });
-const econDetail = (e: Economics, per: string | null) => ({ ...econWire(e, per), learningReason: e.reason });
+const econWire = (e: Economics, per: string | null) => ({ costUsd: e.costUsd, costPer: e.costUsd === null ? null : per, roi: e.roi, roiBasis: roiBasisOf(e), status: e.status });
+const econDetail = (e: Economics, per: string | null) => ({ ...econWire(e, per), learningReason: e.reason, estimates: e.estimates });
 
 const PER_PAYING_CLIENT = "per paying client";
 /** "per positive reply": the outcome a per-outcome cost is counted in (the step's label, lower case). */
@@ -491,6 +493,8 @@ router.get("/internal/catalogue/sales-paths/:id", apiKeyOnly, async (req, res) =
         legKey,
         ratePct: path.rates[i].ratePct,
         rateSource: path.rates[i].source,
+        // Only a measured fleet conversion is measured; a stated median, a default or a declared rate is an estimate.
+        rateMeasured: path.rates[i].source === "measured_pipe",
         pipeIds: [...model.pipes.values()].filter((p) => p.legKey === legKey).map((p) => p.id),
       })),
       ...econDetail(e, PER_PAYING_CLIENT),
@@ -704,6 +708,8 @@ function funnelDetail(model: CatalogueModel, f: CatalogueFunnel, names: Map<stri
     legs: f.legs.map((l, i) => ({
       legKey: l.legKey,
       ratePct: path.rates[i].ratePct,
+      rateSource: path.rates[i].source,
+      rateMeasured: path.rates[i].source === "measured_pipe",
       outcomesNeededPerPayingClient: needed[i],
       pipe: l.pipe
         ? { id: l.pipe.id, name: names.get(nameKeyOfPipe(l.pipe)) ?? null, line: pipeLine(model, l.pipe), mode: l.pipe.mode, ...econWire(l.pipe.economics, perStep(model, l.pipe.toStep)) }
@@ -712,6 +718,7 @@ function funnelDetail(model: CatalogueModel, f: CatalogueFunnel, names: Map<stri
     ...econDetail(f.economics, PER_PAYING_CLIENT),
     costUnit: "per_paying_client",
     lifetimeRevenueUsd: model.lifetimeRevenueUsd,
+    lifetimeRevenueSource: "fleet_median_stated",
     runnable: funnelRunnable(f),
     draft: !funnelPublished(f),
   };
@@ -742,8 +749,14 @@ async function workflowRows(model: CatalogueModel, pipe: CataloguePipe) {
     const name = r.workflowDynastyName ?? r.workflowDynastySlug;
     const mature = r.isMature === true && r.basis === "mature" && r.costPerOutcomeUsd !== null && r.costPerOutcomeUsd > 0;
     const e: Economics = mature
-      ? { status: "measured", costUsd: Math.round(r.costPerOutcomeUsd! * 100) / 100, roi: value === null ? null : Math.round((value / r.costPerOutcomeUsd!) * 100) / 100, reason: null }
-      : { status: "learning", costUsd: null, roi: null, reason: r.outcomes > 0 ? "not_mature_yet" : "no_outcome_yet" };
+      ? {
+          status: "measured",
+          costUsd: Math.round(r.costPerOutcomeUsd! * 100) / 100,
+          roi: value === null ? null : Math.round((value / r.costPerOutcomeUsd!) * 100) / 100,
+          reason: null,
+          estimates: value === null ? [] : [...STEP_VALUE_ESTIMATES],
+        }
+      : { status: "learning", costUsd: null, roi: null, reason: r.outcomes > 0 ? "not_mature_yet" : "no_outcome_yet", estimates: [] };
     return { r, name, e };
   });
 }

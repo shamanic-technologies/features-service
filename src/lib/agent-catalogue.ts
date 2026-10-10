@@ -49,6 +49,20 @@
  *   PATH   cost and roi of its best measured funnel; `learning` when none is measured.
  *   WORKFLOW (on one pipe) its own mature cost per outcome; roi = value(to step) / cost; else `learning`.
  *
+ * ── MEASURED vs ESTIMATED (owner 2026-10-10: we sell a MEASURED cost per outcome, never an invented one) ──
+ *
+ *   A figure is MEASURED only when every input is a measured fleet outcome. Everything else it rests on is
+ *   listed in `estimates` (`rate:<legKey>` for a leg rate that is a stated fleet median, an industry default
+ *   or a declared rate; `lifetime_revenue` for the fleet median of STATED lifetime revenues; `step_value` for
+ *   a step's value, which always ends on that stated lifetime revenue).
+ *   FUNNEL / PATH  `status: "estimated"` as soon as one rate the cost per paying client uses is not measured
+ *                  (only an entry leg's conversion out of Lead found is a measured fleet rate today, and the
+ *                  entry rate is never used by the cost), so every multi-leg funnel reads `estimated` today.
+ *   PIPE / STEP / CHANNEL / WORKFLOW  the COST is measured (`status: "measured"`); the ROI divides a step
+ *                  value, so `roiBasis: "estimated"`.
+ *   RANKING (`byRoi`): tier first, measured > estimated > customer_time > learning, then ROI desc: a fully
+ *   measured figure is never out-ranked by an estimate, however high the estimate.
+ *
  * Pure: no IO, no clock.
  */
 import { CHANNEL_STEPS, isDeclaredStepKey, type ChannelStepKey } from "./acquisition-channels.js";
@@ -152,7 +166,7 @@ export interface CatalogueInputs {
 
 // ── Model ─────────────────────────────────────────────────────────────────────────────────────────
 
-export type EconomicsStatus = "measured" | "learning" | "customer_time";
+export type EconomicsStatus = "measured" | "estimated" | "learning" | "customer_time";
 
 export interface Economics {
   status: EconomicsStatus;
@@ -160,7 +174,15 @@ export interface Economics {
   roi: number | null;
   /** Why it is `learning` (detail reads). Null when measured. */
   reason: string | null;
+  /** What the figures rest on that is NOT a measured fleet outcome (see the header). Empty = all measured. */
+  estimates: string[];
 }
+
+/** The basis of an ROI: `estimated` when anything it rests on is not measured; null with no ROI. */
+export const roiBasisOf = (e: Economics): "measured" | "estimated" | null => (e.roi === null ? null : e.estimates.length > 0 ? "estimated" : "measured");
+
+/** A step value always ends on the fleet median of STATED lifetime revenues: an ROI built on it is estimated. */
+export const STEP_VALUE_ESTIMATES: readonly string[] = ["step_value"];
 
 export interface CatalogueStep {
   key: string;
@@ -233,7 +255,8 @@ export const salesPathNameKeyOf = (pathId: string): string => `path:${pathId}`;
 
 const round2 = (v: number): number => Math.round(v * 100) / 100;
 const usable = (v: number | null | undefined): v is number => typeof v === "number" && Number.isFinite(v) && v > 0;
-const LEARNING = (reason: string): Economics => ({ status: "learning", costUsd: null, roi: null, reason });
+const LEARNING = (reason: string): Economics => ({ status: "learning", costUsd: null, roi: null, reason, estimates: [] });
+const CUSTOMER_TIME = (): Economics => ({ status: "customer_time", costUsd: null, roi: null, reason: null, estimates: [] });
 
 const ENTRY_FROM = (from: string | null): boolean => from === null || from === "lead_found";
 
@@ -248,10 +271,16 @@ function buildPipes(inputs: CatalogueInputs, valueOf: (step: string) => number |
       const measurement = inputs.measurements.get(id) ?? null;
       const toStep = t.to.key;
       let economics: Economics;
-      if (c.operatedBy === "customer") economics = { status: "customer_time", costUsd: null, roi: null, reason: null };
+      if (c.operatedBy === "customer") economics = CUSTOMER_TIME();
       else if (measurement?.basis === "mature" && usable(measurement.costPerOutcomeUsd)) {
         const value = valueOf(toStep);
-        economics = { status: "measured", costUsd: round2(measurement.costPerOutcomeUsd), roi: value == null ? null : round2(value / measurement.costPerOutcomeUsd), reason: null };
+        economics = {
+          status: "measured",
+          costUsd: round2(measurement.costPerOutcomeUsd),
+          roi: value == null ? null : round2(value / measurement.costPerOutcomeUsd),
+          reason: null,
+          estimates: value == null ? [] : [...STEP_VALUE_ESTIMATES],
+        };
       } else economics = LEARNING(measurement?.basis === "flash" ? "no_mature_workflow_yet" : "no_fleet_history");
       out.set(id, {
         id,
@@ -425,6 +454,7 @@ export function funnelEconomics(path: CataloguePath, legs: readonly FunnelLeg[],
   let needed = 1;
   let cost = 0;
   let platformLegs = 0;
+  const estimates: string[] = [];
   for (let i = legs.length - 1; i >= 0; i -= 1) {
     const pipe = legs[i].pipe;
     if (pipe?.operatedBy === "platform") {
@@ -435,10 +465,19 @@ export function funnelEconomics(path: CataloguePath, legs: readonly FunnelLeg[],
     if (i === 0) break;
     const rate = path.rates[i].ratePct;
     if (!usable(rate)) return LEARNING(`leg_unrated:${path.legKeys[i]}`);
+    // Only a measured fleet conversion is a measured rate; a stated median, a default or a declared rate is not.
+    if (path.rates[i].source !== "measured_pipe") estimates.unshift(`rate:${path.legKeys[i]}`);
     needed /= rate / 100;
   }
-  if (platformLegs === 0 || !(cost > 0)) return { status: "customer_time", costUsd: null, roi: null, reason: null };
-  return { status: "measured", costUsd: round2(cost), roi: round2(lifetimeRevenueUsd / cost), reason: null };
+  if (platformLegs === 0 || !(cost > 0)) return CUSTOMER_TIME();
+  const costEstimated = estimates.length > 0;
+  return {
+    status: costEstimated ? "estimated" : "measured",
+    costUsd: round2(cost),
+    roi: round2(lifetimeRevenueUsd / cost),
+    reason: null,
+    estimates: [...estimates, "lifetime_revenue"],
+  };
 }
 
 /** PURE: outcomes of each leg's step needed per paying client (null after a 0% / unrated leg). */
@@ -515,12 +554,15 @@ export function funnelById(model: CatalogueModel, id: string): CatalogueFunnel |
   return funnelsOfPath(model, path).find((f) => f.id === id) ?? null;
 }
 
-/** PURE: a path's economics = its best measured funnel (highest roi); else learning. */
+/** PURE: a path's economics = its best funnel in the ranking's order (a measured one before any estimate,
+ *  then highest roi); else learning. */
 export function pathEconomics(model: CatalogueModel, path: CataloguePath): Economics & { bestFunnelId: string | null } {
   const funnels = funnelsOfPath(model, path);
-  const measured = funnels.filter((f) => f.economics.status === "measured" && f.economics.roi !== null).sort((a, b) => b.economics.roi! - a.economics.roi! || a.id.localeCompare(b.id));
-  if (measured.length > 0) return { ...measured[0].economics, bestFunnelId: measured[0].id };
-  if (funnels.length > 0 && funnels.every((f) => f.economics.status === "customer_time")) return { status: "customer_time", costUsd: null, roi: null, reason: null, bestFunnelId: null };
+  const priced = funnels
+    .filter((f) => (f.economics.status === "measured" || f.economics.status === "estimated") && f.economics.roi !== null)
+    .sort(byRoi((f) => f.economics, (f) => f.id));
+  if (priced.length > 0) return { ...priced[0].economics, bestFunnelId: priced[0].id };
+  if (funnels.length > 0 && funnels.every((f) => f.economics.status === "customer_time")) return { ...CUSTOMER_TIME(), bestFunnelId: null };
   return { ...LEARNING("no_measured_funnel"), bestFunnelId: null };
 }
 
@@ -533,7 +575,7 @@ export function channelEconomics(model: CatalogueModel, slug: string, legKeys: R
   const pipes = [...model.pipes.values()].filter((p) => p.channelSlug === slug && (!legKeys || legKeys.has(p.legKey)));
   const measured = pipes.filter((p) => p.economics.status === "measured").sort((a, b) => (b.economics.roi ?? -1) - (a.economics.roi ?? -1) || a.id.localeCompare(b.id));
   if (measured.length > 0) return { ...measured[0].economics, bestPipeId: measured[0].id };
-  if (pipes.length > 0 && pipes.every((p) => p.economics.status === "customer_time")) return { status: "customer_time", costUsd: null, roi: null, reason: null, bestPipeId: null };
+  if (pipes.length > 0 && pipes.every((p) => p.economics.status === "customer_time")) return { ...CUSTOMER_TIME(), bestPipeId: null };
   return { ...LEARNING("no_measured_pipe"), bestPipeId: null };
 }
 
@@ -543,7 +585,8 @@ export function stepEconomics(model: CatalogueModel, key: string): Economics {
   const producing = [...model.pipes.values()].filter((p) => p.toStep === key && p.economics.status === "measured" && p.measurement?.costPerOutcomeUsd != null);
   if (producing.length === 0) return LEARNING("no_measured_pipe");
   const cost = Math.min(...producing.map((p) => p.measurement!.costPerOutcomeUsd!));
-  return { status: "measured", costUsd: round2(cost), roi: step?.valueUsd == null ? null : round2(step.valueUsd / cost), reason: null };
+  const roi = step?.valueUsd == null ? null : round2(step.valueUsd / cost);
+  return { status: "measured", costUsd: round2(cost), roi, reason: null, estimates: roi === null ? [] : [...STEP_VALUE_ESTIMATES] };
 }
 
 // ── Text and filters ──────────────────────────────────────────────────────────────────────────────
@@ -573,15 +616,19 @@ export function matchesQuery(q: string | undefined, texts: ReadonlyArray<string 
     .every((w) => hay.includes(w));
 }
 
-/** PURE: order rows by roi desc (null last), then measured before learning, then the tie-break text. */
+/** The ranking tier of a status: a fully measured figure is never out-ranked by an estimate. */
+const STATUS_TIER: Record<EconomicsStatus, number> = { measured: 0, estimated: 1, customer_time: 2, learning: 3 };
+
+/** PURE: order rows by status tier (measured > estimated > customer_time > learning), then roi desc (null
+ *  last), then the tie-break text. */
 export function byRoi<T>(econ: (row: T) => Economics, tie: (row: T) => string): (a: T, b: T) => number {
   return (a, b) => {
     const ea = econ(a);
     const eb = econ(b);
+    if (STATUS_TIER[ea.status] !== STATUS_TIER[eb.status]) return STATUS_TIER[ea.status] - STATUS_TIER[eb.status];
     if (ea.roi !== null && eb.roi !== null && ea.roi !== eb.roi) return eb.roi - ea.roi;
     if ((ea.roi === null) !== (eb.roi === null)) return ea.roi === null ? 1 : -1;
-    const rank = (s: EconomicsStatus) => (s === "measured" ? 0 : s === "customer_time" ? 1 : 2);
-    return rank(ea.status) - rank(eb.status) || tie(a).localeCompare(tie(b));
+    return tie(a).localeCompare(tie(b));
   };
 }
 
