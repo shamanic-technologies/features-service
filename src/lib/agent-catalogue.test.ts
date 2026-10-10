@@ -12,6 +12,9 @@ import {
   matchesQuery,
   pathEconomics,
   pathLine,
+  phosphorIconOf,
+  STEP_ICONS,
+  FAMILY_GLYPHS,
   stepEconomics,
   type CatalogueInputs,
   type PipeMeasurement,
@@ -164,5 +167,31 @@ describe("a step declared at run time ('LinkedIn post') rides legs, paths and va
     expect(f.id).toBe(funnelIdOf(f.legs));
     expect(f.id.startsWith("start_to_linkedin_post@organic-linkedin-publishing+linkedin_post_to_conversation@organic-linkedin-publishing")).toBe(true);
     expect(funnelEconomics(path, f.legs, 3000).status).toBe("learning");
+  });
+});
+
+describe("catalogue icons are Phosphor names only (owner 2026-10-10)", () => {
+  // Checked against @phosphor-icons/react 2.1 (`dist/csr/<PascalName>`): every name the catalogue serves today.
+  const PHOSPHOR = new Set([
+    "address-book", "at", "bell", "bird", "calendar-check", "calendar-plus", "chat-circle", "chat-circle-text", "chat-text",
+    "currency-dollar", "cursor-click", "envelope", "facebook-logo", "file-text", "flow-arrow", "funnel", "globe", "handshake",
+    "instagram-logo", "linkedin-logo", "list-bullets", "magnifying-glass", "medal", "megaphone", "microphone", "newspaper",
+    "note-pencil", "phone", "phone-call", "question", "rocket", "share-network", "shopping-cart", "sparkle", "target",
+    "trend-up", "tray", "user-check", "user-focus", "user-plus", "users", "video", "waves", "youtube-logo",
+  ]);
+  it("maps the other set's spellings to the same picture", () => {
+    expect(phosphorIconOf("mail")).toBe("envelope");
+    expect(phosphorIconOf("share-2")).toBe("share-network");
+    expect(phosphorIconOf("mic")).toBe("microphone");
+    expect(phosphorIconOf("envelope")).toBe("envelope");
+  });
+  it("every seeded channel and step icon is served as a Phosphor name", async () => {
+    const { SEED_FEATURES } = await import("../seed/features.js");
+    const served = [
+      ...SEED_FEATURES.map((f) => phosphorIconOf(f.icon)),
+      ...Object.values(STEP_ICONS),
+      ...Object.values(FAMILY_GLYPHS).filter((g): g is NonNullable<typeof g> => g !== null),
+    ];
+    expect([...new Set(served)].filter((i) => !PHOSPHOR.has(i))).toEqual([]);
   });
 });
