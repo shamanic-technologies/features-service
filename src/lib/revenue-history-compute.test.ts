@@ -675,7 +675,7 @@ describe("revenue history — one org's unreadable billing payment-outlook (2026
       },
       spendableBudgets: async (pairs) => {
         const out = new Map<string, BrandSpendableBudget>();
-        for (const p of pairs) out.set(spendableKey(p.orgId, p.brandId), { configuredUsd: 40, runningUsd: 40, proactiveRunningUsd: 40, reactiveRunningUsd: 0 });
+        for (const p of pairs) out.set(spendableKey(p.orgId, p.brandId), { configuredUsd: 40, runningUsd: 40, proactiveRunningUsd: 40, reactiveRunningUsd: 0, salesFunnelRunningUsd: 0 });
         return out;
       },
       brandsBasic: async (ids) => new Map(ids.map((id) => [id, { name: `Brand ${id}`, domain: `${id}.com` }])),
