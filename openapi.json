@@ -47700,6 +47700,26 @@
             "description": "1..25, default 10.",
             "name": "limit",
             "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "PER-OFFER price (2026-10-10, the signup's \"Your campaign\" step and payment wall): the same formula with THIS offer's lifetime revenue (stated, else the fleet median) and its brand's own leg rates where it has them (measured on its leads / CRM = `offer_measured`, stated = `offer_stated`), else the fleet's. Pipe costs stay the fleet's measured ones. Needs `brandId` and the `x-org-id` header (400 `brand_required` / `org_required`; 404 `offer_not_found`). Still `estimated` whenever a rate or the lifetime revenue is not measured."
+            },
+            "required": false,
+            "description": "PER-OFFER price (2026-10-10, the signup's \"Your campaign\" step and payment wall): the same formula with THIS offer's lifetime revenue (stated, else the fleet median) and its brand's own leg rates where it has them (measured on its leads / CRM = `offer_measured`, stated = `offer_stated`), else the fleet's. Pipe costs stay the fleet's measured ones. Needs `brandId` and the `x-org-id` header (400 `brand_required` / `org_required`; 404 `offer_not_found`). Still `estimated` whenever a rate or the lifetime revenue is not measured.",
+            "name": "offerId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "The offer's brand (required with offerId)."
+            },
+            "required": false,
+            "description": "The offer's brand (required with offerId).",
+            "name": "brandId",
+            "in": "query"
           }
         ],
         "responses": {
@@ -47811,6 +47831,41 @@
                           "mixed"
                         ]
                       }
+                    },
+                    "offer": {
+                      "type": "object",
+                      "properties": {
+                        "offerId": {
+                          "type": "string"
+                        },
+                        "brandId": {
+                          "type": "string"
+                        },
+                        "lifetimeRevenueUsd": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "lifetimeRevenueSource": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "offer_stated",
+                            "fleet_median"
+                          ]
+                        },
+                        "ownRateLegs": {
+                          "type": "integer",
+                          "description": "Legs priced on the brand's own rate."
+                        }
+                      },
+                      "required": [
+                        "offerId",
+                        "brandId",
+                        "lifetimeRevenueUsd",
+                        "lifetimeRevenueSource",
+                        "ownRateLegs"
+                      ],
+                      "description": "Present on a per-offer read only."
                     }
                   },
                   "required": [
@@ -47954,9 +48009,11 @@
                             "enum": [
                               "fleet_median",
                               "default",
-                              "measured_pipe"
+                              "measured_pipe",
+                              "offer_measured",
+                              "offer_stated"
                             ],
-                            "description": "`fleet_median` = median of the rates brands STATED (>= 5 brands); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion. Null on the entry leg (not used by the cost)."
+                            "description": "`fleet_median` = median of the rates brands STATED (>= 5 brands); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion; per-offer read only: `offer_measured` (the brand's own measured rate) / `offer_stated` (the rate it stated). Null on the entry leg (not used by the cost)."
                           },
                           "rateMeasured": {
                             "type": "boolean"
@@ -48103,10 +48160,13 @@
                     },
                     "lifetimeRevenueSource": {
                       "type": "string",
+                      "nullable": true,
                       "enum": [
-                        "fleet_median_stated"
+                        "fleet_median_stated",
+                        "offer_stated",
+                        "fleet_median"
                       ],
-                      "description": "The lifetime revenue the roi divides: the fleet median of the lifetime revenues offers STATED (never measured)."
+                      "description": "The lifetime revenue the roi divides: `fleet_median_stated` on the fleet catalogue; on a per-offer read `offer_stated` (the client value the customer typed) or `fleet_median` (the offer states none)."
                     },
                     "runnable": {
                       "type": "boolean",
@@ -48229,9 +48289,11 @@
                             "enum": [
                               "fleet_median",
                               "default",
-                              "measured_pipe"
+                              "measured_pipe",
+                              "offer_measured",
+                              "offer_stated"
                             ],
-                            "description": "`fleet_median` = median of the rates brands STATED (>= 5 brands); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion. Null on the entry leg (not used by the cost)."
+                            "description": "`fleet_median` = median of the rates brands STATED (>= 5 brands); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion; per-offer read only: `offer_measured` (the brand's own measured rate) / `offer_stated` (the rate it stated). Null on the entry leg (not used by the cost)."
                           },
                           "rateMeasured": {
                             "type": "boolean"
@@ -48378,10 +48440,13 @@
                     },
                     "lifetimeRevenueSource": {
                       "type": "string",
+                      "nullable": true,
                       "enum": [
-                        "fleet_median_stated"
+                        "fleet_median_stated",
+                        "offer_stated",
+                        "fleet_median"
                       ],
-                      "description": "The lifetime revenue the roi divides: the fleet median of the lifetime revenues offers STATED (never measured)."
+                      "description": "The lifetime revenue the roi divides: `fleet_median_stated` on the fleet catalogue; on a per-offer read `offer_stated` (the client value the customer typed) or `fleet_median` (the offer states none)."
                     },
                     "runnable": {
                       "type": "boolean",
@@ -48461,6 +48526,26 @@
             "description": "A sales funnel id (URL-encoded).",
             "name": "id",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "PER-OFFER price (2026-10-10, the signup's \"Your campaign\" step and payment wall): the same formula with THIS offer's lifetime revenue (stated, else the fleet median) and its brand's own leg rates where it has them (measured on its leads / CRM = `offer_measured`, stated = `offer_stated`), else the fleet's. Pipe costs stay the fleet's measured ones. Needs `brandId` and the `x-org-id` header (400 `brand_required` / `org_required`; 404 `offer_not_found`). Still `estimated` whenever a rate or the lifetime revenue is not measured."
+            },
+            "required": false,
+            "description": "PER-OFFER price (2026-10-10, the signup's \"Your campaign\" step and payment wall): the same formula with THIS offer's lifetime revenue (stated, else the fleet median) and its brand's own leg rates where it has them (measured on its leads / CRM = `offer_measured`, stated = `offer_stated`), else the fleet's. Pipe costs stay the fleet's measured ones. Needs `brandId` and the `x-org-id` header (400 `brand_required` / `org_required`; 404 `offer_not_found`). Still `estimated` whenever a rate or the lifetime revenue is not measured.",
+            "name": "offerId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "The offer's brand (required with offerId)."
+            },
+            "required": false,
+            "description": "The offer's brand (required with offerId).",
+            "name": "brandId",
+            "in": "query"
           }
         ],
         "responses": {
@@ -48542,9 +48627,11 @@
                             "enum": [
                               "fleet_median",
                               "default",
-                              "measured_pipe"
+                              "measured_pipe",
+                              "offer_measured",
+                              "offer_stated"
                             ],
-                            "description": "`fleet_median` = median of the rates brands STATED (>= 5 brands); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion. Null on the entry leg (not used by the cost)."
+                            "description": "`fleet_median` = median of the rates brands STATED (>= 5 brands); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion; per-offer read only: `offer_measured` (the brand's own measured rate) / `offer_stated` (the rate it stated). Null on the entry leg (not used by the cost)."
                           },
                           "rateMeasured": {
                             "type": "boolean"
@@ -48691,10 +48778,13 @@
                     },
                     "lifetimeRevenueSource": {
                       "type": "string",
+                      "nullable": true,
                       "enum": [
-                        "fleet_median_stated"
+                        "fleet_median_stated",
+                        "offer_stated",
+                        "fleet_median"
                       ],
-                      "description": "The lifetime revenue the roi divides: the fleet median of the lifetime revenues offers STATED (never measured)."
+                      "description": "The lifetime revenue the roi divides: `fleet_median_stated` on the fleet catalogue; on a per-offer read `offer_stated` (the client value the customer typed) or `fleet_median` (the offer states none)."
                     },
                     "runnable": {
                       "type": "boolean",
@@ -48706,6 +48796,41 @@
                     },
                     "draft": {
                       "type": "boolean"
+                    },
+                    "offer": {
+                      "type": "object",
+                      "properties": {
+                        "offerId": {
+                          "type": "string"
+                        },
+                        "brandId": {
+                          "type": "string"
+                        },
+                        "lifetimeRevenueUsd": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "lifetimeRevenueSource": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "offer_stated",
+                            "fleet_median"
+                          ]
+                        },
+                        "ownRateLegs": {
+                          "type": "integer",
+                          "description": "Legs priced on the brand's own rate."
+                        }
+                      },
+                      "required": [
+                        "offerId",
+                        "brandId",
+                        "lifetimeRevenueUsd",
+                        "lifetimeRevenueSource",
+                        "ownRateLegs"
+                      ],
+                      "description": "Present on a per-offer read only."
                     }
                   },
                   "required": [
