@@ -8,6 +8,7 @@ import {
   channelEconomics,
   channelRunnable,
   funnelRunnable,
+  funnelMixed,
   funnelTypeOf,
   pathRunnable,
   pipeRunnable,
@@ -401,6 +402,7 @@ const funnelRowOf = (f: CatalogueFunnel, name: string) => ({
   type: funnelTypeOf(f),
   ...econWire(f.economics, PER_PAYING_CLIENT),
   runnable: funnelRunnable(f),
+  mixed: funnelMixed(f),
   ...(funnelPublished(f) ? {} : { draft: true }),
 });
 
@@ -735,6 +737,7 @@ function funnelDetail(model: CatalogueModel, f: CatalogueFunnel, names: Map<stri
     lifetimeRevenueUsd: model.lifetimeRevenueUsd,
     lifetimeRevenueSource: "fleet_median_stated",
     runnable: funnelRunnable(f),
+  mixed: funnelMixed(f),
     draft: !funnelPublished(f),
   };
 }
