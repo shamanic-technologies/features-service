@@ -57,7 +57,7 @@ describe("GET /brands/:brandId/sales-funnel-campaigns", () => {
   it("one engine pass over the units together: invested = committed of the units, ROI from the same body, copy served", async () => {
     fetchWithRetry.mockResolvedValue(new Response(JSON.stringify({ salesFunnelCampaigns: [FC("fc1", "f1", [unit("c2", "sales-cold-email-outreach", "lead_found_to_conversation"), unit("c1", "sourcing-apollo-cold-filters", "start_to_lead_found")])] })));
     distinctChannelFunnels.mockReturnValue([{ key: "sales" }]);
-    computeFeatureRevenue.mockResolvedValue({ costEconomics: { committedCostUsd: 12.34, roiMultiple: 2.5, unmeasuredReason: null }, maturity: { isMature: false, legs: [] } });
+    computeFeatureRevenue.mockResolvedValue({ headline: { totalPipelineUsd: 30, unpricedReason: null }, costEconomics: { committedCostUsd: 12.34, roiMultiple: 2.5, unmeasuredReason: null }, maturity: { isMature: false, legs: [] } });
 
     const res = await request(app).get("/brands/b1/sales-funnel-campaigns?pricing=net").set(AUTH);
     expect(res.status).toBe(200);
@@ -71,6 +71,7 @@ describe("GET /brands/:brandId/sales-funnel-campaigns", () => {
     expect(row).toMatchObject({ id: "fc1", name: "Bliss", typeLabel: "Daily", type: "proactive", triggerLabel: null, investedUsd: 12.34, roiMultiple: 2.5, moneyUnavailableReason: null, copyUnavailableReason: null });
     expect(row).not.toHaveProperty("description");
     expect(row.maturity).toEqual({ isMature: false, legs: [] });
+    expect(row.headline).toEqual({ totalPipelineUsd: 30, unpricedReason: null });
     expect(row.path.items[0]).toEqual({ kind: "step", key: "lead_found", label: "Lead found" });
     expect(fetchWithRetry.mock.calls[0][0]).toBe("http://campaign:3000/sales-funnel-campaigns?brandId=b1");
   });
