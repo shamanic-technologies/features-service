@@ -1,4 +1,7 @@
 import { Router, type Request, type Response } from "express";
+import { getInternalPipeFleet, internalPipeCountsByDynasty, type MeetingLegFleet } from "../lib/meeting-leg-fleet.js";
+import { internalPipeToStep } from "../lib/pipe-kind.js";
+import type { ChannelStepKey } from "../lib/acquisition-channels.js";
 import { overlayVendorProjection } from "../lib/actual-cost-projection.js";
 import { fetchActiveAudienceAvailabilitySoft } from "../lib/human-client.js";
 import { fetchPricingFunnels } from "../lib/reading-funnels.js";
@@ -1603,7 +1606,12 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
         ? economicsFromTerms(funnelEconomics, [legBasisFunnelKey]).economics
         : null
       : goalEconomics;
-    if (legKey && legBasisFunnelKey && mergedEconomics) {
+    const internalToStep = legKey ? await internalPipeToStep(featureSlug, legKey) : null;
+    if (legKey && legBasisFunnelKey && internalToStep) {
+      // An INTERNAL pipe's outcome is OBSERVED (the follow-up ledger: who it acted on reached its step,
+      // `withInternalPipeCounts`), exactly like an entry pipe's: nothing is walked from another step.
+      legTerms = { funnelKey: legBasisFunnelKey, outcomeStep: internalToStep as ChannelStepKey, driver: "reply", rateFromDriver: 1, outcomeObserved: true };
+    } else if (legKey && legBasisFunnelKey && mergedEconomics) {
       legTerms = legTermsForFunnel(legKey, legBasisFunnelKey, mergedEconomics);
     } else if (legKey && legBasisFunnelKey) {
       // No offer terms: nothing is PROJECTED (no paid-client cost, return, %CAC), but an ENTRY leg's cost
@@ -2005,7 +2013,7 @@ export async function fetchWorkflowProjectionEvidence(input: {
     }
   }
 
-  return {
+  const out: WorkflowProjectionEvidence = {
     ...(legFleet && legKey ? { legKey } : {}),
     ...(mature !== undefined ? { mature } : {}),
     ...(matureUnavailableReason ? { matureUnavailableReason } : {}),
@@ -2021,6 +2029,65 @@ export async function fetchWorkflowProjectionEvidence(input: {
     ...(offerGrain
       ? { offerGrain: [...offerGrain.active.entries()], retiredOfferGrain: [...offerGrain.retired.entries()] }
       : {}),
+  };
+  // An INTERNAL pipe (its leg starts on a step other than Lead found) serves nobody, so the sends above
+  // count no one: its people and outcomes are the follow-up ledger's, at every grain (the one rule every
+  // pipe follows, `fleetPipeFigures` in routes/public.ts).
+  const internalToStep = legKey ? await internalPipeToStep(featureSlug, legKey) : null;
+  if (internalToStep) {
+    const fleet = await getInternalPipeFleet(featureSlug, legKey!, internalToStep);
+    return withInternalPipeCounts(out, fleet, {
+      brand: (c) => c.brandId === brandId && c.orgId === identity.orgId,
+      campaign: campaignIds ? (c) => campaignIds.includes(c.campaignId) : null,
+      offer: offerCampaignIds ? (c) => offerCampaignIds.includes(c.campaignId) : null,
+    });
+  }
+  return out;
+}
+
+/**
+ * PURE: an internal pipe's evidence with every grain's people and outcomes read off the follow-up ledger
+ * (`internalPipeCountsByDynasty`): `contacted` = the people its campaigns acted on, `replies` = those who
+ * reached the pipe's `to` step (the observed-outcome slot its leg terms read, rate 1), `clicks` = 0.
+ * Spend is untouched (runs, same campaigns). The audience grain keeps its own (an internal pipe serves no
+ * audience). Exported for tests.
+ */
+export function withInternalPipeCounts(
+  ev: WorkflowProjectionEvidence,
+  fleet: Pick<MeetingLegFleet, "perCampaign">,
+  scopes: {
+    brand: (c: MeetingLegFleet["perCampaign"][number]) => boolean;
+    campaign: ((c: MeetingLegFleet["perCampaign"][number]) => boolean) | null;
+    offer: ((c: MeetingLegFleet["perCampaign"][number]) => boolean) | null;
+  },
+): WorkflowProjectionEvidence {
+  const dynastyOf = new Map(ev.workflows.map((w) => [w.workflowSlug, w.workflowDynastySlug]));
+  const activeOf = new Map(ev.workflows.filter((w) => w.status === "active").map((w) => [w.workflowDynastySlug, w.workflowSlug]));
+  const counted = (stats: Map<string, { contacted: number; reached: number }>, dynasty: string) => stats.get(dynasty) ?? { contacted: 0, reached: 0 };
+  const regrain = (rows: Array<[string, WorkflowGrainEvidence]> | undefined, scope: ((c: MeetingLegFleet["perCampaign"][number]) => boolean) | null, keyIsDynasty: boolean) => {
+    if (!rows || !scope) return rows;
+    const stats = internalPipeCountsByDynasty(fleet, scope);
+    return rows.map(([key, e]): [string, WorkflowGrainEvidence] => {
+      const n = counted(stats, keyIsDynasty ? key : (dynastyOf.get(key) ?? key));
+      return [key, { ...e, contacted: n.contacted, replies: n.reached, clicks: 0 }];
+    });
+  };
+  const fleetStats = internalPipeCountsByDynasty(fleet, () => true);
+  // Per slug: every version's recipient counts reset, the dynasty's put on its active slug (else any of its
+  // slugs) so the per-dynasty sum the ladder takes is the ledger's count exactly.
+  const zero = { recipientsContacted: 0, recipientsRepliesPositive: 0, recipientsClicked: 0 };
+  const emailStats = new Map<string, Record<string, number>>(ev.crossOrgEmailStats.map(([slug, r]) => [slug, { ...r, ...zero }]));
+  for (const [dynasty, n] of fleetStats) {
+    const slug = activeOf.get(dynasty) ?? ev.workflows.find((w) => w.workflowDynastySlug === dynasty)?.workflowSlug ?? dynasty;
+    emailStats.set(slug, { ...(emailStats.get(slug) ?? {}), ...zero, recipientsContacted: n.contacted, recipientsRepliesPositive: n.reached });
+  }
+  return {
+    ...ev,
+    crossOrgEmailStats: [...emailStats.entries()],
+    brandGrain: regrain(ev.brandGrain, scopes.brand, false)!,
+    retiredBrandGrain: regrain(ev.retiredBrandGrain, scopes.brand, true)!,
+    ...(ev.campaignGrain ? { campaignGrain: regrain(ev.campaignGrain, scopes.campaign, false), retiredCampaignGrain: regrain(ev.retiredCampaignGrain, scopes.campaign, true) } : {}),
+    ...(ev.offerGrain ? { offerGrain: regrain(ev.offerGrain, scopes.offer, false), retiredOfferGrain: regrain(ev.retiredOfferGrain, scopes.offer, true) } : {}),
   };
 }
 

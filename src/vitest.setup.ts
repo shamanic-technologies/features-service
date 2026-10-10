@@ -49,3 +49,14 @@ vi.mock("./lib/effective-conversion-rates.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/effective-conversion-rates.js")>()),
   getFleetLifetimeRevenueMedian: vi.fn(async () => ({ usd: null, offerCount: 0 })),
 }));
+
+/**
+ * Suite-wide default: which (channel, leg) is an INTERNAL pipe (lib/pipe-kind.ts) is read off the channel
+ * catalogue (a DB read no route fixture answers). Null here: every leg read keeps the walk of its basis
+ * funnel, as before the one-rule change. Suites asserting the internal-pipe measure `vi.unmock` it or set
+ * their own return.
+ */
+vi.mock("./lib/pipe-kind.js", () => ({
+  internalPipeToStep: vi.fn(async () => null),
+  __resetPipeKind: vi.fn(),
+}));
