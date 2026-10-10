@@ -378,7 +378,7 @@ async function named(keys: string[], known: Map<string, string>): Promise<Map<st
 
 const pathRowOf = (m: CatalogueModel, p: CataloguePath, name: string) => {
   const e = pathEconomics(m, p);
-  return { id: p.id, name, icon: FAMILY_GLYPHS.sales_path, color: glyphColorOf(name), line: pathLine(m, p), ...econWire(e, PER_PAYING_CLIENT), runnable: pathRunnable(m, p) };
+  return { id: p.id, name, icon: FAMILY_GLYPHS.sales_path, color: glyphColorOf(name), line: pathLine(m, p), type: p.type, ...econWire(e, PER_PAYING_CLIENT), runnable: pathRunnable(m, p) };
 };
 
 const pipeRowOf = (m: CatalogueModel, p: CataloguePipe, name: string) => ({
@@ -475,7 +475,7 @@ router.get("/internal/catalogue/sales-paths", apiKeyOnly, async (req, res) => {
       .filter((p) => !runnable || pathRunnable(model, p))
       .filter((p) => matchesQuery(q, [pathLine(model, p), names.get(salesPathNameKeyOf(p.id)), p.id]))
       .map((p) => ({ p, e: pathEconomics(model, p) }))
-      .sort(byRoi((x) => x.e, (x) => x.p.id));
+      .sort(byRoi((x) => x.e, (x) => x.p.id, (x) => x.p.type));
     const shown = candidates.slice(0, limit);
     const n = await named(shown.map((x) => salesPathNameKeyOf(x.p.id)), names);
     const rows = candidates.map((x, i) => (i < limit ? pathRowOf(model, x.p, n.get(salesPathNameKeyOf(x.p.id))!) : null)).filter(Boolean);
@@ -501,6 +501,7 @@ router.get("/internal/catalogue/sales-paths/:id", apiKeyOnly, async (req, res) =
       icon: FAMILY_GLYPHS.sales_path,
       color: glyphColorOf(name),
       line: pathLine(model, path),
+      type: path.type,
       steps: path.steps.map((s) => ({ id: s, name: stepLabel(model, s) })),
       legs: path.legKeys.map((legKey, i) => ({
         legKey,
@@ -690,7 +691,7 @@ router.get("/internal/catalogue/sales-funnels", apiKeyOnly, async (req, res) => 
       .filter((f) => !containsChannels || f.channelSlugs.some((s) => containsChannels.includes(s)))
       .filter((f) => !runnable || funnelRunnable(f))
       .filter((f) => matchesQuery(q, [funnelLine(f), names.get(f.id), f.id]))
-      .sort(byRoi((f) => f.economics, (f) => f.id));
+      .sort(byRoi((f: CatalogueFunnel) => f.economics, (f) => f.id, (f) => funnelTypeOf(f)));
     const shown = candidates.slice(0, limit);
     const n = await named(shown.map((f) => f.id), names);
     res.json({
@@ -946,7 +947,7 @@ router.post("/internal/catalogue/sales-paths", apiKeyOnly, async (req, res) => {
     const id = pathIdOf(legKeys);
     const path = model.paths.get(id);
     if (!path) {
-      throw bad("path_invalid", `${id} is not a sales path: the legs must chain from an entry leg (from nothing or from Lead found) to paid_client, each performed by a pipe (GET /internal/catalogue/pipes)`);
+      throw bad("path_invalid", `${id} is not a sales path: the legs must chain to paid_client from an entry leg (from nothing or from Lead found) or from a trigger step through a reactive pipe (a reactive path), each performed by a pipe (GET /internal/catalogue/pipes)`);
     }
     const declared = await listDeclaredSalesPathChains();
     const existed = declared.some((d) => d.pathId === id) || names.has(salesPathNameKeyOf(id));
