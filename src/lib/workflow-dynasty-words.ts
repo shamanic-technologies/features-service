@@ -5,7 +5,8 @@
  * (`lib/catalogue-names.ts`) and the guard test fails on any overlap. workflow-service only APPENDS words;
  * re-copy this list when it does (a word added there after a name was given here stays given here).
  */
-export const WORKFLOW_DYNASTY_WORDS: readonly string[] = [
+/** The mixed pool every dynasty was named from before 2026-10-10 (534eb726). */
+const WORKFLOW_DYNASTY_LEGACY_WORDS: readonly string[] = [
   "andromeda", "orion", "cassiopeia", "lyra", "vega", "sirius", "polaris", "altair", "rigel", "deneb",
   "antares", "arcturus", "betelgeuse", "capella", "canopus", "procyon", "aldebaran", "spica", "regulus",
   "fomalhaut", "achernar", "bellatrix", "mintaka", "alnilam", "alnitak", "mizar", "alcor", "dubhe", "merak",
@@ -50,3 +51,58 @@ export const WORKFLOW_DYNASTY_WORDS: readonly string[] = [
   "lantern", "lighthouse", "compass", "anchor", "rudder", "helm", "keel", "mast", "bowsprit", "starboard",
   "portside", "leeward", "windward", "current", "drift", "voyage", "odyssey",
 ];
+
+/**
+ * The STAR pool new dynasties draw from since 2026-10-10 (workflow-service #514, origin/main 8d255fe: IAU single-word
+ * star names minus its own `EXCLUDED_STAR_NAMES`), and the adjectives of its two-word form ("Bright Vega"). Added
+ * 2026-10-10: the first snapshot held the legacy words only, so 16 catalogue words (Bold, Brave, Bright, Twinkling,
+ * Clear...) were shared with a workflow name.
+ */
+export const WORKFLOW_STAR_NAMES: readonly string[] = [
+  "Absolutno", "Acamar", "Achernar", "Achird", "Acrab", "Acrux", "Acubens", "Adhafera", "Adhara", "Adhil",
+  "Ain", "Ainalrami", "Aladfar", "Alasia", "Albaldah", "Albali", "Albireo", "Alchiba", "Alcor", "Alcyone",
+  "Aldebaran", "Alderamin", "Aldhanab", "Aldhibah", "Aldulfin", "Alfirk", "Algedi", "Algenib", "Algieba",
+  "Algol", "Algorab", "Alhena", "Alioth", "Aljanah", "Alkaid", "Alkalurops", "Alkaphrah", "Alkarab", "Alkes",
+  "Almaaz", "Almach", "Alnair", "Alnasl", "Alnilam", "Alnitak", "Alniyat", "Alphard", "Alphecca",
+  "Alpheratz", "Alpherg", "Alrakis", "Alrescha", "Alruba", "Alsafi", "Alsciaukat", "Alsephina", "Alshain",
+  "Alshat", "Altair", "Altais", "Alterf", "Aludra", "Alya", "Alzirr", "Amadioha", "Amansinaya", "Ancha",
+  "Angetenar", "Aniara", "Ankaa", "Antares", "Arcalis", "Arcturus", "Arneb", "Ascella", "Ashlesha",
+  "Aspidiske", "Asterope", "Atakoraka", "Athebyne", "Atik", "Atria", "Avior", "Azelfafage", "Azha", "Azmidi",
+  "Baekdu", "Beemim", "Beid", "Belel", "Belenos", "Bellatrix", "Berehynia", "Betelgeuse", "Bharani", "Bibha",
+  "Biham", "Botein", "Bubup", "Bunda", "Canopus", "Capella", "Caph", "Castula", "Cebalrai", "Celaeno",
+  "Chalawan", "Chamukuy", "Chara", "Chason", "Chechia", "Chertan", "Citadelle", "Citala", "Cujam", "Cursa",
+  "Dabih", "Dalim", "Deneb", "Denebola", "Dingolay", "Diphda", "Diwo", "Diya", "Dofida", "Dombay",
+  "Dschubba", "Dubhe", "Dziban", "Edasich", "Electra", "Elgafar", "Elkurud", "Elnath", "Eltanin", "Emiw",
+  "Enif", "Errai", "Fafnir", "Fawaris", "Fomalhaut", "Fulu", "Fumalsamakah", "Funi", "Furud", "Fuyue",
+  "Gacrux", "Gakyid", "Geminga", "Giausar", "Gienah", "Ginan", "Gloas", "Gomeisa", "Grumium", "Gudja",
+  "Gumala", "Guniibuu", "Hadar", "Haedus", "Hamal", "Hassaleh", "Hatysa", "Heze", "Hoggar", "Homam", "Horna",
+  "Hunahpu", "Hunor", "Iklil", "Imai", "Inquill", "Intan", "Intercrus", "Itonda", "Izar", "Jabbah", "Jishui",
+  "Kaffaljidhma", "Kalausi", "Kamuy", "Karaka", "Kaveh", "Keid", "Khambalia", "Kitalpha", "Kochab", "Koeia",
+  "Koit", "Kornephoros", "Kraz", "Kurhah", "Larawag", "Lerna", "Lesath", "Libertas", "Liesma", "Lionrock",
+  "Maasym", "Mago", "Mahasim", "Mahsati", "Maia", "Malmok", "Marfik", "Markab", "Markeb", "Marohu", "Marsic",
+  "Matar", "Mebsuta", "Megrez", "Meissa", "Mekbuda", "Meleph", "Menkalinan", "Menkar", "Menkent", "Menkib",
+  "Merak", "Merga", "Meridiana", "Merope", "Mesarthim", "Miaplacidus", "Minchir", "Minelauva", "Mintaka",
+  "Mira", "Mirach", "Miram", "Mirfak", "Mirzam", "Misam", "Mizar", "Moldoveanu", "Monch", "Montuno",
+  "Mothallah", "Muliphein", "Muphrid", "Muscida", "Muspelheim", "Nahn", "Naledi", "Naos", "Nashira", "Nasti",
+  "Nekkar", "Nembus", "Nenque", "Nganurganity", "Nihal", "Nikawiy", "Nosaxa", "Nunki", "Nusakan", "Nyamien",
+  "Ogma", "Okab", "Paikauhale", "Parumleo", "Phact", "Phecda", "Pherkad", "Piautos", "Pincoya", "Pipirima",
+  "Pipoltr", "Pleione", "Poerava", "Pollux", "Porrima", "Praecipua", "Procyon", "Propus", "Rapeto",
+  "Rasalas", "Rasalgethi", "Rasalhague", "Rastaban", "Regulus", "Revati", "Rigel", "Rotanev", "Ruchbah",
+  "Rukbat", "Sabik", "Saclateni", "Sadachbia", "Sadalbari", "Sadalmelik", "Sadalsuud", "Sadr", "Saiph",
+  "Salm", "Samaya", "Sansuna", "Sargas", "Sceptrum", "Scheat", "Schedar", "Segin", "Seginus", "Shaula",
+  "Sheliak", "Sheratan", "Sirius", "Solaris", "Spica", "Sterrennacht", "Stribor", "Sualocin", "Subra",
+  "Suhail", "Sulafat", "Syrma", "Tabit", "Taika", "Taiyangshou", "Taiyi", "Talitha", "Tangra", "Tapecue",
+  "Tarazed", "Tarf", "Taygeta", "Tegmine", "Tejat", "Terebellum", "Tevel", "Theemin", "Thuban", "Tiaki",
+  "Tianguan", "Tianyi", "Timir", "Titawin", "Tojil", "Toliman", "Tonatiuh", "Torcular", "Tuiren", "Tupa",
+  "Tupi", "Tureis", "Ukdah", "Uklun", "Unukalhai", "Vega", "Veritate", "Vindemiatrix", "Wasat", "Wazn",
+  "Wezen", "Wurren", "Xamidimura", "Xihe", "Xuange", "Yildun", "Zaniah", "Zaurak", "Zavijava", "Zhang",
+  "Zibal", "Zosma", "Zubenelgenubi", "Zubenelhakrabi", "Zubeneschamali",
+];
+
+export const WORKFLOW_STAR_ADJECTIVES: readonly string[] = [
+  "Bright", "Bold", "Brave", "Calm", "Clear", "Fair", "Keen", "Kind", "Glad", "Warm", "True", "Wise",
+  "Steady", "Gentle", "Lucky", "Merry", "Grand", "Pure", "Proud", "Twinkling",
+];
+
+/** Every word workflow-service names (or named) a dynasty with. No catalogue name may be given one. */
+export const WORKFLOW_DYNASTY_WORDS: readonly string[] = [...WORKFLOW_DYNASTY_LEGACY_WORDS, ...WORKFLOW_STAR_NAMES, ...WORKFLOW_STAR_ADJECTIVES];
