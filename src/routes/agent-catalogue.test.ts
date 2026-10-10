@@ -141,7 +141,7 @@ describe("agent catalogue lists (context-window sized)", () => {
     expect(res.body.rows.length).toBeGreaterThan(3);
     expect(tokens(res.body)).toBeLessThan(2000);
     for (const r of res.body.rows) {
-      expect(Object.keys(r).sort()).toEqual(["color", "costPer", "costUsd", "icon", "id", "line", "name", "roi", "roiBasis", "runnable", "status"]);
+      expect(Object.keys(r).sort()).toEqual(["color", "costPer", "costUsd", "icon", "id", "line", "name", "roi", "roiBasis", "runnable", "status", "type"]);
       expect(r.line).toContain("Meeting booked");
       expect(r.icon).toBe("waves");
     }
@@ -298,6 +298,34 @@ describe("agent catalogue creates (data, never a PR)", () => {
     // No name twice across every family.
     const all = [...names.rows.values()];
     expect(new Set(all).size).toBe(all.length);
+  });
+
+  it("a REACTIVE-only funnel starts on a trigger step: the two campaign-service converts are creatable (owner 2026-10-10)", async () => {
+    const paths = await request(app).get("/internal/catalogue/sales-paths").query({ containsSteps: "conversation", limit: 25 }).set(KEY);
+    const reactive = paths.body.rows.filter((r: { type: string }) => r.type === "reactive");
+    expect(reactive.map((r: { id: string }) => r.id)).toEqual(
+      expect.arrayContaining([
+        "conversation_to_meeting_booked+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client",
+        "conversation_to_booking_call+booking_call_to_meeting_booked+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client",
+      ]),
+    );
+    const meeting = reactive.find((r: { id: string }) => r.id.startsWith("conversation_to_meeting_booked"));
+    expect(meeting.line).toBe("Positive reply → Meeting booked → Meeting attended → Paid client");
+
+    for (const pipeIds of [
+      ["ai-meeting-booking|conversation_to_meeting_booked", "your-team-meeting-attendance|meeting_booked_to_meeting_attended", "your-team-closing-calls|meeting_attended_to_paid_client"],
+      ["ai-instant-call|conversation_to_booking_call", "booking_call_to_meeting_booked", "your-team-meeting-attendance|meeting_booked_to_meeting_attended", "your-team-closing-calls|meeting_attended_to_paid_client"],
+    ]) {
+      const f = await request(app).post("/internal/catalogue/sales-funnels").set(KEY).send({ pipeIds, createdBy: "campaign-service" });
+      expect(f.status).toBe(201);
+      expect(f.body).toMatchObject({ type: "reactive" });
+      expect(FAMILY_WORDS.sales_funnel).toContain(f.body.name);
+      expect(f.body.face.svgPath).toContain("/public/catalogue/faces/");
+    }
+    expect(mem.paths.map((p) => p.combinationKey)).toEqual([
+      "conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client",
+      "conversation_to_booking_call@ai-instant-call+booking_call_to_meeting_booked+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client",
+    ]);
   });
 
   it("a pipe on a leg nothing rates states its conversion rate", async () => {

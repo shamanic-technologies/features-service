@@ -27,9 +27,9 @@
  * guarded against every combination the catalogue can form (`offer-sales-paths.test.ts`); an exhausted
  * pool throws `SalesPathNamePoolExhaustedError` — loud, never a reused or invented name.
  */
-import { inArray, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { salesPathCombinationNames } from "../db/schema.js";
+import { retiredNames, salesPathCombinationNames } from "../db/schema.js";
 import type { ChannelStepTransitionWire, PublicChannel } from "./channel-catalogue.js";
 import { campaignNameKeyOf } from "./offer-sales-paths.js";
 import { servedNameKeyOf } from "./funnel-legs.js";
@@ -154,12 +154,53 @@ async function namesByStoredKey(keysInRankOrder: readonly string[]): Promise<Map
     const named = await read(tx);
     const missing = keys.filter((k) => !named.has(k));
     if (missing.length === 0) return named;
-    const used = new Set((await tx.select({ name: salesPathCombinationNames.name }).from(salesPathCombinationNames)).map((r) => r.name));
+    const used = await usedNames(tx);
     const words = nextNamesForKeys(missing, used);
     await tx.insert(salesPathCombinationNames).values(missing.map((combinationKey, i) => ({ combinationKey, name: words[i] })));
     missing.forEach((k, i) => named.set(k, words[i]));
     console.log(`[features-service] sales-path names: named ${missing.map((k, i) => `${words[i]}=${k}`).join(", ")}`);
     return named;
+  });
+}
+
+/** Every name ever given: the live ones AND the retired ones (a retired name is never given again). */
+async function usedNames(q: Pick<typeof db, "select">): Promise<Set<string>> {
+  const [live, retired] = await Promise.all([
+    q.select({ name: salesPathCombinationNames.name }).from(salesPathCombinationNames),
+    q.select({ name: retiredNames.name }).from(retiredNames),
+  ]);
+  return new Set([...live.map((r) => r.name), ...retired.map((r) => r.name)]);
+}
+
+/** PURE: the pipe rows whose name is not a bird (named before the families split), in assignment order. */
+export function pipesToRenameToBirds(rows: ReadonlyArray<{ combinationKey: string; name: string }>): Array<{ combinationKey: string; name: string }> {
+  const birds = new Set(familyNameCandidates("pipe", PIPE_BIRD_WORDS));
+  return rows.filter((r) => nameFamilyOfKey(r.combinationKey) === "pipe" && !birds.has(r.name));
+}
+
+/**
+ * OWNER GO 2026-10-10: every PIPE still carrying a word of another family (Prism, Soar, Nova, Jubilation...,
+ * named before the families split) takes the next free BIRD; the old word is RETIRED (`retired_names`), so
+ * it is never given again to anything. Idempotent (a renamed pipe is a bird), under the assignment lock, run
+ * at every boot after the outbound re-key. Fail-loud: a DB error stops the boot like the re-key does.
+ */
+export async function renamePipesToBirds(): Promise<Array<{ combinationKey: string; from: string; to: string }>> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(${NAME_ASSIGNMENT_LOCK})`);
+    const rows = await tx
+      .select({ combinationKey: salesPathCombinationNames.combinationKey, name: salesPathCombinationNames.name, assignedAt: salesPathCombinationNames.assignedAt })
+      .from(salesPathCombinationNames);
+    const todo = pipesToRenameToBirds([...rows].sort((a, b) => a.assignedAt.getTime() - b.assignedAt.getTime() || a.combinationKey.localeCompare(b.combinationKey)));
+    if (todo.length === 0) return [];
+    const used = await usedNames(tx);
+    const birds = nextNamesForKeys(todo.map((r) => r.combinationKey), used);
+    const out = todo.map((r, i) => ({ combinationKey: r.combinationKey, from: r.name, to: birds[i] }));
+    for (const r of out) {
+      await tx.insert(retiredNames).values({ name: r.from, combinationKey: r.combinationKey, replacedBy: r.to, reason: "pipe_renamed_to_bird" });
+      await tx.update(salesPathCombinationNames).set({ name: r.to }).where(eq(salesPathCombinationNames.combinationKey, r.combinationKey));
+    }
+    console.log(`[features-service] pipe names: renamed to birds ${out.map((r) => `${r.from}->${r.to}`).join(", ")}`);
+    return out;
   });
 }
 

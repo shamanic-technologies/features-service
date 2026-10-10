@@ -28,6 +28,7 @@ vi.mock("../db/index.js", () => {
 
 import { isGivableWord, PIPE_BIRD_WORDS } from "./catalogue-names.js";
 import {
+  pipesToRenameToBirds,
   FAMILY_WORDS,
   campaignNamesOf,
   nextUnusedNames,
@@ -148,3 +149,16 @@ describe("withCampaignNames — every sales-path campaign (channel × leg) named
     expect(store.rows).toHaveLength(before);
   });
 });
+
+describe("pipes named before the families split are renamed to birds (owner GO 2026-10-10)", () => {
+  it("picks every pipe whose name is not a bird, and nothing else", () => {
+    const rows = [
+      { combinationKey: "campaign:ai-meeting-booking|conversation_to_meeting_booked", name: "Prism" },
+      { combinationKey: "campaign:agency-closing-calls|meeting_attended_to_paid_client", name: "Sparrow" },
+      { combinationKey: "lead_found_to_conversation@sales-cold-email-outreach+conversation_to_paid_client", name: "Zenith" },
+      { combinationKey: "path:x", name: "Danube" },
+    ];
+    expect(pipesToRenameToBirds(rows).map((r) => r.name)).toEqual(["Prism"]);
+  });
+});
+

@@ -385,6 +385,19 @@ export const workflowLegAssignmentChanges = pgTable("workflow_leg_assignment_cha
  * shared across every client, written once and never updated or deleted — a name never moves to
  * another combination and is never given twice.
  */
+/**
+ * A NAME TAKEN BACK (owner GO 2026-10-10: the ~20 pipes named before the families split are renamed to birds).
+ * A retired name is never given again, to any object of any family: `lib/sales-path-names.ts` counts these
+ * rows as used. `replaced_by` = the name the object carries now.
+ */
+export const retiredNames = pgTable("retired_names", {
+  name: text("name").primaryKey(),
+  combinationKey: text("combination_key").notNull(),
+  replacedBy: text("replaced_by").notNull(),
+  reason: text("reason").notNull(),
+  retiredAt: timestamp("retired_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const salesPathCombinationNames = pgTable("sales_path_combination_names", {
   /** `combinationKeyOf` (`lib/offer-sales-paths.ts`): the legs in order, each managed leg `@<channel slug>`. */
   combinationKey: text("combination_key").primaryKey(),

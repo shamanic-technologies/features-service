@@ -45637,6 +45637,14 @@
                           "runnable": {
                             "type": "boolean",
                             "description": "Sales path rows: at least one of its funnels is runnable. Absent on workflow rows."
+                          },
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "proactive",
+                              "reactive"
+                            ],
+                            "description": "Sales path rows only."
                           }
                         },
                         "required": [
@@ -45779,6 +45787,14 @@
                       "type": "boolean",
                       "description": "Sales path rows: at least one of its funnels is runnable. Absent on workflow rows."
                     },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "proactive",
+                        "reactive"
+                      ],
+                      "description": "Sales path rows only."
+                    },
                     "created": {
                       "type": "boolean"
                     }
@@ -45861,6 +45877,14 @@
                     "runnable": {
                       "type": "boolean",
                       "description": "Sales path rows: at least one of its funnels is runnable. Absent on workflow rows."
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "proactive",
+                        "reactive"
+                      ],
+                      "description": "Sales path rows only."
                     },
                     "created": {
                       "type": "boolean"
@@ -45948,6 +45972,14 @@
                     },
                     "line": {
                       "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "proactive",
+                        "reactive"
+                      ],
+                      "description": "`proactive`: starts on an entry leg (from nothing or from Lead found). `reactive` (owner 2026-10-10): starts on a TRIGGER step through a reactive pipe (Positive reply -> Meeting booked -> ... -> Paid client); its cost per paying client leaves out what produced the trigger, so a reactive path ranks after the proactive ones of its status tier."
                     },
                     "steps": {
                       "type": "array",
@@ -46083,6 +46115,7 @@
                     "icon",
                     "color",
                     "line",
+                    "type",
                     "steps",
                     "legs",
                     "costUsd",
@@ -46497,6 +46530,14 @@
                             "type": "boolean",
                             "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
                           },
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "proactive",
+                              "reactive"
+                            ],
+                            "description": "Sales path rows only."
+                          },
                           "mode": {
                             "type": "string",
                             "enum": [
@@ -46727,6 +46768,14 @@
                           "runnable": {
                             "type": "boolean",
                             "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
+                          },
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "proactive",
+                              "reactive"
+                            ],
+                            "description": "Sales path rows only."
                           },
                           "mode": {
                             "type": "string",
@@ -48653,6 +48702,14 @@
                           "runnable": {
                             "type": "boolean",
                             "description": "Sales path rows: at least one of its funnels is runnable. Absent on workflow rows."
+                          },
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "proactive",
+                              "reactive"
+                            ],
+                            "description": "Sales path rows only."
                           }
                         },
                         "required": [
