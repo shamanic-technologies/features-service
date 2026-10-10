@@ -127,7 +127,7 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
             orgId: headers.orgId,
             compute: async () => {
               const body = await computeFeatureRevenue(featureSlugs, brandId, campaignIds, funnel, headers, undefined, priced, false, pricing, undefined, r.offerId, undefined, DEFAULT_PRICED_CAUSES);
-              return { costEconomics: body.costEconomics, maturity: body.maturity ?? null };
+              return { headline: body.headline, costEconomics: body.costEconomics, maturity: body.maturity ?? null };
             },
           });
 
@@ -152,6 +152,9 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
         investedUsd: money ? money.costEconomics.committedCostUsd : 0,
         roiMultiple: money && distinct.length <= 1 ? money.costEconomics.roiMultiple : null,
         moneyUnavailableReason: distinct.length > 1 ? "units_price_differently" : null,
+        // The pipeline and WHY it is unpriced (`unpricedReason`, e.g. `no_funnel_wired` on an AI meeting
+        // booking funnel), the block a campaign row serves: a null ROI always reads with its reason.
+        headline: money?.headline ?? null,
         costEconomics: money?.costEconomics ?? null,
         maturity: money?.maturity ?? null,
       };

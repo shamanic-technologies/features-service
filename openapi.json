@@ -20052,7 +20052,7 @@
                 "roiMultiple": {
                   "type": "number",
                   "nullable": true,
-                  "description": "The funnel campaign's ROI (= `costEconomics.roiMultiple`): ONE engine pass over the units' people (deduped) and spend together, on the offer's terms; never a sum or an average of unit ROIs. Null with a reason in `costEconomics.unmeasuredReason` (e.g. `maturing`: still learning) or `moneyUnavailableReason`. Read `maturity` for the flash/mature pair and the verdict, as on a campaign row."
+                  "description": "The funnel campaign's ROI (= `costEconomics.roiMultiple`): ONE engine pass over the units' people (deduped) and spend together, on the offer's terms; never a sum or an average of unit ROIs. Null with a reason in `costEconomics.unmeasuredReason` (e.g. `maturing`: still learning), `headline.unpricedReason` (e.g. `no_funnel_wired`) or `moneyUnavailableReason`. Read `maturity` for the flash/mature pair and the verdict, as on a campaign row."
                 },
                 "moneyUnavailableReason": {
                   "type": "string",
@@ -20061,6 +20061,47 @@
                     "units_price_differently"
                   ],
                   "description": "`units_price_differently`: the units' channels price on two different funnel definitions, so no ROI can be one figure (investedUsd is still served). Null otherwise."
+                },
+                "headline": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "totalPipelineUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Org-deduped expected pipeline. Null (with headline.unpricedReason) when nothing is priced: no funnel wired, or no priced funnel (an offer that states no lifetime revenue is priced on the fleet median, see headline.lifetimeRevenueSource)."
+                    },
+                    "unpricedReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "no_priced_funnel",
+                        "lifetime_revenue_not_stated",
+                        "no_funnel_wired",
+                        "no_channel"
+                      ],
+                      "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
+                    },
+                    "lifetimeRevenueUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "The lifetime revenue per paying client this pipeline was priced on: the offer's own stated value, else the fleet median of every offer's stated lifetime revenue (owner 2026-10-09: every offer always has one, never 0). Present on the priced Overview body; absent/null when nothing is priced."
+                    },
+                    "lifetimeRevenueSource": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "offer_stated",
+                        "fleet_median"
+                      ],
+                      "description": "Where lifetimeRevenueUsd came from: offer_stated = the customer stated it on the offer; fleet_median = the offer states none, so the fleet median of stated offer lifetime revenues stands in (say 'fleet median', not 'you stated'). Absent/null when nothing is priced."
+                    }
+                  },
+                  "required": [
+                    "totalPipelineUsd",
+                    "unpricedReason"
+                  ],
+                  "description": "The units' pipeline together and WHY it is unpriced when it is (`unpricedReason`, e.g. `no_funnel_wired`: a funnel whose units wire no funnel we price yet, like AI meeting booking), the block a campaign row serves. Null when the funnel campaign has no unit."
                 },
                 "costEconomics": {
                   "type": "object",
@@ -20204,6 +20245,7 @@
                 "investedUsd",
                 "roiMultiple",
                 "moneyUnavailableReason",
+                "headline",
                 "costEconomics",
                 "maturity"
               ]
