@@ -11,6 +11,7 @@ import {
   funnelEconomics,
   funnelIdOf,
   funnelsOfPath,
+  funnelTypeOf,
   matchesQuery,
   pathEconomics,
   pathLine,
@@ -156,6 +157,33 @@ describe("the agent catalogue model", () => {
   it("keeps a list page around 2k tokens (10 rows ~ 8 KB of JSON at most)", () => {
     const rows = [...model.paths.values()].slice(0, 10).map((p) => ({ id: p.id, name: "Danube", icon: "waves", color: "#E0784B", line: pathLine(model, p), costUsd: 902.22, roi: 3.33, status: "measured" }));
     expect(JSON.stringify({ object: "sales_path", total: 40, truncated: true, rows }).length).toBeLessThan(8000);
+  });
+});
+
+describe("a sales funnel's type (owner 2026-10-10: Proactive when at least one pipe is proactive, else Reactive)", () => {
+  const model = buildCatalogueModel(inputs());
+
+  it("reads Proactive on a funnel holding one proactive pipe (Epiphany: cold email from Lead found)", () => {
+    const epiphany = funnelById(model, "lead_found_to_website_visit@sales-cold-email-outreach+website_visit_to_purchase+purchase_to_paid_client")!;
+    expect(epiphany).toBeDefined();
+    expect(epiphany.legs[0].pipe!.mode).toBe("proactive");
+    expect(funnelTypeOf(epiphany)).toBe("proactive");
+  });
+
+  it("reads Reactive when every pipe is reactive, bare legs included", () => {
+    const meet = model.pipes.get("ai-meeting-booking|conversation_to_meeting_booked")!;
+    expect(meet.mode).toBe("reactive");
+    expect(funnelTypeOf({ legs: [{ legKey: "lead_found_to_conversation", pipe: null }, { legKey: meet.legKey, pipe: meet }] })).toBe("reactive");
+    expect(funnelTypeOf({ legs: [{ legKey: "conversation_to_paid_client", pipe: null }] })).toBe("reactive");
+  });
+
+  it("every funnel the model builds states exactly one of the two types, matching its pipes", () => {
+    for (const path of model.paths.values()) {
+      for (const f of funnelsOfPath(model, path)) {
+        const anyProactive = f.legs.some((l) => l.pipe?.mode === "proactive");
+        expect(funnelTypeOf(f)).toBe(anyProactive ? "proactive" : "reactive");
+      }
+    }
   });
 });
 

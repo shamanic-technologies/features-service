@@ -174,7 +174,7 @@ describe("agent catalogue lists (context-window sized)", () => {
     // `+` sent unencoded arrives as a space: still the same path.
     const funnels = await request(app).get(`/internal/catalogue/sales-funnels?paths=${path}&containsChannels=ai-meeting-booking&limit=5`).set(KEY);
     expect(funnels.status).toBe(200);
-    expect(funnels.body.rows[0]).toMatchObject({ name: "Victory", face: "/public/catalogue/faces/Victory.svg", status: "estimated", roiBasis: "estimated" });
+    expect(funnels.body.rows[0]).toMatchObject({ name: "Victory", face: "/public/catalogue/faces/Victory.svg", status: "estimated", roiBasis: "estimated", type: "proactive" });
     expect(tokens(funnels.body)).toBeLessThan(2000);
   });
 
@@ -183,6 +183,7 @@ describe("agent catalogue lists (context-window sized)", () => {
     const f = await request(app).get(`/internal/catalogue/sales-funnels/${encodeURIComponent(victory)}`).set(KEY);
     expect(f.status).toBe(200);
     expect(f.body.name).toBe("Victory");
+    expect(f.body.type).toBe("proactive");
     expect(f.body.face).toMatchObject({ svgPath: "/public/catalogue/faces/Victory.svg" });
     expect(f.body.legs).toHaveLength(4);
     expect(f.body.costUsd).toBeCloseTo(902.22, 1);
