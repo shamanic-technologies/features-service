@@ -16,6 +16,7 @@ import {
   pathEconomics,
   pathIdOf,
   pathLine,
+  phosphorIconOf,
   pipeIdOf,
   pipeLine,
   salesPathNameKeyOf,
@@ -419,7 +420,7 @@ router.get("/internal/catalogue/channels", apiKeyOnly, async (req, res) => {
       .filter((c) => matchesQuery(q, [c.name, c.slug, c.shortDescription, c.description, c.channelType]))
       .map((c) => ({ c, e: channelEconomics(model, c.slug, legs) }))
       .sort(byRoi((x) => x.e, (x) => x.c.slug))
-      .map(({ c, e }) => ({ id: c.slug, name: c.name, icon: c.icon, line: c.shortDescription, ...econWire(e) }));
+      .map(({ c, e }) => ({ id: c.slug, name: c.name, icon: phosphorIconOf(c.icon), line: c.shortDescription, ...econWire(e) }));
     res.json({ object: "channel", costUnit: "per_outcome", order: "roi_desc", ...page(rows, limit) });
   } catch (err) {
     fail(res, err, "list channels");
@@ -438,7 +439,7 @@ router.get("/internal/catalogue/channels/:id", apiKeyOnly, async (req, res) => {
       object: "channel",
       id: c.slug,
       name: c.name,
-      icon: c.icon,
+      icon: phosphorIconOf(c.icon),
       line: c.shortDescription,
       description: c.description,
       channelType: c.channelType,
