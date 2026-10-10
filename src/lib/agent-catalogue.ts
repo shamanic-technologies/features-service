@@ -536,6 +536,15 @@ export function funnelsOfPath(model: CatalogueModel, path: CataloguePath, cap = 
  */
 export const pipeRunnable = (p: CataloguePipe): boolean => p.published && (p.operatedBy === "customer" || p.managed);
 
+/**
+ * PURE: a sales funnel's TYPE (owner 2026-10-10): `proactive` when at least one of its pipes is proactive
+ * (own budget, worked every tick), else `reactive` (every pipe waits on a trigger; a bare leg is the buyer's).
+ * Served on every funnel row and detail so campaign-service / billing relay it and nobody re-grades pipe modes.
+ */
+export type FunnelType = "proactive" | "reactive";
+export const funnelTypeOf = (f: Pick<CatalogueFunnel, "legs">): FunnelType =>
+  f.legs.some((l) => l.pipe?.mode === "proactive") ? "proactive" : "reactive";
+
 /** PURE: a funnel we can run today: every leg is bare (the buyer acts) or worked by a runnable pipe. */
 export const funnelRunnable = (f: CatalogueFunnel): boolean => f.legs.every((l) => l.pipe === null || pipeRunnable(l.pipe));
 

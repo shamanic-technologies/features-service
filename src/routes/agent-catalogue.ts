@@ -8,6 +8,7 @@ import {
   channelEconomics,
   channelRunnable,
   funnelRunnable,
+  funnelTypeOf,
   pathRunnable,
   pipeRunnable,
   FAMILY_GLYPHS,
@@ -397,6 +398,7 @@ const funnelRowOf = (f: CatalogueFunnel, name: string) => ({
   name,
   face: faceOf(name).svgPath,
   line: funnelLine(f),
+  type: funnelTypeOf(f),
   ...econWire(f.economics, PER_PAYING_CLIENT),
   runnable: funnelRunnable(f),
   ...(funnelPublished(f) ? {} : { draft: true }),
@@ -714,6 +716,7 @@ function funnelDetail(model: CatalogueModel, f: CatalogueFunnel, names: Map<stri
     name,
     face: faceOf(name),
     line: funnelLine(f),
+    type: funnelTypeOf(f),
     salesPathId: path.id,
     salesPathName: names.get(salesPathNameKeyOf(path.id)) ?? null,
     legs: f.legs.map((l, i) => ({
