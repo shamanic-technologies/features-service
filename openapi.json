@@ -45472,6 +45472,20 @@
           {
             "schema": {
               "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "`true` keeps only what we run today (`runnable`): what a customer surface may present. Default: everything."
+            },
+            "required": false,
+            "description": "`true` keeps only what we run today (`runnable`): what a customer surface may present. Default: everything.",
+            "name": "runnable",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "description": "Text search: every word must appear in the row's text (name, line, id)."
             },
             "required": false,
@@ -45559,6 +45573,10 @@
                               "learning",
                               "customer_time"
                             ]
+                          },
+                          "runnable": {
+                            "type": "boolean",
+                            "description": "Sales path rows: at least one of its funnels is runnable. Absent on workflow rows."
                           }
                         },
                         "required": [
@@ -45679,6 +45697,10 @@
                         "customer_time"
                       ]
                     },
+                    "runnable": {
+                      "type": "boolean",
+                      "description": "Sales path rows: at least one of its funnels is runnable. Absent on workflow rows."
+                    },
                     "created": {
                       "type": "boolean"
                     }
@@ -45739,6 +45761,10 @@
                         "learning",
                         "customer_time"
                       ]
+                    },
+                    "runnable": {
+                      "type": "boolean",
+                      "description": "Sales path rows: at least one of its funnels is runnable. Absent on workflow rows."
                     },
                     "created": {
                       "type": "boolean"
@@ -45918,6 +45944,10 @@
                     "lifetimeRevenueUsd": {
                       "type": "number",
                       "nullable": true
+                    },
+                    "runnable": {
+                      "type": "boolean",
+                      "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
                     }
                   },
                   "required": [
@@ -45936,7 +45966,8 @@
                     "costUnit",
                     "bestSalesFunnelId",
                     "salesFunnelCount",
-                    "lifetimeRevenueUsd"
+                    "lifetimeRevenueUsd",
+                    "runnable"
                   ]
                 }
               }
@@ -45983,6 +46014,20 @@
             "required": false,
             "description": "Comma list of leg keys.",
             "name": "legKeys",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "`true` keeps only what we run today (`runnable`): what a customer surface may present. Default: everything."
+            },
+            "required": false,
+            "description": "`true` keeps only what we run today (`runnable`): what a customer surface may present. Default: everything.",
+            "name": "runnable",
             "in": "query"
           },
           {
@@ -46071,6 +46116,10 @@
                               "learning",
                               "customer_time"
                             ]
+                          },
+                          "runnable": {
+                            "type": "boolean",
+                            "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
                           }
                         },
                         "required": [
@@ -46080,7 +46129,8 @@
                           "line",
                           "costUsd",
                           "roi",
-                          "status"
+                          "status",
+                          "runnable"
                         ]
                       }
                     }
@@ -46180,6 +46230,10 @@
                     "managed": {
                       "type": "boolean"
                     },
+                    "runnable": {
+                      "type": "boolean",
+                      "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
+                    },
                     "costUsd": {
                       "type": "number",
                       "nullable": true,
@@ -46253,6 +46307,10 @@
                               "customer_time"
                             ]
                           },
+                          "runnable": {
+                            "type": "boolean",
+                            "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
+                          },
                           "mode": {
                             "type": "string",
                             "enum": [
@@ -46273,6 +46331,7 @@
                           "costUsd",
                           "roi",
                           "status",
+                          "runnable",
                           "mode"
                         ]
                       }
@@ -46289,6 +46348,7 @@
                     "operatedBy",
                     "performedBy",
                     "managed",
+                    "runnable",
                     "costUsd",
                     "roi",
                     "status",
@@ -46350,6 +46410,20 @@
             },
             "required": false,
             "name": "legKeys",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "`true` keeps only what we run today (`runnable`): what a customer surface may present. Default: everything."
+            },
+            "required": false,
+            "description": "`true` keeps only what we run today (`runnable`): what a customer surface may present. Default: everything.",
+            "name": "runnable",
             "in": "query"
           },
           {
@@ -46443,6 +46517,10 @@
                               "customer_time"
                             ]
                           },
+                          "runnable": {
+                            "type": "boolean",
+                            "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
+                          },
                           "mode": {
                             "type": "string",
                             "enum": [
@@ -46463,6 +46541,7 @@
                           "costUsd",
                           "roi",
                           "status",
+                          "runnable",
                           "mode"
                         ]
                       }
@@ -46618,6 +46697,10 @@
                     "managed": {
                       "type": "boolean"
                     },
+                    "runnable": {
+                      "type": "boolean",
+                      "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
+                    },
                     "draft": {
                       "type": "boolean"
                     },
@@ -46687,6 +46770,7 @@
                     "triggerId",
                     "operatedBy",
                     "managed",
+                    "runnable",
                     "draft",
                     "costUsd",
                     "roi",
@@ -46767,6 +46851,10 @@
                     "managed": {
                       "type": "boolean"
                     },
+                    "runnable": {
+                      "type": "boolean",
+                      "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
+                    },
                     "draft": {
                       "type": "boolean"
                     },
@@ -46836,6 +46924,7 @@
                     "triggerId",
                     "operatedBy",
                     "managed",
+                    "runnable",
                     "draft",
                     "costUsd",
                     "roi",
@@ -46954,6 +47043,10 @@
                     "managed": {
                       "type": "boolean"
                     },
+                    "runnable": {
+                      "type": "boolean",
+                      "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
+                    },
                     "draft": {
                       "type": "boolean"
                     },
@@ -47023,6 +47116,7 @@
                     "triggerId",
                     "operatedBy",
                     "managed",
+                    "runnable",
                     "draft",
                     "costUsd",
                     "roi",
@@ -47079,6 +47173,20 @@
             "required": false,
             "description": "Comma list of channel slugs: funnels containing AT LEAST ONE.",
             "name": "containsChannels",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "`true` keeps only what we run today (`runnable`): what a customer surface may present. Default: everything."
+            },
+            "required": false,
+            "description": "`true` keeps only what we run today (`runnable`): what a customer surface may present. Default: everything.",
+            "name": "runnable",
             "in": "query"
           },
           {
@@ -47169,6 +47277,10 @@
                               "customer_time"
                             ]
                           },
+                          "runnable": {
+                            "type": "boolean",
+                            "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
+                          },
                           "draft": {
                             "type": "boolean"
                           }
@@ -47180,7 +47292,8 @@
                           "line",
                           "costUsd",
                           "roi",
-                          "status"
+                          "status",
+                          "runnable"
                         ]
                       }
                     }
@@ -47417,6 +47530,10 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "runnable": {
+                      "type": "boolean",
+                      "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
+                    },
                     "draft": {
                       "type": "boolean"
                     },
@@ -47439,6 +47556,7 @@
                     "learningReason",
                     "costUnit",
                     "lifetimeRevenueUsd",
+                    "runnable",
                     "draft",
                     "created"
                   ]
@@ -47615,6 +47733,10 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "runnable": {
+                      "type": "boolean",
+                      "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
+                    },
                     "draft": {
                       "type": "boolean"
                     },
@@ -47637,6 +47759,7 @@
                     "learningReason",
                     "costUnit",
                     "lifetimeRevenueUsd",
+                    "runnable",
                     "draft",
                     "created"
                   ]
@@ -47851,6 +47974,10 @@
                       "type": "number",
                       "nullable": true
                     },
+                    "runnable": {
+                      "type": "boolean",
+                      "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
+                    },
                     "draft": {
                       "type": "boolean"
                     }
@@ -47870,6 +47997,7 @@
                     "learningReason",
                     "costUnit",
                     "lifetimeRevenueUsd",
+                    "runnable",
                     "draft"
                   ]
                 }
@@ -47999,6 +48127,10 @@
                               "learning",
                               "customer_time"
                             ]
+                          },
+                          "runnable": {
+                            "type": "boolean",
+                            "description": "Sales path rows: at least one of its funnels is runnable. Absent on workflow rows."
                           }
                         },
                         "required": [

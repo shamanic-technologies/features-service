@@ -140,7 +140,7 @@ describe("agent catalogue lists (context-window sized)", () => {
     expect(res.body.rows.length).toBeGreaterThan(3);
     expect(tokens(res.body)).toBeLessThan(2000);
     for (const r of res.body.rows) {
-      expect(Object.keys(r).sort()).toEqual(["color", "costUsd", "icon", "id", "line", "name", "roi", "status"]);
+      expect(Object.keys(r).sort()).toEqual(["color", "costUsd", "icon", "id", "line", "name", "roi", "runnable", "status"]);
       expect(r.line).toContain("Meeting booked");
       expect(r.icon).toBe("waves");
     }
@@ -190,6 +190,39 @@ describe("agent catalogue lists (context-window sized)", () => {
     const channel = await request(app).get("/internal/catalogue/channels/ai-meeting-booking").set(KEY);
     expect(channel.body).toMatchObject({ id: "ai-meeting-booking", costUsd: 2, bestPipeId: MEET });
     expect((await request(app).get("/internal/catalogue/pipes/nope").set(KEY)).status).toBe(404);
+  });
+
+  it("runnable=true keeps only what we run today: no LinkedIn posting, no unmanaged pipe or funnel (owner 2026-10-10)", async () => {
+    const all = await request(app).get("/internal/catalogue/channels").query({ q: "linkedin", limit: 25 }).set(KEY);
+    expect(all.status).toBe(200);
+    const posting = all.body.rows.find((r: { id: string }) => r.id === "organic-linkedin-publishing");
+    expect(posting).toMatchObject({ runnable: false });
+
+    const runnable = await request(app).get("/internal/catalogue/channels").query({ q: "linkedin", runnable: "true", limit: 25 }).set(KEY);
+    expect(runnable.body.rows.map((r: { id: string }) => r.id)).not.toContain("organic-linkedin-publishing");
+    expect(runnable.body.rows.every((r: { runnable: boolean }) => r.runnable)).toBe(true);
+
+    const ch = await request(app).get("/internal/catalogue/channels").query({ runnable: "true", limit: 25 }).set(KEY);
+    expect(ch.body.rows.map((r: { id: string }) => r.id)).toContain("sales-cold-email-outreach");
+
+    const pipes = await request(app).get("/internal/catalogue/pipes").query({ channels: "organic-linkedin-publishing", runnable: "true" }).set(KEY);
+    expect(pipes.body.rows).toEqual([]);
+    const pipesAll = await request(app).get("/internal/catalogue/pipes").query({ channels: "organic-linkedin-publishing" }).set(KEY);
+    expect(pipesAll.body.rows.length).toBeGreaterThan(0);
+    expect(pipesAll.body.rows.every((r: { runnable: boolean }) => r.runnable === false)).toBe(true);
+
+    const funnels = await request(app).get("/internal/catalogue/sales-funnels").query({ containsChannels: "organic-linkedin-publishing", runnable: "true" }).set(KEY);
+    expect(funnels.body.rows).toEqual([]);
+    const cold = await request(app).get("/internal/catalogue/sales-funnels").query({ containsChannels: "sales-cold-email-outreach", runnable: "true", limit: 25 }).set(KEY);
+    expect(cold.body.rows.length).toBeGreaterThan(0);
+    expect(cold.body.rows.every((r: { runnable: boolean }) => r.runnable)).toBe(true);
+
+    const paths = await request(app).get("/internal/catalogue/sales-paths").query({ runnable: "true", limit: 25 }).set(KEY);
+    expect(paths.body.rows.every((r: { runnable: boolean }) => r.runnable)).toBe(true);
+
+    const detail = await request(app).get("/internal/catalogue/channels/organic-linkedin-publishing").set(KEY);
+    expect(detail.body).toMatchObject({ managed: false, runnable: false });
+    expect((await request(app).get("/internal/catalogue/channels").query({ runnable: "yes" }).set(KEY)).status).toBe(400);
   });
 
   it("serves a face as an SVG image", async () => {

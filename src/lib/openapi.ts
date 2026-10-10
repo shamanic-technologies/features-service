@@ -6072,6 +6072,8 @@ const cataloguePage = (row: z.ZodTypeAny, object: string, costUnit: string) =>
   });
 const catalogueLimit = z.string().optional().describe("1..25, default 10.");
 const catalogueQ = z.string().optional().describe("Text search: every word must appear in the row's text (name, line, id).");
+const catalogueRunnable = z.enum(["true", "false"]).optional().describe("`true` keeps only what we run today (`runnable`): what a customer surface may present. Default: everything.");
+const catalogueRunnableField = { runnable: z.boolean().describe("We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects.") };
 const catalogueErrors = {
   400: { description: "A filter is invalid (`reason`: `limit_unrecognised`, `step_not_found`, `sales_path_not_found`, `pipe_required`, ...)." },
   401: { description: "Missing or wrong service key." },
@@ -6079,10 +6081,10 @@ const catalogueErrors = {
 };
 
 const catalogueStepRow = z.object({ id: z.string(), name: z.string(), icon: z.string().describe("Phosphor icon name."), line: z.string(), valueUsd: z.number().nullable().describe("What reaching the step is worth on the way to a paid client (fleet). Use it for an endpoint's ROI: value / cost of the call."), ...catalogueEcon, declared: z.boolean().optional().describe("Present (true) on a step declared at run time.") });
-const catalogueGlyphRow = z.object({ id: z.string(), name: z.string(), icon: z.string().describe("The family glyph (Phosphor): `waves` (sales path), `bird` (pipe), `flow-arrow` (workflow)."), color: z.string().describe("`#RRGGBB`, derived from the name."), line: z.string(), ...catalogueEcon });
-const cataloguePipeRow = catalogueGlyphRow.extend({ mode: z.enum(["proactive", "reactive"]), draft: z.boolean().optional() });
-const catalogueChannelRow = z.object({ id: z.string().describe("The channel slug."), name: z.string(), icon: z.string(), line: z.string(), ...catalogueEcon });
-const catalogueFunnelRow = z.object({ id: z.string(), name: z.string(), face: z.string().describe("Path of the name's face SVG on this service (`GET /public/catalogue/faces/{name}.svg`)."), line: z.string().describe("Who works each leg, in order."), ...catalogueEcon, draft: z.boolean().optional() });
+const catalogueGlyphRow = z.object({ id: z.string(), name: z.string(), icon: z.string().describe("The family glyph (Phosphor): `waves` (sales path), `bird` (pipe), `flow-arrow` (workflow)."), color: z.string().describe("`#RRGGBB`, derived from the name."), line: z.string(), ...catalogueEcon, runnable: z.boolean().optional().describe("Sales path rows: at least one of its funnels is runnable. Absent on workflow rows.") });
+const cataloguePipeRow = catalogueGlyphRow.extend({ mode: z.enum(["proactive", "reactive"]), ...catalogueRunnableField, draft: z.boolean().optional() });
+const catalogueChannelRow = z.object({ id: z.string().describe("The channel slug."), name: z.string(), icon: z.string(), line: z.string(), ...catalogueEcon, ...catalogueRunnableField });
+const catalogueFunnelRow = z.object({ id: z.string(), name: z.string(), face: z.string().describe("Path of the name's face SVG on this service (`GET /public/catalogue/faces/{name}.svg`)."), line: z.string().describe("Who works each leg, in order."), ...catalogueEcon, ...catalogueRunnableField, draft: z.boolean().optional() });
 const catalogueFace = z.object({ animal: z.string(), color: z.string(), eyes: z.string(), mouth: z.string(), accessory: z.string(), svgPath: z.string() });
 
 const catalogueStepDetail = z.object({
@@ -6095,24 +6097,24 @@ const cataloguePathDetail = z.object({
   object: z.literal("sales_path"), id: z.string(), name: z.string(), icon: z.string(), color: z.string(), line: z.string(),
   steps: z.array(z.object({ id: z.string(), name: z.string() })),
   legs: z.array(z.object({ legKey: z.string(), ratePct: z.number().nullable(), rateSource: z.enum(["fleet_median", "default", "measured_pipe"]).nullable(), pipeIds: z.array(z.string()) })),
-  ...catalogueEconDetail, costUnit: z.literal("per_paying_client"), bestSalesFunnelId: z.string().nullable(), salesFunnelCount: z.number().int(), lifetimeRevenueUsd: z.number().nullable(),
+  ...catalogueEconDetail, costUnit: z.literal("per_paying_client"), bestSalesFunnelId: z.string().nullable(), salesFunnelCount: z.number().int(), lifetimeRevenueUsd: z.number().nullable(), ...catalogueRunnableField,
 });
 const catalogueChannelDetail = z.object({
   object: z.literal("channel"), id: z.string(), name: z.string(), icon: z.string(), line: z.string(), description: z.string(), channelType: z.string(),
-  operatedBy: z.enum(["platform", "customer"]), performedBy: z.enum(["software", "person"]), managed: z.boolean(),
+  operatedBy: z.enum(["platform", "customer"]), performedBy: z.enum(["software", "person"]), managed: z.boolean(), ...catalogueRunnableField,
   ...catalogueEconDetail, costUnit: z.literal("per_outcome"), bestPipeId: z.string().nullable(), pipes: z.array(cataloguePipeRow),
 });
 const cataloguePipeDetail = z.object({
   object: z.literal("pipe"), id: z.string(), name: z.string(), icon: z.string(), color: z.string(), line: z.string(), channelSlug: z.string(), channelName: z.string(),
   legKey: z.string(), fromStep: z.string().nullable(), toStep: z.string(), mode: z.enum(["proactive", "reactive"]), triggerId: z.string().nullable(),
-  operatedBy: z.enum(["platform", "customer"]), managed: z.boolean(), draft: z.boolean(),
+  operatedBy: z.enum(["platform", "customer"]), managed: z.boolean(), ...catalogueRunnableField, draft: z.boolean(),
   ...catalogueEconDetail, costUnit: z.literal("per_outcome"), toStepValueUsd: z.number().nullable(), bestWorkflowSlug: z.string().nullable(),
   measuredBasis: z.enum(["mature", "flash"]).nullable(), conversionRatePct: z.number().nullable(),
 });
 const catalogueFunnelDetail = z.object({
   object: z.literal("sales_funnel"), id: z.string(), name: z.string(), face: catalogueFace, line: z.string(), salesPathId: z.string(), salesPathName: z.string().nullable(),
   legs: z.array(z.object({ legKey: z.string(), ratePct: z.number().nullable(), outcomesNeededPerPayingClient: z.number().nullable(), pipe: z.object({ id: z.string(), name: z.string().nullable(), line: z.string(), mode: z.enum(["proactive", "reactive"]), ...catalogueEcon }).nullable().describe("Null on a leg no channel performs.") })),
-  ...catalogueEconDetail, costUnit: z.literal("per_paying_client"), lifetimeRevenueUsd: z.number().nullable(), draft: z.boolean(),
+  ...catalogueEconDetail, costUnit: z.literal("per_paying_client"), lifetimeRevenueUsd: z.number().nullable(), ...catalogueRunnableField, draft: z.boolean(),
 });
 const catalogueWorkflowDetail = z.object({
   object: z.literal("workflow"), id: z.string(), name: z.string(), icon: z.string(), color: z.string(), pipeId: z.string(), rank: z.number().int(), assignment: z.string(), selectable: z.boolean(),
@@ -6135,13 +6137,13 @@ const idParam = (what: string) => ({ id: z.string().describe(`${what} (URL-encod
 
 catalogueRead("/internal/catalogue/steps", "List steps (internal, api-key)", { q: catalogueQ, limit: catalogueLimit }, cataloguePage(catalogueStepRow, "step", "per_outcome"));
 catalogueRead("/internal/catalogue/steps/{id}", "One step (internal, api-key)", {}, catalogueStepDetail, idParam("A step key or label"));
-catalogueRead("/internal/catalogue/sales-paths", "List sales paths (internal, api-key)", { containsSteps: z.string().optional().describe("Comma list of step keys or labels: the paths containing AT LEAST ONE."), q: catalogueQ, limit: catalogueLimit }, cataloguePage(catalogueGlyphRow, "sales_path", "per_paying_client"));
+catalogueRead("/internal/catalogue/sales-paths", "List sales paths (internal, api-key)", { containsSteps: z.string().optional().describe("Comma list of step keys or labels: the paths containing AT LEAST ONE."), runnable: catalogueRunnable, q: catalogueQ, limit: catalogueLimit }, cataloguePage(catalogueGlyphRow, "sales_path", "per_paying_client"));
 catalogueRead("/internal/catalogue/sales-paths/{id}", "One sales path (internal, api-key)", {}, cataloguePathDetail, idParam("A sales path id"));
-catalogueRead("/internal/catalogue/channels", "List channels (internal, api-key)", { forPaths: z.string().optional().describe("Comma list of sales path ids: channels with a pipe on a leg of one of them."), legKeys: z.string().optional().describe("Comma list of leg keys."), q: catalogueQ, limit: catalogueLimit }, cataloguePage(catalogueChannelRow, "channel", "per_outcome"));
+catalogueRead("/internal/catalogue/channels", "List channels (internal, api-key)", { forPaths: z.string().optional().describe("Comma list of sales path ids: channels with a pipe on a leg of one of them."), legKeys: z.string().optional().describe("Comma list of leg keys."), runnable: catalogueRunnable, q: catalogueQ, limit: catalogueLimit }, cataloguePage(catalogueChannelRow, "channel", "per_outcome"));
 catalogueRead("/internal/catalogue/channels/{id}", "One channel and its pipes (internal, api-key)", {}, catalogueChannelDetail, idParam("A channel slug"));
-catalogueRead("/internal/catalogue/pipes", "List pipes (internal, api-key)", { paths: z.string().optional().describe("Comma list of sales path ids: pipes on their legs."), channels: z.string().optional().describe("Comma list of channel slugs."), legKeys: z.string().optional(), q: catalogueQ, limit: catalogueLimit }, cataloguePage(cataloguePipeRow, "pipe", "per_outcome"));
+catalogueRead("/internal/catalogue/pipes", "List pipes (internal, api-key)", { paths: z.string().optional().describe("Comma list of sales path ids: pipes on their legs."), channels: z.string().optional().describe("Comma list of channel slugs."), legKeys: z.string().optional(), runnable: catalogueRunnable, q: catalogueQ, limit: catalogueLimit }, cataloguePage(cataloguePipeRow, "pipe", "per_outcome"));
 catalogueRead("/internal/catalogue/pipes/{id}", "One pipe (internal, api-key)", {}, cataloguePipeDetail, idParam("A pipe id `<channel slug>|<leg key>`"));
-catalogueRead("/internal/catalogue/sales-funnels", "List sales funnels (internal, api-key)", { paths: z.string().optional().describe("Comma list of sales path ids (default: every path)."), containsChannels: z.string().optional().describe("Comma list of channel slugs: funnels containing AT LEAST ONE."), q: catalogueQ, limit: catalogueLimit }, cataloguePage(catalogueFunnelRow, "sales_funnel", "per_paying_client"));
+catalogueRead("/internal/catalogue/sales-funnels", "List sales funnels (internal, api-key)", { paths: z.string().optional().describe("Comma list of sales path ids (default: every path)."), containsChannels: z.string().optional().describe("Comma list of channel slugs: funnels containing AT LEAST ONE."), runnable: catalogueRunnable, q: catalogueQ, limit: catalogueLimit }, cataloguePage(catalogueFunnelRow, "sales_funnel", "per_paying_client"));
 catalogueRead("/internal/catalogue/sales-funnels/{id}", "One sales funnel (internal, api-key)", {}, catalogueFunnelDetail, idParam("A sales funnel id"));
 catalogueRead("/internal/catalogue/workflows", "List the workflows of one pipe (internal, api-key)", { pipe: z.string().describe("A pipe id (required)."), q: catalogueQ, limit: catalogueLimit }, cataloguePage(catalogueGlyphRow, "workflow", "per_outcome").extend({ pipeId: z.string() }));
 catalogueRead("/internal/catalogue/workflows/{id}", "One workflow on one pipe (internal, api-key)", { pipe: z.string().describe("The pipe id (required).") }, catalogueWorkflowDetail, idParam("A workflow dynasty slug"));
