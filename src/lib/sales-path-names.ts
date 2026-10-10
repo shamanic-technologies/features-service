@@ -27,7 +27,7 @@
  * guarded against every combination the catalogue can form (`offer-sales-paths.test.ts`); an exhausted
  * pool throws `SalesPathNamePoolExhaustedError` — loud, never a reused or invented name.
  */
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { retiredNames, salesPathCombinationNames } from "../db/schema.js";
 import type { ChannelStepTransitionWire, PublicChannel } from "./channel-catalogue.js";
@@ -240,33 +240,3 @@ export async function withCampaignNames(channels: readonly PublicChannel[]): Pro
     }),
   }));
 }
-
-/**
- * The stored sentence of every funnel among `wanted` (name key -> sentence it would get), writing the missing
- * ones ONCE (`description IS NULL` guard: a stored sentence never moves). A funnel must be named first (its
- * row exists); a key with no row is skipped. Keys in any outbound spelling; the map answers under the asked one.
- */
-export async function funnelDescriptionsFor(wanted: ReadonlyMap<string, string>): Promise<Map<string, string>> {
-  const stored = new Map([...wanted.keys()].map((k) => [servedNameKeyOf(k), k]));
-  if (stored.size === 0) return new Map();
-  const rows = await db
-    .select({ key: salesPathCombinationNames.combinationKey, description: salesPathCombinationNames.description })
-    .from(salesPathCombinationNames)
-    .where(inArray(salesPathCombinationNames.combinationKey, [...stored.keys()]));
-  const out = new Map<string, string>();
-  for (const r of rows) {
-    const asked = stored.get(r.key)!;
-    if (r.description) {
-      out.set(asked, r.description);
-      continue;
-    }
-    const sentence = wanted.get(asked)!;
-    await db
-      .update(salesPathCombinationNames)
-      .set({ description: sentence })
-      .where(and(eq(salesPathCombinationNames.combinationKey, r.key), isNull(salesPathCombinationNames.description)));
-    out.set(asked, sentence);
-  }
-  return out;
-}
-
