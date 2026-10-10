@@ -35,6 +35,31 @@ import type { EnginePerson } from "./revenue-engine.js";
 export const MEETING_BOOKING_FEATURE_SLUG = "ai-meeting-booking";
 export const MEETING_BOOKING_LEG_KEY = "conversation_to_meeting_booked";
 
+/**
+ * ONE RULE FOR EVERY PIPE (owner 2026-10-10: "NE CRÉE PLUS JAMAIS DES CAS PARTICULIERS"). What decides how a
+ * pipe is measured is where its leg STARTS, never its channel:
+ *   - an ENTRY pipe (from nothing, or from Lead found) serves leads of its own: measured on the leads its
+ *     campaigns served (`fetchFleetLegWorkflowMaturity`);
+ *   - an INTERNAL pipe (from any other step: Positive reply -> Meeting booked, Positive reply -> Booking
+ *     call...) serves nobody: its campaigns act on people another campaign holds, so it is measured on the
+ *     people they ACTED on (lead-service follow-up ledger) and the outcome is the pipe's own `to` step.
+ */
+export const isInternalPipe = (fromStep: string | null): boolean => fromStep !== null && fromStep !== "lead_found";
+
+/**
+ * Whether a person reached `step`, read off the signals the revenue engine carries. `booking_call` has no
+ * signal on a lead: lead-service's own rule is that an `acted` row of a booking-call campaign IS the call
+ * placed (`booking-calls.ts`), so on that step the act is the outcome. A step with no reading is `null`:
+ * the pipe's outcomes are then unmeasured, never 0.
+ */
+const STEP_REACHED: Readonly<Record<string, ((p: EnginePerson) => boolean) | "acted">> = {
+  conversation: (p) => Boolean(p.signals.positiveReply),
+  website_visit: (p) => Boolean(p.signals.clicked),
+  meeting_booked: (p) => Boolean(p.signals.meeting),
+  paid_client: (p) => Boolean(p.signals.closeWin),
+  booking_call: "acted",
+};
+
 export interface MeetingLegFleet {
   legKey: string;
   campaignCount: number;
@@ -57,7 +82,10 @@ export function buildMeetingLegFleet(input: {
   workflows: readonly WorkflowMetadata[];
   costGroups: readonly CostGroup[];
   pairs: ReadonlyMap<string, PairActed>;
+  /** The internal pipe's leg (default: Positive reply -> Meeting booked). */
+  legKey?: string;
 }): MeetingLegFleet {
+  const legKey = input.legKey ?? MEETING_BOOKING_LEG_KEY;
   const toDynasty = dynastyOfSlug(input.workflows as WorkflowMetadata[]);
   const spendByCampaign = new Map<string, Map<string, number>>();
   for (const g of input.costGroups) {
@@ -95,20 +123,22 @@ export function buildMeetingLegFleet(input: {
     .sort(([a], [b]) => (a < b ? -1 : 1))
     .map(([dynasty, e]) => {
       const figures = outcomeFigures(e.cents / 100, e.acted.size, e.meetings.size);
-      return [dynasty, legMaturityFigures(MEETING_BOOKING_LEG_KEY, figures, figures)];
+      return [dynasty, legMaturityFigures(legKey, figures, figures)];
     });
   return {
-    legKey: MEETING_BOOKING_LEG_KEY,
+    legKey,
     campaignCount: input.campaigns.length,
     byDynasty,
     unattributableCampaignIds: unattributable.sort(),
   };
 }
 
-/** One brand's answered leads and which of them booked a meeting (every cause counts). */
-async function readPairActed(orgId: string, brandId: string, campaignIds: string[]): Promise<PairActed> {
+/** One brand's acted leads and which of them reached `toStep` (every cause counts). */
+async function readPairActed(orgId: string, brandId: string, campaignIds: string[], toStep: string): Promise<PairActed> {
   const actedByCampaign = await fetchFollowupActedLeads(brandId, campaignIds);
   const actedIds = new Set([...actedByCampaign.values()].flatMap((s) => [...s]));
+  const reached = STEP_REACHED[toStep];
+  if (reached === "acted") return { actedByCampaign, meetingLeadIds: actedIds };
   if (actedIds.size === 0) return { actedByCampaign, meetingLeadIds: new Set() };
   const headers = { orgId };
   const persons: EnginePerson[] = (await fetchLeadsForRevenue(brandId, undefined, headers)).filter((p) => actedIds.has(p.leadId));
@@ -118,13 +148,26 @@ async function readPairActed(orgId: string, brandId: string, campaignIds: string
     fetchQualifications(brandId, undefined, emails, headers),
   ]);
   applySignalOverlays(persons, null, observed.byEmail, quals, [], OUTCOME_CAUSES);
-  return { actedByCampaign, meetingLeadIds: new Set(persons.filter((p) => p.signals.meeting).map((p) => p.leadId)) };
+  return { actedByCampaign, meetingLeadIds: new Set(persons.filter((p) => (reached as (p: EnginePerson) => boolean)(p)).map((p) => p.leadId)) };
 }
 
 export async function computeMeetingLegFleet(): Promise<MeetingLegFleet> {
-  const campaigns = await fetchFleetLegCampaigns(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY);
+  return computeInternalPipeFleet(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY, "meeting_booked");
+}
+
+/** Thrown when an internal pipe's `to` step has no reading on a person: its outcomes cannot be counted. */
+export class StepNotReadableError extends Error {
+  constructor(readonly toStep: string) {
+    super(`no reading of step ${toStep} on a person: the pipe's outcomes cannot be counted`);
+  }
+}
+
+/** Any INTERNAL pipe across every org, per workflow dynasty (the rule above). */
+export async function computeInternalPipeFleet(featureSlug: string, legKey: string, toStep: string): Promise<MeetingLegFleet> {
+  if (!STEP_REACHED[toStep]) throw new StepNotReadableError(toStep);
+  const campaigns = await fetchFleetLegCampaigns(featureSlug, legKey);
   const ids = [...new Set(campaigns.map((c) => c.campaignId))].sort();
-  if (ids.length === 0) return { legKey: MEETING_BOOKING_LEG_KEY, campaignCount: 0, byDynasty: [], unattributableCampaignIds: [] };
+  if (ids.length === 0) return { legKey, campaignCount: 0, byDynasty: [], unattributableCampaignIds: [] };
 
   const byPair = new Map<string, { orgId: string; brandId: string; campaignIds: string[] }>();
   for (const c of campaigns) {
@@ -134,16 +177,16 @@ export async function computeMeetingLegFleet(): Promise<MeetingLegFleet> {
     byPair.set(c.brandId, pair);
   }
   const [workflows, costChunks, pairResults] = await Promise.all([
-    fetchPublicWorkflows(MEETING_BOOKING_FEATURE_SLUG, "all"),
+    fetchPublicWorkflows(featureSlug, "all"),
     // The public cost read groups on ONE dimension, so each campaign is asked on its own and its groups
     // are tagged with it (the leg holds a handful of campaigns).
     mapWithConcurrency(ids, 4, async (id) =>
-      (await fetchPublicCosts(MEETING_BOOKING_FEATURE_SLUG, "workflowSlug", "gross", "incurred", [id])).map((g) => ({
+      (await fetchPublicCosts(featureSlug, "workflowSlug", "gross", "incurred", [id])).map((g) => ({
         ...g,
         dimensions: { ...g.dimensions, campaignId: id },
       })),
     ),
-    mapWithConcurrency([...byPair.values()], 2, async (p) => [p.brandId, await readPairActed(p.orgId, p.brandId, p.campaignIds)] as const),
+    mapWithConcurrency([...byPair.values()], 2, async (p) => [p.brandId, await readPairActed(p.orgId, p.brandId, p.campaignIds, toStep)] as const),
   ]);
-  return buildMeetingLegFleet({ campaigns, workflows, costGroups: costChunks.flat(), pairs: new Map(pairResults) });
+  return buildMeetingLegFleet({ campaigns, workflows, costGroups: costChunks.flat(), pairs: new Map(pairResults), legKey });
 }

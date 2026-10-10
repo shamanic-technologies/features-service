@@ -40,7 +40,7 @@ import {
   type MeetingPriceArithmetic,
   type OutcomePrice,
 } from "../lib/outcome-prices.js";
-import { computeMeetingLegFleet, MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY } from "../lib/meeting-leg-fleet.js";
+import { computeInternalPipeFleet, computeMeetingLegFleet, isInternalPipe, MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY } from "../lib/meeting-leg-fleet.js";
 import { fetchLegAssignments } from "../lib/workflow-leg-assignments.js";
 import { getFunnel, type SalesEconomics } from "../lib/funnel-registry.js";
 import { projectedCostPerOutcome } from "../lib/cost-engine.js";
@@ -99,7 +99,7 @@ import { matureBasisOf, type CostEconomics } from "../lib/cost-economics.js";
 import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel } from "./revenue.js";
 import { distinctChannelFunnels } from "./offer-economics.js";
 import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
-import { FUNNEL_LEG_KEYS, matchChannelLegKey, matchFunnelLegKey, OUTBOUND_LEG_KEY_CORRESPONDENCE } from "../lib/funnel-legs.js";
+import { FUNNEL_LEG_KEYS, funnelLeg, matchChannelLegKey, matchFunnelLegKey, OUTBOUND_LEG_KEY_CORRESPONDENCE } from "../lib/funnel-legs.js";
 import { withChannelType } from "../lib/channel-types.js";
 import { fetchFleetLegCampaigns, type FleetLegCampaign } from "../lib/fleet-leg-campaigns.js";
 import { computeWorkflowRevenueGroups } from "../lib/workflow-revenue.js";
@@ -4598,14 +4598,9 @@ async function coldEmailLegPrice(legKey: string): Promise<LegPrice> {
  * without walking anything. (Read by the agent catalogue, `routes/agent-catalogue.ts`.)
  */
 export async function fleetLegPrice(featureSlug: string, legKey: string): Promise<LegPrice> {
-  if (featureSlug === MEETING_BOOKING_FEATURE_SLUG && legKey === MEETING_BOOKING_LEG_KEY) {
-    const [fleet, excluded] = await Promise.all([computeMeetingLegFleet(), deprecatedOnLeg(featureSlug, legKey)]);
-    return pickLegPrice({ legKey, featureSlug, byDynasty: new Map(fleet.byDynasty), excluded, campaignCount: fleet.campaignCount });
-  }
-  const campaigns = await getFleetLegCampaigns(featureSlug, legKey);
-  if (campaigns.length === 0) return pickLegPrice({ legKey, featureSlug, byDynasty: new Map(), excluded: new Set(), campaignCount: 0 });
-  const [maturity, excluded] = await Promise.all([fetchFleetLegWorkflowMaturity(featureSlug, legKey), deprecatedOnLeg(featureSlug, legKey)]);
-  return pickLegPrice({ legKey, featureSlug, byDynasty: new Map(maturity.byDynasty), excluded, campaignCount: campaigns.length });
+  // ONE rule for every pipe (`fleetPipeFigures`), the same one the workflow ranking reads.
+  const [figures, excluded] = await Promise.all([fleetPipeFigures(featureSlug, legKey), deprecatedOnLeg(featureSlug, legKey)]);
+  return pickLegPrice({ legKey, featureSlug, byDynasty: new Map(figures.byDynasty), excluded, campaignCount: figures.campaignCount });
 }
 
 export async function computeOutcomePrices(): Promise<OutcomePricesPayload> {
@@ -4755,9 +4750,39 @@ export interface LegWorkflowRankingPayload {
 const legRankingStore = new Map<string, { value: LegWorkflowRankingPayload; computedAt: number }>();
 const legRankingWarm = new Map<string, Promise<void>>();
 
+/**
+ * ONE PIPE'S PER-WORKFLOW FLEET FIGURES, the same rule for every pipe of every channel (owner 2026-10-10: no
+ * special case). An ENTRY pipe (from nothing / Lead found) is measured on the leads its campaigns served; an
+ * INTERNAL pipe (from any other step) on the people its campaigns acted on and their reaching its `to` step
+ * (`lib/meeting-leg-fleet.ts`). Read by the price (`fleetLegPrice`) AND the workflow ranking, so the choice
+ * and the ROI see the same figures. Before: one channel's internal pipe (AI meeting booking) was measured on
+ * the ledger by its slug and only in the price; the ranking read it as an entry pipe ("0 outcomes from 0
+ * people" for rhodium).
+ */
+export async function fleetPipeFigures(
+  featureSlug: string,
+  legKey: string,
+): Promise<{ byDynasty: Array<[string, LegMaturityFigures]>; cutoffIso: string | null; measured: boolean; campaignCount: number }> {
+  const leg = funnelLeg(legKey);
+  const fromStep = leg ? (leg.fromStep?.key ?? null) : null;
+  if (leg && isInternalPipe(fromStep)) {
+    const fleet = await computeInternalPipeFleet(featureSlug, legKey, leg.toStep.key);
+    if (fleet.unattributableCampaignIds.length > 0) {
+      console.warn(
+        `[features-service] pipe ${featureSlug}|${legKey}: ${fleet.unattributableCampaignIds.length} campaign(s) ran several workflows and are left out of every workflow: ${fleet.unattributableCampaignIds.join(",")}`,
+      );
+    }
+    return { byDynasty: fleet.byDynasty, cutoffIso: legCutoffIso(legKey), measured: true, campaignCount: fleet.campaignCount };
+  }
+  const campaigns = await getFleetLegCampaigns(featureSlug, legKey);
+  if (campaigns.length === 0) return { byDynasty: [], cutoffIso: legCutoffIso(legKey), measured: true, campaignCount: 0 };
+  const maturity = await fetchFleetLegWorkflowMaturity(featureSlug, legKey);
+  return { ...maturity, campaignCount: campaigns.length };
+}
+
 export async function computeLegWorkflowRanking(featureSlug: string, legKey: string): Promise<LegWorkflowRankingPayload> {
   const [maturity, assignmentRows, workflows, pipelines, campaigns] = await Promise.all([
-    fetchFleetLegWorkflowMaturity(featureSlug, legKey),
+    fleetPipeFigures(featureSlug, legKey),
     fetchLegAssignments(featureSlug, legKey),
     fetchPublicWorkflows(featureSlug, "all"),
     getFleetWorkflowPipelines(featureSlug, legKey),
