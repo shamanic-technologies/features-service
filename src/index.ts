@@ -38,6 +38,7 @@ import { registerChannelTriggerTypes, registerSeedFeatures } from "./seed/regist
 import { servedLegKeysMiddleware } from "./lib/served-leg-keys.js";
 import { legacyLegKeyArrivalsMiddleware } from "./lib/legacy-leg-key-arrivals.js";
 import { migrateOutboundLegKeys } from "./lib/outbound-leg-key-migration.js";
+import { renamePipesToBirds } from "./lib/sales-path-names.js";
 import { startViewKeeper } from "./lib/view-keeper.js";
 import {
   announceViewRefresherReady,
@@ -151,6 +152,8 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
       // Re-key every stored outbound leg to its new spelling (idempotent, three small tables; re-run at
       // every boot so a row an older process wrote during a deploy is moved on the next one).
       await migrateOutboundLegKeys();
+      // Owner GO 2026-10-10: every pipe named before the families split takes a bird (idempotent).
+      await renamePipesToBirds();
       app.listen(Number(PORT), "::", () => {
         console.log(`Features service running on port ${PORT}`);
         // Fork the view refresher after the port binds: its boot must never hold up the health check.

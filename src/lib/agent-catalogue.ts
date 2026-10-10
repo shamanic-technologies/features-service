@@ -221,6 +221,13 @@ export interface CataloguePath {
   id: string;
   legKeys: string[];
   steps: string[];
+  /**
+   * `proactive`: the path starts on an entry leg (from nothing, or from Lead found). `reactive` (owner
+   * 2026-10-10, "an additional Sales Funnel, reactive only"): it starts on a TRIGGER step, its first leg
+   * worked by a reactive pipe (Positive reply -> Meeting booked -> ... -> Paid client); nothing of ours
+   * produced the trigger step, the funnel on it only answers it.
+   */
+  type: "proactive" | "reactive";
   /** The rate of each leg (null on an entry leg out of nothing). */
   rates: Array<{ legKey: string; ratePct: number | null; source: "fleet_median" | "default" | "measured_pipe" | null }>;
 }
@@ -407,13 +414,14 @@ export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
   // A funnel leg no channel performs (a visitor signing up) is still a leg of a path, worked by nobody of ours.
   for (const l of FUNNEL_LEGS) if (l.fromStep) addLeg({ legKey: l.legKey, fromStep: l.fromStep.key, toStep: l.toStep.key });
   const paths = new Map<string, CataloguePath>();
-  const walk = (step: string, chain: PathLeg[], seen: Set<string>) => {
+  const walk = (step: string, chain: PathLeg[], seen: Set<string>, type: CataloguePath["type"] = "proactive") => {
     if (step === "paid_client") {
       const legKeys = chain.map((l) => l.legKey);
       const id = pathIdOf(legKeys);
       paths.set(id, {
         id,
         legKeys,
+        type,
         steps: [chain[0].fromStep ?? "start", ...chain.map((l) => l.toStep)].filter((s) => s !== "start"),
         rates: chain.map((l, i) => {
           if (i === 0) {
@@ -432,10 +440,18 @@ export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
     if (chain.length >= 12) return;
     for (const leg of (legsByFrom.get(step) ?? new Map<string, PathLeg>()).values()) {
       if (seen.has(leg.toStep)) continue;
-      walk(leg.toStep, [...chain, leg], new Set([...seen, leg.toStep]));
+      walk(leg.toStep, [...chain, leg], new Set([...seen, leg.toStep]), type);
     }
   };
   walk("∅", [], new Set());
+  // REACTIVE paths (owner 2026-10-10): from every trigger step a reactive pipe leaves, through that pipe's
+  // leg first, then any chain to Paid client. Their ids start on the reactive leg, so they never collide with
+  // a proactive path (which starts on an entry leg).
+  for (const p of pipes.values()) {
+    if (p.mode !== "reactive" || p.fromStep === null || p.fromStep === "lead_found" || p.toStep === "lead_found") continue;
+    const first: PathLeg = { legKey: p.legKey, fromStep: p.fromStep, toStep: p.toStep };
+    walk(p.toStep, [first], new Set([p.fromStep, p.toStep]), "reactive");
+  }
 
   return { steps, pipes, paths, lifetimeRevenueUsd: inputs.lifetimeRevenueUsd, channels: inputs.channels };
 }
@@ -604,7 +620,7 @@ export const stepLabel = (model: CatalogueModel, key: string): string => model.s
 
 /** PURE: "Lead found -> Positive reply -> Meeting booked -> Paid client"; a path from nothing reads "Start -> ...". */
 export const pathLine = (model: CatalogueModel, path: CataloguePath): string =>
-  [...(path.steps[0] === "lead_found" ? [] : ["Start"]), ...path.steps.map((s) => stepLabel(model, s))].join(" → ");
+  [...(path.steps[0] === "lead_found" || path.type === "reactive" ? [] : ["Start"]), ...path.steps.map((s) => stepLabel(model, s))].join(" → ");
 
 /** PURE: "Cold Email: Lead found -> Positive reply". */
 export const pipeLine = (model: CatalogueModel, pipe: CataloguePipe): string =>
@@ -630,11 +646,18 @@ const STATUS_TIER: Record<EconomicsStatus, number> = { measured: 0, estimated: 1
 
 /** PURE: order rows by status tier (measured > estimated > customer_time > learning), then roi desc (null
  *  last), then the tie-break text. */
-export function byRoi<T>(econ: (row: T) => Economics, tie: (row: T) => string): (a: T, b: T) => number {
+export function byRoi<T>(
+  econ: (row: T) => Economics,
+  tie: (row: T) => string,
+  /** Paths and funnels: a PROACTIVE one ranks before a REACTIVE one in the same status tier. A reactive cost
+   *  per paying client leaves out what produced its trigger step, so its roi is not comparable. */
+  typeOf?: (row: T) => "proactive" | "reactive",
+): (a: T, b: T) => number {
   return (a, b) => {
     const ea = econ(a);
     const eb = econ(b);
     if (STATUS_TIER[ea.status] !== STATUS_TIER[eb.status]) return STATUS_TIER[ea.status] - STATUS_TIER[eb.status];
+    if (typeOf && typeOf(a) !== typeOf(b)) return typeOf(a) === "proactive" ? -1 : 1;
     if (ea.roi !== null && eb.roi !== null && ea.roi !== eb.roi) return eb.roi - ea.roi;
     if ((ea.roi === null) !== (eb.roi === null)) return ea.roi === null ? 1 : -1;
     return tie(a).localeCompare(tie(b));
