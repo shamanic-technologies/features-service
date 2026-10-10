@@ -48349,10 +48349,6 @@
                       "items": {
                         "type": "object",
                         "properties": {
-                          "description": {
-                            "type": "string",
-                            "description": "ONE customer sentence: what the funnel does for the client, unique per funnel, stored once given (owner 2026-10-11, Campaigns page)."
-                          },
                           "triggerLabel": {
                             "type": "string",
                             "nullable": true,
@@ -48419,7 +48415,6 @@
                           }
                         },
                         "required": [
-                          "description",
                           "triggerLabel",
                           "id",
                           "name",
@@ -48541,10 +48536,6 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "description": {
-                      "type": "string",
-                      "description": "ONE customer sentence: what the funnel does for the client, unique per funnel, stored once given (owner 2026-10-11, Campaigns page)."
-                    },
                     "triggerLabel": {
                       "type": "string",
                       "nullable": true,
@@ -48796,7 +48787,6 @@
                     }
                   },
                   "required": [
-                    "description",
                     "triggerLabel",
                     "object",
                     "id",
@@ -48832,10 +48822,6 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "description": {
-                      "type": "string",
-                      "description": "ONE customer sentence: what the funnel does for the client, unique per funnel, stored once given (owner 2026-10-11, Campaigns page)."
-                    },
                     "triggerLabel": {
                       "type": "string",
                       "nullable": true,
@@ -49087,7 +49073,6 @@
                     }
                   },
                   "required": [
-                    "description",
                     "triggerLabel",
                     "object",
                     "id",
@@ -49181,10 +49166,6 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "description": {
-                      "type": "string",
-                      "description": "ONE customer sentence: what the funnel does for the client, unique per funnel, stored once given (owner 2026-10-11, Campaigns page)."
-                    },
                     "triggerLabel": {
                       "type": "string",
                       "nullable": true,
@@ -49468,7 +49449,6 @@
                     }
                   },
                   "required": [
-                    "description",
                     "triggerLabel",
                     "object",
                     "id",
@@ -49971,10 +49951,6 @@
                       "items": {
                         "type": "object",
                         "properties": {
-                          "description": {
-                            "type": "string",
-                            "description": "ONE customer sentence: what the funnel does for the client, unique per funnel, stored once given (owner 2026-10-11, Campaigns page)."
-                          },
                           "triggerLabel": {
                             "type": "string",
                             "nullable": true,
@@ -50041,7 +50017,6 @@
                           }
                         },
                         "required": [
-                          "description",
                           "triggerLabel",
                           "id",
                           "name",

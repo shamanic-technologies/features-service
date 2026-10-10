@@ -30,9 +30,14 @@
  * A read spanning campaigns on different legs applies EACH CAMPAIGN'S OWN duration: a zero-duration
  * campaign's recent spend and leads stay in, a 21-day campaign's leave. With the two durations in
  * force today that is at most one real cutoff.
+ *
+ * A SOURCING campaign (Start -> Lead found) is the exception: it buys no outcome of its own, it finds the
+ * people the scope's outreach legs work, so it waits the scope's longest delay (alone in a scope, it waits
+ * for nothing).
  */
 import { legMaturity, maturityCutoffIso as moduleCutoffIso, servedInMatureCohort } from "./maturity.js";
 import type { CampaignIdentityRow } from "./campaign-identity.js";
+import { SOURCE_LEG_KEY } from "./sourcing-origins.js";
 import type { EnginePerson } from "./revenue-engine.js";
 
 /** Days a campaign bought for `legKey` must age before its spend and its leads count toward ROI. */
@@ -79,14 +84,23 @@ export function buildMaturityPlan(
 ): MaturityPlan {
   let days = 0;
   const delayed = new Set<string>();
+  const sourcing: string[] = [];
   for (const row of rows) {
     if (!inScope(row)) continue;
+    // A SOURCING campaign (Start -> Lead found) buys no outcome of its own: it finds the people the outreach
+    // legs in the same scope work, so its spend waits as long as theirs (owner 2026-10-11: a funnel campaign
+    // one day old read 0x on its sourcing spend alone while its cold email read `maturing`).
+    if (row.legKey === SOURCE_LEG_KEY) {
+      sourcing.push(row.id);
+      continue;
+    }
     const d = maturityDaysForLeg(row.legKey);
     if (d <= 0) continue;
     delayed.add(row.id);
     if (d > days) days = d;
   }
   if (days === 0) return NO_MATURITY;
+  for (const id of sourcing) delayed.add(id);
   return { days, cutoffIso: maturityCutoffIso(days, now), delayedCampaignIds: delayed };
 }
 
