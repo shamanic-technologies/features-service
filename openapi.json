@@ -47757,6 +47757,15 @@
                       "items": {
                         "type": "object",
                         "properties": {
+                          "description": {
+                            "type": "string",
+                            "description": "ONE customer sentence: what the funnel does for the client, unique per funnel, stored once given (owner 2026-10-11, Campaigns page)."
+                          },
+                          "triggerLabel": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "A REACTIVE funnel: the customer label of what starts it (e.g. `Positive replies`), shown as a tag. Null on a proactive funnel."
+                          },
                           "id": {
                             "type": "string"
                           },
@@ -47818,6 +47827,8 @@
                           }
                         },
                         "required": [
+                          "description",
+                          "triggerLabel",
                           "id",
                           "name",
                           "face",
@@ -47938,6 +47949,15 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "description": {
+                      "type": "string",
+                      "description": "ONE customer sentence: what the funnel does for the client, unique per funnel, stored once given (owner 2026-10-11, Campaigns page)."
+                    },
+                    "triggerLabel": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "A REACTIVE funnel: the customer label of what starts it (e.g. `Positive replies`), shown as a tag. Null on a proactive funnel."
+                    },
                     "object": {
                       "type": "string",
                       "enum": [
@@ -48184,6 +48204,8 @@
                     }
                   },
                   "required": [
+                    "description",
+                    "triggerLabel",
                     "object",
                     "id",
                     "name",
@@ -48218,6 +48240,15 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "description": {
+                      "type": "string",
+                      "description": "ONE customer sentence: what the funnel does for the client, unique per funnel, stored once given (owner 2026-10-11, Campaigns page)."
+                    },
+                    "triggerLabel": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "A REACTIVE funnel: the customer label of what starts it (e.g. `Positive replies`), shown as a tag. Null on a proactive funnel."
+                    },
                     "object": {
                       "type": "string",
                       "enum": [
@@ -48464,6 +48495,8 @@
                     }
                   },
                   "required": [
+                    "description",
+                    "triggerLabel",
                     "object",
                     "id",
                     "name",
@@ -48556,6 +48589,15 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "description": {
+                      "type": "string",
+                      "description": "ONE customer sentence: what the funnel does for the client, unique per funnel, stored once given (owner 2026-10-11, Campaigns page)."
+                    },
+                    "triggerLabel": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "A REACTIVE funnel: the customer label of what starts it (e.g. `Positive replies`), shown as a tag. Null on a proactive funnel."
+                    },
                     "object": {
                       "type": "string",
                       "enum": [
@@ -48834,6 +48876,8 @@
                     }
                   },
                   "required": [
+                    "description",
+                    "triggerLabel",
                     "object",
                     "id",
                     "name",
@@ -49335,6 +49379,15 @@
                       "items": {
                         "type": "object",
                         "properties": {
+                          "description": {
+                            "type": "string",
+                            "description": "ONE customer sentence: what the funnel does for the client, unique per funnel, stored once given (owner 2026-10-11, Campaigns page)."
+                          },
+                          "triggerLabel": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "A REACTIVE funnel: the customer label of what starts it (e.g. `Positive replies`), shown as a tag. Null on a proactive funnel."
+                          },
                           "id": {
                             "type": "string"
                           },
@@ -49396,6 +49449,8 @@
                           }
                         },
                         "required": [
+                          "description",
+                          "triggerLabel",
                           "id",
                           "name",
                           "face",

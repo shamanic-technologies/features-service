@@ -56,7 +56,8 @@ import {
   type LoadedCatalogue,
 } from "../lib/channel-declarations-store.js";
 import { actorOf, DeclarationError, parseLegInput, requestedByOrgIdOf } from "../lib/channel-declarations.js";
-import { allNamesByKey, salesPathNamesFor, SalesPathNamePoolExhaustedError } from "../lib/sales-path-names.js";
+import { allNamesByKey, funnelDescriptionsFor, salesPathNamesFor, SalesPathNamePoolExhaustedError } from "../lib/sales-path-names.js";
+import { describeFunnel, funnelTriggerLabel } from "../lib/funnel-descriptions.js";
 import { campaignNameKeyOf } from "../lib/offer-sales-paths.js";
 import { getBrandEffectiveRates, getFleetArrowMedians, getFleetLifetimeRevenueMedian, legPairKey, peekFleetStatedMedians, type FleetArrowMedians } from "../lib/effective-conversion-rates.js";
 import { fetchBrandLegEconomics } from "../lib/brand-leg-economics-client.js";
@@ -437,11 +438,28 @@ const pipeRowOf = (m: CatalogueModel, p: CataloguePipe, name: string) => ({
   ...(p.published ? {} : { draft: true }),
 });
 
-const funnelRowOf = (f: CatalogueFunnel, name: string) => ({
+/**
+ * Each funnel's one customer sentence (`lib/funnel-descriptions.ts`), stored once given (after naming). The
+ * stored sentence wins, so a later wording change never moves one a customer has seen.
+ */
+async function describedFunnels(model: CatalogueModel, funnels: readonly CatalogueFunnel[]): Promise<Map<string, string>> {
+  const wanted = new Map(funnels.map((f) => [f.id, describeFunnel(f, model.channels, (k) => stepLabel(model, k))]));
+  const stored = await funnelDescriptionsFor(wanted);
+  return new Map([...wanted].map(([id, sentence]) => [id, stored.get(id) ?? sentence]));
+}
+
+/** What a funnel says to a customer: its sentence, and for a reactive one the trigger that starts it. */
+const funnelCopy = (model: CatalogueModel, f: CatalogueFunnel, descriptions: Map<string, string>) => ({
+  description: descriptions.get(f.id) ?? describeFunnel(f, model.channels, (k) => stepLabel(model, k)),
+  triggerLabel: funnelTriggerLabel(f, (k) => stepLabel(model, k)),
+});
+
+const funnelRowOf = (f: CatalogueFunnel, name: string, copy: { description: string; triggerLabel: string | null }) => ({
   id: f.id,
   name,
   face: faceOf(name).svgPath,
   line: funnelLine(f),
+  ...copy,
   type: funnelTypeOf(f),
   ...econWire(f.economics, PER_PAYING_CLIENT),
   runnable: funnelRunnable(f),
@@ -746,13 +764,14 @@ async function listSalesFunnels(req: Request, res: Response, forceRunnable: bool
       .sort(byRoi((f: CatalogueFunnel) => f.economics, (f) => f.id, (f) => funnelTypeOf(f)));
     const shown = candidates.slice(0, limit);
     const n = await named(shown.map((f) => f.id), names);
+    const descriptions = await describedFunnels(model, shown);
     res.json({
       object: "sales_funnel",
       costUnit: "per_paying_client",
       order: "roi_desc",
       total: candidates.length,
       truncated: candidates.length > limit,
-      rows: shown.map((f) => funnelRowOf(f, n.get(f.id)!)),
+      rows: shown.map((f) => funnelRowOf(f, n.get(f.id)!, funnelCopy(model, f, descriptions))),
       ...(offer ? { offer: offerEcho(offer) } : {}),
     });
   } catch (err) {
@@ -765,7 +784,8 @@ router.get("/internal/catalogue/sales-funnels", apiKeyOnly, (req, res) => listSa
 /** Public: the runnable sales funnels only (same rows, same filters, `runnable` forced on). */
 router.get("/public/catalogue/sales-funnels", (req, res) => listSalesFunnels(req, res, true));
 
-function funnelDetail(model: CatalogueModel, f: CatalogueFunnel, names: Map<string, string>, offer: OfferContext | null = null) {
+async function funnelDetail(model: CatalogueModel, f: CatalogueFunnel, names: Map<string, string>, offer: OfferContext | null = null) {
+  const copy = funnelCopy(model, f, await describedFunnels(model, [f]));
   const name = names.get(f.id)!;
   const path = model.paths.get(f.pathId)!;
   const needed = outcomesNeededPerPayingClient(path);
@@ -775,6 +795,7 @@ function funnelDetail(model: CatalogueModel, f: CatalogueFunnel, names: Map<stri
     name,
     face: faceOf(name),
     line: funnelLine(f),
+    ...copy,
     type: funnelTypeOf(f),
     salesPathId: path.id,
     salesPathName: names.get(salesPathNameKeyOf(path.id)) ?? null,
@@ -809,7 +830,7 @@ router.get("/internal/catalogue/sales-funnels/:id", apiKeyOnly, async (req, res)
     const f = funnelById(model, req.params.id);
     if (!f) return void res.status(404).json({ error: `no sales funnel ${req.params.id}`, reason: "sales_funnel_not_found" });
     const n = await named([f.id, salesPathNameKeyOf(f.pathId), ...funnelPipes(f).map(nameKeyOfPipe)], names);
-    res.json(funnelDetail(model, f, n, offer));
+    res.json(await funnelDetail(model, f, n, offer));
   } catch (err) {
     fail(res, err, "get sales funnel");
   }
@@ -1055,7 +1076,7 @@ router.post("/internal/catalogue/sales-funnels", apiKeyOnly, async (req, res) =>
     }
     const n = await named([funnel.id, salesPathNameKeyOf(funnel.pathId), ...funnelPipes(funnel).map(nameKeyOfPipe)], names);
     console.log(`[features-service] agent catalogue: sales funnel ${funnel.id} ${existed ? "re-declared" : "declared"} by ${createdBy}, named ${n.get(funnel.id)}`);
-    res.status(existed ? 200 : 201).json({ created: !existed, ...funnelDetail(model, funnel, n) });
+    res.status(existed ? 200 : 201).json({ created: !existed, ...(await funnelDetail(model, funnel, n)) });
   } catch (err) {
     fail(res, err, "create sales funnel");
   }
