@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { legMaturityFigures, outcomeFigures, type LegMaturityFigures } from "./maturity.js";
 import { meetingBookedPrice, pickLegPrice, websiteVisitPrice } from "./outcome-prices.js";
-import { buildMeetingLegFleet, MEETING_BOOKING_LEG_KEY } from "./meeting-leg-fleet.js";
+import { buildMeetingLegFleet, isInternalPipe, MEETING_BOOKING_LEG_KEY } from "./meeting-leg-fleet.js";
 import type { WorkflowMetadata } from "./public-stats-clients.js";
 
 const REPLY = "start_to_conversation";
@@ -148,3 +148,27 @@ describe("buildMeetingLegFleet", () => {
     expect(new Map(fleet.byDynasty).has("osmium")).toBe(false);
   });
 });
+
+describe("one measure rule for every pipe (owner 2026-10-10: no special case)", () => {
+  it("an internal pipe is one that starts on a step other than Lead found, whatever its channel", () => {
+    expect(isInternalPipe(null)).toBe(false); // from nothing
+    expect(isInternalPipe("lead_found")).toBe(false); // outbound entry pipe
+    expect(isInternalPipe("conversation")).toBe(true); // AI meeting booking, AI instant call...
+    expect(isInternalPipe("meeting_booked")).toBe(true);
+  });
+
+  it("an internal pipe's figures carry its own leg's rule, not the meeting leg's", () => {
+    const fleet = buildMeetingLegFleet({
+      campaigns: [{ campaignId: "c1", orgId: "o1", brandId: "b1" }],
+      workflows: [{ workflowSlug: "orbit", workflowDynastySlug: "orbit" }] as WorkflowMetadata[],
+      costGroups: [{ dimensions: { campaignId: "c1", workflowSlug: "orbit" }, totalCostInUsdCents: "200", runCount: 1, minStartedAt: null, maxStartedAt: null }],
+      pairs: new Map([["b1", { actedByCampaign: new Map([["c1", new Set(["a", "b"])]]), meetingLeadIds: new Set(["a", "b"]) }]]),
+      legKey: "conversation_to_booking_call",
+    });
+    expect(fleet.legKey).toBe("conversation_to_booking_call");
+    const orbit = new Map(fleet.byDynasty).get("orbit")!;
+    expect(orbit.legKey).toBe("conversation_to_booking_call");
+    expect(orbit.flash).toMatchObject({ contacted: 2, outcomes: 2, spentUsd: 2 });
+  });
+});
+
