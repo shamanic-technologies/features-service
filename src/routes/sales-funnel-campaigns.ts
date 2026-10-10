@@ -1,0 +1,171 @@
+/**
+ * A BRAND'S SALES FUNNEL CAMPAIGNS, ONE ROW EACH, AS THE DASHBOARD CAMPAIGNS TABLE READS THEM (owner 2026-10-11).
+ *
+ *   GET /brands/:brandId/sales-funnel-campaigns[?offerId=&pricing=net|gross]
+ *
+ * A customer campaign is a SALES FUNNEL CAMPAIGN (campaign-service `GET /sales-funnel-campaigns`: brand x offer x
+ * sales funnel, one UNIT campaign per pipe). Each row serves, so the browser composes and computes nothing:
+ *   - the funnel's NAME (campaign-service's) and FACE, its one-sentence customer DESCRIPTION, its TYPE, its
+ *     trigger label and the Type column's label ("Daily", or a reactive funnel's trigger: "Positive replies"):
+ *     the SAME copy its catalogue funnel row serves (`lib/funnel-descriptions.ts`, stored once given); and its
+ *     PATH as structured items ("Lead found -> Sales Cold Email Outreach -> Positive reply -> Paid client",
+ *     `funnelPathView`), so the dashboard never parses an id;
+ *   - its MONEY SINCE INCEPTION over its units together: ONE engine pass (`computeFeatureRevenue`) over the
+ *     units' campaign ids and channels, exactly as the offer grain combines its channels: spend ADDS (every
+ *     cost row belongs to one unit, so `investedUsd` = the sum of the units' committed spend, the same
+ *     `committedCostUsd` each unit's own campaign read serves), people are deduped, every ratio is recomputed
+ *     from the combined numerator and denominator (never a sum or an average of unit ROIs). Priced on the
+ *     offer's terms narrowed to the funnels the units' legs walk (the rule a unit's own read follows), with
+ *     the maturity verdict (`maturity`, `costEconomics.unmeasuredReason`) the per-campaign reads serve.
+ *
+ * Units whose channels price on two different funnel definitions cannot be priced as one figure: the row
+ * still serves its invested amount, with a null ROI and `moneyUnavailableReason: "units_price_differently"`.
+ * A funnel id the catalogue no longer knows serves null copy + `copyUnavailableReason`. campaign-service
+ * unreadable = 502 (no row is ever guessed).
+ */
+import { Router } from "express";
+import { apiKeyAuth, type AuthenticatedRequest } from "../middleware/auth.js";
+import { computeFeatureRevenue, fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel, pricedFingerprint, type DownstreamHeaders } from "./revenue.js";
+import type { FunnelPricedEconomics } from "../lib/offer-pricing.js";
+import { distinctChannelFunnels } from "./offer-economics.js";
+import { funnelCopiesFor } from "./agent-catalogue.js";
+import { faceOf } from "../lib/catalogue-faces.js";
+import { assertBrandHeld, BrandOwnershipError } from "../lib/brand-ownership.js";
+import { parsePricing } from "../lib/pricing.js";
+import { DEFAULT_PRICED_CAUSES } from "../lib/outcome-cause.js";
+import { funnelsContainingLeg, isOutboundLegKeySpelling, storedLegKeyOf } from "../lib/funnel-legs.js";
+import { fetchWithRetry } from "../lib/fetch-retry.js";
+import { mapWithConcurrency } from "../lib/concurrency.js";
+import { servedCached, buildScopeKey } from "../lib/view-cache.js";
+import type { DeclaredSalesFunnel } from "../lib/sales-funnels-client.js";
+
+const router = Router();
+
+export interface SalesFunnelUnitRow {
+  campaignId: string;
+  pipeId: string;
+  featureSlug: string;
+  legKey: string;
+  status: string;
+}
+
+export interface SalesFunnelCampaignRow {
+  id: string;
+  brandId: string;
+  offerId: string;
+  salesFunnelId: string;
+  salesFunnelName: string;
+  status: string;
+  stopReason: string | null;
+  createdAt: string;
+  units: SalesFunnelUnitRow[];
+}
+
+/** campaign-service's funnel campaigns of one brand (optionally one offer), org-scoped. FAIL-LOUD. */
+export async function fetchSalesFunnelCampaigns(brandId: string, offerId: string | null, headers: DownstreamHeaders): Promise<SalesFunnelCampaignRow[]> {
+  const url = process.env.CAMPAIGN_SERVICE_URL;
+  const apiKey = process.env.CAMPAIGN_SERVICE_API_KEY;
+  if (!url || !apiKey) throw new Error("[features-service] CAMPAIGN_SERVICE_URL or CAMPAIGN_SERVICE_API_KEY not configured");
+  const params = new URLSearchParams({ brandId });
+  if (offerId) params.set("offerId", offerId);
+  const reqHeaders: Record<string, string> = { "x-api-key": apiKey, "x-org-id": headers.orgId, "x-brand-id": brandId };
+  if (headers.userId) reqHeaders["x-user-id"] = headers.userId;
+  if (headers.runId) reqHeaders["x-run-id"] = headers.runId;
+  const response = await fetchWithRetry(`${url}/sales-funnel-campaigns?${params}`, { headers: reqHeaders }, { shareForMs: 30_000 });
+  if (!response.ok) throw new Error(`[features-service] campaign-service /sales-funnel-campaigns failed (${response.status}): ${await response.text()}`);
+  const data = (await response.json()) as { salesFunnelCampaigns?: SalesFunnelCampaignRow[] };
+  if (!Array.isArray(data.salesFunnelCampaigns)) throw new Error("[features-service] campaign-service /sales-funnel-campaigns returned no salesFunnelCampaigns array");
+  return data.salesFunnelCampaigns;
+}
+
+/** PURE: the offer's terms narrowed to the declared funnels the units' legs walk (a unit's own read rule). */
+export function pricingForUnits(declared: DeclaredSalesFunnel[], all: FunnelPricedEconomics, units: readonly SalesFunnelUnitRow[]): FunnelPricedEconomics {
+  const legs = units.map((u) => (isOutboundLegKeySpelling(u.legKey) ? storedLegKeyOf(u.legKey) : u.legKey));
+  const own = declared.filter((f) => legs.some((leg) => funnelsContainingLeg(leg).includes(f.funnelKey)));
+  if (own.length === 0) return all;
+  return priceOnDeclaredFunnel(own, own.length === 1 ? own[0].funnelKey : undefined);
+}
+
+router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, res) => {
+  try {
+    const auth = req as AuthenticatedRequest & { params: { brandId: string } };
+    const brandId = auth.params.brandId;
+    const offerFilter = typeof req.query.offerId === "string" && req.query.offerId.trim() !== "" ? req.query.offerId.trim() : null;
+    const pricing = parsePricing(req.query.pricing);
+    if (pricing === null) return void res.status(400).json({ error: "pricing must be one of: gross, net", reason: "pricing_unrecognised" });
+    const headers: DownstreamHeaders = { orgId: auth.orgId, userId: auth.userId, runId: auth.runId, featureSlug: undefined };
+
+    const [rows] = await Promise.all([fetchSalesFunnelCampaigns(brandId, offerFilter, headers), assertBrandHeld(brandId, headers)]);
+    const copies = await funnelCopiesFor([...new Set(rows.map((r) => r.salesFunnelId))]);
+
+    // The offer's terms, read ONCE per offer and shared by its funnel campaigns.
+    const offerIds = [...new Set(rows.map((r) => r.offerId))];
+    const declaredByOffer = new Map(await Promise.all(offerIds.map(async (o) => [o, await fetchDeclaredFunnelsSoft(brandId, headers.orgId, o)] as const)));
+
+    const out = await mapWithConcurrency(rows, 3, async (r) => {
+      const copy = copies.get(r.salesFunnelId) ?? null;
+      if (!copy) console.error(`[features-service] sales funnel campaign ${r.id}: funnel ${r.salesFunnelId} is not in the catalogue (copy null)`);
+      const featureSlugs = [...new Set(r.units.map((u) => u.featureSlug))].sort();
+      const campaignIds = r.units.map((u) => u.campaignId).sort();
+      const distinct = distinctChannelFunnels(r.units);
+      const funnel = distinct.length === 1 ? distinct[0] : null;
+      const declared = declaredByOffer.get(r.offerId) ?? [];
+      const priced = funnel ? pricingForUnits(declared, priceOnDeclaredFunnel(declared), r.units) : undefined;
+
+      const money = campaignIds.length === 0
+        ? null
+        : await servedCached({
+            view: "sales-funnel-campaign-money",
+            scopeKey: buildScopeKey(r.id, {
+              orgId: headers.orgId,
+              brandId,
+              offerId: r.offerId,
+              units: campaignIds.join("+"),
+              channels: featureSlugs.join("+"),
+              pricing,
+              econ: priced ? pricedFingerprint(priced) : undefined,
+              decl: funnel ? declared.map((f) => f.funnelKey).sort().join("+") || "none" : undefined,
+            }),
+            orgId: headers.orgId,
+            compute: async () => {
+              const body = await computeFeatureRevenue(featureSlugs, brandId, campaignIds, funnel, headers, undefined, priced, false, pricing, undefined, r.offerId, undefined, DEFAULT_PRICED_CAUSES);
+              return { costEconomics: body.costEconomics, maturity: body.maturity ?? null };
+            },
+          });
+
+      return {
+        id: r.id,
+        brandId: r.brandId,
+        offerId: r.offerId,
+        salesFunnelId: r.salesFunnelId,
+        name: r.salesFunnelName,
+        face: faceOf(r.salesFunnelName).svgPath,
+        status: r.status,
+        stopReason: r.stopReason,
+        createdAt: r.createdAt,
+        description: copy?.description ?? null,
+        type: copy?.type ?? null,
+        triggerLabel: copy?.triggerLabel ?? null,
+        // The Type column (owner 2026-10-11): "Daily" for a proactive funnel, its trigger for a reactive one.
+        typeLabel: copy ? (copy.type === "proactive" ? "Daily" : copy.triggerLabel) : null,
+        // The path the dashboard draws in place of the sentence (owner 2026-10-11), structured: never parsed from an id.
+        path: copy?.path ?? null,
+        copyUnavailableReason: copy ? null : "sales_funnel_not_in_catalogue",
+        units: r.units.map((u) => ({ campaignId: u.campaignId, pipeId: u.pipeId, featureSlug: u.featureSlug, legKey: u.legKey, status: u.status })),
+        investedUsd: money ? money.costEconomics.committedCostUsd : 0,
+        roiMultiple: money && distinct.length <= 1 ? money.costEconomics.roiMultiple : null,
+        moneyUnavailableReason: distinct.length > 1 ? "units_price_differently" : null,
+        costEconomics: money?.costEconomics ?? null,
+        maturity: money?.maturity ?? null,
+      };
+    });
+
+    res.json({ brandId, offerId: offerFilter, pricing, costBasis: "charged", salesFunnelCampaigns: out });
+  } catch (err) {
+    if (err instanceof BrandOwnershipError) return void res.status(404).json({ error: err.message, reason: "brand_not_found" });
+    console.error("[features-service] sales funnel campaigns error:", err);
+    res.status(502).json({ error: "Failed to read sales funnel campaigns" });
+  }
+});
+
+export default router;
