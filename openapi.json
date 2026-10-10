@@ -19883,11 +19883,6 @@
                 "createdAt": {
                   "type": "string"
                 },
-                "description": {
-                  "type": "string",
-                  "nullable": true,
-                  "description": "What this campaign does, in ONE plain customer sentence: the catalogue funnel's own `description` (stored once given). Null only with `copyUnavailableReason`."
-                },
                 "type": {
                   "type": "string",
                   "nullable": true,
@@ -20017,7 +20012,7 @@
                   "enum": [
                     "sales_funnel_not_in_catalogue"
                   ],
-                  "description": "Why the copy fields are null: the funnel id is not in this service's catalogue (logged). Null when they are served."
+                  "description": "Why `type`, `triggerLabel`, `typeLabel` and `path` are null: the funnel id is not in this service's catalogue (logged). Null when they are served."
                 },
                 "units": {
                   "type": "array",
@@ -20200,7 +20195,6 @@
                 "status",
                 "stopReason",
                 "createdAt",
-                "description",
                 "type",
                 "triggerLabel",
                 "typeLabel",
@@ -35051,7 +35045,7 @@
     "/brands/{brandId}/sales-funnel-campaigns": {
       "get": {
         "summary": "A brand's sales funnel campaigns, one row each, with their customer copy and money since inception",
-        "description": "The dashboard Campaigns table (owner 2026-10-11): one row per SALES FUNNEL CAMPAIGN (campaign-service `GET /sales-funnel-campaigns`, brand x offer x sales funnel, one unit campaign per pipe). Each row serves the funnel's name and face, its one-sentence customer description, its type, trigger label and Type label (\"Daily\" or the trigger: \"Positive replies\"), and its money since inception over its units together: invested (the units' committed spend, which adds exactly) and the ROI of ONE engine pass over the units' people and spend (never a sum of unit ROIs), with the maturity verdict. The browser composes and computes nothing. Org-scoped (`x-org-id`).",
+        "description": "The dashboard Campaigns table (owner 2026-10-11): one row per SALES FUNNEL CAMPAIGN (campaign-service `GET /sales-funnel-campaigns`, brand x offer x sales funnel, one unit campaign per pipe). Each row serves the funnel's name and face, its type, trigger label and Type label (\"Daily\" or the trigger: \"Positive replies\"), and its money since inception over its units together: invested (the units' committed spend, which adds exactly) and the ROI of ONE engine pass over the units' people and spend (never a sum of unit ROIs), with the maturity verdict. The browser composes and computes nothing. Org-scoped (`x-org-id`).",
         "tags": [
           "Stats"
         ],
