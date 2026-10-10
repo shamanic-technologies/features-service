@@ -177,11 +177,22 @@ async function computeMeasurements(): Promise<MeasurementStore> {
   );
   const byPipe = new Map<string, PipeMeasurement>();
   const unreadable = new Set<string>();
+  // A pipe whose read fails in THIS build keeps the measurement of the build it replaces (the last computed
+  // figure, same rule as the whole store): one transient fleet-read timeout must not turn a measured pipe
+  // learning for a whole fresh window, nor be persisted for the next process (2026-10-10: Lumen read
+  // `measurement_unreadable` after a restart). Only a pipe never measured reads unreadable.
+  const previous = measurementStore?.value.byPipe ?? new Map<string, PipeMeasurement>();
   await mapWithConcurrency(pipes, MEASUREMENT_CONCURRENCY, async (p) => {
     try {
       const price = await withTimeout(fleetLegPrice(p.slug, p.computedLegKey), MEASUREMENT_TIMEOUT_MS, `pipe ${p.id}`);
       byPipe.set(p.id, { basis: price.basis, costPerOutcomeUsd: price.costPerOutcomeUsd, conversionRatePct: price.conversionRatePct, workflowDynastySlug: price.workflowDynastySlug });
     } catch (error) {
+      const last = previous.get(p.id);
+      if (last) {
+        byPipe.set(p.id, last);
+        console.error(`[features-service] agent catalogue: fleet measurement of pipe ${p.id} failed; it keeps its last computed measurement:`, error);
+        return;
+      }
       unreadable.add(p.id);
       console.error(`[features-service] agent catalogue: fleet measurement of pipe ${p.id} failed; it reads learning (measurement_unreadable):`, error);
     }

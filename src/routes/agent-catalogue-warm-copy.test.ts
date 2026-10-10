@@ -5,8 +5,9 @@ vi.mock("../db/index.js", () => ({ db: { query: { features: { findFirst: vi.fn()
 // The fleet build never ends here: a read must be served from the stored copy, never wait on it.
 vi.mock("./public.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  fleetLegPrice: () => new Promise(() => {}),
+  fleetLegPrice: () => (fleet.fails ? Promise.reject(new Error("fleet read timed out")) : new Promise(() => {})),
 }));
+const fleet = vi.hoisted(() => ({ fails: false }));
 const cells = vi.hoisted(() => new Map<string, { text: string; computedAt: number }>());
 vi.mock("../lib/fleet-cell-store.js", () => ({
   loadFleetCell: async (key: string) => cells.get(key) ?? null,
@@ -103,7 +104,7 @@ process.env.NODE_ENV = "test";
 process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 
 const app = (await import("../index.js")).default;
-const { __resetCatalogueMeasurements, serializeFigures, parseFigures } = await import("./agent-catalogue.js");
+const { __resetCatalogueMeasurements, serializeFigures, parseFigures, warmCatalogueMeasurements } = await import("./agent-catalogue.js");
 
 const KEY = { "x-api-key": "test-key" };
 const COLD = "sales-cold-email-outreach|lead_found_to_conversation";
@@ -112,6 +113,7 @@ beforeEach(() => {
   names.rows = new Map();
   __resetCatalogueMeasurements();
   cells.clear();
+  fleet.fails = false;
 });
 
 describe("a fresh process (every deploy) serves the stored catalogue figures, never waits on the rebuild", () => {
@@ -139,6 +141,28 @@ describe("a fresh process (every deploy) serves the stored catalogue figures, ne
     const res = await request(app).get("/internal/catalogue/pipes?limit=25").set(KEY);
     expect(res.status).toBe(200);
     expect(Date.now() - started).toBeLessThan(5_000);
+    expect(res.body.rows.find((r: { id: string }) => r.id === COLD)).toMatchObject({ costUsd: 40, status: "measured" });
+  });
+
+  it("a rebuild whose read of a pipe fails keeps that pipe's last measurement (never stores it unreadable)", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    cells.set("agent-catalogue-figures", {
+      computedAt: Date.now() - 60 * 60_000,
+      text: serializeFigures({
+        byPipe: new Map([[COLD, { basis: "mature", costPerOutcomeUsd: 40, conversionRatePct: 1, workflowDynastySlug: "orion" }]]),
+        unreadable: new Set(),
+        computedAt: "2026-10-10T10:00:00.000Z",
+        fleet: { arrows: new Map(), lifetimeRevenue: { usd: 3000, offerCount: 12 } },
+      }),
+    });
+    fleet.fails = true;
+    await request(app).get("/internal/catalogue/pipes?limit=1").set(KEY); // installs the stored copy, kicks the rebuild
+    await warmCatalogueMeasurements();
+    const stored = parseFigures(cells.get("agent-catalogue-figures")!.text);
+    expect(stored.computedAt).not.toBe("2026-10-10T10:00:00.000Z"); // the rebuild ran and was stored
+    expect(stored.byPipe.get(COLD)).toMatchObject({ costPerOutcomeUsd: 40, basis: "mature" });
+    expect(stored.unreadable.has(COLD)).toBe(false);
+    const res = await request(app).get("/internal/catalogue/pipes?limit=25").set(KEY);
     expect(res.body.rows.find((r: { id: string }) => r.id === COLD)).toMatchObject({ costUsd: 40, status: "measured" });
   });
 });
