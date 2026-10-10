@@ -487,6 +487,26 @@ export function funnelsOfPath(model: CatalogueModel, path: CataloguePath, cap = 
   return [...out.values()];
 }
 
+// ── Runnable: what we run TODAY (owner rule: a customer surface never presents what we do not run) ──
+
+/**
+ * PURE: a pipe we can run today. Published (channel AND leg) and either run by the customer's own team
+ * (nothing of ours to run) or on a MANAGED channel (`MANAGED_CHANNEL_SLUGS` + live sourcing origins: the
+ * platform runs it, a workflow exists). An unmanaged platform channel (LinkedIn posting, ads, agencies)
+ * is listed in the catalogue but campaign-service answers 409 `no_workflow` on launch.
+ */
+export const pipeRunnable = (p: CataloguePipe): boolean => p.published && (p.operatedBy === "customer" || p.managed);
+
+/** PURE: a funnel we can run today: every leg is bare (the buyer acts) or worked by a runnable pipe. */
+export const funnelRunnable = (f: CatalogueFunnel): boolean => f.legs.every((l) => l.pipe === null || pipeRunnable(l.pipe));
+
+/** PURE: a channel we can run today: at least one of its pipes is runnable. */
+export const channelRunnable = (model: CatalogueModel, slug: string): boolean =>
+  [...model.pipes.values()].some((p) => p.channelSlug === slug && pipeRunnable(p));
+
+/** PURE: a sales path we can run today: at least one of its funnels is runnable. */
+export const pathRunnable = (model: CatalogueModel, path: CataloguePath): boolean => funnelsOfPath(model, path).some(funnelRunnable);
+
 /** PURE: a funnel by id (any path), or null. */
 export function funnelById(model: CatalogueModel, id: string): CatalogueFunnel | null {
   const legKeys = id.split("+").map((part) => part.split("@")[0]);
