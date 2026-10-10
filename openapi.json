@@ -44947,6 +44947,3305 @@
           }
         }
       }
+    },
+    "/internal/catalogue/steps": {
+      "get": {
+        "summary": "List steps (internal, api-key)",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Text search: every word must appear in the row's text (name, line, id)."
+            },
+            "required": false,
+            "description": "Text search: every word must appear in the row's text (name, line, id).",
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "1..25, default 10."
+            },
+            "required": false,
+            "description": "1..25, default 10.",
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List steps (internal, api-key)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "enum": [
+                        "step"
+                      ]
+                    },
+                    "costUnit": {
+                      "type": "string",
+                      "enum": [
+                        "per_outcome"
+                      ]
+                    },
+                    "order": {
+                      "type": "string"
+                    },
+                    "total": {
+                      "type": "integer",
+                      "description": "Rows matching the filters (before `limit`)."
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "icon": {
+                            "type": "string",
+                            "description": "Phosphor icon name."
+                          },
+                          "line": {
+                            "type": "string"
+                          },
+                          "valueUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "What reaching the step is worth on the way to a paid client (fleet). Use it for an endpoint's ROI: value / cost of the call."
+                          },
+                          "costUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                          },
+                          "roi": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Average fleet return multiple. Null unless measured."
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "measured",
+                              "learning",
+                              "customer_time"
+                            ]
+                          },
+                          "declared": {
+                            "type": "boolean",
+                            "description": "Present (true) on a step declared at run time."
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "icon",
+                          "line",
+                          "valueUsd",
+                          "costUsd",
+                          "roi",
+                          "status"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "object",
+                    "costUnit",
+                    "order",
+                    "total",
+                    "truncated",
+                    "rows"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A filter is invalid (`reason`: `limit_unrecognised`, `step_not_found`, `sales_path_not_found`, `pipe_required`, ...)."
+          },
+          "401": {
+            "description": "Missing or wrong service key."
+          },
+          "404": {
+            "description": "Unknown id (`*_not_found`)."
+          },
+          "503": {
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+          }
+        }
+      },
+      "post": {
+        "summary": "Declare a step (internal, api-key)",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`. A step names what something produces (\"LinkedIn post\", \"Email found\"); declared legs (pipes) may then start or end on it. It states where it leads (`towardStep` reached at `towardRatePct`), so it has a value from the start: towardRatePct/100 x value(towardStep).",
+        "tags": [
+          "Internal"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "description": "snake_case, new."
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "shortDescription": {
+                    "type": "string",
+                    "description": "<= 80 characters."
+                  },
+                  "icon": {
+                    "type": "string",
+                    "description": "Phosphor icon name."
+                  },
+                  "towardStep": {
+                    "type": "string"
+                  },
+                  "towardRatePct": {
+                    "type": "number",
+                    "description": "(0, 100]."
+                  },
+                  "producedBy": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "The endpoint or service producing it."
+                  },
+                  "createdBy": {
+                    "type": "string",
+                    "description": "Who makes the write (staff identity or the agent)."
+                  },
+                  "requestedByOrgId": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Which client asked (provenance, never scope)."
+                  }
+                },
+                "required": [
+                  "key",
+                  "label",
+                  "description",
+                  "shortDescription",
+                  "icon",
+                  "towardStep",
+                  "towardRatePct",
+                  "createdBy"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Already existed (sales paths and funnels): the same body, `created: false`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "enum": [
+                        "step"
+                      ]
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "icon": {
+                      "type": "string"
+                    },
+                    "line": {
+                      "type": "string"
+                    },
+                    "valueUsd": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "declared": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    },
+                    "producedBy": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "object",
+                    "id",
+                    "name",
+                    "icon",
+                    "line",
+                    "valueUsd",
+                    "declared",
+                    "producedBy"
+                  ]
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Declare a step (internal, api-key): created (an existing path or funnel answers 200, `created: false`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "enum": [
+                        "step"
+                      ]
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "icon": {
+                      "type": "string"
+                    },
+                    "line": {
+                      "type": "string"
+                    },
+                    "valueUsd": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "declared": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    },
+                    "producedBy": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "object",
+                    "id",
+                    "name",
+                    "icon",
+                    "line",
+                    "valueUsd",
+                    "declared",
+                    "producedBy"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A field is missing or invalid (`reason` names it)."
+          },
+          "401": {
+            "description": "Missing or wrong service key."
+          },
+          "404": {
+            "description": "A referenced object does not exist (`*_not_found`)."
+          },
+          "409": {
+            "description": "Already exists (`step_exists`, `step_label_taken`, `leg_exists`, `already_exists`)."
+          },
+          "502": {
+            "description": "`name_family_exhausted`: the family has no name left (add words at the end of its list)."
+          }
+        }
+      }
+    },
+    "/internal/catalogue/steps/{id}": {
+      "get": {
+        "summary": "One step (internal, api-key)",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "A step key or label (URL-encoded)."
+            },
+            "required": true,
+            "description": "A step key or label (URL-encoded).",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One step (internal, api-key)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "enum": [
+                        "step"
+                      ]
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "icon": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "line": {
+                      "type": "string"
+                    },
+                    "declared": {
+                      "type": "boolean"
+                    },
+                    "producedBy": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "What produces it (an endpoint, a service), as declared."
+                    },
+                    "valueUsd": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "valueVia": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "toStep": {
+                          "type": "string"
+                        },
+                        "toStepName": {
+                          "type": "string"
+                        },
+                        "ratePct": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "toStep",
+                        "toStepName",
+                        "ratePct"
+                      ]
+                    },
+                    "valueBasis": {
+                      "type": "string"
+                    },
+                    "lifetimeRevenueUsd": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "costUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                    },
+                    "roi": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Average fleet return multiple. Null unless measured."
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "measured",
+                        "learning",
+                        "customer_time"
+                      ]
+                    },
+                    "learningReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Why it is learning (`no_fleet_history`, `no_mature_workflow_yet`, `measurement_unreadable`, `pipe_learning:<pipe id>`, `leg_unrated:<leg>`, `no_measured_funnel`, `no_measured_pipe`, `no_lifetime_revenue`). Null when measured."
+                    },
+                    "costUnit": {
+                      "type": "string",
+                      "enum": [
+                        "per_outcome"
+                      ]
+                    },
+                    "producingPipeIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "salesPathCount": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "object",
+                    "id",
+                    "name",
+                    "icon",
+                    "description",
+                    "line",
+                    "declared",
+                    "producedBy",
+                    "valueUsd",
+                    "valueVia",
+                    "valueBasis",
+                    "lifetimeRevenueUsd",
+                    "costUsd",
+                    "roi",
+                    "status",
+                    "learningReason",
+                    "costUnit",
+                    "producingPipeIds",
+                    "salesPathCount"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A filter is invalid (`reason`: `limit_unrecognised`, `step_not_found`, `sales_path_not_found`, `pipe_required`, ...)."
+          },
+          "401": {
+            "description": "Missing or wrong service key."
+          },
+          "404": {
+            "description": "Unknown id (`*_not_found`)."
+          },
+          "503": {
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+          }
+        }
+      }
+    },
+    "/internal/catalogue/sales-paths": {
+      "get": {
+        "summary": "List sales paths (internal, api-key)",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Comma list of step keys or labels: the paths containing AT LEAST ONE."
+            },
+            "required": false,
+            "description": "Comma list of step keys or labels: the paths containing AT LEAST ONE.",
+            "name": "containsSteps",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Text search: every word must appear in the row's text (name, line, id)."
+            },
+            "required": false,
+            "description": "Text search: every word must appear in the row's text (name, line, id).",
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "1..25, default 10."
+            },
+            "required": false,
+            "description": "1..25, default 10.",
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List sales paths (internal, api-key)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "enum": [
+                        "sales_path"
+                      ]
+                    },
+                    "costUnit": {
+                      "type": "string",
+                      "enum": [
+                        "per_paying_client"
+                      ]
+                    },
+                    "order": {
+                      "type": "string"
+                    },
+                    "total": {
+                      "type": "integer",
+                      "description": "Rows matching the filters (before `limit`)."
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "icon": {
+                            "type": "string",
+                            "description": "The family glyph (Phosphor): `waves` (sales path), `bird` (pipe), `flow-arrow` (workflow)."
+                          },
+                          "color": {
+                            "type": "string",
+                            "description": "`#RRGGBB`, derived from the name."
+                          },
+                          "line": {
+                            "type": "string"
+                          },
+                          "costUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                          },
+                          "roi": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Average fleet return multiple. Null unless measured."
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "measured",
+                              "learning",
+                              "customer_time"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "icon",
+                          "color",
+                          "line",
+                          "costUsd",
+                          "roi",
+                          "status"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "object",
+                    "costUnit",
+                    "order",
+                    "total",
+                    "truncated",
+                    "rows"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A filter is invalid (`reason`: `limit_unrecognised`, `step_not_found`, `sales_path_not_found`, `pipe_required`, ...)."
+          },
+          "401": {
+            "description": "Missing or wrong service key."
+          },
+          "404": {
+            "description": "Unknown id (`*_not_found`)."
+          },
+          "503": {
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+          }
+        }
+      },
+      "post": {
+        "summary": "Declare a sales path (internal, api-key)",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`. The legs in order (a chain the catalogue holds: GET /internal/catalogue/sales-paths lists them). Persisted and named with a never-given river; an existing path answers 200 `created: false` with its name.",
+        "tags": [
+          "Internal"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "legKeys": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "createdBy": {
+                    "type": "string",
+                    "description": "Who makes the write (staff identity or the agent)."
+                  },
+                  "requestedByOrgId": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Which client asked (provenance, never scope)."
+                  }
+                },
+                "required": [
+                  "legKeys",
+                  "createdBy"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Already existed (sales paths and funnels): the same body, `created: false`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "icon": {
+                      "type": "string",
+                      "description": "The family glyph (Phosphor): `waves` (sales path), `bird` (pipe), `flow-arrow` (workflow)."
+                    },
+                    "color": {
+                      "type": "string",
+                      "description": "`#RRGGBB`, derived from the name."
+                    },
+                    "line": {
+                      "type": "string"
+                    },
+                    "costUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                    },
+                    "roi": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Average fleet return multiple. Null unless measured."
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "measured",
+                        "learning",
+                        "customer_time"
+                      ]
+                    },
+                    "created": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "icon",
+                    "color",
+                    "line",
+                    "costUsd",
+                    "roi",
+                    "status",
+                    "created"
+                  ]
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Declare a sales path (internal, api-key): created (an existing path or funnel answers 200, `created: false`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "icon": {
+                      "type": "string",
+                      "description": "The family glyph (Phosphor): `waves` (sales path), `bird` (pipe), `flow-arrow` (workflow)."
+                    },
+                    "color": {
+                      "type": "string",
+                      "description": "`#RRGGBB`, derived from the name."
+                    },
+                    "line": {
+                      "type": "string"
+                    },
+                    "costUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                    },
+                    "roi": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Average fleet return multiple. Null unless measured."
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "measured",
+                        "learning",
+                        "customer_time"
+                      ]
+                    },
+                    "created": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "icon",
+                    "color",
+                    "line",
+                    "costUsd",
+                    "roi",
+                    "status",
+                    "created"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A field is missing or invalid (`reason` names it)."
+          },
+          "401": {
+            "description": "Missing or wrong service key."
+          },
+          "404": {
+            "description": "A referenced object does not exist (`*_not_found`)."
+          },
+          "409": {
+            "description": "Already exists (`step_exists`, `step_label_taken`, `leg_exists`, `already_exists`)."
+          },
+          "502": {
+            "description": "`name_family_exhausted`: the family has no name left (add words at the end of its list)."
+          }
+        }
+      }
+    },
+    "/internal/catalogue/sales-paths/{id}": {
+      "get": {
+        "summary": "One sales path (internal, api-key)",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "A sales path id (URL-encoded)."
+            },
+            "required": true,
+            "description": "A sales path id (URL-encoded).",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One sales path (internal, api-key)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "enum": [
+                        "sales_path"
+                      ]
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "icon": {
+                      "type": "string"
+                    },
+                    "color": {
+                      "type": "string"
+                    },
+                    "line": {
+                      "type": "string"
+                    },
+                    "steps": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name"
+                        ]
+                      }
+                    },
+                    "legs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "legKey": {
+                            "type": "string"
+                          },
+                          "ratePct": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "rateSource": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "fleet_median",
+                              "default",
+                              "measured_pipe"
+                            ]
+                          },
+                          "pipeIds": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "legKey",
+                          "ratePct",
+                          "rateSource",
+                          "pipeIds"
+                        ]
+                      }
+                    },
+                    "costUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                    },
+                    "roi": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Average fleet return multiple. Null unless measured."
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "measured",
+                        "learning",
+                        "customer_time"
+                      ]
+                    },
+                    "learningReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Why it is learning (`no_fleet_history`, `no_mature_workflow_yet`, `measurement_unreadable`, `pipe_learning:<pipe id>`, `leg_unrated:<leg>`, `no_measured_funnel`, `no_measured_pipe`, `no_lifetime_revenue`). Null when measured."
+                    },
+                    "costUnit": {
+                      "type": "string",
+                      "enum": [
+                        "per_paying_client"
+                      ]
+                    },
+                    "bestSalesFunnelId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "salesFunnelCount": {
+                      "type": "integer"
+                    },
+                    "lifetimeRevenueUsd": {
+                      "type": "number",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "object",
+                    "id",
+                    "name",
+                    "icon",
+                    "color",
+                    "line",
+                    "steps",
+                    "legs",
+                    "costUsd",
+                    "roi",
+                    "status",
+                    "learningReason",
+                    "costUnit",
+                    "bestSalesFunnelId",
+                    "salesFunnelCount",
+                    "lifetimeRevenueUsd"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A filter is invalid (`reason`: `limit_unrecognised`, `step_not_found`, `sales_path_not_found`, `pipe_required`, ...)."
+          },
+          "401": {
+            "description": "Missing or wrong service key."
+          },
+          "404": {
+            "description": "Unknown id (`*_not_found`)."
+          },
+          "503": {
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+          }
+        }
+      }
+    },
+    "/internal/catalogue/channels": {
+      "get": {
+        "summary": "List channels (internal, api-key)",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Comma list of sales path ids: channels with a pipe on a leg of one of them."
+            },
+            "required": false,
+            "description": "Comma list of sales path ids: channels with a pipe on a leg of one of them.",
+            "name": "forPaths",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Comma list of leg keys."
+            },
+            "required": false,
+            "description": "Comma list of leg keys.",
+            "name": "legKeys",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Text search: every word must appear in the row's text (name, line, id)."
+            },
+            "required": false,
+            "description": "Text search: every word must appear in the row's text (name, line, id).",
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "1..25, default 10."
+            },
+            "required": false,
+            "description": "1..25, default 10.",
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List channels (internal, api-key)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "enum": [
+                        "channel"
+                      ]
+                    },
+                    "costUnit": {
+                      "type": "string",
+                      "enum": [
+                        "per_outcome"
+                      ]
+                    },
+                    "order": {
+                      "type": "string"
+                    },
+                    "total": {
+                      "type": "integer",
+                      "description": "Rows matching the filters (before `limit`)."
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "description": "The channel slug."
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "icon": {
+                            "type": "string"
+                          },
+                          "line": {
+                            "type": "string"
+                          },
+                          "costUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                          },
+                          "roi": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Average fleet return multiple. Null unless measured."
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "measured",
+                              "learning",
+                              "customer_time"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "icon",
+                          "line",
+                          "costUsd",
+                          "roi",
+                          "status"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "object",
+                    "costUnit",
+                    "order",
+                    "total",
+                    "truncated",
+                    "rows"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A filter is invalid (`reason`: `limit_unrecognised`, `step_not_found`, `sales_path_not_found`, `pipe_required`, ...)."
+          },
+          "401": {
+            "description": "Missing or wrong service key."
+          },
+          "404": {
+            "description": "Unknown id (`*_not_found`)."
+          },
+          "503": {
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+          }
+        }
+      }
+    },
+    "/internal/catalogue/channels/{id}": {
+      "get": {
+        "summary": "One channel and its pipes (internal, api-key)",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "A channel slug (URL-encoded)."
+            },
+            "required": true,
+            "description": "A channel slug (URL-encoded).",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One channel and its pipes (internal, api-key)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "enum": [
+                        "channel"
+                      ]
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "icon": {
+                      "type": "string"
+                    },
+                    "line": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "channelType": {
+                      "type": "string"
+                    },
+                    "operatedBy": {
+                      "type": "string",
+                      "enum": [
+                        "platform",
+                        "customer"
+                      ]
+                    },
+                    "performedBy": {
+                      "type": "string",
+                      "enum": [
+                        "software",
+                        "person"
+                      ]
+                    },
+                    "managed": {
+                      "type": "boolean"
+                    },
+                    "costUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                    },
+                    "roi": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Average fleet return multiple. Null unless measured."
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "measured",
+                        "learning",
+                        "customer_time"
+                      ]
+                    },
+                    "learningReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Why it is learning (`no_fleet_history`, `no_mature_workflow_yet`, `measurement_unreadable`, `pipe_learning:<pipe id>`, `leg_unrated:<leg>`, `no_measured_funnel`, `no_measured_pipe`, `no_lifetime_revenue`). Null when measured."
+                    },
+                    "costUnit": {
+                      "type": "string",
+                      "enum": [
+                        "per_outcome"
+                      ]
+                    },
+                    "bestPipeId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "pipes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "icon": {
+                            "type": "string",
+                            "description": "The family glyph (Phosphor): `waves` (sales path), `bird` (pipe), `flow-arrow` (workflow)."
+                          },
+                          "color": {
+                            "type": "string",
+                            "description": "`#RRGGBB`, derived from the name."
+                          },
+                          "line": {
+                            "type": "string"
+                          },
+                          "costUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                          },
+                          "roi": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Average fleet return multiple. Null unless measured."
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "measured",
+                              "learning",
+                              "customer_time"
+                            ]
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "proactive",
+                              "reactive"
+                            ]
+                          },
+                          "draft": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "icon",
+                          "color",
+                          "line",
+                          "costUsd",
+                          "roi",
+                          "status",
+                          "mode"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "object",
+                    "id",
+                    "name",
+                    "icon",
+                    "line",
+                    "description",
+                    "channelType",
+                    "operatedBy",
+                    "performedBy",
+                    "managed",
+                    "costUsd",
+                    "roi",
+                    "status",
+                    "learningReason",
+                    "costUnit",
+                    "bestPipeId",
+                    "pipes"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A filter is invalid (`reason`: `limit_unrecognised`, `step_not_found`, `sales_path_not_found`, `pipe_required`, ...)."
+          },
+          "401": {
+            "description": "Missing or wrong service key."
+          },
+          "404": {
+            "description": "Unknown id (`*_not_found`)."
+          },
+          "503": {
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+          }
+        }
+      }
+    },
+    "/internal/catalogue/pipes": {
+      "get": {
+        "summary": "List pipes (internal, api-key)",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Comma list of sales path ids: pipes on their legs."
+            },
+            "required": false,
+            "description": "Comma list of sales path ids: pipes on their legs.",
+            "name": "paths",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Comma list of channel slugs."
+            },
+            "required": false,
+            "description": "Comma list of channel slugs.",
+            "name": "channels",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "legKeys",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Text search: every word must appear in the row's text (name, line, id)."
+            },
+            "required": false,
+            "description": "Text search: every word must appear in the row's text (name, line, id).",
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "1..25, default 10."
+            },
+            "required": false,
+            "description": "1..25, default 10.",
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List pipes (internal, api-key)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "enum": [
+                        "pipe"
+                      ]
+                    },
+                    "costUnit": {
+                      "type": "string",
+                      "enum": [
+                        "per_outcome"
+                      ]
+                    },
+                    "order": {
+                      "type": "string"
+                    },
+                    "total": {
+                      "type": "integer",
+                      "description": "Rows matching the filters (before `limit`)."
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "icon": {
+                            "type": "string",
+                            "description": "The family glyph (Phosphor): `waves` (sales path), `bird` (pipe), `flow-arrow` (workflow)."
+                          },
+                          "color": {
+                            "type": "string",
+                            "description": "`#RRGGBB`, derived from the name."
+                          },
+                          "line": {
+                            "type": "string"
+                          },
+                          "costUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                          },
+                          "roi": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Average fleet return multiple. Null unless measured."
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "measured",
+                              "learning",
+                              "customer_time"
+                            ]
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "proactive",
+                              "reactive"
+                            ]
+                          },
+                          "draft": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "icon",
+                          "color",
+                          "line",
+                          "costUsd",
+                          "roi",
+                          "status",
+                          "mode"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "object",
+                    "costUnit",
+                    "order",
+                    "total",
+                    "truncated",
+                    "rows"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A filter is invalid (`reason`: `limit_unrecognised`, `step_not_found`, `sales_path_not_found`, `pipe_required`, ...)."
+          },
+          "401": {
+            "description": "Missing or wrong service key."
+          },
+          "404": {
+            "description": "Unknown id (`*_not_found`)."
+          },
+          "503": {
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+          }
+        }
+      },
+      "post": {
+        "summary": "Declare a pipe (internal, api-key)",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`. One leg on one channel (a declared leg, `POST /internal/declarations/channels/{slug}/legs` rules: a reactive pipe names a trigger something fires). A leg out of a step nothing rates states `conversionRatePct` (400 `conversion_rate_required`). Named with a never-given bird. Created as a draft: clients see it once staff publishes the leg.",
+        "tags": [
+          "Internal"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "channelSlug": {
+                    "type": "string"
+                  },
+                  "fromStep": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "null = from nothing."
+                  },
+                  "toStep": {
+                    "type": "string"
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "proactive",
+                      "reactive"
+                    ]
+                  },
+                  "triggerId": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "conversionRatePct": {
+                    "type": "number"
+                  },
+                  "createdBy": {
+                    "type": "string",
+                    "description": "Who makes the write (staff identity or the agent)."
+                  },
+                  "requestedByOrgId": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Which client asked (provenance, never scope)."
+                  }
+                },
+                "required": [
+                  "channelSlug",
+                  "fromStep",
+                  "toStep",
+                  "mode",
+                  "createdBy"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Already existed (sales paths and funnels): the same body, `created: false`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "enum": [
+                        "pipe"
+                      ]
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "icon": {
+                      "type": "string"
+                    },
+                    "color": {
+                      "type": "string"
+                    },
+                    "line": {
+                      "type": "string"
+                    },
+                    "channelSlug": {
+                      "type": "string"
+                    },
+                    "channelName": {
+                      "type": "string"
+                    },
+                    "legKey": {
+                      "type": "string"
+                    },
+                    "fromStep": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "toStep": {
+                      "type": "string"
+                    },
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "proactive",
+                        "reactive"
+                      ]
+                    },
+                    "triggerId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "operatedBy": {
+                      "type": "string",
+                      "enum": [
+                        "platform",
+                        "customer"
+                      ]
+                    },
+                    "managed": {
+                      "type": "boolean"
+                    },
+                    "draft": {
+                      "type": "boolean"
+                    },
+                    "costUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                    },
+                    "roi": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Average fleet return multiple. Null unless measured."
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "measured",
+                        "learning",
+                        "customer_time"
+                      ]
+                    },
+                    "learningReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Why it is learning (`no_fleet_history`, `no_mature_workflow_yet`, `measurement_unreadable`, `pipe_learning:<pipe id>`, `leg_unrated:<leg>`, `no_measured_funnel`, `no_measured_pipe`, `no_lifetime_revenue`). Null when measured."
+                    },
+                    "costUnit": {
+                      "type": "string",
+                      "enum": [
+                        "per_outcome"
+                      ]
+                    },
+                    "toStepValueUsd": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "bestWorkflowSlug": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "measuredBasis": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "mature",
+                        "flash"
+                      ]
+                    },
+                    "conversionRatePct": {
+                      "type": "number",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "object",
+                    "id",
+                    "name",
+                    "icon",
+                    "color",
+                    "line",
+                    "channelSlug",
+                    "channelName",
+                    "legKey",
+                    "fromStep",
+                    "toStep",
+                    "mode",
+                    "triggerId",
+                    "operatedBy",
+                    "managed",
+                    "draft",
+                    "costUsd",
+                    "roi",
+                    "status",
+                    "learningReason",
+                    "costUnit",
+                    "toStepValueUsd",
+                    "bestWorkflowSlug",
+                    "measuredBasis",
+                    "conversionRatePct"
+                  ]
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Declare a pipe (internal, api-key): created (an existing path or funnel answers 200, `created: false`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "enum": [
+                        "pipe"
+                      ]
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "icon": {
+                      "type": "string"
+                    },
+                    "color": {
+                      "type": "string"
+                    },
+                    "line": {
+                      "type": "string"
+                    },
+                    "channelSlug": {
+                      "type": "string"
+                    },
+                    "channelName": {
+                      "type": "string"
+                    },
+                    "legKey": {
+                      "type": "string"
+                    },
+                    "fromStep": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "toStep": {
+                      "type": "string"
+                    },
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "proactive",
+                        "reactive"
+                      ]
+                    },
+                    "triggerId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "operatedBy": {
+                      "type": "string",
+                      "enum": [
+                        "platform",
+                        "customer"
+                      ]
+                    },
+                    "managed": {
+                      "type": "boolean"
+                    },
+                    "draft": {
+                      "type": "boolean"
+                    },
+                    "costUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                    },
+                    "roi": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Average fleet return multiple. Null unless measured."
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "measured",
+                        "learning",
+                        "customer_time"
+                      ]
+                    },
+                    "learningReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Why it is learning (`no_fleet_history`, `no_mature_workflow_yet`, `measurement_unreadable`, `pipe_learning:<pipe id>`, `leg_unrated:<leg>`, `no_measured_funnel`, `no_measured_pipe`, `no_lifetime_revenue`). Null when measured."
+                    },
+                    "costUnit": {
+                      "type": "string",
+                      "enum": [
+                        "per_outcome"
+                      ]
+                    },
+                    "toStepValueUsd": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "bestWorkflowSlug": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "measuredBasis": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "mature",
+                        "flash"
+                      ]
+                    },
+                    "conversionRatePct": {
+                      "type": "number",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "object",
+                    "id",
+                    "name",
+                    "icon",
+                    "color",
+                    "line",
+                    "channelSlug",
+                    "channelName",
+                    "legKey",
+                    "fromStep",
+                    "toStep",
+                    "mode",
+                    "triggerId",
+                    "operatedBy",
+                    "managed",
+                    "draft",
+                    "costUsd",
+                    "roi",
+                    "status",
+                    "learningReason",
+                    "costUnit",
+                    "toStepValueUsd",
+                    "bestWorkflowSlug",
+                    "measuredBasis",
+                    "conversionRatePct"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A field is missing or invalid (`reason` names it)."
+          },
+          "401": {
+            "description": "Missing or wrong service key."
+          },
+          "404": {
+            "description": "A referenced object does not exist (`*_not_found`)."
+          },
+          "409": {
+            "description": "Already exists (`step_exists`, `step_label_taken`, `leg_exists`, `already_exists`)."
+          },
+          "502": {
+            "description": "`name_family_exhausted`: the family has no name left (add words at the end of its list)."
+          }
+        }
+      }
+    },
+    "/internal/catalogue/pipes/{id}": {
+      "get": {
+        "summary": "One pipe (internal, api-key)",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "A pipe id `<channel slug>|<leg key>` (URL-encoded)."
+            },
+            "required": true,
+            "description": "A pipe id `<channel slug>|<leg key>` (URL-encoded).",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One pipe (internal, api-key)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "enum": [
+                        "pipe"
+                      ]
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "icon": {
+                      "type": "string"
+                    },
+                    "color": {
+                      "type": "string"
+                    },
+                    "line": {
+                      "type": "string"
+                    },
+                    "channelSlug": {
+                      "type": "string"
+                    },
+                    "channelName": {
+                      "type": "string"
+                    },
+                    "legKey": {
+                      "type": "string"
+                    },
+                    "fromStep": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "toStep": {
+                      "type": "string"
+                    },
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "proactive",
+                        "reactive"
+                      ]
+                    },
+                    "triggerId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "operatedBy": {
+                      "type": "string",
+                      "enum": [
+                        "platform",
+                        "customer"
+                      ]
+                    },
+                    "managed": {
+                      "type": "boolean"
+                    },
+                    "draft": {
+                      "type": "boolean"
+                    },
+                    "costUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                    },
+                    "roi": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Average fleet return multiple. Null unless measured."
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "measured",
+                        "learning",
+                        "customer_time"
+                      ]
+                    },
+                    "learningReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Why it is learning (`no_fleet_history`, `no_mature_workflow_yet`, `measurement_unreadable`, `pipe_learning:<pipe id>`, `leg_unrated:<leg>`, `no_measured_funnel`, `no_measured_pipe`, `no_lifetime_revenue`). Null when measured."
+                    },
+                    "costUnit": {
+                      "type": "string",
+                      "enum": [
+                        "per_outcome"
+                      ]
+                    },
+                    "toStepValueUsd": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "bestWorkflowSlug": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "measuredBasis": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "mature",
+                        "flash"
+                      ]
+                    },
+                    "conversionRatePct": {
+                      "type": "number",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "object",
+                    "id",
+                    "name",
+                    "icon",
+                    "color",
+                    "line",
+                    "channelSlug",
+                    "channelName",
+                    "legKey",
+                    "fromStep",
+                    "toStep",
+                    "mode",
+                    "triggerId",
+                    "operatedBy",
+                    "managed",
+                    "draft",
+                    "costUsd",
+                    "roi",
+                    "status",
+                    "learningReason",
+                    "costUnit",
+                    "toStepValueUsd",
+                    "bestWorkflowSlug",
+                    "measuredBasis",
+                    "conversionRatePct"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A filter is invalid (`reason`: `limit_unrecognised`, `step_not_found`, `sales_path_not_found`, `pipe_required`, ...)."
+          },
+          "401": {
+            "description": "Missing or wrong service key."
+          },
+          "404": {
+            "description": "Unknown id (`*_not_found`)."
+          },
+          "503": {
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+          }
+        }
+      }
+    },
+    "/internal/catalogue/sales-funnels": {
+      "get": {
+        "summary": "List sales funnels (internal, api-key)",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Comma list of sales path ids (default: every path)."
+            },
+            "required": false,
+            "description": "Comma list of sales path ids (default: every path).",
+            "name": "paths",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Comma list of channel slugs: funnels containing AT LEAST ONE."
+            },
+            "required": false,
+            "description": "Comma list of channel slugs: funnels containing AT LEAST ONE.",
+            "name": "containsChannels",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Text search: every word must appear in the row's text (name, line, id)."
+            },
+            "required": false,
+            "description": "Text search: every word must appear in the row's text (name, line, id).",
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "1..25, default 10."
+            },
+            "required": false,
+            "description": "1..25, default 10.",
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List sales funnels (internal, api-key)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "enum": [
+                        "sales_funnel"
+                      ]
+                    },
+                    "costUnit": {
+                      "type": "string",
+                      "enum": [
+                        "per_paying_client"
+                      ]
+                    },
+                    "order": {
+                      "type": "string"
+                    },
+                    "total": {
+                      "type": "integer",
+                      "description": "Rows matching the filters (before `limit`)."
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "face": {
+                            "type": "string",
+                            "description": "Path of the name's face SVG on this service (`GET /public/catalogue/faces/{name}.svg`)."
+                          },
+                          "line": {
+                            "type": "string",
+                            "description": "Who works each leg, in order."
+                          },
+                          "costUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                          },
+                          "roi": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Average fleet return multiple. Null unless measured."
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "measured",
+                              "learning",
+                              "customer_time"
+                            ]
+                          },
+                          "draft": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "face",
+                          "line",
+                          "costUsd",
+                          "roi",
+                          "status"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "object",
+                    "costUnit",
+                    "order",
+                    "total",
+                    "truncated",
+                    "rows"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A filter is invalid (`reason`: `limit_unrecognised`, `step_not_found`, `sales_path_not_found`, `pipe_required`, ...)."
+          },
+          "401": {
+            "description": "Missing or wrong service key."
+          },
+          "404": {
+            "description": "Unknown id (`*_not_found`)."
+          },
+          "503": {
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+          }
+        }
+      },
+      "post": {
+        "summary": "Declare a sales funnel (internal, api-key)",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`. One entry per leg of a sales path, in order: a pipe id, or the leg key of a leg no channel performs. Persisted (the declared sales path store the offer read already knows) and named with a never-given uplifting word + a face; an existing funnel answers 200 `created: false` with its name. Campaign-service and billing-service key a campaign on this id.",
+        "tags": [
+          "Internal"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "pipeIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "createdBy": {
+                    "type": "string",
+                    "description": "Who makes the write (staff identity or the agent)."
+                  },
+                  "requestedByOrgId": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Which client asked (provenance, never scope)."
+                  }
+                },
+                "required": [
+                  "pipeIds",
+                  "createdBy"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Already existed (sales paths and funnels): the same body, `created: false`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "enum": [
+                        "sales_funnel"
+                      ]
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "face": {
+                      "type": "object",
+                      "properties": {
+                        "animal": {
+                          "type": "string"
+                        },
+                        "color": {
+                          "type": "string"
+                        },
+                        "eyes": {
+                          "type": "string"
+                        },
+                        "mouth": {
+                          "type": "string"
+                        },
+                        "accessory": {
+                          "type": "string"
+                        },
+                        "svgPath": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "animal",
+                        "color",
+                        "eyes",
+                        "mouth",
+                        "accessory",
+                        "svgPath"
+                      ]
+                    },
+                    "line": {
+                      "type": "string"
+                    },
+                    "salesPathId": {
+                      "type": "string"
+                    },
+                    "salesPathName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "legs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "legKey": {
+                            "type": "string"
+                          },
+                          "ratePct": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "outcomesNeededPerPayingClient": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "pipe": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "line": {
+                                "type": "string"
+                              },
+                              "mode": {
+                                "type": "string",
+                                "enum": [
+                                  "proactive",
+                                  "reactive"
+                                ]
+                              },
+                              "costUsd": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                              },
+                              "roi": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Average fleet return multiple. Null unless measured."
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "measured",
+                                  "learning",
+                                  "customer_time"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name",
+                              "line",
+                              "mode",
+                              "costUsd",
+                              "roi",
+                              "status"
+                            ],
+                            "description": "Null on a leg no channel performs."
+                          }
+                        },
+                        "required": [
+                          "legKey",
+                          "ratePct",
+                          "outcomesNeededPerPayingClient",
+                          "pipe"
+                        ]
+                      }
+                    },
+                    "costUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                    },
+                    "roi": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Average fleet return multiple. Null unless measured."
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "measured",
+                        "learning",
+                        "customer_time"
+                      ]
+                    },
+                    "learningReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Why it is learning (`no_fleet_history`, `no_mature_workflow_yet`, `measurement_unreadable`, `pipe_learning:<pipe id>`, `leg_unrated:<leg>`, `no_measured_funnel`, `no_measured_pipe`, `no_lifetime_revenue`). Null when measured."
+                    },
+                    "costUnit": {
+                      "type": "string",
+                      "enum": [
+                        "per_paying_client"
+                      ]
+                    },
+                    "lifetimeRevenueUsd": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "draft": {
+                      "type": "boolean"
+                    },
+                    "created": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "object",
+                    "id",
+                    "name",
+                    "face",
+                    "line",
+                    "salesPathId",
+                    "salesPathName",
+                    "legs",
+                    "costUsd",
+                    "roi",
+                    "status",
+                    "learningReason",
+                    "costUnit",
+                    "lifetimeRevenueUsd",
+                    "draft",
+                    "created"
+                  ]
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Declare a sales funnel (internal, api-key): created (an existing path or funnel answers 200, `created: false`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "enum": [
+                        "sales_funnel"
+                      ]
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "face": {
+                      "type": "object",
+                      "properties": {
+                        "animal": {
+                          "type": "string"
+                        },
+                        "color": {
+                          "type": "string"
+                        },
+                        "eyes": {
+                          "type": "string"
+                        },
+                        "mouth": {
+                          "type": "string"
+                        },
+                        "accessory": {
+                          "type": "string"
+                        },
+                        "svgPath": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "animal",
+                        "color",
+                        "eyes",
+                        "mouth",
+                        "accessory",
+                        "svgPath"
+                      ]
+                    },
+                    "line": {
+                      "type": "string"
+                    },
+                    "salesPathId": {
+                      "type": "string"
+                    },
+                    "salesPathName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "legs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "legKey": {
+                            "type": "string"
+                          },
+                          "ratePct": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "outcomesNeededPerPayingClient": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "pipe": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "line": {
+                                "type": "string"
+                              },
+                              "mode": {
+                                "type": "string",
+                                "enum": [
+                                  "proactive",
+                                  "reactive"
+                                ]
+                              },
+                              "costUsd": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                              },
+                              "roi": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Average fleet return multiple. Null unless measured."
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "measured",
+                                  "learning",
+                                  "customer_time"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name",
+                              "line",
+                              "mode",
+                              "costUsd",
+                              "roi",
+                              "status"
+                            ],
+                            "description": "Null on a leg no channel performs."
+                          }
+                        },
+                        "required": [
+                          "legKey",
+                          "ratePct",
+                          "outcomesNeededPerPayingClient",
+                          "pipe"
+                        ]
+                      }
+                    },
+                    "costUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                    },
+                    "roi": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Average fleet return multiple. Null unless measured."
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "measured",
+                        "learning",
+                        "customer_time"
+                      ]
+                    },
+                    "learningReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Why it is learning (`no_fleet_history`, `no_mature_workflow_yet`, `measurement_unreadable`, `pipe_learning:<pipe id>`, `leg_unrated:<leg>`, `no_measured_funnel`, `no_measured_pipe`, `no_lifetime_revenue`). Null when measured."
+                    },
+                    "costUnit": {
+                      "type": "string",
+                      "enum": [
+                        "per_paying_client"
+                      ]
+                    },
+                    "lifetimeRevenueUsd": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "draft": {
+                      "type": "boolean"
+                    },
+                    "created": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "object",
+                    "id",
+                    "name",
+                    "face",
+                    "line",
+                    "salesPathId",
+                    "salesPathName",
+                    "legs",
+                    "costUsd",
+                    "roi",
+                    "status",
+                    "learningReason",
+                    "costUnit",
+                    "lifetimeRevenueUsd",
+                    "draft",
+                    "created"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A field is missing or invalid (`reason` names it)."
+          },
+          "401": {
+            "description": "Missing or wrong service key."
+          },
+          "404": {
+            "description": "A referenced object does not exist (`*_not_found`)."
+          },
+          "409": {
+            "description": "Already exists (`step_exists`, `step_label_taken`, `leg_exists`, `already_exists`)."
+          },
+          "502": {
+            "description": "`name_family_exhausted`: the family has no name left (add words at the end of its list)."
+          }
+        }
+      }
+    },
+    "/internal/catalogue/sales-funnels/{id}": {
+      "get": {
+        "summary": "One sales funnel (internal, api-key)",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "A sales funnel id (URL-encoded)."
+            },
+            "required": true,
+            "description": "A sales funnel id (URL-encoded).",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One sales funnel (internal, api-key)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "enum": [
+                        "sales_funnel"
+                      ]
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "face": {
+                      "type": "object",
+                      "properties": {
+                        "animal": {
+                          "type": "string"
+                        },
+                        "color": {
+                          "type": "string"
+                        },
+                        "eyes": {
+                          "type": "string"
+                        },
+                        "mouth": {
+                          "type": "string"
+                        },
+                        "accessory": {
+                          "type": "string"
+                        },
+                        "svgPath": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "animal",
+                        "color",
+                        "eyes",
+                        "mouth",
+                        "accessory",
+                        "svgPath"
+                      ]
+                    },
+                    "line": {
+                      "type": "string"
+                    },
+                    "salesPathId": {
+                      "type": "string"
+                    },
+                    "salesPathName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "legs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "legKey": {
+                            "type": "string"
+                          },
+                          "ratePct": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "outcomesNeededPerPayingClient": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "pipe": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "line": {
+                                "type": "string"
+                              },
+                              "mode": {
+                                "type": "string",
+                                "enum": [
+                                  "proactive",
+                                  "reactive"
+                                ]
+                              },
+                              "costUsd": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                              },
+                              "roi": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Average fleet return multiple. Null unless measured."
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "measured",
+                                  "learning",
+                                  "customer_time"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name",
+                              "line",
+                              "mode",
+                              "costUsd",
+                              "roi",
+                              "status"
+                            ],
+                            "description": "Null on a leg no channel performs."
+                          }
+                        },
+                        "required": [
+                          "legKey",
+                          "ratePct",
+                          "outcomesNeededPerPayingClient",
+                          "pipe"
+                        ]
+                      }
+                    },
+                    "costUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                    },
+                    "roi": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Average fleet return multiple. Null unless measured."
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "measured",
+                        "learning",
+                        "customer_time"
+                      ]
+                    },
+                    "learningReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Why it is learning (`no_fleet_history`, `no_mature_workflow_yet`, `measurement_unreadable`, `pipe_learning:<pipe id>`, `leg_unrated:<leg>`, `no_measured_funnel`, `no_measured_pipe`, `no_lifetime_revenue`). Null when measured."
+                    },
+                    "costUnit": {
+                      "type": "string",
+                      "enum": [
+                        "per_paying_client"
+                      ]
+                    },
+                    "lifetimeRevenueUsd": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "draft": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "object",
+                    "id",
+                    "name",
+                    "face",
+                    "line",
+                    "salesPathId",
+                    "salesPathName",
+                    "legs",
+                    "costUsd",
+                    "roi",
+                    "status",
+                    "learningReason",
+                    "costUnit",
+                    "lifetimeRevenueUsd",
+                    "draft"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A filter is invalid (`reason`: `limit_unrecognised`, `step_not_found`, `sales_path_not_found`, `pipe_required`, ...)."
+          },
+          "401": {
+            "description": "Missing or wrong service key."
+          },
+          "404": {
+            "description": "Unknown id (`*_not_found`)."
+          },
+          "503": {
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+          }
+        }
+      }
+    },
+    "/internal/catalogue/workflows": {
+      "get": {
+        "summary": "List the workflows of one pipe (internal, api-key)",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "A pipe id (required)."
+            },
+            "required": true,
+            "description": "A pipe id (required).",
+            "name": "pipe",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Text search: every word must appear in the row's text (name, line, id)."
+            },
+            "required": false,
+            "description": "Text search: every word must appear in the row's text (name, line, id).",
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "1..25, default 10."
+            },
+            "required": false,
+            "description": "1..25, default 10.",
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List the workflows of one pipe (internal, api-key)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "enum": [
+                        "workflow"
+                      ]
+                    },
+                    "costUnit": {
+                      "type": "string",
+                      "enum": [
+                        "per_outcome"
+                      ]
+                    },
+                    "order": {
+                      "type": "string"
+                    },
+                    "total": {
+                      "type": "integer",
+                      "description": "Rows matching the filters (before `limit`)."
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "icon": {
+                            "type": "string",
+                            "description": "The family glyph (Phosphor): `waves` (sales path), `bird` (pipe), `flow-arrow` (workflow)."
+                          },
+                          "color": {
+                            "type": "string",
+                            "description": "`#RRGGBB`, derived from the name."
+                          },
+                          "line": {
+                            "type": "string"
+                          },
+                          "costUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                          },
+                          "roi": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Average fleet return multiple. Null unless measured."
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "measured",
+                              "learning",
+                              "customer_time"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "icon",
+                          "color",
+                          "line",
+                          "costUsd",
+                          "roi",
+                          "status"
+                        ]
+                      }
+                    },
+                    "pipeId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "object",
+                    "costUnit",
+                    "order",
+                    "total",
+                    "truncated",
+                    "rows",
+                    "pipeId"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A filter is invalid (`reason`: `limit_unrecognised`, `step_not_found`, `sales_path_not_found`, `pipe_required`, ...)."
+          },
+          "401": {
+            "description": "Missing or wrong service key."
+          },
+          "404": {
+            "description": "Unknown id (`*_not_found`)."
+          },
+          "503": {
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+          }
+        }
+      }
+    },
+    "/internal/catalogue/workflows/{id}": {
+      "get": {
+        "summary": "One workflow on one pipe (internal, api-key)",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `status` (`measured` = mature fleet evidence; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best measured funnel; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. The first read after a deploy waits up to 150 s on the fleet economics build, else 503 `catalogue_economics_not_computed_yet`.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "A workflow dynasty slug (URL-encoded)."
+            },
+            "required": true,
+            "description": "A workflow dynasty slug (URL-encoded).",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "The pipe id (required)."
+            },
+            "required": true,
+            "description": "The pipe id (required).",
+            "name": "pipe",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One workflow on one pipe (internal, api-key)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "enum": [
+                        "workflow"
+                      ]
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "icon": {
+                      "type": "string"
+                    },
+                    "color": {
+                      "type": "string"
+                    },
+                    "pipeId": {
+                      "type": "string"
+                    },
+                    "rank": {
+                      "type": "integer"
+                    },
+                    "assignment": {
+                      "type": "string"
+                    },
+                    "selectable": {
+                      "type": "boolean"
+                    },
+                    "isMature": {
+                      "type": "boolean",
+                      "nullable": true
+                    },
+                    "basis": {
+                      "type": "string",
+                      "enum": [
+                        "mature",
+                        "flash"
+                      ]
+                    },
+                    "outcomes": {
+                      "type": "number"
+                    },
+                    "contacted": {
+                      "type": "number"
+                    },
+                    "spentUsd": {
+                      "type": "number"
+                    },
+                    "conversionRatePct": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "holdsTheMoney": {
+                      "type": "boolean"
+                    },
+                    "costUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Average fleet cost (unit: the list's `costUnit`). Null unless `status` is measured."
+                    },
+                    "roi": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Average fleet return multiple. Null unless measured."
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "measured",
+                        "learning",
+                        "customer_time"
+                      ]
+                    },
+                    "learningReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Why it is learning (`no_fleet_history`, `no_mature_workflow_yet`, `measurement_unreadable`, `pipe_learning:<pipe id>`, `leg_unrated:<leg>`, `no_measured_funnel`, `no_measured_pipe`, `no_lifetime_revenue`). Null when measured."
+                    },
+                    "costUnit": {
+                      "type": "string",
+                      "enum": [
+                        "per_outcome"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "object",
+                    "id",
+                    "name",
+                    "icon",
+                    "color",
+                    "pipeId",
+                    "rank",
+                    "assignment",
+                    "selectable",
+                    "isMature",
+                    "basis",
+                    "outcomes",
+                    "contacted",
+                    "spentUsd",
+                    "conversionRatePct",
+                    "holdsTheMoney",
+                    "costUsd",
+                    "roi",
+                    "status",
+                    "learningReason",
+                    "costUnit"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A filter is invalid (`reason`: `limit_unrecognised`, `step_not_found`, `sales_path_not_found`, `pipe_required`, ...)."
+          },
+          "401": {
+            "description": "Missing or wrong service key."
+          },
+          "404": {
+            "description": "Unknown id (`*_not_found`)."
+          },
+          "503": {
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+          }
+        }
+      }
+    },
+    "/public/catalogue/faces/{file}": {
+      "get": {
+        "summary": "The face of a sales funnel name (SVG, public)",
+        "description": "A cute manga-style animal head drawn from the NAME alone (same name, same face): `/public/catalogue/faces/<URL-encoded name>.svg`, 128 x 128, transparent. Served for the dashboard to show without a hand drawing.",
+        "tags": [
+          "Public"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "`<name>.svg`"
+            },
+            "required": true,
+            "description": "`<name>.svg`",
+            "name": "file",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The SVG.",
+            "content": {
+              "image/svg+xml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`face_path_invalid`."
+          }
+        }
+      }
     }
   }
 }

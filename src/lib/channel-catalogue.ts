@@ -22,6 +22,7 @@ import {
   type ChannelTrigger,
   CHANNEL_STEPS,
   CHANNEL_STEP_KEYS,
+  declaredStepKeys,
   matchChannelStepKey,
   legRunStatementOf,
   isProactiveTransition,
@@ -376,7 +377,8 @@ export function funnelLegCatalogue(): PublicFunnelLeg[] {
 
 /** The step vocabulary itself, published beside the channels so a consumer never has to hardcode it. */
 export function channelStepCatalogue(): ChannelStepDefWire[] {
-  return CHANNEL_STEP_KEYS.map(stepWire);
+  // Steps declared at run time follow the coded ones, so a published leg on one always names a listed step.
+  return [...CHANNEL_STEP_KEYS, ...(declaredStepKeys() as ChannelStepKey[])].map(stepWire);
 }
 
 /** One sales funnel, published in its own right rather than only nested inside the channels that sell
