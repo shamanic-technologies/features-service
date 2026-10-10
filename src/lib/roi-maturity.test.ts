@@ -51,6 +51,15 @@ describe("the plan covers the read's own scope", () => {
     expect([...plan.delayedCampaignIds]).toEqual(["cold"]);
   });
 
+  it("a sourcing campaign waits as long as the outreach it feeds (2026-10-11: a one-day funnel read 0x on its sourcing spend)", () => {
+    const withSourcing = [...rows, { id: "src", featureSlug: "sourcing-apollo-cold-filters", legKey: "start_to_lead_found" }];
+    const plan = buildMaturityPlan(withSourcing, scopePredicate({ featureSlugs: ["sales-cold-email-outreach", "sourcing-apollo-cold-filters"], campaignIds: [] }), NOW);
+    expect(plan.days).toBe(21);
+    expect([...plan.delayedCampaignIds].sort()).toEqual(["cold", "src"]);
+    const alone = buildMaturityPlan(withSourcing, scopePredicate({ featureSlugs: ["sourcing-apollo-cold-filters"], campaignIds: [] }), NOW);
+    expect(alone.cutoffIso).toBeNull();
+  });
+
   it("a scope on zero-delay legs only waits for nothing", () => {
     const plan = buildMaturityPlan(rows, scopePredicate({ featureSlugs: ["ai-meeting-booking"], campaignIds: [] }), NOW);
     expect(plan.cutoffIso).toBeNull();
