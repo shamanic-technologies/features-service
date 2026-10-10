@@ -47633,6 +47633,10 @@
                             "type": "boolean",
                             "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
                           },
+                          "mixed": {
+                            "type": "boolean",
+                            "description": "A proactive pipe AND a reactive pipe we run (platform-operated) in one funnel: its budget caps both, so the reactive part can starve the proactive one (owner 2026-10-10). A mixed funnel is never `runnable`; propose a proactive funnel and a separate reactive one."
+                          },
                           "draft": {
                             "type": "boolean"
                           }
@@ -47647,7 +47651,8 @@
                           "roi",
                           "roiBasis",
                           "status",
-                          "runnable"
+                          "runnable",
+                          "mixed"
                         ]
                       }
                     }
@@ -47951,6 +47956,10 @@
                       "type": "boolean",
                       "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
                     },
+                    "mixed": {
+                      "type": "boolean",
+                      "description": "A proactive pipe AND a reactive pipe we run (platform-operated) in one funnel: its budget caps both, so the reactive part can starve the proactive one (owner 2026-10-10). A mixed funnel is never `runnable`; propose a proactive funnel and a separate reactive one."
+                    },
                     "draft": {
                       "type": "boolean"
                     },
@@ -47978,6 +47987,7 @@
                     "lifetimeRevenueUsd",
                     "lifetimeRevenueSource",
                     "runnable",
+                    "mixed",
                     "draft",
                     "created"
                   ]
@@ -48221,6 +48231,10 @@
                       "type": "boolean",
                       "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
                     },
+                    "mixed": {
+                      "type": "boolean",
+                      "description": "A proactive pipe AND a reactive pipe we run (platform-operated) in one funnel: its budget caps both, so the reactive part can starve the proactive one (owner 2026-10-10). A mixed funnel is never `runnable`; propose a proactive funnel and a separate reactive one."
+                    },
                     "draft": {
                       "type": "boolean"
                     },
@@ -48248,6 +48262,7 @@
                     "lifetimeRevenueUsd",
                     "lifetimeRevenueSource",
                     "runnable",
+                    "mixed",
                     "draft",
                     "created"
                   ]
@@ -48529,6 +48544,10 @@
                       "type": "boolean",
                       "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
                     },
+                    "mixed": {
+                      "type": "boolean",
+                      "description": "A proactive pipe AND a reactive pipe we run (platform-operated) in one funnel: its budget caps both, so the reactive part can starve the proactive one (owner 2026-10-10). A mixed funnel is never `runnable`; propose a proactive funnel and a separate reactive one."
+                    },
                     "draft": {
                       "type": "boolean"
                     }
@@ -48553,6 +48572,7 @@
                     "lifetimeRevenueUsd",
                     "lifetimeRevenueSource",
                     "runnable",
+                    "mixed",
                     "draft"
                   ]
                 }
