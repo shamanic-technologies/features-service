@@ -42,6 +42,7 @@ function deps(fixture: {
           runningUsd,
           proactiveRunningUsd: runningUsd,
           reactiveRunningUsd: 0,
+          salesFunnelRunningUsd: 0,
         });
       }
       return out;
@@ -249,7 +250,7 @@ describe("aggregateFleetNewSequences", () => {
       },
       paymentHold: async () => null,
       spendableBudgets: async (pairs) =>
-        new Map(pairs.map((p) => [spendableKey(p.orgId, p.brandId), { configuredUsd: 100, runningUsd: 100, proactiveRunningUsd: 100, reactiveRunningUsd: 0 }])),
+        new Map(pairs.map((p) => [spendableKey(p.orgId, p.brandId), { configuredUsd: 100, runningUsd: 100, proactiveRunningUsd: 100, reactiveRunningUsd: 0, salesFunnelRunningUsd: 0 }])),
       brandSpentTodayUsd: async () => 0,
     };
     await aggregateFleetNewSequences(COLD, NOW, d);

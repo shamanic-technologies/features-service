@@ -98,15 +98,57 @@ export interface BrandSpendableBudget {
   runningUsd: number;
   /**
    * The running part standing behind a PROACTIVE campaign (its leg is an ENTRY leg, `fromStep: null`:
-   * it starts conversations and spends its daily budget). The money a client is charged for.
+   * it starts conversations and spends its daily budget) — the money a client is charged for — PLUS every
+   * running SALES FUNNEL's max budget per day (`salesFunnelRunningUsd`, inside this figure).
    */
   proactiveRunningUsd: number;
+  /**
+   * The part of `proactiveRunningUsd` that is SALES FUNNELS (campaign-service v0.75.18): each funnel whose
+   * funnel campaign is ongoing, by its max budget as a daily figure (weekly / 7, monthly / 30: FRACTIONAL
+   * cents), never discounted. Counted PROACTIVE on purpose: a funnel is a whole campaign from Start to Paid
+   * client, its entry pipe starts conversations, and its money is spent by its own pacing, not held as a
+   * reactive cap. Its unit campaigns carry 0 of their own, so nothing is counted twice.
+   */
+  salesFunnelRunningUsd: number;
   /**
    * The running part standing behind a REACTIVE campaign (its leg continues from a step a lead already
    * reached, e.g. AI meeting booking on a conversation). A CAP, rarely spent — never money in play.
    */
   reactiveRunningUsd: number;
 }
+
+/** One sales funnel of campaign-service's spendable-budget answer (v0.75.18), as far as the split needs it. */
+export interface SpendableSalesFunnelWire {
+  salesFunnelId?: string;
+  running?: boolean;
+  dailyBudgetCents?: number;
+}
+
+/**
+ * The running daily figure of a pair's SALES FUNNELS, in (possibly fractional) cents. Fail loud: an answer
+ * without the list predates v0.75.18 (its totals would then hold no funnel money we could place), and a
+ * funnel without a numeric figure cannot be counted.
+ */
+export function salesFunnelRunningCents(pair: { orgId: string; brandId: string }, funnels: unknown): number {
+  if (!Array.isArray(funnels)) {
+    throw new Error(
+      `[features-service] campaign-service /brands/spendable-budget returned no salesFunnels list for ${pair.orgId}/${pair.brandId} (needs campaign-service >= v0.75.18)`,
+    );
+  }
+  let cents = 0;
+  for (const f of funnels as SpendableSalesFunnelWire[]) {
+    if (typeof f?.running !== "boolean" || typeof f.dailyBudgetCents !== "number" || !Number.isFinite(f.dailyBudgetCents)) {
+      throw new Error(
+        `[features-service] campaign-service /brands/spendable-budget returned a sales funnel with no running flag or daily figure for ${pair.orgId}/${pair.brandId}: ${JSON.stringify(f)}`,
+      );
+    }
+    if (f.running) cents += f.dailyBudgetCents;
+  }
+  return cents;
+}
+
+/** Cents compared after fractional sums (a weekly cap / 7): equal within a millionth of a cent. */
+const CENTS_EPSILON = 1e-6;
 
 /** One ceiling entry of campaign-service's spendable-budget answer, as far as the split needs it. */
 export interface SpendableRowWire {
@@ -208,6 +250,7 @@ export async function fetchSpendableBudgets(
         runningDailyBudgetCents?: number;
         rows?: SpendableRowWire[];
         campaigns?: Array<{ campaignId?: string; legKey?: string | null }>;
+        salesFunnels?: SpendableSalesFunnelWire[];
       }>;
       unavailable?: Array<{ orgId?: string; brandId?: string; reason?: string }>;
     };
@@ -239,18 +282,23 @@ export async function fetchSpendableBudgets(
       const campaignLegs = new Map(
         (row.campaigns ?? []).filter((c) => c.campaignId).map((c) => [c.campaignId!, c.legKey ?? null]),
       );
-      const split = splitRunningCents({ orgId: row.orgId, brandId: row.brandId }, row.rows, campaignLegs);
+      const pair = { orgId: row.orgId, brandId: row.brandId };
+      const split = splitRunningCents(pair, row.rows, campaignLegs);
+      // Running sales funnels count PROACTIVE, by their funnel daily figure (see `salesFunnelRunningUsd`).
+      const funnelCents = salesFunnelRunningCents(pair, row.salesFunnels);
+      const proactiveCents = split.proactiveCents + funnelCents;
       // The split must add back to the producer's own running total, or a row was read wrong.
-      if (split.proactiveCents + split.reactiveCents !== running) {
+      if (Math.abs(proactiveCents + split.reactiveCents - running) > CENTS_EPSILON) {
         throw new Error(
-          `[features-service] spendable budget ${row.orgId}/${row.brandId}: proactive ${split.proactiveCents} + reactive ${split.reactiveCents} cents ≠ running ${running}`,
+          `[features-service] spendable budget ${row.orgId}/${row.brandId}: proactive ${split.proactiveCents} + funnels ${funnelCents} + reactive ${split.reactiveCents} cents ≠ running ${running}`,
         );
       }
       out.set(spendableKey(row.orgId, row.brandId), {
         configuredUsd: configured / 100,
         runningUsd: running / 100,
-        proactiveRunningUsd: split.proactiveCents / 100,
+        proactiveRunningUsd: proactiveCents / 100,
         reactiveRunningUsd: split.reactiveCents / 100,
+        salesFunnelRunningUsd: funnelCents / 100,
       });
     }
   }

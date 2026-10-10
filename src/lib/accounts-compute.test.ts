@@ -55,6 +55,7 @@ function deps(fixture: {
           runningUsd: proactiveRunningUsd + reactiveRunningUsd,
           proactiveRunningUsd,
           reactiveRunningUsd,
+          salesFunnelRunningUsd: 0,
         });
       }
       return out;
