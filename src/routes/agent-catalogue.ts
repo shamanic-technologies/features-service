@@ -417,7 +417,7 @@ router.get("/internal/catalogue/channels", apiKeyOnly, async (req, res) => {
     const rows = model.channels
       .filter((c) => !legs || [...model.pipes.values()].some((p) => p.channelSlug === c.slug && legs!.has(p.legKey)))
       .filter((c) => matchesQuery(q, [c.name, c.slug, c.shortDescription, c.description, c.channelType]))
-      .map((c) => ({ c, e: channelEconomics(model, c.slug) }))
+      .map((c) => ({ c, e: channelEconomics(model, c.slug, legs) }))
       .sort(byRoi((x) => x.e, (x) => x.c.slug))
       .map(({ c, e }) => ({ id: c.slug, name: c.name, icon: c.icon, line: c.shortDescription, ...econWire(e) }));
     res.json({ object: "channel", costUnit: "per_outcome", order: "roi_desc", ...page(rows, limit) });
