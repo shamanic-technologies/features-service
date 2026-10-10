@@ -673,13 +673,18 @@ router.get("/internal/catalogue/pipes/:id", apiKeyOnly, async (req, res) => {
 
 // ── Sales funnels ─────────────────────────────────────────────────────────────────────────────────
 
-router.get("/internal/catalogue/sales-funnels", apiKeyOnly, async (req, res) => {
+/**
+ * One page of sales funnels. `forceRunnable` = the PUBLIC read (owner 2026-10-10, the signup's
+ * "Your campaign" step): only what we can run today, and runnable implies published, so a draft or
+ * a mixed funnel never reaches a signed-out visitor whatever the query says.
+ */
+async function listSalesFunnels(req: Request, res: Response, forceRunnable: boolean): Promise<void> {
   try {
     const limit = limitOf(req);
     const q = qOf(req);
     const paths = listOf(req, "paths");
     const containsChannels = listOf(req, "containsChannels");
-    const runnable = runnableOf(req);
+    const runnable = forceRunnable || runnableOf(req);
     const { model, names } = await loadModel();
     const onPaths: CataloguePath[] = paths
       ? paths.map((id) => {
@@ -707,7 +712,12 @@ router.get("/internal/catalogue/sales-funnels", apiKeyOnly, async (req, res) => 
   } catch (err) {
     fail(res, err, "list sales funnels");
   }
-});
+}
+
+router.get("/internal/catalogue/sales-funnels", apiKeyOnly, (req, res) => listSalesFunnels(req, res, false));
+
+/** Public: the runnable sales funnels only (same rows, same filters, `runnable` forced on). */
+router.get("/public/catalogue/sales-funnels", (req, res) => listSalesFunnels(req, res, true));
 
 function funnelDetail(model: CatalogueModel, f: CatalogueFunnel, names: Map<string, string>) {
   const name = names.get(f.id)!;

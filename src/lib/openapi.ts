@@ -6214,6 +6214,27 @@ catalogueCreate(
 
 registry.registerPath({
   method: "get",
+  path: "/public/catalogue/sales-funnels",
+  summary: "The sales funnels we can run today (public)",
+  description:
+    "Same rows and filters as `GET /internal/catalogue/sales-funnels`, with `runnable` FORCED on: published, not mixed, every pipe runnable. No identity. Read by the signup's campaign step (owner 2026-10-10) to propose the best proactive funnel and a reactive one.",
+  tags: ["Public"],
+  request: {
+    query: z.object({
+      paths: z.string().optional().describe("Comma list of sales path ids (default: every path)."),
+      containsChannels: z.string().optional().describe("Comma list of channel slugs: funnels containing AT LEAST ONE."),
+      q: catalogueQ,
+      limit: catalogueLimit,
+    }),
+  },
+  responses: {
+    200: { description: "One page, ROI first.", content: { "application/json": { schema: cataloguePage(catalogueFunnelRow, "sales_funnel", "per_paying_client") } } },
+    400: { description: "A query value the read does not recognise (`reason`)." },
+  },
+});
+
+registry.registerPath({
+  method: "get",
   path: "/public/catalogue/faces/{file}",
   summary: "The face of a sales funnel name (SVG, public)",
   description: "A cute manga-style animal head drawn from the NAME alone (same name, same face): `/public/catalogue/faces/<URL-encoded name>.svg`, 128 x 128, transparent. Served for the dashboard to show without a hand drawing.",
