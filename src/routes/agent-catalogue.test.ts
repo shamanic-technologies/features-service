@@ -140,7 +140,7 @@ describe("agent catalogue lists (context-window sized)", () => {
     expect(res.body.rows.length).toBeGreaterThan(3);
     expect(tokens(res.body)).toBeLessThan(2000);
     for (const r of res.body.rows) {
-      expect(Object.keys(r).sort()).toEqual(["color", "costUsd", "icon", "id", "line", "name", "roi", "runnable", "status"]);
+      expect(Object.keys(r).sort()).toEqual(["color", "costPer", "costUsd", "icon", "id", "line", "name", "roi", "runnable", "status"]);
       expect(r.line).toContain("Meeting booked");
       expect(r.icon).toBe("waves");
     }
@@ -223,6 +223,23 @@ describe("agent catalogue lists (context-window sized)", () => {
     const detail = await request(app).get("/internal/catalogue/channels/organic-linkedin-publishing").set(KEY);
     expect(detail.body).toMatchObject({ managed: false, runnable: false });
     expect((await request(app).get("/internal/catalogue/channels").query({ runnable: "yes" }).set(KEY)).status).toBe(400);
+  });
+
+  it("every figure carries its own unit in words (prod 2026-10-10: a per-reply cost quoted per paying client)", async () => {
+    const ch = await request(app).get("/internal/catalogue/channels").query({ q: "cold email", limit: 25 }).set(KEY);
+    const cold = ch.body.rows.find((r: { id: string }) => r.id === "sales-cold-email-outreach");
+    expect(cold).toMatchObject({ costUsd: 40, costPer: "per positive reply" });
+    const pipe = await request(app).get(`/internal/catalogue/pipes/${encodeURIComponent(MEET)}`).set(KEY);
+    expect(pipe.body).toMatchObject({ costUsd: 2, costPer: "per meeting booked" });
+    const funnels = await request(app).get("/internal/catalogue/sales-funnels").query({ containsChannels: "ai-meeting-booking", limit: 5 }).set(KEY);
+    const measured = funnels.body.rows.filter((r: { costUsd: number | null }) => r.costUsd !== null);
+    expect(measured.length).toBeGreaterThan(0);
+    expect(measured.every((r: { costPer: string }) => r.costPer === "per paying client")).toBe(true);
+    // No cost, no unit.
+    const learning = funnels.body.rows.filter((r: { costUsd: number | null }) => r.costUsd === null);
+    expect(learning.every((r: { costPer: string | null }) => r.costPer === null)).toBe(true);
+    const steps = await request(app).get("/internal/catalogue/steps").query({ limit: 25 }).set(KEY);
+    for (const r of steps.body.rows) if (r.costUsd !== null) expect(r.costPer).toBe(`per ${r.name.toLowerCase()}`);
   });
 
   it("serves a face as an SVG image", async () => {

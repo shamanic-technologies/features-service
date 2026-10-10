@@ -245,8 +245,23 @@ function resolveStep(model: CatalogueModel, raw: string): string | null {
 
 // ── Wire helpers ──────────────────────────────────────────────────────────────────────────────────
 
-const econWire = (e: Economics) => ({ costUsd: e.costUsd, roi: e.roi, status: e.status });
-const econDetail = (e: Economics) => ({ costUsd: e.costUsd, roi: e.roi, status: e.status, learningReason: e.reason });
+/**
+ * `costPer` = the unit of `costUsd` in words, ON THE ROW ("per positive reply", "per paying client"), null
+ * when there is no cost. A list's `costUnit` alone let an agent quote a channel's cost per positive reply
+ * as "per paying client" (prod 2026-10-10): every figure carries its own unit.
+ */
+const econWire = (e: Economics, per: string | null) => ({ costUsd: e.costUsd, costPer: e.costUsd === null ? null : per, roi: e.roi, status: e.status });
+const econDetail = (e: Economics, per: string | null) => ({ ...econWire(e, per), learningReason: e.reason });
+
+const PER_PAYING_CLIENT = "per paying client";
+/** "per positive reply": the outcome a per-outcome cost is counted in (the step's label, lower case). */
+const perStep = (m: CatalogueModel, stepKey: string): string =>
+  stepKey === "paid_client" ? PER_PAYING_CLIENT : `per ${stepLabel(m, stepKey).toLowerCase()}`;
+/** A channel's cost is its best pipe's: per that pipe's outcome. */
+const perChannel = (m: CatalogueModel, bestPipeId: string | null): string | null => {
+  const p = bestPipeId ? m.pipes.get(bestPipeId) : undefined;
+  return p ? perStep(m, p.toStep) : null;
+};
 
 function page<T>(rows: T[], limit: number) {
   return { total: rows.length, truncated: rows.length > limit, rows: rows.slice(0, limit) };
@@ -272,7 +287,7 @@ async function named(keys: string[], known: Map<string, string>): Promise<Map<st
 
 const pathRowOf = (m: CatalogueModel, p: CataloguePath, name: string) => {
   const e = pathEconomics(m, p);
-  return { id: p.id, name, icon: FAMILY_GLYPHS.sales_path, color: glyphColorOf(name), line: pathLine(m, p), ...econWire(e), runnable: pathRunnable(m, p) };
+  return { id: p.id, name, icon: FAMILY_GLYPHS.sales_path, color: glyphColorOf(name), line: pathLine(m, p), ...econWire(e, PER_PAYING_CLIENT), runnable: pathRunnable(m, p) };
 };
 
 const pipeRowOf = (m: CatalogueModel, p: CataloguePipe, name: string) => ({
@@ -282,7 +297,7 @@ const pipeRowOf = (m: CatalogueModel, p: CataloguePipe, name: string) => ({
   color: glyphColorOf(name),
   line: pipeLine(m, p),
   mode: p.mode,
-  ...econWire(p.economics),
+  ...econWire(p.economics, perStep(m, p.toStep)),
   runnable: pipeRunnable(p),
   ...(p.published ? {} : { draft: true }),
 });
@@ -292,7 +307,7 @@ const funnelRowOf = (f: CatalogueFunnel, name: string) => ({
   name,
   face: faceOf(name).svgPath,
   line: funnelLine(f),
-  ...econWire(f.economics),
+  ...econWire(f.economics, PER_PAYING_CLIENT),
   runnable: funnelRunnable(f),
   ...(funnelPublished(f) ? {} : { draft: true }),
 });
@@ -308,7 +323,7 @@ router.get("/internal/catalogue/steps", apiKeyOnly, async (req, res) => {
       .filter((s) => matchesQuery(q, [s.label, s.key, s.shortDescription, s.description, s.producedBy]))
       .map((s) => ({ s, e: stepEconomics(model, s.key) }))
       .sort((a, b) => (b.s.valueUsd ?? -1) - (a.s.valueUsd ?? -1) || a.s.key.localeCompare(b.s.key))
-      .map(({ s, e }) => ({ id: s.key, name: s.label, icon: s.icon, line: s.shortDescription, valueUsd: s.valueUsd, ...econWire(e), ...(s.declared ? { declared: true } : {}) }));
+      .map(({ s, e }) => ({ id: s.key, name: s.label, icon: s.icon, line: s.shortDescription, valueUsd: s.valueUsd, ...econWire(e, perStep(model, s.key)), ...(s.declared ? { declared: true } : {}) }));
     res.json({ object: "step", costUnit: "per_outcome", order: "value_desc", ...page(rows, limit) });
   } catch (err) {
     fail(res, err, "list steps");
@@ -336,7 +351,7 @@ router.get("/internal/catalogue/steps/:id", apiKeyOnly, async (req, res) => {
       valueVia: s.valueVia ? { toStep: s.valueVia.toStep, toStepName: stepLabel(model, s.valueVia.toStep), ratePct: s.valueVia.ratePct } : null,
       valueBasis: "fleet median lifetime revenue x the best rated route to Paid client",
       lifetimeRevenueUsd: model.lifetimeRevenueUsd,
-      ...econDetail(stepEconomics(model, s.key)),
+      ...econDetail(stepEconomics(model, s.key), perStep(model, s.key)),
       costUnit: "per_outcome",
       producingPipeIds: producing.map((p) => p.id),
       salesPathCount: paths.length,
@@ -401,7 +416,7 @@ router.get("/internal/catalogue/sales-paths/:id", apiKeyOnly, async (req, res) =
         rateSource: path.rates[i].source,
         pipeIds: [...model.pipes.values()].filter((p) => p.legKey === legKey).map((p) => p.id),
       })),
-      ...econDetail(e),
+      ...econDetail(e, PER_PAYING_CLIENT),
       costUnit: "per_paying_client",
       bestSalesFunnelId: e.bestFunnelId,
       runnable: pathRunnable(model, path),
@@ -439,7 +454,7 @@ router.get("/internal/catalogue/channels", apiKeyOnly, async (req, res) => {
       .filter((c) => matchesQuery(q, [c.name, c.slug, c.shortDescription, c.description, c.channelType]))
       .map((c) => ({ c, e: channelEconomics(model, c.slug, legs) }))
       .sort(byRoi((x) => x.e, (x) => x.c.slug))
-      .map(({ c, e }) => ({ id: c.slug, name: c.name, icon: phosphorIconOf(c.icon), line: c.shortDescription, ...econWire(e), runnable: channelRunnable(model, c.slug) }));
+      .map(({ c, e }) => ({ id: c.slug, name: c.name, icon: phosphorIconOf(c.icon), line: c.shortDescription, ...econWire(e, perChannel(model, e.bestPipeId)), runnable: channelRunnable(model, c.slug) }));
     res.json({ object: "channel", costUnit: "per_outcome", order: "roi_desc", ...page(rows, limit) });
   } catch (err) {
     fail(res, err, "list channels");
@@ -466,7 +481,7 @@ router.get("/internal/catalogue/channels/:id", apiKeyOnly, async (req, res) => {
       performedBy: c.performedBy,
       managed: c.managed,
       runnable: channelRunnable(model, c.slug),
-      ...econDetail(e),
+      ...econDetail(e, perChannel(model, e.bestPipeId)),
       costUnit: "per_outcome",
       bestPipeId: e.bestPipeId,
       pipes: pipes.map((p) => pipeRowOf(model, p, n.get(nameKeyOfPipe(p))!)),
@@ -538,7 +553,7 @@ function pipeDetail(model: CatalogueModel, p: CataloguePipe, name: string) {
     managed: p.managed,
     runnable: pipeRunnable(p),
     draft: !p.published,
-    ...econDetail(p.economics),
+    ...econDetail(p.economics, perStep(model, p.toStep)),
     costUnit: "per_outcome",
     toStepValueUsd: to?.valueUsd ?? null,
     bestWorkflowSlug: p.measurement?.workflowDynastySlug ?? null,
@@ -614,10 +629,10 @@ function funnelDetail(model: CatalogueModel, f: CatalogueFunnel, names: Map<stri
       ratePct: path.rates[i].ratePct,
       outcomesNeededPerPayingClient: needed[i],
       pipe: l.pipe
-        ? { id: l.pipe.id, name: names.get(nameKeyOfPipe(l.pipe)) ?? null, line: pipeLine(model, l.pipe), mode: l.pipe.mode, ...econWire(l.pipe.economics) }
+        ? { id: l.pipe.id, name: names.get(nameKeyOfPipe(l.pipe)) ?? null, line: pipeLine(model, l.pipe), mode: l.pipe.mode, ...econWire(l.pipe.economics, perStep(model, l.pipe.toStep)) }
         : null,
     })),
-    ...econDetail(f.economics),
+    ...econDetail(f.economics, PER_PAYING_CLIENT),
     costUnit: "per_paying_client",
     lifetimeRevenueUsd: model.lifetimeRevenueUsd,
     runnable: funnelRunnable(f),
@@ -675,7 +690,7 @@ router.get("/internal/catalogue/workflows", apiKeyOnly, async (req, res) => {
         icon: FAMILY_GLYPHS.workflow,
         color: glyphColorOf(x.name),
         line: `${x.r.outcomes} outcomes from ${x.r.contacted} people, ${x.r.assignment}${x.r.moneyGoesHere ? ", holds the money" : ""}`,
-        ...econWire(x.e),
+        ...econWire(x.e, perStep(model, pipe.toStep)),
       }));
     res.json({ object: "workflow", pipeId, costUnit: "per_outcome", order: "fleet_rank", ...page(listed, limit) });
   } catch (err) {
@@ -711,7 +726,7 @@ router.get("/internal/catalogue/workflows/:id", apiKeyOnly, async (req, res) => 
       spentUsd: x.r.spentUsd,
       conversionRatePct: x.r.conversionRatePct,
       holdsTheMoney: x.r.moneyGoesHere,
-      ...econDetail(x.e),
+      ...econDetail(x.e, perStep(model, pipe.toStep)),
       costUnit: "per_outcome",
     });
   } catch (err) {
