@@ -24,7 +24,7 @@ vi.mock("./agent-catalogue.js", () => ({
         id,
         id === "unknown"
           ? null
-          : { name: "Bliss", face: "/f", line: "x", type: "proactive", description: "We email your buyers until they reply with interest, and your team takes it from there.", typeLabel: "Daily", trigger: null },
+          : { name: "Bliss", face: "/f", type: "proactive", description: "We email your buyers until they reply with interest, and your team takes it from there.", triggerLabel: null, path: { items: [{ kind: "step", key: "lead_found", label: "Lead found" }], legs: [] } },
       ]),
     ),
   ),
@@ -68,9 +68,10 @@ describe("GET /brands/:brandId/sales-funnel-campaigns", () => {
     expect(args[8]).toBe("net");
     expect(args[10]).toBe("of1");
     const row = res.body.salesFunnelCampaigns[0];
-    expect(row).toMatchObject({ id: "fc1", name: "Bliss", typeLabel: "Daily", type: "proactive", trigger: null, investedUsd: 12.34, roiMultiple: 2.5, moneyUnavailableReason: null, copyUnavailableReason: null });
+    expect(row).toMatchObject({ id: "fc1", name: "Bliss", typeLabel: "Daily", type: "proactive", triggerLabel: null, investedUsd: 12.34, roiMultiple: 2.5, moneyUnavailableReason: null, copyUnavailableReason: null });
     expect(row.description).toMatch(/^We email your buyers/);
     expect(row.maturity).toEqual({ isMature: false, legs: [] });
+    expect(row.path.items[0]).toEqual({ kind: "step", key: "lead_found", label: "Lead found" });
     expect(fetchWithRetry.mock.calls[0][0]).toBe("http://campaign:3000/sales-funnel-campaigns?brandId=b1");
   });
 

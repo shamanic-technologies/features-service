@@ -2810,6 +2810,71 @@ registry.registerPath({
   },
 });
 
+
+const salesFunnelCampaignRowSchema = z.object({
+  id: z.string().describe("campaign-service's sales funnel campaign id."),
+  brandId: z.string(),
+  offerId: z.string(),
+  salesFunnelId: z.string().describe("The catalogue sales funnel id (`GET /internal/catalogue/sales-funnels` rows[].id)."),
+  name: z.string().describe("The funnel campaign's name, as campaign-service serves it (`salesFunnelName`)."),
+  face: z.string().describe("Path of the name's face SVG on this service (`GET /public/catalogue/faces/{name}.svg`)."),
+  status: z.string().describe("campaign-service's status (`ongoing` | `stopped`), relayed."),
+  stopReason: z.string().nullable(),
+  createdAt: z.string(),
+  description: z.string().nullable().describe("What this campaign does, in ONE plain customer sentence: the catalogue funnel's own `description` (stored once given). Null only with `copyUnavailableReason`."),
+  type: z.enum(["proactive", "reactive"]).nullable().describe("The funnel's type (catalogue `type`). Null only with `copyUnavailableReason`."),
+  triggerLabel: z.string().nullable().describe("What starts a REACTIVE funnel, in customer words (\"Positive replies\"): the catalogue funnel's `triggerLabel`. Null on a proactive funnel."),
+  typeLabel: z.string().nullable().describe("The Campaigns table's Type column (owner 2026-10-11): \"Daily\" for a proactive funnel, `triggerLabel` for a reactive one. Null only with `copyUnavailableReason`."),
+  path: z.object({
+    items: z.array(z.union([
+      z.object({ kind: z.literal("step"), key: z.string(), label: z.string().describe("The step's customer label (\"Positive reply\").") }),
+      z.object({ kind: z.literal("channel"), slug: z.string(), name: z.string().describe("The channel's display name (\"Sales Cold Email Outreach\").") }),
+    ])).describe("The path in reading order: the first step, then per leg the channel's display name when WE run the leg, then the leg's next step (a leg the client's own team works, or the buyer alone, shows only its next step). Always ends at Paid client. Render the items joined by arrows; never parse an id."),
+    legs: z.array(z.object({ legKey: z.string(), fromStep: z.string(), toStep: z.string(), runByUs: z.boolean().describe("We run this leg (a platform channel)."), channelSlug: z.string().nullable().describe("The channel working the leg; null when no channel performs it (the buyer acts)."), channelName: z.string().nullable() })).describe("The same path, one entry per leg, in order."),
+  }).nullable().describe("The funnel's PATH as structured data (owner 2026-10-11: the Campaigns table shows it under the name). Null only with `copyUnavailableReason`."),
+  copyUnavailableReason: z.enum(["sales_funnel_not_in_catalogue"]).nullable().describe("Why the copy fields are null: the funnel id is not in this service's catalogue (logged). Null when they are served."),
+  units: z.array(z.object({ campaignId: z.string(), pipeId: z.string(), featureSlug: z.string(), legKey: z.string(), status: z.string() })).describe("The unit campaigns (one per pipe) the money is computed over, as campaign-service serves them."),
+  investedUsd: z.number().describe("$ Invested since inception: the COMMITTED spend of every unit together (= `costEconomics.committedCostUsd`). Every cost row belongs to one unit, so this is exactly the sum of the units' own `committedCostUsd` (each unit's `/features/{slug}/revenue?campaignId=` read), on the requested pricing basis."),
+  roiMultiple: z.number().nullable().describe("The funnel campaign's ROI (= `costEconomics.roiMultiple`): ONE engine pass over the units' people (deduped) and spend together, on the offer's terms; never a sum or an average of unit ROIs. Null with a reason in `costEconomics.unmeasuredReason` (e.g. `maturing`: still learning) or `moneyUnavailableReason`. Read `maturity` for the flash/mature pair and the verdict, as on a campaign row."),
+  moneyUnavailableReason: z.enum(["units_price_differently"]).nullable().describe("`units_price_differently`: the units' channels price on two different funnel definitions, so no ROI can be one figure (investedUsd is still served). Null otherwise."),
+  costEconomics: featureRevenueResponseSchema.shape.costEconomics.nullable().describe("The full cost economics of the units together (the block a campaign row serves). Null when the funnel campaign has no unit."),
+  maturity: scopeMaturitySchema.nullable().describe("Per-leg figures and the maturity verdict of the units together (the object a campaign row serves). Null when unreadable or no unit."),
+});
+
+const salesFunnelCampaignsResponseRef = registry.register(
+  "SalesFunnelCampaignsResponse",
+  z.object({
+    brandId: z.string(),
+    offerId: z.string().nullable().describe("The `?offerId=` filter echoed; null = every offer of the brand."),
+    pricing: z.enum(["gross", "net"]),
+    costBasis: z.literal("charged"),
+    salesFunnelCampaigns: z.array(salesFunnelCampaignRowSchema).describe("One row per sales funnel campaign, in campaign-service's order (newest first)."),
+  }),
+);
+
+registry.registerPath({
+  method: "get",
+  path: "/brands/{brandId}/sales-funnel-campaigns",
+  summary: "A brand's sales funnel campaigns, one row each, with their customer copy and money since inception",
+  description:
+    "The dashboard Campaigns table (owner 2026-10-11): one row per SALES FUNNEL CAMPAIGN (campaign-service `GET /sales-funnel-campaigns`, brand x offer x sales funnel, one unit campaign per pipe). Each row serves the funnel's name and face, its one-sentence customer description, its type, trigger label and Type label (\"Daily\" or the trigger: \"Positive replies\"), and its money since inception over its units together: invested (the units' committed spend, which adds exactly) and the ROI of ONE engine pass over the units' people and spend (never a sum of unit ROIs), with the maturity verdict. The browser composes and computes nothing. Org-scoped (`x-org-id`).",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ brandId: z.string() }),
+    query: z.object({
+      offerId: z.string().optional().describe("Only this offer's funnel campaigns. Omitted: every offer of the brand, each priced on its own offer's terms."),
+      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every money figure (omitted = gross). The dashboard reads `net`. NET fails loud (502) when runs' frozen net amounts are absent."),
+    }),
+  },
+  responses: {
+    200: { description: "One row per funnel campaign (an empty array when the brand has none).", content: { "application/json": { schema: salesFunnelCampaignsResponseRef } } },
+    400: { description: "An invalid pricing value (reason: pricing_unrecognised).", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "The caller does not hold this brand (reason: brand_not_found).", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "campaign-service or a money read failed (no row is ever guessed).", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 const measuredArrowRateSchema = z.object({
   basis: z.enum(["our_leads", "crm"]).describe("WHERE this leg was measured. crm: the brand's CRM directly evidences BOTH ends of the leg, so it is measured on the client's WHOLE CRM history (crm-service funnel reach, contactsAtOrBeyond(TO) / contactsAtOrBeyond(FROM)). our_leads: on this brand's leads. fromReached is the population either way, so a consumer can say 'measured on 251 contacts in your CRM' or 'measured on 26 of our leads'."),
   outcomesCounted: z.enum(["all", "caused_by_our_outreach"]).nullable().describe("On our_leads, which outcomes the counts include: caused_by_our_outreach whenever the brand's CRM is available (crm.status used) — a leg only our outreach can observe is not credited with CRM outcomes our outreach did not cause; all otherwise (today's rule). Null on a crm-measured leg. Measurement only: what the ROI prices is unchanged."),
