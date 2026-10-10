@@ -197,6 +197,53 @@ export async function setLegAssignment(input: {
 }
 
 /**
+ * REGISTER a workflow on the pipe it was created for (owner 2026-10-10, option A: the pipe <-> workflow link
+ * lives HERE only, and a workflow created for a pipe is ACTIVE at once; the explore allowance caps what an
+ * unproven workflow can spend). Insert-if-absent: a dynasty already stated on the pipe keeps its state
+ * (a staff `deprecated` is never undone by a later version's creation), and the answer says so.
+ */
+export async function registerLegAssignment(input: {
+  featureSlug: string;
+  legKey: string;
+  workflowDynastySlug: string;
+  registeredBy: string;
+  note?: string | null;
+}): Promise<{ assignment: LegAssignmentRow; created: boolean }> {
+  const legKey = servedLegKeyOf(input.featureSlug, storedLegKeyOf(input.legKey));
+  const key = and(
+    eq(workflowLegAssignments.featureSlug, input.featureSlug),
+    eq(workflowLegAssignments.legKey, legKey),
+    eq(workflowLegAssignments.workflowDynastySlug, input.workflowDynastySlug),
+  );
+  return db.transaction(async (tx) => {
+    const [existing] = await tx.select().from(workflowLegAssignments).where(key).for("update");
+    if (existing) return { assignment: toRow(existing), created: false };
+    const decidedAt = new Date();
+    const note = input.note ?? "registered at creation (a workflow created for a pipe is active at once)";
+    const [stored] = await tx
+      .insert(workflowLegAssignments)
+      .values({ featureSlug: input.featureSlug, legKey, workflowDynastySlug: input.workflowDynastySlug, state: "active", decidedBy: input.registeredBy, decidedAt, note })
+      .onConflictDoNothing()
+      .returning();
+    if (!stored) {
+      const [raced] = await tx.select().from(workflowLegAssignments).where(key);
+      return { assignment: toRow(raced), created: false };
+    }
+    await tx.insert(workflowLegAssignmentChanges).values({
+      featureSlug: input.featureSlug,
+      legKey,
+      workflowDynastySlug: input.workflowDynastySlug,
+      fromState: null,
+      toState: "active",
+      decidedBy: input.registeredBy,
+      decidedAt,
+      note,
+    });
+    return { assignment: toRow(stored), created: true };
+  });
+}
+
+/**
  * PURE: the verdict a projection row carries for its dynasty on the named leg. Only `active` is
  * selectable; a `deprecated` or never-assigned workflow is still served with its figures, and says why
  * it will not be picked.
