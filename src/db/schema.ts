@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, boolean, integer, jsonb, timestamp, uniqueIndex, index, primaryKey } from "drizzle-orm/pg-core";
+import { pgTable, doublePrecision, uuid, text, boolean, integer, jsonb, timestamp, uniqueIndex, index, primaryKey } from "drizzle-orm/pg-core";
 
 export const features = pgTable(
   "features",
@@ -475,6 +475,50 @@ export const declaredSalesPaths = pgTable("declared_sales_paths", {
   /** `combinationKeyOf` (`lib/offer-sales-paths.ts`), the same identity (and name) the offer listing serves. */
   combinationKey: text("combination_key").primaryKey(),
   legs: jsonb("legs").notNull(),
+  createdBy: text("created_by").notNull(),
+  requestedByOrgId: text("requested_by_org_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * STEPS DECLARED AT RUN TIME (owner 2026-10-10, "chat first"): a stage the agent names on the fly ("LinkedIn
+ * post", "Email found"), usable like a coded step by declared legs (`lib/catalogue-declarations.ts`). Every
+ * step has a VALUE on the way to a paid client, so a declared one states where it leads: `towardStep` (an
+ * existing step) reached at `towardRatePct`; its value = that share of the toward step's value.
+ */
+export const declaredSteps = pgTable("declared_steps", {
+  key: text("key").primaryKey(),
+  label: text("label").notNull().unique(),
+  description: text("description").notNull(),
+  shortDescription: text("short_description").notNull(),
+  icon: text("icon").notNull(),
+  towardStep: text("toward_step").notNull(),
+  towardRatePct: doublePrecision("toward_rate_pct").notNull(),
+  /** What produces it, free text (an endpoint, a service): provenance for "ROI per API output". */
+  producedBy: text("produced_by"),
+  createdBy: text("created_by").notNull(),
+  requestedByOrgId: text("requested_by_org_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** The stated conversion rate of a leg nothing else rates (no industry default, no fleet median): declared with its first pipe or step. */
+export const declaredLegRates = pgTable(
+  "declared_leg_rates",
+  {
+    fromStep: text("from_step").notNull(),
+    toStep: text("to_step").notNull(),
+    ratePct: doublePrecision("rate_pct").notNull(),
+    createdBy: text("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ name: "declared_leg_rates_pk", columns: [t.fromStep, t.toStep] })],
+);
+
+/** SALES PATHS (chains of legs, no channel) created explicitly through `/internal/catalogue/sales-paths`. */
+export const declaredSalesPathChains = pgTable("declared_sales_path_chains", {
+  /** The chain's served leg keys joined by `+` (`lib/agent-catalogue.ts` `pathIdOf`). */
+  pathId: text("path_id").primaryKey(),
+  legKeys: jsonb("leg_keys").notNull(),
   createdBy: text("created_by").notNull(),
   requestedByOrgId: text("requested_by_org_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

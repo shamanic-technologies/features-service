@@ -55,5 +55,16 @@ export const DEFAULT_LEG_RATE_PCT: Readonly<Partial<Record<LegPair, number>>> = 
 
 /** The default for the leg between two of our step keys, or null when none is seeded (a guard failure). */
 export function defaultLegRatePct(from: ChannelStepKey, to: ChannelStepKey): number | null {
-  return DEFAULT_LEG_RATE_PCT[`${from}>${to}` as LegPair] ?? null;
+  return DEFAULT_LEG_RATE_PCT[`${from}>${to}` as LegPair] ?? DECLARED_LEG_RATE_PCT.get(`${from}>${to}`) ?? null;
+}
+
+/**
+ * The stated rate of a leg the seeded defaults do not cover (a leg touching a step declared at run time,
+ * `declared_leg_rates`), registered by every catalogue load (`lib/catalogue-declarations-store.ts`). A seeded
+ * default always wins: a declaration never re-rates a coded leg.
+ */
+const DECLARED_LEG_RATE_PCT = new Map<string, number>();
+
+export function registerDeclaredLegRates(rates: ReadonlyArray<{ fromStep: string; toStep: string; ratePct: number }>): void {
+  for (const r of rates) DECLARED_LEG_RATE_PCT.set(`${r.fromStep}>${r.toStep}`, r.ratePct);
 }

@@ -171,7 +171,8 @@ export interface TriggerTypeRecord {
 }
 
 export interface DeclaredSalesPathLeg {
-  channelSlug: string;
+  /** Null on a leg no channel performs (declared through `/internal/catalogue/sales-funnels`). */
+  channelSlug: string | null;
   legKey: string;
 }
 

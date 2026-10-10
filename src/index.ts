@@ -31,6 +31,7 @@ import publicRoutes, { warmFleetReturnSnapshotsOnBoot, warmShowcaseFunnelsOnBoot
 import viewCacheAdminRoutes from "./routes/view-cache-admin.js";
 import workflowLegAssignmentsRoutes from "./routes/workflow-leg-assignments.js";
 import channelDeclarationsRoutes from "./routes/channel-declarations.js";
+import agentCatalogueRoutes, { warmCatalogueMeasurements } from "./routes/agent-catalogue.js";
 import transferBrandRoutes from "./routes/transfer-brand.js";
 import orgPeriodRecapRoutes from "./routes/org-period-recap.js";
 import { registerChannelTriggerTypes, registerSeedFeatures } from "./seed/register.js";
@@ -95,6 +96,7 @@ app.use(conversionRatesRoutes);
 app.use(viewCacheAdminRoutes);
 app.use(workflowLegAssignmentsRoutes);
 app.use(channelDeclarationsRoutes);
+app.use(agentCatalogueRoutes);
 app.use(transferBrandRoutes);
 app.use(orgPeriodRecapRoutes);
 
@@ -164,6 +166,8 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
         warmShowcaseFunnelsOnBoot();
         // The onboarding prices each outcome off this payload; its fleet walks must never run on a read.
         void warmOutcomePrices();
+        // The agent catalogue's pipe economics are fleet walks too: built off the request path.
+        void warmCatalogueMeasurements();
         // Research reads the cold-email legs' fleet ranking; warm both so its first read is not empty.
         void warmLegWorkflowRanking("sales-cold-email-outreach", "start_to_conversation");
         void warmLegWorkflowRanking("sales-cold-email-outreach", "start_to_website_visit");
