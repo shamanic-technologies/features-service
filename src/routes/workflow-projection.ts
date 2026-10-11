@@ -47,6 +47,7 @@ import { fetchOfferScopeIdsSoft } from "../lib/offer-scope.js";
 import { withInteractiveReads } from "../lib/lead-copy.js";
 import { describeIdentity, type CampaignIdentity, type CampaignIdentityView } from "../lib/campaign-identity.js";
 import { DEFAULT_MAXIMIZE, MAXIMIZE_ERROR, parseMaximize, type Maximize } from "../lib/maximize.js";
+import { workflowlessPipeLeg } from "../lib/workflowless-pipes.js";
 import {
   buildObservedPicks,
   fetchCampaignTriggerRunsSoft,
@@ -1219,6 +1220,28 @@ function exploreResolved(
  */
 type ProjectionCostBasis = "billed" | "actual";
 
+/**
+ * The answer for a pipe that runs no workflow (lib/workflowless-pipes.ts): nothing to rank, nothing
+ * recommended, and `measured: false` + `no_active_workflows` so the empty `rows` read as "no workflow
+ * here", never as "nobody to contact". The leg's maturity rule is echoed (a 0-day leg: nothing to cut).
+ * No funnel prices it, so there is no `leg`/`funnelKey` block and no economics.
+ */
+export function noWorkflowPipeProjection(featureSlug: string, legKey: string, maximize: Maximize): WorkflowProjectionResponse {
+  return {
+    featureSlug,
+    objective: "meeting-booked",
+    maximize,
+    goal: "meetingBooked",
+    economics: null,
+    rows: [],
+    recommendedWorkflowDynastySlug: null,
+    recommendedBudgetUsd: null,
+    measured: false,
+    unmeasuredReason: "no_active_workflows",
+    maturity: { ...legMaturity(legKey), legKey, cutoffIso: null, measured: true, unmeasuredReason: null },
+  };
+}
+
 export async function handleWorkflowProjection(req: Request, res: Response, costBasis: ProjectionCostBasis) {
   const { featureSlug } = req.params;
   const { orgId, userId, runId, featureSlug: headerFeatureSlug } = req as AuthenticatedRequest;
@@ -1246,6 +1269,14 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
   const legParam = req.query.leg as string | undefined;
   let legKey: string | null = null;
   if (legParam != null && legParam !== "") {
+    // A pipe of a channel that sells no reading funnel (sourcing, AI Instant Call) runs no workflow:
+    // that is an ANSWER, not an unknown or undeclared leg (lib/workflowless-pipes.ts).
+    const pipeLegKey = workflowlessPipeLeg(featureSlug, legParam);
+    if (pipeLegKey) {
+      const maximizeParam = parseMaximize(req.query as Record<string, unknown>);
+      if (!maximizeParam.ok) return res.status(400).json({ error: MAXIMIZE_ERROR, reason: "maximize_unrecognised" });
+      return res.json(noWorkflowPipeProjection(featureSlug, pipeLegKey, maximizeParam.maximize));
+    }
     // Both spellings of an outbound leg are one identity (wave 1, `lib/funnel-legs.ts`): resolved to the stored one.
     legKey = matchChannelLegKey(featureSlug, legParam);
     if (!legKey) {

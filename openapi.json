@@ -7333,7 +7333,7 @@
               "no_active_workflows",
               "no_spend_recorded"
             ],
-            "description": "Present ⟺ measured=false, and it is the whole point of the field: an empty `rows` must never be read as 'this brand has nobody to contact'. `no_active_audiences` = the brand is working no audience, so there is nothing to serve through ANY channel (rows is empty). `no_active_workflows` = this feature has no active workflow (rows is empty). `no_spend_recorded` = the brand HAS active audiences and this channel HAS active workflows, it has simply never run — rows then enumerate every (active audience × active workflow) couple, all measured=false."
+            "description": "Present ⟺ measured=false, and it is the whole point of the field: an empty `rows` must never be read as 'this brand has nobody to contact'. `no_active_audiences` = the brand is working no audience, so there is nothing to serve through ANY channel (rows is empty). `no_active_workflows` = this feature has no active workflow (rows is empty); also the answer for a `?leg=` naming a pipe of a channel that sells no reading sales funnel (sourcing origins `start_to_lead_found`, AI Instant Call `conversation_to_booking_call`): 200, no `leg` block, no economics, never a 400/404. `no_spend_recorded` = the brand HAS active audiences and this channel HAS active workflows, it has simply never run — rows then enumerate every (active audience × active workflow) couple, all measured=false."
           }
         },
         "required": [
@@ -31933,7 +31933,7 @@
                         "no_active_workflows",
                         "no_spend_recorded"
                       ],
-                      "description": "Present ⟺ measured=false, and it is the whole point of the field: an empty `rows` must never be read as 'this brand has nobody to contact'. `no_active_audiences` = the brand is working no audience, so there is nothing to serve through ANY channel (rows is empty). `no_active_workflows` = this feature has no active workflow (rows is empty). `no_spend_recorded` = the brand HAS active audiences and this channel HAS active workflows, it has simply never run — rows then enumerate every (active audience × active workflow) couple, all measured=false."
+                      "description": "Present ⟺ measured=false, and it is the whole point of the field: an empty `rows` must never be read as 'this brand has nobody to contact'. `no_active_audiences` = the brand is working no audience, so there is nothing to serve through ANY channel (rows is empty). `no_active_workflows` = this feature has no active workflow (rows is empty); also the answer for a `?leg=` naming a pipe of a channel that sells no reading sales funnel (sourcing origins `start_to_lead_found`, AI Instant Call `conversation_to_booking_call`): 200, no `leg` block, no economics, never a 400/404. `no_spend_recorded` = the brand HAS active audiences and this channel HAS active workflows, it has simply never run — rows then enumerate every (active audience × active workflow) couple, all measured=false."
                     }
                   },
                   "required": [
@@ -51357,6 +51357,23 @@
                               "reactive"
                             ],
                             "description": "Sales path rows only."
+                          },
+                          "trigger": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "slug": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "slug",
+                              "name"
+                            ],
+                            "description": "A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."
                           },
                           "mode": {
                             "type": "string",
