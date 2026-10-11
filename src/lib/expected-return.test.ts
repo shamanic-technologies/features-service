@@ -154,10 +154,10 @@ describe("a funnel campaign is priced on ITS OWN path (EXPECTED-ROI-1011 follow-
   it("an unlisted reactive funnel reads its own legs and the value it ADDS, never the offer's best path", () => {
     const m = model([visit], [], { inputs });
     const e = expectedForCombination(m, "conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client");
-    // needed: 1 / (0.75 × 0.20) = 6.667 meetings per paying client at $2 = $13.33; people at Positive reply = 6.667 / 0.30 = 22.2,
-    // each already worth $1000 × max(5% direct, 4.5% via meetings) = $50 → $1111 → the client adds 1000 − 1111 < 0.
+    // needed: 1 / (0.75 × 0.20) = 6.667 meetings per paying client at $2 = $13.33; the 6.667 people it moved were each
+    // already worth $1000 × max(5% direct, 4.5% via meetings) = $50 at Positive reply → it adds 1000 − 333 = $667.
     expect(e.combinationKey).toBe("conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client");
-    expect(e.roiMultiple).toBeCloseTo((1000 - (6.6667 / 0.3) * 50) / 13.3333, 2);
+    expect(e.roiMultiple).toBeCloseTo((1000 - 6.6667 * 50) / 13.3333, 2);
     expect(e.costPerOutcome).toMatchObject({ costPerOutcomeUsd: 2, legKey: "conversation_to_meeting_booked", basis: "fleet" });
     expect(e.assumptions.some((a) => a.source === "value_added_from:conversation")).toBe(true);
   });
