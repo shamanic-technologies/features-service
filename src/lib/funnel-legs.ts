@@ -272,9 +272,22 @@ export function servedCampaignKeyOf(key: string): string {
   return m ? `campaign:${m[1]}|${servedLegKeyOf(m[1], m[2])}` : key;
 }
 
-/** A key of `sales_path_combination_names` (a combination key or a campaign key) as STORED. */
+/**
+ * ONE CHANNEL PER LEG (owner 2026-10-11): a funnel id names its sourcing leg. An id from before (its first leg starts
+ * out of Lead found: the sourcing leg was a pool outside the id) IS that funnel with Lead Sourcing on the sourcing leg.
+ * PURE: that id, or null when `id` is not such a legacy id. (`lib/agent-catalogue.ts` resolves funnels through it.)
+ */
+export function legacyFunnelIdAliasOf(id: string): string | null {
+  const first = id.split("+")[0]?.split("@")[0] ?? "";
+  return first.startsWith("lead_found_to_") ? `start_to_lead_found@lead-sourcing+${id}` : null;
+}
+
+/** A key of `sales_path_combination_names` (a combination key, a campaign key, a path key) as STORED: a legacy funnel
+ *  key in its Lead Sourcing spelling (`legacyFunnelIdAliasOf`), so a name follows its funnel. */
 export function servedNameKeyOf(key: string): string {
-  return key.startsWith("campaign:") ? servedCampaignKeyOf(key) : servedCombinationKeyOf(key);
+  if (key.startsWith("campaign:")) return servedCampaignKeyOf(key);
+  const served = servedCombinationKeyOf(key);
+  return key.startsWith("path:") ? served : (legacyFunnelIdAliasOf(served) ?? served);
 }
 
 /** The channel slug of a combination's ENTRY leg (`leg@slug` first part), null when the entry leg is bare. */

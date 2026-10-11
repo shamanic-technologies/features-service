@@ -40,6 +40,7 @@ import { registerChannelTriggerTypes, registerSeedFeatures } from "./seed/regist
 import { servedLegKeysMiddleware } from "./lib/served-leg-keys.js";
 import { legacyLegKeyArrivalsMiddleware } from "./lib/legacy-leg-key-arrivals.js";
 import { migrateOutboundLegKeys } from "./lib/outbound-leg-key-migration.js";
+import { migrateLeadSourcingFunnelKeys } from "./lib/lead-sourcing-key-migration.js";
 import { renamePipesToBirds } from "./lib/sales-path-names.js";
 import { listLegAssignments } from "./lib/workflow-leg-assignments.js";
 import { storedLegKeyOf } from "./lib/funnel-legs.js";
@@ -158,6 +159,9 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
       // Re-key every stored outbound leg to its new spelling (idempotent, three small tables; re-run at
       // every boot so a row an older process wrote during a deploy is moved on the next one).
       await migrateOutboundLegKeys();
+      // One channel per leg (owner 2026-10-11): a funnel name stored under its pre-sourcing-leg id moves to its Lead
+      // Sourcing id (idempotent, same lock; `lib/lead-sourcing-key-migration.ts`).
+      await migrateLeadSourcingFunnelKeys();
       // Owner GO 2026-10-10: every pipe named before the families split takes a bird (idempotent).
       await renamePipesToBirds();
       app.listen(Number(PORT), "::", () => {

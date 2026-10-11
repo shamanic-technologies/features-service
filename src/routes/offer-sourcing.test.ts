@@ -15,6 +15,12 @@ describe("GET /public/sourcing-origins", () => {
     expect(res.body.sourcingChannels).toEqual(Object.keys(SOURCING_ORIGINS_BY_CHANNEL).sort());
     expect(res.body.originsByChannel).toEqual(SOURCING_ORIGINS_BY_CHANNEL);
     expect(res.body.originsByChannel["sales-crm-email-outreach"]).toEqual(["sourcing-crm-contacts"]);
+    // Lead Sourcing: no origin of its own, it picks among the live origins a cold email channel takes (owner 2026-10-11).
+    expect(res.body.origins.map((o: { slug: string }) => o.slug)).not.toContain("lead-sourcing");
+    expect(res.body.originsByChannel["sales-cold-email-outreach"]).toContain("lead-sourcing");
+    expect(res.body.leadSourcing).toMatchObject({ slug: "lead-sourcing", name: "Lead Sourcing", sourceCampaignKey: "campaign:lead-sourcing|start_to_lead_found" });
+    expect(res.body.leadSourcing.mayUseByChannel["sales-cold-email-outreach"]).toEqual(["sourcing-apollo-cold-filters", "sourcing-apollo-buying-signals", "sourcing-linkedin-engagement-signals"]);
+    expect(res.body.leadSourcing.mayUseByChannel["sales-crm-email-outreach"]).toEqual([]);
     const provider = Object.fromEntries(res.body.origins.map((o: { slug: string; provider: unknown }) => [o.slug, o.provider]));
     expect(provider["sourcing-apollo-cold-filters"]).toEqual({ name: "Apollo", domain: "apollo.io" });
     expect(provider["sourcing-linkedin-engagement-signals"]).toEqual({ name: "LinkedIn", domain: "linkedin.com" });

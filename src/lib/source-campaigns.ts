@@ -34,6 +34,7 @@ import {
   SOURCING_PARENT_CHANNEL_SLUGS,
   sourceCampaignKeyOf,
   sourcingOriginBySlug,
+  isSourcingChannel,
   type SourcingOrigin,
   type SourcingProvider,
 } from "./sourcing-origins.js";
@@ -140,7 +141,7 @@ export function sourceCampaignNameKeys(origins: readonly SourcingOrigin[]): stri
 export function buildOutreachCampaignSplits(sourcing: OfferSourcing): OutreachCampaignSplit[] {
   const out = new Map<string, OutreachCampaignSplit>();
   for (const c of sourcing.campaigns) {
-    if (sourcingOriginBySlug(c.featureSlug)) continue; // a source campaign's own row: it is a source campaign
+    if (isSourcingChannel(c.featureSlug)) continue; // a source campaign's own row (an origin or Lead Sourcing): it is a source campaign
     const id = `${c.featureSlug}|${c.legKey ?? ""}`;
     let s = out.get(id);
     if (!s) {
@@ -254,7 +255,7 @@ export function buildSourceCampaigns(input: { sourcing: OfferSourcing | null; na
       endToEndCostUsd: s.endToEndCostUsd + own,
       costPerLeadUsd: s.leadsServed > 0 ? costUsd / s.leadsServed : null,
       costByOutreachCampaign: [...(byOutreach.get(o.slug)?.values() ?? [])]
-        .filter((e) => !sourcingOriginBySlug(e.featureSlug))
+        .filter((e) => !isSourcingChannel(e.featureSlug))
         .sort((a, b) => b.costUsd - a.costUsd || (a.campaignKey ?? "~").localeCompare(b.campaignKey ?? "~")),
     };
   });

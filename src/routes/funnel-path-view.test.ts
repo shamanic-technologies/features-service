@@ -27,23 +27,24 @@ describe("funnelPathView", () => {
   const MOTIVATE = "conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client";
   const MOVING = "conversation_to_booking_call@ai-instant-call+booking_call_to_meeting_booked+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client";
 
-  it("Bliss reads Start -> [its sources] -> Lead found -> [Sales Cold Email Outreach] -> Positive reply -> [Your Team ...] -> ... -> Paid client", () => {
-    const sources = ["sourcing-apollo-cold-filters", "sourcing-apollo-buying-signals", "sourcing-linkedin-engagement-signals"];
-    // The campaign's units: its three sources and its cold email (the sourcing leg shows the sources it runs).
-    const v = funnelPathView(model, funnelById(model, BLISS)!, [...sources, "sales-cold-email-outreach"]);
-    const items = read(v);
-    expect(items[0]).toBe("Start");
-    expect(items.slice(1, 4).sort()).toEqual(["[Apollo Buying Signals]", "[Apollo Cold Filters]", "[LinkedIn Engagement Signals]"].sort());
-    expect(items.slice(4)).toEqual([
+  it("Bliss (its stored id) reads Start -> [Lead Sourcing] -> Lead found -> [Sales Cold Email Outreach] -> ... -> Paid client: one channel per leg", () => {
+    const v = funnelPathView(model, funnelById(model, BLISS)!);
+    expect(read(v)).toEqual([
+      "Start", "[Lead Sourcing]",
       "Lead found", "[Sales Cold Email Outreach]", "Positive reply",
       "[Your Team Meeting Booking]", "Meeting booked",
       "[Your Team Meeting Attendance]", "Meeting attended",
       "[Your Team Closing Calls]", "Paid client",
     ]);
-    expect(v.legs.map((l) => [l.fromStep, l.toStep, l.runByUs])).toEqual([
-      ["start", "lead_found", true], ["lead_found", "conversation", true], ["conversation", "meeting_booked", false], ["meeting_booked", "meeting_attended", false], ["meeting_attended", "paid_client", false],
+    expect(v.legs.map((l) => [l.fromStep, l.toStep, l.runByUs, l.channelSlug])).toEqual([
+      ["start", "lead_found", true, "lead-sourcing"], ["lead_found", "conversation", true, "sales-cold-email-outreach"], ["conversation", "meeting_booked", false, "your-team-meeting-booking"], ["meeting_booked", "meeting_attended", false, "your-team-meeting-attendance"], ["meeting_attended", "paid_client", false, "your-team-closing-calls"],
     ]);
     expect(v.legs[3].channels).toEqual([{ slug: "your-team-meeting-attendance", name: "Your Team Meeting Attendance", runByUs: false }]);
+  });
+
+  it("a single-source funnel reads its one source on the sourcing leg", () => {
+    const v = funnelPathView(model, funnelById(model, `start_to_lead_found@sourcing-apollo-cold-filters+${BLISS}`)!);
+    expect(read(v).slice(0, 3)).toEqual(["Start", "[Apollo Cold Filters]", "Lead found"]);
   });
 
   it("Moving and Motivate, reactive funnels, start with their TRIGGER (owner 2026-10-11); Moving's booking call leg is the customer's team's", () => {
@@ -67,7 +68,8 @@ describe("funnelPathView", () => {
         const kinds = v.items.map((i) => i.kind);
         expect(kinds[0], f.id).toBe(path.type === "reactive" ? "trigger" : "step");
         expect(kinds[kinds.length - 1], f.id).toBe("step");
-        for (let i = 1; i < kinds.length; i += 1) if (kinds[i] !== "channel") expect(kinds[i - 1], `${f.id} @${i}`).toBe("channel");
+        // Exactly one channel between every two steps (owner 2026-10-11: a straight line).
+        for (let i = 1; i < kinds.length; i += 1) expect(kinds[i], `${f.id} @${i}`).toBe(kinds[i - 1] === "channel" ? "step" : "channel");
         if (path.type === "proactive") expect(v.items[0], f.id).toMatchObject({ key: "start", label: "Start" });
       }
     }

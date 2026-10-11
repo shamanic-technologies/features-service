@@ -83,12 +83,13 @@ export interface NamePlan {
 }
 
 /** PURE: every key naming an outbound leg in its legacy spelling moves to the served one, its NAME with it;
- *  a key whose new spelling is already named keeps the OLDER name (a tie keeps the new-spelled row). */
-export function planNames(rows: readonly NameRowLike[]): NamePlan {
+ *  a key whose new spelling is already named keeps the OLDER name (a tie keeps the new-spelled row). `respell` = the
+ *  re-key (the Lead Sourcing funnel re-key reuses this plan, `lib/lead-sourcing-key-migration.ts`). */
+export function planNames(rows: readonly NameRowLike[], respell: (key: string) => string = servedNameKeyOf): NamePlan {
   const plan: NamePlan = { deletes: [], rekeys: [] };
   const byKey = new Map(rows.map((r) => [r.combinationKey, r]));
   for (const row of rows) {
-    const to = servedNameKeyOf(row.combinationKey);
+    const to = respell(row.combinationKey);
     if (to === row.combinationKey) continue;
     const twin = byKey.get(to);
     if (twin && twin.assignedAt <= row.assignedAt) {

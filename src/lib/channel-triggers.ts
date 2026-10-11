@@ -38,6 +38,11 @@ export interface ChannelTriggerType {
   firedBy: string;
   /** A service fires it today. A managed channel's leg may only name a coded trigger. */
   coded: boolean;
+  /**
+   * The pipe answering it runs INSIDE the run that fires it (a source answering the lead request of the outreach run
+   * that needs the lead): it draws on no budget of its own, so it never makes a funnel "mixed". Absent = false.
+   */
+  inline?: boolean;
 }
 
 /**
@@ -56,6 +61,7 @@ export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
     // lead-service serves a lead the moment an outbound run asks for one (its `lead-serve` run).
     firedBy: "lead-service",
     coded: true,
+    inline: true,
   },
   {
     id: "positive_reply_received",
@@ -176,3 +182,6 @@ export function assertLegTriggersDeclared(
     if (leg.managed && !type.coded) throw new UndeclaredLegTriggerError(`${where} is run by us and names ${leg.triggerId}, which nothing fires yet`);
   }
 }
+
+/** The triggers answered INSIDE the run that fires them (`ChannelTriggerType.inline`). */
+export const INLINE_TRIGGER_IDS: ReadonlySet<string> = new Set(CHANNEL_TRIGGER_TYPES.filter((t) => t.inline === true).map((t) => t.id));

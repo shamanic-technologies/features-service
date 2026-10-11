@@ -123,7 +123,7 @@ describe("runs-service fanout collapse: features-stats endpoint", () => {
       ([url, init]) => isCostsGet(url, init),
     );
     expect(costsGets.length).toBe(1);
-    expect(costsGets[0][0]).toContain("featureSlugs=sales-cold-email-outreach");
+    expect(new URL(String(costsGets[0][0]), "http://x").searchParams.get("featureSlugs")!.split(",")).toContain("sales-cold-email-outreach");
   });
 
   it("fetchRunsStats: GET query string uses featureSlugs (CSV) param, not legacy featureSlug", async () => {
@@ -141,7 +141,7 @@ describe("runs-service fanout collapse: features-stats endpoint", () => {
     );
     expect(costsGets.length).toBe(1);
     const url = costsGets[0][0] as string;
-    expect(url).toContain("featureSlugs=sales-cold-email-outreach");
+    expect(new URL(String(url), "http://x").searchParams.get("featureSlugs")!.split(",")).toContain("sales-cold-email-outreach");
     // Confirms the legacy per-slug `featureSlug=` param is no longer emitted.
     expect(url).not.toMatch(/[?&]featureSlug=/);
   });

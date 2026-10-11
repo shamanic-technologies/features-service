@@ -25,6 +25,9 @@ import {
   SOURCE_LEG_KEY,
   SOURCING_ORIGINS,
   SOURCING_ORIGIN_SLUGS,
+  SOURCING_CHANNEL_SLUGS,
+  LEAD_SOURCING_CHANNEL,
+  originsLeadSourcingMayUse,
   SOURCING_ORIGINS_BY_CHANNEL,
   SOURCING_PARENT_CHANNEL_SLUGS,
   sourceCampaignKeyOf,
@@ -78,6 +81,15 @@ router.get("/public/sourcing-origins", (_req, res) => {
     sourceLegKey: SOURCE_LEG_KEY,
     sourcingChannels: [...SOURCING_PARENT_CHANNEL_SLUGS],
     originsByChannel: Object.fromEntries(SOURCING_PARENT_CHANNEL_SLUGS.map((c) => [c, [...SOURCING_ORIGINS_BY_CHANNEL[c]!]])),
+    // LEAD SOURCING (owner 2026-10-11): the sourcing channel that is no origin of its own; it picks among the origins
+    // an outreach channel accepts (human-service decides which, per brand). Listed in `originsByChannel` beside them.
+    leadSourcing: {
+      slug: LEAD_SOURCING_CHANNEL.slug,
+      name: LEAD_SOURCING_CHANNEL.name,
+      description: LEAD_SOURCING_CHANNEL.description,
+      sourceCampaignKey: sourceCampaignKeyOf(LEAD_SOURCING_CHANNEL.slug),
+      mayUseByChannel: Object.fromEntries(SOURCING_PARENT_CHANNEL_SLUGS.map((c) => [c, originsLeadSourcingMayUse(c)])),
+    },
   });
 });
 
@@ -105,14 +117,14 @@ export async function offerSourcingCell(input: {
   const { offerId, brandId, pricing, identity } = input;
   const headers: DownstreamHeaders = { ...identity, featureSlug: undefined };
   const rows = await fetchBrandCampaignRows(brandId, undefined, identity);
-  // The offer's campaigns on a channel that sources leads, AND its source campaigns (featureSlug = an origin).
+  // The offer's campaigns on a channel that sources leads, AND its source campaigns (featureSlug = an origin or Lead Sourcing).
   const campaigns = rows
     .filter(
       (r) =>
         r.id &&
         r.offerId === offerId &&
         r.featureSlug &&
-        (SOURCING_PARENT_CHANNEL_SLUGS.includes(r.featureSlug) || SOURCING_ORIGIN_SLUGS.includes(r.featureSlug)),
+        (SOURCING_PARENT_CHANNEL_SLUGS.includes(r.featureSlug) || SOURCING_CHANNEL_SLUGS.includes(r.featureSlug)),
     )
     .map((r) => ({
       id: r.id,

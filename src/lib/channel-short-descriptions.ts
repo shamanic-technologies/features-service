@@ -63,6 +63,7 @@ export const CHANNEL_SHORT_DESCRIPTIONS: Readonly<Record<string, string>> = {
   "sourcing-linkedin-engagement-signals": "People who engage with your competitors' posts.",
   "sourcing-crm-contacts": "We work the contacts you already have.",
   "sourcing-apify-search": "Our former search provider, kept for its history.",
+  "lead-sourcing": "We pick the sources that bring you the most clients.",
   // Conversion
   "agency-meeting-booking": "Our team turns replies into booked meetings.",
   "your-team-meeting-booking": "Your team answers replies and books meetings.",

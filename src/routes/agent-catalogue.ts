@@ -25,7 +25,6 @@ import {
   legStepsOf,
   pathById,
   pipesOnLeg,
-  SOURCED_STEP,
   funnelLine,
   outcomesNeededPerPayingClient,
   funnelsOfPath,
@@ -68,6 +67,10 @@ import {
 import { actorOf, DeclarationError, parseLegInput, requestedByOrgIdOf, type TriggerTypeRecord } from "../lib/channel-declarations.js";
 import { allNamesByKey, salesPathNamesFor, SalesPathNamePoolExhaustedError } from "../lib/sales-path-names.js";
 import { funnelTriggerLabel } from "../lib/funnel-descriptions.js";
+import { LEAD_SOURCING_SLUG, SOURCE_LEG_KEY } from "../lib/sourcing-origins.js";
+
+/** The Lead Sourcing pipe, named in the one-channel-per-leg refusal. */
+const LEAD_SOURCING_PIPE_ID = `${LEAD_SOURCING_SLUG}|${SOURCE_LEG_KEY}`;
 import { campaignNameKeyOf } from "../lib/offer-sales-paths.js";
 import { getBrandEffectiveRates, getFleetArrowMedians, getFleetLifetimeRevenueMedian, legPairKey, peekFleetStatedMedians, type FleetArrowMedians } from "../lib/effective-conversion-rates.js";
 import { fetchBrandLegEconomics } from "../lib/brand-leg-economics-client.js";
@@ -804,7 +807,7 @@ async function funnelDetail(model: CatalogueModel, f: CatalogueFunnel, names: Ma
     legs: f.legs.map((l, i) => ({
       legKey: l.legKey,
       ...legStepsOf(model, l.legKey),
-      // Every leg a channel (owner 2026-10-11). The sourcing leg holds several (its pool, `pipe` null there).
+      // Every leg ONE channel (owner 2026-10-11), the sourcing leg included.
       channels: legPipes(l).map(legChannelOf),
       pipes: legPipes(l).map((p) => ({ id: p.id, name: names.get(nameKeyOfPipe(p)) ?? null, channelSlug: p.channelSlug, runnable: pipeRunnable(p) })),
       ratePct: path.rates[i].ratePct,
@@ -1115,7 +1118,7 @@ router.post("/internal/catalogue/sales-funnels", apiKeyOnly, async (req, res) =>
     const requestedByOrgId = requestedByOrgIdOf(body);
     const raw = body.pipeIds;
     if (!Array.isArray(raw) || raw.length === 0 || raw.some((l) => typeof l !== "string")) {
-      throw bad("pipe_ids_required", "pipeIds is required: one pipe id per leg of a sales path, in order (the sourcing leg may name several, or none: a funnel holds every source)");
+      throw bad("pipe_ids_required", "pipeIds is required: exactly one pipe id per leg of a sales path, in order (the sourcing leg included: one source, or Lead Sourcing)");
     }
     // EVERY LEG A CHANNEL (owner 2026-10-11): a leg is named by the pipe working it, never bare. A leg the customer's
     // own team works is its `Your Team` pipe.
@@ -1129,11 +1132,23 @@ router.post("/internal/catalogue/sales-funnels", apiKeyOnly, async (req, res) =>
       if (!p) throw new DeclarationError(404, "pipe_not_found", `pipeIds[${i}]: no pipe ${entry}`);
       return p;
     });
-    // The sourcing pool is every source on the leg, whatever the caller named (`funnelIdOf` leaves it out).
-    const legs: FunnelLeg[] = picked.filter((p) => p.toStep !== SOURCED_STEP).map((p) => ({ legKey: p.legKey, pipe: p }));
-    const funnel = legs.length > 0 ? funnelById(model, funnelIdOf(legs)) : null;
-    if (!funnel) {
-      throw bad("funnel_invalid", `${funnelIdOf(legs)} is no sales funnel: the pipes must work, in order, the legs of a sales path (GET /internal/catalogue/sales-paths)`);
+    // ONE CHANNEL PER LEG (owner 2026-10-11): a sales funnel is a straight line. Two pipes on one leg, or a leg of
+    // the path no pipe names (the sourcing leg included), is refused, never completed or pooled for the caller.
+    const twice = picked.findIndex((p, i) => picked.findIndex((q) => q.legKey === p.legKey) !== i);
+    if (twice >= 0) {
+      throw bad("one_channel_per_leg", `pipeIds[${twice}]: ${picked[twice].id} works the leg ${picked[twice].legKey} a pipe before it already works. A sales funnel names ONE channel per leg; on Start -> Lead found pick one source, or Lead Sourcing (pipe ${LEAD_SOURCING_PIPE_ID}) to let us pick the sources`);
+    }
+    const legs: FunnelLeg[] = picked.map((p) => ({ legKey: p.legKey, pipe: p }));
+    const id = funnelIdOf(legs);
+    const funnel = funnelById(model, id);
+    if (!funnel || funnel.id !== id) {
+      const path = pathById(model, pathIdOf(picked.map((p) => p.legKey)));
+      if (path && path.legKeys.length > picked.length) {
+        const named = new Set(picked.map((p) => p.legKey));
+        const missing = path.legKeys.filter((k) => !named.has(k));
+        throw bad("leg_without_channel", `${missing.join(", ")}: every leg of the sales path is worked by ONE channel; name its pipe (GET /internal/catalogue/pipes?legKeys=${missing[0]}), on Start -> Lead found one source or Lead Sourcing`);
+      }
+      throw bad("funnel_invalid", `${id} is no sales funnel: the pipes must work, in order, every leg of a sales path, each pipe feeding the next (GET /internal/catalogue/sales-paths)`);
     }
     const combinationKey = storedCombinationKeyOf(funnel.id);
     const existing = await listDeclaredSalesPaths();
@@ -1142,7 +1157,7 @@ router.post("/internal/catalogue/sales-funnels", apiKeyOnly, async (req, res) =>
     if (!declared) {
       await insertSalesPath(
         combinationKey,
-        funnel.legs.filter((l) => !l.pool).map((l) => ({ channelSlug: l.pipe?.channelSlug ?? null, legKey: l.pipe?.computedLegKey ?? l.legKey })),
+        funnel.legs.map((l) => ({ channelSlug: l.pipe?.channelSlug ?? null, legKey: l.pipe?.computedLegKey ?? l.legKey })),
         createdBy,
         requestedByOrgId,
       );
@@ -1206,14 +1221,12 @@ export interface FunnelCopy {
 }
 
 /**
- * A funnel's PATH as the dashboard draws it (owner 2026-10-11): `items` in reading order, a step, then the channel(s)
+ * A funnel's PATH as the dashboard draws it (owner 2026-10-11): `items` in reading order, a step, then the ONE channel
  * working the leg, then the leg's next step, and so on to Paid client. A proactive funnel starts at Start ("Start ->
- * Apollo Cold Filters + LinkedIn Engagement -> Lead found -> Sales Cold Email Outreach -> Positive reply -> Your Team
- * Closing Calls -> Paid client"); a reactive one with its TRIGGER item (`kind: "trigger"`, unique slug + name, "Positive
- * Reply") in place of its trigger step. EVERY two steps have at least one channel
- * between them ("il faut que tu fasses apparaître tous les channels utilisés entre chaque leg"), `runByUs` false on
- * the customer's own team's. The sourcing leg lists the campaign's own sources when `sourceSlugs` names some, else
- * every runnable source. `legs` states the same per leg, structured.
+ * Lead Sourcing -> Lead found -> Sales Cold Email Outreach -> Positive reply -> Your Team Closing Calls -> Paid
+ * client"); a reactive one with its TRIGGER item (`kind: "trigger"`, unique slug + name, "Positive Reply") in place of
+ * its trigger step. EVERY two steps have exactly one channel between them (owner 2026-10-11: a sales funnel is a
+ * straight line), `runByUs` false on the customer's own team's. `legs` states the same per leg, structured.
  */
 export interface FunnelPathView {
   /** A reactive funnel's first item is its TRIGGER (owner 2026-10-11: "[⚡ Positive Reply] -> [AI Meeting Booking] ->
@@ -1229,7 +1242,7 @@ export interface FunnelPathView {
     toStep: string;
     /** At least one channel of the leg is ours. */
     runByUs: boolean;
-    /** The leg's one channel; null on the sourcing leg, which `channels` lists (several). */
+    /** The leg's one channel. */
     channelSlug: string | null;
     channelName: string | null;
     channels: Array<{ slug: string; name: string; runByUs: boolean }>;
@@ -1238,20 +1251,15 @@ export interface FunnelPathView {
 
 const START_STEP = { kind: "step" as const, key: "start", label: "Start" };
 
-/** PURE: the path view of a funnel. `sourceSlugs` = the sources a campaign on it runs (its sourcing leg shows those). */
-export function funnelPathView(model: CatalogueModel, f: CatalogueFunnel, sourceSlugs: readonly string[] = []): FunnelPathView {
+/** PURE: the path view of a funnel: one channel per leg. */
+export function funnelPathView(model: CatalogueModel, f: CatalogueFunnel): FunnelPathView {
   const step = (key: string | null) => (key === null ? START_STEP : { kind: "step" as const, key, label: stepLabel(model, key) });
   const items: FunnelPathView["items"] = [];
   const trigger = funnelTrigger(model, f);
   const legs: FunnelPathView["legs"] = f.legs.map((l, i) => {
     const { fromStep, toStep } = legStepsOf(model, l.legKey);
     if (i === 0) items.push(trigger ? { kind: "trigger", ...trigger } : step(fromStep));
-    let pipes = legPipes(l);
-    if (l.pool) {
-      const own = pipes.filter((p) => sourceSlugs.includes(p.channelSlug));
-      pipes = own.length > 0 ? own : pipes.filter(pipeRunnable);
-    }
-    const channels = pipes.map((p) => ({ slug: p.channelSlug, name: p.channelName, runByUs: p.operatedBy === "platform" }));
+    const channels = legPipes(l).map((p) => ({ slug: p.channelSlug, name: p.channelName, runByUs: p.operatedBy === "platform" }));
     for (const c of channels) items.push({ kind: "channel", ...c });
     items.push(step(toStep));
     return {
@@ -1270,8 +1278,8 @@ export function funnelPathView(model: CatalogueModel, f: CatalogueFunnel, source
 export async function funnelCopiesFor(ids: readonly string[]): Promise<{
   copies: Map<string, FunnelCopy | null>;
   pipeSteps: Map<string, { fromStep: string | null; toStep: string }>;
-  /** A funnel campaign's path: its funnel's, its sourcing leg showing the sources the campaign runs. */
-  pathOf: (id: string, sourceSlugs: readonly string[]) => FunnelPathView | null;
+  /** A funnel campaign's path: its funnel's (one channel per leg). */
+  pathOf: (id: string) => FunnelPathView | null;
 }> {
   const [all, pub, declaredSteps, names, triggers] = await Promise.all([
     loadChannelCatalogue({ publishedOnly: false }),
@@ -1293,9 +1301,9 @@ export async function funnelCopiesFor(ids: readonly string[]): Promise<{
   }
   // Every pipe's steps, so a caller knows which step each of a campaign's units produces (`lib/value-added.ts`).
   const pipeSteps = new Map([...model.pipes.values()].map((p) => [p.id, { fromStep: p.fromStep, toStep: p.toStep }] as const));
-  const pathOf = (id: string, sourceSlugs: readonly string[]) => {
+  const pathOf = (id: string) => {
     const f = found.get(id);
-    return f ? funnelPathView(model, f, sourceSlugs) : null;
+    return f ? funnelPathView(model, f) : null;
   };
   return { copies: out, pipeSteps, pathOf };
 }

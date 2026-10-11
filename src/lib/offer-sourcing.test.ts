@@ -52,7 +52,9 @@ describe("sourcing origins", () => {
   });
 
   it("a spend read about a sourcing channel also counts the origins THAT channel serves from; any other scope is unchanged", () => {
+    // Lead Sourcing (owner 2026-10-11) feeds the channel like an origin: its serves are the channel's sourcing too.
     expect(withSourcingSlugs(["sales-cold-email-outreach"])).toEqual([
+      "lead-sourcing",
       "sales-cold-email-outreach",
       "sourcing-apify-search",
       "sourcing-apollo-buying-signals",

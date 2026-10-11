@@ -11,7 +11,7 @@ import {
   type AcquisitionChannel,
   type ChannelStepTransition,
 } from "../lib/acquisition-channels.js";
-import { SOURCING_ORIGINS } from "../lib/sourcing-origins.js";
+import { LEAD_SOURCING_CHANNEL, SOURCING_ORIGINS } from "../lib/sourcing-origins.js";
 import { channelTypeOf, type ChannelType } from "../lib/channel-types.js";
 
 /**
@@ -1086,6 +1086,34 @@ for (const origin of SOURCING_ORIGINS) {
     entities: [],
   });
 }
+
+/**
+ * LEAD SOURCING (owner 2026-10-11, `lib/sourcing-origins.ts` `LEAD_SOURCING_CHANNEL`): the sourcing channel that
+ * picks its own sources (human-service decides which origins, per brand, by ROI and fit). Same leg and terms as an
+ * origin: Start -> Lead found, reactive on `lead_requested`, run by us. A sales funnel names ONE channel on that
+ * leg: one origin, or this one.
+ */
+SEED_FEATURE_DEFS.push({
+  slug: LEAD_SOURCING_CHANNEL.slug,
+  name: LEAD_SOURCING_CHANNEL.name,
+  description: LEAD_SOURCING_CHANNEL.description,
+  icon: "sparkle",
+  implemented: true,
+  displayOrder: LEAD_SOURCING_CHANNEL.displayOrder,
+  status: "active",
+  acquisitionChannel: {
+    family: "sourcing",
+    operatedBy: "platform",
+    performedBy: "software",
+    stepTransitions: [{ from: null, to: "lead_found", mode: "reactive", triggerId: "lead_requested" }],
+    terms: terms(0, 1, 1),
+  },
+  supersededBySlug: null,
+  inputs: [],
+  outputs: [],
+  charts: [],
+  entities: [],
+});
 
 /**
  * The catalogue as every consumer reads it: the definitions above with `salesFunnels` DERIVED from what
