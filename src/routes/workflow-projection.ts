@@ -47,7 +47,7 @@ import { fetchOfferScopeIdsSoft } from "../lib/offer-scope.js";
 import { withInteractiveReads } from "../lib/lead-copy.js";
 import { describeIdentity, type CampaignIdentity, type CampaignIdentityView } from "../lib/campaign-identity.js";
 import { DEFAULT_MAXIMIZE, MAXIMIZE_ERROR, parseMaximize, type Maximize } from "../lib/maximize.js";
-import { workflowlessPipeLeg } from "../lib/workflowless-pipes.js";
+import { unpricedPipeLeg } from "../lib/unpriced-pipes.js";
 import {
   buildObservedPicks,
   fetchCampaignTriggerRunsSoft,
@@ -1221,23 +1221,44 @@ function exploreResolved(
 type ProjectionCostBasis = "billed" | "actual";
 
 /**
- * The answer for a pipe that runs no workflow (lib/workflowless-pipes.ts): nothing to rank, nothing
- * recommended, and `measured: false` + `no_active_workflows` so the empty `rows` read as "no workflow
- * here", never as "nobody to contact". The leg's maturity rule is echoed (a 0-day leg: nothing to cut).
- * No funnel prices it, so there is no `leg`/`funnelKey` block and no economics.
+ * The answer for a pipe no sales funnel prices (lib/unpriced-pipes.ts: sourcing, AI Instant Call). Like
+ * every pipe it runs the workflows ASSIGNED to it (owner 2026-10-11: "every pipe has a workflow"), read
+ * live and fail-loud from the same table as every leg read. Nothing prices them here (no funnel, no
+ * ladder evidence), so each row is `measured: false` with an all-null `resolved`, ordered selectable
+ * first then by slug, and rank 1 is named as the workflow to start on (`recommendationBasis:
+ * "cold_start"`, no budget), exactly the cold start of any leg. No assignment at all → `rows: []`,
+ * `no_active_workflows`; only deprecated ones → `recommendationWithheldReason: "no_eligible_workflow"`.
  */
-export function noWorkflowPipeProjection(featureSlug: string, legKey: string, maximize: Maximize): WorkflowProjectionResponse {
+export async function unpricedPipeProjection(featureSlug: string, legKey: string, maximize: Maximize): Promise<WorkflowProjectionResponse> {
+  const assignments = await fetchLegAssignments(featureSlug, legKey);
+  const verdicts = [...assignments.keys()]
+    .map((slug) => ({ slug, verdict: legAssignmentVerdict(assignments.get(slug), legKey) }))
+    .sort((a, b) => Number(b.verdict.selectable) - Number(a.verdict.selectable) || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
+  const rows: ProjectionRow[] = verdicts.map(({ slug, verdict }, i) => ({
+    audienceId: null,
+    workflow: { workflowDynastySlug: slug, workflowDynastyName: null },
+    estimatesByGrain: {},
+    resolved: { ...UNMEASURED_RESOLVED },
+    measured: false,
+    rank: i + 1,
+    scopeRank: i + 1,
+    legAssignment: verdict,
+    modelEligibility: { modelAlias: null, modelTier: null, eligible: verdict.selectable, ineligibleReason: verdict.reason, unknownTierReason: null },
+    maturity: { basis: "flash", isMature: null, matureOutcomes: null, resolved: maturityPair<ResolvedFigures>(null, null, null) },
+  }));
+  const recommended = verdicts.find((v) => v.verdict.selectable)?.slug ?? null;
   return {
     featureSlug,
     objective: "meeting-booked",
     maximize,
     goal: "meetingBooked",
     economics: null,
-    rows: [],
-    recommendedWorkflowDynastySlug: null,
+    rows,
+    recommendedWorkflowDynastySlug: recommended,
     recommendedBudgetUsd: null,
     measured: false,
-    unmeasuredReason: "no_active_workflows",
+    unmeasuredReason: recommended ? "no_spend_recorded" : "no_active_workflows",
+    ...(recommended ? { recommendationBasis: "cold_start" as const } : rows.length > 0 ? { recommendationWithheldReason: "no_eligible_workflow" as const } : {}),
     maturity: { ...legMaturity(legKey), legKey, cutoffIso: null, measured: true, unmeasuredReason: null },
   };
 }
@@ -1269,13 +1290,13 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
   const legParam = req.query.leg as string | undefined;
   let legKey: string | null = null;
   if (legParam != null && legParam !== "") {
-    // A pipe of a channel that sells no reading funnel (sourcing, AI Instant Call) runs no workflow:
-    // that is an ANSWER, not an unknown or undeclared leg (lib/workflowless-pipes.ts).
-    const pipeLegKey = workflowlessPipeLeg(featureSlug, legParam);
+    // A pipe no sales funnel prices (sourcing, AI Instant Call) is answered from its ASSIGNED workflows,
+    // never refused as an unknown or undeclared leg (lib/unpriced-pipes.ts).
+    const pipeLegKey = unpricedPipeLeg(featureSlug, legParam);
     if (pipeLegKey) {
       const maximizeParam = parseMaximize(req.query as Record<string, unknown>);
       if (!maximizeParam.ok) return res.status(400).json({ error: MAXIMIZE_ERROR, reason: "maximize_unrecognised" });
-      return res.json(noWorkflowPipeProjection(featureSlug, pipeLegKey, maximizeParam.maximize));
+      return res.json(await unpricedPipeProjection(featureSlug, pipeLegKey, maximizeParam.maximize));
     }
     // Both spellings of an outbound leg are one identity (wave 1, `lib/funnel-legs.ts`): resolved to the stored one.
     legKey = matchChannelLegKey(featureSlug, legParam);
