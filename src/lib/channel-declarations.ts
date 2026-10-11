@@ -369,6 +369,13 @@ export interface TriggerInput {
 export const isTriggerCoded = (t: Pick<TriggerTypeRecord, "origin" | "coded" | "kind">): boolean =>
   t.origin === "code" ? t.coded : GENERIC_DETECTOR_KINDS.has(t.kind);
 
+/** PURE: refuse a trigger NAME another trigger already has (case-insensitive; owner 2026-10-11, `lib/channel-triggers.ts`). */
+function assertTriggerNameFree(label: string, existing: ReadonlyArray<{ id: string; label: string }>, selfId: string | null): void {
+  const key = label.trim().toLowerCase();
+  const twin = [...existing, ...CHANNEL_TRIGGER_TYPES].find((t) => t.id !== selfId && t.label.trim().toLowerCase() === key);
+  if (twin) throw new DeclarationError(409, "trigger_name_taken", `the trigger ${twin.id} is already named ${JSON.stringify(twin.label)}: every trigger has a unique name`);
+}
+
 /** PURE: read a create-trigger body. A declared trigger is never coded on its own say-so. */
 export function parseTriggerInput(body: Body, existing: readonly TriggerTypeRecord[]): TriggerInput {
   const id = text(body, "id", 64);
@@ -399,20 +406,25 @@ export function parseTriggerInput(body: Body, existing: readonly TriggerTypeReco
     params = parsePollParams(body.params);
     firedBy = "campaign-service";
   }
-  return { id, label: text(body, "label", 80), description: text(body, "description", 500), icon: icon(body), kind: kind as TriggerKind, fromStep, params, firedBy };
+  const label = text(body, "label", 80);
+  assertTriggerNameFree(label, existing, null);
+  return { id, label, description: text(body, "description", 500), icon: icon(body), kind: kind as TriggerKind, fromStep, params, firedBy };
 }
 
 export type TriggerPatch = Partial<Pick<TriggerTypeRecord, "label" | "description" | "icon">>;
 
 /** PURE: a declared trigger's wording may change; its id, kind and parameters are what legs rely on. */
-export function parseTriggerPatch(body: Body, current: TriggerTypeRecord): TriggerPatch {
+export function parseTriggerPatch(body: Body, current: TriggerTypeRecord, existing: readonly TriggerTypeRecord[]): TriggerPatch {
   if (current.origin === "code") throw new DeclarationError(409, "trigger_coded", `${current.id} is stated in code: change it in lib/channel-triggers.ts`);
   for (const frozen of ["id", "kind", "params", "fromStep", "coded", "firedBy"]) {
     if (body[frozen] !== undefined) throw bad("field_immutable", `${frozen} cannot change: declare a new trigger instead`);
   }
   const patch: TriggerPatch = {};
   const label = optionalText(body, "label", 80);
-  if (label !== undefined) patch.label = label;
+  if (label !== undefined) {
+    assertTriggerNameFree(label, existing, current.id);
+    patch.label = label;
+  }
   const description = optionalText(body, "description", 500);
   if (description !== undefined) patch.description = description;
   if (body.icon !== undefined) patch.icon = icon(body);

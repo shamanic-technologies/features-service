@@ -40,10 +40,16 @@ export interface ChannelTriggerType {
   coded: boolean;
 }
 
+/**
+ * Every trigger has a UNIQUE slug (`id`) AND a unique NAME (`label`, case-insensitive; owner 2026-10-11): a reactive
+ * sales path or funnel STARTS with its trigger, shown by name ("Positive Reply"), so two triggers may never read
+ * alike. Enforced by the unique index `channel_trigger_types_label_lower_unique` (migration 0026) and refused on
+ * create / rename (409 `trigger_name_taken`, `lib/channel-declarations.ts`). Names are Title Case, like a channel's.
+ */
 export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
   {
     id: "lead_requested",
-    label: "Lead requested",
+    label: "Lead Requested",
     description: "A campaign needs a new person to contact.",
     icon: "user-focus",
     fromStep: null,
@@ -53,7 +59,7 @@ export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
   },
   {
     id: "positive_reply_received",
-    label: "Positive reply",
+    label: "Positive Reply",
     description: "A prospect replied with interest.",
     icon: "thumbs-up",
     fromStep: "conversation",
@@ -63,7 +69,7 @@ export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
   },
   {
     id: "website_visited",
-    label: "Website visit",
+    label: "Website Visit",
     description: "A prospect clicked through to your site.",
     icon: "cursor-click",
     fromStep: "website_visit",
@@ -72,7 +78,7 @@ export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
   },
   {
     id: "booking_call_started",
-    label: "Booking call",
+    label: "Booking Call",
     description: "A prospect was put on a call with your sales rep.",
     icon: "phone-call",
     fromStep: "booking_call",
@@ -81,7 +87,7 @@ export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
   },
   {
     id: "meeting_booked",
-    label: "Meeting booked",
+    label: "Meeting Booked",
     description: "A prospect booked a meeting.",
     icon: "calendar-check",
     fromStep: "meeting_booked",
@@ -90,7 +96,7 @@ export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
   },
   {
     id: "meeting_attended",
-    label: "Meeting attended",
+    label: "Meeting Attended",
     description: "A booked meeting was held.",
     icon: "handshake",
     fromStep: "meeting_attended",
@@ -108,7 +114,7 @@ export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
   },
   {
     id: "form_submitted",
-    label: "Form submitted",
+    label: "Form Submitted",
     description: "A prospect filled in a form.",
     icon: "clipboard-text",
     fromStep: "form_submitted",

@@ -183,6 +183,13 @@
       "when": 1791936000000,
       "tag": "0025_paths_start_at_start",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1792022400000,
+      "tag": "0026_trigger_names_unique",
+      "breakpoints": true
     }
   ]
 }

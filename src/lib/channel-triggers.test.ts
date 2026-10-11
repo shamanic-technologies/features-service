@@ -53,8 +53,9 @@ describe("every leg states proactive or reactive, and a reactive leg names one d
     for (const t of CHANNEL_TRIGGER_TYPES) expect(VERIFIED_PHOSPHOR.has(t.icon), `${t.id}: ${t.icon}`).toBe(true);
   });
 
-  it("trigger ids are unique and every one has a label and an icon", () => {
+  it("trigger ids (slugs) AND names are unique, every one has a label and an icon (owner 2026-10-11)", () => {
     expect(new Set(CHANNEL_TRIGGER_TYPES.map((t) => t.id)).size).toBe(CHANNEL_TRIGGER_TYPES.length);
+    expect(new Set(CHANNEL_TRIGGER_TYPES.map((t) => t.label.trim().toLowerCase())).size).toBe(CHANNEL_TRIGGER_TYPES.length);
     for (const t of CHANNEL_TRIGGER_TYPES) expect(t.label.length * t.icon.length * t.description.length).toBeGreaterThan(0);
   });
 });
