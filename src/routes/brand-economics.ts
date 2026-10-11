@@ -97,6 +97,7 @@ import { computeAudienceStats, type ComputeResult } from "../lib/audience-stats-
 import { computeBrandPipelineActivity } from "./pipeline-activity.js";
 import { BrandOwnershipError, assertBrandHeld as assertBrandHeldByOrg } from "../lib/brand-ownership.js";
 import { servedCached, servedCachedJson, sendSnapshotJson, buildScopeKey } from "../lib/view-cache.js";
+import { expectedReturnForBrand, expectedReturnForScope, withAudienceExpectedReturns } from "../lib/expected-return.js";
 import { withInteractiveReads } from "../lib/lead-copy.js";
 import { applyLeadDetail, parseLeadDetail, LEAD_DETAIL_VALUES } from "../lib/lead-detail.js";
 import {
@@ -392,11 +393,15 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
             maturity: channelBody.maturity ?? null,
           };
         });
+        // NEVER EMPTY (owner 2026-10-11): the measured return when mature, else the best of the brand's offers' sales
+        // paths priced on named hypotheses (`lib/expected-return.ts`). Additive: the measured figures are unchanged.
+        const expectedReturn = await expectedReturnForBrand(headers, brandId, body.costEconomics.maturity);
         return {
           brandId,
           costBasis: "charged" as const,
           channels: groups,
           ...applyLeadDetail(body, leadDetail),
+          expectedReturn,
           ...(window ? { window } : {}),
         };
       },
@@ -625,7 +630,9 @@ router.get("/brands/:brandId/audience-stats", apiKeyAuth, async (req, res) => {
     });
     if (!result.ok) return res.status(result.status).json({ error: result.error });
     // `brandId` already rides the envelope with the identical value — stated once.
-    res.json({ channels: describeChannels(channels), ...result.envelope });
+    // NEVER EMPTY (owner 2026-10-11): every row's mature return, else the brand's sales path model (`lib/expected-return.ts`).
+    const scopeModel = await expectedReturnForScope(headers, brandId, { campaign: null, offerId: null });
+    res.json({ channels: describeChannels(channels), ...withAudienceExpectedReturns(result.envelope, scopeModel) });
   } catch (error) {
     return handleError(res, error, "audience stats");
   }

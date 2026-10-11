@@ -147,6 +147,191 @@
           "updatedAt"
         ]
       },
+      "ExpectedReturn": {
+        "type": "object",
+        "properties": {
+          "roiMultiple": {
+            "type": "number",
+            "nullable": true,
+            "description": "The EXPECTED return, never null unless unavailableReason. = the scope's own MATURE return when it has one (basis measured), else its sales path's ROI exactly as GET /offers/{offerId}/sales-paths prices it: lifetime revenue / cost per paying client, each leg's rate measured > stated > fleet median > industry default, each leg's cost best mature workflow > fleet measured > seeded default, the offer's stated lifetime revenue else the fleet median. Additive: costEconomics.roiMultiple and its maturity verdict are unchanged."
+          },
+          "basis": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "measured",
+              "stated",
+              "fleet",
+              "default"
+            ],
+            "description": "What an expected figure rests on, the WEAKEST of its inputs: measured (the scope's own mature evidence / a measured rate / our own workflow's mature cost) < stated (the customer stated it: a leg rate, the offer's lifetime revenue) < fleet (the fleet median / the fleet's measured cost) < default (a seeded industry benchmark or cost). A tooltip says it in words."
+          },
+          "assumptions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "input": {
+                  "type": "string",
+                  "enum": [
+                    "lifetime_revenue",
+                    "rate",
+                    "cost",
+                    "sales_path"
+                  ]
+                },
+                "legKey": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The leg a rate or a cost is about. Null otherwise."
+                },
+                "basis": {
+                  "type": "string",
+                  "enum": [
+                    "measured",
+                    "stated",
+                    "fleet",
+                    "default"
+                  ],
+                  "description": "What an expected figure rests on, the WEAKEST of its inputs: measured (the scope's own mature evidence / a measured rate / our own workflow's mature cost) < stated (the customer stated it: a leg rate, the offer's lifetime revenue) < fleet (the fleet median / the fleet's measured cost) < default (a seeded industry benchmark or cost). A tooltip says it in words."
+                },
+                "source": {
+                  "type": "string",
+                  "description": "The producer's own word: crm_measured | measured_on_our_leads | customer_stated | fleet_median | industry_default (rate); workflow | fleet_measured | default | benchmark (cost); offer_stated | fleet_median (lifetime_revenue); not_running (sales_path: the offer runs no funnel campaign, so the figure is the best path we would sell it)."
+                }
+              },
+              "required": [
+                "input",
+                "legKey",
+                "basis",
+                "source"
+              ]
+            },
+            "description": "Every input the model figure rests on, with its own source. Empty on a measured figure."
+          },
+          "combinationKey": {
+            "type": "string",
+            "nullable": true,
+            "description": "The sales path (combination key, stored spelling) the figure is read off. A funnel campaign reads its own; a campaign the best selected path running it; an offer its best selected path (proactive first); a brand its best offer. Null on a measured figure."
+          },
+          "costPerOutcome": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "costPerOutcomeUsd": {
+                "type": "number"
+              },
+              "legKey": {
+                "type": "string"
+              },
+              "stepKey": {
+                "type": "string",
+                "description": "The outcome the cost buys (the leg's TO step), e.g. conversation (a positive reply) or website_visit."
+              },
+              "basis": {
+                "type": "string",
+                "enum": [
+                  "measured",
+                  "stated",
+                  "fleet",
+                  "default"
+                ],
+                "description": "What an expected figure rests on, the WEAKEST of its inputs: measured (the scope's own mature evidence / a measured rate / our own workflow's mature cost) < stated (the customer stated it: a leg rate, the offer's lifetime revenue) < fleet (the fleet median / the fleet's measured cost) < default (a seeded industry benchmark or cost). A tooltip says it in words."
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "workflow",
+                  "fleet_measured",
+                  "default",
+                  "benchmark"
+                ]
+              }
+            },
+            "required": [
+              "costPerOutcomeUsd",
+              "legKey",
+              "stepKey",
+              "basis",
+              "source"
+            ],
+            "description": "The EXPECTED cost per outcome of the scope's leg on that path (a campaign's own leg; an offer's, funnel's or brand's first platform leg). Always the model's figure, also beside a measured return. Null on a path whose legs carry no platform cost."
+          },
+          "unavailableReason": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "expected_model_unavailable",
+              "expected_model_computing",
+              "no_priced_sales_path"
+            ],
+            "description": "Why roiMultiple is null: the model could not be read (logged), is computing for the first time since a deploy (served on the next read), or no path could be priced."
+          }
+        },
+        "required": [
+          "roiMultiple",
+          "basis",
+          "assumptions",
+          "combinationKey",
+          "costPerOutcome",
+          "unavailableReason"
+        ],
+        "description": "THE EXPECTED RETURN (owner 2026-10-11: every ROI surface always reads a value, even expected, on a stated hypothesis). See roiMultiple."
+      },
+      "ExpectedConversion": {
+        "type": "object",
+        "properties": {
+          "ratePct": {
+            "type": "number",
+            "nullable": true,
+            "description": "The row's EXPECTED % Conversion, never null except on Paid client (nothing converts past it) or unavailableReason. = conversionFromRowAbove.ratePct when measured, else the brand's effective rate of the leg out of the row's step on the offer's priced paths (GET /brands/{brandId}/conversion-rates: measured > stated > fleet median > industry default; the shallowest next step); the contacted row: the entry leg's fleet conversion, else a seeded cold-email benchmark (1% positive reply, 2% website visit)."
+          },
+          "basis": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "measured",
+              "stated",
+              "fleet",
+              "default"
+            ],
+            "description": "What an expected figure rests on, the WEAKEST of its inputs: measured (the scope's own mature evidence / a measured rate / our own workflow's mature cost) < stated (the customer stated it: a leg rate, the offer's lifetime revenue) < fleet (the fleet median / the fleet's measured cost) < default (a seeded industry benchmark or cost). A tooltip says it in words."
+          },
+          "source": {
+            "type": "string",
+            "nullable": true,
+            "description": "measured | manual | median | default (the effective rate's own source) | fleet_measured | default_entry."
+          },
+          "toStep": {
+            "type": "string",
+            "nullable": true,
+            "description": "The step the rate leads to (the row above when measured)."
+          },
+          "legKey": {
+            "type": "string",
+            "nullable": true,
+            "description": "The leg the hypothesis is read off. Null when measured."
+          },
+          "unavailableReason": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "final_step",
+              "rates_unavailable",
+              "no_next_step"
+            ]
+          }
+        },
+        "required": [
+          "ratePct",
+          "basis",
+          "source",
+          "toStep",
+          "legKey",
+          "unavailableReason"
+        ],
+        "description": "THE EXPECTED % CONVERSION (owner 2026-10-11: a conversion rate is never empty, on a stated hypothesis). Additive beside conversionFromRowAbove (unchanged)."
+      },
       "LegMaturityRule": {
         "type": "object",
         "properties": {
@@ -4091,6 +4276,16 @@
                 "description": "The scope's per-leg figures on both bases and its verdict. Null where the lead population was never read (no funnel wired)."
               }
             ]
+          },
+          "expectedReturn": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExpectedReturn"
+              },
+              {
+                "description": "The scope's EXPECTED return, never empty (see ExpectedReturn): campaign (?campaignId=), offer (?offerId=, /offers/{id}/revenue) or brand (/brands/{id}/revenue, a brand-wide read). Absent on ?lens= and ?workflow= reads."
+              }
+            ]
           }
         },
         "required": [
@@ -4498,6 +4693,16 @@
                     {
                       "nullable": true,
                       "description": "The identity's per-leg figures and verdict — the object its own ?campaignId= read serves."
+                    }
+                  ]
+                },
+                "expectedReturn": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ExpectedReturn"
+                    },
+                    {
+                      "description": "The identity's EXPECTED return, never empty (see ExpectedReturn), the one its own ?campaignId= read serves. Absent on the staff actual-cost read."
                     }
                   ]
                 }
@@ -5106,6 +5311,16 @@
                     {
                       "nullable": true,
                       "description": "The offer's per-leg figures and verdict."
+                    }
+                  ]
+                },
+                "expectedReturn": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ExpectedReturn"
+                    },
+                    {
+                      "description": "The offer's EXPECTED return, never empty (see ExpectedReturn)."
                     }
                   ]
                 }
@@ -7959,6 +8174,16 @@
                       "description": "This audience's per-leg figures on both bases and its verdict. The rows' spend and outcomes plus the envelope's unattributedMaturity add up to the envelope's maturity."
                     }
                   ]
+                },
+                "expectedReturn": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ExpectedReturn"
+                    },
+                    {
+                      "description": "This audience's EXPECTED return, never empty (see ExpectedReturn): its own projection.maturity mature returnPerDollar when mature (basis measured), else the scope's sales path model (the campaign's, offer's or brand's)."
+                    }
+                  ]
                 }
               },
               "required": [
@@ -8120,6 +8345,16 @@
               {
                 "nullable": true,
                 "description": "Spend and leads of this scope whose serve carried NO audience tag."
+              }
+            ]
+          },
+          "expectedReturn": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExpectedReturn"
+              },
+              {
+                "description": "The SCOPE's expected return, never empty (see ExpectedReturn): brandProjection.maturity's mature returnPerDollar when mature, else the scope's sales path model."
               }
             ]
           }
@@ -10435,6 +10670,16 @@
               }
             ]
           },
+          "expectedReturn": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExpectedReturn"
+              },
+              {
+                "description": "The scope's EXPECTED return, never empty (see ExpectedReturn): campaign (?campaignId=), offer (?offerId=, /offers/{id}/revenue) or brand (/brands/{id}/revenue, a brand-wide read). Absent on ?lens= and ?workflow= reads."
+              }
+            ]
+          },
           "offerId": {
             "type": "string"
           },
@@ -12618,6 +12863,16 @@
                           "points"
                         ],
                         "description": "THE SLICED % CONVERSION, DATED (only with ?conversionHistory=true, else null): per day since the offer's first delivery, every person stands where they stood that day (the furthest step priced for them reached by then, else the furthest reached, else the contacted row once contacted), then the conversionFromRowAbove rule. Null on a step that is not counted, and when no delivery date is known."
+                      },
+                      "expectedConversionFromRowAbove": {
+                        "allOf": [
+                          {
+                            "$ref": "#/components/schemas/ExpectedConversion"
+                          },
+                          {
+                            "description": "Never empty: the measured % Conversion, else a named hypothesis (see ExpectedConversion)."
+                          }
+                        ]
                       }
                     },
                     "required": [
@@ -13248,6 +13503,16 @@
                             "points"
                           ],
                           "description": "THE SLICED % CONVERSION, DATED (only with ?conversionHistory=true, else null): per day since the offer's first delivery, every person stands where they stood that day (the furthest step priced for them reached by then, else the furthest reached, else the contacted row once contacted), then the conversionFromRowAbove rule. Null on a step that is not counted, and when no delivery date is known."
+                        },
+                        "expectedConversionFromRowAbove": {
+                          "allOf": [
+                            {
+                              "$ref": "#/components/schemas/ExpectedConversion"
+                            },
+                            {
+                              "description": "Never empty: the measured % Conversion, else a named hypothesis (see ExpectedConversion)."
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -16606,6 +16871,16 @@
                       "description": "This audience's per-leg figures on both bases and its verdict. The rows' spend and outcomes plus the envelope's unattributedMaturity add up to the envelope's maturity."
                     }
                   ]
+                },
+                "expectedReturn": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ExpectedReturn"
+                    },
+                    {
+                      "description": "This audience's EXPECTED return, never empty (see ExpectedReturn): its own projection.maturity mature returnPerDollar when mature (basis measured), else the scope's sales path model (the campaign's, offer's or brand's)."
+                    }
+                  ]
                 }
               },
               "required": [
@@ -16767,6 +17042,16 @@
               {
                 "nullable": true,
                 "description": "Spend and leads of this scope whose serve carried NO audience tag."
+              }
+            ]
+          },
+          "expectedReturn": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExpectedReturn"
+              },
+              {
+                "description": "The SCOPE's expected return, never empty (see ExpectedReturn): brandProjection.maturity's mature returnPerDollar when mature, else the scope's sales path model."
               }
             ]
           },
@@ -19357,6 +19642,16 @@
               }
             ]
           },
+          "expectedReturn": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExpectedReturn"
+              },
+              {
+                "description": "The scope's EXPECTED return, never empty (see ExpectedReturn): campaign (?campaignId=), offer (?offerId=, /offers/{id}/revenue) or brand (/brands/{id}/revenue, a brand-wide read). Absent on ?lens= and ?workflow= reads."
+              }
+            ]
+          },
           "brandId": {
             "type": "string"
           },
@@ -20117,6 +20412,16 @@
                   ],
                   "description": "`units_price_differently`: the units' channels price on two different funnel definitions, so no ROI can be one figure (investedUsd is still served). Null otherwise."
                 },
+                "expectedReturn": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ExpectedReturn"
+                    },
+                    {
+                      "description": "The funnel campaign's EXPECTED return, never empty (see ExpectedReturn): its own mature return (basis measured), else its own sales path (salesFunnelId = the combination key) priced on named hypotheses. roiMultiple and maturity are unchanged."
+                    }
+                  ]
+                },
                 "headline": {
                   "type": "object",
                   "nullable": true,
@@ -20338,6 +20643,7 @@
                 "investedUsd",
                 "roiMultiple",
                 "moneyUnavailableReason",
+                "expectedReturn",
                 "headline",
                 "costEconomics",
                 "maturity",
@@ -22607,6 +22913,16 @@
                       "description": "This audience's per-leg figures on both bases and its verdict. The rows' spend and outcomes plus the envelope's unattributedMaturity add up to the envelope's maturity."
                     }
                   ]
+                },
+                "expectedReturn": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ExpectedReturn"
+                    },
+                    {
+                      "description": "This audience's EXPECTED return, never empty (see ExpectedReturn): its own projection.maturity mature returnPerDollar when mature (basis measured), else the scope's sales path model (the campaign's, offer's or brand's)."
+                    }
+                  ]
                 }
               },
               "required": [
@@ -22768,6 +23084,16 @@
               {
                 "nullable": true,
                 "description": "Spend and leads of this scope whose serve carried NO audience tag."
+              }
+            ]
+          },
+          "expectedReturn": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExpectedReturn"
+              },
+              {
+                "description": "The SCOPE's expected return, never empty (see ExpectedReturn): brandProjection.maturity's mature returnPerDollar when mature, else the scope's sales path model."
               }
             ]
           },
@@ -33387,6 +33713,16 @@
                                 "description": "This audience's per-leg figures on both bases and its verdict. The rows' spend and outcomes plus the envelope's unattributedMaturity add up to the envelope's maturity."
                               }
                             ]
+                          },
+                          "expectedReturn": {
+                            "allOf": [
+                              {
+                                "$ref": "#/components/schemas/ExpectedReturn"
+                              },
+                              {
+                                "description": "This audience's EXPECTED return, never empty (see ExpectedReturn): its own projection.maturity mature returnPerDollar when mature (basis measured), else the scope's sales path model (the campaign's, offer's or brand's)."
+                              }
+                            ]
                           }
                         },
                         "required": [
@@ -33548,6 +33884,16 @@
                         {
                           "nullable": true,
                           "description": "Spend and leads of this scope whose serve carried NO audience tag."
+                        }
+                      ]
+                    },
+                    "expectedReturn": {
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/ExpectedReturn"
+                        },
+                        {
+                          "description": "The SCOPE's expected return, never empty (see ExpectedReturn): brandProjection.maturity's mature returnPerDollar when mature, else the scope's sales path model."
                         }
                       ]
                     }

@@ -39,6 +39,7 @@ import type { DeclaredSalesFunnel } from "../lib/sales-funnels-client.js";
 import { fetchSalesFunnelCampaigns, type SalesFunnelUnitRow } from "../lib/sales-funnel-campaigns-client.js";
 import { STEP_SIGNAL, takeoverStepOf } from "../lib/value-added.js";
 import { computeTakeoverReturn } from "../lib/value-added-io.js";
+import { expectedReturnForFunnelCampaign } from "../lib/expected-return.js";
 
 const router = Router();
 
@@ -121,6 +122,16 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
             },
           });
 
+      // NEVER EMPTY (owner 2026-10-11): the measured return when mature, else the funnel's own sales path priced
+      // on hypotheses, each named (`lib/expected-return.ts`). Additive: `roiMultiple` and `maturity` are unchanged.
+      const expectedReturn = await expectedReturnForFunnelCampaign(
+        headers,
+        brandId,
+        r.offerId,
+        r.salesFunnelId,
+        distinct.length <= 1 ? (money?.costEconomics.maturity ?? null) : null,
+      );
+
       return {
         id: r.id,
         brandId: r.brandId,
@@ -143,6 +154,7 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
         investedUsd: money ? money.costEconomics.committedCostUsd : 0,
         roiMultiple: money && distinct.length <= 1 ? money.costEconomics.roiMultiple : null,
         moneyUnavailableReason: distinct.length > 1 ? "units_price_differently" : null,
+        expectedReturn,
         // The pipeline and WHY it is unpriced (`unpricedReason`, e.g. `no_funnel_wired` on an AI meeting
         // booking funnel), the block a campaign row serves: a null ROI always reads with its reason.
         headline: money?.headline ?? null,

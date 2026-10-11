@@ -1640,7 +1640,7 @@ describe("GET /features/:featureSlug/revenue?groupBy=campaignId", () => {
     // Each group is lean — campaignId + the identity it was totalled over + headline + costEconomics
     // + the volume half, no timeSeries/orgs/leads/events.
     for (const g of res.body.groups) {
-      expect(Object.keys(g).sort()).toEqual(["campaignId", "campaignIdentity", "costEconomics", "headline", "maturity", "outcomes"]);
+      expect(Object.keys(g).sort()).toEqual(["campaignId", "campaignIdentity", "costEconomics", "expectedReturn", "headline", "maturity", "outcomes"]);
     }
     const byId = Object.fromEntries(res.body.groups.map((g: any) => [g.campaignId, g]));
     // grouped costEconomics carries NEITHER lens-only field

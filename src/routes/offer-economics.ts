@@ -87,6 +87,7 @@ import { computeOfferPipelineActivity } from "./pipeline-activity.js";
 import { assertBrandHeld } from "../lib/brand-ownership.js";
 import { withInteractiveReads } from "../lib/lead-copy.js";
 import { servedCached, servedCachedJson, sendSnapshotJson, buildScopeKey, type SnapshotJson } from "../lib/view-cache.js";
+import { expectedReturnForOffer, expectedReturnForScope, withAudienceExpectedReturns } from "../lib/expected-return.js";
 import { applyLeadDetail, parseLeadDetail, LEAD_DETAIL_VALUES } from "../lib/lead-detail.js";
 import {
   OUTCOME_CAUSES,
@@ -391,12 +392,16 @@ export async function offerRevenueJson(args: OfferRevenueArgs): Promise<Snapshot
           maturity: channelBody.maturity ?? null,
         };
       });
+      // NEVER EMPTY (owner 2026-10-11): the measured return when mature, else the offer's best sales path priced on
+      // named hypotheses (`lib/expected-return.ts`). Additive: the measured figures are unchanged.
+      const expectedReturn = await expectedReturnForOffer(headers, brandId, offerId, body.costEconomics.maturity);
       return {
         offerId,
         brandId,
         costBasis: "charged" as const,
         channels: groups,
         ...applyLeadDetail(body, leadDetail),
+        expectedReturn,
         ...(window ? { window } : {}),
       };
     },
@@ -453,7 +458,9 @@ router.get("/offers/:offerId/audience-stats", apiKeyAuth, async (req, res) => {
       compute: () => computeAudienceStats(req, pricing, campaignIds, channels, offerId),
     });
     if (!result.ok) return res.status(result.status).json({ error: result.error });
-    res.json({ offerId, channels: describeChannels(channels), ...result.envelope });
+    // NEVER EMPTY (owner 2026-10-11): every row's mature return, else the offer's sales path model (`lib/expected-return.ts`).
+    const scopeModel = await expectedReturnForScope(headers, brandId, { campaign: null, offerId });
+    res.json({ offerId, channels: describeChannels(channels), ...withAudienceExpectedReturns(result.envelope, scopeModel) });
   } catch (error) {
     if (error instanceof OfferHasNoChannelsError) {
       return res.status(404).json({ error: error.message, reason: "offer_has_no_channels", offerId: error.offerId });
