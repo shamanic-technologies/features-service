@@ -105,7 +105,7 @@ export async function registerChannelTriggerTypes(): Promise<void> {
       displayOrder,
       // A code trigger whose id was declared first is promoted: the code now states it.
       origin: "code",
-      kind: "event",
+      kind: t.kind ?? "event",
       params: null,
       updatedAt: new Date(),
     };

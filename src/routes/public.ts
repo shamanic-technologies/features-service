@@ -3343,8 +3343,8 @@ interface PublicChannelTrigger {
   coded: boolean;
   /** `code` (stated in `lib/channel-triggers.ts`) or `declared` (created at run time). */
   origin: "code" | "declared";
-  /** `event` | `delay` (N days after a step, if nothing happened) | `poll` (a new item at a source). */
-  kind: "event" | "delay" | "poll";
+  /** `event` | `delay` (N days after a step, if nothing happened) | `poll` (a new item at a source) | `reported` (a caller reports it). */
+  kind: "event" | "delay" | "poll" | "reported";
   params: Record<string, unknown> | null;
 }
 

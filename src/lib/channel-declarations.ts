@@ -28,10 +28,17 @@
  *    belong to campaign-service, which owns the trigger EVENTS and their due times.
  *  - `poll`: "a new item appeared at this source". The polling loop and its cursor belong to campaign-service
  *    too (same door, same events table), reading the source through treg.
+ *  - `reported` (owner 2026-10-11, the Copilot follow-up): a CALLER reports each occurrence to campaign-service's
+ *    trigger-events record route (`POST /internal/trigger-events {triggerId, brandId, offerId, leadId?}`), which
+ *    fires every live campaign whose reactive pipe names it (same dispatch, same funding rules as any trigger).
+ *    That route is a real, generic door: anything that knows the occurrence rings it, so the kind is coded. The
+ *    declaration NAMES who reports it (`params.reportedBy`, required): an honest statement of who rings, never
+ *    "someone will".
  * campaign-service runs the `delay` and `poll` detectors since #601 (deployed 2026-10-10), so both kinds are
  * in the set and every declared trigger of those kinds is coded. Their params are validated HERE with the
  * detector's own rules (`parseDelayParams`, `parsePollParams`), so a malformed declaration never reaches it.
- * A declared `event` stays uncoded: no generic detector can know what an arbitrary event means.
+ * A declared `event` stays uncoded: no generic detector can know what an arbitrary event means. An event a
+ * caller can report is declared `reported` instead.
  *
  * ── PRICE ──────────────────────────────────────────────────────────────────────────────────────────
  *
@@ -95,11 +102,12 @@ export interface DeclaredLeg {
   updatedAt: string;
 }
 
-export const TRIGGER_KINDS = ["event", "delay", "poll"] as const;
+export const TRIGGER_KINDS = ["event", "delay", "poll", "reported"] as const;
 export type TriggerKind = (typeof TRIGGER_KINDS)[number];
 
-/** The kinds a service fires GENERICALLY for any declared trigger of that kind. Empty today: see the header. */
-export const GENERIC_DETECTOR_KINDS: ReadonlySet<TriggerKind> = new Set<TriggerKind>(["delay", "poll"]);
+/** The kinds a service fires GENERICALLY for any declared trigger of that kind (see the header): campaign-service's
+ *  `delay` and `poll` detectors, and its trigger-events record route for a `reported` one. */
+export const GENERIC_DETECTOR_KINDS: ReadonlySet<TriggerKind> = new Set<TriggerKind>(["delay", "poll", "reported"]);
 
 const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
@@ -152,6 +160,18 @@ export function parsePollParams(raw: unknown): { source: string; everyMinutes: n
   const extra = Object.keys(source).filter((k) => !["endpoint", "method", "query", "body", "items", "itemId", "maxMicro"].includes(k));
   if (extra.length > 0) throw fail(`has unknown fields: ${extra.join(", ")}`);
   return { source: JSON.stringify(source), everyMinutes };
+}
+
+/** PURE: `reported` params `{reportedBy}`: the service (or staff agent) that reports each occurrence. Required. */
+export function parseReportedParams(raw: unknown): { reportedBy: string } {
+  if (!isRecord(raw)) throw badParams("params_required", "a reported trigger states params {reportedBy}: who reports each occurrence to campaign-service");
+  const { reportedBy } = raw;
+  if (typeof reportedBy !== "string" || reportedBy.trim() === "" || reportedBy.trim().length > 64) {
+    throw badParams("reported_by_invalid", "params.reportedBy must name the service that reports each occurrence (1..64 characters)");
+  }
+  const extra = Object.keys(raw).filter((k) => k !== "reportedBy");
+  if (extra.length > 0) throw badParams("params_invalid", `params has unknown fields: ${extra.join(", ")}`);
+  return { reportedBy: reportedBy.trim() };
 }
 
 export interface TriggerTypeRecord {
@@ -402,6 +422,12 @@ export function parseTriggerInput(body: Body, existing: readonly TriggerTypeReco
     fromStep = delay.afterStep;
     params = delay;
     firedBy = "campaign-service";
+  } else if (kind === "reported") {
+    // The step the person stands at when it is reported (optional, like an event's); the caller reports, campaign-service fires.
+    fromStep = body.fromStep == null ? null : step(body.fromStep, "fromStep");
+    params = parseReportedParams(body.params);
+    if (body.firedBy !== undefined) throw bad("fired_by_not_declarable", "a reported trigger is fired by campaign-service's record route: state who reports it in params.reportedBy");
+    firedBy = "campaign-service";
   } else {
     params = parsePollParams(body.params);
     firedBy = "campaign-service";
@@ -469,7 +495,7 @@ export function checkLegRun(mode: unknown, triggerId: unknown, triggers: readonl
     throw new DeclarationError(
       409,
       "trigger_not_fired",
-      `nothing fires ${triggerId} yet (${trigger.kind === "event" ? `no service detects it` : `campaign-service runs no ${trigger.kind} detector`}): a leg on it would wait forever`,
+      `nothing fires ${triggerId} yet (${trigger.kind === "event" ? `no service detects it; declare it kind 'reported' if a caller reports it` : `campaign-service runs no ${trigger.kind} detector`}): a leg on it would wait forever`,
     );
   }
   return { mode: "reactive", triggerId };
