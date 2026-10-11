@@ -29,6 +29,7 @@ import { sumDecimalStrings } from "./decimal.js";
 import { startedBeforeParam } from "./maturity.js";
 import { campaignFamilySet, singleCampaignId, type CampaignFilter } from "./campaign-scope.js";
 import { runsFeatureSlugsParam, type FeatureScope } from "./feature-scope.js";
+import { attributedCampaignId, pipeRunsScope } from "./pipe-spend-attribution.js";
 
 /**
  * One scope's run spend on both bases. `committedCents` is THE basis (see the module header);
@@ -46,7 +47,7 @@ export async function fetchRunsCostCents(
   // One campaign, or the family of campaigns sharing one identity. A single-campaign scope keeps
   // the original `campaignId=` filter; a family co-groups on campaignId and sums its members, so
   // the whole family costs ONE runs call regardless of how many stopped rows it carries.
-  campaignScope: CampaignFilter,
+  requestedCampaignScope: CampaignFilter,
   // ONE channel, or the SET of channels an offer is sold through (see lib/feature-scope.ts).
   // runs-service comma-splits `featureSlugs`, so several channels cost one call and a run — which
   // carries exactly one `feature_slug` — can never be counted twice.
@@ -71,6 +72,8 @@ export async function fetchRunsCostCents(
     throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
   }
 
+  // A pipe of a sales funnel campaign reads its OWN spend (lib/pipe-spend-attribution.ts); else unchanged.
+  const { campaignScope, releasedOriginSlugs } = pipeRunsScope(requestedCampaignScope);
   const campaignId = singleCampaignId(campaignScope);
   const family = campaignFamilySet(campaignScope);
 
@@ -79,7 +82,7 @@ export async function fetchRunsCostCents(
   const params = new URLSearchParams({
     groupBy: family ? "workflowSlug,campaignId" : "workflowSlug",
     brandId,
-    featureSlugs: runsFeatureSlugsParam(featureScope),
+    featureSlugs: runsFeatureSlugsParam(featureScope, releasedOriginSlugs),
   });
   if (campaignId) params.set("campaignId", campaignId);
   if (workflowSlugs) params.set("workflowSlugs", workflowSlugs);
@@ -147,7 +150,7 @@ export async function fetchRunsCostCentsByWorkflowSlug(
   pricing: Pricing = "gross",
   // One campaign, or the family sharing one identity. `undefined` → the brand's whole spend →
   // byte-identical to the request this made before a campaign could be named.
-  campaignScope: CampaignFilter = undefined,
+  requestedCampaignScope: CampaignFilter = undefined,
 ): Promise<Map<string, RunsCostCents>> {
   const url = process.env.RUNS_SERVICE_URL;
   const apiKey = process.env.RUNS_SERVICE_API_KEY;
@@ -155,13 +158,14 @@ export async function fetchRunsCostCentsByWorkflowSlug(
     throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
   }
 
+  const { campaignScope, releasedOriginSlugs } = pipeRunsScope(requestedCampaignScope);
   const campaignId = singleCampaignId(campaignScope);
   const family = campaignFamilySet(campaignScope);
 
   const params = new URLSearchParams({
     groupBy: family ? "workflowSlug,campaignId" : "workflowSlug",
     brandId,
-    featureSlugs: runsFeatureSlugsParam(featureSlug),
+    featureSlugs: runsFeatureSlugsParam(featureSlug, releasedOriginSlugs),
   });
   if (campaignId) params.set("campaignId", campaignId);
 
@@ -369,7 +373,7 @@ export async function fetchCampaignIdsWithRuns(
  */
 export async function fetchMatureSpendCents(
   brandId: string,
-  campaignScope: CampaignFilter,
+  requestedCampaignScope: CampaignFilter,
   featureScope: FeatureScope,
   headers: { orgId: string; userId?: string; runId?: string; featureSlug?: string },
   pricing: Pricing,
@@ -382,6 +386,7 @@ export async function fetchMatureSpendCents(
   if (!url || !apiKey) {
     throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
   }
+  const { campaignScope, releasedOriginSlugs } = pipeRunsScope(requestedCampaignScope);
   const campaignId = singleCampaignId(campaignScope);
   const family = campaignFamilySet(campaignScope);
 
@@ -399,7 +404,7 @@ export async function fetchMatureSpendCents(
     const params = new URLSearchParams({
       groupBy: "workflowSlug,campaignId",
       brandId,
-      featureSlugs: runsFeatureSlugsParam(featureScope),
+      featureSlugs: runsFeatureSlugsParam(featureScope, releasedOriginSlugs),
     });
     if (campaignId) params.set("campaignId", campaignId);
     if (workflowSlugs) params.set("workflowSlugs", workflowSlugs);
@@ -451,7 +456,8 @@ export async function fetchMatureSpendCents(
   for (const group of after) {
     const cid = group.dimensions?.campaignId;
     if (!inFamily(cid)) continue;
-    if (cid && plan.delayedCampaignIds.has(cid)) continue;
+    // An adopted outreach id's row is the pipe's own: it waits as the pipe does (lib/pipe-spend-attribution.ts).
+    if (cid && plan.delayedCampaignIds.has(attributedCampaignId(cid))) continue;
     add(group);
   }
   const cents = (values: readonly string[]) => Math.round(Number(sumDecimalStrings(values, "runs-service cost group")));
