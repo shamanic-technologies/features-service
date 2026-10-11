@@ -63,7 +63,7 @@ import {
   registerStepDeclarations,
   type LoadedCatalogue,
 } from "../lib/channel-declarations-store.js";
-import { actorOf, DeclarationError, parseLegInput, requestedByOrgIdOf } from "../lib/channel-declarations.js";
+import { actorOf, DeclarationError, parseLegInput, requestedByOrgIdOf, type TriggerTypeRecord } from "../lib/channel-declarations.js";
 import { allNamesByKey, salesPathNamesFor, SalesPathNamePoolExhaustedError } from "../lib/sales-path-names.js";
 import { funnelTriggerLabel } from "../lib/funnel-descriptions.js";
 import { campaignNameKeyOf } from "../lib/offer-sales-paths.js";
@@ -920,6 +920,66 @@ router.get("/internal/catalogue/workflows/:id", apiKeyOnly, async (req, res) => 
     });
   } catch (err) {
     fail(res, err, "get workflow");
+  }
+});
+
+// ── Triggers (what starts a reactive pipe) ────────────────────────────────────────────────────────
+
+/**
+ * TRIGGERS (owner 2026-10-11, the staff Triggers section): every trigger type a reactive pipe may name
+ * (`lib/channel-triggers.ts` coded + the ones declared at run time, `channel_trigger_types`), in the
+ * catalogue's display order, each with the reactive pipes that name it. No economics: a trigger costs
+ * nothing, the pipes it starts carry the figures. `icon` is the family glyph (`lightning`), `eventIcon`
+ * the trigger type's own picture.
+ */
+const triggerRowOf = (m: CatalogueModel, t: TriggerTypeRecord, pipeCount: number) => ({
+  id: t.id,
+  name: t.label,
+  icon: FAMILY_GLYPHS.trigger,
+  color: glyphColorOf(t.label),
+  eventIcon: phosphorIconOf(t.icon),
+  line: t.description,
+  fromStep: t.fromStep,
+  fromStepName: t.fromStep ? stepLabel(m, t.fromStep) : null,
+  firedBy: t.firedBy,
+  coded: t.coded,
+  kind: t.kind,
+  origin: t.origin,
+  pipeCount,
+});
+
+const pipesOfTrigger = (m: CatalogueModel, id: string): CataloguePipe[] =>
+  [...m.pipes.values()].filter((p) => p.mode === "reactive" && p.triggerId === id).sort(byRoi((p) => p.economics, (p) => p.id));
+
+router.get("/internal/catalogue/triggers", apiKeyOnly, async (req, res) => {
+  try {
+    const limit = limitOf(req);
+    const q = qOf(req);
+    const [{ model }, triggers] = await Promise.all([loadModel(), listTriggerTypes()]);
+    const rows = triggers
+      .filter((t) => matchesQuery(q, [t.label, t.id, t.description, t.firedBy, t.fromStep ? stepLabel(model, t.fromStep) : null]))
+      .map((t) => triggerRowOf(model, t, pipesOfTrigger(model, t.id).length));
+    res.json({ object: "trigger", order: "catalogue", ...page(rows, limit) });
+  } catch (err) {
+    fail(res, err, "list triggers");
+  }
+});
+
+router.get("/internal/catalogue/triggers/:id", apiKeyOnly, async (req, res) => {
+  try {
+    const [{ model, names }, triggers] = await Promise.all([loadModel(), listTriggerTypes()]);
+    const t = triggers.find((x) => x.id === req.params.id);
+    if (!t) return void res.status(404).json({ error: `no trigger ${req.params.id}`, reason: "trigger_not_found" });
+    const pipes = pipesOfTrigger(model, t.id);
+    const n = await named(pipes.map(nameKeyOfPipe), names);
+    res.json({
+      object: "trigger",
+      ...triggerRowOf(model, t, pipes.length),
+      params: t.params,
+      pipes: pipes.map((p) => pipeRowOf(model, p, n.get(nameKeyOfPipe(p))!)),
+    });
+  } catch (err) {
+    fail(res, err, "get trigger");
   }
 });
 

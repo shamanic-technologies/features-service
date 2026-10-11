@@ -6396,6 +6396,23 @@ catalogueRead("/internal/catalogue/sales-funnels", "List sales funnels (internal
 catalogueRead("/internal/catalogue/sales-funnels/{id}", "One sales funnel (internal, api-key)", { ...catalogueOfferQuery }, catalogueFunnelDetail.extend({ offer: catalogueOfferEcho }), idParam("A sales funnel id"));
 catalogueRead("/internal/catalogue/workflows", "List the workflows of one pipe (internal, api-key)", { pipe: z.string().describe("A pipe id (required)."), q: catalogueQ, limit: catalogueLimit }, cataloguePage(catalogueGlyphRow, "workflow", "per_outcome").extend({ pipeId: z.string() }));
 catalogueRead("/internal/catalogue/workflows/{id}", "One workflow on one pipe (internal, api-key)", { pipe: z.string().describe("The pipe id (required).") }, catalogueWorkflowDetail, idParam("A workflow dynasty slug"));
+const catalogueTriggerRow = z.object({
+  id: z.string().describe("The trigger id a reactive pipe names (`triggerId`)."),
+  name: z.string().describe("The trigger's label, unique."),
+  icon: z.literal("lightning").describe("The family glyph (Phosphor)."),
+  color: z.string().describe("`#RRGGBB`, derived from the name."),
+  eventIcon: z.string().describe("The trigger type's own Phosphor icon (e.g. `thumbs-up`)."),
+  line: z.string().describe("What happened, in one line."),
+  fromStep: z.string().nullable().describe("The step a lead reached that fires it; null when it is not a step (`lead_requested`)."),
+  fromStepName: z.string().nullable(),
+  firedBy: z.string().describe("The service that detects the event."),
+  coded: z.boolean().describe("A service fires it today."),
+  kind: z.string().describe("`event`, `delay` or `poll`."),
+  origin: z.enum(["code", "declared"]),
+  pipeCount: z.number().int().describe("Reactive pipes that name this trigger."),
+});
+catalogueRead("/internal/catalogue/triggers", "List triggers: what starts a reactive pipe (internal, api-key)", { q: catalogueQ, limit: catalogueLimit }, z.object({ object: z.literal("trigger"), order: z.literal("catalogue"), total: z.number().int(), truncated: z.boolean(), rows: z.array(catalogueTriggerRow) }));
+catalogueRead("/internal/catalogue/triggers/{id}", "One trigger and the reactive pipes it starts (internal, api-key)", {}, catalogueTriggerRow.extend({ object: z.literal("trigger"), params: z.record(z.unknown()).nullable().describe("A declared delay/poll trigger's parameters."), pipes: z.array(cataloguePipeRow).describe("The reactive pipes naming it, best ROI first.") }), idParam("A trigger id"));
 
 const catalogueCreate = (path: string, summary: string, extra: string, body: z.ZodTypeAny, schema: z.ZodTypeAny) =>
   registry.registerPath({

@@ -102,7 +102,7 @@ export function valueAddedTo(valueOf: (step: string) => number | null, fromStep:
 // ── Glyphs ────────────────────────────────────────────────────────────────────────────────────────
 
 /** One Phosphor icon per family (the dashboard maps Phosphor names) + a colour derived from the name. */
-export const FAMILY_GLYPHS = { step: null, sales_path: "waves", channel: null, pipe: "bird", sales_funnel: null, workflow: "flow-arrow" } as const;
+export const FAMILY_GLYPHS = { step: null, sales_path: "waves", channel: null, pipe: "bird", sales_funnel: null, workflow: "flow-arrow", trigger: "lightning" } as const;
 
 const GLYPH_COLORS = ["#E0784B", "#8E6CD8", "#3FA27E", "#D6A21E", "#3D7FD0", "#D9577A", "#9C6B3E", "#5E9E3A", "#2F9DB3", "#C2563A"];
 

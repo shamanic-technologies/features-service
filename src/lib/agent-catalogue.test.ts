@@ -292,7 +292,7 @@ describe("catalogue icons are Phosphor names only (owner 2026-10-10)", () => {
     "browser", "package",
     "address-book", "at", "bell", "bird", "calendar-check", "calendar-plus", "chat-circle", "chat-circle-text", "chat-text",
     "currency-dollar", "cursor-click", "envelope", "facebook-logo", "file-text", "flow-arrow", "funnel", "globe", "handshake",
-    "instagram-logo", "linkedin-logo", "list-bullets", "magnifying-glass", "medal", "megaphone", "microphone", "newspaper",
+    "instagram-logo", "lightning", "linkedin-logo", "list-bullets", "magnifying-glass", "medal", "megaphone", "microphone", "newspaper",
     "note-pencil", "phone", "phone-call", "question", "rocket", "share-network", "shopping-cart", "sparkle", "target",
     "trend-up", "tray", "user-check", "user-focus", "user-plus", "users", "video", "waves", "youtube-logo",
   ]);
