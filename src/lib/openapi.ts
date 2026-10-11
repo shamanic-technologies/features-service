@@ -3879,6 +3879,8 @@ const customerHealthRowSchema = z.object({
   activeThisWeek: z.boolean(),
   activeThisMonth: z.boolean(),
   activeDays: z.array(z.string()).describe("The de-facto active-day timeline from billed spend (distinct UTC days, ascending)."),
+  paidActiveDays: z.array(z.string()).nullable().describe("The days the org PAID for: the subset of its spend days its CASH funded (owner rule 2026-10-11: revenue is cash the client paid; consumed welcome credit or unrepaid advances are never revenue; non-cash credit is consumed first, then cash). 'Paying in month M' = at least one paid active day in M; an org that never paid (billing cash 0) has none, however much credit it consumed. null = billing's cash read or runs' spend read failed for this org (never guessed). Org-level: same on every brand row of one org."),
+  orgCashPaidUsd: z.number().nullable().describe("Cash the ORG paid us to date (billing GET /internal/accounts/by-org/:orgId/cash cash_paid_cents, net of refunds and lost disputes), USD. Org-level, never sum across rows. null = unreadable."),
   status: z.enum(["active", "payment_declined", "no_payment_method", "unknown", "out_of_credit", "reactive_only", "paused", "inactive"]).describe("Same composition as GET /internal/stats/accounts (payment_declined > active > out_of_credit > reactive_only > paused > inactive; payment_declined means billing cannot charge the org, reason on paymentDeclinedReason; active needs a PROACTIVE RUNNING budget > 0 AND funded/auto-topup; out_of_credit means a proactive campaign runs but the balance cannot fund one more day and there is no auto-topup (a billing state, never shown as paused; until 2026-10-11 it read paused); reactive_only means nothing proactive runs but a reactive campaign is on; paused means money posted with nothing running). 'unknown' (this board only): billing's payment-outlook read failed for this org, so whether billing can charge it is not known and no verdict is invented; the reason rides statusUnknownReason, every other column of the row is read as usual, and the rest of the board is unaffected (one org's billing failure no longer 500s the whole board, 2026-10-03). Its health badge reads red (not KNOWN active)."),
   statusUnknownReason: z.string().nullable().describe("Why status is 'unknown' (e.g. 'billing payment-outlook unreadable: … (502) …', capped at 300 chars); null whenever the status is known."),
   paymentDeclinedReason: z.string().nullable().describe("billing's own reason it cannot charge this org (payment-outlook blockedReason: card_declined, card_unusable, retries_exhausted, no_chargeable_card, card_country_unsupported) when status is 'payment_declined'; null otherwise, and null if billing blocked without naming a reason."),
@@ -4060,7 +4062,7 @@ registry.registerPath({
 const revenueBucketSchema = z.object({
   period: z.string().describe("Bucket label — `YYYY-MM-DD` (daily), `YYYY-Www` ISO week (weekly), or `YYYY-MM` (monthly)."),
   periodStart: z.string().describe("UTC start date of the bucket (`YYYY-MM-DD`): the day, the ISO week's Monday, or the month's 1st. For charting."),
-  revenueUsd: z.number().describe("NET realized revenue (summed NET actual cold-email spend after per-org usage discount, all orgs) in this bucket, in USD (2-decimal)."),
+  revenueUsd: z.number().describe("NET realized revenue in this bucket, in USD (2-decimal): the CASH-FUNDED part of each org's NET actual cold-email spend (owner rule 2026-10-11: revenue is cash the client paid; consumed welcome credit or unrepaid advances are never revenue; each org's non-cash credit is consumed first, then its cash, billing GET /internal/accounts/by-org/:orgId/cash). Until 2026-10-11 every consumed dollar counted. NRR rides the same basis."),
   growthPct: z.number().nullable().describe("Period-over-period growth vs the previous bucket, in percent (1-decimal). null on the first bucket or when the previous bucket is 0."),
 });
 
@@ -4299,7 +4301,7 @@ const statedAmountSchema = z.object({
 const statedAmountRef = registry.register("StatedMonthlyAmount", statedAmountSchema);
 
 const revenueHistoryResponseSchema = z.object({
-  totalRevenueUsd: z.number().describe("Cumulative NET realized revenue since inception (all orgs, all time; post per-org usage discount), in USD (2-decimal)."),
+  totalRevenueUsd: z.number().describe("Cumulative NET realized revenue since inception (all orgs, all time; post per-org usage discount; CASH-FUNDED spend only, see monthly[].revenueUsd), in USD (2-decimal)."),
   currentMrrUsd: z.number().nullable().describe("LIVE fleet MRR — billing-service's RECURRING revenue (GET /internal/revenue/fleet): an org is recurring when postpaid with a chargeable card, or prepaid with auto top-up and a chargeable card; its DRR is the daily budgets of its PROACTIVE campaigns running with audience left (reactive legs never count); MRR = DRR × 30, ARR = MRR × 12. A one-off prepaid org is not MRR. Read, never re-derived here. Equals GET /internal/stats/accounts stats.mrrUsd (one read, one answer). Was running budget × 30 until 2026-09-29. null = billing unavailable."),
   monthly: z.array(revenueBucketSchema).describe("Trailing calendar-month revenue buckets (oldest→newest)."),
   weekly: z.array(revenueBucketSchema).describe("Trailing ISO-week revenue buckets (oldest→newest)."),
