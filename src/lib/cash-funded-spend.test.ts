@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cashFundedDailyCents } from "./cash-funded-spend.js";
+import { AGENCY_FUNDING, cashFundedDailyCents } from "./cash-funded-spend.js";
 
 const days = (o: Record<string, number>) => new Map(Object.entries(o));
 
@@ -8,18 +8,19 @@ describe("cashFundedDailyCents — revenue is cash the client paid (owner rule 2
     expect([...cashFundedDailyCents(days({ "2026-10-01": 500, "2026-10-02": 451 }), { cashPaidCents: 0, nonCashCreditCents: 3000 })]).toEqual([]);
   });
 
-  it("non-cash credit is consumed first, then cash; a day keeps only what cash funded", () => {
-    const out = cashFundedDailyCents(days({ "2026-09-02": 2000, "2026-09-01": 2000, "2026-09-03": 2000 }), {
-      cashPaidCents: 3000,
-      nonCashCreditCents: 3000,
+  it("each day is cash in the org's cash share, never credit-first (Living Vital: $400 paid + $400 match)", () => {
+    const out = cashFundedDailyCents(days({ "2026-09-02": 2000, "2026-09-01": 2000, "2026-10-03": 1000 }), {
+      cashPaidCents: 40000,
+      nonCashCreditCents: 40000,
     });
     expect([...out]).toEqual([
+      ["2026-09-01", 1000],
       ["2026-09-02", 1000],
-      ["2026-09-03", 2000],
+      ["2026-10-03", 500],
     ]);
   });
 
-  it("spend past cash + credit (postpaid, not charged yet) is not revenue until the charge lands", () => {
+  it("the cash-funded total never exceeds the cash paid (postpaid below zero, not charged yet)", () => {
     const out = cashFundedDailyCents(days({ "2026-09-01": 5000, "2026-09-02": 5000 }), { cashPaidCents: 6000, nonCashCreditCents: 0 });
     expect([...out]).toEqual([
       ["2026-09-01", 5000],
@@ -27,8 +28,9 @@ describe("cashFundedDailyCents — revenue is cash the client paid (owner rule 2
     ]);
   });
 
-  it("a fully cash-funded org keeps every day unchanged", () => {
+  it("a fully cash-funded org, and an agency org (paid off-platform), keep every day unchanged", () => {
     const d = days({ "2026-09-01": 123, "2026-09-02": 456 });
     expect([...cashFundedDailyCents(d, { cashPaidCents: 10_000, nonCashCreditCents: 0 })]).toEqual([...d]);
+    expect([...cashFundedDailyCents(d, AGENCY_FUNDING)]).toEqual([...d]);
   });
 });
