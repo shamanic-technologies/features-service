@@ -45,7 +45,7 @@ vi.mock("../lib/brand-leg-economics-client.js", async (importOriginal) => ({
   fetchBrandLegEconomics: async () => ({ legRates: [], offers: [{ offerId: "offer-1", lifetimeRevenueUsd: 12000 }] }),
 }));
 
-const mem = vi.hoisted(() => ({ legs: [] as any[], steps: [] as any[], rates: [] as any[], chains: [] as any[], paths: [] as any[] }));
+const mem = vi.hoisted(() => ({ legs: [] as any[], steps: [] as any[], rates: [] as any[], chains: [] as any[], paths: [] as any[], triggers: [] as any[] }));
 vi.mock("../lib/channel-declarations-store.js", async () => {
   const { mergeDeclarations } = await import("../lib/channel-declarations.js");
   const { buildChannelCatalogue } = await import("../lib/channel-catalogue.js");
@@ -61,7 +61,7 @@ vi.mock("../lib/channel-declarations-store.js", async () => {
     return { steps: mem.steps, rates: mem.rates };
   };
   return {
-    listTriggerTypes: async () => [],
+    listTriggerTypes: async () => mem.triggers,
     listDeclaredChannels: async () => [],
     listDeclaredLegs: async () => mem.legs,
     listDeclaredSalesPaths: async () => mem.paths,
@@ -108,6 +108,7 @@ const { __setCatalogueMeasurementsForTest } = await import("./agent-catalogue.js
 const { FAMILY_WORDS } = await import("../lib/sales-path-names.js");
 const { PIPE_BIRD_WORDS, PATH_RIVER_WORDS } = await import("../lib/catalogue-names.js");
 
+const { CHANNEL_TRIGGER_TYPES } = await import("../lib/channel-triggers.js");
 const KEY = { "x-api-key": "test-key" };
 const COLD = "sales-cold-email-outreach|lead_found_to_conversation";
 const MEET = "ai-meeting-booking|conversation_to_meeting_booked";
@@ -122,6 +123,7 @@ beforeEach(() => {
   mem.rates = [];
   mem.chains = [];
   mem.paths = [];
+  mem.triggers = [];
   __setCatalogueMeasurementsForTest(
     new Map([
       [COLD, { basis: "mature", costPerOutcomeUsd: 40, conversionRatePct: 1, workflowDynastySlug: "orion" }],
@@ -444,5 +446,50 @@ describe("agent catalogue creates (data, never a PR)", () => {
     const step = (await request(app).get("/internal/catalogue/steps/email_found").set(KEY)).body;
     expect(step).toMatchObject({ producedBy: "apollo-service POST /people/match", declared: true });
     expect(step.valueUsd).toBeCloseTo(0.9 * 1.5, 5);
+  });
+});
+
+describe("agent catalogue triggers (owner 2026-10-11, the staff Triggers section)", () => {
+  const record = (t: (typeof CHANNEL_TRIGGER_TYPES)[number], i: number) => ({ ...t, origin: "code", kind: "event", params: null, displayOrder: i, createdBy: null, requestedByOrgId: null });
+  beforeEach(() => {
+    mem.triggers = CHANNEL_TRIGGER_TYPES.map(record);
+  });
+
+  it("is service-key only", async () => {
+    expect((await request(app).get("/internal/catalogue/triggers")).status).toBe(401);
+  });
+
+  it("lists every trigger in catalogue order, lightning glyph, unique name, with the count of reactive pipes it starts", async () => {
+    const r = await request(app).get("/internal/catalogue/triggers").query({ limit: 25 }).set(KEY);
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ object: "trigger", order: "catalogue", total: CHANNEL_TRIGGER_TYPES.length });
+    expect(r.body.rows.map((x: { id: string }) => x.id)).toEqual(CHANNEL_TRIGGER_TYPES.slice(0, 25).map((t) => t.id));
+    const names = r.body.rows.map((x: { name: string }) => x.name);
+    expect(new Set(names).size).toBe(names.length);
+    const reply = r.body.rows.find((x: { id: string }) => x.id === "positive_reply_received");
+    expect(reply).toMatchObject({ name: "Positive reply", icon: "lightning", eventIcon: "thumbs-up", fromStep: "conversation", coded: true });
+    expect(reply.color).toMatch(/^#[0-9A-F]{6}$/i);
+    expect(reply.pipeCount).toBeGreaterThan(0);
+  });
+
+  it("searches and pages", async () => {
+    const r = await request(app).get("/internal/catalogue/triggers").query({ q: "positive", limit: 1 }).set(KEY);
+    expect(r.body.rows.map((x: { id: string }) => x.id)).toEqual(["positive_reply_received"]);
+  });
+
+  it("one trigger: the reactive pipes it starts, named", async () => {
+    const r = await request(app).get("/internal/catalogue/triggers/positive_reply_received").set(KEY);
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ object: "trigger", id: "positive_reply_received", name: "Positive reply" });
+    const ids = r.body.pipes.map((p: { id: string }) => p.id);
+    expect(ids).toContain(MEET);
+    expect(r.body.pipes.find((p: { id: string }) => p.id === MEET)).toMatchObject({ name: "Prism", mode: "reactive" });
+    expect(r.body.pipeCount).toBe(ids.length);
+  });
+
+  it("404 on an unknown trigger", async () => {
+    const r = await request(app).get("/internal/catalogue/triggers/nope").set(KEY);
+    expect(r.status).toBe(404);
+    expect(r.body.reason).toBe("trigger_not_found");
   });
 });
