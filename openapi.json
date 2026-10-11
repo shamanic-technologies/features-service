@@ -50086,7 +50086,7 @@
                               "roiBasis",
                               "status"
                             ],
-                            "description": "The leg's one pipe. On the sourcing leg (Start -> Lead found) it adds no cost of its own to the funnel's figure: a source finds its lead inside the outreach run, whose measured cost already counts it."
+                            "description": "The leg's one pipe. On the sourcing leg (Start -> Lead found) it adds its OWN cost (owner 2026-10-11): cost per lead found x the leads one paying client needs; the outreach pipe's cost is its outreach alone, so two funnels that differ only by their source price differently."
                           }
                         },
                         "required": [
@@ -50455,7 +50455,7 @@
                               "roiBasis",
                               "status"
                             ],
-                            "description": "The leg's one pipe. On the sourcing leg (Start -> Lead found) it adds no cost of its own to the funnel's figure: a source finds its lead inside the outreach run, whose measured cost already counts it."
+                            "description": "The leg's one pipe. On the sourcing leg (Start -> Lead found) it adds its OWN cost (owner 2026-10-11): cost per lead found x the leads one paying client needs; the outreach pipe's cost is its outreach alone, so two funnels that differ only by their source price differently."
                           }
                         },
                         "required": [
@@ -50882,7 +50882,7 @@
                               "roiBasis",
                               "status"
                             ],
-                            "description": "The leg's one pipe. On the sourcing leg (Start -> Lead found) it adds no cost of its own to the funnel's figure: a source finds its lead inside the outreach run, whose measured cost already counts it."
+                            "description": "The leg's one pipe. On the sourcing leg (Start -> Lead found) it adds its OWN cost (owner 2026-10-11): cost per lead found x the leads one paying client needs; the outreach pipe's cost is its outreach alone, so two funnels that differ only by their source price differently."
                           }
                         },
                         "required": [
@@ -51539,7 +51539,7 @@
                           "fromStep": {
                             "type": "string",
                             "nullable": true,
-                            "description": "The step a lead reached that fires it; null when it is not a step (`lead_requested`)."
+                            "description": "The step a lead reached that fires it; null when it is not a step (`on_demand`)."
                           },
                           "fromStepName": {
                             "type": "string",
@@ -51670,7 +51670,7 @@
                     "fromStep": {
                       "type": "string",
                       "nullable": true,
-                      "description": "The step a lead reached that fires it; null when it is not a step (`lead_requested`)."
+                      "description": "The step a lead reached that fires it; null when it is not a step (`on_demand`)."
                     },
                     "fromStepName": {
                       "type": "string",
