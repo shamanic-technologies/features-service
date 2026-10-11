@@ -28,6 +28,7 @@ import {
   listDeclaredSalesPaths,
   listTriggerTypes,
   loadChannelCatalogue,
+  registerStepDeclarations,
   takenChannelIdentities,
   updateChannel,
   updateLeg,
@@ -285,6 +286,8 @@ router.post("/internal/declarations/trigger-types", apiKeyOnly, async (req, res)
   try {
     const createdBy = actorOf(body);
     const requestedByOrgId = requestedByOrgIdOf(body);
+    // A `reported` / `event` trigger may stand at a step declared at run time: the step registry must hold it.
+    await registerStepDeclarations();
     const input = parseTriggerInput(body, await listTriggerTypes());
     const created = await insertTrigger(input, createdBy, requestedByOrgId);
     invalidateChannelCatalogue();

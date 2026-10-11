@@ -56,6 +56,7 @@ const MEMBERS: Record<ChannelType, readonly string[]> = {
   conversion: [
     "ai-meeting-booking",
     "ai-instant-call",
+    "ai-follow-up-email",
     "agency-meeting-booking",
     "your-team-meeting-booking",
     "agency-meeting-attendance",

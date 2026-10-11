@@ -75,6 +75,10 @@ const AI_BOOKS_THE_MEETING: readonly ChannelStepTransition[] = reactsToStep({ fr
 // The instant call: the moment a reply is qualified as a sales interest, we ring the brand's sales rep and
 // connect them to the buyer (instantly-service `ring-rep-on-sales-interest`). Positive reply -> Booking call.
 const RINGS_THE_REP: readonly ChannelStepTransition[] = reactsToStep({ from: "conversation", to: "booking_call" });
+// The Copilot follow-up (owner 2026-10-11): ONE warm email to ONE person the brand already knows (a signup, toward paying), written
+// from the campaign's instruction, the moment a caller reports the follow-up due. It can START a thread (AI meeting
+// booking only answers inside one). A precise condition is its own `reported` trigger on a leg declared at run time.
+const FOLLOWS_UP: readonly ChannelStepTransition[] = [{ from: "signup", to: "paid_client", mode: "reactive", triggerId: "follow_up_due" }];
 const GETS_THE_MEETING_HELD: readonly ChannelStepTransition[] = reactsToStep({ from: "meeting_booked", to: "meeting_attended" });
 const CLOSES_THE_MEETING: readonly ChannelStepTransition[] = reactsToStep({ from: "meeting_attended", to: "paid_client" });
 const CONVERTS_THE_SELF_SERVE_LEAD: readonly ChannelStepTransition[] = reactsToStep(
@@ -971,6 +975,14 @@ const PUBLISHED_CHANNELS: ChannelSeed[] = [
     stepTransitions: RINGS_THE_REP,
     terms: terms(0, 30, 0),
     description: "The moment a prospect replies with interest, we ring your sales rep and connect them to the prospect by phone.",
+    inputs: OFFER_INPUTS },
+
+  { slug: "ai-follow-up-email", name: "AI Follow-up Email", displayOrder: 55, icon: "envelope", family: "conversion", performedBy: "software",
+    // REACTIVE, ONE PERSON: a campaign on it names the person it acts for and the instruction of what to write;
+    // nothing runs on a daily budget, so no standing day of work is charged.
+    stepTransitions: FOLLOWS_UP,
+    terms: terms(0, 30, 0),
+    description: "When a follow-up you planned is due, we write one email to that person, saying what you asked us to say.",
     inputs: OFFER_INPUTS },
 
   { slug: "agency-meeting-attendance", name: "Agency Meeting Attendance", displayOrder: 44, icon: "bell", family: "conversion", performedBy: "person", stepTransitions: GETS_THE_MEETING_HELD,
