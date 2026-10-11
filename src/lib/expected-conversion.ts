@@ -6,7 +6,8 @@
  *   1. MEASURED: the row's own `conversionFromRowAbove.ratePct` when it has one;
  *   2. else the HYPOTHESIS for the share of the row that goes one step further: the brand's effective rate of
  *      the leg out of the row's step on the offer's priced paths (`/brands/:id/conversion-rates`, measured >
- *      stated > fleet median > industry default; the next step is the SHALLOWEST one those paths reach); for
+ *      stated > fleet median > industry default; the next step is the SHALLOWEST one those paths reach, else any
+ *      catalogue leg out of the step); for
  *      the contacted row, the entry leg's fleet conversion (the best workflow's on the leg, `/public/stats/
  *      outcome-prices`), else a seeded cold-email benchmark (`DEFAULT_ENTRY_RATE_PCT`).
  * `basis` says which, in the words of `lib/expected-return.ts`. Null ONLY on Paid client (the last step: nothing
@@ -62,14 +63,18 @@ const depth = (step: string): number => {
   return i < 0 ? Number.MAX_SAFE_INTEGER : i;
 };
 
-/** PURE: the legs out of `from` (null = the entry legs) on the priced funnels, shallowest target first. */
+/**
+ * PURE: the legs out of `from` (null = the entry legs), the priced funnels' first, then every other catalogue leg
+ * (a person can stand on a step the offer's priced paths do not walk, e.g. a reply on a purchase offer), each
+ * group shallowest target first.
+ */
 function nextLegs(from: ChannelStepKey | null, pricedFunnelKeys: readonly SalesFunnelKey[]) {
   const priced = new Set(pricedFunnelKeys);
-  return FUNNEL_LEGS.filter(
-    (l) =>
-      (from === null ? l.fromStep === null || l.fromStep.key === "lead_found" : l.fromStep?.key === from) &&
-      (priced.size === 0 || l.funnelKeys.some((f) => priced.has(f))),
-  ).sort((a, b) => depth(a.toStep.key) - depth(b.toStep.key) || a.legKey.localeCompare(b.legKey));
+  const out = FUNNEL_LEGS.filter((l) => (from === null ? l.fromStep === null || l.fromStep.key === "lead_found" : l.fromStep?.key === from));
+  const onPriced = (l: (typeof out)[number]) => priced.size === 0 || l.funnelKeys.some((f) => priced.has(f));
+  return out.sort(
+    (a, b) => Number(onPriced(b)) - Number(onPriced(a)) || depth(a.toStep.key) - depth(b.toStep.key) || a.legKey.localeCompare(b.legKey),
+  );
 }
 
 export interface ExpectedConversionInputs {
