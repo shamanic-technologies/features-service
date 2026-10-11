@@ -248,26 +248,63 @@ describe("workflow-projection: a LEG is answerable with no sales funnel named", 
     expect(tolerated.body.leg.legKey).toBe("meeting_booked_to_meeting_attended");
   });
 
-  it("a pipe of its channel that runs NO workflow (sourcing, AI Instant Call) answers 200 with nothing to rank, never a 400", async () => {
+  it("a pipe no sales funnel prices (sourcing, AI Instant Call) answers 200 with the workflows ASSIGNED to it, never a 400/404", async () => {
     mockFetch();
-    for (const [slug, leg] of [
-      ["sourcing-apollo-cold-filters", "start_to_lead_found"],
-      ["sourcing-apollo-buying-signals", "start_to_lead_found"],
-      ["sourcing-linkedin-engagement-signals", "start_to_lead_found"],
-      ["ai-instant-call", "conversation_to_booking_call"],
-    ] as const) {
-      const res = await request(app)
-        .get(`/features/${slug}/workflow-projection?brandId=${BRAND}&leg=${leg}&campaignId=c-1&pricing=net`)
-        .set(AUTH);
-      expect(res.status, slug).toBe(200);
-      expect(res.body.featureSlug).toBe(slug);
-      expect(res.body.rows).toEqual([]);
-      expect(res.body.recommendedWorkflowDynastySlug).toBeNull();
-      expect(res.body.recommendedBudgetUsd).toBeNull();
-      expect(res.body.measured).toBe(false);
-      expect(res.body.unmeasuredReason).toBe("no_active_workflows");
-      expect(res.body.maturity).toMatchObject({ legKey: leg, measured: true, cutoffIso: null });
-    }
+    const { fetchLegAssignments } = await import("../lib/workflow-leg-assignments.js");
+    const row = (slug: string, state: "active" | "deprecated") => ({
+      featureSlug: "sourcing-apollo-cold-filters",
+      legKey: "start_to_lead_found",
+      workflowDynastySlug: slug,
+      state,
+      decidedBy: "staff",
+      decidedAt: "2026-10-11T10:56:30.000Z",
+      note: null,
+    });
+    vi.mocked(fetchLegAssignments).mockResolvedValueOnce(
+      new Map([
+        ["sourcing-apollo-cold-filters-old", row("sourcing-apollo-cold-filters-old", "deprecated")],
+        ["sourcing-apollo-cold-filters-scheat", row("sourcing-apollo-cold-filters-scheat", "active")],
+      ]),
+    );
+    const sourcing = await request(app)
+      .get(`/features/sourcing-apollo-cold-filters/workflow-projection?brandId=${BRAND}&leg=start_to_lead_found&campaignId=c-1&pricing=net`)
+      .set(AUTH);
+    expect(sourcing.status).toBe(200);
+    expect(vi.mocked(fetchLegAssignments)).toHaveBeenCalledWith("sourcing-apollo-cold-filters", "start_to_lead_found");
+    // Selectable first, then by slug; rank 1 is named to start on, with no price and no budget.
+    expect(sourcing.body.rows.map((r: { workflow: { workflowDynastySlug: string } }) => r.workflow.workflowDynastySlug)).toEqual([
+      "sourcing-apollo-cold-filters-scheat",
+      "sourcing-apollo-cold-filters-old",
+    ]);
+    expect(sourcing.body.rows[0]).toMatchObject({ rank: 1, scopeRank: 1, measured: false, legAssignment: { state: "active", selectable: true } });
+    expect(sourcing.body.rows[0].resolved.costPerOutcomeUsd).toBeNull();
+    expect(sourcing.body.rows[1]).toMatchObject({ rank: 2, legAssignment: { state: "deprecated", selectable: false } });
+    expect(sourcing.body.recommendedWorkflowDynastySlug).toBe("sourcing-apollo-cold-filters-scheat");
+    expect(sourcing.body.recommendationBasis).toBe("cold_start");
+    expect(sourcing.body.recommendedBudgetUsd).toBeNull();
+    expect(sourcing.body.measured).toBe(false);
+    expect(sourcing.body.unmeasuredReason).toBe("no_spend_recorded");
+    expect(sourcing.body.maturity).toMatchObject({ legKey: "start_to_lead_found", measured: true, cutoffIso: null });
+
+    // Only a deprecated workflow: listed, never recommended, and the refusal is named.
+    vi.mocked(fetchLegAssignments).mockResolvedValueOnce(new Map([["sourcing-apollo-cold-filters-old", row("sourcing-apollo-cold-filters-old", "deprecated")]]));
+    const withheld = await request(app)
+      .get(`/features/sourcing-apollo-cold-filters/workflow-projection?brandId=${BRAND}&leg=start_to_lead_found`)
+      .set(AUTH);
+    expect(withheld.status).toBe(200);
+    expect(withheld.body.recommendedWorkflowDynastySlug).toBeNull();
+    expect(withheld.body.recommendationWithheldReason).toBe("no_eligible_workflow");
+
+    // Nothing assigned (AI Instant Call today): still a 200, nothing to rank, named.
+    vi.mocked(fetchLegAssignments).mockResolvedValueOnce(new Map());
+    const none = await request(app)
+      .get(`/features/ai-instant-call/workflow-projection?brandId=${BRAND}&leg=conversation_to_booking_call&campaignId=c-1`)
+      .set(AUTH);
+    expect(none.status).toBe(200);
+    expect(none.body.rows).toEqual([]);
+    expect(none.body.recommendedWorkflowDynastySlug).toBeNull();
+    expect(none.body.unmeasuredReason).toBe("no_active_workflows");
+
     // A leg the channel does not have still fails loud.
     const foreign = await request(app)
       .get(`/features/sourcing-apollo-cold-filters/workflow-projection?brandId=${BRAND}&leg=signup_to_meeting_attended`)
