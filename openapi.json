@@ -20052,7 +20052,7 @@
                 "roiMultiple": {
                   "type": "number",
                   "nullable": true,
-                  "description": "The funnel campaign's ROI (= `costEconomics.roiMultiple`): ONE engine pass over the units' people (deduped) and spend together, on the offer's terms; never a sum or an average of unit ROIs. Null with a reason in `costEconomics.unmeasuredReason` (e.g. `maturing`: still learning), `headline.unpricedReason` (e.g. `no_funnel_wired`) or `moneyUnavailableReason`. Read `maturity` for the flash/mature pair and the verdict, as on a campaign row."
+                  "description": "The funnel campaign's ROI (= `costEconomics.roiMultiple`) = the value it ADDS over its own spend (owner 2026-10-11): ONE engine pass over the units' people (deduped) and spend together, on the offer's terms, minus their value where it took them over (`takeoverStep`, `valueAdded`; $0 when it found them); never a sum or an average of unit ROIs. Null with a reason in `costEconomics.unmeasuredReason` (e.g. `maturing`: still learning), `headline.unpricedReason` (e.g. `no_funnel_wired`) or `moneyUnavailableReason`. Read `maturity` for the flash/mature pair and the verdict, as on a campaign row."
                 },
                 "moneyUnavailableReason": {
                   "type": "string",
@@ -20224,6 +20224,44 @@
                       "description": "Per-leg figures and the maturity verdict of the units together (the object a campaign row serves). Null when unreadable or no unit."
                     }
                   ]
+                },
+                "takeoverStep": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Where this campaign took its people over (owner 2026-10-11, one formula for every campaign): the funnel's first step unless its own units produce it. Null = it found them (its sourcing units are inside it): its return is the engine's ordinary pipeline over its spend. A step (e.g. `conversation` for a campaign answering Positive replies): it is credited only the value it ADDS."
+                },
+                "valueAdded": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "takeoverStep": {
+                      "type": "string"
+                    },
+                    "people": {
+                      "type": "integer",
+                      "description": "The people its units served or ACTED on (lead-service follow-up ledger)."
+                    },
+                    "valueNowUsd": {
+                      "type": "number",
+                      "description": "Their value now, on the offer's terms (the revenue engine's own)."
+                    },
+                    "valueAtTakeoverUsd": {
+                      "type": "number",
+                      "description": "Their value at the takeover step (same person, same stated value, holding only that step)."
+                    },
+                    "valueAddedUsd": {
+                      "type": "number",
+                      "description": "valueNowUsd - valueAtTakeoverUsd: what `roiMultiple` divides by the spend (= headline.totalPipelineUsd here)."
+                    }
+                  },
+                  "required": [
+                    "takeoverStep",
+                    "people",
+                    "valueNowUsd",
+                    "valueAtTakeoverUsd",
+                    "valueAddedUsd"
+                  ],
+                  "description": "The value this campaign ADDED, when it took its people over at a step the engine values (a reactive campaign). Example: 2 meetings booked off positive replies, a meeting worth $400 and a reply $150: 2 x ($400 - $150) = $500; on $10 spent, 50x. Null when it found its people (takeoverStep null, or Lead found: a lead nobody engaged is worth $0 to the engine, so nothing is subtracted)."
                 }
               },
               "required": [
@@ -20247,7 +20285,9 @@
                 "moneyUnavailableReason",
                 "headline",
                 "costEconomics",
-                "maturity"
+                "maturity",
+                "takeoverStep",
+                "valueAdded"
               ]
             },
             "description": "One row per sales funnel campaign, in campaign-service's order (newest first)."

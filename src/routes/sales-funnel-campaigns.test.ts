@@ -17,18 +17,28 @@ vi.mock("./revenue.js", () => ({
 }));
 const distinctChannelFunnels = vi.fn();
 vi.mock("./offer-economics.js", () => ({ distinctChannelFunnels: (...a: unknown[]) => distinctChannelFunnels(...a) }));
+const REACTIVE = "conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended";
 vi.mock("./agent-catalogue.js", () => ({
-  funnelCopiesFor: vi.fn(async (ids: string[]) =>
-    new Map(
+  funnelCopiesFor: vi.fn(async (ids: string[]) => ({
+    copies: new Map(
       ids.map((id) => [
         id,
         id === "unknown"
           ? null
-          : { name: "Bliss", face: "/f", type: "proactive", triggerLabel: null, path: { items: [{ kind: "step", key: "lead_found", label: "Lead found" }], legs: [] } },
+          : id === REACTIVE
+            ? { name: "Motivate", face: "/f", type: "reactive", triggerLabel: "Positive replies", firstStep: "conversation", path: { items: [], legs: [] } }
+            : { name: "Bliss", face: "/f", type: "proactive", triggerLabel: null, firstStep: "lead_found", path: { items: [{ kind: "step", key: "lead_found", label: "Lead found" }], legs: [] } },
       ]),
     ),
-  ),
+    pipeSteps: new Map([
+      ["sales-cold-email-outreach|lead_found_to_conversation", { fromStep: "lead_found", toStep: "conversation" }],
+      ["sourcing-apollo-cold-filters|start_to_lead_found", { fromStep: null, toStep: "lead_found" }],
+      ["ai-meeting-booking|conversation_to_meeting_booked", { fromStep: "conversation", toStep: "meeting_booked" }],
+    ]),
+  })),
 }));
+const computeTakeoverReturn = vi.fn();
+vi.mock("../lib/value-added-io.js", () => ({ computeTakeoverReturn: (...a: unknown[]) => computeTakeoverReturn(...a) }));
 vi.mock("../lib/brand-ownership.js", () => ({ assertBrandHeld: vi.fn(async () => {}), BrandOwnershipError: class extends Error {} }));
 const fetchWithRetry = vi.fn();
 vi.mock("../lib/fetch-retry.js", () => ({ fetchWithRetry: (...a: unknown[]) => fetchWithRetry(...a) }));
@@ -48,6 +58,7 @@ const FC = (id: string, salesFunnelId: string, units: unknown[]) => ({
 });
 
 beforeEach(() => {
+  computeTakeoverReturn.mockReset();
   computeFeatureRevenue.mockReset();
   distinctChannelFunnels.mockReset();
   fetchWithRetry.mockReset();
@@ -100,5 +111,35 @@ describe("GET /brands/:brandId/sales-funnel-campaigns", () => {
     fetchWithRetry.mockResolvedValue(new Response("boom", { status: 500 }));
     expect((await request(app).get("/brands/b1/sales-funnel-campaigns").set(AUTH)).status).toBe(502);
     expect((await request(app).get("/brands/b1/sales-funnel-campaigns?pricing=x").set(AUTH)).status).toBe(400);
+  });
+
+  it("a campaign that TOOK its people over is credited the value it adds; one that found them keeps the engine's figures", async () => {
+    fetchWithRetry.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          salesFunnelCampaigns: [
+            FC("bliss", "lead_found_to_conversation@sales-cold-email-outreach", [unit("c2", "sales-cold-email-outreach", "lead_found_to_conversation"), unit("c1", "sourcing-apollo-cold-filters", "start_to_lead_found")]),
+            FC("motivate", REACTIVE, [unit("c3", "ai-meeting-booking", "conversation_to_meeting_booked")]),
+          ],
+        }),
+      ),
+    );
+    distinctChannelFunnels.mockReturnValue([{ key: "sales" }]);
+    computeFeatureRevenue.mockResolvedValue({ headline: { totalPipelineUsd: 30, unpricedReason: null }, costEconomics: { committedCostUsd: 12, roiMultiple: 2.5, unmeasuredReason: null }, maturity: null });
+    computeTakeoverReturn.mockResolvedValue({
+      headline: { totalPipelineUsd: 500, unpricedReason: null },
+      costEconomics: { committedCostUsd: 10, roiMultiple: 50, unmeasuredReason: null },
+      maturity: { isMature: false, legs: [] },
+      valueAdded: { people: 3, valueNowUsd: 950, valueAtTakeoverUsd: 450, valueAddedUsd: 500, takeoverStep: "conversation" },
+    });
+
+    const res = await request(app).get("/brands/b1/sales-funnel-campaigns?pricing=net").set(AUTH);
+    const [bliss, motivate] = res.body.salesFunnelCampaigns;
+    // Bliss's sourcing unit produces Lead found: it took its people from nothing, the engine's figures stand.
+    expect(bliss).toMatchObject({ takeoverStep: null, roiMultiple: 2.5, investedUsd: 12, valueAdded: null });
+    // Motivate answers Positive replies it did not produce: 2 x ($400 - $150) style value added over its spend.
+    expect(motivate).toMatchObject({ takeoverStep: "conversation", roiMultiple: 50, investedUsd: 10, headline: { totalPipelineUsd: 500 } });
+    expect(computeFeatureRevenue).toHaveBeenCalledTimes(1);
+    expect(computeTakeoverReturn.mock.calls[0][0]).toMatchObject({ takeoverStep: "conversation", unitCampaignIds: ["c3"], takeoverLeg: { legKey: "conversation_to_meeting_booked", toStep: "meeting_booked" } });
   });
 });

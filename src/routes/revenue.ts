@@ -6,7 +6,9 @@ import { FUNNEL_RETIRED_BODY, namesRetiredFunnel } from "../lib/retired-funnel-p
 import { contactedPricingSoft } from "./contacted-value.js";
 import { Router, type Request, type Response } from "express";
 import { fetchPricingFunnels } from "../lib/reading-funnels.js";
-import { funnelsContainingLeg } from "../lib/funnel-legs.js";
+import { funnelLeg, funnelsContainingLeg } from "../lib/funnel-legs.js";
+import { STEP_SIGNAL } from "../lib/value-added.js";
+import { computeTakeoverReturn, type TakeoverReturn } from "../lib/value-added-io.js";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
@@ -1383,6 +1385,37 @@ function matureSpendByDay(
 }
 
 /**
+ * A CAMPAIGN THAT TOOK ITS PEOPLE OVER IS CREDITED THE VALUE IT ADDS (`lib/value-added.ts`, owner 2026-10-11,
+ * one formula for every campaign): a campaign identity on ONE leg starting from a step the engine values (an AI
+ * meeting booking answering Positive replies) is priced on the people it acted on, at (value now − value at that
+ * step) over its own spend. A leg from nothing or from Lead found ($0 in the engine) returns null: the engine's
+ * own figures ARE that formula there, byte-unchanged.
+ */
+export async function takeoverReturnFor(
+  identity: { campaignIds: string[]; legKeys: string[] } | null | undefined,
+  featureSlug: string,
+  brandId: string,
+  priced: FunnelPricedEconomics | undefined,
+  pricing: Pricing,
+  headers: DownstreamHeaders,
+): Promise<TakeoverReturn | null> {
+  if (!identity || identity.legKeys.length !== 1) return null;
+  const leg = funnelLeg(identity.legKeys[0]);
+  const from = leg?.fromStep?.key ?? null;
+  if (!leg || !from || !STEP_SIGNAL[from]) return null;
+  return computeTakeoverReturn({
+    brandId,
+    unitCampaignIds: identity.campaignIds,
+    featureSlugs: [featureSlug],
+    takeoverStep: from,
+    takeoverLeg: { legKey: leg.legKey, toStep: leg.toStep.key },
+    priced,
+    pricing,
+    headers: { orgId: headers.orgId, userId: headers.userId, runId: headers.runId },
+  });
+}
+
+/**
  * Compute the full expected-pipeline revenue body for ONE (brand, campaign?) scope.
  *
  * Single source of truth for both the overview (no groupBy) and the per-campaign groups
@@ -2517,6 +2550,13 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
                 const identity = families.identityOf(idsWithRuns[0]);
                 const scope = identity?.campaignIds ?? idsWithRuns;
                 const body = await computeFeatureRevenue(featureSlug, brandId, scope, funnel, headers, undefined, pricingForIdentity(identity), false, campaignPricing, undefined, undefined, undefined, causes);
+                // A campaign that took its people over is credited only the value it adds (the same block its own read serves).
+                const takeover = costBasis === "actual" ? null : await takeoverReturnFor(identity, featureSlug, brandId, pricingForIdentity(identity), campaignPricing, headers);
+                if (takeover) {
+                  body.headline = { ...body.headline, ...takeover.headline };
+                  body.costEconomics = takeover.costEconomics;
+                  body.maturity = takeover.maturity;
+                }
                 // On the actual-cost basis: the identity's billed spend on rows with no known vendor
                 // cost, read on the same scope its cost was.
                 const unpricedCents =
@@ -2647,6 +2687,18 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
 
         // Overview (no lens) emits the canonical spend block; the lens path omits it (brand-total concept).
         const body = await computeFeatureRevenue(featureSlug, brandId, campaignScope, funnel, headers, lens, pricingForIdentity(campaignId ? identity : null), !lens, pricing, undefined, undefined, undefined, causes, workflowScope);
+        // A campaign that took its people over is credited only the value it adds (`takeoverReturnFor`): its money
+        // blocks are that read's, and the return curve (drawn on the engine pipeline it no longer reports) is null.
+        const takeover =
+          campaignId && !lens && !workflowScope && !offerId
+            ? await takeoverReturnFor(identity, featureSlug, brandId, pricingForIdentity(identity), pricing, headers)
+            : null;
+        if (takeover) {
+          body.headline = { ...body.headline, ...takeover.headline };
+          body.costEconomics = takeover.costEconomics;
+          body.maturity = takeover.maturity;
+          body.roiHistory = null;
+        }
 
         traceEvent(runId, { service: "features-service", event: "feature-revenue-done", detail: `featureSlug=${featureSlug}, orgs=${body.organizations.length}, pipelineUsd=${body.headline.totalPipelineUsd}` }, req.headers).catch(() => {});
 

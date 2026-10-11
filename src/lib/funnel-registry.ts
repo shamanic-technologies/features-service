@@ -1,5 +1,6 @@
 import type { FunnelMilestone, ResolvedPath } from "./revenue-engine.js";
 import type { SalesFunnelKey } from "./sales-funnels.js";
+import { SEED_FEATURES } from "../seed/features.js";
 
 /**
  * Funnel registry — maps a featureSlug to its expected-revenue funnel.
@@ -702,16 +703,17 @@ export function restrictPathsToDeclaredLegs(
   return paths.filter((path) => signals.has(path.signal));
 }
 
-export const FUNNEL_REGISTRY: Record<string, FunnelDefinition> = {
-  // Sales first. press / hiring / investors / vc / accelerators reuse the engine with
-  // their own funnel + economics once defined — until then they return a null pipeline.
-  "sales-cold-email-outreach": salesFunnel,
-  // Same medium, same measurement, different OFFER (a feedback request rather than a pitch), so it
-  // prices on the same funnel. Which FUNNEL a given brand is sold this feature through is narrowed
-  // separately by the catalogue's per-feature `salesFunnels` (the conversation funnel alone here),
-  // and by `restrictPathsToDeclaredLegs` at pricing time.
-  "feedback-request-cold-email-outreach": salesFunnel,
-};
+/**
+ * ONE ENGINE FOR EVERY CHANNEL (owner 2026-10-11, "NE CRÉE PLUS JAMAIS DES CAS PARTICULIERS"; supersedes the
+ * hand-kept list of the two cold-email slugs, which left AI meeting booking / instant call reading
+ * `no_funnel_wired`): every channel that SELLS a sales funnel (its catalogue `salesFunnels`, derived from its
+ * legs) prices on the sales funnel. Which funnels price a given brand is still narrowed by the offer's terms
+ * (`restrictPathsToDeclaredLegs`). A channel that sells none (a sourcing origin: it finds people and produces
+ * no outcome of its own) keeps a null pipeline.
+ */
+export const FUNNEL_REGISTRY: Record<string, FunnelDefinition> = Object.fromEntries(
+  SEED_FEATURES.filter((f) => f.salesFunnels.length > 0).map((f) => [f.slug, salesFunnel] as const),
+);
 
 export function getFunnel(featureSlug: string): FunnelDefinition | null {
   return FUNNEL_REGISTRY[featureSlug] ?? null;

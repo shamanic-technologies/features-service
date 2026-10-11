@@ -2834,11 +2834,22 @@ const salesFunnelCampaignRowSchema = z.object({
   copyUnavailableReason: z.enum(["sales_funnel_not_in_catalogue"]).nullable().describe("Why `type`, `triggerLabel`, `typeLabel` and `path` are null: the funnel id is not in this service's catalogue (logged). Null when they are served."),
   units: z.array(z.object({ campaignId: z.string(), pipeId: z.string(), featureSlug: z.string(), legKey: z.string(), status: z.string() })).describe("The unit campaigns (one per pipe) the money is computed over, as campaign-service serves them."),
   investedUsd: z.number().describe("$ Invested since inception: the COMMITTED spend of every unit together (= `costEconomics.committedCostUsd`). Every cost row belongs to one unit, so this is exactly the sum of the units' own `committedCostUsd` (each unit's `/features/{slug}/revenue?campaignId=` read), on the requested pricing basis."),
-  roiMultiple: z.number().nullable().describe("The funnel campaign's ROI (= `costEconomics.roiMultiple`): ONE engine pass over the units' people (deduped) and spend together, on the offer's terms; never a sum or an average of unit ROIs. Null with a reason in `costEconomics.unmeasuredReason` (e.g. `maturing`: still learning), `headline.unpricedReason` (e.g. `no_funnel_wired`) or `moneyUnavailableReason`. Read `maturity` for the flash/mature pair and the verdict, as on a campaign row."),
+  roiMultiple: z.number().nullable().describe("The funnel campaign's ROI (= `costEconomics.roiMultiple`) = the value it ADDS over its own spend (owner 2026-10-11): ONE engine pass over the units' people (deduped) and spend together, on the offer's terms, minus their value where it took them over (`takeoverStep`, `valueAdded`; $0 when it found them); never a sum or an average of unit ROIs. Null with a reason in `costEconomics.unmeasuredReason` (e.g. `maturing`: still learning), `headline.unpricedReason` (e.g. `no_funnel_wired`) or `moneyUnavailableReason`. Read `maturity` for the flash/mature pair and the verdict, as on a campaign row."),
   moneyUnavailableReason: z.enum(["units_price_differently"]).nullable().describe("`units_price_differently`: the units' channels price on two different funnel definitions, so no ROI can be one figure (investedUsd is still served). Null otherwise."),
   headline: featureRevenueResponseSchema.shape.headline.nullable().describe("The units' pipeline together and WHY it is unpriced when it is (`unpricedReason`, e.g. `no_funnel_wired`: a funnel whose units wire no funnel we price yet, like AI meeting booking), the block a campaign row serves. Null when the funnel campaign has no unit."),
   costEconomics: featureRevenueResponseSchema.shape.costEconomics.nullable().describe("The full cost economics of the units together (the block a campaign row serves). Null when the funnel campaign has no unit."),
   maturity: scopeMaturitySchema.nullable().describe("Per-leg figures and the maturity verdict of the units together (the object a campaign row serves). Null when unreadable or no unit."),
+  takeoverStep: z.string().nullable().describe("Where this campaign took its people over (owner 2026-10-11, one formula for every campaign): the funnel's first step unless its own units produce it. Null = it found them (its sourcing units are inside it): its return is the engine's ordinary pipeline over its spend. A step (e.g. `conversation` for a campaign answering Positive replies): it is credited only the value it ADDS."),
+  valueAdded: z
+    .object({
+      takeoverStep: z.string(),
+      people: z.number().int().describe("The people its units served or ACTED on (lead-service follow-up ledger)."),
+      valueNowUsd: z.number().describe("Their value now, on the offer's terms (the revenue engine's own)."),
+      valueAtTakeoverUsd: z.number().describe("Their value at the takeover step (same person, same stated value, holding only that step)."),
+      valueAddedUsd: z.number().describe("valueNowUsd - valueAtTakeoverUsd: what `roiMultiple` divides by the spend (= headline.totalPipelineUsd here)."),
+    })
+    .nullable()
+    .describe("The value this campaign ADDED, when it took its people over at a step the engine values (a reactive campaign). Example: 2 meetings booked off positive replies, a meeting worth $400 and a reply $150: 2 x ($400 - $150) = $500; on $10 spent, 50x. Null when it found its people (takeoverStep null, or Lead found: a lead nobody engaged is worth $0 to the engine, so nothing is subtracted)."),
 });
 
 const salesFunnelCampaignsResponseRef = registry.register(
