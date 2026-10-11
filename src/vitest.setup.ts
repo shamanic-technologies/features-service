@@ -60,3 +60,13 @@ vi.mock("./lib/pipe-kind.js", () => ({
   internalPipeToStep: vi.fn(async () => null),
   __resetPipeKind: vi.fn(),
 }));
+
+/**
+ * Suite-wide default: a sales funnel PIPE's spend attribution (lib/pipe-spend-attribution-io.ts) reads
+ * campaign-service's funnel campaigns, which no route fixture answers. It resolves to `null` (nothing moves)
+ * here, so a campaign-scoped suite keeps the spend its fixture states. `routes/pipe-spend-attribution.test.ts`
+ * `vi.unmock`s it.
+ */
+vi.mock("./lib/pipe-spend-attribution-io.js", () => ({
+  resolvePipeSpendAttribution: vi.fn(async () => null),
+}));

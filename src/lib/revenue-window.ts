@@ -55,6 +55,7 @@ import { mapWithConcurrency } from "./concurrency.js";
 import { isVendorPricing, type Pricing } from "./pricing.js";
 import type { CampaignFilter } from "./campaign-scope.js";
 import { campaignScopeIds } from "./campaign-scope.js";
+import { pipeRunsScope } from "./pipe-spend-attribution.js";
 import { runsFeatureSlugsParam, type FeatureScope } from "./feature-scope.js";
 import { fetchBroadcastEmailsByDay, fetchBroadcastQueuedEmails } from "./sequences-client.js";
 import { RUNS_CAMPAIGN_IDS_PER_REQUEST } from "./brand-spend-by-day-client.js";
@@ -236,14 +237,16 @@ export async function fetchWindowActualSpendByDay(input: {
     if (input.startedAfter) p.set("startedAfter", input.startedAfter);
     return p;
   };
-  const members = campaignScopeIds(input.campaignScope);
+  // A pipe of a sales funnel campaign reads its OWN spend (lib/pipe-spend-attribution.ts); else unchanged.
+  const pipe = pipeRunsScope(input.campaignScope);
+  const members = campaignScopeIds(pipe.campaignScope);
   const chunks: string[][] = [];
   for (let i = 0; i < members.length; i += RUNS_CAMPAIGN_IDS_PER_REQUEST) chunks.push(members.slice(i, i + RUNS_CAMPAIGN_IDS_PER_REQUEST));
   const scopedReads = members.length === 0 ? [undefined] : chunks;
   const [scopedParts, brandWide] = await Promise.all([
     mapWithConcurrency(scopedReads, 6, (chunk) => {
       const p = base();
-      p.set("featureSlugs", runsFeatureSlugsParam(input.featureScope));
+      p.set("featureSlugs", runsFeatureSlugsParam(input.featureScope, pipe.releasedOriginSlugs));
       if (chunk) p.set("campaignIds", chunk.join(","));
       return fetchCampaignSplitDays(p, input.pricing);
     }),

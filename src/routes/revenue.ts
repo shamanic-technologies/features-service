@@ -79,6 +79,8 @@ import { SalesFunnelsUnavailableError, type DeclaredSalesFunnel } from "../lib/s
 import { primaryDeclaredFunnel } from "../lib/brand-funnels.js";
 import { salesFunnelIndex, SALES_FUNNEL_GOAL_ECHO, type SalesFunnelKey } from "../lib/sales-funnels.js";
 import { campaignScopeIds, singleCampaignId, type CampaignFilter } from "../lib/campaign-scope.js";
+import { pipeSpendAttributionKey, withPipeSpendAttribution } from "../lib/pipe-spend-attribution.js";
+import { resolvePipeSpendAttribution } from "../lib/pipe-spend-attribution-io.js";
 import {
   computeLearningPhaseSoft,
   engagedLeadsByCampaign,
@@ -2549,37 +2551,41 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
                 // own still belongs to the campaign, and dropping it would drop its leads.
                 const identity = families.identityOf(idsWithRuns[0]);
                 const scope = identity?.campaignIds ?? idsWithRuns;
-                const body = await computeFeatureRevenue(featureSlug, brandId, scope, funnel, headers, undefined, pricingForIdentity(identity), false, campaignPricing, undefined, undefined, undefined, causes);
-                // A campaign that took its people over is credited only the value it adds (the same block its own read serves).
-                const takeover = costBasis === "actual" ? null : await takeoverReturnFor(identity, featureSlug, brandId, pricingForIdentity(identity), campaignPricing, headers);
-                if (takeover) {
-                  body.headline = { ...body.headline, ...takeover.headline };
-                  body.costEconomics = takeover.costEconomics;
-                  body.maturity = takeover.maturity;
-                }
-                // On the actual-cost basis: the identity's billed spend on rows with no known vendor
-                // cost, read on the same scope its cost was.
-                const unpricedCents =
-                  costBasis === "actual"
-                    ? (await fetchRunsCostCents(brandId, scope, featureSlug, headers, "vendorUnpriced")).committedCents
-                    : null;
-                const stamp = <G extends { costEconomics: CostEconomics; outcomes?: object | null }>(g: G) =>
-                  unpricedCents === null ? g : stampVendorGroup(g, unpricedCents);
-                return idsWithRuns.map((cid) => stamp({
-                  campaignId: cid,
-                  campaignIdentity: describeIdentity(identity, cid),
-                  headline: body.headline,
-                  costEconomics: body.costEconomics,
-                  // The VOLUME half — how much real outcome evidence this row's ROI and %CAC rest on.
-                  // Totalled over the identity exactly as the money is (the compute above already runs
-                  // over the family's WHOLE membership), and deduped inside it, so a lead served under
-                  // two member rows is ONE person here as it is one person to the brand. Every member
-                  // of an identity therefore carries the identical block, like the money.
-                  outcomes: body.outcomes,
-                  // The identity's per-leg figures and verdict (`lib/scope-maturity.ts`) — the same
-                  // object its own `?campaignId=` read serves, so a row and its page cannot disagree.
-                  maturity: body.maturity ?? null,
-                }));
+                // The row of a sales funnel PIPE reads its own spend, exactly as its own `?campaignId=` read does.
+                const pipeAttribution = await resolvePipeSpendAttribution({ brandId, featureSlug, pipeCampaignIds: scope, headers });
+                return withPipeSpendAttribution(pipeAttribution, async () => {
+                  const body = await computeFeatureRevenue(featureSlug, brandId, scope, funnel, headers, undefined, pricingForIdentity(identity), false, campaignPricing, undefined, undefined, undefined, causes);
+                  // A campaign that took its people over is credited only the value it adds (the same block its own read serves).
+                  const takeover = costBasis === "actual" ? null : await takeoverReturnFor(identity, featureSlug, brandId, pricingForIdentity(identity), campaignPricing, headers);
+                  if (takeover) {
+                    body.headline = { ...body.headline, ...takeover.headline };
+                    body.costEconomics = takeover.costEconomics;
+                    body.maturity = takeover.maturity;
+                  }
+                  // On the actual-cost basis: the identity's billed spend on rows with no known vendor
+                  // cost, read on the same scope its cost was.
+                  const unpricedCents =
+                    costBasis === "actual"
+                      ? (await fetchRunsCostCents(brandId, scope, featureSlug, headers, "vendorUnpriced")).committedCents
+                      : null;
+                  const stamp = <G extends { costEconomics: CostEconomics; outcomes?: object | null }>(g: G) =>
+                    unpricedCents === null ? g : stampVendorGroup(g, unpricedCents);
+                  return idsWithRuns.map((cid) => stamp({
+                    campaignId: cid,
+                    campaignIdentity: describeIdentity(identity, cid),
+                    headline: body.headline,
+                    costEconomics: body.costEconomics,
+                    // The VOLUME half — how much real outcome evidence this row's ROI and %CAC rest on.
+                    // Totalled over the identity exactly as the money is (the compute above already runs
+                    // over the family's WHOLE membership), and deduped inside it, so a lead served under
+                    // two member rows is ONE person here as it is one person to the brand. Every member
+                    // of an identity therefore carries the identical block, like the money.
+                    outcomes: body.outcomes,
+                    // The identity's per-leg figures and verdict (`lib/scope-maturity.ts`) — the same
+                    // object its own `?campaignId=` read serves, so a row and its page cannot disagree.
+                    maturity: body.maturity ?? null,
+                  }));
+                });
               }),
             )
           ).flat();
@@ -2610,6 +2616,14 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
       : null;
     const offerCampaignIds = offerId ? await resolveOfferCampaignIds(offerId, brandId, featureSlug, headers) : null;
     const campaignScope: CampaignFilter = offerCampaignIds ?? identity?.campaignIds ?? campaignId;
+    // A PIPE of a sales funnel campaign reads its OWN spend: the sourcing history filed under its sibling outreach
+    // pipe before 2026-10-08 moves to the sourcing pipe it belongs to, read-time (lib/pipe-spend-attribution.ts).
+    // Null (nothing moves) for every campaign in no funnel: its cells and figures are byte-unchanged.
+    const pipeAttribution =
+      campaignId && !offerId
+        ? await resolvePipeSpendAttribution({ brandId, featureSlug, pipeCampaignIds: campaignScopeIds(campaignScope), headers })
+        : null;
+    const pipeSpend = pipeSpendAttributionKey(pipeAttribution);
 
     // ONE WORKFLOW of that scope. FAIL-LOUD: the catalogue decides which of the scope's leads are
     // this workflow's, so a degraded read would answer about one VERSION under the whole workflow's
@@ -2629,9 +2643,10 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
           decl,
           econ,
           cause: causeKey,
+          pipeSpend,
         }),
         orgId,
-        compute: async () => {
+        compute: () => withPipeSpendAttribution(pipeAttribution, async () => {
           const ledger = vendorSpendLedger(fetchBrandVendorSpendByDay);
           const body = await computeFeatureRevenue(featureSlug, brandId, campaignScope, funnel, headers, undefined, pricingForIdentity(campaignId ? identity : null), true, "gross", undefined, undefined, undefined, causes, workflowScope, ledger.reader);
           return {
@@ -2649,7 +2664,7 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
             // drawn from one leg, and never the billed curve under this basis.
             actualCostHistory: body.roiHistory ? buildActualCostHistory(body.roiHistory, ledger.unpricedByDay(), ledger.unpricedCostNames()) : null,
           };
-        },
+        }),
       });
       return sendSnapshotJson(res, actualPayload);
     }
@@ -2680,9 +2695,11 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
         cause: causeKey,
         // The campaign card row adds a block. Absent → dropped → today's keys are unmoved.
         windowDays,
+        // A pipe whose spend moves to / from a sibling pipe. Absent → dropped → today's keys are unmoved.
+        pipeSpend,
       }),
       orgId,
-      compute: async () => {
+      compute: () => withPipeSpendAttribution(pipeAttribution, async () => {
         traceEvent(runId, { service: "features-service", event: "feature-revenue-start", detail: `featureSlug=${featureSlug}, brandId=${brandId}, campaignId=${campaignId ?? "none"}` }, req.headers).catch(() => {});
 
         // Overview (no lens) emits the canonical spend block; the lens path omits it (brand-total concept).
@@ -2737,7 +2754,7 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
               }
             : undefined,
         };
-      },
+      }),
     });
 
     sendSnapshotJson(res, payload);
