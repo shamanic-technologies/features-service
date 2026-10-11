@@ -111,9 +111,7 @@ export type SalesPathRateSource =
 
 /** The ONLY channels the platform manages today (defined beside the per-item minimums it decides). */
 export { MANAGED_CHANNEL_SLUGS } from "./channel-leg-minimums.js";
-/** The managed channels an offer's sales paths CROSS: every managed one but a person-scoped one (`PERSON_SCOPED_CHANNEL_SLUGS`). */
-export const OFFER_PATH_MANAGED_CHANNEL_SLUGS: ReadonlySet<string> = new Set([...MANAGED_CHANNEL_SLUGS].filter((s) => !PERSON_SCOPED_CHANNEL_SLUGS.has(s)));
-import { MANAGED_CHANNEL_SLUGS, PERSON_SCOPED_CHANNEL_SLUGS, channelLegMinimumMonthlyCents } from "./channel-leg-minimums.js";
+import { MANAGED_CHANNEL_SLUGS, channelLegMinimumMonthlyCents } from "./channel-leg-minimums.js";
 
 /**
  * The LAST rung of the cost cascade: a conservative cost per outcome for every (managed channel, leg),
@@ -127,12 +125,15 @@ import { MANAGED_CHANNEL_SLUGS, PERSON_SCOPED_CHANNEL_SLUGS, channelLegMinimumMo
  *    worked, ~1 in 3 conversations booking, at our price multiple.
  *  - AI instant call → booking call $2: one bridged phone call (Twilio both legs, a few minutes) plus
  *    the LLM qualification, counting unanswered rings, at our price multiple.
+ *  - AI follow-up email → paid client $1: one AI-written warm email (~$0.10 of LLM tokens + send at our price
+ *    multiple) per signup, at the 10% default signup -> paid client rate (`lib/default-leg-rates.ts`).
  */
 export const DEFAULT_COST_PER_OUTCOME_USD: ReadonlyMap<string, number> = new Map([
   ["start_to_conversation|sales-cold-email-outreach", 50],
   ["start_to_website_visit|sales-cold-email-outreach", 5],
   ["conversation_to_meeting_booked|ai-meeting-booking", 5],
   ["conversation_to_booking_call|ai-instant-call", 2],
+  ["signup_to_paid_client|ai-follow-up-email", 1],
 ]);
 
 /** Which rung of the cost cascade priced a candidate. */
@@ -502,7 +503,7 @@ function cartesian<T>(options: ReadonlyArray<readonly T[]>): T[][] {
 export function platformChannelsForLeg(
   channels: readonly SalesPathChannelInput[],
   legKey: string,
-  managed: ReadonlySet<string> = OFFER_PATH_MANAGED_CHANNEL_SLUGS,
+  managed: ReadonlySet<string> = MANAGED_CHANNEL_SLUGS,
 ): SalesPathChannelInput[] {
   return channels.filter((c) => c.operatedBy === "platform" && managed.has(c.slug) && c.legKeys.includes(legKey));
 }
@@ -524,7 +525,7 @@ export function legChannelsForScope(
   channels: readonly SalesPathChannelInput[],
   legKey: string,
   scope: SalesPathScope,
-  managed: ReadonlySet<string> = OFFER_PATH_MANAGED_CHANNEL_SLUGS,
+  managed: ReadonlySet<string> = MANAGED_CHANNEL_SLUGS,
   shortlist: ReadonlySet<string> = SALES_PATH_CATALOGUE_CHANNEL_SLUGS,
 ): SalesPathChannelInput[] {
   if (scope === "ticked") return platformChannelsForLeg(channels, legKey, managed);
@@ -567,7 +568,7 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
   const benchmarks = input.benchmarks ?? SALES_PATH_COST_BENCHMARKS;
 
   const arrows = new Map(input.rates.map((a) => [legPairKey(a.fromStep, a.toStep), a]));
-  const managed = input.managedChannelSlugs ?? OFFER_PATH_MANAGED_CHANNEL_SLUGS;
+  const managed = input.managedChannelSlugs ?? MANAGED_CHANNEL_SLUGS;
   const fleetPrices = input.fleetPrices ?? new Map<string, number>();
   const defaultCosts = input.defaultCosts ?? DEFAULT_COST_PER_OUTCOME_USD;
   const ltr = input.lifetimeRevenueUsd;

@@ -8,7 +8,6 @@ import {
   DEFAULT_COST_PER_OUTCOME_USD,
   enumerateSalesPaths,
   MANAGED_CHANNEL_SLUGS,
-  OFFER_PATH_MANAGED_CHANNEL_SLUGS,
   platformChannelsForLeg,
   priceKey,
   resolveLegChannelCost,
@@ -305,8 +304,8 @@ describe("the managed-channel rule (owner 2026-09-29)", () => {
     { slug: "agency-closing-calls", name: "Closing", operatedBy: "platform", trigger: "daily_budget", legKeys: ["meeting_attended_to_paid_client"] },
   ];
 
-  it("is exactly the three channels we manage (a person-scoped managed channel is never crossed)", () => {
-    expect([...OFFER_PATH_MANAGED_CHANNEL_SLUGS].sort()).toEqual(["ai-instant-call", "ai-meeting-booking", "sales-cold-email-outreach"]);
+  it("is exactly the four channels we manage", () => {
+    expect([...MANAGED_CHANNEL_SLUGS].sort()).toEqual(["ai-follow-up-email", "ai-instant-call", "ai-meeting-booking", "sales-cold-email-outreach"]);
     expect(platformChannelsForLeg(REAL, "start_to_conversation").map((c) => c.slug)).toEqual(["sales-cold-email-outreach"]);
     expect(platformChannelsForLeg(REAL, "conversation_to_meeting_booked").map((c) => c.slug)).toEqual(["ai-meeting-booking"]);
     expect(platformChannelsForLeg(REAL, "meeting_attended_to_paid_client")).toEqual([]);
