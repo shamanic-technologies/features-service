@@ -2827,9 +2827,9 @@ const salesFunnelCampaignRowSchema = z.object({
   path: z.object({
     items: z.array(z.union([
       z.object({ kind: z.literal("step"), key: z.string(), label: z.string().describe("The step's customer label (\"Positive reply\").") }),
-      z.object({ kind: z.literal("channel"), slug: z.string(), name: z.string().describe("The channel's display name (\"Sales Cold Email Outreach\").") }),
-    ])).describe("The path in reading order: the first step, then per leg the channel's display name when WE run the leg, then the leg's next step (a leg the client's own team works, or the buyer alone, shows only its next step). Always ends at Paid client. Render the items joined by arrows; never parse an id."),
-    legs: z.array(z.object({ legKey: z.string(), fromStep: z.string(), toStep: z.string(), runByUs: z.boolean().describe("We run this leg (a platform channel)."), channelSlug: z.string().nullable().describe("The channel working the leg; null when no channel performs it (the buyer acts)."), channelName: z.string().nullable() })).describe("The same path, one entry per leg, in order."),
+      z.object({ kind: z.literal("channel"), slug: z.string(), name: z.string().describe("The channel's display name (\"Sales Cold Email Outreach\")."), runByUs: z.boolean().describe("We run it; false = the customer's own team (a `Your Team` channel).") }),
+    ])).describe("The path in reading order (owner 2026-10-11): a proactive funnel starts at Start (`key: \"start\"`), a reactive one at its trigger step; then per leg the channel(s) working it, then the leg's next step, to Paid client. EVERY two steps have at least one channel between them. The sourcing leg (Start -> Lead found) lists the sources THIS campaign runs (several). Render the items joined by arrows; never parse an id."),
+    legs: z.array(z.object({ legKey: z.string(), fromStep: z.string().describe("`start` on the first leg of a proactive funnel."), toStep: z.string(), runByUs: z.boolean().describe("At least one channel of the leg is ours."), channelSlug: z.string().nullable().describe("The leg's one channel; null on the sourcing leg, which `channels` lists."), channelName: z.string().nullable(), channels: z.array(z.object({ slug: z.string(), name: z.string(), runByUs: z.boolean() })).describe("Every channel working the leg; never empty.") })).describe("The same path, one entry per leg, in order."),
   }).nullable().describe("The funnel's PATH as structured data (owner 2026-10-11: the Campaigns table shows it under the name). Null only with `copyUnavailableReason`."),
   copyUnavailableReason: z.enum(["sales_funnel_not_in_catalogue"]).nullable().describe("Why `type`, `triggerLabel`, `typeLabel` and `path` are null: the funnel id is not in this service's catalogue (logged). Null when they are served."),
   units: z.array(z.object({ campaignId: z.string(), pipeId: z.string(), featureSlug: z.string(), legKey: z.string(), status: z.string() })).describe("The unit campaigns (one per pipe) the money is computed over, as campaign-service serves them."),
@@ -6200,7 +6200,7 @@ const catalogueErrors = {
 };
 
 const catalogueStepRow = z.object({ id: z.string(), name: z.string(), icon: z.string().describe("Phosphor icon name."), line: z.string(), valueUsd: z.number().nullable().describe("What reaching the step is worth on the way to a paid client (fleet). Use it for an endpoint's ROI: value / cost of the call."), ...catalogueEcon, declared: z.boolean().optional().describe("Present (true) on a step declared at run time.") });
-const catalogueGlyphRow = z.object({ id: z.string(), name: z.string(), icon: z.string().describe("The family glyph (Phosphor): `waves` (sales path), `bird` (pipe), `flow-arrow` (workflow)."), color: z.string().describe("`#RRGGBB`, derived from the name."), line: z.string(), ...catalogueEcon, runnable: z.boolean().optional().describe("Sales path rows: at least one of its funnels is runnable. Absent on workflow rows."), type: z.enum(["proactive", "reactive"]).describe("`proactive`: starts on an entry leg (from nothing or from Lead found). `reactive` (owner 2026-10-10): starts on a TRIGGER step through a reactive pipe (Positive reply -> Meeting booked -> ... -> Paid client); its cost per paying client leaves out what produced the trigger, so a reactive path ranks after the proactive ones of its status tier.").optional().describe("Sales path rows only.") });
+const catalogueGlyphRow = z.object({ id: z.string(), name: z.string(), icon: z.string().describe("The family glyph (Phosphor): `waves` (sales path), `bird` (pipe), `flow-arrow` (workflow)."), color: z.string().describe("`#RRGGBB`, derived from the name."), line: z.string(), ...catalogueEcon, runnable: z.boolean().optional().describe("Sales path rows: at least one of its funnels is runnable. Absent on workflow rows."), type: z.enum(["proactive", "reactive"]).describe("`proactive`: starts at Start, on a leg from nothing (an outbound path on Start -> Lead found; owner 2026-10-11, the id it had from `lead_found_to_*` still resolves). `reactive` (owner 2026-10-10): starts on a TRIGGER step through a reactive pipe (Positive reply -> Meeting booked -> ... -> Paid client); its cost per paying client leaves out what produced the trigger, so a reactive path ranks after the proactive ones of its status tier.").optional().describe("Sales path rows only.") });
 const cataloguePipeRow = catalogueGlyphRow.extend({ mode: z.enum(["proactive", "reactive"]), ...catalogueRunnableField, draft: z.boolean().optional() });
 const catalogueChannelRow = z.object({ id: z.string().describe("The channel slug."), name: z.string(), icon: z.string(), line: z.string(), ...catalogueEcon, ...catalogueRunnableField });
 const catalogueFunnelCopy = { triggerLabel: z.string().nullable().describe("A REACTIVE funnel: the customer label of what starts it (e.g. `Positive replies`), shown as a tag. Null on a proactive funnel.") };
@@ -6214,9 +6214,9 @@ const catalogueStepDetail = z.object({
   ...catalogueEconDetail, costUnit: z.literal("per_outcome"), producingPipeIds: z.array(z.string()), salesPathCount: z.number().int(),
 });
 const cataloguePathDetail = z.object({
-  object: z.literal("sales_path"), id: z.string(), name: z.string(), icon: z.string(), color: z.string(), line: z.string(), type: z.enum(["proactive", "reactive"]).describe("`proactive`: starts on an entry leg (from nothing or from Lead found). `reactive` (owner 2026-10-10): starts on a TRIGGER step through a reactive pipe (Positive reply -> Meeting booked -> ... -> Paid client); its cost per paying client leaves out what produced the trigger, so a reactive path ranks after the proactive ones of its status tier."),
+  object: z.literal("sales_path"), id: z.string(), name: z.string(), icon: z.string(), color: z.string(), line: z.string(), type: z.enum(["proactive", "reactive"]).describe("`proactive`: starts at Start, on a leg from nothing (an outbound path on Start -> Lead found; owner 2026-10-11, the id it had from `lead_found_to_*` still resolves). `reactive` (owner 2026-10-10): starts on a TRIGGER step through a reactive pipe (Positive reply -> Meeting booked -> ... -> Paid client); its cost per paying client leaves out what produced the trigger, so a reactive path ranks after the proactive ones of its status tier."),
   steps: z.array(z.object({ id: z.string(), name: z.string() })),
-  legs: z.array(z.object({ legKey: z.string(), ratePct: z.number().nullable(), rateSource: z.enum(["fleet_median", "default", "measured_pipe"]).nullable(), rateMeasured: z.boolean().describe("True only for a measured fleet conversion (`measured_pipe`)."), pipeIds: z.array(z.string()) })),
+  legs: z.array(z.object({ legKey: z.string(), fromStep: z.string().nullable().describe("Null = Start."), toStep: z.string(), ratePct: z.number().nullable(), rateSource: z.enum(["fleet_median", "default", "measured_pipe"]).nullable(), rateMeasured: z.boolean().describe("True only for a measured fleet conversion (`measured_pipe`)."), pipeIds: z.array(z.string()), channels: z.array(z.object({ id: z.string().describe("The channel slug."), name: z.string(), runByUs: z.boolean().describe("False = the customer's own team (`Your Team`)."), runnable: z.boolean() })).describe("Every channel performing the leg (owner 2026-10-11: every leg a channel); never empty.") })),
   ...catalogueEconDetail, costUnit: z.literal("per_paying_client"), bestSalesFunnelId: z.string().nullable(), salesFunnelCount: z.number().int(), lifetimeRevenueUsd: z.number().nullable(), ...catalogueRunnableField,
 });
 const catalogueChannelDetail = z.object({
@@ -6234,7 +6234,7 @@ const cataloguePipeDetail = z.object({
 const catalogueFunnelDetail = z.object({
   ...catalogueFunnelCopy,
   object: z.literal("sales_funnel"), id: z.string(), name: z.string(), face: catalogueFace, line: z.string(), salesPathId: z.string(), salesPathName: z.string().nullable(),
-  legs: z.array(z.object({ legKey: z.string(), ratePct: z.number().nullable(), rateSource: z.enum(["fleet_median", "default", "measured_pipe", "offer_measured", "offer_stated"]).nullable().describe("`fleet_median` = median of the rates brands STATED (>= 5 brands); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion; per-offer read only: `offer_measured` (the brand's own measured rate) / `offer_stated` (the rate it stated). Null on the entry leg (not used by the cost)."), rateMeasured: z.boolean(), outcomesNeededPerPayingClient: z.number().nullable(), pipe: z.object({ id: z.string(), name: z.string().nullable(), line: z.string(), mode: z.enum(["proactive", "reactive"]), ...catalogueEcon }).nullable().describe("Null on a leg no channel performs.") })),
+  legs: z.array(z.object({ legKey: z.string(), fromStep: z.string().nullable().describe("Null = Start."), toStep: z.string(), channels: z.array(z.object({ id: z.string().describe("The channel slug."), name: z.string(), runByUs: z.boolean().describe("False = the customer's own team (`Your Team`).") })).describe("The channel(s) working the leg (owner 2026-10-11: every leg a channel); never empty. The sourcing leg (Start -> Lead found, first on a proactive outbound funnel) lists every source: a pool, a campaign runs some."), pipes: z.array(z.object({ id: z.string(), name: z.string().nullable(), channelSlug: z.string(), runnable: z.boolean() })).describe("The pipe(s) working the leg; never empty."), ratePct: z.number().nullable(), rateSource: z.enum(["fleet_median", "default", "measured_pipe", "offer_measured", "offer_stated"]).nullable().describe("`fleet_median` = median of the rates brands STATED (>= 5 brands); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion; per-offer read only: `offer_measured` (the brand's own measured rate) / `offer_stated` (the rate it stated). Null on the entry leg (not used by the cost)."), rateMeasured: z.boolean(), outcomesNeededPerPayingClient: z.number().nullable(), pipe: z.object({ id: z.string(), name: z.string().nullable(), line: z.string(), mode: z.enum(["proactive", "reactive"]), ...catalogueEcon }).nullable().describe("The leg's one pipe. Null ONLY on the sourcing leg, which several sources work (`pipes`); it adds no cost of its own (a source finds its leads inside the outreach run) and is not part of the funnel id.") })),
   ...catalogueEconDetail, costUnit: z.literal("per_paying_client"), lifetimeRevenueUsd: z.number().nullable(), lifetimeRevenueSource: z.enum(["fleet_median_stated", "offer_stated", "fleet_median"]).nullable().describe("The lifetime revenue the roi divides: `fleet_median_stated` on the fleet catalogue; on a per-offer read `offer_stated` (the client value the customer typed) or `fleet_median` (the offer states none)."), ...catalogueRunnableField, mixed: z.boolean().describe("A proactive pipe AND a reactive pipe we run (platform-operated) in one funnel: its budget caps both, so the reactive part can starve the proactive one (owner 2026-10-10). A mixed funnel is never `runnable`; propose a proactive funnel and a separate reactive one."), draft: z.boolean(),
 });
 const catalogueWorkflowDetail = z.object({
@@ -6322,7 +6322,7 @@ catalogueCreate(
 catalogueCreate(
   "/internal/catalogue/sales-funnels",
   "Declare a sales funnel (internal, api-key)",
-  "One entry per leg of a sales path, in order: a pipe id, or the leg key of a leg no channel performs. Persisted (the declared sales path store the offer read already knows) and named with a never-given uplifting word + a face; an existing funnel answers 200 `created: false` with its name. Campaign-service and billing-service key a campaign on this id.",
+  "One pipe id per leg of a sales path, in order (a leg the customer's own team works: its `Your Team` pipe). A bare leg key is refused 400 `bare_leg_refused` (owner 2026-10-11: every leg a channel). Sourcing pipes (Start -> Lead found) may be named or left out: a funnel holds every source. Persisted (the declared sales path store the offer read already knows) and named with a never-given uplifting word + a face; an existing funnel answers 200 `created: false` with its name. Campaign-service and billing-service key a campaign on this id.",
   z.object({ pipeIds: z.array(z.string()), ...catalogueActor }),
   catalogueFunnelDetail.extend({ created: z.boolean() }),
 );
@@ -6345,6 +6345,29 @@ registry.registerPath({
   responses: {
     200: { description: "One page, ROI first.", content: { "application/json": { schema: cataloguePage(catalogueFunnelRow, "sales_funnel", "per_paying_client") } } },
     400: { description: "A query value the read does not recognise (`reason`)." },
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/public/catalogue/steps",
+  summary: "Every catalogue step's key, name and icon (public)",
+  description:
+    "The step vocabulary with nothing economic: one row per step of the agent catalogue, `key` = the canonical step key the fleet uses, `name` and `icon` (Phosphor) byte-equal to `GET /internal/catalogue/steps` `name`/`icon` for that step (a declared step states its own icon). No identity. Read by the customer dashboard's Outcomes entries (owner 2026-10-11). Sorted by key.",
+  tags: ["Public"],
+  responses: {
+    200: {
+      description: "Every step.",
+      content: {
+        "application/json": {
+          schema: z.object({
+            object: z.literal("step"),
+            total: z.number().int(),
+            rows: z.array(z.object({ key: z.string().describe("Canonical step key (`lead_found`, `conversation`, ...)."), name: z.string(), icon: z.string().describe("Phosphor icon name (`chat-circle-text`, ...).") })),
+          }),
+        },
+      },
+    },
   },
 });
 

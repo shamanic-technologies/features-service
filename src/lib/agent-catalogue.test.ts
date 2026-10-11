@@ -12,6 +12,10 @@ import {
   funnelIdOf,
   funnelsOfPath,
   funnelTypeOf,
+  legPipes,
+  legStepsOf,
+  pathById,
+  pipesOnLeg,
   matchesQuery,
   pathEconomics,
   pathLine,
@@ -53,12 +57,20 @@ const inputs = (over: Partial<CatalogueInputs> = {}): CatalogueInputs => ({
 describe("the agent catalogue model", () => {
   const model = buildCatalogueModel(inputs());
 
-  it("enumerates sales paths from an entry leg to Paid client, sourcing never a leg of one", () => {
+  it("enumerates sales paths from Start to Paid client (a reactive one from its trigger step), every leg a channel", () => {
     expect(model.paths.size).toBeGreaterThan(10);
     for (const p of model.paths.values()) {
       expect(p.steps[p.steps.length - 1]).toBe("paid_client");
-      expect(p.legKeys.some((l) => l.endsWith("_to_lead_found"))).toBe(false);
+      // Every leg is worked by a channel (owner 2026-10-11): no leg of a path without a pipe.
+      for (const l of p.legKeys) expect(pipesOnLeg(model, l).length, `${p.id}: ${l}`).toBeGreaterThan(0);
+      // A proactive path starts at Start (a leg from nothing); none starts at Lead found any more.
+      if (p.type === "proactive") expect(legStepsOf(model, p.legKeys[0]).fromStep, p.id).toBeNull();
+      expect(p.legKeys[0].startsWith("lead_found_to_"), p.id).toBe(false);
     }
+    // An outbound path starts Start -> Lead found; its former id resolves to it.
+    const old = "lead_found_to_conversation+conversation_to_paid_client";
+    expect(pathById(model, old)?.id).toBe(`start_to_lead_found+${old}`);
+    expect(pathLine(model, pathById(model, old)!)).toBe("Start → Lead found → Positive reply → Paid client");
     // The funnel named Victory is one of them, keyed exactly as its stored name row.
     const victory = "lead_found_to_conversation@sales-cold-email-outreach+conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client";
     expect(funnelById(model, victory)?.id).toBe(victory);
@@ -109,8 +121,8 @@ describe("the agent catalogue model", () => {
   });
 
   it("serves a path its best measured funnel, a channel its best measured pipe, a step its cheapest producing pipe", () => {
-    const path = [...model.paths.values()].find((p) => p.id === "lead_found_to_conversation+conversation_to_meeting_booked+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client")!;
-    expect(pathLine(model, path)).toBe("Lead found → Positive reply → Meeting booked → Meeting attended → Paid client");
+    const path = pathById(model, "lead_found_to_conversation+conversation_to_meeting_booked+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client")!;
+    expect(pathLine(model, path)).toBe("Start → Lead found → Positive reply → Meeting booked → Meeting attended → Paid client");
     const e = pathEconomics(model, path);
     expect(e.status).toBe("estimated");
     expect(e.bestFunnelId).toContain("@sales-cold-email-outreach");
@@ -162,13 +174,62 @@ describe("the agent catalogue model", () => {
   });
 });
 
+describe("every leg a channel, every proactive funnel from Start (owner 2026-10-11)", () => {
+  const model = buildCatalogueModel(inputs());
+  const all = [...model.paths.values()].flatMap((p) => funnelsOfPath(model, p));
+  const BLISS = "lead_found_to_conversation@sales-cold-email-outreach+conversation_to_meeting_booked+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client";
+
+  it("no funnel holds a leg without a channel", () => {
+    expect(all.length).toBeGreaterThan(20);
+    for (const f of all) for (const l of f.legs) expect(legPipes(l).length, `${f.id}: ${l.legKey}`).toBeGreaterThan(0);
+  });
+
+  it("the legs nobody worked are the customer's own team's, each a Your Team channel", () => {
+    for (const [leg, slug] of [
+      ["booking_call_to_meeting_booked", "your-team-booking-calls"],
+      ["conversation_to_paid_client", "your-team-reply-closing"],
+      ["website_visit_to_purchase", "your-team-website"],
+      ["website_visit_to_signup", "your-team-website"],
+      ["website_visit_to_form_submitted", "your-team-website"],
+      ["purchase_to_paid_client", "your-team-order-delivery"],
+    ]) {
+      const on = pipesOnLeg(model, leg);
+      expect(on.map((p) => p.channelSlug), leg).toEqual([slug]);
+      expect(on[0].operatedBy, leg).toBe("customer");
+    }
+  });
+
+  it("a leg has at most one Your Team channel, so a customer leg is one funnel, never several", () => {
+    const legs = new Set([...model.pipes.values()].map((p) => p.legKey));
+    for (const l of legs) expect(pipesOnLeg(model, l).filter((p) => p.operatedBy === "customer").length, l).toBeLessThanOrEqual(1);
+  });
+
+  it("Bliss keeps its id, starts at Start, and its sourcing leg holds every source (a pool, not part of the id)", () => {
+    const bliss = funnelById(model, BLISS)!;
+    expect(bliss.id).toBe(BLISS);
+    expect(bliss.pathId).toBe(`start_to_lead_found+${BLISS.replace("@sales-cold-email-outreach", "")}`);
+    expect(bliss.legs[0].legKey).toBe("start_to_lead_found");
+    expect(bliss.legs[0].pool!.map((p) => p.channelSlug)).toEqual(expect.arrayContaining(["sourcing-apollo-cold-filters", "sourcing-apollo-buying-signals", "sourcing-linkedin-engagement-signals"]));
+    expect(bliss.legs.slice(1).map((l) => l.pipe!.channelSlug)).toEqual(["sales-cold-email-outreach", "your-team-meeting-booking", "your-team-meeting-attendance", "your-team-closing-calls"]);
+    expect(funnelTypeOf(bliss)).toBe("proactive");
+  });
+
+  it("the sourcing pool changes no figure: the cost runs from the outreach leg, as before", () => {
+    const victory = funnelById(model, "lead_found_to_conversation@sales-cold-email-outreach+conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client")!;
+    const path = model.paths.get(victory.pathId)!;
+    const withoutPool = funnelEconomics({ ...path, legKeys: path.legKeys.slice(1), rates: path.rates.slice(1) }, victory.legs.slice(1), 3000);
+    expect(victory.economics.costUsd).toBeCloseTo(902.22, 1);
+    expect(withoutPool.costUsd).toBeCloseTo(902.22, 1);
+  });
+});
+
 describe("a sales funnel's type (owner 2026-10-10: Proactive when at least one pipe is proactive, else Reactive)", () => {
   const model = buildCatalogueModel(inputs());
 
   it("reads Proactive on a funnel holding one proactive pipe (Epiphany: cold email from Lead found)", () => {
     const epiphany = funnelById(model, "lead_found_to_website_visit@sales-cold-email-outreach+website_visit_to_purchase+purchase_to_paid_client")!;
     expect(epiphany).toBeDefined();
-    expect(epiphany.legs[0].pipe!.mode).toBe("proactive");
+    expect(epiphany.legs[1].pipe!.mode).toBe("proactive");
     expect(funnelTypeOf(epiphany)).toBe("proactive");
   });
 
@@ -182,7 +243,7 @@ describe("a sales funnel's type (owner 2026-10-10: Proactive when at least one p
   it("every funnel the model builds states exactly one of the two types, matching its pipes", () => {
     for (const path of model.paths.values()) {
       for (const f of funnelsOfPath(model, path)) {
-        const anyProactive = f.legs.some((l) => l.pipe?.mode === "proactive");
+        const anyProactive = f.legs.some((l) => legPipes(l).some((p) => p.mode === "proactive"));
         expect(funnelTypeOf(f)).toBe(anyProactive ? "proactive" : "reactive");
       }
     }
@@ -228,6 +289,7 @@ describe("a step declared at run time ('LinkedIn post') rides legs, paths and va
 describe("catalogue icons are Phosphor names only (owner 2026-10-10)", () => {
   // Checked against @phosphor-icons/react 2.1 (`dist/csr/<PascalName>`): every name the catalogue serves today.
   const PHOSPHOR = new Set([
+    "browser", "package",
     "address-book", "at", "bell", "bird", "calendar-check", "calendar-plus", "chat-circle", "chat-circle-text", "chat-text",
     "currency-dollar", "cursor-click", "envelope", "facebook-logo", "file-text", "flow-arrow", "funnel", "globe", "handshake",
     "instagram-logo", "linkedin-logo", "list-bullets", "magnifying-glass", "medal", "megaphone", "microphone", "newspaper",

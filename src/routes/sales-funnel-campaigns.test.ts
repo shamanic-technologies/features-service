@@ -35,6 +35,9 @@ vi.mock("./agent-catalogue.js", () => ({
       ["sourcing-apollo-cold-filters|start_to_lead_found", { fromStep: null, toStep: "lead_found" }],
       ["ai-meeting-booking|conversation_to_meeting_booked", { fromStep: "conversation", toStep: "meeting_booked" }],
     ]),
+    // The campaign's path: its sourcing leg shows the sources the campaign runs (its units' channels).
+    pathOf: (id: string, sourceSlugs: string[]) =>
+      id === "unknown" ? null : { items: [{ kind: "step", key: "start", label: "Start" }, ...sourceSlugs.map((slug) => ({ kind: "channel", slug, name: slug, runByUs: true }))], legs: [] },
   })),
 }));
 const computeTakeoverReturn = vi.fn();
@@ -83,7 +86,9 @@ describe("GET /brands/:brandId/sales-funnel-campaigns", () => {
     expect(row).not.toHaveProperty("description");
     expect(row.maturity).toEqual({ isMature: false, legs: [] });
     expect(row.headline).toEqual({ totalPipelineUsd: 30, unpricedReason: null });
-    expect(row.path.items[0]).toEqual({ kind: "step", key: "lead_found", label: "Lead found" });
+    expect(row.path.items[0]).toEqual({ kind: "step", key: "start", label: "Start" });
+    // The path is drawn with THIS campaign's units (its sources among them), never the funnel's every source.
+    expect(row.path.items.slice(1).map((i: { slug: string }) => i.slug)).toEqual(["sales-cold-email-outreach", "sourcing-apollo-cold-filters"]);
     expect(fetchWithRetry.mock.calls[0][0]).toBe("http://campaign:3000/sales-funnel-campaigns?brandId=b1");
   });
 

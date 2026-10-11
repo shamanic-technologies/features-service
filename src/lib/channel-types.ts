@@ -62,6 +62,10 @@ const MEMBERS: Record<ChannelType, readonly string[]> = {
     "your-team-closing-calls",
     "agency-signup-conversion",
     "your-team-signup-conversion",
+    "your-team-booking-calls",
+    "your-team-reply-closing",
+    "your-team-website",
+    "your-team-order-delivery",
   ],
   paid: [
     "google-ads",

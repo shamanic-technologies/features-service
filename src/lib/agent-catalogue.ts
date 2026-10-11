@@ -21,13 +21,25 @@
  *   brand-service's "sales funnels" (`website_purchases`, `sales_meetings_from_reply`...) are a DIFFERENT,
  *   older thing (the declared funnels a brand sells through) and keep their name everywhere else.
  *
- * ── WHERE A PATH STARTS ─────────────────────────────────────────────────────────────────────────
+ * ── WHERE A PATH STARTS, AND EVERY LEG A CHANNEL (owner 2026-10-11) ─────────────────────────────────
  *
- * A path's first leg is an ENTRY leg: from nothing (an ad producing a website visit), or from Lead found (an
- * outbound channel working a found lead: Lead found -> Positive reply). The leg that FINDS the lead
- * (Start -> Lead found, a sourcing pipe) feeds every path starting on Lead found and is not itself a leg of
- * any path: that is how every funnel named before today is keyed (Victory starts on the cold-email leg), and
- * a name never moves. Sourcing pipes are listed as pipes.
+ * A PROACTIVE path goes from Start to Paid client, always: its first leg is from nothing (an ad producing a
+ * website visit, or Start -> Lead found, the leg that FINDS the lead). An outbound path therefore reads
+ * Start -> Lead found -> Positive reply -> ... and its id begins `start_to_lead_found+`. The id it had before
+ * (from `lead_found_to_*`) is an ALIAS (`pathAliases`), so a stored id or name keeps resolving.
+ * A REACTIVE path starts on its trigger step (see `CataloguePath.type`).
+ *
+ * Every leg of a path is a leg some channel performs; a leg nobody performs is no path leg (owner 2026-10-11:
+ * "des pipes sans channel ... ça ne devrait pas être possible"). The customer's own work is a `Your Team`
+ * channel like any other.
+ *
+ * THE SOURCING LEG IS A POOL. Start -> Lead found is worked by several lead sources at once for one outreach
+ * (Apollo filters + buying signals + LinkedIn engagement feed the same cold email), so a funnel holds EVERY
+ * sourcing pipe on it (`FunnelLeg.pool`), and which sources a campaign runs is the campaign's choice. The pool
+ * is not part of a funnel's identity (`funnelIdOf` leaves it out), so every funnel id named before stays its
+ * id, and campaign-service and billing (caps keyed on it) see no change. Its cost is not added either: a
+ * source finds its leads inside the outreach run, so their cost is already in the outreach pipe's cost per
+ * outcome.
  *
  * ── AVERAGE COST, ROI, LEARNING (fleet grain, no identity) ──────────────────────────────────────
  *
@@ -238,6 +250,7 @@ export interface CataloguePipe {
 }
 
 export interface CataloguePath {
+  /** Its legs joined by `+`. A proactive path starts on a leg from nothing (Start). */
   id: string;
   legKeys: string[];
   steps: string[];
@@ -252,12 +265,21 @@ export interface CataloguePath {
   rates: Array<{ legKey: string; ratePct: number | null; source: CatalogueRateSource }>;
 }
 
-/** One leg of a funnel: the pipe working it, or null when no channel performs the leg (the buyer or the
- *  customer's team does it with nothing of ours on it: a visitor signing up). */
+/**
+ * One leg of a funnel: the pipe working it. The sourcing leg (Start -> Lead found) is a POOL: `pipe` is null and
+ * `pool` holds every sourcing pipe on it (see the header). No other leg is ever without a pipe.
+ */
 export interface FunnelLeg {
   legKey: string;
   pipe: CataloguePipe | null;
+  pool?: CataloguePipe[];
 }
+
+/** PURE: the pipes working a funnel leg (the pool's, or its one pipe). Never empty on a built funnel. */
+export const legPipes = (l: FunnelLeg): CataloguePipe[] => l.pool ?? (l.pipe ? [l.pipe] : []);
+
+/** The step the sourcing leg reaches: the leg several sources work together (a pool). */
+export const SOURCED_STEP = "lead_found";
 
 export interface CatalogueFunnel {
   id: string;
@@ -271,6 +293,8 @@ export interface CatalogueModel {
   steps: Map<string, CatalogueStep>;
   pipes: Map<string, CataloguePipe>;
   paths: Map<string, CataloguePath>;
+  /** A path's id before it started at Start (its legs without the sourcing leg) -> its id. */
+  pathAliases: Map<string, string>;
   lifetimeRevenueUsd: number | null;
   channels: readonly PublicChannel[];
 }
@@ -284,8 +308,6 @@ const round2 = (v: number): number => Math.round(v * 100) / 100;
 const usable = (v: number | null | undefined): v is number => typeof v === "number" && Number.isFinite(v) && v > 0;
 const LEARNING = (reason: string): Economics => ({ status: "learning", costUsd: null, roi: null, reason, estimates: [] });
 const CUSTOMER_TIME = (): Economics => ({ status: "customer_time", costUsd: null, roi: null, reason: null, estimates: [] });
-
-const ENTRY_FROM = (from: string | null): boolean => from === null || from === "lead_found";
 
 /** PURE: every pipe of the catalogue, with its fleet economics. `valueOf` prices the roi. */
 function buildPipes(inputs: CatalogueInputs, valueOf: (step: string) => number | null): Map<string, CataloguePipe> {
@@ -430,37 +452,35 @@ export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
 
   const pipes = buildPipes(inputs, (s) => stepValue(s).value);
 
-  // Paths: chains of served legs from an entry leg to Paid client, no step twice; the sourcing leg (-> Lead
-  // found) is never a path leg (see the header).
+  // Paths: chains of the legs pipes perform, from Start (a leg from nothing) to Paid client, no step twice. A leg
+  // no channel performs is no path leg (see the header).
   type PathLeg = { legKey: string; fromStep: string | null; toStep: string };
   const legsByFrom = new Map<string, Map<string, PathLeg>>();
   const addLeg = (l: PathLeg) => {
-    if (l.toStep === "lead_found") return;
-    const from = ENTRY_FROM(l.fromStep) ? "∅" : l.fromStep!;
+    const from = l.fromStep ?? "∅";
     const byLeg = legsByFrom.get(from) ?? new Map<string, PathLeg>();
     if (!byLeg.has(l.legKey)) byLeg.set(l.legKey, l);
     legsByFrom.set(from, byLeg);
   };
   for (const p of pipes.values()) addLeg(p);
-  // A funnel leg no channel performs (a visitor signing up) is still a leg of a path, worked by nobody of ours.
-  for (const l of FUNNEL_LEGS) if (l.fromStep) addLeg({ legKey: l.legKey, fromStep: l.fromStep.key, toStep: l.toStep.key });
   const paths = new Map<string, CataloguePath>();
+  const pathAliases = new Map<string, string>();
   const walk = (step: string, chain: PathLeg[], seen: Set<string>, type: CataloguePath["type"] = "proactive") => {
     if (step === "paid_client") {
       const legKeys = chain.map((l) => l.legKey);
       const id = pathIdOf(legKeys);
+      if (chain[0].toStep === SOURCED_STEP && chain.length > 1) pathAliases.set(pathIdOf(legKeys.slice(1)), id);
       paths.set(id, {
         id,
         legKeys,
         type,
         steps: [chain[0].fromStep ?? "start", ...chain.map((l) => l.toStep)].filter((s) => s !== "start"),
         rates: chain.map((l, i) => {
-          if (i === 0) {
-            if (l.fromStep === "lead_found") {
-              const r = measuredEntryRate(pipes.values(), l.legKey);
-              return { legKey: l.legKey, ratePct: r, source: r === null ? null : ("measured_pipe" as const) };
-            }
-            return { legKey: l.legKey, ratePct: null, source: null };
+          if (i === 0) return { legKey: l.legKey, ratePct: null, source: null };
+          // A leg out of Lead found has no stated rate: the best mature pipe's measured conversion prices it.
+          if (l.fromStep === SOURCED_STEP) {
+            const r = measuredEntryRate(pipes.values(), l.legKey);
+            return { legKey: l.legKey, ratePct: r, source: r === null ? null : ("measured_pipe" as const) };
           }
           const r = rateOf(l.fromStep!, l.toStep);
           return { legKey: l.legKey, ratePct: r.ratePct, source: r.source };
@@ -479,18 +499,33 @@ export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
   // leg first, then any chain to Paid client. Their ids start on the reactive leg, so they never collide with
   // a proactive path (which starts on an entry leg).
   for (const p of pipes.values()) {
-    if (p.mode !== "reactive" || p.fromStep === null || p.fromStep === "lead_found" || p.toStep === "lead_found") continue;
+    if (p.mode !== "reactive" || p.fromStep === null || p.fromStep === SOURCED_STEP || p.toStep === SOURCED_STEP) continue;
     const first: PathLeg = { legKey: p.legKey, fromStep: p.fromStep, toStep: p.toStep };
     walk(p.toStep, [first], new Set([p.fromStep, p.toStep]), "reactive");
   }
 
-  return { steps, pipes, paths, lifetimeRevenueUsd: inputs.lifetimeRevenueUsd, channels: inputs.channels };
+  return { steps, pipes, paths, pathAliases, lifetimeRevenueUsd: inputs.lifetimeRevenueUsd, channels: inputs.channels };
 }
 
 // ── Funnels ───────────────────────────────────────────────────────────────────────────────────────
 
 /** PURE: every pipe performing one leg of a path. */
 export const pipesOnLeg = (model: CatalogueModel, legKey: string): CataloguePipe[] => [...model.pipes.values()].filter((p) => p.legKey === legKey);
+
+/** A channel as a leg serves it: its slug, display name, and whether WE run it (else the customer's own team). */
+export interface LegChannel {
+  id: string;
+  name: string;
+  runByUs: boolean;
+}
+export const legChannelOf = (p: CataloguePipe): LegChannel => ({ id: p.channelSlug, name: p.channelName, runByUs: p.operatedBy === "platform" });
+
+/** PURE: the steps a path leg goes between (null from = Start), read off the pipes performing it. */
+export function legStepsOf(model: CatalogueModel, legKey: string): { fromStep: string | null; toStep: string } {
+  const p = pipesOnLeg(model, legKey)[0];
+  if (!p) throw new Error(`[features-service] catalogue: no pipe performs the path leg ${legKey}`);
+  return { fromStep: p.fromStep, toStep: p.toStep };
+}
 
 /**
  * PURE: the economics of one funnel (see the header formula). A leg's rate is the path's rate of that leg; a
@@ -509,14 +544,16 @@ export function funnelEconomics(
   let cost = 0;
   let platformLegs = 0;
   const estimates: string[] = [];
-  for (let i = legs.length - 1; i >= 0; i -= 1) {
+  // The sourcing pool adds no cost of its own (see the header): the cost runs from the first leg after it.
+  const first = Math.max(0, legs.findIndex((l) => !l.pool));
+  for (let i = legs.length - 1; i >= first; i -= 1) {
     const pipe = legs[i].pipe;
     if (pipe?.operatedBy === "platform") {
       platformLegs += 1;
       if (pipe.economics.status !== "measured" || pipe.measurement?.costPerOutcomeUsd == null) return LEARNING(`pipe_learning:${pipe.id}`);
       cost += pipe.measurement.costPerOutcomeUsd * needed;
     }
-    if (i === 0) break;
+    if (i === first) break;
     const rate = path.rates[i].ratePct;
     if (!usable(rate)) return LEARNING(`leg_unrated:${path.legKeys[i]}`);
     // Only a measured fleet conversion is a measured rate; a stated median, a default or a declared rate is not.
@@ -550,30 +587,34 @@ export function outcomesNeededPerPayingClient(path: CataloguePath): Array<number
   return out;
 }
 
-/** PURE: the funnel id of a pick (the offer read's combination key: a platform pipe `@<slug>`, any other leg bare). */
+/**
+ * PURE: the funnel id of a pick (the offer read's combination key: a platform pipe `@<slug>`, a leg the customer's
+ * own team works bare). The sourcing pool is left out (see the header): every id named before stays its id.
+ */
 export const funnelIdOf = (legs: readonly FunnelLeg[]): string =>
-  combinationKeyOf(legs.map((l) => ({ legKey: l.legKey, channelSlug: l.pipe?.operatedBy === "platform" ? l.pipe.channelSlug : null })));
+  combinationKeyOf(legs.filter((l) => !l.pool).map((l) => ({ legKey: l.legKey, channelSlug: l.pipe?.operatedBy === "platform" ? l.pipe.channelSlug : null })));
 
 /**
- * PURE: every funnel of a path (one pipe per leg; a leg no channel performs stays bare), deduplicated by id
- * (two customer-team channels on one leg are one funnel). Capped at `cap`.
+ * PURE: every funnel of a path: one pipe per leg (a platform pipe, or the customer's own team's), the sourcing leg
+ * a pool of every sourcing pipe. Deduplicated by id. A leg no pipe works makes no funnel. Capped at `cap`.
  */
 export function funnelsOfPath(model: CatalogueModel, path: CataloguePath, cap = 2000): CatalogueFunnel[] {
   const options: FunnelLeg[][] = path.legKeys.map((legKey) => {
     const onLeg = pipesOnLeg(model, legKey);
+    if (onLeg.length > 0 && onLeg.every((p) => p.toStep === SOURCED_STEP)) return [{ legKey, pipe: null, pool: onLeg }];
     const platform = onLeg.filter((p) => p.operatedBy === "platform");
     const customer = onLeg.filter((p) => p.operatedBy === "customer").slice(0, 1);
-    const picks = [...platform, ...customer].map((pipe) => ({ legKey, pipe }));
-    return picks.length > 0 ? picks : [{ legKey, pipe: null }];
+    return [...platform, ...customer].map((pipe) => ({ legKey, pipe }));
   });
+  if (options.some((o) => o.length === 0)) return [];
   const out = new Map<string, CatalogueFunnel>();
   const walk = (i: number, acc: FunnelLeg[]) => {
     if (out.size >= cap) return;
     if (i === options.length) {
       const id = funnelIdOf(acc);
       if (!out.has(id)) {
-        const slugs = [...new Set(acc.flatMap((l) => (l.pipe ? [l.pipe.channelSlug] : [])))];
-        const takeover = acc[0]?.pipe ? acc[0].pipe.fromStep : (path.steps[0] ?? null);
+        const slugs = [...new Set(acc.flatMap((l) => legPipes(l).map((p) => p.channelSlug)))];
+        const takeover = funnelFirstStep(acc);
         const takeoverValue = takeover && STEP_SIGNAL[takeover] ? (model.steps.get(takeover)?.valueUsd ?? null) : 0;
         out.set(id, { id, pathId: path.id, legs: acc, channelSlugs: slugs, economics: funnelEconomics(path, acc, model.lifetimeRevenueUsd, takeoverValue) });
       }
@@ -584,6 +625,9 @@ export function funnelsOfPath(model: CatalogueModel, path: CataloguePath, cap = 
   walk(0, []);
   return [...out.values()];
 }
+
+/** PURE: the step a funnel's first leg starts from (null = Start: the funnel finds its own people). */
+export const funnelFirstStep = (legs: readonly FunnelLeg[]): string | null => (legs[0] ? (legPipes(legs[0])[0]?.fromStep ?? null) : null);
 
 // ── Runnable: what we run TODAY (owner rule: a customer surface never presents what we do not run) ──
 
@@ -602,20 +646,22 @@ export const pipeRunnable = (p: CataloguePipe): boolean => p.published && (p.ope
  */
 export type FunnelType = "proactive" | "reactive";
 export const funnelTypeOf = (f: Pick<CatalogueFunnel, "legs">): FunnelType =>
-  f.legs.some((l) => l.pipe?.mode === "proactive") ? "proactive" : "reactive";
+  f.legs.some((l) => legPipes(l).some((p) => p.mode === "proactive")) ? "proactive" : "reactive";
 
 /**
  * PURE: a MIXED funnel (owner 2026-10-10): a proactive pipe AND a reactive pipe WE run (platform-operated,
  * e.g. AI meeting booking on a reply). The funnel's budget caps every pipe, so the reactive one can starve
  * the proactive part. A reactive pipe the customer's own team works spends nothing of ours: not a mix.
  */
+// The sourcing pool is not counted: a source answers the outreach run's request for a lead inside that run and
+// spends no budget of its own, so it cannot starve the proactive part.
 export const funnelMixed = (f: Pick<CatalogueFunnel, "legs">): boolean =>
   f.legs.some((l) => l.pipe?.mode === "proactive") &&
   f.legs.some((l) => l.pipe?.mode === "reactive" && l.pipe.operatedBy === "platform");
 
-/** PURE: a funnel we can run today: one kind (never mixed), every leg bare (the buyer acts) or worked by a runnable pipe. */
+/** PURE: a funnel we can run today: one kind (never mixed), every leg worked by a runnable pipe (the pool: by one). */
 export const funnelRunnable = (f: CatalogueFunnel): boolean =>
-  !funnelMixed(f) && f.legs.every((l) => l.pipe === null || pipeRunnable(l.pipe));
+  !funnelMixed(f) && f.legs.every((l) => legPipes(l).some(pipeRunnable));
 
 /** PURE: a channel we can run today: at least one of its pipes is runnable. */
 export const channelRunnable = (model: CatalogueModel, slug: string): boolean =>
@@ -624,10 +670,14 @@ export const channelRunnable = (model: CatalogueModel, slug: string): boolean =>
 /** PURE: a sales path we can run today: at least one of its funnels is runnable. */
 export const pathRunnable = (model: CatalogueModel, path: CataloguePath): boolean => funnelsOfPath(model, path).some(funnelRunnable);
 
-/** PURE: a funnel by id (any path), or null. */
+/** PURE: a sales path by id or by the id it had before it started at Start (`pathAliases`), or null. */
+export const pathById = (model: CatalogueModel, id: string): CataloguePath | null =>
+  model.paths.get(id) ?? model.paths.get(model.pathAliases.get(id) ?? "") ?? null;
+
+/** PURE: a funnel by id (any path), or null. Its id names its legs but the sourcing pool (`funnelIdOf`). */
 export function funnelById(model: CatalogueModel, id: string): CatalogueFunnel | null {
   const legKeys = id.split("+").map((part) => part.split("@")[0]);
-  const path = model.paths.get(pathIdOf(legKeys));
+  const path = pathById(model, pathIdOf(legKeys));
   if (!path) return null;
   return funnelsOfPath(model, path).find((f) => f.id === id) ?? null;
 }
@@ -674,17 +724,19 @@ export function stepEconomics(model: CatalogueModel, key: string): Economics {
 
 export const stepLabel = (model: CatalogueModel, key: string): string => model.steps.get(key)?.label ?? key;
 
-/** PURE: "Lead found -> Positive reply -> Meeting booked -> Paid client"; a path from nothing reads "Start -> ...". */
+/** PURE: "Start -> Lead found -> Positive reply -> Paid client"; a reactive path starts on its trigger step. */
 export const pathLine = (model: CatalogueModel, path: CataloguePath): string =>
-  [...(path.steps[0] === "lead_found" || path.type === "reactive" ? [] : ["Start"]), ...path.steps.map((s) => stepLabel(model, s))].join(" → ");
+  [...(path.type === "proactive" ? ["Start"] : []), ...path.steps.map((s) => stepLabel(model, s))].join(" → ");
 
 /** PURE: "Cold Email: Lead found -> Positive reply". */
 export const pipeLine = (model: CatalogueModel, pipe: CataloguePipe): string =>
   `${pipe.channelName}: ${pipe.fromStep ? stepLabel(model, pipe.fromStep) : "Start"} → ${stepLabel(model, pipe.toStep)}`;
 
-/** PURE: who works each leg, in order ("Sales Cold Email → AI Meeting Booking → your team"). */
+/** PURE: who works each leg, in order ("Apollo Cold Filters + CRM Contacts → Sales Cold Email → your team"). */
 export const funnelLine = (funnel: CatalogueFunnel): string =>
-  funnel.legs.map((l) => (!l.pipe || l.pipe.operatedBy === "customer" ? "your team" : l.pipe.channelName)).join(" → ");
+  funnel.legs
+    .map((l) => legPipes(l).map((p) => (p.operatedBy === "customer" ? "your team" : p.channelName)).join(" + "))
+    .join(" → ");
 
 /** PURE: case-insensitive "every word of q appears in one of the texts". Empty q matches everything. */
 export function matchesQuery(q: string | undefined, texts: ReadonlyArray<string | null | undefined>): boolean {

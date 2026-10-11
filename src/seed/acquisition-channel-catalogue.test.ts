@@ -108,6 +108,11 @@ describe("the published acquisition-channel catalogue", () => {
       "your-team-closing-calls",
       "agency-signup-conversion",
       "your-team-signup-conversion",
+      // Every leg a channel (owner 2026-10-11): the legs no channel worked, each the customer's own work.
+      "your-team-booking-calls",
+      "your-team-reply-closing",
+      "your-team-website",
+      "your-team-order-delivery",
     ];
     for (const slug of expected) {
       expect(bySlug(slug), slug).toBeDefined();
@@ -558,10 +563,14 @@ describe("WHAT performs a channel's leg — software or a person by hand — is 
     "agency-signup-conversion",
     "cold-call-outreach",
     "seo-content",
+    "your-team-booking-calls",
     "your-team-closing-calls",
     "your-team-meeting-attendance",
     "your-team-meeting-booking",
+    "your-team-order-delivery",
+    "your-team-reply-closing",
     "your-team-signup-conversion",
+    "your-team-website",
   ];
 
   it("every channel states it, and exactly the by-hand ones read `person`", () => {
