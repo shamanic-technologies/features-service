@@ -159,7 +159,7 @@ describe("agent catalogue lists (context-window sized)", () => {
       expect(r.icon).toBe("waves");
     }
     // The priced path ranks first (its cost per paying client rests on default rates: estimated; learning last).
-    expect(res.body.rows[0]).toMatchObject({ status: "estimated", roiBasis: "estimated", line: "Lead found → Positive reply → Meeting booked → Meeting attended → Paid client" });
+    expect(res.body.rows[0]).toMatchObject({ status: "estimated", roiBasis: "estimated", line: "Start → Lead found → Positive reply → Meeting booked → Meeting attended → Paid client" });
     expect(res.body.rows[0].name).toBe("Danube");
   });
 
@@ -204,6 +204,7 @@ describe("agent catalogue lists (context-window sized)", () => {
     expect(offer.lifetimeRevenueSource).toBe("offer_stated");
     // Own measured rate (50%) and own stated rate (40%); the default show-up stays the fleet's (75%).
     expect(offer.legs.map((l: { ratePct: number | null; rateSource: string | null }) => [l.ratePct, l.rateSource])).toEqual([
+      [null, null],
       [1, "measured_pipe"],
       [50, "offer_measured"],
       [75, "default"],
@@ -239,12 +240,18 @@ describe("agent catalogue lists (context-window sized)", () => {
     expect(f.body.name).toBe("Victory");
     expect(f.body.type).toBe("proactive");
     expect(f.body.face).toMatchObject({ svgPath: "/public/catalogue/faces/Victory.svg" });
-    expect(f.body.legs).toHaveLength(4);
+    // Start -> Lead found (its sources, a pool) + the four legs of the id; every leg serves its channels.
+    expect(f.body.legs).toHaveLength(5);
+    expect(f.body.salesPathId).toBe("start_to_lead_found+lead_found_to_conversation+conversation_to_meeting_booked+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client");
+    for (const l of f.body.legs) expect(l.channels.length, l.legKey).toBeGreaterThan(0);
+    expect(f.body.legs[0]).toMatchObject({ legKey: "start_to_lead_found", fromStep: null, toStep: "lead_found", pipe: null });
+    expect(f.body.legs[0].channels).toEqual(expect.arrayContaining([{ id: "sourcing-apollo-cold-filters", name: expect.any(String), runByUs: true }]));
+    expect(f.body.legs[4].channels).toEqual([{ id: "your-team-closing-calls", name: "Your Team Closing Calls", runByUs: false }]);
     expect(f.body.costUsd).toBeCloseTo(902.22, 1);
     // What is measured vs estimated, per leg and in total (owner 2026-10-10: never "measured" on an estimate).
     expect(f.body).toMatchObject({ status: "estimated", roiBasis: "estimated", lifetimeRevenueSource: "fleet_median_stated" });
     expect(f.body.estimates).toContain("rate:conversation_to_meeting_booked");
-    expect(f.body.legs[1]).toMatchObject({ rateSource: "default", rateMeasured: false, pipe: { status: "measured", roiBasis: "estimated" } });
+    expect(f.body.legs[2]).toMatchObject({ rateSource: "default", rateMeasured: false, pipe: { status: "measured", roiBasis: "estimated" } });
     const pipe = await request(app).get(`/internal/catalogue/pipes/${encodeURIComponent(MEET)}`).set(KEY);
     expect(pipe.body).toMatchObject({ name: "Prism", costUsd: 2, roi: 150, toStepValueUsd: 450 });
     const channel = await request(app).get("/internal/catalogue/channels/ai-meeting-booking").set(KEY);
@@ -391,7 +398,7 @@ describe("agent catalogue creates (data, never a PR)", () => {
 
     for (const pipeIds of [
       ["ai-meeting-booking|conversation_to_meeting_booked", "your-team-meeting-attendance|meeting_booked_to_meeting_attended", "your-team-closing-calls|meeting_attended_to_paid_client"],
-      ["ai-instant-call|conversation_to_booking_call", "booking_call_to_meeting_booked", "your-team-meeting-attendance|meeting_booked_to_meeting_attended", "your-team-closing-calls|meeting_attended_to_paid_client"],
+      ["ai-instant-call|conversation_to_booking_call", "your-team-booking-calls|booking_call_to_meeting_booked", "your-team-meeting-attendance|meeting_booked_to_meeting_attended", "your-team-closing-calls|meeting_attended_to_paid_client"],
     ]) {
       const f = await request(app).post("/internal/catalogue/sales-funnels").set(KEY).send({ pipeIds, createdBy: "campaign-service" });
       expect(f.status).toBe(201);
@@ -403,6 +410,16 @@ describe("agent catalogue creates (data, never a PR)", () => {
       "conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client",
       "conversation_to_booking_call@ai-instant-call+booking_call_to_meeting_booked+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client",
     ]);
+  });
+
+  it("refuses a funnel with a bare leg: every leg is worked by a channel (owner 2026-10-11)", async () => {
+    const f = await request(app)
+      .post("/internal/catalogue/sales-funnels")
+      .set(KEY)
+      .send({ pipeIds: ["ai-instant-call|conversation_to_booking_call", "booking_call_to_meeting_booked", "your-team-meeting-attendance|meeting_booked_to_meeting_attended", "your-team-closing-calls|meeting_attended_to_paid_client"], createdBy: "agent" });
+    expect(f.status).toBe(400);
+    expect(f.body.reason).toBe("bare_leg_refused");
+    expect(f.body.error).toContain("pipeIds[1]");
   });
 
   it("a pipe on a leg nothing rates states its conversion rate", async () => {

@@ -7,7 +7,8 @@
  * sales funnel, one UNIT campaign per pipe). Each row serves, so the browser composes and computes nothing:
  *   - the funnel's NAME (campaign-service's) and FACE, its TYPE, its trigger label and the Type column's label ("Daily", or a reactive funnel's trigger: "Positive replies"):
  *     the SAME trigger label its catalogue funnel row serves; and its PATH as structured items ("Lead found -> Sales Cold Email Outreach -> Positive reply -> Paid client",
- *     `funnelPathView`), so the dashboard never parses an id;
+ *     `funnelPathView`: from Start, a channel between every two steps, the sourcing leg showing this campaign's own
+ *     sources), so the dashboard never parses an id;
  *   - its MONEY SINCE INCEPTION over its units together: ONE engine pass (`computeFeatureRevenue`) over the
  *     units' campaign ids and channels, exactly as the offer grain combines its channels: spend ADDS (every
  *     cost row belongs to one unit, so `investedUsd` = the sum of the units' committed spend, the same
@@ -96,7 +97,7 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
     const headers: DownstreamHeaders = { orgId: auth.orgId, userId: auth.userId, runId: auth.runId, featureSlug: undefined };
 
     const [rows] = await Promise.all([fetchSalesFunnelCampaigns(brandId, offerFilter, headers), assertBrandHeld(brandId, headers)]);
-    const { copies, pipeSteps } = await funnelCopiesFor([...new Set(rows.map((r) => r.salesFunnelId))]);
+    const { copies, pipeSteps, pathOf } = await funnelCopiesFor([...new Set(rows.map((r) => r.salesFunnelId))]);
 
     // The offer's terms, read ONCE per offer and shared by its funnel campaigns.
     const offerIds = [...new Set(rows.map((r) => r.offerId))];
@@ -170,7 +171,8 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
         // The Type column (owner 2026-10-11): "Daily" for a proactive funnel, its trigger for a reactive one.
         typeLabel: copy ? (copy.type === "proactive" ? "Daily" : copy.triggerLabel) : null,
         // The path the dashboard draws in place of the sentence (owner 2026-10-11), structured: never parsed from an id.
-        path: copy?.path ?? null,
+        // Its sourcing leg shows the sources THIS campaign runs (its units' channels).
+        path: copy ? pathOf(r.salesFunnelId, featureSlugs) : null,
         copyUnavailableReason: copy ? null : "sales_funnel_not_in_catalogue",
         units: r.units.map((u) => ({ campaignId: u.campaignId, pipeId: u.pipeId, featureSlug: u.featureSlug, legKey: u.legKey, status: u.status })),
         investedUsd: money ? money.costEconomics.committedCostUsd : 0,
