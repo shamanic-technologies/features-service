@@ -147,8 +147,8 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
         // The Type column (owner 2026-10-11): "Daily" for a proactive funnel, its trigger for a reactive one.
         typeLabel: copy ? (copy.type === "proactive" ? "Daily" : copy.triggerLabel) : null,
         // The path the dashboard draws in place of the sentence (owner 2026-10-11), structured: never parsed from an id.
-        // Its sourcing leg shows the sources THIS campaign runs (its units' channels).
-        path: copy ? pathOf(r.salesFunnelId, featureSlugs) : null,
+        // One channel per leg (owner 2026-10-11): the funnel's own path.
+        path: copy ? pathOf(r.salesFunnelId) : null,
         copyUnavailableReason: copy ? null : "sales_funnel_not_in_catalogue",
         units: r.units.map((u) => ({ campaignId: u.campaignId, pipeId: u.pipeId, featureSlug: u.featureSlug, legKey: u.legKey, status: u.status })),
         investedUsd: money ? money.costEconomics.committedCostUsd : 0,

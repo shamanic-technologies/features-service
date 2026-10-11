@@ -59,10 +59,11 @@ describe("sales-path combination and campaign names", () => {
       { combinationKey: "campaign:sourcing-crm-contacts|start_to_lead_found", name: "Spire", assignedAt: at("2026-10-04") },
     ]);
     expect(plan.deletes).toEqual([]);
+    // An outbound funnel key also takes its Lead Sourcing spelling (one channel per leg, owner 2026-10-11).
     expect(plan.rekeys.map((r) => [r.name, r.to])).toEqual([
-      ["Victory", "lead_found_to_conversation@sales-cold-email-outreach+conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client"],
-      ["Sol", "lead_found_to_website_visit@sales-cold-email-outreach+website_visit_to_meeting_booked+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client"],
-      ["Herald", "lead_found_to_website_visit@sales-cold-email-outreach+website_visit_to_signup+signup_to_paid_client"],
+      ["Victory", "start_to_lead_found@lead-sourcing+lead_found_to_conversation@sales-cold-email-outreach+conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client"],
+      ["Sol", "start_to_lead_found@lead-sourcing+lead_found_to_website_visit@sales-cold-email-outreach+website_visit_to_meeting_booked+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client"],
+      ["Herald", "start_to_lead_found@lead-sourcing+lead_found_to_website_visit@sales-cold-email-outreach+website_visit_to_signup+signup_to_paid_client"],
       ["Jubilation", "campaign:sales-cold-email-outreach|lead_found_to_conversation"],
     ]);
   });

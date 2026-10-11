@@ -29,7 +29,7 @@
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import { campaignScopeIds, type CampaignFilter } from "./campaign-scope.js";
-import { SOURCING_ORIGIN_SLUGS, SOURCING_ORIGINS_BY_CHANNEL } from "./sourcing-origins.js";
+import { SOURCING_CHANNEL_SLUGS, SOURCING_ORIGINS_BY_CHANNEL } from "./sourcing-origins.js";
 import type { SalesFunnelCampaignRow } from "./sales-funnel-campaigns-client.js";
 
 export interface PipeSpendAttribution {
@@ -48,7 +48,8 @@ export interface PipeSpendPlan {
   adoptFrom: { campaignId: string; featureSlug: string }[];
 }
 
-const ORIGINS = new Set(SOURCING_ORIGIN_SLUGS);
+// Every sourcing channel (the origins and Lead Sourcing): a sourcing UNIT of the funnel.
+const ORIGINS = new Set(SOURCING_CHANNEL_SLUGS);
 
 /**
  * PURE. The plan for the unit `campaignId` reading as channel `featureSlug`, or null when nothing moves (not a

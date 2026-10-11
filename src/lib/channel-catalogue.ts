@@ -39,7 +39,7 @@ import {
 import { legKeyFor, FUNNEL_LEGS, OUTBOUND_LEG_KEY_CORRESPONDENCE, type FunnelLegDef } from "./funnel-legs.js";
 import { channelTypeOf, type ChannelType } from "./channel-types.js";
 import { assertLegTriggersDeclared, LEG_MODES, type LegMode } from "./channel-triggers.js";
-import { sourcingOriginBySlug } from "./sourcing-origins.js";
+import { isLiveSourcingChannel } from "./sourcing-origins.js";
 import { SALES_PATH_CATALOGUE_CHANNEL_SLUGS } from "./sales-path-cost-benchmarks.js";
 import { MANAGED_CHANNEL_SLUGS, channelLegMinimumMonthlyCents } from "./channel-leg-minimums.js";
 import { legMaturity, type LegMaturity } from "./maturity.js";
@@ -266,9 +266,9 @@ export function parseAcquisitionChannel(slug: string, raw: unknown): Acquisition
 
 const stepWire = (key: ChannelStepKey): ChannelStepDefWire => ({ ...CHANNEL_STEPS[key] });
 
-/** We run it today: the managed channels, and every LIVE sourcing origin (billing has treated a live
- *  origin's source campaign as managed since 2026-10-07). */
-const isManagedChannel = (slug: string): boolean => MANAGED_CHANNEL_SLUGS.has(slug) || sourcingOriginBySlug(slug)?.live === true;
+/** We run it today: the managed channels, and every LIVE sourcing channel (a live origin: billing has treated its
+ *  source campaign as managed since 2026-10-07; Lead Sourcing, owner 2026-10-11). */
+const isManagedChannel = (slug: string): boolean => MANAGED_CHANNEL_SLUGS.has(slug) || isLiveSourcingChannel(slug);
 
 /**
  * Every acquisition channel among these feature rows, ordered as the catalogue orders features. A row

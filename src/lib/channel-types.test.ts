@@ -72,10 +72,10 @@ describe("the sourcing features are channels like any other", () => {
   }));
   const catalogue = buildChannelCatalogue(rows, () => "x");
 
-  it("each live origin states Start -> Lead found, proactive, daily budget, no floor, managed", () => {
+  it("each live sourcing channel (every origin, and Lead Sourcing) states Start -> Lead found, proactive, daily budget, no floor, managed", () => {
     const live = catalogue.filter((c) => c.channelType === "sourcing");
     expect(live.map((c) => c.slug).sort()).toEqual(
-      ["sourcing-apollo-buying-signals", "sourcing-apollo-cold-filters", "sourcing-crm-contacts", "sourcing-linkedin-engagement-signals"].sort(),
+      ["lead-sourcing", "sourcing-apollo-buying-signals", "sourcing-apollo-cold-filters", "sourcing-crm-contacts", "sourcing-linkedin-engagement-signals"].sort(),
     );
     for (const c of live) {
       expect(c.stepTransitions).toHaveLength(1);
