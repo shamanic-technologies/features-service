@@ -332,6 +332,20 @@ describe("agent catalogue lists (context-window sized)", () => {
     expect((await request(app).get("/public/catalogue/sales-funnels").query({ limit: "x" })).status).toBe(400);
   });
 
+  it("the PUBLIC step vocabulary needs no key and serves every step's key, name and icon byte-equal to the staff read (owner 2026-10-11)", async () => {
+    const pub = await request(app).get("/public/catalogue/steps");
+    expect(pub.status).toBe(200);
+    expect(pub.body.object).toBe("step");
+    const internal = await request(app).get("/internal/catalogue/steps").query({ limit: 25 }).set(KEY);
+    expect(internal.body.truncated).toBe(false);
+    const staff = new Map(internal.body.rows.map((r: { id: string; name: string; icon: string }) => [r.id, { key: r.id, name: r.name, icon: r.icon }]));
+    expect(pub.body.total).toBe(staff.size);
+    expect(pub.body.rows).toHaveLength(staff.size);
+    for (const r of pub.body.rows) expect(r).toEqual(staff.get(r.key));
+    expect(pub.body.rows.find((r: { key: string }) => r.key === "conversation")).toMatchObject({ icon: "chat-circle-text" });
+    expect(JSON.stringify(pub.body)).not.toMatch(/valueUsd|costUsd|roi/);
+  });
+
   it("serves a face as an SVG image", async () => {
     const res = await request(app).get("/public/catalogue/faces/Victory.svg");
     expect(res.status).toBe(200);

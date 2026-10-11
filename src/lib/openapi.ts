@@ -6350,6 +6350,29 @@ registry.registerPath({
 
 registry.registerPath({
   method: "get",
+  path: "/public/catalogue/steps",
+  summary: "Every catalogue step's key, name and icon (public)",
+  description:
+    "The step vocabulary with nothing economic: one row per step of the agent catalogue, `key` = the canonical step key the fleet uses, `name` and `icon` (Phosphor) byte-equal to `GET /internal/catalogue/steps` `name`/`icon` for that step (a declared step states its own icon). No identity. Read by the customer dashboard's Outcomes entries (owner 2026-10-11). Sorted by key.",
+  tags: ["Public"],
+  responses: {
+    200: {
+      description: "Every step.",
+      content: {
+        "application/json": {
+          schema: z.object({
+            object: z.literal("step"),
+            total: z.number().int(),
+            rows: z.array(z.object({ key: z.string().describe("Canonical step key (`lead_found`, `conversation`, ...)."), name: z.string(), icon: z.string().describe("Phosphor icon name (`chat-circle-text`, ...).") })),
+          }),
+        },
+      },
+    },
+  },
+});
+
+registry.registerPath({
+  method: "get",
   path: "/public/catalogue/faces/{file}",
   summary: "The face of a sales funnel name (SVG, public)",
   description: "A cute manga-style animal head drawn from the NAME alone (same name, same face): `/public/catalogue/faces/<URL-encoded name>.svg`, 128 x 128, transparent. Served for the dashboard to show without a hand drawing.",
