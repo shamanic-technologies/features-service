@@ -20331,6 +20331,493 @@
           "salesFunnelCampaigns"
         ]
       },
+      "SalesFunnelCampaignActivityResponse": {
+        "type": "object",
+        "properties": {
+          "salesFunnelCampaignId": {
+            "type": "string"
+          },
+          "brandId": {
+            "type": "string"
+          },
+          "offerId": {
+            "type": "string"
+          },
+          "salesFunnelId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "basis": {
+            "type": "string",
+            "enum": [
+              "people_since_inception"
+            ],
+            "description": "Every count is PEOPLE since inception (no window)."
+          },
+          "pricing": {
+            "type": "string",
+            "enum": [
+              "gross",
+              "net"
+            ],
+            "description": "The `?pricing=` basis echoed (it only moves `pipes[].calls.spend`)."
+          },
+          "funnel": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "proactive",
+                  "reactive"
+                ],
+                "description": "`proactive` (the funnel starts at Lead found: its people are the leads its OUTREACH unit holds, lead-service's Leads page set for that unit) | `reactive` (it starts at another step: its people are the people its units were HANDED, lead-service follow-up ledger)."
+              },
+              "steps": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "description": "The catalogue step key (`lead_found`, `conversation`, `meeting_booked`...), or `contacted` / `delivered` for the two outreach rungs."
+                    },
+                    "label": {
+                      "type": "string",
+                      "description": "The step's customer label (\"Positive reply\"), the catalogue's own; \"Contacted\" / \"Delivered\" on the outreach rungs."
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "step",
+                        "outreach"
+                      ],
+                      "description": "`step` = a step of the campaign's path; `outreach` = a rung of its outreach between Lead found and the next step (Contacted, Delivered)."
+                    },
+                    "people": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "PEOPLE at this step since inception (never emails). Null only with `unmeasuredReason`."
+                    },
+                    "rateToNextPct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "People at the next step / people here x 100 (2 decimals), served so the page divides nothing. Null on the last step, when either side is unmeasured, or when nobody is here. Steps are counted independently, so a rate can exceed 100 (e.g. a sale recorded with no meeting)."
+                    },
+                    "unmeasuredReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "step_not_counted",
+                        "not_counted_by_lead_service",
+                        "no_unit_performs_step",
+                        "outcomes_unreadable"
+                      ],
+                      "description": "Why `people` is null: `step_not_counted` (no producer counts this step), `no_unit_performs_step` (an act step no unit of this campaign performs), `outcomes_unreadable`. Null when counted."
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "label",
+                    "kind",
+                    "people",
+                    "rateToNextPct",
+                    "unmeasuredReason"
+                  ]
+                },
+                "description": "Every step of the campaign's path (Start excluded) in reading order, in PEOPLE, each with the rate to the next. Proactive: Lead found = the outreach unit's leads (lead-service `bucket-counts` `total`), then Contacted (`counts.contacted`, exactly lead-service's contacted bucket) and Delivered (`people.delivered`: people an email reached; 0 on a channel sending no email), then each later step = lead-service's bucket for it. Reactive: the first step = people handed; an act step (Booking call) = people the performing unit acted on (the call placed); every later step = handed people with an attributed outcome at that step."
+              }
+            },
+            "required": [
+              "mode",
+              "steps"
+            ],
+            "description": "The whole funnel of this campaign. Null only with `funnelUnavailableReason`."
+          },
+          "funnelUnavailableReason": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "sales_funnel_not_in_catalogue",
+              "no_outreach_pipe",
+              "several_outreach_pipes"
+            ],
+            "description": "Why `funnel` is null: the funnel id is unknown to the catalogue, a proactive campaign has no outreach unit (nobody holds its people), or several outreach units hold people (their counts cannot be added without double counting). Null when served."
+          },
+          "pipes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "campaignId": {
+                  "type": "string",
+                  "description": "The unit campaign (one per pipe)."
+                },
+                "pipeId": {
+                  "type": "string"
+                },
+                "featureSlug": {
+                  "type": "string"
+                },
+                "legKey": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "fromStep": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The pipe's from step (null = from nothing: a sourcing pipe)."
+                },
+                "toStep": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The step the pipe produces."
+                },
+                "kind": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "sourcing",
+                    "outreach",
+                    "takeover"
+                  ],
+                  "description": "`sourcing` (from nothing to Lead found: hands its leads to the outreach pipe, counted there) | `outreach` (from Lead found: holds the people) | `takeover` (from any later step: acts on people another campaign holds, e.g. AI Meeting Booking, AI Instant Call). Null when the pipe is unknown to the catalogue."
+                },
+                "people": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "found": {
+                      "type": "integer",
+                      "description": "Leads the pipe holds (lead-service `total`)."
+                    },
+                    "contacted": {
+                      "type": "integer",
+                      "description": "lead-service's contacted bucket for this unit."
+                    },
+                    "sent": {
+                      "type": "integer",
+                      "description": "People at least one email was actually sent to."
+                    },
+                    "delivered": {
+                      "type": "integer",
+                      "description": "People an email reached (sent, no bounce)."
+                    },
+                    "reachedToStep": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "People at the pipe's `toStep` (lead-service's bucket for it); null when no bucket counts that step."
+                    }
+                  },
+                  "required": [
+                    "found",
+                    "contacted",
+                    "sent",
+                    "delivered",
+                    "reachedToStep"
+                  ],
+                  "description": "An OUTREACH pipe's people counts since inception. Null on other kinds."
+                },
+                "work": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "handed": {
+                      "type": "integer",
+                      "description": "Distinct people handed to the pipe since inception."
+                    },
+                    "actedOn": {
+                      "type": "integer",
+                      "description": "Distinct people it acted on (answered; on a call pipe, called)."
+                    },
+                    "reached": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "Of the people handed, those reaching the pipe's `toStep` (attributed outcome; on a call step, the act itself). Null when no producer counts that step."
+                    },
+                    "conversionRatePct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "reached / handed x 100. Null when reached is null or nobody was handed."
+                    },
+                    "daily": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "date": {
+                            "type": "string",
+                            "description": "UTC day, YYYY-MM-DD."
+                          },
+                          "handed": {
+                            "type": "integer",
+                            "description": "People first handed to the pipe that day (e.g. positive replies given to the AI Meeting Booking worker)."
+                          },
+                          "actedOn": {
+                            "type": "integer",
+                            "description": "People the pipe first acted on that day (an answer sent; on AI Instant Call, the call placed)."
+                          },
+                          "reached": {
+                            "type": "integer",
+                            "description": "People reaching the pipe's own `toStep` that day (meeting booked; on a call step, the call placed: the act is the outcome)."
+                          }
+                        },
+                        "required": [
+                          "date",
+                          "handed",
+                          "actedOn",
+                          "reached"
+                        ]
+                      },
+                      "description": "Per UTC day with any activity, ascending. Each person once per figure, on the day of its first occurrence."
+                    },
+                    "undated": {
+                      "type": "object",
+                      "properties": {
+                        "handed": {
+                          "type": "integer"
+                        },
+                        "actedOn": {
+                          "type": "integer"
+                        },
+                        "reached": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "handed",
+                        "actedOn",
+                        "reached"
+                      ],
+                      "description": "People in the totals with no date for that figure (on no day)."
+                    }
+                  },
+                  "required": [
+                    "handed",
+                    "actedOn",
+                    "reached",
+                    "conversionRatePct",
+                    "daily",
+                    "undated"
+                  ],
+                  "description": "A TAKEOVER pipe's work since inception, total and per day (the pipe's \"over time\" chart). Null on other kinds."
+                },
+                "dailySource": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "campaign_revenue"
+                  ],
+                  "description": "`campaign_revenue`: this pipe's day-by-day series is its unit campaign's own revenue read (`GET /features/{featureSlug}/revenue?campaignId=`, e.g. cold email emails/spend per day). Null when `work.daily` is the series (or the pipe has none)."
+                },
+                "calls": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "totals": {
+                      "type": "object",
+                      "properties": {
+                        "requested": {
+                          "type": "integer",
+                          "description": "Every call row recorded (twillio-service), whether or not Twilio accepted it."
+                        },
+                        "placed": {
+                          "type": "integer",
+                          "description": "Calls Twilio accepted and dialled (a call SID issued). The calls PLACED."
+                        },
+                        "accepted": {
+                          "type": "integer",
+                          "description": "Calls the rep ANSWERED and took (pressed 1). Subset of placed."
+                        },
+                        "connected": {
+                          "type": "integer",
+                          "description": "Calls bridged to the prospect (the rep's second keypress): the BOOKING CALLS OBTAINED. Subset of accepted."
+                        },
+                        "outcomes": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "integer"
+                          },
+                          "description": "Each call in exactly one bucket, adding up to `requested` (twillio-service's own: connected, acceptedNotConnected, answeredNotAccepted, noAnswer, busy, failed, canceled, inProgress)."
+                        },
+                        "billedMinutes": {
+                          "type": "number",
+                          "description": "Minutes billed on the leg to the rep."
+                        },
+                        "connectBilledMinutes": {
+                          "type": "number",
+                          "description": "Minutes billed on the bridged leg to the prospect."
+                        },
+                        "totalBilledMinutes": {
+                          "type": "number",
+                          "description": "billedMinutes + connectBilledMinutes."
+                        }
+                      },
+                      "required": [
+                        "requested",
+                        "placed",
+                        "accepted",
+                        "connected",
+                        "outcomes",
+                        "billedMinutes",
+                        "connectBilledMinutes",
+                        "totalBilledMinutes"
+                      ],
+                      "description": "Since inception."
+                    },
+                    "daily": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "requested": {
+                            "type": "integer",
+                            "description": "Every call row recorded (twillio-service), whether or not Twilio accepted it."
+                          },
+                          "placed": {
+                            "type": "integer",
+                            "description": "Calls Twilio accepted and dialled (a call SID issued). The calls PLACED."
+                          },
+                          "accepted": {
+                            "type": "integer",
+                            "description": "Calls the rep ANSWERED and took (pressed 1). Subset of placed."
+                          },
+                          "connected": {
+                            "type": "integer",
+                            "description": "Calls bridged to the prospect (the rep's second keypress): the BOOKING CALLS OBTAINED. Subset of accepted."
+                          },
+                          "outcomes": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "integer"
+                            },
+                            "description": "Each call in exactly one bucket, adding up to `requested` (twillio-service's own: connected, acceptedNotConnected, answeredNotAccepted, noAnswer, busy, failed, canceled, inProgress)."
+                          },
+                          "billedMinutes": {
+                            "type": "number",
+                            "description": "Minutes billed on the leg to the rep."
+                          },
+                          "connectBilledMinutes": {
+                            "type": "number",
+                            "description": "Minutes billed on the bridged leg to the prospect."
+                          },
+                          "totalBilledMinutes": {
+                            "type": "number",
+                            "description": "billedMinutes + connectBilledMinutes."
+                          },
+                          "day": {
+                            "type": "string",
+                            "description": "UTC day the call was requested, YYYY-MM-DD."
+                          }
+                        },
+                        "required": [
+                          "requested",
+                          "placed",
+                          "accepted",
+                          "connected",
+                          "outcomes",
+                          "billedMinutes",
+                          "connectBilledMinutes",
+                          "totalBilledMinutes",
+                          "day"
+                        ]
+                      },
+                      "description": "One entry per UTC day with at least one call, ascending; adds up to `totals`."
+                    },
+                    "spend": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "committedUsd": {
+                          "type": "number",
+                          "description": "The pipe's committed spend since inception (runs-service, the requested `pricing` basis): the same figure its unit campaign's revenue read serves."
+                        },
+                        "costPerPlacedCallUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "committedUsd / totals.placed. Null with no call placed."
+                        },
+                        "costPerConnectedCallUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "committedUsd / totals.connected: the cost per BOOKING CALL obtained. Null with none obtained."
+                        }
+                      },
+                      "required": [
+                        "committedUsd",
+                        "costPerPlacedCallUsd",
+                        "costPerConnectedCallUsd"
+                      ],
+                      "description": "Null with `spendUnavailableReason`."
+                    },
+                    "spendUnavailableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "spend_unreadable"
+                      ],
+                      "description": "runs-service did not answer for this pipe (the calls stay served). Null when `spend` is served."
+                    }
+                  },
+                  "required": [
+                    "totals",
+                    "daily",
+                    "spend",
+                    "spendUnavailableReason"
+                  ],
+                  "description": "A pipe producing the Booking call step (AI Instant Call): the calls it placed since inception (twillio-service's own counts: placed, answered/accepted, booking calls obtained = connected), per UTC day, and their cost (spend, cost per booking call). Null with `callsUnavailableReason`."
+                },
+                "callsUnavailableReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "pipe_places_no_calls",
+                    "calls_unreadable"
+                  ],
+                  "description": "`pipe_places_no_calls`: the pipe does not produce the Booking call step. `calls_unreadable`: twillio-service did not answer for this campaign. Null when `calls` is served."
+                }
+              },
+              "required": [
+                "campaignId",
+                "pipeId",
+                "featureSlug",
+                "legKey",
+                "status",
+                "fromStep",
+                "toStep",
+                "kind",
+                "people",
+                "work",
+                "dailySource",
+                "calls",
+                "callsUnavailableReason"
+              ]
+            },
+            "description": "One per unit campaign (pipe), in campaign-service's order: what it did and produced since inception. Money (invested, ROI) per funnel campaign is `/brands/{brandId}/sales-funnel-campaigns`, per pipe the unit's own revenue read."
+          }
+        },
+        "required": [
+          "salesFunnelCampaignId",
+          "brandId",
+          "offerId",
+          "salesFunnelId",
+          "name",
+          "createdAt",
+          "basis",
+          "pricing",
+          "funnel",
+          "funnelUnavailableReason",
+          "pipes"
+        ]
+      },
       "BrandConversionRatesResponse": {
         "type": "object",
         "properties": {
@@ -35287,6 +35774,156 @@
           },
           "502": {
             "description": "campaign-service or a money read failed (no row is ever guessed).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/activity": {
+      "get": {
+        "summary": "One sales funnel campaign's whole funnel in people, and what each of its pipes did and produced, since inception",
+        "description": "The campaign page (owner 2026-10-11): per sales funnel campaign, the number of PEOPLE at each step of its own path with the rate from each step to the next, and per pipe (unit campaign) what it did and produced: an outreach pipe's lead-service people counts, a takeover pipe's (AI Meeting Booking, AI Instant Call) people handed / acted on / reached in total and per UTC day, and a call pipe's calls (twillio-service). Since inception only; never an open count. The browser counts, sums and divides nothing. Org-scoped (`x-org-id`).",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "salesFunnelCampaignId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gross",
+                "net"
+              ],
+              "description": "Pricing basis of the call pipes' spend (omitted = gross). The dashboard reads `net`."
+            },
+            "required": false,
+            "description": "Pricing basis of the call pipes' spend (omitted = gross). The dashboard reads `net`.",
+            "name": "pricing",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The campaign's funnel and pipes.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SalesFunnelCampaignActivityResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An invalid pricing value (reason: pricing_unrecognised).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The caller does not hold this brand (reason: brand_not_found), or the brand has no sales funnel campaign with this id (reason: sales_funnel_campaign_not_found).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "A producer (campaign-service, lead-service) failed: no count is ever guessed.",
             "content": {
               "application/json": {
                 "schema": {

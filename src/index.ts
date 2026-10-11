@@ -35,6 +35,7 @@ import agentCatalogueRoutes, { warmCatalogueMeasurements } from "./routes/agent-
 import transferBrandRoutes from "./routes/transfer-brand.js";
 import orgPeriodRecapRoutes from "./routes/org-period-recap.js";
 import salesFunnelCampaignsRoutes from "./routes/sales-funnel-campaigns.js";
+import salesFunnelCampaignActivityRoutes from "./routes/sales-funnel-campaign-activity.js";
 import { registerChannelTriggerTypes, registerSeedFeatures } from "./seed/register.js";
 import { servedLegKeysMiddleware } from "./lib/served-leg-keys.js";
 import { legacyLegKeyArrivalsMiddleware } from "./lib/legacy-leg-key-arrivals.js";
@@ -104,6 +105,7 @@ app.use(agentCatalogueRoutes);
 app.use(transferBrandRoutes);
 app.use(orgPeriodRecapRoutes);
 app.use(salesFunnelCampaignsRoutes);
+app.use(salesFunnelCampaignActivityRoutes);
 
 // 404 handler
 app.use((req, res) => {
