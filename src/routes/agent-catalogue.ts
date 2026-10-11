@@ -1070,6 +1070,30 @@ router.post("/internal/catalogue/sales-funnels", apiKeyOnly, async (req, res) =>
   }
 });
 
+// ── Step vocabulary (public: the customer dashboard's Outcomes icons) ──────────────────────────────
+
+/**
+ * Every catalogue step's key, name and Phosphor icon, nothing economic (owner 2026-10-11: the
+ * customer's Outcomes entries wear the icon the staff Steps section shows). Built on the same model
+ * as `GET /internal/catalogue/steps` without the measurements (icon and name never depend on them),
+ * so each row is byte-equal to the staff read's `id`/`name`/`icon` for that step.
+ */
+router.get("/public/catalogue/steps", async (_req, res) => {
+  try {
+    const [all, pub, declaredSteps] = await Promise.all([
+      loadChannelCatalogue({ publishedOnly: false }),
+      loadChannelCatalogue({ publishedOnly: true }),
+      listDeclaredSteps(),
+    ]);
+    const publishedPipeIds = new Set(pub.channels.flatMap((c) => c.stepTransitions.map((t) => pipeIdOf(c.slug, servedPipeLegKey(c.slug, t.legKey)))));
+    const model = buildCatalogueModel({ channels: all.channels, publishedPipeIds, declaredSteps, measurements: new Map(), fleetMedians: new Map(), lifetimeRevenueUsd: null });
+    const rows = [...model.steps.values()].sort((a, b) => a.key.localeCompare(b.key)).map((s) => ({ key: s.key, name: s.label, icon: s.icon }));
+    res.set("Cache-Control", "public, max-age=300").json({ object: "step", total: rows.length, rows });
+  } catch (err) {
+    fail(res, err, "list public steps");
+  }
+});
+
 // ── Faces (public: the dashboard shows the image) ─────────────────────────────────────────────────
 
 router.get("/public/catalogue/faces/:file", (req, res) => {
