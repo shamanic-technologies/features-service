@@ -264,6 +264,8 @@ describe("buildCustomerHealthBoard", () => {
         account({ orgId: "payer", brandId: "b2", status: "active" }),
         account({ orgId: "payer", brandId: "b3", status: "active" }),
         account({ orgId: "blip", brandId: "b4", status: "active" }),
+        account({ orgId: "agency", brandId: "b5", status: "active", revenueSide: "agency" }),
+        account({ orgId: "unknownside", brandId: "b6", status: "active", revenueSide: null }),
       ],
       recencies: [recency("aireena", "2026-07-02"), recency("payer", "2026-07-14")],
       perBrand: {},
@@ -274,7 +276,8 @@ describe("buildCustomerHealthBoard", () => {
       },
     });
     const inner = deps.orgPaidActivity;
-    deps.orgPaidActivity = (orgId, csv) => (calls.push(orgId), inner(orgId, csv));
+    const agencyFlags: Record<string, boolean> = {};
+    deps.orgPaidActivity = (orgId, csv, isAgency) => (calls.push(orgId), (agencyFlags[orgId] = isAgency), inner(orgId, csv, isAgency));
     const board = await buildCustomerHealthBoard(COLD_CSV, NOW, deps);
     const by = Object.fromEntries(board.customers.map((r) => [r.brandId, r]));
     expect(by.b1.activeDays.length).toBeGreaterThan(0); // it consumed credit...
@@ -285,6 +288,10 @@ describe("buildCustomerHealthBoard", () => {
     expect(by.b4.paidActiveDays).toBeNull();
     expect(by.b4.orgCashPaidUsd).toBeNull();
     expect(calls.filter((o) => o === "payer")).toHaveLength(1); // org-level, read once
+    // An agency pays off-platform: its side rides to the read. An org whose side is unknown is never guessed.
+    expect(agencyFlags).toMatchObject({ agency: true, payer: false, aireena: false });
+    expect(by.b6.paidActiveDays).toBeNull();
+    expect(calls).not.toContain("unknownside");
   });
 
   it("composes a GREEN row: active, ROI>=1, audience not near-exhausted; economics coherent", async () => {
