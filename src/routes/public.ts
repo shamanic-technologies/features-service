@@ -41,7 +41,9 @@ import {
   type OutcomePrice,
 } from "../lib/outcome-prices.js";
 import { computeMeetingLegFleet, getInternalPipeFleet, MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY } from "../lib/meeting-leg-fleet.js";
-import { internalPipeToStep } from "../lib/pipe-kind.js";
+import { internalPipeToStep, onDemandPipeTrigger } from "../lib/pipe-kind.js";
+import { effectiveSpendSlugs, type SpendSlugs } from "../lib/feature-scope.js";
+import { getOnDemandPipeFleet } from "../lib/on-demand-pipe-fleet.js";
 import { fetchLegAssignments } from "../lib/workflow-leg-assignments.js";
 import { getFunnel, type SalesEconomics } from "../lib/funnel-registry.js";
 import { projectedCostPerOutcome } from "../lib/cost-engine.js";
@@ -2247,10 +2249,10 @@ function legEvidenceByDynasty(
 }
 
 /** One leg's fleet maturity, computed IN THIS PROCESS (the refresher, or the server when it is off). */
-export async function computeFleetLegWorkflowMaturity(featureSlug: string, legKey: string): Promise<FleetLegWorkflowMaturity> {
+export async function computeFleetLegWorkflowMaturity(featureSlug: string, legKey: string, slugs: SpendSlugs = "fed"): Promise<FleetLegWorkflowMaturity> {
   const [workflows, flash] = await Promise.all([
     fetchPublicWorkflows(featureSlug, "all"),
-    fetchLegFleetEvidence(featureSlug, legKey, "gross"),
+    fetchLegFleetEvidence(featureSlug, legKey, "gross", slugs),
   ]);
   const legSet = new Set(flash.campaigns.map((c) => c.campaignId));
   // Positive replies counted on PEOPLE, the leg's campaigns only — the crossOrg grain's own basis. A fleet
@@ -2261,7 +2263,7 @@ export async function computeFleetLegWorkflowMaturity(featureSlug: string, legKe
   );
   const cutoffIso = legCutoffIso(legKey);
   const mature = cutoffIso
-    ? await fetchLegFleetMatureEvidence(featureSlug, legKey, "gross", cutoffIso, null, legSet)
+    ? await fetchLegFleetMatureEvidence(featureSlug, legKey, "gross", cutoffIso, null, legSet, slugs)
     : { costGroups: flash.costGroups, emailStats: flash.emailStats };
   const matureBy = mature ? legEvidenceByDynasty(workflows, mature.costGroups, mature.emailStats) : null;
   const dynastySlugs = [...new Set(workflows.map((w) => w.workflowDynastySlug))];
@@ -2274,11 +2276,18 @@ export async function computeFleetLegWorkflowMaturity(featureSlug: string, legKe
 }
 
 /** Ask the refresher (whose fleet cells are warm) for one leg's maturity; compute here when it cannot. */
-async function fetchFleetLegWorkflowMaturity(featureSlug: string, legKey: string): Promise<FleetLegWorkflowMaturity> {
+/**
+ * `slugs` (`lib/feature-scope.ts` `SpendSlugs`): `fed` (default) for the forecasts and outcome prices, `own` for a pipe's
+ * own measured cost (`fleetPipeFigures`, the agent catalogue and the leg workflow ranking).
+ */
+async function fetchFleetLegWorkflowMaturity(featureSlug: string, legKey: string, requested: SpendSlugs = "fed"): Promise<FleetLegWorkflowMaturity> {
+  const slugs = effectiveSpendSlugs(featureSlug, requested);
   const base = refresherBaseUrl();
   if (base) {
     try {
-      const res = await fetch(`${base}/internal/fleet-leg-maturity?${new URLSearchParams({ featureSlug, legKey })}`, {
+      const q = new URLSearchParams({ featureSlug, legKey });
+      if (slugs === "own") q.set("slugs", "own");
+      const res = await fetch(`${base}/internal/fleet-leg-maturity?${q}`, {
         headers: { "x-api-key": process.env.FEATURES_SERVICE_API_KEY ?? "" },
       });
       if (res.ok) return (await res.json()) as FleetLegWorkflowMaturity;
@@ -2287,7 +2296,7 @@ async function fetchFleetLegWorkflowMaturity(featureSlug: string, legKey: string
       console.error(`[features-service] refresher unreachable for fleet leg maturity ${featureSlug}|${legKey}; computing locally:`, error);
     }
   }
-  return computeFleetLegWorkflowMaturity(featureSlug, legKey);
+  return computeFleetLegWorkflowMaturity(featureSlug, legKey, slugs);
 }
 
 // Fresh 15 min (the fleet cells' own window); a stored value is served however old until a warm replaces it.
@@ -4534,7 +4543,8 @@ router.get("/internal/fleet-leg-maturity", apiKeyOnly, async (req, res) => {
     return;
   }
   try {
-    res.json(await computeFleetLegWorkflowMaturity(featureSlug, legKey));
+    const slugs: SpendSlugs = req.query.slugs === "own" ? "own" : "fed";
+    res.json(await computeFleetLegWorkflowMaturity(featureSlug, legKey, slugs));
   } catch (error) {
     console.error("[features-service] Internal fleet leg maturity error:", error);
     res.status(500).json({ error: "Internal server error" });
@@ -4782,6 +4792,13 @@ export async function fleetPipeFigures(
   featureSlug: string,
   legKey: string,
 ): Promise<{ byDynasty: Array<[string, LegMaturityFigures]>; cutoffIso: string | null; measured: boolean; campaignCount: number }> {
+  // An ON-DEMAND pipe (owner 2026-10-11: the sourcing channels, run only when the cold email pipe asks, each ask its own
+  // unit run) is measured on its own runs' spend and the leads its trigger's events say it found (`lib/on-demand-pipe-fleet.ts`).
+  const onDemandTrigger = await onDemandPipeTrigger(featureSlug, legKey);
+  if (onDemandTrigger) {
+    const fleet = await getOnDemandPipeFleet(featureSlug, legKey);
+    return { byDynasty: fleet.byDynasty, cutoffIso: legCutoffIso(legKey), measured: true, campaignCount: fleet.campaignCount };
+  }
   const internalToStep = await internalPipeToStep(featureSlug, legKey);
   if (internalToStep) {
     const fleet = await getInternalPipeFleet(featureSlug, legKey, internalToStep);
@@ -4794,7 +4811,9 @@ export async function fleetPipeFigures(
   }
   const campaigns = await getFleetLegCampaigns(featureSlug, legKey);
   if (campaigns.length === 0) return { byDynasty: [], cutoffIso: legCutoffIso(legKey), measured: true, campaignCount: 0 };
-  const maturity = await fetchFleetLegWorkflowMaturity(featureSlug, legKey);
+  // The pipe's OWN cost (owner 2026-10-11): an outreach pipe fed by sources reads its own slug only, its sources being
+  // pipes measured on theirs (`lib/feature-scope.ts` `SpendSlugs`).
+  const maturity = await fetchFleetLegWorkflowMaturity(featureSlug, legKey, "own");
   return { ...maturity, campaignCount: campaigns.length };
 }
 
@@ -4812,7 +4831,7 @@ export async function computeLegWorkflowRanking(featureSlug: string, legKey: str
   const billedSpendUsd = new Map<string, number>();
   await mapWithConcurrency(spent, LEG_RANKING_SPEND_CONCURRENCY, async (slug) => {
     try {
-      const byDay = await fetchDynastyBilledSpendByDay(featureSlug, slug, campaignIds);
+      const byDay = await fetchDynastyBilledSpendByDay(featureSlug, slug, campaignIds, "own");
       billedSpendUsd.set(slug, [...byDay.values()].reduce((a, b) => a + b, 0));
     } catch (error) {
       console.error(`[features-service] leg workflow ranking: billed spend read failed (${featureSlug}, ${legKey}, ${slug}); its return is unstated:`, error);

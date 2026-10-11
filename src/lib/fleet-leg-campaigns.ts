@@ -18,18 +18,20 @@ export interface FleetLegCampaign {
   orgId: string;
   /** The brand it funds, or null for a legacy row naming none (it still carries spend). */
   brandId: string | null;
+  /** The workflow the campaign runs (campaign-service's own field); null when it states none. */
+  workflowSlug?: string | null;
 }
 
 /** PURE: keep the rows of `featureSlug` whose stated leg IS `legKey` (canonical). */
 export function filterLegCampaigns(rows: unknown[], featureSlug: string, legKey: string): FleetLegCampaign[] {
   return rows.flatMap((raw) => {
-    const c = raw as { id?: unknown; orgId?: unknown; featureSlug?: unknown; legKey?: unknown; brandId?: unknown; brandIds?: unknown };
+    const c = raw as { id?: unknown; orgId?: unknown; featureSlug?: unknown; legKey?: unknown; brandId?: unknown; brandIds?: unknown; workflowSlug?: unknown };
     if (typeof c.id !== "string" || typeof c.orgId !== "string") return [];
     if (c.featureSlug !== featureSlug) return [];
     if (typeof c.legKey !== "string" || matchFunnelLegKey(c.legKey) !== legKey) return [];
     const first = Array.isArray(c.brandIds) ? c.brandIds[0] : undefined;
     const brandId = typeof first === "string" ? first : typeof c.brandId === "string" ? c.brandId : null;
-    return [{ campaignId: c.id, orgId: c.orgId, brandId }];
+    return [{ campaignId: c.id, orgId: c.orgId, brandId, workflowSlug: typeof c.workflowSlug === "string" ? c.workflowSlug : null }];
   });
 }
 

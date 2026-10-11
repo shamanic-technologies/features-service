@@ -36,7 +36,7 @@ vi.mock("./fetch-retry.js", () => ({
   },
 }));
 
-const { planPipeSpend, withPipeSpendAttribution, pipeRunsScope, pipeSpendAttributionKey, attributedCampaignId } = await import("./pipe-spend-attribution.js");
+const { planPipeSpend, planChannelSpend, planBrandWideChannelSpend, withPipeSpendAttribution, pipeRunsScope, pipeSpendAttributionKey, attributedCampaignId } = await import("./pipe-spend-attribution.js");
 const { runsFeatureSlugsParam } = await import("./feature-scope.js");
 const { fetchRunsCostCents } = await import("./runs-cost-client.js");
 import type { SalesFunnelCampaignRow } from "./sales-funnel-campaigns-client.js";
@@ -153,5 +153,64 @@ describe("a pipe's runs spend reads under the attribution (prod funnel 7fcf42ab)
   it("keys a cell only when something moves", () => {
     expect(pipeSpendAttributionKey(null)).toBeUndefined();
     expect(pipeSpendAttributionKey(coldFilters)).toBe("r:|a:ce");
+  });
+});
+
+describe("planChannelSpend: an offer's / a brand's channel rows each read their OWN spend (owner 2026-10-11)", () => {
+  const headers = { orgId: "org-1" };
+  beforeEach(() => {
+    process.env.RUNS_SERVICE_URL = "http://runs";
+    process.env.RUNS_SERVICE_API_KEY = "k";
+    // Prod brand 448eea76's shape: the cold filters history under the cold email campaign, none under its source campaign.
+    ROWS = [
+      { campaignId: "ce", featureSlug: COLD_EMAIL, cents: 6452 },
+      { campaignId: "ce", featureSlug: COLD_FILTERS, cents: 3590 },
+      { campaignId: "cf", featureSlug: COLD_FILTERS, cents: 0 },
+      { campaignId: "ls", featureSlug: "lead-sourcing", cents: 120 },
+    ];
+  });
+
+  it("the outreach row releases the origins the set runs as channels; each such channel adopts the outreach ids", () => {
+    const plan = planChannelSpend([
+      { featureSlug: COLD_EMAIL, campaignIds: ["ce"] },
+      { featureSlug: COLD_FILTERS, campaignIds: ["cf"] },
+      { featureSlug: "your-team-website", campaignIds: ["w"] },
+    ]);
+    expect(plan.get(COLD_EMAIL)).toEqual({ pipeCampaignIds: ["ce"], releasedOriginSlugs: [COLD_FILTERS], adoptedCampaignIds: [] });
+    expect(plan.get(COLD_FILTERS)).toEqual({ pipeCampaignIds: ["cf"], releasedOriginSlugs: [], adoptedCampaignIds: ["ce"] });
+    expect(plan.has("your-team-website")).toBe(false);
+  });
+
+  it("an origin the set does not run as a channel stays with the outreach row (no channel to own it)", () => {
+    expect(planChannelSpend([{ featureSlug: COLD_EMAIL, campaignIds: ["ce"] }]).size).toBe(0);
+  });
+
+  it("AFTER: the rows add up to the same total, the sourcing row now carrying its own spend", async () => {
+    const plan = planChannelSpend([
+      { featureSlug: COLD_EMAIL, campaignIds: ["ce"] },
+      { featureSlug: COLD_FILTERS, campaignIds: ["cf"] },
+      { featureSlug: "lead-sourcing", campaignIds: ["ls"] },
+    ]);
+    const before = (await fetchRunsCostCents("b", ["ce"], COLD_EMAIL, headers)).committedCents
+      + (await fetchRunsCostCents("b", ["cf"], COLD_FILTERS, headers)).committedCents
+      + (await fetchRunsCostCents("b", ["ls"], "lead-sourcing", headers)).committedCents;
+    const ce = await withPipeSpendAttribution(plan.get(COLD_EMAIL)!, () => fetchRunsCostCents("b", ["ce"], COLD_EMAIL, headers));
+    const cf = await withPipeSpendAttribution(plan.get(COLD_FILTERS)!, () => fetchRunsCostCents("b", ["cf"], COLD_FILTERS, headers));
+    const ls = await withPipeSpendAttribution(plan.get("lead-sourcing") ?? null, () => fetchRunsCostCents("b", ["ls"], "lead-sourcing", headers));
+    expect([ce.committedCents, cf.committedCents, ls.committedCents]).toEqual([6452, 3590, 120]);
+    expect(ce.committedCents + cf.committedCents + ls.committedCents).toBe(before);
+  });
+
+  it("a BRAND-WIDE read of the outreach channel releases every origin feeding it (each reads its own brand-wide)", async () => {
+    const plan = planBrandWideChannelSpend(COLD_EMAIL)!;
+    expect(plan.pipeCampaignIds).toEqual([]);
+    expect(plan.releasedOriginSlugs).toContain(COLD_FILTERS);
+    expect(plan.releasedOriginSlugs).toContain("lead-sourcing");
+    const ce = await withPipeSpendAttribution(plan, () => fetchRunsCostCents("b", undefined, COLD_EMAIL, headers));
+    const cf = await fetchRunsCostCents("b", undefined, COLD_FILTERS, headers);
+    const ls = await fetchRunsCostCents("b", undefined, "lead-sourcing", headers);
+    expect(ce.committedCents).toBe(6452);
+    expect(ce.committedCents + cf.committedCents + ls.committedCents).toBe(6452 + 3590 + 120);
+    expect(planBrandWideChannelSpend(COLD_FILTERS)).toBeNull();
   });
 });

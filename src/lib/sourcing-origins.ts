@@ -120,7 +120,7 @@ export const SOURCING_ORIGIN_SLUGS: readonly string[] = SOURCING_ORIGINS.map((o)
 // A sales funnel is a straight line: ONE channel per leg. On Start -> Lead found that channel is either one
 // ORIGIN above (Apollo Cold Filters, ...) or LEAD SOURCING, where human-service decides which origins to use for
 // the brand, by measured ROI and in line with the brand's client profiles and ICP qualification. It is a channel
-// like any other (one leg, Start -> Lead found, reactive on `lead_requested`, run by us), NOT an origin: an origin
+// like any other (one leg, Start -> Lead found, reactive on `on_demand`, run by us), NOT an origin: an origin
 // is where a person's data comes from (one audience list kind), Lead Sourcing is a choice among them. So a serve
 // it files keeps its ORIGIN from the audience it served from (`originOfServe` falls through to the list kind),
 // and per-origin figures stay exact under it.

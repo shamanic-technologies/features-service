@@ -23,7 +23,7 @@ describe("every leg states proactive or reactive, and a reactive leg names one d
       ["proactive", null],
     ]);
     expect(leg("google-ads").every((t) => t.mode === "proactive")).toBe(true);
-    expect(leg("sourcing-apollo-cold-filters").map((t) => [t.mode, t.triggerId])).toEqual([["reactive", "lead_requested"]]);
+    expect(leg("sourcing-apollo-cold-filters").map((t) => [t.mode, t.triggerId])).toEqual([["reactive", "on_demand"]]);
     expect(leg("ai-meeting-booking").map((t) => [t.mode, t.triggerId])).toEqual([["reactive", "positive_reply_received"]]);
     expect(leg("ai-instant-call").map((t) => [t.mode, t.triggerId])).toEqual([["reactive", "positive_reply_received"]]);
     expect(leg("agency-meeting-attendance").map((t) => [t.mode, t.triggerId])).toEqual([["reactive", "meeting_booked"]]);
@@ -49,7 +49,7 @@ describe("every leg states proactive or reactive, and a reactive leg names one d
   it("every icon is a REAL Phosphor icon name (verified against @phosphor-icons/core 2.x assets, 2026-10-09)", () => {
     // The dashboard maps Phosphor names only; an unknown token renders the label alone. A new trigger's icon
     // is checked against https://unpkg.com/@phosphor-icons/core@2/assets/regular/<name>.svg, then added here.
-    const VERIFIED_PHOSPHOR = new Set(["user-focus", "thumbs-up", "cursor-click", "calendar-check", "handshake", "user-plus", "clipboard-text", "phone-call", "shopping-cart", "bell-ringing"]);
+    const VERIFIED_PHOSPHOR = new Set(["user-focus", "thumbs-up", "cursor-click", "calendar-check", "handshake", "user-plus", "clipboard-text", "phone-call", "shopping-cart", "bell-ringing", "hand-tap"]);
     for (const t of CHANNEL_TRIGGER_TYPES) expect(VERIFIED_PHOSPHOR.has(t.icon), `${t.id}: ${t.icon}`).toBe(true);
   });
 

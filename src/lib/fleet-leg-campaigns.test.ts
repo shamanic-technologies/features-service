@@ -3,7 +3,7 @@ import { filterLegCampaigns } from "./fleet-leg-campaigns.js";
 
 describe("filterLegCampaigns", () => {
   const rows = [
-    { id: "a", orgId: "o1", brandIds: ["b1"], featureSlug: "sales-cold-email-outreach", legKey: "start_to_conversation" },
+    { id: "a", orgId: "o1", brandIds: ["b1"], featureSlug: "sales-cold-email-outreach", legKey: "start_to_conversation", workflowSlug: "keel" },
     { id: "b", orgId: "o1", brandIds: ["b1"], featureSlug: "sales-cold-email-outreach", legKey: "start_to_website_visit" },
     { id: "c", orgId: "o2", brandIds: null, brandId: "b2", featureSlug: "sales-cold-email-outreach", legKey: "start_to_conversation" },
     { id: "d", orgId: "o2", brandIds: ["b2"], featureSlug: "sales-cold-email-outreach", legKey: null },
@@ -14,9 +14,10 @@ describe("filterLegCampaigns", () => {
 
   it("keeps only the feature's campaigns stating THIS leg — a leg-less row is in no leg", () => {
     expect(filterLegCampaigns(rows, "sales-cold-email-outreach", "start_to_conversation")).toEqual([
-      { campaignId: "a", orgId: "o1", brandId: "b1" },
-      { campaignId: "c", orgId: "o2", brandId: "b2" },
-      { campaignId: "f", orgId: "o3", brandId: null },
+      // The workflow it runs rides along (an on-demand pipe credits its leads to it, lib/on-demand-pipe-fleet.ts).
+      { campaignId: "a", orgId: "o1", brandId: "b1", workflowSlug: "keel" },
+      { campaignId: "c", orgId: "o2", brandId: "b2", workflowSlug: null },
+      { campaignId: "f", orgId: "o3", brandId: null, workflowSlug: null },
     ]);
     expect(filterLegCampaigns(rows, "sales-cold-email-outreach", "start_to_website_visit").map((c) => c.campaignId)).toEqual(["b"]);
   });

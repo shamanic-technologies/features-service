@@ -129,6 +129,8 @@ beforeEach(() => {
     new Map([
       [COLD, { basis: "mature", costPerOutcomeUsd: 40, conversionRatePct: 1, workflowDynastySlug: "orion" }],
       [MEET, { basis: "mature", costPerOutcomeUsd: 2, conversionRatePct: 30, workflowDynastySlug: "vega" }],
+      // Lead Sourcing on its OWN cost per lead found (owner 2026-10-11): it adds 0.5 x the leads a funnel needs.
+      ["lead-sourcing|start_to_lead_found", { basis: "mature", costPerOutcomeUsd: 0.5, conversionRatePct: 100, workflowDynastySlug: "lead-sourcing-scheat" }],
     ]),
   );
 });
@@ -213,9 +215,10 @@ describe("agent catalogue lists (context-window sized)", () => {
       [75, "default"],
       [40, "offer_stated"],
     ]);
-    // needed: paid 1, attended 2.5, booked 3.333, reply 6.667 -> 2 x 3.333 + 40 x 6.667 = 273.33; roi 12000 / 273.33.
-    expect(offer.costUsd).toBeCloseTo(273.33, 1);
-    expect(offer.roi).toBeCloseTo(43.9, 1);
+    // needed: paid 1, attended 2.5, booked 3.333, reply 6.667, lead 666.7 -> 2 x 3.333 + 40 x 6.667 + 0.5 x 666.7 = 606.67;
+    // roi 12000 / 606.67.
+    expect(offer.costUsd).toBeCloseTo(606.67, 1);
+    expect(offer.roi).toBeCloseTo(19.78, 1);
     expect(offer.status).toBe("estimated");
     expect(offer.estimates).toEqual(["rate:meeting_booked_to_meeting_attended", "rate:meeting_attended_to_paid_client", "lifetime_revenue"]);
     expect(fleet.costUsd).not.toBeCloseTo(offer.costUsd, 0);
@@ -251,7 +254,8 @@ describe("agent catalogue lists (context-window sized)", () => {
     expect(f.body.legs[0]).toMatchObject({ legKey: "start_to_lead_found", fromStep: null, toStep: "lead_found", pipe: { id: "lead-sourcing|start_to_lead_found" } });
     expect(f.body.legs[0].channels).toEqual([{ id: "lead-sourcing", name: "Lead Sourcing", runByUs: true }]);
     expect(f.body.legs[4].channels).toEqual([{ id: "your-team-closing-calls", name: "Your Team Closing Calls", runByUs: false }]);
-    expect(f.body.costUsd).toBeCloseTo(902.22, 1);
+    // 902.22 of outreach + Lead Sourcing's own 0.5 x 2222.2 leads.
+    expect(f.body.costUsd).toBeCloseTo(2013.33, 1);
     // What is measured vs estimated, per leg and in total (owner 2026-10-10: never "measured" on an estimate).
     expect(f.body).toMatchObject({ status: "estimated", roiBasis: "estimated", lifetimeRevenueSource: "fleet_median_stated" });
     expect(f.body.estimates).toContain("rate:conversation_to_meeting_booked");

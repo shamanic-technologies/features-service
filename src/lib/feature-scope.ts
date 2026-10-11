@@ -58,7 +58,35 @@ export function soleFeatureSlug(scope: FeatureScope): string | undefined {
 }
 
 /**
- * The value for runs-service's `featureSlugs` on a SPEND read: the scope, plus every sourcing origin slug
+ * WHICH SLUGS A RUNS-SERVICE SPEND READ COUNTS for a channel (owner 2026-10-11: a sourcing pipe's spend is its OWN cost
+ * and ROI, no longer folded into the outreach pipe's):
+ *   - `fed`: the channel PLUS the sourcing origins that feed it (`runsFeatureSlugsParam`). What a scope SPENT and what a
+ *     budget BUYS: money totals, the forecasts (workflow-projection ladders, pipeline activity, outcome prices), since a
+ *     budget pays the sourcing its outreach asks for.
+ *   - `own`: the channel's slugs alone (`runsOwnFeatureSlugsParam`). A PIPE's own measured cost, the one the agent
+ *     catalogue prices a pipe and composes a funnel with (`routes/agent-catalogue.ts`): every sourcing pipe is measured
+ *     on its own slug, so the outreach pipe is its outreach alone and two funnels that differ only by their source
+ *     price differently.
+ */
+export type SpendSlugs = "fed" | "own";
+
+/** A channel's OWN slugs (see `SpendSlugs`). */
+export function runsOwnFeatureSlugsParam(scope: FeatureScope): string {
+  return featureSlugsParam(scope);
+}
+
+/** The slugs of `mode` for `scope`. */
+export function runsSpendSlugsParam(scope: FeatureScope, mode: SpendSlugs): string {
+  return mode === "own" ? runsOwnFeatureSlugsParam(scope) : runsFeatureSlugsParam(scope);
+}
+
+/** `mode`, or `fed` when both read the same slugs (a channel no origin feeds): one cache cell, never two equal ones. */
+export function effectiveSpendSlugs(scope: FeatureScope, mode: SpendSlugs): SpendSlugs {
+  return mode === "own" && runsOwnFeatureSlugsParam(scope) !== runsFeatureSlugsParam(scope) ? "own" : "fed";
+}
+
+/**
+ * The value for runs-service's `featureSlugs` on a MONEY read (what a campaign, offer, brand or org SPENT): the scope, plus every sourcing origin slug
  * when the scope holds a channel that sources leads (`lib/sourcing-origins.ts`). A serve run carries the
  * outreach slug today and its origin's slug once lead-service / human-service switch, so a spend figure
  * reads the same in both states; a run carries ONE slug, so the producer's `IN (...)` counts it once.

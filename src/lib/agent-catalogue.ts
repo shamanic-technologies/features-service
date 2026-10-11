@@ -44,9 +44,11 @@
  * on its sourcing leg (`funnelById` resolves it, `legacyFunnelIdAliasOf`): the multi-source funnels moved to Lead
  * Sourcing (owner's migration), and every stored id (campaign-service, billing caps) keeps resolving. Their NAME
  * moved with them (`lib/lead-sourcing-key-migration.ts`).
- * COST: a leg ending at Lead found adds no cost of its own to a funnel's figure: a source finds its lead inside the
- * outreach run that asked for it, and every spend read about that outreach channel counts the sourcing channels'
- * slugs too (`withSourcingSlugs`), so its cost is already in the outreach pipe's measured cost per outcome.
+ * COST: the sourcing leg is a pipe with its OWN cost (owner 2026-10-11): a source runs only when the outreach run asks
+ * for a lead, as its own unit run (the `on_demand` trigger), and is measured on its own runs and the leads it found
+ * (`lib/on-demand-pipe-fleet.ts`); the outreach pipe's measured cost is its outreach alone (fleet reads name its own
+ * slug, `runsOwnFeatureSlugsParam`). So a funnel adds the source's cost per lead x the leads one paying client needs,
+ * and two funnels that differ only by their source price differently.
  *
  * ── AVERAGE COST, ROI, LEARNING (fleet grain, no identity) ──────────────────────────────────────
  *
@@ -580,8 +582,8 @@ export function funnelEconomics(
   let cost = 0;
   let platformLegs = 0;
   const estimates: string[] = [];
-  // A leg ending at Lead found adds no cost of its own (see the header): the cost runs from the first leg after it.
-  const first = Math.max(0, legs.findIndex((l) => l.pipe?.toStep !== SOURCED_STEP));
+  // Every leg's pipe adds its own cost, the sourcing leg included (see the header).
+  const first = 0;
   for (let i = legs.length - 1; i >= first; i -= 1) {
     const pipe = legs[i].pipe;
     if (pipe?.operatedBy === "platform") {

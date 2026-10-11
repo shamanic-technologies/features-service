@@ -8,7 +8,7 @@ import { RUNS_CAMPAIGN_IDS_PER_REQUEST } from "./brand-spend-by-day-client.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { runsCostsUrl, selectCostCentsString, type Pricing } from "./pricing.js";
 import { refundedCents, type CostBasis } from "./cost-basis.js";
-import { runsFeatureSlugsParam } from "./feature-scope.js";
+import { runsFeatureSlugsParam, runsSpendSlugsParam, type SpendSlugs } from "./feature-scope.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -89,8 +89,10 @@ export async function fetchPublicCosts(
   // Narrow the fleet to these campaigns (runs-service `campaignIds`, at most 500 per request — the
   // caller chunks). Used by a LEG-scoped ladder: only the campaigns performing that leg count.
   campaignIds?: readonly string[],
+  // `fed` (default, every forecast and benchmark as before) or `own`: a pipe's own measured cost (lib/feature-scope.ts).
+  slugs: SpendSlugs = "fed",
 ): Promise<CostGroup[]> {
-  const params = new URLSearchParams({ featureSlugs: runsFeatureSlugsParam(featureSlugs.split(",")), groupBy });
+  const params = new URLSearchParams({ featureSlugs: runsSpendSlugsParam(featureSlugs.split(","), slugs), groupBy });
   if (campaignIds && campaignIds.length > 0) params.set("campaignIds", campaignIds.join(","));
 
   // The vendor basis reads the service-auth vendor twin (no org header = the whole fleet), never the
@@ -167,12 +169,13 @@ export async function fetchDynastyBilledSpendByDay(
   // A LEG-scoped curve: only these campaigns' rows. Absent → the whole fleet (byte-identical request).
   // Present and empty → nothing performs the leg, so nothing was spent on it (no request at all).
   campaignIds?: string[],
+  slugs: SpendSlugs = "fed",
 ): Promise<Map<string, number>> {
-  if (campaignIds === undefined) return fetchDynastyBilledSpendChunk(featureSlug, workflowDynastySlug, undefined);
+  if (campaignIds === undefined) return fetchDynastyBilledSpendChunk(featureSlug, workflowDynastySlug, undefined, slugs);
   const byDay = new Map<string, number>();
   for (let i = 0; i < campaignIds.length; i += RUNS_CAMPAIGN_IDS_PER_REQUEST) {
     // A cost row belongs to exactly one campaign, so summing the chunks is exact.
-    const part = await fetchDynastyBilledSpendChunk(featureSlug, workflowDynastySlug, campaignIds.slice(i, i + RUNS_CAMPAIGN_IDS_PER_REQUEST));
+    const part = await fetchDynastyBilledSpendChunk(featureSlug, workflowDynastySlug, campaignIds.slice(i, i + RUNS_CAMPAIGN_IDS_PER_REQUEST), slugs);
     for (const [day, usd] of part) byDay.set(day, (byDay.get(day) ?? 0) + usd);
   }
   return byDay;
@@ -182,8 +185,9 @@ async function fetchDynastyBilledSpendChunk(
   featureSlug: string,
   workflowDynastySlug: string,
   campaignIds: string[] | undefined,
+  slugs: SpendSlugs,
 ): Promise<Map<string, number>> {
-  const params = new URLSearchParams({ interval: "day", featureSlugs: runsFeatureSlugsParam(featureSlug), workflowDynastySlug });
+  const params = new URLSearchParams({ interval: "day", featureSlugs: runsSpendSlugsParam(featureSlug, slugs), workflowDynastySlug });
   if (campaignIds) params.set("campaignIds", campaignIds.join(","));
   const url = `${process.env.RUNS_SERVICE_URL}/v1/stats/public/costs/timeseries?${params}`;
   const response = await fetchWithRetry(url, { headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY! } });

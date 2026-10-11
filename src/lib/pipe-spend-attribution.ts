@@ -122,9 +122,10 @@ export function pipeRunsScope(campaignScope: CampaignFilter): { campaignScope: C
   };
 }
 
-/** The same for a read that takes its scope as an id list (`[]` = brand-wide, never attributed). */
+/** The same for a read that takes its scope as an id list (`[]` = brand-wide: attributed only by a brand-wide plan,
+ *  `planBrandWideChannelSpend`, whose pipe identity is empty). */
 export function pipeRunsIds(ids: readonly string[]): { ids: string[]; releasedOriginSlugs: readonly string[] } {
-  const attr = ids.length > 0 ? activeFor(ids) : null;
+  const attr = activeFor(ids);
   if (!attr) return { ids: [...ids], releasedOriginSlugs: [] };
   return { ids: [...ids, ...attr.adoptedCampaignIds], releasedOriginSlugs: attr.releasedOriginSlugs };
 }
@@ -146,4 +147,53 @@ export function attributedCampaignId(campaignId: string | null): string | null {
   const attr = store.getStore();
   if (!attr || !campaignId || !attr.adoptedCampaignIds.includes(campaignId)) return campaignId;
   return attr.pipeCampaignIds[0] ?? campaignId;
+}
+
+/** One channel row of a grain that groups by channel (an offer's or a brand's): its slug and its campaigns. */
+export interface ChannelSpendInput {
+  featureSlug: string;
+  campaignIds: readonly string[];
+}
+
+/**
+ * PURE. THE SAME RULE AT A GRAIN THAT GROUPS BY CHANNEL (owner 2026-10-11: a sourcing pipe's spend is its OWN cost
+ * and ROI, no longer folded into the outreach channel's). Within ONE set of channel rows (an offer's, a brand's):
+ *   - an OUTREACH channel releases every origin that feeds it (`SOURCING_ORIGINS_BY_CHANNEL`, Lead Sourcing included)
+ *     which the set runs as a channel of its own: those rows leave its read;
+ *   - that SOURCING channel adopts the campaign ids of the outreach channels it feeds: its read (already filtered on
+ *     its own slug) also covers the rows filed under them (the history before 2026-10-08).
+ * Released and adopted are the same rows, so the set's total never moves. An origin the set does not run as a channel
+ * stays with the outreach channel that bought it (no channel to own it). Keyed by channel slug; absent = nothing moves.
+ */
+export function planChannelSpend(channels: readonly ChannelSpendInput[]): Map<string, PipeSpendAttribution> {
+  const bySlug = new Map(channels.filter((c) => c.campaignIds.length > 0).map((c) => [c.featureSlug, c] as const));
+  const out = new Map<string, PipeSpendAttribution>();
+  for (const c of bySlug.values()) {
+    const ids = [...new Set(c.campaignIds)].sort();
+    const fedBy = SOURCING_ORIGINS_BY_CHANNEL[c.featureSlug];
+    if (fedBy) {
+      const released = fedBy.filter((o) => bySlug.has(o)).sort();
+      if (released.length > 0) out.set(c.featureSlug, { pipeCampaignIds: ids, releasedOriginSlugs: released, adoptedCampaignIds: [] });
+      continue;
+    }
+    if (!ORIGINS.has(c.featureSlug)) continue;
+    const own = new Set(ids);
+    const adopted = [...bySlug.values()]
+      .filter((o) => (SOURCING_ORIGINS_BY_CHANNEL[o.featureSlug] ?? []).includes(c.featureSlug))
+      .flatMap((o) => o.campaignIds)
+      .filter((id) => !own.has(id));
+    if (adopted.length > 0) out.set(c.featureSlug, { pipeCampaignIds: ids, releasedOriginSlugs: [], adoptedCampaignIds: [...new Set(adopted)].sort() });
+  }
+  return out;
+}
+
+/**
+ * PURE. The release of a BRAND-WIDE read of one channel (no campaign, no offer: `/features/:slug/revenue?brandId=`
+ * alone): every origin feeding it leaves it. Each origin is a channel of the catalogue with its own brand-wide read,
+ * which already counts every row of its slug wherever it was filed, so nothing is lost: the brand's TOTAL (its own
+ * route) keeps every row. Null = a channel no origin feeds.
+ */
+export function planBrandWideChannelSpend(featureSlug: string): PipeSpendAttribution | null {
+  const released = [...(SOURCING_ORIGINS_BY_CHANNEL[featureSlug] ?? [])].sort();
+  return released.length > 0 ? { pipeCampaignIds: [], releasedOriginSlugs: released, adoptedCampaignIds: [] } : null;
 }

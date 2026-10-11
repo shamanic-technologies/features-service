@@ -5,8 +5,8 @@
  *  - PROACTIVE: it goes and finds or contacts people on its own budget. It has NO trigger: campaign-service
  *    checks it at every tick against its budget (daily, weekly, monthly) and billing. Cold email, ads.
  *  - REACTIVE: it runs ON DEMAND, and something asks for it. It names exactly ONE trigger from the list below:
- *    a campaign asking for a lead (`lead_requested`: the sourcing channels, pulled by the outbound campaign
- *    that needs someone to contact), or an event on a lead (`positive_reply_received`: AI meeting booking,
+ *    another pipe asking for it (`on_demand`: the sourcing channels, pulled by the outbound campaign that needs
+ *    someone to contact; `lead_requested` before 2026-10-11), or an event on a lead (`positive_reply_received`: AI meeting booking,
  *    the instant call; `meeting_booked`: meeting attendance...).
  *
  * Three separate things, three homes:
@@ -58,12 +58,28 @@ export interface ChannelTriggerType {
  */
 export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
   {
+    // ON DEMAND (owner 2026-10-11: "ça ne changera rien si le pipe a un trigger de type 'on demand' -> only exécuté
+    // quand par ex le pipe cold email l'appelle"): the pipe runs only when another pipe asks for it, at that instant,
+    // as its OWN unit run (campaign-service `POST /internal/on-demand-runs`: own run id, campaign, workflow, costs).
+    // The sourcing channels answer it: lead-service serves the lead a cold email run asks for under the source unit's
+    // run. Any future pipe that only runs when asked names it too.
+    id: "on_demand",
+    label: "On Demand",
+    description: "Runs only when another step asks for it.",
+    icon: "hand-tap",
+    fromStep: null,
+    firedBy: "campaign-service",
+    coded: true,
+    inline: true,
+  },
+  {
+    // The sourcing channels' trigger until 2026-10-11 (now `on_demand`). Kept declared: its recorded events stay
+    // readable (campaign-service anchors `lead_found` on them), and no leg names it.
     id: "lead_requested",
     label: "Lead Requested",
     description: "A campaign needs a new person to contact.",
     icon: "user-focus",
     fromStep: null,
-    // lead-service serves a lead the moment an outbound run asks for one (its `lead-serve` run).
     firedBy: "lead-service",
     coded: true,
     inline: true,

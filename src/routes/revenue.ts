@@ -82,6 +82,7 @@ import { salesFunnelIndex, SALES_FUNNEL_GOAL_ECHO, type SalesFunnelKey } from ".
 import { campaignScopeIds, singleCampaignId, type CampaignFilter } from "../lib/campaign-scope.js";
 import { pipeSpendAttributionKey, withPipeSpendAttribution } from "../lib/pipe-spend-attribution.js";
 import { resolvePipeSpendAttribution } from "../lib/pipe-spend-attribution-io.js";
+import { resolveChannelSpendAttribution } from "../lib/channel-spend-attribution-io.js";
 import {
   computeLearningPhaseSoft,
   engagedLeadsByCampaign,
@@ -2632,10 +2633,14 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
     // A PIPE of a sales funnel campaign reads its OWN spend: the sourcing history filed under its sibling outreach
     // pipe before 2026-10-08 moves to the sourcing pipe it belongs to, read-time (lib/pipe-spend-attribution.ts).
     // Null (nothing moves) for every campaign in no funnel: its cells and figures are byte-unchanged.
+    // An OFFER or BRAND-WIDE read of one channel reads its OWN spend too (owner 2026-10-11): the sourcing channels the
+    // offer / brand runs own their rows (`resolveChannelSpendAttribution`); the offer and brand TOTALS keep every row.
     const pipeAttribution =
       campaignId && !offerId
         ? await resolvePipeSpendAttribution({ brandId, featureSlug, pipeCampaignIds: campaignScopeIds(campaignScope), headers })
-        : null;
+        : !campaignId
+          ? await resolveChannelSpendAttribution({ brandId, featureSlug, offerId, headers })
+          : null;
     const pipeSpend = pipeSpendAttributionKey(pipeAttribution);
 
     // ONE WORKFLOW of that scope. FAIL-LOUD: the catalogue decides which of the scope's leads are
