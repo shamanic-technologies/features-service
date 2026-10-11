@@ -38,7 +38,8 @@
  */
 import { fetchFeatureMemberships, type FeatureMembership } from "./feature-memberships-client.js";
 import { buildAccountsAudit, type AccountsAudit, type AccountsDeps, type AccountRow, type AccountRowStatus, type UnreadOrgRead } from "./accounts-compute.js";
-import { buildActiveUsersByUser, type ActiveUsersByUser, type ActiveUserRow } from "./active-users-by-user-compute.js";
+import { buildActiveUsersByUser, INCEPTION_ISO, type ActiveUsersByUser, type ActiveUserRow } from "./active-users-by-user-compute.js";
+import { fetchOrgPaidActivity, type OrgPaidActivity } from "./cash-funded-spend.js";
 import { BrandOwnershipError, assertBrandHeld } from "./brand-ownership.js";
 import { fetchConversionCounts, type ConversionCounts } from "./conversion-counts-client.js";
 import { fetchDashboardReturnsByOrg, type DashboardReturnSignal } from "./posthog-client.js";
@@ -190,6 +191,15 @@ export interface CustomerHealthRow {
   activeThisMonth: boolean;
   /** The de-facto active-day timeline from billed spend (cheap, already tracked). Distinct UTC days ascending. */
   activeDays: string[];
+  /**
+   * The days the org PAID for: the subset of its spend days that its CASH funded (owner rule 2026-10-11:
+   * revenue is cash the client paid; consumed gifts / unrepaid advances are never revenue,
+   * `cash-funded-spend.ts`). "Paying in month M" = a paid active day in M. null = billing's cash read or
+   * runs' spend read failed for this org (never guessed). Org-level: same on every brand row of one org.
+   */
+  paidActiveDays: string[] | null;
+  /** Cash the ORG paid us to date (billing, net of refunds), USD. Org-level. null = unreadable. */
+  orgCashPaidUsd: number | null;
 
   // ── Current brand status (same composition as the accounts audit) ───────────
   /**
@@ -317,6 +327,8 @@ export interface CustomerHealthDeps {
   budgetHistory: (brandId: string, orgId: string) => Promise<BudgetChangeEntry[]>;
   /** Per-(org, brand) pause on/off transition history (campaign). Fail-loud; the builder wraps it soft (→ null). */
   pauseHistory: (brandId: string, orgId: string) => Promise<PauseTransition[]>;
+  /** One org's cash paid + the days cash funded its cold-email spend. Fail-loud; the builder wraps it soft (→ null), once per org. */
+  orgPaidActivity: (orgId: string, coldEmailSlugsCsv: string) => Promise<OrgPaidActivity>;
 }
 
 /**
@@ -348,6 +360,7 @@ const REAL_DEPS: CustomerHealthDeps = {
   dashboardReturns: fetchDashboardReturnsByOrg,
   budgetHistory: fetchBudgetChangeHistory,
   pauseHistory: fetchPauseHistory,
+  orgPaidActivity: (orgId, csv) => fetchOrgPaidActivity(orgId, csv, INCEPTION_ISO),
   brandRevenue: async (featureSlug, brandId, orgId, priced) => {
     const funnel = getFunnel(featureSlug);
     const headers: DownstreamHeaders = { orgId, featureSlug };
@@ -577,6 +590,20 @@ export async function buildCustomerHealthBoard(
 
   const recencyByOrg = new Map<string, ActiveUserRow>(byUser.users.map((u) => [u.orgId, u]));
 
+  // Paid activity is ORG-level: read once per org (shared promise across its brand rows), fail-SOFT to null.
+  const paidActivityByOrg = new Map<string, Promise<OrgPaidActivity | null>>();
+  const paidActivityOf = (orgId: string): Promise<OrgPaidActivity | null> => {
+    let p = paidActivityByOrg.get(orgId);
+    if (!p) {
+      p = deps.orgPaidActivity(orgId, coldEmailSlugsCsv).catch((error): null => {
+        console.error(`[features-service] customer-health paid activity unreadable for org ${orgId} (null on its rows): ${(error as Error).message}`);
+        return null;
+      });
+      paidActivityByOrg.set(orgId, p);
+    }
+    return p;
+  };
+
   // Exact cold-email feature per (org, brand) — first sorted slug the pair appears under wins (deterministic).
   const pairFeature = new Map<string, string>();
   for (const { slug, memberships } of membershipsBySlug) {
@@ -598,7 +625,7 @@ export async function buildCustomerHealthBoard(
     // fail-SOFT to null so a billing/campaign blip degrades only its own column, never the row's economics
     // or the whole board (mirrors the PostHog dashboard-return degrade). Independent of featureSlug /
     // economics, so fetched outside the main enrichment try. An empty array = "tracked, no history yet".
-    const [budgetChangeHistory, pauseHistory] = await Promise.all([
+    const [budgetChangeHistory, pauseHistory, paid] = await Promise.all([
       deps.budgetHistory(account.brandId, account.orgId).catch((error): BudgetChangeEntry[] | null => {
         console.warn(`[features-service] customer-health budget-history soft-degrade (org=${account.orgId} brand=${account.brandId}): ${(error as Error).message}`);
         return null;
@@ -607,6 +634,7 @@ export async function buildCustomerHealthBoard(
         console.warn(`[features-service] customer-health pause-history soft-degrade (org=${account.orgId} brand=${account.brandId}): ${(error as Error).message}`);
         return null;
       }),
+      paidActivityOf(account.orgId),
     ]);
 
     let economics: SalesEconomics | null = null;
@@ -728,6 +756,8 @@ export async function buildCustomerHealthBoard(
       activeThisWeek: recency?.activeThisWeek ?? false,
       activeThisMonth: recency?.activeThisMonth ?? false,
       activeDays: recency?.activeDays ?? [],
+      paidActiveDays: paid ? paid.paidActiveDays : null,
+      orgCashPaidUsd: paid ? paid.cashPaidUsd : null,
       status: account.status,
       statusUnknownReason: account.statusUnknownReason ?? null,
       paymentDeclinedReason: account.paymentDeclinedReason,
