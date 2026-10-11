@@ -21,6 +21,11 @@ describe("expected % Conversion of the sliced ladder", () => {
     expect(expectedStepConversion("meeting_booked", null, input)).toMatchObject({ ratePct: 80, basis: "measured", toStep: "meeting_attended" });
   });
 
+  it("a step the priced paths do not walk still reads the catalogue leg out of it", () => {
+    const purchaseOnly = { ...input, pricedFunnelKeys: ["website_purchases"] as never };
+    expect(expectedStepConversion("conversation", null, purchaseOnly)).toMatchObject({ ratePct: 30, toStep: "meeting_booked" });
+  });
+
   it("Paid client has nothing past it; unreadable rates are named, never a number", () => {
     expect(expectedStepConversion("paid_client", null, input)).toMatchObject({ ratePct: null, unavailableReason: "final_step" });
     expect(expectedStepConversion("conversation", null, { ...input, rates: null })).toMatchObject({ ratePct: null, unavailableReason: "rates_unavailable" });
