@@ -415,7 +415,9 @@ export const salesPathCombinationNames = pgTable("sales_path_combination_names",
  * per-campaign On/Off live in campaign-service.
  */
 export const channelTriggerTypes = pgTable("channel_trigger_types", {
+  /** The trigger's SLUG, unique. */
   id: text("id").primaryKey(),
+  /** The trigger's NAME, unique case-insensitive (index `channel_trigger_types_label_lower_unique`, migration 0026). */
   label: text("label").notNull(),
   description: text("description").notNull(),
   icon: text("icon").notNull(),

@@ -17,6 +17,8 @@ import {
   FAMILY_GLYPHS,
   funnelById,
   funnelFirstStep,
+  funnelTrigger,
+  pathTrigger,
   funnelIdOf,
   legChannelOf,
   legPipes,
@@ -63,7 +65,7 @@ import {
   registerStepDeclarations,
   type LoadedCatalogue,
 } from "../lib/channel-declarations-store.js";
-import { actorOf, DeclarationError, parseLegInput, requestedByOrgIdOf } from "../lib/channel-declarations.js";
+import { actorOf, DeclarationError, parseLegInput, requestedByOrgIdOf, type TriggerTypeRecord } from "../lib/channel-declarations.js";
 import { allNamesByKey, salesPathNamesFor, SalesPathNamePoolExhaustedError } from "../lib/sales-path-names.js";
 import { funnelTriggerLabel } from "../lib/funnel-descriptions.js";
 import { campaignNameKeyOf } from "../lib/offer-sales-paths.js";
@@ -307,12 +309,13 @@ const offerEcho = (o: OfferContext | null) =>
 async function loadModel(offer: OfferContext | null = null): Promise<Loaded> {
   await installPersistedFigures();
   void warmCatalogueMeasurements();
-  const [measurements, all, pub, declaredSteps, names] = await Promise.all([
+  const [measurements, all, pub, declaredSteps, names, triggers] = await Promise.all([
     awaitWarmStore(() => measurementStore?.value ?? null, warmCatalogueMeasurements, MEASUREMENTS_BOOT_WAIT_MS, "catalogue economics"),
     loadChannelCatalogue({ publishedOnly: false }),
     loadChannelCatalogue({ publishedOnly: true }),
     listDeclaredSteps(),
     allNamesByKey(),
+    listTriggerTypes(),
   ]);
   const { arrows: medians, lifetimeRevenue: ltr } = await fleetMediansFor(measurements.fleet);
   const publishedPipeIds = new Set(pub.channels.flatMap((c) => c.stepTransitions.map((t) => pipeIdOf(c.slug, servedPipeLegKey(c.slug, t.legKey)))));
@@ -324,6 +327,7 @@ async function loadModel(offer: OfferContext | null = null): Promise<Loaded> {
     fleetMedians: medians,
     lifetimeRevenueUsd: offer ? offer.lifetimeRevenueUsd : ltr.usd,
     ...(offer ? { offerRates: offer.rates } : {}),
+    triggers,
   });
   for (const id of measurements.unreadable) {
     const p = model.pipes.get(id);
@@ -431,7 +435,7 @@ async function named(keys: string[], known: Map<string, string>): Promise<Map<st
 
 const pathRowOf = (m: CatalogueModel, p: CataloguePath, name: string) => {
   const e = pathEconomics(m, p);
-  return { id: p.id, name, icon: FAMILY_GLYPHS.sales_path, color: glyphColorOf(name), line: pathLine(m, p), type: p.type, ...econWire(e, PER_PAYING_CLIENT), runnable: pathRunnable(m, p) };
+  return { id: p.id, name, icon: FAMILY_GLYPHS.sales_path, color: glyphColorOf(name), line: pathLine(m, p), type: p.type, trigger: pathTrigger(m, p), ...econWire(e, PER_PAYING_CLIENT), runnable: pathRunnable(m, p) };
 };
 
 const pipeRowOf = (m: CatalogueModel, p: CataloguePipe, name: string) => ({
@@ -447,9 +451,9 @@ const pipeRowOf = (m: CatalogueModel, p: CataloguePipe, name: string) => ({
 });
 
 /** A reactive funnel's trigger in customer words (`lib/funnel-descriptions.ts`); null on a proactive one. */
-const funnelCopy = (model: CatalogueModel, f: CatalogueFunnel) => ({ triggerLabel: funnelTriggerLabel(f, (k) => stepLabel(model, k)) });
+const funnelCopy = (model: CatalogueModel, f: CatalogueFunnel) => ({ triggerLabel: funnelTriggerLabel(f, (k) => stepLabel(model, k)), trigger: funnelTrigger(model, f) });
 
-const funnelRowOf = (f: CatalogueFunnel, name: string, copy: { triggerLabel: string | null }) => ({
+const funnelRowOf = (f: CatalogueFunnel, name: string, copy: ReturnType<typeof funnelCopy>) => ({
   id: f.id,
   name,
   face: faceOf(name).svgPath,
@@ -560,6 +564,7 @@ router.get("/internal/catalogue/sales-paths/:id", apiKeyOnly, async (req, res) =
       color: glyphColorOf(name),
       line: pathLine(model, path),
       type: path.type,
+      trigger: pathTrigger(model, path),
       steps: path.steps.map((s) => ({ id: s, name: stepLabel(model, s) })),
       legs: path.legKeys.map((legKey, i) => ({
         legKey,
@@ -923,6 +928,66 @@ router.get("/internal/catalogue/workflows/:id", apiKeyOnly, async (req, res) => 
   }
 });
 
+// ── Triggers (what starts a reactive pipe) ────────────────────────────────────────────────────────
+
+/**
+ * TRIGGERS (owner 2026-10-11, the staff Triggers section): every trigger type a reactive pipe may name
+ * (`lib/channel-triggers.ts` coded + the ones declared at run time, `channel_trigger_types`), in the
+ * catalogue's display order, each with the reactive pipes that name it. No economics: a trigger costs
+ * nothing, the pipes it starts carry the figures. `icon` is the family glyph (`lightning`), `eventIcon`
+ * the trigger type's own picture.
+ */
+const triggerRowOf = (m: CatalogueModel, t: TriggerTypeRecord, pipeCount: number) => ({
+  id: t.id,
+  name: t.label,
+  icon: FAMILY_GLYPHS.trigger,
+  color: glyphColorOf(t.label),
+  eventIcon: phosphorIconOf(t.icon),
+  line: t.description,
+  fromStep: t.fromStep,
+  fromStepName: t.fromStep ? stepLabel(m, t.fromStep) : null,
+  firedBy: t.firedBy,
+  coded: t.coded,
+  kind: t.kind,
+  origin: t.origin,
+  pipeCount,
+});
+
+const pipesOfTrigger = (m: CatalogueModel, id: string): CataloguePipe[] =>
+  [...m.pipes.values()].filter((p) => p.mode === "reactive" && p.triggerId === id).sort(byRoi((p) => p.economics, (p) => p.id));
+
+router.get("/internal/catalogue/triggers", apiKeyOnly, async (req, res) => {
+  try {
+    const limit = limitOf(req);
+    const q = qOf(req);
+    const [{ model }, triggers] = await Promise.all([loadModel(), listTriggerTypes()]);
+    const rows = triggers
+      .filter((t) => matchesQuery(q, [t.label, t.id, t.description, t.firedBy, t.fromStep ? stepLabel(model, t.fromStep) : null]))
+      .map((t) => triggerRowOf(model, t, pipesOfTrigger(model, t.id).length));
+    res.json({ object: "trigger", order: "catalogue", ...page(rows, limit) });
+  } catch (err) {
+    fail(res, err, "list triggers");
+  }
+});
+
+router.get("/internal/catalogue/triggers/:id", apiKeyOnly, async (req, res) => {
+  try {
+    const [{ model, names }, triggers] = await Promise.all([loadModel(), listTriggerTypes()]);
+    const t = triggers.find((x) => x.id === req.params.id);
+    if (!t) return void res.status(404).json({ error: `no trigger ${req.params.id}`, reason: "trigger_not_found" });
+    const pipes = pipesOfTrigger(model, t.id);
+    const n = await named(pipes.map(nameKeyOfPipe), names);
+    res.json({
+      object: "trigger",
+      ...triggerRowOf(model, t, pipes.length),
+      params: t.params,
+      pipes: pipes.map((p) => pipeRowOf(model, p, n.get(nameKeyOfPipe(p))!)),
+    });
+  } catch (err) {
+    fail(res, err, "get trigger");
+  }
+});
+
 // ── Creates ───────────────────────────────────────────────────────────────────────────────────────
 
 const STEP_KEY_RE = /^[a-z][a-z0-9]*(_[a-z0-9]+)*$/;
@@ -1144,13 +1209,20 @@ export interface FunnelCopy {
  * A funnel's PATH as the dashboard draws it (owner 2026-10-11): `items` in reading order, a step, then the channel(s)
  * working the leg, then the leg's next step, and so on to Paid client. A proactive funnel starts at Start ("Start ->
  * Apollo Cold Filters + LinkedIn Engagement -> Lead found -> Sales Cold Email Outreach -> Positive reply -> Your Team
- * Closing Calls -> Paid client"); a reactive one at its trigger step. EVERY two steps have at least one channel
+ * Closing Calls -> Paid client"); a reactive one with its TRIGGER item (`kind: "trigger"`, unique slug + name, "Positive
+ * Reply") in place of its trigger step. EVERY two steps have at least one channel
  * between them ("il faut que tu fasses apparaître tous les channels utilisés entre chaque leg"), `runByUs` false on
  * the customer's own team's. The sourcing leg lists the campaign's own sources when `sourceSlugs` names some, else
  * every runnable source. `legs` states the same per leg, structured.
  */
 export interface FunnelPathView {
-  items: Array<{ kind: "step"; key: string; label: string } | { kind: "channel"; slug: string; name: string; runByUs: boolean }>;
+  /** A reactive funnel's first item is its TRIGGER (owner 2026-10-11: "[⚡ Positive Reply] -> [AI Meeting Booking] ->
+   *  Meeting booked -> ..."), in place of its trigger step; a proactive one's is Start. */
+  items: Array<
+    | { kind: "trigger"; slug: string; name: string }
+    | { kind: "step"; key: string; label: string }
+    | { kind: "channel"; slug: string; name: string; runByUs: boolean }
+  >;
   legs: Array<{
     legKey: string;
     fromStep: string;
@@ -1170,9 +1242,10 @@ const START_STEP = { kind: "step" as const, key: "start", label: "Start" };
 export function funnelPathView(model: CatalogueModel, f: CatalogueFunnel, sourceSlugs: readonly string[] = []): FunnelPathView {
   const step = (key: string | null) => (key === null ? START_STEP : { kind: "step" as const, key, label: stepLabel(model, key) });
   const items: FunnelPathView["items"] = [];
+  const trigger = funnelTrigger(model, f);
   const legs: FunnelPathView["legs"] = f.legs.map((l, i) => {
     const { fromStep, toStep } = legStepsOf(model, l.legKey);
-    if (i === 0) items.push(step(fromStep));
+    if (i === 0) items.push(trigger ? { kind: "trigger", ...trigger } : step(fromStep));
     let pipes = legPipes(l);
     if (l.pool) {
       const own = pipes.filter((p) => sourceSlugs.includes(p.channelSlug));
@@ -1200,14 +1273,15 @@ export async function funnelCopiesFor(ids: readonly string[]): Promise<{
   /** A funnel campaign's path: its funnel's, its sourcing leg showing the sources the campaign runs. */
   pathOf: (id: string, sourceSlugs: readonly string[]) => FunnelPathView | null;
 }> {
-  const [all, pub, declaredSteps, names] = await Promise.all([
+  const [all, pub, declaredSteps, names, triggers] = await Promise.all([
     loadChannelCatalogue({ publishedOnly: false }),
     loadChannelCatalogue({ publishedOnly: true }),
     listDeclaredSteps(),
     allNamesByKey(),
+    listTriggerTypes(),
   ]);
   const publishedPipeIds = new Set(pub.channels.flatMap((c) => c.stepTransitions.map((t) => pipeIdOf(c.slug, servedPipeLegKey(c.slug, t.legKey)))));
-  const model = buildCatalogueModel({ channels: all.channels, publishedPipeIds, declaredSteps, measurements: new Map(), fleetMedians: new Map(), lifetimeRevenueUsd: null });
+  const model = buildCatalogueModel({ channels: all.channels, publishedPipeIds, declaredSteps, measurements: new Map(), fleetMedians: new Map(), lifetimeRevenueUsd: null, triggers });
   const found = new Map(ids.flatMap((id) => {
     const f = funnelById(model, id);
     return f ? [[id, f] as const] : [];

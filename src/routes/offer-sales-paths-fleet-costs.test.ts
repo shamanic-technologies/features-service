@@ -8,7 +8,7 @@ const code = route.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
 
 describe("sales-paths fleet costs never depend on uptime", () => {
   it("awaits the outcome-prices build, never the sync empty-store read", () => {
-    expect(code).toContain("await (await import(\"./public.js\")).awaitFleetLegCostsFromOutcomePrices()");
+    expect(code).toContain("await (await import(\"./public.js\")).awaitFleetLegCostsFromOutcomePrices(");
     expect(code).not.toContain("fleetLegCostsFromOutcomePrices()");
   });
   it("a store still empty past the bound is a visible 503, not a default-priced 200", () => {

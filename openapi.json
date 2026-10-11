@@ -147,6 +147,191 @@
           "updatedAt"
         ]
       },
+      "ExpectedReturn": {
+        "type": "object",
+        "properties": {
+          "roiMultiple": {
+            "type": "number",
+            "nullable": true,
+            "description": "The EXPECTED return, never null unless unavailableReason. = the scope's own MATURE return when it has one (basis measured), else its sales path's ROI exactly as GET /offers/{offerId}/sales-paths prices it: lifetime revenue / cost per paying client, each leg's rate measured > stated > fleet median > industry default, each leg's cost best mature workflow > fleet measured > seeded default, the offer's stated lifetime revenue else the fleet median. Additive: costEconomics.roiMultiple and its maturity verdict are unchanged."
+          },
+          "basis": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "measured",
+              "stated",
+              "fleet",
+              "default"
+            ],
+            "description": "What an expected figure rests on, the WEAKEST of its inputs: measured (the scope's own mature evidence / a measured rate / our own workflow's mature cost) < stated (the customer stated it: a leg rate, the offer's lifetime revenue) < fleet (the fleet median / the fleet's measured cost) < default (a seeded industry benchmark or cost). A tooltip says it in words."
+          },
+          "assumptions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "input": {
+                  "type": "string",
+                  "enum": [
+                    "lifetime_revenue",
+                    "rate",
+                    "cost",
+                    "sales_path"
+                  ]
+                },
+                "legKey": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The leg a rate or a cost is about. Null otherwise."
+                },
+                "basis": {
+                  "type": "string",
+                  "enum": [
+                    "measured",
+                    "stated",
+                    "fleet",
+                    "default"
+                  ],
+                  "description": "What an expected figure rests on, the WEAKEST of its inputs: measured (the scope's own mature evidence / a measured rate / our own workflow's mature cost) < stated (the customer stated it: a leg rate, the offer's lifetime revenue) < fleet (the fleet median / the fleet's measured cost) < default (a seeded industry benchmark or cost). A tooltip says it in words."
+                },
+                "source": {
+                  "type": "string",
+                  "description": "The producer's own word: crm_measured | measured_on_our_leads | customer_stated | fleet_median | industry_default (rate); workflow | fleet_measured | default | benchmark (cost); offer_stated | fleet_median (lifetime_revenue); not_running (sales_path: the offer runs no funnel campaign, so the figure is the best path we would sell it)."
+                }
+              },
+              "required": [
+                "input",
+                "legKey",
+                "basis",
+                "source"
+              ]
+            },
+            "description": "Every input the model figure rests on, with its own source. Empty on a measured figure."
+          },
+          "combinationKey": {
+            "type": "string",
+            "nullable": true,
+            "description": "The sales path (combination key, stored spelling) the figure is read off. A funnel campaign reads its own; a campaign the best selected path running it; an offer its best selected path (proactive first); a brand its best offer. Null on a measured figure."
+          },
+          "costPerOutcome": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "costPerOutcomeUsd": {
+                "type": "number"
+              },
+              "legKey": {
+                "type": "string"
+              },
+              "stepKey": {
+                "type": "string",
+                "description": "The outcome the cost buys (the leg's TO step), e.g. conversation (a positive reply) or website_visit."
+              },
+              "basis": {
+                "type": "string",
+                "enum": [
+                  "measured",
+                  "stated",
+                  "fleet",
+                  "default"
+                ],
+                "description": "What an expected figure rests on, the WEAKEST of its inputs: measured (the scope's own mature evidence / a measured rate / our own workflow's mature cost) < stated (the customer stated it: a leg rate, the offer's lifetime revenue) < fleet (the fleet median / the fleet's measured cost) < default (a seeded industry benchmark or cost). A tooltip says it in words."
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "workflow",
+                  "fleet_measured",
+                  "default",
+                  "benchmark"
+                ]
+              }
+            },
+            "required": [
+              "costPerOutcomeUsd",
+              "legKey",
+              "stepKey",
+              "basis",
+              "source"
+            ],
+            "description": "The EXPECTED cost per outcome of the scope's leg on that path (a campaign's own leg; an offer's, funnel's or brand's first platform leg). Always the model's figure, also beside a measured return. Null on a path whose legs carry no platform cost."
+          },
+          "unavailableReason": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "expected_model_unavailable",
+              "expected_model_computing",
+              "no_priced_sales_path"
+            ],
+            "description": "Why roiMultiple is null: the model could not be read (logged), is computing for the first time since a deploy (served on the next read), or no path could be priced."
+          }
+        },
+        "required": [
+          "roiMultiple",
+          "basis",
+          "assumptions",
+          "combinationKey",
+          "costPerOutcome",
+          "unavailableReason"
+        ],
+        "description": "THE EXPECTED RETURN (owner 2026-10-11: every ROI surface always reads a value, even expected, on a stated hypothesis). See roiMultiple."
+      },
+      "ExpectedConversion": {
+        "type": "object",
+        "properties": {
+          "ratePct": {
+            "type": "number",
+            "nullable": true,
+            "description": "The row's EXPECTED % Conversion, never null except on Paid client (nothing converts past it) or unavailableReason. = conversionFromRowAbove.ratePct when measured, else the brand's effective rate of the leg out of the row's step on the offer's priced paths (GET /brands/{brandId}/conversion-rates: measured > stated > fleet median > industry default; the shallowest next step); the contacted row: the entry leg's fleet conversion, else a seeded cold-email benchmark (1% positive reply, 2% website visit)."
+          },
+          "basis": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "measured",
+              "stated",
+              "fleet",
+              "default"
+            ],
+            "description": "What an expected figure rests on, the WEAKEST of its inputs: measured (the scope's own mature evidence / a measured rate / our own workflow's mature cost) < stated (the customer stated it: a leg rate, the offer's lifetime revenue) < fleet (the fleet median / the fleet's measured cost) < default (a seeded industry benchmark or cost). A tooltip says it in words."
+          },
+          "source": {
+            "type": "string",
+            "nullable": true,
+            "description": "measured | manual | median | default (the effective rate's own source) | fleet_measured | default_entry."
+          },
+          "toStep": {
+            "type": "string",
+            "nullable": true,
+            "description": "The step the rate leads to (the row above when measured)."
+          },
+          "legKey": {
+            "type": "string",
+            "nullable": true,
+            "description": "The leg the hypothesis is read off. Null when measured."
+          },
+          "unavailableReason": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "final_step",
+              "rates_unavailable",
+              "no_next_step"
+            ]
+          }
+        },
+        "required": [
+          "ratePct",
+          "basis",
+          "source",
+          "toStep",
+          "legKey",
+          "unavailableReason"
+        ],
+        "description": "THE EXPECTED % CONVERSION (owner 2026-10-11: a conversion rate is never empty, on a stated hypothesis). Additive beside conversionFromRowAbove (unchanged)."
+      },
       "LegMaturityRule": {
         "type": "object",
         "properties": {
@@ -4091,6 +4276,16 @@
                 "description": "The scope's per-leg figures on both bases and its verdict. Null where the lead population was never read (no funnel wired)."
               }
             ]
+          },
+          "expectedReturn": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExpectedReturn"
+              },
+              {
+                "description": "The scope's EXPECTED return, never empty (see ExpectedReturn): campaign (?campaignId=), offer (?offerId=, /offers/{id}/revenue) or brand (/brands/{id}/revenue, a brand-wide read). Absent on ?lens= and ?workflow= reads."
+              }
+            ]
           }
         },
         "required": [
@@ -4498,6 +4693,16 @@
                     {
                       "nullable": true,
                       "description": "The identity's per-leg figures and verdict — the object its own ?campaignId= read serves."
+                    }
+                  ]
+                },
+                "expectedReturn": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ExpectedReturn"
+                    },
+                    {
+                      "description": "The identity's EXPECTED return, never empty (see ExpectedReturn), the one its own ?campaignId= read serves. Absent on the staff actual-cost read."
                     }
                   ]
                 }
@@ -5106,6 +5311,16 @@
                     {
                       "nullable": true,
                       "description": "The offer's per-leg figures and verdict."
+                    }
+                  ]
+                },
+                "expectedReturn": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ExpectedReturn"
+                    },
+                    {
+                      "description": "The offer's EXPECTED return, never empty (see ExpectedReturn)."
                     }
                   ]
                 }
@@ -7333,7 +7548,7 @@
               "no_active_workflows",
               "no_spend_recorded"
             ],
-            "description": "Present ⟺ measured=false, and it is the whole point of the field: an empty `rows` must never be read as 'this brand has nobody to contact'. `no_active_audiences` = the brand is working no audience, so there is nothing to serve through ANY channel (rows is empty). `no_active_workflows` = this feature has no active workflow (rows is empty). `no_spend_recorded` = the brand HAS active audiences and this channel HAS active workflows, it has simply never run — rows then enumerate every (active audience × active workflow) couple, all measured=false."
+            "description": "Present ⟺ measured=false, and it is the whole point of the field: an empty `rows` must never be read as 'this brand has nobody to contact'. `no_active_audiences` = the brand is working no audience, so there is nothing to serve through ANY channel (rows is empty). `no_active_workflows` = this feature has no active workflow (rows is empty); also the answer for a `?leg=` naming a pipe of a channel that sells no reading sales funnel (sourcing origins `start_to_lead_found`, AI Instant Call `conversation_to_booking_call`): 200, no `leg` block, no economics, never a 400/404. `no_spend_recorded` = the brand HAS active audiences and this channel HAS active workflows, it has simply never run — rows then enumerate every (active audience × active workflow) couple, all measured=false."
           }
         },
         "required": [
@@ -7959,6 +8174,16 @@
                       "description": "This audience's per-leg figures on both bases and its verdict. The rows' spend and outcomes plus the envelope's unattributedMaturity add up to the envelope's maturity."
                     }
                   ]
+                },
+                "expectedReturn": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ExpectedReturn"
+                    },
+                    {
+                      "description": "This audience's EXPECTED return, never empty (see ExpectedReturn): its own projection.maturity mature returnPerDollar when mature (basis measured), else the scope's sales path model (the campaign's, offer's or brand's)."
+                    }
+                  ]
                 }
               },
               "required": [
@@ -8120,6 +8345,16 @@
               {
                 "nullable": true,
                 "description": "Spend and leads of this scope whose serve carried NO audience tag."
+              }
+            ]
+          },
+          "expectedReturn": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExpectedReturn"
+              },
+              {
+                "description": "The SCOPE's expected return, never empty (see ExpectedReturn): brandProjection.maturity's mature returnPerDollar when mature, else the scope's sales path model."
               }
             ]
           }
@@ -10435,6 +10670,16 @@
               }
             ]
           },
+          "expectedReturn": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExpectedReturn"
+              },
+              {
+                "description": "The scope's EXPECTED return, never empty (see ExpectedReturn): campaign (?campaignId=), offer (?offerId=, /offers/{id}/revenue) or brand (/brands/{id}/revenue, a brand-wide read). Absent on ?lens= and ?workflow= reads."
+              }
+            ]
+          },
           "offerId": {
             "type": "string"
           },
@@ -12618,6 +12863,16 @@
                           "points"
                         ],
                         "description": "THE SLICED % CONVERSION, DATED (only with ?conversionHistory=true, else null): per day since the offer's first delivery, every person stands where they stood that day (the furthest step priced for them reached by then, else the furthest reached, else the contacted row once contacted), then the conversionFromRowAbove rule. Null on a step that is not counted, and when no delivery date is known."
+                      },
+                      "expectedConversionFromRowAbove": {
+                        "allOf": [
+                          {
+                            "$ref": "#/components/schemas/ExpectedConversion"
+                          },
+                          {
+                            "description": "Never empty: the measured % Conversion, else a named hypothesis (see ExpectedConversion)."
+                          }
+                        ]
                       }
                     },
                     "required": [
@@ -13248,6 +13503,16 @@
                             "points"
                           ],
                           "description": "THE SLICED % CONVERSION, DATED (only with ?conversionHistory=true, else null): per day since the offer's first delivery, every person stands where they stood that day (the furthest step priced for them reached by then, else the furthest reached, else the contacted row once contacted), then the conversionFromRowAbove rule. Null on a step that is not counted, and when no delivery date is known."
+                        },
+                        "expectedConversionFromRowAbove": {
+                          "allOf": [
+                            {
+                              "$ref": "#/components/schemas/ExpectedConversion"
+                            },
+                            {
+                              "description": "Never empty: the measured % Conversion, else a named hypothesis (see ExpectedConversion)."
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -16606,6 +16871,16 @@
                       "description": "This audience's per-leg figures on both bases and its verdict. The rows' spend and outcomes plus the envelope's unattributedMaturity add up to the envelope's maturity."
                     }
                   ]
+                },
+                "expectedReturn": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ExpectedReturn"
+                    },
+                    {
+                      "description": "This audience's EXPECTED return, never empty (see ExpectedReturn): its own projection.maturity mature returnPerDollar when mature (basis measured), else the scope's sales path model (the campaign's, offer's or brand's)."
+                    }
+                  ]
                 }
               },
               "required": [
@@ -16767,6 +17042,16 @@
               {
                 "nullable": true,
                 "description": "Spend and leads of this scope whose serve carried NO audience tag."
+              }
+            ]
+          },
+          "expectedReturn": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExpectedReturn"
+              },
+              {
+                "description": "The SCOPE's expected return, never empty (see ExpectedReturn): brandProjection.maturity's mature returnPerDollar when mature, else the scope's sales path model."
               }
             ]
           },
@@ -19357,6 +19642,16 @@
               }
             ]
           },
+          "expectedReturn": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExpectedReturn"
+              },
+              {
+                "description": "The scope's EXPECTED return, never empty (see ExpectedReturn): campaign (?campaignId=), offer (?offerId=, /offers/{id}/revenue) or brand (/brands/{id}/revenue, a brand-wide read). Absent on ?lens= and ?workflow= reads."
+              }
+            ]
+          },
           "brandId": {
             "type": "string"
           },
@@ -19916,6 +20211,31 @@
                               "kind": {
                                 "type": "string",
                                 "enum": [
+                                  "trigger"
+                                ]
+                              },
+                              "slug": {
+                                "type": "string",
+                                "description": "The trigger's unique slug (`positive_reply_received`)."
+                              },
+                              "name": {
+                                "type": "string",
+                                "description": "The trigger's unique name (\"Positive Reply\")."
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "slug",
+                              "name"
+                            ],
+                            "description": "A REACTIVE funnel's first item (owner 2026-10-11): its trigger, in place of its trigger step."
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
                                   "step"
                                 ]
                               },
@@ -19963,7 +20283,7 @@
                           }
                         ]
                       },
-                      "description": "The path in reading order (owner 2026-10-11): a proactive funnel starts at Start (`key: \"start\"`), a reactive one at its trigger step; then per leg the channel(s) working it, then the leg's next step, to Paid client. EVERY two steps have at least one channel between them. The sourcing leg (Start -> Lead found) lists the sources THIS campaign runs (several). Render the items joined by arrows; never parse an id."
+                      "description": "The path in reading order (owner 2026-10-11): a proactive funnel starts at Start (`key: \"start\"`), a reactive one with its TRIGGER (`kind: \"trigger\"`); then per leg the channel(s) working it, then the leg's next step, to Paid client. EVERY two steps have at least one channel between them. The sourcing leg (Start -> Lead found) lists the sources THIS campaign runs (several). Render the items joined by arrows; never parse an id."
                     },
                     "legs": {
                       "type": "array",
@@ -20091,6 +20411,16 @@
                     "units_price_differently"
                   ],
                   "description": "`units_price_differently`: the units' channels price on two different funnel definitions, so no ROI can be one figure (investedUsd is still served). Null otherwise."
+                },
+                "expectedReturn": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ExpectedReturn"
+                    },
+                    {
+                      "description": "The funnel campaign's EXPECTED return, never empty (see ExpectedReturn): its own mature return (basis measured), else its own sales path (salesFunnelId = the combination key) priced on named hypotheses. roiMultiple and maturity are unchanged."
+                    }
+                  ]
                 },
                 "headline": {
                   "type": "object",
@@ -20313,6 +20643,7 @@
                 "investedUsd",
                 "roiMultiple",
                 "moneyUnavailableReason",
+                "expectedReturn",
                 "headline",
                 "costEconomics",
                 "maturity",
@@ -22582,6 +22913,16 @@
                       "description": "This audience's per-leg figures on both bases and its verdict. The rows' spend and outcomes plus the envelope's unattributedMaturity add up to the envelope's maturity."
                     }
                   ]
+                },
+                "expectedReturn": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ExpectedReturn"
+                    },
+                    {
+                      "description": "This audience's EXPECTED return, never empty (see ExpectedReturn): its own projection.maturity mature returnPerDollar when mature (basis measured), else the scope's sales path model (the campaign's, offer's or brand's)."
+                    }
+                  ]
                 }
               },
               "required": [
@@ -22743,6 +23084,16 @@
               {
                 "nullable": true,
                 "description": "Spend and leads of this scope whose serve carried NO audience tag."
+              }
+            ]
+          },
+          "expectedReturn": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExpectedReturn"
+              },
+              {
+                "description": "The SCOPE's expected return, never empty (see ExpectedReturn): brandProjection.maturity's mature returnPerDollar when mature, else the scope's sales path model."
               }
             ]
           },
@@ -24064,11 +24415,12 @@
                     "payment_declined",
                     "no_payment_method",
                     "unknown",
+                    "out_of_credit",
                     "reactive_only",
                     "paused",
                     "inactive"
                   ],
-                  "description": "'unknown' = a per-org billing read (payment-outlook or balance) failed for this org: no verdict is invented, the row is excluded from every money total and the org is named in unreadOrgReads. Otherwise: Precedence payment_declined / no_payment_method > active > paused > inactive: 'no_payment_method' iff billing cannot charge the org because it has no chargeable card (payment-outlook charge_blocked / no_chargeable_card; campaign-service stops it with stopReason no_payment_method); 'payment_declined' iff billing cannot charge it for any other reason (card declined, unusable, retries exhausted, or unsupported card country; stopReason payment_declined), whatever budget is configured or still reported running; billing's reason rides paymentDeclinedReason. Else 'active' iff runningDailyBudgetUsd>0 (PROACTIVE) && (autoTopupEnabled || orgActualBalanceUsd>runningDailyBudgetUsd); else 'reactive_only' iff runningDailyBudgetUsd==0 && reactiveRunningDailyCapUsd>0 (every proactive campaign stopped, a reactive one still on: starts no conversation, not active, not paused, excluded from every money total); else 'paused' iff configuredDailyBudgetUsd>0 (money posted, nothing running against it); else 'inactive'. There is no brand-level pause flag in this rule: that control was removed from the product and the flag lied in both directions."
+                  "description": "'unknown' = a per-org billing read (payment-outlook or balance) failed for this org: no verdict is invented, the row is excluded from every money total and the org is named in unreadOrgReads. Otherwise: Precedence payment_declined / no_payment_method > active > paused > inactive: 'no_payment_method' iff billing cannot charge the org because it has no chargeable card (payment-outlook charge_blocked / no_chargeable_card; campaign-service stops it with stopReason no_payment_method); 'payment_declined' iff billing cannot charge it for any other reason (card declined, unusable, retries exhausted, or unsupported card country; stopReason payment_declined), whatever budget is configured or still reported running; billing's reason rides paymentDeclinedReason. Else 'active' iff runningDailyBudgetUsd>0 (PROACTIVE) && (autoTopupEnabled || orgActualBalanceUsd>runningDailyBudgetUsd); else 'out_of_credit' iff runningDailyBudgetUsd>0 (a proactive campaign still runs but the balance cannot fund one more day and nothing reloads it: a BILLING state, staff ask the client to top up; never 'paused', which is the customer's own choice; until 2026-10-11 such a row read 'paused'); else 'reactive_only' iff runningDailyBudgetUsd==0 && reactiveRunningDailyCapUsd>0 (every proactive campaign stopped, a reactive one still on: starts no conversation, not active, not paused, excluded from every money total); else 'paused' iff configuredDailyBudgetUsd>0 (money posted, nothing running against it); else 'inactive'. There is no brand-level pause flag in this rule: that control was removed from the product and the flag lied in both directions."
                 },
                 "paymentDeclinedReason": {
                   "type": "string",
@@ -24220,6 +24572,10 @@
               "pausedCount": {
                 "type": "integer"
               },
+              "outOfCreditCount": {
+                "type": "integer",
+                "description": "Rows running a proactive campaign whose balance cannot fund one more day, with no auto-topup (status out_of_credit). Excluded from every running/MRR total, like paused."
+              },
               "statusUnknownCount": {
                 "type": "integer",
                 "description": "Rows with status 'unknown' (a per-org billing read failed; see unreadOrgReads). Excluded from every running/MRR total and never counted as inactive. 0 on a healthy read."
@@ -24245,6 +24601,7 @@
               "paymentDeclinedCount",
               "noPaymentMethodCount",
               "pausedCount",
+              "outOfCreditCount",
               "statusUnknownCount",
               "inactiveCount",
               "totalCount"
@@ -24336,11 +24693,12 @@
                     "payment_declined",
                     "no_payment_method",
                     "unknown",
+                    "out_of_credit",
                     "reactive_only",
                     "paused",
                     "inactive"
                   ],
-                  "description": "Same composition as GET /internal/stats/accounts (payment_declined > active > reactive_only > paused > inactive; payment_declined means billing cannot charge the org, reason on paymentDeclinedReason; active needs a PROACTIVE RUNNING budget > 0 AND funded/auto-topup; reactive_only means nothing proactive runs but a reactive campaign is on; paused means money posted with nothing running). 'unknown' (this board only): billing's payment-outlook read failed for this org, so whether billing can charge it is not known and no verdict is invented; the reason rides statusUnknownReason, every other column of the row is read as usual, and the rest of the board is unaffected (one org's billing failure no longer 500s the whole board, 2026-10-03). Its health badge reads red (not KNOWN active)."
+                  "description": "Same composition as GET /internal/stats/accounts (payment_declined > active > out_of_credit > reactive_only > paused > inactive; payment_declined means billing cannot charge the org, reason on paymentDeclinedReason; active needs a PROACTIVE RUNNING budget > 0 AND funded/auto-topup; out_of_credit means a proactive campaign runs but the balance cannot fund one more day and there is no auto-topup (a billing state, never shown as paused; until 2026-10-11 it read paused); reactive_only means nothing proactive runs but a reactive campaign is on; paused means money posted with nothing running). 'unknown' (this board only): billing's payment-outlook read failed for this org, so whether billing can charge it is not known and no verdict is invented; the reason rides statusUnknownReason, every other column of the row is read as usual, and the rest of the board is unaffected (one org's billing failure no longer 500s the whole board, 2026-10-03). Its health badge reads red (not KNOWN active)."
                 },
                 "statusUnknownReason": {
                   "type": "string",
@@ -24870,6 +25228,10 @@
               "pausedCount": {
                 "type": "integer"
               },
+              "outOfCreditCount": {
+                "type": "integer",
+                "description": "Rows running a proactive campaign whose balance cannot fund one more day, with no auto-topup (status out_of_credit). Excluded from every running/MRR total, like paused."
+              },
               "statusUnknownCount": {
                 "type": "integer",
                 "description": "Rows whose status could not be read (status 'unknown': billing payment-outlook or balance unreadable for the org; see unreadOrgReads). Not counted as inactive, excluded from every money total."
@@ -24894,6 +25256,7 @@
               "paymentDeclinedCount",
               "noPaymentMethodCount",
               "pausedCount",
+              "outOfCreditCount",
               "statusUnknownCount",
               "inactiveCount",
               "greenCount",
@@ -31908,7 +32271,7 @@
                         "no_active_workflows",
                         "no_spend_recorded"
                       ],
-                      "description": "Present ⟺ measured=false, and it is the whole point of the field: an empty `rows` must never be read as 'this brand has nobody to contact'. `no_active_audiences` = the brand is working no audience, so there is nothing to serve through ANY channel (rows is empty). `no_active_workflows` = this feature has no active workflow (rows is empty). `no_spend_recorded` = the brand HAS active audiences and this channel HAS active workflows, it has simply never run — rows then enumerate every (active audience × active workflow) couple, all measured=false."
+                      "description": "Present ⟺ measured=false, and it is the whole point of the field: an empty `rows` must never be read as 'this brand has nobody to contact'. `no_active_audiences` = the brand is working no audience, so there is nothing to serve through ANY channel (rows is empty). `no_active_workflows` = this feature has no active workflow (rows is empty); also the answer for a `?leg=` naming a pipe of a channel that sells no reading sales funnel (sourcing origins `start_to_lead_found`, AI Instant Call `conversation_to_booking_call`): 200, no `leg` block, no economics, never a 400/404. `no_spend_recorded` = the brand HAS active audiences and this channel HAS active workflows, it has simply never run — rows then enumerate every (active audience × active workflow) couple, all measured=false."
                     }
                   },
                   "required": [
@@ -33350,6 +33713,16 @@
                                 "description": "This audience's per-leg figures on both bases and its verdict. The rows' spend and outcomes plus the envelope's unattributedMaturity add up to the envelope's maturity."
                               }
                             ]
+                          },
+                          "expectedReturn": {
+                            "allOf": [
+                              {
+                                "$ref": "#/components/schemas/ExpectedReturn"
+                              },
+                              {
+                                "description": "This audience's EXPECTED return, never empty (see ExpectedReturn): its own projection.maturity mature returnPerDollar when mature (basis measured), else the scope's sales path model (the campaign's, offer's or brand's)."
+                              }
+                            ]
                           }
                         },
                         "required": [
@@ -33511,6 +33884,16 @@
                         {
                           "nullable": true,
                           "description": "Spend and leads of this scope whose serve carried NO audience tag."
+                        }
+                      ]
+                    },
+                    "expectedReturn": {
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/ExpectedReturn"
+                        },
+                        {
+                          "description": "The SCOPE's expected return, never empty (see ExpectedReturn): brandProjection.maturity's mature returnPerDollar when mature, else the scope's sales path model."
                         }
                       ]
                     }
@@ -47100,6 +47483,23 @@
                               "reactive"
                             ],
                             "description": "Sales path rows only."
+                          },
+                          "trigger": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "slug": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "slug",
+                              "name"
+                            ],
+                            "description": "A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."
                           }
                         },
                         "required": [
@@ -47250,6 +47650,23 @@
                       ],
                       "description": "Sales path rows only."
                     },
+                    "trigger": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "slug": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "slug",
+                        "name"
+                      ],
+                      "description": "A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."
+                    },
                     "created": {
                       "type": "boolean"
                     }
@@ -47341,6 +47758,23 @@
                       ],
                       "description": "Sales path rows only."
                     },
+                    "trigger": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "slug": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "slug",
+                        "name"
+                      ],
+                      "description": "A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."
+                    },
                     "created": {
                       "type": "boolean"
                     }
@@ -47427,6 +47861,23 @@
                     },
                     "line": {
                       "type": "string"
+                    },
+                    "trigger": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "slug": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "slug",
+                        "name"
+                      ],
+                      "description": "A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."
                     },
                     "type": {
                       "type": "string",
@@ -47610,6 +48061,7 @@
                     "icon",
                     "color",
                     "line",
+                    "trigger",
                     "type",
                     "steps",
                     "legs",
@@ -48033,6 +48485,23 @@
                             ],
                             "description": "Sales path rows only."
                           },
+                          "trigger": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "slug": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "slug",
+                              "name"
+                            ],
+                            "description": "A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."
+                          },
                           "mode": {
                             "type": "string",
                             "enum": [
@@ -48271,6 +48740,23 @@
                               "reactive"
                             ],
                             "description": "Sales path rows only."
+                          },
+                          "trigger": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "slug": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "slug",
+                              "name"
+                            ],
+                            "description": "A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."
                           },
                           "mode": {
                             "type": "string",
@@ -49096,6 +49582,23 @@
                       "items": {
                         "type": "object",
                         "properties": {
+                          "trigger": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "slug": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "slug",
+                              "name"
+                            ],
+                            "description": "A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."
+                          },
                           "triggerLabel": {
                             "type": "string",
                             "nullable": true,
@@ -49162,6 +49665,7 @@
                           }
                         },
                         "required": [
+                          "trigger",
                           "triggerLabel",
                           "id",
                           "name",
@@ -49283,6 +49787,23 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "trigger": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "slug": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "slug",
+                        "name"
+                      ],
+                      "description": "A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."
+                    },
                     "triggerLabel": {
                       "type": "string",
                       "nullable": true,
@@ -49599,6 +50120,7 @@
                     }
                   },
                   "required": [
+                    "trigger",
                     "triggerLabel",
                     "object",
                     "id",
@@ -49634,6 +50156,23 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "trigger": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "slug": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "slug",
+                        "name"
+                      ],
+                      "description": "A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."
+                    },
                     "triggerLabel": {
                       "type": "string",
                       "nullable": true,
@@ -49950,6 +50489,7 @@
                     }
                   },
                   "required": [
+                    "trigger",
                     "triggerLabel",
                     "object",
                     "id",
@@ -50043,6 +50583,23 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "trigger": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "slug": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "slug",
+                        "name"
+                      ],
+                      "description": "A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."
+                    },
                     "triggerLabel": {
                       "type": "string",
                       "nullable": true,
@@ -50391,6 +50948,7 @@
                     }
                   },
                   "required": [
+                    "trigger",
                     "triggerLabel",
                     "object",
                     "id",
@@ -50569,6 +51127,23 @@
                               "reactive"
                             ],
                             "description": "Sales path rows only."
+                          },
+                          "trigger": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "slug": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "slug",
+                              "name"
+                            ],
+                            "description": "A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."
                           }
                         },
                         "required": [
@@ -50809,6 +51384,421 @@
         }
       }
     },
+    "/internal/catalogue/triggers": {
+      "get": {
+        "summary": "List triggers: what starts a reactive pipe (internal, api-key)",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`).",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Text search: every word must appear in the row's text (name, line, id)."
+            },
+            "required": false,
+            "description": "Text search: every word must appear in the row's text (name, line, id).",
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "1..25, default 10."
+            },
+            "required": false,
+            "description": "1..25, default 10.",
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List triggers: what starts a reactive pipe (internal, api-key)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "enum": [
+                        "trigger"
+                      ]
+                    },
+                    "order": {
+                      "type": "string",
+                      "enum": [
+                        "catalogue"
+                      ]
+                    },
+                    "total": {
+                      "type": "integer"
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "description": "The trigger id a reactive pipe names (`triggerId`)."
+                          },
+                          "name": {
+                            "type": "string",
+                            "description": "The trigger's label, unique."
+                          },
+                          "icon": {
+                            "type": "string",
+                            "enum": [
+                              "lightning"
+                            ],
+                            "description": "The family glyph (Phosphor)."
+                          },
+                          "color": {
+                            "type": "string",
+                            "description": "`#RRGGBB`, derived from the name."
+                          },
+                          "eventIcon": {
+                            "type": "string",
+                            "description": "The trigger type's own Phosphor icon (e.g. `thumbs-up`)."
+                          },
+                          "line": {
+                            "type": "string",
+                            "description": "What happened, in one line."
+                          },
+                          "fromStep": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The step a lead reached that fires it; null when it is not a step (`lead_requested`)."
+                          },
+                          "fromStepName": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "firedBy": {
+                            "type": "string",
+                            "description": "The service that detects the event."
+                          },
+                          "coded": {
+                            "type": "boolean",
+                            "description": "A service fires it today."
+                          },
+                          "kind": {
+                            "type": "string",
+                            "description": "`event`, `delay` or `poll`."
+                          },
+                          "origin": {
+                            "type": "string",
+                            "enum": [
+                              "code",
+                              "declared"
+                            ]
+                          },
+                          "pipeCount": {
+                            "type": "integer",
+                            "description": "Reactive pipes that name this trigger."
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "icon",
+                          "color",
+                          "eventIcon",
+                          "line",
+                          "fromStep",
+                          "fromStepName",
+                          "firedBy",
+                          "coded",
+                          "kind",
+                          "origin",
+                          "pipeCount"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "object",
+                    "order",
+                    "total",
+                    "truncated",
+                    "rows"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A filter is invalid (`reason`: `limit_unrecognised`, `step_not_found`, `sales_path_not_found`, `pipe_required`, ...)."
+          },
+          "401": {
+            "description": "Missing or wrong service key."
+          },
+          "404": {
+            "description": "Unknown id (`*_not_found`)."
+          },
+          "503": {
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+          }
+        }
+      }
+    },
+    "/internal/catalogue/triggers/{id}": {
+      "get": {
+        "summary": "One trigger and the reactive pipes it starts (internal, api-key)",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`).",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "A trigger id (URL-encoded)."
+            },
+            "required": true,
+            "description": "A trigger id (URL-encoded).",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One trigger and the reactive pipes it starts (internal, api-key)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "The trigger id a reactive pipe names (`triggerId`)."
+                    },
+                    "name": {
+                      "type": "string",
+                      "description": "The trigger's label, unique."
+                    },
+                    "icon": {
+                      "type": "string",
+                      "enum": [
+                        "lightning"
+                      ],
+                      "description": "The family glyph (Phosphor)."
+                    },
+                    "color": {
+                      "type": "string",
+                      "description": "`#RRGGBB`, derived from the name."
+                    },
+                    "eventIcon": {
+                      "type": "string",
+                      "description": "The trigger type's own Phosphor icon (e.g. `thumbs-up`)."
+                    },
+                    "line": {
+                      "type": "string",
+                      "description": "What happened, in one line."
+                    },
+                    "fromStep": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The step a lead reached that fires it; null when it is not a step (`lead_requested`)."
+                    },
+                    "fromStepName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "firedBy": {
+                      "type": "string",
+                      "description": "The service that detects the event."
+                    },
+                    "coded": {
+                      "type": "boolean",
+                      "description": "A service fires it today."
+                    },
+                    "kind": {
+                      "type": "string",
+                      "description": "`event`, `delay` or `poll`."
+                    },
+                    "origin": {
+                      "type": "string",
+                      "enum": [
+                        "code",
+                        "declared"
+                      ]
+                    },
+                    "pipeCount": {
+                      "type": "integer",
+                      "description": "Reactive pipes that name this trigger."
+                    },
+                    "object": {
+                      "type": "string",
+                      "enum": [
+                        "trigger"
+                      ]
+                    },
+                    "params": {
+                      "type": "object",
+                      "nullable": true,
+                      "additionalProperties": {
+                        "nullable": true
+                      },
+                      "description": "A declared delay/poll trigger's parameters."
+                    },
+                    "pipes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "icon": {
+                            "type": "string",
+                            "description": "The family glyph (Phosphor): `waves` (sales path), `bird` (pipe), `flow-arrow` (workflow)."
+                          },
+                          "color": {
+                            "type": "string",
+                            "description": "`#RRGGBB`, derived from the name."
+                          },
+                          "line": {
+                            "type": "string"
+                          },
+                          "costUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured or estimated."
+                          },
+                          "costPer": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The unit of `costUsd` in words, on every row: `per <outcome step>` for a step, pipe, channel (its best pipe's step) or workflow (its pipe's step), e.g. `per positive reply`; `per paying client` for a sales path or funnel. Quote it with the figure. Null when `costUsd` is null."
+                          },
+                          "roi": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Average fleet return multiple. Null unless measured or estimated."
+                          },
+                          "roiBasis": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "measured",
+                              "estimated"
+                            ],
+                            "description": "`estimated` when anything the ROI rests on is not a measured fleet outcome: every ROI today, since it divides a step value or a lifetime revenue that ends on the fleet median of STATED lifetime revenues. Null with no roi."
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "measured",
+                              "estimated",
+                              "learning",
+                              "customer_time"
+                            ],
+                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                          },
+                          "runnable": {
+                            "type": "boolean",
+                            "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
+                          },
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "proactive",
+                              "reactive"
+                            ],
+                            "description": "Sales path rows only."
+                          },
+                          "trigger": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "slug": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "slug",
+                              "name"
+                            ],
+                            "description": "A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."
+                          },
+                          "mode": {
+                            "type": "string",
+                            "enum": [
+                              "proactive",
+                              "reactive"
+                            ]
+                          },
+                          "draft": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "icon",
+                          "color",
+                          "line",
+                          "costUsd",
+                          "costPer",
+                          "roi",
+                          "roiBasis",
+                          "status",
+                          "runnable",
+                          "mode"
+                        ]
+                      },
+                      "description": "The reactive pipes naming it, best ROI first."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "icon",
+                    "color",
+                    "eventIcon",
+                    "line",
+                    "fromStep",
+                    "fromStepName",
+                    "firedBy",
+                    "coded",
+                    "kind",
+                    "origin",
+                    "pipeCount",
+                    "object",
+                    "params",
+                    "pipes"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A filter is invalid (`reason`: `limit_unrecognised`, `step_not_found`, `sales_path_not_found`, `pipe_required`, ...)."
+          },
+          "401": {
+            "description": "Missing or wrong service key."
+          },
+          "404": {
+            "description": "Unknown id (`*_not_found`)."
+          },
+          "503": {
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+          }
+        }
+      }
+    },
     "/public/catalogue/sales-funnels": {
       "get": {
         "summary": "The sales funnels we can run today (public)",
@@ -50893,6 +51883,23 @@
                       "items": {
                         "type": "object",
                         "properties": {
+                          "trigger": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "slug": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "slug",
+                              "name"
+                            ],
+                            "description": "A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."
+                          },
                           "triggerLabel": {
                             "type": "string",
                             "nullable": true,
@@ -50959,6 +51966,7 @@
                           }
                         },
                         "required": [
+                          "trigger",
                           "triggerLabel",
                           "id",
                           "name",

@@ -25,9 +25,15 @@
  *   0a. billing cannot charge the org because it has NO chargeable card (`no_chargeable_card`)     → "no_payment_method"
  *   0b. billing cannot charge the org for any other reason (payment-outlook `charge_blocked`)      → "payment_declined"
  *   1. runningDailyBudgetUsd > 0 && (autoTopupEnabled || actualBalanceUsd > runningDailyBudgetUsd) → "active"
- *   2. else runningDailyBudgetUsd == 0 && reactiveRunningDailyCapUsd > 0                           → "reactive_only"
- *   3. else configuredDailyBudgetUsd > 0                                                          → "paused"
- *   4. else                                                                                       → "inactive"
+ *   2. else runningDailyBudgetUsd > 0                                                             → "out_of_credit"
+ *   3. else runningDailyBudgetUsd == 0 && reactiveRunningDailyCapUsd > 0                           → "reactive_only"
+ *   4. else configuredDailyBudgetUsd > 0                                                          → "paused"
+ *   5. else                                                                                       → "inactive"
+ * OUT_OF_CREDIT (owner rule 2026-10-11) is a BILLING state, PAUSED is the CUSTOMER's intent: a campaign
+ * still runs with its budget, but the balance cannot fund one more day and nothing reloads it (no
+ * auto-topup). Staff act differently (ask the client to top up vs ask why they stopped), so the two are
+ * never one status. Before this rule such a row fell through to "paused" (NOVEMIQ, Aireena: zero pause
+ * transitions, prepaid at ~$0).
  * PAYMENT_DECLINED wins over everything: billing's verdict is that the org's card is refused (or
  * unusable, or from an unsupported country), campaign-service stops every campaign of such an org, and
  * any budget still reported as running is money that cannot be collected. `paymentDeclinedReason`
@@ -84,7 +90,14 @@ import { createSlotLimiter } from "./concurrency.js";
  * its own stop reason (`no_payment_method`) and the customer dashboard says "no payment method"; the
  * audit says the same thing rather than calling it a declined payment (owner rule 2026-09-27).
  */
-export type AccountStatus = "active" | "payment_declined" | "no_payment_method" | "reactive_only" | "paused" | "inactive";
+export type AccountStatus =
+  | "active"
+  | "payment_declined"
+  | "no_payment_method"
+  | "out_of_credit"
+  | "reactive_only"
+  | "paused"
+  | "inactive";
 
 /**
  * A ROW's status: the verdict above, or "unknown" when an input the verdict needs could not be read.
@@ -200,6 +213,8 @@ export interface AccountsStats {
   /** Rows with nothing proactive running but a reactive campaign still on (status reactive_only). */
   reactiveOnlyCount: number;
   paymentDeclinedCount: number;
+  /** Rows running a proactive campaign whose balance cannot fund one more day, no auto-topup (status out_of_credit). */
+  outOfCreditCount: number;
   /** Rows with no chargeable card (status no_payment_method); excluded from every money total. */
   noPaymentMethodCount: number;
   pausedCount: number;
@@ -324,6 +339,8 @@ export function accountStatus(
 ): AccountStatus {
   if (paymentHold) return paymentHold.blockedReason === NO_CHARGEABLE_CARD ? "no_payment_method" : "payment_declined";
   if (proactiveRunningDailyBudgetUsd > 0 && (autoTopupEnabled || actualBalanceUsd > proactiveRunningDailyBudgetUsd)) return "active";
+  // Running, but the balance cannot fund one more day and nothing reloads it: a billing state, not a pause.
+  if (proactiveRunningDailyBudgetUsd > 0) return "out_of_credit";
   if (proactiveRunningDailyBudgetUsd === 0 && reactiveRunningDailyCapUsd > 0) return "reactive_only";
   if (configuredDailyBudgetUsd > 0) return "paused";
   return "inactive";
@@ -472,9 +489,9 @@ export async function buildAccountsAudit(
       };
   });
 
-  // Deterministic order: active → payment_declined → no_payment_method → unknown → reactive_only → paused → inactive, then running budget desc, tiebreak on the
+  // Deterministic order: active → payment_declined → no_payment_method → unknown → out_of_credit → reactive_only → paused → inactive, then running budget desc, tiebreak on the
   // configured one (a paused row runs nothing, so its posted money is what ranks it), then brandId.
-  const statusRank: Record<AccountRowStatus, number> = { active: 0, payment_declined: 1, no_payment_method: 2, unknown: 3, reactive_only: 4, paused: 5, inactive: 6 };
+  const statusRank: Record<AccountRowStatus, number> = { active: 0, payment_declined: 1, no_payment_method: 2, unknown: 3, out_of_credit: 4, reactive_only: 5, paused: 6, inactive: 7 };
   rows.sort((a, b) => {
     if (a.status !== b.status) return statusRank[a.status] - statusRank[b.status];
     if (a.runningDailyBudgetUsd !== b.runningDailyBudgetUsd) {
@@ -499,6 +516,7 @@ export async function buildAccountsAudit(
   let activeCount = 0;
   let reactiveOnlyCount = 0;
   let pausedCount = 0;
+  let outOfCreditCount = 0;
   let paymentDeclinedCount = 0;
   let noPaymentMethodCount = 0;
   let statusUnknownCount = 0;
@@ -513,6 +531,8 @@ export async function buildAccountsAudit(
       reactiveOnlyCount += 1;
     } else if (row.status === "paused") {
       pausedCount += 1;
+    } else if (row.status === "out_of_credit") {
+      outOfCreditCount += 1;
     } else if (row.status === "payment_declined") {
       paymentDeclinedCount += 1;
     } else if (row.status === "no_payment_method") {
@@ -522,7 +542,7 @@ export async function buildAccountsAudit(
     }
   }
   const inactiveCount =
-    rows.length - activeCount - reactiveOnlyCount - pausedCount - paymentDeclinedCount - noPaymentMethodCount - statusUnknownCount;
+    rows.length - activeCount - reactiveOnlyCount - pausedCount - outOfCreditCount - paymentDeclinedCount - noPaymentMethodCount - statusUnknownCount;
   // Round the fleet totals to cents defensively (per-row budgets are already dollars-and-cents).
   totalRunningDailyBudgetUsd = Math.round(totalRunningDailyBudgetUsd * 100) / 100;
   totalConfiguredDailyBudgetUsd = Math.round(totalConfiguredDailyBudgetUsd * 100) / 100;
@@ -549,6 +569,7 @@ export async function buildAccountsAudit(
       paymentDeclinedCount,
       noPaymentMethodCount,
       pausedCount,
+      outOfCreditCount,
       statusUnknownCount,
       inactiveCount,
       totalCount: rows.length,

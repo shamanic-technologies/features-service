@@ -299,9 +299,10 @@ router.patch("/internal/declarations/trigger-types/:id", apiKeyOnly, async (req,
   const body = (req.body ?? {}) as Body;
   try {
     const updatedBy = actorOf(body, "updatedBy");
-    const current = (await listTriggerTypes()).find((x) => x.id === req.params.id);
+    const all = await listTriggerTypes();
+    const current = all.find((x) => x.id === req.params.id);
     if (!current) return void res.status(404).json({ error: `no trigger type ${req.params.id}`, reason: "trigger_not_found" });
-    const updated = await updateTrigger(current.id, parseTriggerPatch(body, current));
+    const updated = await updateTrigger(current.id, parseTriggerPatch(body, current, all));
     invalidateChannelCatalogue();
     console.log(`[features-service] declarations: trigger type ${current.id} updated by ${updatedBy}`);
     res.json(triggerView(updated));
