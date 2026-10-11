@@ -154,7 +154,7 @@ describe("agent catalogue lists (context-window sized)", () => {
     expect(res.body.rows.length).toBeGreaterThan(3);
     expect(tokens(res.body)).toBeLessThan(2000);
     for (const r of res.body.rows) {
-      expect(Object.keys(r).sort()).toEqual(["color", "costPer", "costUsd", "icon", "id", "line", "name", "roi", "roiBasis", "runnable", "status", "type"]);
+      expect(Object.keys(r).sort()).toEqual(["color", "costPer", "costUsd", "icon", "id", "line", "name", "roi", "roiBasis", "runnable", "status", "trigger", "type"]);
       expect(r.line).toContain("Meeting booked");
       expect(r.icon).toBe("waves");
     }
@@ -408,7 +408,10 @@ describe("agent catalogue creates (data, never a PR)", () => {
       ]),
     );
     const meeting = reactive.find((r: { id: string }) => r.id.startsWith("conversation_to_meeting_booked"));
-    expect(meeting.line).toBe("Positive reply → Meeting booked → Meeting attended → Paid client");
+    // A reactive path starts with its TRIGGER, by name (owner 2026-10-11), in place of its trigger step.
+    expect(meeting.line).toBe("Positive Reply → Meeting booked → Meeting attended → Paid client");
+    expect(meeting.trigger).toEqual({ slug: "positive_reply_received", name: "Positive Reply" });
+    expect(paths.body.rows.filter((r: { type: string }) => r.type === "proactive").every((r: { trigger: unknown }) => r.trigger === null)).toBe(true);
 
     for (const pipeIds of [
       ["ai-meeting-booking|conversation_to_meeting_booked", "your-team-meeting-attendance|meeting_booked_to_meeting_attended", "your-team-closing-calls|meeting_attended_to_paid_client"],

@@ -19916,6 +19916,31 @@
                               "kind": {
                                 "type": "string",
                                 "enum": [
+                                  "trigger"
+                                ]
+                              },
+                              "slug": {
+                                "type": "string",
+                                "description": "The trigger's unique slug (`positive_reply_received`)."
+                              },
+                              "name": {
+                                "type": "string",
+                                "description": "The trigger's unique name (\"Positive Reply\")."
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "slug",
+                              "name"
+                            ],
+                            "description": "A REACTIVE funnel's first item (owner 2026-10-11): its trigger, in place of its trigger step."
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
                                   "step"
                                 ]
                               },
@@ -19963,7 +19988,7 @@
                           }
                         ]
                       },
-                      "description": "The path in reading order (owner 2026-10-11): a proactive funnel starts at Start (`key: \"start\"`), a reactive one at its trigger step; then per leg the channel(s) working it, then the leg's next step, to Paid client. EVERY two steps have at least one channel between them. The sourcing leg (Start -> Lead found) lists the sources THIS campaign runs (several). Render the items joined by arrows; never parse an id."
+                      "description": "The path in reading order (owner 2026-10-11): a proactive funnel starts at Start (`key: \"start\"`), a reactive one with its TRIGGER (`kind: \"trigger\"`); then per leg the channel(s) working it, then the leg's next step, to Paid client. EVERY two steps have at least one channel between them. The sourcing leg (Start -> Lead found) lists the sources THIS campaign runs (several). Render the items joined by arrows; never parse an id."
                     },
                     "legs": {
                       "type": "array",
@@ -47100,6 +47125,23 @@
                               "reactive"
                             ],
                             "description": "Sales path rows only."
+                          },
+                          "trigger": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "slug": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "slug",
+                              "name"
+                            ],
+                            "description": "A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."
                           }
                         },
                         "required": [
@@ -47250,6 +47292,23 @@
                       ],
                       "description": "Sales path rows only."
                     },
+                    "trigger": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "slug": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "slug",
+                        "name"
+                      ],
+                      "description": "A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."
+                    },
                     "created": {
                       "type": "boolean"
                     }
@@ -47341,6 +47400,23 @@
                       ],
                       "description": "Sales path rows only."
                     },
+                    "trigger": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "slug": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "slug",
+                        "name"
+                      ],
+                      "description": "A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."
+                    },
                     "created": {
                       "type": "boolean"
                     }
@@ -47427,6 +47503,23 @@
                     },
                     "line": {
                       "type": "string"
+                    },
+                    "trigger": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "slug": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "slug",
+                        "name"
+                      ],
+                      "description": "A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."
                     },
                     "type": {
                       "type": "string",
@@ -47610,6 +47703,7 @@
                     "icon",
                     "color",
                     "line",
+                    "trigger",
                     "type",
                     "steps",
                     "legs",
@@ -48033,6 +48127,23 @@
                             ],
                             "description": "Sales path rows only."
                           },
+                          "trigger": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "slug": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "slug",
+                              "name"
+                            ],
+                            "description": "A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."
+                          },
                           "mode": {
                             "type": "string",
                             "enum": [
@@ -48271,6 +48382,23 @@
                               "reactive"
                             ],
                             "description": "Sales path rows only."
+                          },
+                          "trigger": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "slug": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "slug",
+                              "name"
+                            ],
+                            "description": "A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."
                           },
                           "mode": {
                             "type": "string",
@@ -49096,6 +49224,23 @@
                       "items": {
                         "type": "object",
                         "properties": {
+                          "trigger": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "slug": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "slug",
+                              "name"
+                            ],
+                            "description": "A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."
+                          },
                           "triggerLabel": {
                             "type": "string",
                             "nullable": true,
@@ -49162,6 +49307,7 @@
                           }
                         },
                         "required": [
+                          "trigger",
                           "triggerLabel",
                           "id",
                           "name",
@@ -49283,6 +49429,23 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "trigger": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "slug": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "slug",
+                        "name"
+                      ],
+                      "description": "A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."
+                    },
                     "triggerLabel": {
                       "type": "string",
                       "nullable": true,
@@ -49599,6 +49762,7 @@
                     }
                   },
                   "required": [
+                    "trigger",
                     "triggerLabel",
                     "object",
                     "id",
@@ -49634,6 +49798,23 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "trigger": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "slug": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "slug",
+                        "name"
+                      ],
+                      "description": "A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."
+                    },
                     "triggerLabel": {
                       "type": "string",
                       "nullable": true,
@@ -49950,6 +50131,7 @@
                     }
                   },
                   "required": [
+                    "trigger",
                     "triggerLabel",
                     "object",
                     "id",
@@ -50043,6 +50225,23 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "trigger": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "slug": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "slug",
+                        "name"
+                      ],
+                      "description": "A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."
+                    },
                     "triggerLabel": {
                       "type": "string",
                       "nullable": true,
@@ -50391,6 +50590,7 @@
                     }
                   },
                   "required": [
+                    "trigger",
                     "triggerLabel",
                     "object",
                     "id",
@@ -50569,6 +50769,23 @@
                               "reactive"
                             ],
                             "description": "Sales path rows only."
+                          },
+                          "trigger": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "slug": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "slug",
+                              "name"
+                            ],
+                            "description": "A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."
                           }
                         },
                         "required": [
@@ -50893,6 +51110,23 @@
                       "items": {
                         "type": "object",
                         "properties": {
+                          "trigger": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "slug": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "slug",
+                              "name"
+                            ],
+                            "description": "A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."
+                          },
                           "triggerLabel": {
                             "type": "string",
                             "nullable": true,
@@ -50959,6 +51193,7 @@
                           }
                         },
                         "required": [
+                          "trigger",
                           "triggerLabel",
                           "id",
                           "name",

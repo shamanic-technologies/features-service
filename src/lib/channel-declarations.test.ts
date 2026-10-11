@@ -11,6 +11,7 @@ import {
   parseLegInput,
   parseSalesPathInput,
   parseTriggerInput,
+  parseTriggerPatch,
   type DeclaredChannel,
   type DeclaredLeg,
   type TriggerTypeRecord,
@@ -168,6 +169,12 @@ describe("declared trigger types are never coded on their own say-so", () => {
     refused(() => parseTriggerInput({ id: "lead_requested", label: "x", description: "x", icon: "x", kind: "event" }, TRIGGERS), 409, "trigger_exists");
     refused(() => parseTriggerInput({ id: "new_one", label: "x", description: "x", icon: "x", kind: "event", coded: true }, TRIGGERS), 400, "coded_not_declarable");
     refused(() => parseTriggerInput({ id: "new_one", label: "x", description: "x", icon: "x", kind: "event", fromStep: "conversation" }, TRIGGERS), 409, "trigger_exists_for_step");
+  });
+
+  it("refuses a trigger NAME another trigger has, case-insensitive, on create and on rename (owner 2026-10-11)", () => {
+    refused(() => parseTriggerInput({ id: "new_one", label: "positive reply ", description: "x", icon: "x", kind: "delay", params: { afterStep: "lead_found", days: 2 } }, TRIGGERS), 409, "trigger_name_taken");
+    refused(() => parseTriggerPatch({ label: "Positive Reply" }, delayTrigger, TRIGGERS), 409, "trigger_name_taken");
+    expect(parseTriggerPatch({ label: delayTrigger.label.toUpperCase() }, delayTrigger, TRIGGERS)).toEqual({ label: delayTrigger.label.toUpperCase() });
   });
 
   const SOURCE = { endpoint: "linkedin.jobs.search", method: "GET", query: { keywords: "cfo" }, items: "data.jobs", itemId: "id", maxMicro: 20_000 };

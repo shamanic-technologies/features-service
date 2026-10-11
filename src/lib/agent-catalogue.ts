@@ -27,7 +27,8 @@
  * website visit, or Start -> Lead found, the leg that FINDS the lead). An outbound path therefore reads
  * Start -> Lead found -> Positive reply -> ... and its id begins `start_to_lead_found+`. The id it had before
  * (from `lead_found_to_*`) is an ALIAS (`pathAliases`), so a stored id or name keeps resolving.
- * A REACTIVE path starts on its trigger step (see `CataloguePath.type`).
+ * A REACTIVE path starts with its TRIGGER (owner 2026-10-11): its first leg's pipes answer one trigger (`pathTrigger`),
+ * served by slug and name ("Positive Reply") in place of the trigger step, in the line and the path items.
  *
  * Every leg of a path is a leg some channel performs; a leg nobody performs is no path leg (owner 2026-10-11:
  * "des pipes sans channel ... ça ne devrait pas être possible"). The customer's own work is a `Your Team`
@@ -85,6 +86,7 @@ import { FUNNEL_LEGS, servedLegKeyOf } from "./funnel-legs.js";
 import { combinationKeyOf } from "./offer-sales-paths.js";
 import { faceOf, stableHash, type Face } from "./catalogue-faces.js";
 import { STEP_SIGNAL } from "./value-added.js";
+import { CHANNEL_TRIGGER_TYPES } from "./channel-triggers.js";
 
 /**
  * PURE: the value a pipe ADDS per outcome (owner 2026-10-11, `lib/value-added.ts`): its outcome step's value minus
@@ -194,6 +196,15 @@ export interface CatalogueInputs {
    * the fleet rate. Absent on the fleet catalogue.
    */
   offerRates?: ReadonlyMap<string, { ratePct: number; source: "offer_measured" | "offer_stated" }>;
+  /** The trigger types stored (`channel_trigger_types`: the coded ones and those declared at run time). The coded
+   *  list (`lib/channel-triggers.ts`) is read in any case: it is what boot upserts. */
+  triggers?: ReadonlyArray<{ id: string; label: string }>;
+}
+
+/** A trigger as a reactive path or funnel starts with it: its unique slug and unique name. */
+export interface TriggerRef {
+  slug: string;
+  name: string;
 }
 
 // ── Model ─────────────────────────────────────────────────────────────────────────────────────────
@@ -295,6 +306,8 @@ export interface CatalogueModel {
   paths: Map<string, CataloguePath>;
   /** A path's id before it started at Start (its legs without the sourcing leg) -> its id. */
   pathAliases: Map<string, string>;
+  /** Trigger slug -> its slug and name. */
+  triggers: Map<string, TriggerRef>;
   lifetimeRevenueUsd: number | null;
   channels: readonly PublicChannel[];
 }
@@ -504,7 +517,10 @@ export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
     walk(p.toStep, [first], new Set([p.fromStep, p.toStep]), "reactive");
   }
 
-  return { steps, pipes, paths, pathAliases, lifetimeRevenueUsd: inputs.lifetimeRevenueUsd, channels: inputs.channels };
+  const triggers = new Map<string, TriggerRef>(
+    [...CHANNEL_TRIGGER_TYPES, ...(inputs.triggers ?? [])].map((t) => [t.id, { slug: t.id, name: t.label }]),
+  );
+  return { steps, pipes, paths, pathAliases, triggers, lifetimeRevenueUsd: inputs.lifetimeRevenueUsd, channels: inputs.channels };
 }
 
 // ── Funnels ───────────────────────────────────────────────────────────────────────────────────────
@@ -724,9 +740,37 @@ export function stepEconomics(model: CatalogueModel, key: string): Economics {
 
 export const stepLabel = (model: CatalogueModel, key: string): string => model.steps.get(key)?.label ?? key;
 
-/** PURE: "Start -> Lead found -> Positive reply -> Paid client"; a reactive path starts on its trigger step. */
-export const pathLine = (model: CatalogueModel, path: CataloguePath): string =>
-  [...(path.type === "proactive" ? ["Start"] : []), ...path.steps.map((s) => stepLabel(model, s))].join(" → ");
+/** PURE: the trigger a pipe answers, by slug and name; null on a proactive pipe. Fails LOUD on a trigger no row
+ *  names (boot's `assertLegTriggersDeclared` makes that impossible). */
+export function pipeTrigger(model: CatalogueModel, pipe: CataloguePipe): TriggerRef | null {
+  if (pipe.triggerId === null) return null;
+  const t = model.triggers.get(pipe.triggerId);
+  if (!t) throw new Error(`[features-service] catalogue: pipe ${pipe.id} names the trigger ${pipe.triggerId}, which no trigger type states`);
+  return t;
+}
+
+/** PURE: the trigger a REACTIVE path starts with (the one its first leg's pipes answer); null on a proactive path. */
+export function pathTrigger(model: CatalogueModel, path: CataloguePath): TriggerRef | null {
+  if (path.type !== "reactive") return null;
+  const first = pipesOnLeg(model, path.legKeys[0]).find((p) => p.mode === "reactive" && p.triggerId !== null);
+  if (!first) throw new Error(`[features-service] catalogue: reactive path ${path.id} has no reactive pipe on its first leg`);
+  return pipeTrigger(model, first);
+}
+
+/** PURE: the trigger a funnel starts with: its first pipe's, on a reactive path; null on a proactive one. */
+export function funnelTrigger(model: CatalogueModel, f: Pick<CatalogueFunnel, "pathId" | "legs">): TriggerRef | null {
+  const path = model.paths.get(f.pathId);
+  if (!path || path.type !== "reactive" || !f.legs[0]?.pipe) return null;
+  return pipeTrigger(model, f.legs[0].pipe);
+}
+
+/** PURE: "Start -> Lead found -> Positive reply -> Paid client"; a reactive path starts with its trigger
+ *  ("Positive Reply -> Meeting booked -> ..."), in place of its trigger step. */
+export const pathLine = (model: CatalogueModel, path: CataloguePath): string => {
+  const trigger = pathTrigger(model, path);
+  const steps = path.steps.map((s) => stepLabel(model, s));
+  return (trigger ? [trigger.name, ...steps.slice(1)] : ["Start", ...steps]).join(" → ");
+};
 
 /** PURE: "Cold Email: Lead found -> Positive reply". */
 export const pipeLine = (model: CatalogueModel, pipe: CataloguePipe): string =>
