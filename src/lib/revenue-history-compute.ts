@@ -28,7 +28,7 @@ import { fetchFeatureMemberships } from "./feature-memberships-client.js";
 import { fetchBrandFirstBilledDay, fetchOrgDailySpendCents } from "./revenue-history-client.js";
 import { buildAccountsAudit, type AccountsAudit, type AccountsDeps, type UnreadOrgRead } from "./accounts-compute.js";
 import { mapWithConcurrency } from "./concurrency.js";
-import { cashFundedDailyCents, fetchOrgCashFunding, type OrgCashFunding } from "./cash-funded-spend.js";
+import { AGENCY_FUNDING, cashFundedDailyCents, fetchOrgCashFunding, type OrgCashFunding } from "./cash-funded-spend.js";
 import { addUtcDays } from "./send-forecast-compute.js";
 import { bucketOf, enumerateBuckets, type Granularity } from "./active-users-compute.js";
 import {
@@ -55,6 +55,7 @@ import {
 } from "./mrr-day-facts-clients.js";
 import { fetchBrandCommittedSpendByDay } from "./brand-spend-by-day-client.js";
 import {
+  agencyOrgIdsOf,
   agencyPairKeysOf,
   buildMrrSplit,
   pairKey,
@@ -157,6 +158,11 @@ export interface RevenueHistory {
    * total; the gap is named. `[]` on a healthy read.
    */
   unreadOrgReads: UnreadOrgRead[];
+  /**
+   * true = the stated-amount store was unreadable, so agency orgs (paid off-platform) could not be told
+   * apart and their revenue is read on billing's cash alone: UNDER-stated. false on a healthy read.
+   */
+  cashBasisAgencyUnknown: boolean;
   asOf: string;
 }
 
@@ -360,6 +366,12 @@ export async function buildRevenueHistory(
   // 1. Enumerate the distinct cold-email org universe (same source as the accounts audit).
   const memberships = coldEmailSlugsCsv ? await deps.featureMemberships(coldEmailSlugsCsv) : [];
   const orgIds = [...new Set(memberships.map((m) => m.orgId))];
+  // Agency orgs pay off-platform (`cash-funded-spend.ts`): their spend is cash-funded in full. An
+  // unreadable stated store cannot tell them apart: every org is then read on billing's cash alone (agency
+  // revenue UNDER-stated), and the payload says so in `cashBasisAgencyUnknown` (never a 502, like the split).
+  const statedForCash = orgIds.length ? await deps.readStatedAmounts() : [];
+  if (statedForCash === null) console.error("[features-service] revenue history: stated amounts unreadable, agency orgs read on billing cash only (under-stated)");
+  const agencyOrgs = new Set(agencyOrgIdsOf(statedForCash ?? []));
 
   // 2. Per-org ALL-TIME daily-spend map (capped fan-out) + the live fleet committed stats (accounts verdict),
   //    in parallel. One all-time fetch per org feeds every series: the trailing windows ignore out-of-window days.
@@ -369,7 +381,7 @@ export async function buildRevenueHistory(
     mapWithConcurrency(orgIds, ORG_FANOUT_CONCURRENCY, async (orgId): Promise<[string, Map<string, number>]> => {
       const [daily, funding] = await Promise.all([
         deps.orgDailySpendCents(orgId, coldEmailSlugsCsv, INCEPTION_FLOOR_ISO),
-        deps.orgCashFunding(orgId),
+        agencyOrgs.has(orgId) ? Promise.resolve(AGENCY_FUNDING) : deps.orgCashFunding(orgId),
       ]);
       return [orgId, cashFundedDailyCents(daily, funding)];
     }),
@@ -464,6 +476,7 @@ export async function buildRevenueHistory(
     mrrSplit,
     paymentOutlookUnreadOrgs: fleet.paymentOutlookUnreadOrgs ?? [],
     unreadOrgReads: fleet.unreadOrgReads ?? [],
+    cashBasisAgencyUnknown: statedForCash === null,
     asOf: now.toISOString(),
   };
 }

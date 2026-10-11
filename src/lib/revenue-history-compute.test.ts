@@ -86,6 +86,8 @@ describe("buildRevenueHistory — integration via injected deps", () => {
     capture?: { startedAfter?: string; recorded?: Array<{ orgId: string; revenueClass: string; mrrCents: string | null }> };
     /** Per-org cash funding; absent = every cent of spend was cash-funded. */
     cashFunding?: Record<string, { cashPaidCents: number; nonCashCreditCents: number }>;
+    /** Orgs holding a stated monthly amount (agency: paid off-platform). */
+    statedOrgs?: string[];
   }): RevenueHistoryDeps {
     return {
       featureMemberships: async () => fixture.orgs.map((orgId) => ({ orgId })),
@@ -100,7 +102,11 @@ describe("buildRevenueHistory — integration via injected deps", () => {
         if (fixture.capture) fixture.capture.recorded = rows;
       },
       readRecurringSnapshots: async () => new Map(),
-      readStatedAmounts: async () => [],
+      readStatedAmounts: async () =>
+        (fixture.statedOrgs ?? []).map((orgId, i) => ({
+          id: `s${i}`, orgId, brandId: `b-${orgId}`, amountUsd: 500, startDate: "2026-07-01", endDate: null,
+          note: null, createdAt: "2026-07-01T00:00:00Z", updatedAt: "2026-07-01T00:00:00Z",
+        })),
       budgetByDay: async () => ({ recordBeginsAt: null, byDay: new Map() }),
       currentDailyBudget: async () => null,
       paymentStopped: async () => ({ recordBeginsOn: null, periods: [] }),
@@ -233,28 +239,30 @@ describe("buildRevenueHistory — integration via injected deps", () => {
       NOW,
       { days: 3, weeks: 2, months: 2 },
       deps({
-        orgs: ["aireena", "payer"],
+        orgs: ["aireena", "payer", "agency"],
         dailyCents: {
           // Aireena: $9.51 of its $30 signup advance consumed this month, never paid a cent.
           aireena: { "2026-07-14": 951 },
-          // A payer: $30 welcome credit consumed first (June), then $50 of the $100 it paid (July).
+          // A payer: $100 cash + $100 welcome match: half of every day is cash.
           payer: { "2026-06-20": 3000, "2026-07-15": 5000 },
+          // An agency: paid off-platform, billing sees only staff grants; every cent is cash-funded.
+          agency: { "2026-07-15": 2000 },
         },
         cashFunding: {
           aireena: { cashPaidCents: 0, nonCashCreditCents: 3000 },
-          payer: { cashPaidCents: 10000, nonCashCreditCents: 3000 },
+          payer: { cashPaidCents: 10000, nonCashCreditCents: 10000 },
+          agency: { cashPaidCents: 0, nonCashCreditCents: 14595 },
         },
+        statedOrgs: ["agency"],
         currentMrrUsd: 0,
       }),
     );
-    expect(history.totalRevenueUsd).toBe(50);
-    const july = history.monthly.find((b) => b.period === "2026-07");
-    const june = history.monthly.find((b) => b.period === "2026-06");
-    expect(july?.revenueUsd).toBe(50);
-    expect(june?.revenueUsd).toBe(0);
-    // NRR: nobody had revenue in June, so July has no cohort (Aireena and the June credit burn are not revenue).
+    expect(history.totalRevenueUsd).toBe(60); // payer 15 + 25, agency 20, Aireena 0
+    expect(history.monthly.find((b) => b.period === "2026-07")?.revenueUsd).toBe(45);
+    expect(history.monthly.find((b) => b.period === "2026-06")?.revenueUsd).toBe(15);
+    // NRR July: the June cohort is the payer alone (Aireena never paid).
     const nrrJuly = history.netRevenueRetention.monthly.find((b) => b.period === "2026-07");
-    expect(nrrJuly?.cohortSize).toBe(0);
+    expect(nrrJuly?.cohortSize).toBe(1);
   });
 
   it("empty cold-email universe → zero totals + empty since-inception line, never throws", async () => {

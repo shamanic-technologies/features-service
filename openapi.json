@@ -24731,7 +24731,7 @@
                   "items": {
                     "type": "string"
                   },
-                  "description": "The days the org PAID for: the subset of its spend days its CASH funded (owner rule 2026-10-11: revenue is cash the client paid; consumed welcome credit or unrepaid advances are never revenue; non-cash credit is consumed first, then cash). 'Paying in month M' = at least one paid active day in M; an org that never paid (billing cash 0) has none, however much credit it consumed. null = billing's cash read or runs' spend read failed for this org (never guessed). Org-level: same on every brand row of one org."
+                  "description": "The days the org PAID for: the subset of its spend days its CASH funded (owner rule 2026-10-11: revenue is cash the client paid; consumed welcome credit or unrepaid advances are never revenue; each day counts in the org's cash share, cash ÷ (cash + non-cash credit), capped at the cash paid; an AGENCY org, paid off-platform, counts every day). null also when the org's agency side is unknown. 'Paying in month M' = at least one paid active day in M; an org that never paid (billing cash 0) has none, however much credit it consumed. null = billing's cash read or runs' spend read failed for this org (never guessed). Org-level: same on every brand row of one org."
                 },
                 "orgCashPaidUsd": {
                   "type": "number",
@@ -25559,7 +25559,7 @@
                 },
                 "revenueUsd": {
                   "type": "number",
-                  "description": "NET realized revenue in this bucket, in USD (2-decimal): the CASH-FUNDED part of each org's NET actual cold-email spend (owner rule 2026-10-11: revenue is cash the client paid; consumed welcome credit or unrepaid advances are never revenue; each org's non-cash credit is consumed first, then its cash, billing GET /internal/accounts/by-org/:orgId/cash). Until 2026-10-11 every consumed dollar counted. NRR rides the same basis."
+                  "description": "NET realized revenue in this bucket, in USD (2-decimal): the CASH-FUNDED part of each org's NET actual cold-email spend (owner rule 2026-10-11: revenue is cash the client paid; consumed welcome credit or unrepaid advances are never revenue): each day × the org's cash share, cash ÷ (cash + non-cash credit) from billing GET /internal/accounts/by-org/:orgId/cash, capped at the cash paid; an AGENCY org (holds a stated monthly amount) pays off-platform and counts in full. Until 2026-10-11 every consumed dollar counted. NRR rides the same basis."
                 },
                 "growthPct": {
                   "type": "number",
@@ -25591,7 +25591,7 @@
                 },
                 "revenueUsd": {
                   "type": "number",
-                  "description": "NET realized revenue in this bucket, in USD (2-decimal): the CASH-FUNDED part of each org's NET actual cold-email spend (owner rule 2026-10-11: revenue is cash the client paid; consumed welcome credit or unrepaid advances are never revenue; each org's non-cash credit is consumed first, then its cash, billing GET /internal/accounts/by-org/:orgId/cash). Until 2026-10-11 every consumed dollar counted. NRR rides the same basis."
+                  "description": "NET realized revenue in this bucket, in USD (2-decimal): the CASH-FUNDED part of each org's NET actual cold-email spend (owner rule 2026-10-11: revenue is cash the client paid; consumed welcome credit or unrepaid advances are never revenue): each day × the org's cash share, cash ÷ (cash + non-cash credit) from billing GET /internal/accounts/by-org/:orgId/cash, capped at the cash paid; an AGENCY org (holds a stated monthly amount) pays off-platform and counts in full. Until 2026-10-11 every consumed dollar counted. NRR rides the same basis."
                 },
                 "growthPct": {
                   "type": "number",
@@ -25623,7 +25623,7 @@
                 },
                 "revenueUsd": {
                   "type": "number",
-                  "description": "NET realized revenue in this bucket, in USD (2-decimal): the CASH-FUNDED part of each org's NET actual cold-email spend (owner rule 2026-10-11: revenue is cash the client paid; consumed welcome credit or unrepaid advances are never revenue; each org's non-cash credit is consumed first, then its cash, billing GET /internal/accounts/by-org/:orgId/cash). Until 2026-10-11 every consumed dollar counted. NRR rides the same basis."
+                  "description": "NET realized revenue in this bucket, in USD (2-decimal): the CASH-FUNDED part of each org's NET actual cold-email spend (owner rule 2026-10-11: revenue is cash the client paid; consumed welcome credit or unrepaid advances are never revenue): each day × the org's cash share, cash ÷ (cash + non-cash credit) from billing GET /internal/accounts/by-org/:orgId/cash, capped at the cash paid; an AGENCY org (holds a stated monthly amount) pays off-platform and counts in full. Until 2026-10-11 every consumed dollar counted. NRR rides the same basis."
                 },
                 "growthPct": {
                   "type": "number",
@@ -25655,7 +25655,7 @@
                 },
                 "revenueUsd": {
                   "type": "number",
-                  "description": "NET realized revenue in this bucket, in USD (2-decimal): the CASH-FUNDED part of each org's NET actual cold-email spend (owner rule 2026-10-11: revenue is cash the client paid; consumed welcome credit or unrepaid advances are never revenue; each org's non-cash credit is consumed first, then its cash, billing GET /internal/accounts/by-org/:orgId/cash). Until 2026-10-11 every consumed dollar counted. NRR rides the same basis."
+                  "description": "NET realized revenue in this bucket, in USD (2-decimal): the CASH-FUNDED part of each org's NET actual cold-email spend (owner rule 2026-10-11: revenue is cash the client paid; consumed welcome credit or unrepaid advances are never revenue): each day × the org's cash share, cash ÷ (cash + non-cash credit) from billing GET /internal/accounts/by-org/:orgId/cash, capped at the cash paid; an AGENCY org (holds a stated monthly amount) pays off-platform and counts in full. Until 2026-10-11 every consumed dollar counted. NRR rides the same basis."
                 },
                 "growthPct": {
                   "type": "number",
@@ -26493,6 +26493,10 @@
             },
             "description": "Every per-org read that failed for this answer (sorted by orgId, then read). The answer is served PARTIAL instead of 500-ing whole: payment_outlook / balance ⇒ that org's rows are status 'unknown' (excluded from the money totals, counted in statusUnknownCount); identity ⇒ its orgExternalId / ownerEmail are null, status unaffected. [] on a healthy read."
           },
+          "cashBasisAgencyUnknown": {
+            "type": "boolean",
+            "description": "true = the stated-amount store was unreadable, so agency orgs (paid OFF-platform, their spend counted cash-funded in full) could not be told apart: every org's revenue is read on billing's cash alone and agency revenue is UNDER-stated. false on a healthy read."
+          },
           "paymentOutlookUnreadOrgs": {
             "type": "array",
             "items": {
@@ -26530,6 +26534,7 @@
           "netRevenueRetention",
           "mrrSplit",
           "unreadOrgReads",
+          "cashBasisAgencyUnknown",
           "paymentOutlookUnreadOrgs",
           "asOf"
         ]
