@@ -115,7 +115,9 @@ describe("the agent catalogue model", () => {
     expect(e.status).toBe("estimated");
     expect(e.bestFunnelId).toContain("@sales-cold-email-outreach");
     expect(channelEconomics(model, "ai-meeting-booking").costUsd).toBe(2);
-    expect(stepEconomics(model, "meeting_booked")).toMatchObject({ status: "measured", costUsd: 2, roi: 225 });
+    // The value the pipe ADDS (owner 2026-10-11, `lib/value-added.ts`): a booked meeting ($450) minus the Positive
+    // reply it took over ($150), over $2: 150x (was 450 / 2 = 225x, crediting it the reply cold email bought).
+    expect(stepEconomics(model, "meeting_booked")).toMatchObject({ status: "measured", costUsd: 2, roi: 150 });
   });
 
   it("ranks a fully measured figure above any estimate, however high the estimate", () => {

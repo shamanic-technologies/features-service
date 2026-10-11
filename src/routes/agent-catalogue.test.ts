@@ -143,7 +143,8 @@ describe("agent catalogue lists (context-window sized)", () => {
     expect(res.body.object).toBe("step");
     expect(res.body.rows[0]).toMatchObject({ id: "paid_client", name: "Paid client", valueUsd: 3000 });
     const booked = (await request(app).get("/internal/catalogue/steps/meeting_booked").set(KEY)).body;
-    expect(booked).toMatchObject({ valueUsd: 450, costUsd: 2, roi: 225, status: "measured" });
+    // Value added: ($450 meeting − $150 reply it took over) / $2 (`lib/value-added.ts`).
+    expect(booked).toMatchObject({ valueUsd: 450, costUsd: 2, roi: 150, status: "measured" });
   });
 
   it("lists the sales paths containing a step, limited, each a river name, under ~2k tokens", async () => {
@@ -245,7 +246,7 @@ describe("agent catalogue lists (context-window sized)", () => {
     expect(f.body.estimates).toContain("rate:conversation_to_meeting_booked");
     expect(f.body.legs[1]).toMatchObject({ rateSource: "default", rateMeasured: false, pipe: { status: "measured", roiBasis: "estimated" } });
     const pipe = await request(app).get(`/internal/catalogue/pipes/${encodeURIComponent(MEET)}`).set(KEY);
-    expect(pipe.body).toMatchObject({ name: "Prism", costUsd: 2, roi: 225, toStepValueUsd: 450 });
+    expect(pipe.body).toMatchObject({ name: "Prism", costUsd: 2, roi: 150, toStepValueUsd: 450 });
     const channel = await request(app).get("/internal/catalogue/channels/ai-meeting-booking").set(KEY);
     expect(channel.body).toMatchObject({ id: "ai-meeting-booking", costUsd: 2, bestPipeId: MEET });
     expect((await request(app).get("/internal/catalogue/pipes/nope").set(KEY)).status).toBe(404);

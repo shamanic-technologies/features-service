@@ -36,6 +36,8 @@ import { fetchWithRetry } from "../lib/fetch-retry.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import type { DeclaredSalesFunnel } from "../lib/sales-funnels-client.js";
+import { STEP_SIGNAL, takeoverStepOf } from "../lib/value-added.js";
+import { computeTakeoverReturn } from "../lib/value-added-io.js";
 
 const router = Router();
 
@@ -94,7 +96,7 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
     const headers: DownstreamHeaders = { orgId: auth.orgId, userId: auth.userId, runId: auth.runId, featureSlug: undefined };
 
     const [rows] = await Promise.all([fetchSalesFunnelCampaigns(brandId, offerFilter, headers), assertBrandHeld(brandId, headers)]);
-    const copies = await funnelCopiesFor([...new Set(rows.map((r) => r.salesFunnelId))]);
+    const { copies, pipeSteps } = await funnelCopiesFor([...new Set(rows.map((r) => r.salesFunnelId))]);
 
     // The offer's terms, read ONCE per offer and shared by its funnel campaigns.
     const offerIds = [...new Set(rows.map((r) => r.offerId))];
@@ -109,6 +111,13 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
       const funnel = distinct.length === 1 ? distinct[0] : null;
       const declared = declaredByOffer.get(r.offerId) ?? [];
       const priced = funnel ? pricingForUnits(declared, priceOnDeclaredFunnel(declared), r.units) : undefined;
+      // WHERE THIS CAMPAIGN TOOK ITS PEOPLE OVER (`lib/value-added.ts`, owner 2026-10-11, one formula for every
+      // campaign): the funnel's first step unless its own units produce it. Null = from nothing (it found them):
+      // its return is the engine's ordinary pipeline over its spend. Else it is credited only the value it adds.
+      const unitSteps = r.units.flatMap((u) => pipeSteps.get(u.pipeId) ?? []);
+      const takeoverStep = copy ? takeoverStepOf(copy.firstStep, unitSteps) : null;
+      const takeoverUnit = takeoverStep ? r.units.find((u) => pipeSteps.get(u.pipeId)?.fromStep === takeoverStep) : undefined;
+      const takeoverToStep = takeoverUnit ? pipeSteps.get(takeoverUnit.pipeId)!.toStep : null;
 
       const money = campaignIds.length === 0
         ? null
@@ -119,6 +128,7 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
               brandId,
               offerId: r.offerId,
               units: campaignIds.join("+"),
+              takeover: takeoverStep ?? undefined,
               channels: featureSlugs.join("+"),
               pricing,
               econ: priced ? pricedFingerprint(priced) : undefined,
@@ -126,8 +136,22 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
             }),
             orgId: headers.orgId,
             compute: async () => {
+              // A step the engine values nothing at (Lead found) subtracts $0: the engine's own figures ARE the formula.
+              if (takeoverStep && STEP_SIGNAL[takeoverStep] && takeoverUnit && takeoverToStep && funnel) {
+                const t = await computeTakeoverReturn({
+                  brandId,
+                  unitCampaignIds: campaignIds,
+                  featureSlugs,
+                  takeoverStep,
+                  takeoverLeg: { legKey: takeoverUnit.legKey, toStep: takeoverToStep },
+                  priced,
+                  pricing,
+                  headers,
+                });
+                return { headline: t.headline, costEconomics: t.costEconomics, maturity: t.maturity, valueAdded: t.valueAdded };
+              }
               const body = await computeFeatureRevenue(featureSlugs, brandId, campaignIds, funnel, headers, undefined, priced, false, pricing, undefined, r.offerId, undefined, DEFAULT_PRICED_CAUSES);
-              return { headline: body.headline, costEconomics: body.costEconomics, maturity: body.maturity ?? null };
+              return { headline: body.headline, costEconomics: body.costEconomics, maturity: body.maturity ?? null, valueAdded: null };
             },
           });
 
@@ -157,6 +181,10 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
         headline: money?.headline ?? null,
         costEconomics: money?.costEconomics ?? null,
         maturity: money?.maturity ?? null,
+        // Where this campaign took its people over (null = it found them) and what it added on top of their value
+        // there (`lib/value-added.ts`); `headline.totalPipelineUsd` is that value added when a step is named.
+        takeoverStep,
+        valueAdded: money?.valueAdded ?? null,
       };
     });
 

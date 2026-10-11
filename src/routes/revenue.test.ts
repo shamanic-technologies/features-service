@@ -270,10 +270,12 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.status).toBe(404);
   });
 
+  // Every channel that SELLS a sales funnel prices on the one engine (owner 2026-10-11); a sourcing origin sells
+  // none (it finds people, no outcome of its own), so it stays unpriced.
   it("null pipeline when feature has no funnel wired (unpricedReason no_funnel_wired)", async () => {
-    vi.mocked(db.query.features.findFirst).mockResolvedValue({ ...SALES_FEATURE, slug: "pr-cold-email-outreach" } as any);
+    vi.mocked(db.query.features.findFirst).mockResolvedValue({ ...SALES_FEATURE, slug: "sourcing-apollo-cold-filters" } as any);
     mockFetch();
-    const res = await request(app).get("/features/pr-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
+    const res = await request(app).get("/features/sourcing-apollo-cold-filters/revenue?leads=full&brandId=b1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBeNull();
     expect(res.body.headline.unpricedReason).toBe("no_funnel_wired");

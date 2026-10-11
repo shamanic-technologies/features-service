@@ -166,6 +166,9 @@ function mockFetch(fixture: Fixture): void {
     const cid = (init?.headers as Record<string, string> | undefined)?.["x-campaign-id"];
     const json = (body: unknown) =>
       new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+    // A campaign on a leg that takes people over (from a valued step) is priced on the people it ACTED on
+    // (`lib/value-added.ts`): this fixture's campaign acted on nobody.
+    if (url.includes("/followup-actions")) return json({ leads: [] });
 
     if (url.includes("/campaigns?")) {
       return json({

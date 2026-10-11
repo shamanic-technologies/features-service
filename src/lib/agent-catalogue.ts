@@ -72,6 +72,20 @@ import { fleetMedianApplies, legPairKey, type FleetArrowMedians } from "./effect
 import { FUNNEL_LEGS, servedLegKeyOf } from "./funnel-legs.js";
 import { combinationKeyOf } from "./offer-sales-paths.js";
 import { faceOf, stableHash, type Face } from "./catalogue-faces.js";
+import { STEP_SIGNAL } from "./value-added.js";
+
+/**
+ * PURE: the value a pipe ADDS per outcome (owner 2026-10-11, `lib/value-added.ts`): its outcome step's value minus
+ * the value of the step it takes people over at. A step the engine values nothing at (from nothing, Lead found)
+ * subtracts $0. Null when a value it needs is unknown.
+ */
+export function valueAddedTo(valueOf: (step: string) => number | null, fromStep: string | null, toStep: string): number | null {
+  const to = valueOf(toStep);
+  if (to == null) return null;
+  if (!fromStep || !STEP_SIGNAL[fromStep]) return to;
+  const from = valueOf(fromStep);
+  return from == null ? null : to - from;
+}
 
 // ── Glyphs ────────────────────────────────────────────────────────────────────────────────────────
 
@@ -286,7 +300,9 @@ function buildPipes(inputs: CatalogueInputs, valueOf: (step: string) => number |
       let economics: Economics;
       if (c.operatedBy === "customer") economics = CUSTOMER_TIME();
       else if (measurement?.basis === "mature" && usable(measurement.costPerOutcomeUsd)) {
-        const value = valueOf(toStep);
+        // The value it ADDS (`lib/value-added.ts`): its outcome's value minus the value of the step it takes people
+        // over at (a reactive pipe answering Positive replies); from nothing / Lead found that is $0.
+        const value = valueAddedTo(valueOf, respelled ? "lead_found" : (t.from?.key ?? null), toStep);
         economics = {
           status: "measured",
           costUsd: round2(measurement.costPerOutcomeUsd),
@@ -480,7 +496,14 @@ export const pipesOnLeg = (model: CatalogueModel, legKey: string): CataloguePipe
  * PURE: the economics of one funnel (see the header formula). A leg's rate is the path's rate of that leg; a
  * leg no pipe of ours works, or one the customer's team works, costs us nothing.
  */
-export function funnelEconomics(path: CataloguePath, legs: readonly FunnelLeg[], lifetimeRevenueUsd: number | null): Economics {
+export function funnelEconomics(
+  path: CataloguePath,
+  legs: readonly FunnelLeg[],
+  lifetimeRevenueUsd: number | null,
+  /** The value of a person at the step the funnel takes people over at (its first leg's start; $0 from nothing /
+   *  Lead found, `lib/value-added.ts`). Null = that step is unvalued: no roi. */
+  takeoverValueUsd: number | null = 0,
+): Economics {
   if (!usable(lifetimeRevenueUsd)) return LEARNING("no_lifetime_revenue");
   let needed = 1;
   let cost = 0;
@@ -502,10 +525,13 @@ export function funnelEconomics(path: CataloguePath, legs: readonly FunnelLeg[],
   }
   if (platformLegs === 0 || !(cost > 0)) return CUSTOMER_TIME();
   const costEstimated = estimates.length > 0;
+  // Per paying client, the value it ADDS: the client, minus what the people it took over were already worth there
+  // (`needed` = people reaching its first leg's outcome per paying client).
+  const added = takeoverValueUsd === null ? null : lifetimeRevenueUsd - needed * takeoverValueUsd;
   return {
     status: costEstimated ? "estimated" : "measured",
     costUsd: round2(cost),
-    roi: round2(lifetimeRevenueUsd / cost),
+    roi: added === null ? null : round2(added / cost),
     reason: null,
     estimates: [...estimates, "lifetime_revenue"],
   };
@@ -547,7 +573,9 @@ export function funnelsOfPath(model: CatalogueModel, path: CataloguePath, cap = 
       const id = funnelIdOf(acc);
       if (!out.has(id)) {
         const slugs = [...new Set(acc.flatMap((l) => (l.pipe ? [l.pipe.channelSlug] : [])))];
-        out.set(id, { id, pathId: path.id, legs: acc, channelSlugs: slugs, economics: funnelEconomics(path, acc, model.lifetimeRevenueUsd) });
+        const takeover = acc[0]?.pipe ? acc[0].pipe.fromStep : (path.steps[0] ?? null);
+        const takeoverValue = takeover && STEP_SIGNAL[takeover] ? (model.steps.get(takeover)?.valueUsd ?? null) : 0;
+        out.set(id, { id, pathId: path.id, legs: acc, channelSlugs: slugs, economics: funnelEconomics(path, acc, model.lifetimeRevenueUsd, takeoverValue) });
       }
       return;
     }
@@ -634,8 +662,11 @@ export function stepEconomics(model: CatalogueModel, key: string): Economics {
   const step = model.steps.get(key);
   const producing = [...model.pipes.values()].filter((p) => p.toStep === key && p.economics.status === "measured" && p.measurement?.costPerOutcomeUsd != null);
   if (producing.length === 0) return LEARNING("no_measured_pipe");
-  const cost = Math.min(...producing.map((p) => p.measurement!.costPerOutcomeUsd!));
-  const roi = step?.valueUsd == null ? null : round2(step.valueUsd / cost);
+  const cheapest = producing.reduce((a, b) => (b.measurement!.costPerOutcomeUsd! < a.measurement!.costPerOutcomeUsd! ? b : a));
+  const cost = cheapest.measurement!.costPerOutcomeUsd!;
+  // The value the cheapest producing pipe ADDS (`lib/value-added.ts`), as its own roi reads.
+  const added = valueAddedTo((s) => model.steps.get(s)?.valueUsd ?? null, cheapest.fromStep, key);
+  const roi = step?.valueUsd == null || added === null ? null : round2(added / cost);
   return { status: "measured", costUsd: round2(cost), roi, reason: null, estimates: roi === null ? [] : [...STEP_VALUE_ESTIMATES] };
 }
 
