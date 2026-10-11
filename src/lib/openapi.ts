@@ -2886,6 +2886,126 @@ registry.registerPath({
   },
 });
 
+const callCountsSchema = z.object({
+  requested: z.number().int().describe("Every call row recorded (twillio-service), whether or not Twilio accepted it."),
+  placed: z.number().int().describe("Calls Twilio accepted and dialled (a call SID issued). The calls PLACED."),
+  accepted: z.number().int().describe("Calls the rep ANSWERED and took (pressed 1). Subset of placed."),
+  connected: z.number().int().describe("Calls bridged to the prospect (the rep's second keypress): the BOOKING CALLS OBTAINED. Subset of accepted."),
+  outcomes: z.record(z.number().int()).describe("Each call in exactly one bucket, adding up to `requested` (twillio-service's own: connected, acceptedNotConnected, answeredNotAccepted, noAnswer, busy, failed, canceled, inProgress)."),
+  billedMinutes: z.number().describe("Minutes billed on the leg to the rep."),
+  connectBilledMinutes: z.number().describe("Minutes billed on the bridged leg to the prospect."),
+  totalBilledMinutes: z.number().describe("billedMinutes + connectBilledMinutes."),
+});
+const campaignCallsSchema = z.object({
+  totals: callCountsSchema.describe("Since inception."),
+  daily: z.array(callCountsSchema.extend({ day: z.string().describe("UTC day the call was requested, YYYY-MM-DD.") })).describe("One entry per UTC day with at least one call, ascending; adds up to `totals`."),
+  spend: z
+    .object({
+      committedUsd: z.number().describe("The pipe's committed spend since inception (runs-service, the requested `pricing` basis): the same figure its unit campaign's revenue read serves."),
+      costPerPlacedCallUsd: z.number().nullable().describe("committedUsd / totals.placed. Null with no call placed."),
+      costPerConnectedCallUsd: z.number().nullable().describe("committedUsd / totals.connected: the cost per BOOKING CALL obtained. Null with none obtained."),
+    })
+    .nullable()
+    .describe("Null with `spendUnavailableReason`."),
+  spendUnavailableReason: z.enum(["spend_unreadable"]).nullable().describe("runs-service did not answer for this pipe (the calls stay served). Null when `spend` is served."),
+});
+
+const funnelActivityStepSchema = z.object({
+  key: z.string().describe("The catalogue step key (`lead_found`, `conversation`, `meeting_booked`...), or `contacted` / `delivered` for the two outreach rungs."),
+  label: z.string().describe("The step's customer label (\"Positive reply\"), the catalogue's own; \"Contacted\" / \"Delivered\" on the outreach rungs."),
+  kind: z.enum(["step", "outreach"]).describe("`step` = a step of the campaign's path; `outreach` = a rung of its outreach between Lead found and the next step (Contacted, Delivered)."),
+  people: z.number().int().nullable().describe("PEOPLE at this step since inception (never emails). Null only with `unmeasuredReason`."),
+  rateToNextPct: z.number().nullable().describe("People at the next step / people here x 100 (2 decimals), served so the page divides nothing. Null on the last step, when either side is unmeasured, or when nobody is here. Steps are counted independently, so a rate can exceed 100 (e.g. a sale recorded with no meeting)."),
+  unmeasuredReason: z.enum(["step_not_counted", "not_counted_by_lead_service", "no_unit_performs_step", "outcomes_unreadable"]).nullable().describe("Why `people` is null: `step_not_counted` (no producer counts this step), `no_unit_performs_step` (an act step no unit of this campaign performs), `outcomes_unreadable`. Null when counted."),
+});
+
+const pipeDaySchema = z.object({
+  date: z.string().describe("UTC day, YYYY-MM-DD."),
+  handed: z.number().int().describe("People first handed to the pipe that day (e.g. positive replies given to the AI Meeting Booking worker)."),
+  actedOn: z.number().int().describe("People the pipe first acted on that day (an answer sent; on AI Instant Call, the call placed)."),
+  reached: z.number().int().describe("People reaching the pipe's own `toStep` that day (meeting booked; on a call step, the call placed: the act is the outcome)."),
+});
+
+const salesFunnelCampaignActivityResponseRef = registry.register(
+  "SalesFunnelCampaignActivityResponse",
+  z.object({
+    salesFunnelCampaignId: z.string(),
+    brandId: z.string(),
+    offerId: z.string(),
+    salesFunnelId: z.string(),
+    name: z.string(),
+    createdAt: z.string(),
+    basis: z.literal("people_since_inception").describe("Every count is PEOPLE since inception (no window)."),
+    pricing: z.enum(["gross", "net"]).describe("The `?pricing=` basis echoed (it only moves `pipes[].calls.spend`)."),
+    funnel: z
+      .object({
+        mode: z.enum(["proactive", "reactive"]).describe("`proactive` (the funnel starts at Lead found: its people are the leads its OUTREACH unit holds, lead-service's Leads page set for that unit) | `reactive` (it starts at another step: its people are the people its units were HANDED, lead-service follow-up ledger)."),
+        steps: z.array(funnelActivityStepSchema).describe("Every step of the campaign's path (Start excluded) in reading order, in PEOPLE, each with the rate to the next. Proactive: Lead found = the outreach unit's leads (lead-service `bucket-counts` `total`), then Contacted (`counts.contacted`, exactly lead-service's contacted bucket) and Delivered (`people.delivered`: people an email reached; 0 on a channel sending no email), then each later step = lead-service's bucket for it. Reactive: the first step = people handed; an act step (Booking call) = people the performing unit acted on (the call placed); every later step = handed people with an attributed outcome at that step."),
+      })
+      .nullable()
+      .describe("The whole funnel of this campaign. Null only with `funnelUnavailableReason`."),
+    funnelUnavailableReason: z.enum(["sales_funnel_not_in_catalogue", "no_outreach_pipe", "several_outreach_pipes"]).nullable().describe("Why `funnel` is null: the funnel id is unknown to the catalogue, a proactive campaign has no outreach unit (nobody holds its people), or several outreach units hold people (their counts cannot be added without double counting). Null when served."),
+    pipes: z
+      .array(
+        z.object({
+          campaignId: z.string().describe("The unit campaign (one per pipe)."),
+          pipeId: z.string(),
+          featureSlug: z.string(),
+          legKey: z.string(),
+          status: z.string(),
+          fromStep: z.string().nullable().describe("The pipe's from step (null = from nothing: a sourcing pipe)."),
+          toStep: z.string().nullable().describe("The step the pipe produces."),
+          kind: z.enum(["sourcing", "outreach", "takeover"]).nullable().describe("`sourcing` (from nothing to Lead found: hands its leads to the outreach pipe, counted there) | `outreach` (from Lead found: holds the people) | `takeover` (from any later step: acts on people another campaign holds, e.g. AI Meeting Booking, AI Instant Call). Null when the pipe is unknown to the catalogue."),
+          people: z
+            .object({
+              found: z.number().int().describe("Leads the pipe holds (lead-service `total`)."),
+              contacted: z.number().int().describe("lead-service's contacted bucket for this unit."),
+              sent: z.number().int().describe("People at least one email was actually sent to."),
+              delivered: z.number().int().describe("People an email reached (sent, no bounce)."),
+              reachedToStep: z.number().int().nullable().describe("People at the pipe's `toStep` (lead-service's bucket for it); null when no bucket counts that step."),
+            })
+            .nullable()
+            .describe("An OUTREACH pipe's people counts since inception. Null on other kinds."),
+          work: z
+            .object({
+              handed: z.number().int().describe("Distinct people handed to the pipe since inception."),
+              actedOn: z.number().int().describe("Distinct people it acted on (answered; on a call pipe, called)."),
+              reached: z.number().int().nullable().describe("Of the people handed, those reaching the pipe's `toStep` (attributed outcome; on a call step, the act itself). Null when no producer counts that step."),
+              conversionRatePct: z.number().nullable().describe("reached / handed x 100. Null when reached is null or nobody was handed."),
+              daily: z.array(pipeDaySchema).describe("Per UTC day with any activity, ascending. Each person once per figure, on the day of its first occurrence."),
+              undated: z.object({ handed: z.number().int(), actedOn: z.number().int(), reached: z.number().int() }).describe("People in the totals with no date for that figure (on no day)."),
+            })
+            .nullable()
+            .describe("A TAKEOVER pipe's work since inception, total and per day (the pipe's \"over time\" chart). Null on other kinds."),
+          dailySource: z.enum(["campaign_revenue"]).nullable().describe("`campaign_revenue`: this pipe's day-by-day series is its unit campaign's own revenue read (`GET /features/{featureSlug}/revenue?campaignId=`, e.g. cold email emails/spend per day). Null when `work.daily` is the series (or the pipe has none)."),
+          calls: campaignCallsSchema.nullable().describe("A pipe producing the Booking call step (AI Instant Call): the calls it placed since inception (twillio-service's own counts: placed, answered/accepted, booking calls obtained = connected), per UTC day, and their cost (spend, cost per booking call). Null with `callsUnavailableReason`."),
+          callsUnavailableReason: z.enum(["pipe_places_no_calls", "calls_unreadable"]).nullable().describe("`pipe_places_no_calls`: the pipe does not produce the Booking call step. `calls_unreadable`: twillio-service did not answer for this campaign. Null when `calls` is served."),
+        }),
+      )
+      .describe("One per unit campaign (pipe), in campaign-service's order: what it did and produced since inception. Money (invested, ROI) per funnel campaign is `/brands/{brandId}/sales-funnel-campaigns`, per pipe the unit's own revenue read."),
+  }),
+);
+
+registry.registerPath({
+  method: "get",
+  path: "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/activity",
+  summary: "One sales funnel campaign's whole funnel in people, and what each of its pipes did and produced, since inception",
+  description:
+    "The campaign page (owner 2026-10-11): per sales funnel campaign, the number of PEOPLE at each step of its own path with the rate from each step to the next, and per pipe (unit campaign) what it did and produced: an outreach pipe's lead-service people counts, a takeover pipe's (AI Meeting Booking, AI Instant Call) people handed / acted on / reached in total and per UTC day, and a call pipe's calls (twillio-service). Since inception only; never an open count. The browser counts, sums and divides nothing. Org-scoped (`x-org-id`).",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ brandId: z.string(), salesFunnelCampaignId: z.string() }),
+    query: z.object({ pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis of the call pipes' spend (omitted = gross). The dashboard reads `net`.") }),
+  },
+  responses: {
+    200: { description: "The campaign's funnel and pipes.", content: { "application/json": { schema: salesFunnelCampaignActivityResponseRef } } },
+    400: { description: "An invalid pricing value (reason: pricing_unrecognised).", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "The caller does not hold this brand (reason: brand_not_found), or the brand has no sales funnel campaign with this id (reason: sales_funnel_campaign_not_found).", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "A producer (campaign-service, lead-service) failed: no count is ever guessed.", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 const measuredArrowRateSchema = z.object({
   basis: z.enum(["our_leads", "crm"]).describe("WHERE this leg was measured. crm: the brand's CRM directly evidences BOTH ends of the leg, so it is measured on the client's WHOLE CRM history (crm-service funnel reach, contactsAtOrBeyond(TO) / contactsAtOrBeyond(FROM)). our_leads: on this brand's leads. fromReached is the population either way, so a consumer can say 'measured on 251 contacts in your CRM' or 'measured on 26 of our leads'."),
   outcomesCounted: z.enum(["all", "caused_by_our_outreach"]).nullable().describe("On our_leads, which outcomes the counts include: caused_by_our_outreach whenever the brand's CRM is available (crm.status used) — a leg only our outreach can observe is not credited with CRM outcomes our outreach did not cause; all otherwise (today's rule). Null on a crm-measured leg. Measurement only: what the ROI prices is unchanged."),
