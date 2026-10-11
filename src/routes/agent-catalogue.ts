@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { apiKeyOnly } from "../middleware/auth.js";
 import {
+  valueAddedTo,
   buildCatalogueModel,
   byRoi,
   isMeasuredRate,
@@ -827,7 +828,8 @@ router.get("/internal/catalogue/sales-funnels/:id", apiKeyOnly, async (req, res)
 async function workflowRows(model: CatalogueModel, pipe: CataloguePipe) {
   const ranking = await readLegWorkflowRanking(pipe.channelSlug, pipe.computedLegKey);
   if (!ranking) return null;
-  const value = model.steps.get(pipe.toStep)?.valueUsd ?? null;
+  // The value the pipe ADDS per outcome (`valueAddedTo`, `lib/value-added.ts`), every workflow on it alike.
+  const value = valueAddedTo((st) => model.steps.get(st)?.valueUsd ?? null, pipe.fromStep, pipe.toStep);
   return ranking.rows.map((r) => {
     const name = r.workflowDynastyName ?? r.workflowDynastySlug;
     const mature = r.isMature === true && r.basis === "mature" && r.costPerOutcomeUsd !== null && r.costPerOutcomeUsd > 0;
@@ -1089,6 +1091,9 @@ export interface FunnelCopy {
   type: "proactive" | "reactive";
   triggerLabel: string | null;
   path: FunnelPathView;
+  /** The step the funnel's first leg starts from (null = from nothing): where a campaign on it takes people over
+   *  unless one of its own units produces that step (`lib/value-added.ts`). */
+  firstStep: string | null;
 }
 
 /**
@@ -1116,7 +1121,7 @@ export function funnelPathView(model: CatalogueModel, f: CatalogueFunnel): Funne
   return { items, legs };
 }
 
-export async function funnelCopiesFor(ids: readonly string[]): Promise<Map<string, FunnelCopy | null>> {
+export async function funnelCopiesFor(ids: readonly string[]): Promise<{ copies: Map<string, FunnelCopy | null>; pipeSteps: Map<string, { fromStep: string | null; toStep: string }> }> {
   const [all, pub, declaredSteps, names] = await Promise.all([
     loadChannelCatalogue({ publishedOnly: false }),
     loadChannelCatalogue({ publishedOnly: true }),
@@ -1132,9 +1137,11 @@ export async function funnelCopiesFor(ids: readonly string[]): Promise<Map<strin
   const out = new Map<string, FunnelCopy | null>(ids.map((id) => [id, null]));
   for (const [id, f] of found) {
     const name = names.get(f.id) ?? null;
-    out.set(id, { name, face: name ? faceOf(name).svgPath : null, type: funnelTypeOf(f), triggerLabel: funnelTriggerLabel(f, (k) => stepLabel(model, k)), path: funnelPathView(model, f) });
+    out.set(id, { name, face: name ? faceOf(name).svgPath : null, type: funnelTypeOf(f), triggerLabel: funnelTriggerLabel(f, (k) => stepLabel(model, k)), path: funnelPathView(model, f), firstStep: f.legs[0]?.pipe ? f.legs[0].pipe.fromStep : (model.paths.get(f.pathId)?.steps[0] ?? null) });
   }
-  return out;
+  // Every pipe's steps, so a caller knows which step each of a campaign's units produces (`lib/value-added.ts`).
+  const pipeSteps = new Map([...model.pipes.values()].map((p) => [p.id, { fromStep: p.fromStep, toStep: p.toStep }] as const));
+  return { copies: out, pipeSteps };
 }
 
 export default router;
