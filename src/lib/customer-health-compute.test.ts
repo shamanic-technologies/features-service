@@ -193,7 +193,7 @@ function makeDeps(fixtures: {
   const audit: AccountsAudit = {
     rows: fixtures.accounts,
     unreadOrgReads: [],
-    stats: { totalRunningDailyBudgetUsd: 0, totalConfiguredDailyBudgetUsd: 0, totalReactiveRunningDailyCapUsd: 0, mrrUsd: 0, arrUsd: 0, mrrBasis: "billing_recurring", mrrUnavailableReason: null, mrrUnknownOrgIds: [], activeCount: 0, reactiveOnlyCount: 0, paymentDeclinedCount: 0, noPaymentMethodCount: 0, pausedCount: 0, statusUnknownCount: 0, inactiveCount: 0, totalCount: fixtures.accounts.length },
+    stats: { totalRunningDailyBudgetUsd: 0, totalConfiguredDailyBudgetUsd: 0, totalReactiveRunningDailyCapUsd: 0, mrrUsd: 0, arrUsd: 0, mrrBasis: "billing_recurring", mrrUnavailableReason: null, mrrUnknownOrgIds: [], activeCount: 0, reactiveOnlyCount: 0, paymentDeclinedCount: 0, noPaymentMethodCount: 0, pausedCount: 0, outOfCreditCount: 0, statusUnknownCount: 0, inactiveCount: 0, totalCount: fixtures.accounts.length },
     asOf: NOW.toISOString(),
   };
   const byUser: ActiveUsersByUser = {

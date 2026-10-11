@@ -79,8 +79,8 @@ describe("accountStatus — the exact status rule (active > paused > inactive)",
     // covers the running figure but not the configured one is enough.
     expect(accountStatus(60, 50, 0, 55, false, null)).toBe("active");
     // The same brand read on its configured ceiling loses its active status: 55 no longer covers a
-    // day, so it falls to paused — money posted that the org cannot fund.
-    expect(accountStatus(60, 60, 0, 55, false, null)).toBe("paused");
+    // day, so it is out of credit — running, but the org cannot fund the next day.
+    expect(accountStatus(60, 60, 0, 55, false, null)).toBe("out_of_credit");
   });
 
   it("auto-topup enabled + running>0 → active even when the actual balance is below one day's budget", () => {
@@ -101,9 +101,15 @@ describe("accountStatus — the exact status rule (active > paused > inactive)",
     expect(accountStatus(0, 0, 0, 100, true, null)).toBe("inactive"); // auto-topup does not rescue a 0 budget
   });
 
-  it("actual balance <= running budget AND auto-topup OFF → paused, not inactive: the money is posted", () => {
-    expect(accountStatus(10, 10, 0, 10, false, null)).toBe("paused"); // actual == budget → cannot cover next day
-    expect(accountStatus(10, 10, 0, 9, false, null)).toBe("paused");
+  it("running, actual balance <= running budget AND auto-topup OFF → out_of_credit, never paused (owner rule 2026-10-11)", () => {
+    expect(accountStatus(10, 10, 0, 10, false, null)).toBe("out_of_credit"); // actual == budget → cannot cover next day
+    expect(accountStatus(10, 10, 0, 9, false, null)).toBe("out_of_credit");
+    // NOVEMIQ / Aireena, prod 2026-10-11: prepaid at ~$0, campaign ongoing, nobody paused it.
+    expect(accountStatus(10, 10, 0, 0.03, false, null)).toBe("out_of_credit");
+    expect(accountStatus(5, 5, 0, 0.34, false, null)).toBe("out_of_credit");
+    // A REAL pause (nothing running) stays paused, whatever the balance.
+    expect(accountStatus(10, 0, 0, 0, false, null)).toBe("paused");
+    expect(accountStatus(10, 0, 0, 1000, false, null)).toBe("paused");
   });
 });
 
@@ -201,7 +207,7 @@ describe("buildAccountsAudit", () => {
     const byBrand = Object.fromEntries(r.rows.map((row) => [row.brandId, row]));
     expect(byBrand.b1.status).toBe("active");
     expect(byBrand.b2.status).toBe("inactive"); // nothing configured
-    expect(byBrand.b3.status).toBe("paused"); // posted, but balance == running
+    expect(byBrand.b3.status).toBe("out_of_credit"); // running, but balance == running
     expect(byBrand.b4.status).toBe("inactive");
     expect(byBrand.b5.status).toBe("active");
     expect(byBrand.b6.status).toBe("paused"); // funded, nothing running
@@ -226,7 +232,8 @@ describe("buildAccountsAudit", () => {
     expect(r.stats.totalRunningDailyBudgetUsd).toBe(30);
     expect(r.stats.totalConfiguredDailyBudgetUsd).toBe(30);
     expect(r.stats.activeCount).toBe(2);
-    expect(r.stats.pausedCount).toBe(2);
+    expect(r.stats.pausedCount).toBe(1);
+    expect(r.stats.outOfCreditCount).toBe(1);
     expect(r.stats.inactiveCount).toBe(2);
     expect(r.stats.totalCount).toBe(6);
   });
@@ -290,12 +297,13 @@ describe("buildAccountsAudit", () => {
     expect(byBrand.b_dy.autoTopupEnabled).toBe(true);
 
     expect(byBrand.b_actual.status).toBe("active"); // actual 25 > budget 20 despite spendable 8 < budget
-    expect(byBrand.b_dry.status).toBe("paused"); // actual 5 <= budget 20, no auto-topup
+    expect(byBrand.b_dry.status).toBe("out_of_credit"); // actual 5 <= budget 20, no auto-topup
 
     // Fleet stats count only the two active budgets (20 + 20 = 40); the dry account is excluded.
     expect(r.stats.totalRunningDailyBudgetUsd).toBe(40);
     expect(r.stats.activeCount).toBe(2);
-    expect(r.stats.pausedCount).toBe(1);
+    expect(r.stats.outOfCreditCount).toBe(1);
+    expect(r.stats.pausedCount).toBe(0);
   });
 
   it("dedupes (org,brand) pairs that appear under multiple workflows/features", async () => {
@@ -326,7 +334,7 @@ describe("buildAccountsAudit", () => {
     const r = await buildAccountsAudit(COLD, NOW, d);
     const byBrand = Object.fromEntries(r.rows.map((row) => [row.brandId, row]));
     expect(byBrand.b1.status).toBe("active");
-    expect(byBrand.b2.status).toBe("paused");
+    expect(byBrand.b2.status).toBe("out_of_credit"); // running 20 on a shared 15 balance
     expect(byBrand.b1.orgBalanceUsd).toBe(15);
     expect(byBrand.b2.orgBalanceUsd).toBe(15);
     expect(r.stats.totalRunningDailyBudgetUsd).toBe(10);
@@ -358,6 +366,7 @@ describe("buildAccountsAudit", () => {
       paymentDeclinedCount: 0,
       noPaymentMethodCount: 0,
       pausedCount: 0,
+      outOfCreditCount: 0,
       statusUnknownCount: 0,
       inactiveCount: 0,
       totalCount: 0,
@@ -399,7 +408,7 @@ describe("buildAccountsAudit", () => {
     const r = await buildAccountsAudit(COLD, NOW, d);
     const row = r.rows[0];
     expect(row.runningDailyBudgetUsd).toBe(20); // undiscounted ceiling
-    expect(row.status).toBe("paused"); // running 20 >= balance 18 → cannot cover a day
+    expect(row.status).toBe("out_of_credit"); // running 20 >= balance 18 → cannot cover a day
     expect(r.stats.totalRunningDailyBudgetUsd).toBe(0); // no active rows
     expect(r.stats.activeCount).toBe(0);
   });
