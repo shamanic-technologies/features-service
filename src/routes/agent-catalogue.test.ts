@@ -115,7 +115,8 @@ const MEET = "ai-meeting-booking|conversation_to_meeting_booked";
 
 beforeEach(() => {
   names.rows = new Map([
-    ["lead_found_to_conversation@sales-cold-email-outreach+conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client", "Victory"],
+    // Stored under its Lead Sourcing spelling (the boot re-key moved it, lib/lead-sourcing-key-migration.ts).
+    ["start_to_lead_found@lead-sourcing+lead_found_to_conversation@sales-cold-email-outreach+conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client", "Victory"],
     ["campaign:ai-meeting-booking|conversation_to_meeting_booked", "Prism"],
   ]);
   mem.legs = [];
@@ -242,12 +243,13 @@ describe("agent catalogue lists (context-window sized)", () => {
     expect(f.body.name).toBe("Victory");
     expect(f.body.type).toBe("proactive");
     expect(f.body.face).toMatchObject({ svgPath: "/public/catalogue/faces/Victory.svg" });
-    // Start -> Lead found (its sources, a pool) + the four legs of the id; every leg serves its channels.
+    // Its stored (legacy) id resolves to its Lead Sourcing funnel: Start -> Lead found named like every leg, ONE channel each.
+    expect(f.body.id).toBe(`start_to_lead_found@lead-sourcing+${victory}`);
     expect(f.body.legs).toHaveLength(5);
     expect(f.body.salesPathId).toBe("start_to_lead_found+lead_found_to_conversation+conversation_to_meeting_booked+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client");
-    for (const l of f.body.legs) expect(l.channels.length, l.legKey).toBeGreaterThan(0);
-    expect(f.body.legs[0]).toMatchObject({ legKey: "start_to_lead_found", fromStep: null, toStep: "lead_found", pipe: null });
-    expect(f.body.legs[0].channels).toEqual(expect.arrayContaining([{ id: "sourcing-apollo-cold-filters", name: expect.any(String), runByUs: true }]));
+    for (const l of f.body.legs) expect(l.channels.length, l.legKey).toBe(1);
+    expect(f.body.legs[0]).toMatchObject({ legKey: "start_to_lead_found", fromStep: null, toStep: "lead_found", pipe: { id: "lead-sourcing|start_to_lead_found" } });
+    expect(f.body.legs[0].channels).toEqual([{ id: "lead-sourcing", name: "Lead Sourcing", runByUs: true }]);
     expect(f.body.legs[4].channels).toEqual([{ id: "your-team-closing-calls", name: "Your Team Closing Calls", runByUs: false }]);
     expect(f.body.costUsd).toBeCloseTo(902.22, 1);
     // What is measured vs estimated, per leg and in total (owner 2026-10-10: never "measured" on an estimate).
@@ -316,7 +318,7 @@ describe("agent catalogue lists (context-window sized)", () => {
     const f = await request(app).get(`/internal/catalogue/sales-funnels/${encodeURIComponent(victory)}`).set(KEY);
     expect(f.body).toMatchObject({ mixed: true, runnable: false, type: "proactive" });
     const list = await request(app).get("/internal/catalogue/sales-funnels").query({ containsChannels: "ai-meeting-booking", runnable: "true", limit: 25 }).set(KEY);
-    expect(list.body.rows.map((r: { id: string }) => r.id)).not.toContain(victory);
+    expect(list.body.rows.map((r: { id: string }) => r.id)).not.toContain(`start_to_lead_found@lead-sourcing+${victory}`);
     expect(list.body.rows.every((r: { mixed: boolean }) => r.mixed === false)).toBe(true);
     const reactive = list.body.rows.filter((r: { type: string }) => r.type === "reactive");
     expect(reactive.length).toBeGreaterThan(0);
@@ -441,6 +443,34 @@ describe("agent catalogue creates (data, never a PR)", () => {
     expect(f.body.error).toContain("pipeIds[1]");
   });
 
+  it("ONE channel per leg (owner 2026-10-11): two sources, or no source, on Start -> Lead found is refused; one source or Lead Sourcing is created", async () => {
+    const tail = ["sales-cold-email-outreach|lead_found_to_conversation", "your-team-meeting-booking|conversation_to_meeting_booked", "your-team-meeting-attendance|meeting_booked_to_meeting_attended", "your-team-closing-calls|meeting_attended_to_paid_client"];
+    const two = await request(app).post("/internal/catalogue/sales-funnels").set(KEY).send({ pipeIds: ["sourcing-apollo-cold-filters|start_to_lead_found", "sourcing-apollo-buying-signals|start_to_lead_found", ...tail], createdBy: "agent" });
+    expect(two.status).toBe(400);
+    expect(two.body.reason).toBe("one_channel_per_leg");
+    expect(two.body.error).toContain("lead-sourcing|start_to_lead_found");
+    const none = await request(app).post("/internal/catalogue/sales-funnels").set(KEY).send({ pipeIds: tail, createdBy: "agent" });
+    expect(none.status).toBe(400);
+    expect(none.body.reason).toBe("leg_without_channel");
+    expect(none.body.error).toContain("start_to_lead_found");
+    const crmUnderCold = await request(app).post("/internal/catalogue/sales-funnels").set(KEY).send({ pipeIds: ["sourcing-crm-contacts|start_to_lead_found", ...tail], createdBy: "agent" });
+    expect(crmUnderCold.status).toBe(400);
+    expect(crmUnderCold.body.reason).toBe("funnel_invalid");
+    expect(mem.paths).toHaveLength(0);
+
+    const ls = await request(app).post("/internal/catalogue/sales-funnels").set(KEY).send({ pipeIds: ["lead-sourcing|start_to_lead_found", ...tail], createdBy: "agent" });
+    expect(ls.status).toBe(201);
+    expect(ls.body.id).toBe("start_to_lead_found@lead-sourcing+lead_found_to_conversation@sales-cold-email-outreach+conversation_to_meeting_booked+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client");
+    expect(ls.body.legs.map((l: { pipe: { id: string } }) => l.pipe.id)).toEqual(["lead-sourcing|start_to_lead_found", ...tail]);
+    expect(ls.body.runnable).toBe(true);
+    const one = await request(app).post("/internal/catalogue/sales-funnels").set(KEY).send({ pipeIds: ["sourcing-apollo-cold-filters|start_to_lead_found", ...tail], createdBy: "agent" });
+    expect(one.status).toBe(201);
+    expect(one.body.id.startsWith("start_to_lead_found@sourcing-apollo-cold-filters+")).toBe(true);
+    expect(one.body.name).not.toBe(ls.body.name);
+    // The declared store holds every leg, the sourcing one first.
+    expect(mem.paths.map((p) => (p.legs as Array<{ channelSlug: string }>)[0].channelSlug)).toEqual(["lead-sourcing", "sourcing-apollo-cold-filters"]);
+  });
+
   it("a pipe on a leg nothing rates states its conversion rate", async () => {
     await request(app).post("/internal/catalogue/steps").set(KEY).send({ key: "email_found", label: "Email found", description: "A work email is found for a person.", shortDescription: "Finds a work email", icon: "envelope", towardStep: "lead_found", towardRatePct: 90, producedBy: "apollo-service POST /people/match", createdBy: "agent" });
     const refused = await request(app).post("/internal/catalogue/pipes").set(KEY).send({ channelSlug: "sales-cold-email-outreach", fromStep: "email_found", toStep: "website_visit", mode: "proactive", createdBy: "agent" });
@@ -470,7 +500,7 @@ describe("agent catalogue triggers (owner 2026-10-11, the staff Triggers section
     const names = r.body.rows.map((x: { name: string }) => x.name);
     expect(new Set(names).size).toBe(names.length);
     const reply = r.body.rows.find((x: { id: string }) => x.id === "positive_reply_received");
-    expect(reply).toMatchObject({ name: "Positive reply", icon: "lightning", eventIcon: "thumbs-up", fromStep: "conversation", coded: true });
+    expect(reply).toMatchObject({ name: "Positive Reply", icon: "lightning", eventIcon: "thumbs-up", fromStep: "conversation", coded: true });
     expect(reply.color).toMatch(/^#[0-9A-F]{6}$/i);
     expect(reply.pipeCount).toBeGreaterThan(0);
   });
@@ -483,7 +513,7 @@ describe("agent catalogue triggers (owner 2026-10-11, the staff Triggers section
   it("one trigger: the reactive pipes it starts, named", async () => {
     const r = await request(app).get("/internal/catalogue/triggers/positive_reply_received").set(KEY);
     expect(r.status).toBe(200);
-    expect(r.body).toMatchObject({ object: "trigger", id: "positive_reply_received", name: "Positive reply" });
+    expect(r.body).toMatchObject({ object: "trigger", id: "positive_reply_received", name: "Positive Reply" });
     const ids = r.body.pipes.map((p: { id: string }) => p.id);
     expect(ids).toContain(MEET);
     expect(r.body.pipes.find((p: { id: string }) => p.id === MEET)).toMatchObject({ name: "Prism", mode: "reactive" });

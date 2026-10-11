@@ -13,7 +13,7 @@
  *   leads the earlier legs deliver, so billing cannot hold a monthly floor against it; a floor it cannot
  *   enforce would be a figure nobody keeps.
  */
-import { sourcingOriginBySlug } from "./sourcing-origins.js";
+import { isSourcingChannel } from "./sourcing-origins.js";
 
 /** The ONLY channels the platform manages today. A leg nothing here publishes is the customer's team. */
 export const MANAGED_CHANNEL_SLUGS: ReadonlySet<string> = new Set([
@@ -33,7 +33,7 @@ export function channelLegMinimumMonthlyCents(
   if (channel.operatedBy === "customer") return 0;
   // A SOURCE campaign is "on demand, up to $X/day" (owner 2026-10-07): no floor, which is what billing
   // has enforced on it since (minimum 0) while the catalogue did not list the sourcing channels.
-  if (sourcingOriginBySlug(channel.slug)) return 0;
+  if (isSourcingChannel(channel.slug)) return 0;
   if (!MANAGED_CHANNEL_SLUGS.has(channel.slug)) return NOT_RUN_YET_MINIMUM_MONTHLY_CENTS;
   return reactive ? 0 : MANAGED_PROACTIVE_MINIMUM_MONTHLY_CENTS;
 }

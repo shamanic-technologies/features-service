@@ -194,7 +194,7 @@ describe("the routes wire it (source guards)", () => {
   });
 
   it("the sourcing cell includes the offer's SOURCE campaigns (featureSlug = an origin) and serves the outreach split", () => {
-    expect(sourcingRoute).toContain("SOURCING_ORIGIN_SLUGS.includes(r.featureSlug)");
+    expect(sourcingRoute).toContain("SOURCING_CHANNEL_SLUGS.includes(r.featureSlug)");
     expect(sourcingRoute).toContain("outreachCampaigns: buildOutreachCampaignSplits(result)");
   });
 });

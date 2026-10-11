@@ -14,10 +14,12 @@ const model = buildCatalogueModel({ channels, publishedPipeIds: ids, declaredSte
 const all = [...model.paths.values()].flatMap((p) => funnelsOfPath(model, p));
 const label = (k: string) => stepLabel(model, k);
 const byId = (id: string) => all.find((f) => f.id === id)!;
+// A proactive funnel's id names its sourcing leg (owner 2026-10-11: one channel per leg).
+const LS = "start_to_lead_found@lead-sourcing+";
 
 describe("a reactive funnel names what starts it, in customer words", () => {
   it("Positive replies on a funnel answering replies; nothing on a proactive one", () => {
     expect(funnelTriggerLabel(byId("conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client"), label)).toBe("Positive replies");
-    expect(funnelTriggerLabel(byId("lead_found_to_conversation@sales-cold-email-outreach+conversation_to_paid_client"), label)).toBeNull();
+    expect(funnelTriggerLabel(byId(`${LS}lead_found_to_conversation@sales-cold-email-outreach+conversation_to_paid_client`), label)).toBeNull();
   });
 });

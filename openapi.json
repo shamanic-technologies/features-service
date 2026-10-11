@@ -13675,6 +13675,44 @@
               "start_to_lead_found"
             ],
             "description": "The leg key of every source campaign (from nothing to lead_found)."
+          },
+          "leadSourcing": {
+            "type": "object",
+            "properties": {
+              "slug": {
+                "type": "string",
+                "enum": [
+                  "lead-sourcing"
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "sourceCampaignKey": {
+                "type": "string"
+              },
+              "mayUseByChannel": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "description": "Per outreach channel, the live ORIGINS Lead Sourcing may choose among under it ([] = it does not feed that channel)."
+              }
+            },
+            "required": [
+              "slug",
+              "name",
+              "description",
+              "sourceCampaignKey",
+              "mayUseByChannel"
+            ],
+            "description": "LEAD SOURCING (owner 2026-10-11): the sourcing channel with no list of its own: human-service picks, per brand, which origins it uses. Listed in `originsByChannel` beside the origins; never in `origins` (a serve it files keeps the origin of the audience it served from)."
           }
         },
         "required": [
@@ -13682,7 +13720,8 @@
           "sourcingChannels",
           "originsByChannel",
           "leadFoundStep",
-          "sourceLegKey"
+          "sourceLegKey",
+          "leadSourcing"
         ]
       },
       "SourceOverlap": {
@@ -20012,7 +20051,7 @@
                           "channelSlug": {
                             "type": "string",
                             "nullable": true,
-                            "description": "The leg's one channel; null on the sourcing leg, which `channels` lists."
+                            "description": "The leg's one channel (owner 2026-10-11: one channel per leg, the sourcing leg included)."
                           },
                           "channelName": {
                             "type": "string",
@@ -20039,7 +20078,7 @@
                                 "runByUs"
                               ]
                             },
-                            "description": "Every channel working the leg; never empty."
+                            "description": "The leg's channel, as a list of exactly one."
                           }
                         },
                         "required": [
@@ -49387,7 +49426,7 @@
       },
       "post": {
         "summary": "Declare a sales funnel (internal, api-key)",
-        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`). One pipe id per leg of a sales path, in order (a leg the customer's own team works: its `Your Team` pipe). A bare leg key is refused 400 `bare_leg_refused` (owner 2026-10-11: every leg a channel). Sourcing pipes (Start -> Lead found) may be named or left out: a funnel holds every source. Persisted (the declared sales path store the offer read already knows) and named with a never-given uplifting word + a face; an existing funnel answers 200 `created: false` with its name. Campaign-service and billing-service key a campaign on this id.",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`). One pipe id per leg of a sales path, in order (a leg the customer's own team works: its `Your Team` pipe). A bare leg key is refused 400 `bare_leg_refused` (owner 2026-10-11: every leg a channel). ONE CHANNEL PER LEG (owner 2026-10-11): the sourcing leg (Start -> Lead found) included, named by ONE pipe: a source (`sourcing-apollo-cold-filters|start_to_lead_found`, ...) or Lead Sourcing (`lead-sourcing|start_to_lead_found`, we pick the sources). Two pipes on one leg = 400 `one_channel_per_leg`; a path leg no pipe names = 400 `leg_without_channel`; a source an outreach channel does not take (your CRM contacts before cold email) = 400 `funnel_invalid`. The funnel id names every leg (`start_to_lead_found@<source>+...`); a legacy id (it starts out of Lead found) reads as its Lead Sourcing funnel. Persisted (the declared sales path store the offer read already knows) and named with a never-given uplifting word + a face; an existing funnel answers 200 `created: false` with its name. Campaign-service and billing-service key a campaign on this id.",
         "tags": [
           "Internal"
         ],
@@ -49543,7 +49582,7 @@
                                 "runByUs"
                               ]
                             },
-                            "description": "The channel(s) working the leg (owner 2026-10-11: every leg a channel); never empty. The sourcing leg (Start -> Lead found, first on a proactive outbound funnel) lists every source: a pool, a campaign runs some."
+                            "description": "The ONE channel working the leg (owner 2026-10-11: one channel per leg, the sourcing leg included: one source, or Lead Sourcing)."
                           },
                           "pipes": {
                             "type": "array",
@@ -49571,7 +49610,7 @@
                                 "runnable"
                               ]
                             },
-                            "description": "The pipe(s) working the leg; never empty."
+                            "description": "The leg's pipe, as a list of exactly one."
                           },
                           "ratePct": {
                             "type": "number",
@@ -49663,7 +49702,7 @@
                               "roiBasis",
                               "status"
                             ],
-                            "description": "The leg's one pipe. Null ONLY on the sourcing leg, which several sources work (`pipes`); it adds no cost of its own (a source finds its leads inside the outreach run) and is not part of the funnel id."
+                            "description": "The leg's one pipe. On the sourcing leg (Start -> Lead found) it adds no cost of its own to the funnel's figure: a source finds its lead inside the outreach run, whose measured cost already counts it."
                           }
                         },
                         "required": [
@@ -49912,7 +49951,7 @@
                                 "runByUs"
                               ]
                             },
-                            "description": "The channel(s) working the leg (owner 2026-10-11: every leg a channel); never empty. The sourcing leg (Start -> Lead found, first on a proactive outbound funnel) lists every source: a pool, a campaign runs some."
+                            "description": "The ONE channel working the leg (owner 2026-10-11: one channel per leg, the sourcing leg included: one source, or Lead Sourcing)."
                           },
                           "pipes": {
                             "type": "array",
@@ -49940,7 +49979,7 @@
                                 "runnable"
                               ]
                             },
-                            "description": "The pipe(s) working the leg; never empty."
+                            "description": "The leg's pipe, as a list of exactly one."
                           },
                           "ratePct": {
                             "type": "number",
@@ -50032,7 +50071,7 @@
                               "roiBasis",
                               "status"
                             ],
-                            "description": "The leg's one pipe. Null ONLY on the sourcing leg, which several sources work (`pipes`); it adds no cost of its own (a source finds its leads inside the outreach run) and is not part of the funnel id."
+                            "description": "The leg's one pipe. On the sourcing leg (Start -> Lead found) it adds no cost of its own to the funnel's figure: a source finds its lead inside the outreach run, whose measured cost already counts it."
                           }
                         },
                         "required": [
@@ -50339,7 +50378,7 @@
                                 "runByUs"
                               ]
                             },
-                            "description": "The channel(s) working the leg (owner 2026-10-11: every leg a channel); never empty. The sourcing leg (Start -> Lead found, first on a proactive outbound funnel) lists every source: a pool, a campaign runs some."
+                            "description": "The ONE channel working the leg (owner 2026-10-11: one channel per leg, the sourcing leg included: one source, or Lead Sourcing)."
                           },
                           "pipes": {
                             "type": "array",
@@ -50367,7 +50406,7 @@
                                 "runnable"
                               ]
                             },
-                            "description": "The pipe(s) working the leg; never empty."
+                            "description": "The leg's pipe, as a list of exactly one."
                           },
                           "ratePct": {
                             "type": "number",
@@ -50459,7 +50498,7 @@
                               "roiBasis",
                               "status"
                             ],
-                            "description": "The leg's one pipe. Null ONLY on the sourcing leg, which several sources work (`pipes`); it adds no cost of its own (a source finds its leads inside the outreach run) and is not part of the funnel id."
+                            "description": "The leg's one pipe. On the sourcing leg (Start -> Lead found) it adds no cost of its own to the funnel's figure: a source finds its lead inside the outreach run, whose measured cost already counts it."
                           }
                         },
                         "required": [
@@ -51357,6 +51396,23 @@
                               "reactive"
                             ],
                             "description": "Sales path rows only."
+                          },
+                          "trigger": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "slug": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "slug",
+                              "name"
+                            ],
+                            "description": "A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."
                           },
                           "mode": {
                             "type": "string",

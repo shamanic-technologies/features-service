@@ -34,13 +34,19 @@
  * "des pipes sans channel ... ça ne devrait pas être possible"). The customer's own work is a `Your Team`
  * channel like any other.
  *
- * THE SOURCING LEG IS A POOL. Start -> Lead found is worked by several lead sources at once for one outreach
- * (Apollo filters + buying signals + LinkedIn engagement feed the same cold email), so a funnel holds EVERY
- * sourcing pipe on it (`FunnelLeg.pool`), and which sources a campaign runs is the campaign's choice. The pool
- * is not part of a funnel's identity (`funnelIdOf` leaves it out), so every funnel id named before stays its
- * id, and campaign-service and billing (caps keyed on it) see no change. Its cost is not added either: a
- * source finds its leads inside the outreach run, so their cost is already in the outreach pipe's cost per
- * outcome.
+ * A SALES FUNNEL IS A STRAIGHT LINE: ONE CHANNEL PER LEG (owner 2026-10-11, supersedes the sourcing "pool"). On
+ * Start -> Lead found the funnel names ONE sourcing channel: an origin (Apollo Cold Filters, Apollo Buying Signals,
+ * LinkedIn Engagement Signals, Your CRM Contacts) or Lead Sourcing, where human-service picks the origins per brand
+ * (`lib/sourcing-origins.ts`). Each is a normal pipe with its own figures, and the funnel's id names it like every
+ * other leg (`start_to_lead_found@<sourcing slug>+...`). A sourcing pipe only feeds an outreach channel that takes
+ * it (`SOURCING_ORIGINS_BY_CHANNEL`): Your CRM Contacts never feeds cold email.
+ * A funnel id from BEFORE the sourcing leg was named (it starts out of Lead found) is that funnel with LEAD SOURCING
+ * on its sourcing leg (`funnelById` resolves it, `legacyFunnelIdAliasOf`): the multi-source funnels moved to Lead
+ * Sourcing (owner's migration), and every stored id (campaign-service, billing caps) keeps resolving. Their NAME
+ * moved with them (`lib/lead-sourcing-key-migration.ts`).
+ * COST: a leg ending at Lead found adds no cost of its own to a funnel's figure: a source finds its lead inside the
+ * outreach run that asked for it, and every spend read about that outreach channel counts the sourcing channels'
+ * slugs too (`withSourcingSlugs`), so its cost is already in the outreach pipe's measured cost per outcome.
  *
  * ── AVERAGE COST, ROI, LEARNING (fleet grain, no identity) ──────────────────────────────────────
  *
@@ -82,11 +88,12 @@ import { CHANNEL_STEPS, isDeclaredStepKey, type ChannelStepKey } from "./acquisi
 import type { PublicChannel } from "./channel-catalogue.js";
 import { defaultLegRatePct } from "./default-leg-rates.js";
 import { fleetMedianApplies, legPairKey, type FleetArrowMedians } from "./effective-conversion-rates.js";
-import { FUNNEL_LEGS, servedLegKeyOf } from "./funnel-legs.js";
+import { FUNNEL_LEGS, legacyFunnelIdAliasOf, servedLegKeyOf } from "./funnel-legs.js";
 import { combinationKeyOf } from "./offer-sales-paths.js";
 import { faceOf, stableHash, type Face } from "./catalogue-faces.js";
 import { STEP_SIGNAL } from "./value-added.js";
-import { CHANNEL_TRIGGER_TYPES } from "./channel-triggers.js";
+import { CHANNEL_TRIGGER_TYPES, INLINE_TRIGGER_IDS } from "./channel-triggers.js";
+import { LEAD_SOURCING_SLUG, SOURCE_LEG_KEY, SOURCING_ORIGINS_BY_CHANNEL, isSourcingChannel } from "./sourcing-origins.js";
 
 /**
  * PURE: the value a pipe ADDS per outcome (owner 2026-10-11, `lib/value-added.ts`): its outcome step's value minus
@@ -276,21 +283,34 @@ export interface CataloguePath {
   rates: Array<{ legKey: string; ratePct: number | null; source: CatalogueRateSource }>;
 }
 
-/**
- * One leg of a funnel: the pipe working it. The sourcing leg (Start -> Lead found) is a POOL: `pipe` is null and
- * `pool` holds every sourcing pipe on it (see the header). No other leg is ever without a pipe.
- */
+/** One leg of a funnel: the ONE pipe working it (owner 2026-10-11: one channel per leg, the sourcing leg included). */
 export interface FunnelLeg {
   legKey: string;
   pipe: CataloguePipe | null;
-  pool?: CataloguePipe[];
 }
 
-/** PURE: the pipes working a funnel leg (the pool's, or its one pipe). Never empty on a built funnel. */
-export const legPipes = (l: FunnelLeg): CataloguePipe[] => l.pool ?? (l.pipe ? [l.pipe] : []);
+/** PURE: the pipe working a funnel leg, as a list (never more than one; empty only on a leg being built). */
+export const legPipes = (l: FunnelLeg): CataloguePipe[] => (l.pipe ? [l.pipe] : []);
 
-/** The step the sourcing leg reaches: the leg several sources work together (a pool). */
+/** The step a sourcing pipe reaches: the hand-off to the outreach pipe that asked for the lead. */
 export const SOURCED_STEP = "lead_found";
+
+/** The Lead Sourcing pipe's part of a funnel id: what a funnel id from before the sourcing leg was named starts with. */
+export const LEAD_SOURCING_FUNNEL_PART = `${SOURCE_LEG_KEY}@${LEAD_SOURCING_SLUG}`;
+
+/** PURE: the funnel id a LEGACY id names (`lib/funnel-legs.ts`, owner 2026-10-11), or null. */
+export { legacyFunnelIdAliasOf };
+
+/** PURE: a pipe that answers an INLINE trigger: it runs inside the run that fires it (a source answering the lead
+ *  request of the outreach run that needs the lead), so it draws on no budget of its own. */
+const answersInline = (p: CataloguePipe): boolean => p.triggerId !== null && INLINE_TRIGGER_IDS.has(p.triggerId);
+
+/** PURE: may this pipe hand its outcome to `next`? A sourcing pipe feeds only an outreach channel that takes it. */
+export function pipeFeeds(p: CataloguePipe, next: CataloguePipe): boolean {
+  if (p.toStep !== SOURCED_STEP || !isSourcingChannel(p.channelSlug)) return true;
+  const accepted = SOURCING_ORIGINS_BY_CHANNEL[next.channelSlug];
+  return accepted === undefined || accepted.includes(p.channelSlug);
+}
 
 export interface CatalogueFunnel {
   id: string;
@@ -560,8 +580,8 @@ export function funnelEconomics(
   let cost = 0;
   let platformLegs = 0;
   const estimates: string[] = [];
-  // The sourcing pool adds no cost of its own (see the header): the cost runs from the first leg after it.
-  const first = Math.max(0, legs.findIndex((l) => !l.pool));
+  // A leg ending at Lead found adds no cost of its own (see the header): the cost runs from the first leg after it.
+  const first = Math.max(0, legs.findIndex((l) => l.pipe?.toStep !== SOURCED_STEP));
   for (let i = legs.length - 1; i >= first; i -= 1) {
     const pipe = legs[i].pipe;
     if (pipe?.operatedBy === "platform") {
@@ -605,19 +625,19 @@ export function outcomesNeededPerPayingClient(path: CataloguePath): Array<number
 
 /**
  * PURE: the funnel id of a pick (the offer read's combination key: a platform pipe `@<slug>`, a leg the customer's
- * own team works bare). The sourcing pool is left out (see the header): every id named before stays its id.
+ * own team works bare). Every leg is in it, the sourcing leg included (see the header).
  */
 export const funnelIdOf = (legs: readonly FunnelLeg[]): string =>
-  combinationKeyOf(legs.filter((l) => !l.pool).map((l) => ({ legKey: l.legKey, channelSlug: l.pipe?.operatedBy === "platform" ? l.pipe.channelSlug : null })));
+  combinationKeyOf(legs.map((l) => ({ legKey: l.legKey, channelSlug: l.pipe?.operatedBy === "platform" ? l.pipe.channelSlug : null })));
 
 /**
- * PURE: every funnel of a path: one pipe per leg (a platform pipe, or the customer's own team's), the sourcing leg
- * a pool of every sourcing pipe. Deduplicated by id. A leg no pipe works makes no funnel. Capped at `cap`.
+ * PURE: every funnel of a path: ONE pipe per leg (a platform pipe, or the customer's own team's), the sourcing leg
+ * included; a sourcing pipe only before an outreach pipe that takes it (`pipeFeeds`). Deduplicated by id. A leg no
+ * pipe works makes no funnel. Capped at `cap`.
  */
 export function funnelsOfPath(model: CatalogueModel, path: CataloguePath, cap = 2000): CatalogueFunnel[] {
   const options: FunnelLeg[][] = path.legKeys.map((legKey) => {
     const onLeg = pipesOnLeg(model, legKey);
-    if (onLeg.length > 0 && onLeg.every((p) => p.toStep === SOURCED_STEP)) return [{ legKey, pipe: null, pool: onLeg }];
     const platform = onLeg.filter((p) => p.operatedBy === "platform");
     const customer = onLeg.filter((p) => p.operatedBy === "customer").slice(0, 1);
     return [...platform, ...customer].map((pipe) => ({ legKey, pipe }));
@@ -636,7 +656,8 @@ export function funnelsOfPath(model: CatalogueModel, path: CataloguePath, cap = 
       }
       return;
     }
-    for (const o of options[i]) walk(i + 1, [...acc, o]);
+    const before = acc[acc.length - 1]?.pipe;
+    for (const o of options[i]) if (!before || !o.pipe || pipeFeeds(before, o.pipe)) walk(i + 1, [...acc, o]);
   };
   walk(0, []);
   return [...out.values()];
@@ -669,13 +690,13 @@ export const funnelTypeOf = (f: Pick<CatalogueFunnel, "legs">): FunnelType =>
  * e.g. AI meeting booking on a reply). The funnel's budget caps every pipe, so the reactive one can starve
  * the proactive part. A reactive pipe the customer's own team works spends nothing of ours: not a mix.
  */
-// The sourcing pool is not counted: a source answers the outreach run's request for a lead inside that run and
-// spends no budget of its own, so it cannot starve the proactive part.
+// A pipe answering an INLINE trigger is not counted: a source answers the outreach run's request for a lead inside
+// that run and spends no budget of its own, so it cannot starve the proactive part.
 export const funnelMixed = (f: Pick<CatalogueFunnel, "legs">): boolean =>
   f.legs.some((l) => l.pipe?.mode === "proactive") &&
-  f.legs.some((l) => l.pipe?.mode === "reactive" && l.pipe.operatedBy === "platform");
+  f.legs.some((l) => l.pipe?.mode === "reactive" && l.pipe.operatedBy === "platform" && !answersInline(l.pipe));
 
-/** PURE: a funnel we can run today: one kind (never mixed), every leg worked by a runnable pipe (the pool: by one). */
+/** PURE: a funnel we can run today: one kind (never mixed), every leg worked by a runnable pipe. */
 export const funnelRunnable = (f: CatalogueFunnel): boolean =>
   !funnelMixed(f) && f.legs.every((l) => legPipes(l).some(pipeRunnable));
 
@@ -690,12 +711,22 @@ export const pathRunnable = (model: CatalogueModel, path: CataloguePath): boolea
 export const pathById = (model: CatalogueModel, id: string): CataloguePath | null =>
   model.paths.get(id) ?? model.paths.get(model.pathAliases.get(id) ?? "") ?? null;
 
-/** PURE: a funnel by id (any path), or null. Its id names its legs but the sourcing pool (`funnelIdOf`). */
+/**
+ * PURE: a funnel by id (any path), or null. Its id names every leg (`funnelIdOf`). A LEGACY id (from before the
+ * sourcing leg was named: it starts out of Lead found) resolves to its Lead Sourcing funnel (`legacyFunnelIdAliasOf`);
+ * the funnel returned carries its CURRENT id.
+ */
 export function funnelById(model: CatalogueModel, id: string): CatalogueFunnel | null {
-  const legKeys = id.split("+").map((part) => part.split("@")[0]);
-  const path = pathById(model, pathIdOf(legKeys));
-  if (!path) return null;
-  return funnelsOfPath(model, path).find((f) => f.id === id) ?? null;
+  const exact = (key: string): CatalogueFunnel | null => {
+    const legKeys = key.split("+").map((part) => part.split("@")[0]);
+    const path = model.paths.get(pathIdOf(legKeys));
+    if (!path) return null;
+    return funnelsOfPath(model, path).find((f) => f.id === key) ?? null;
+  };
+  const found = exact(id);
+  if (found) return found;
+  const alias = legacyFunnelIdAliasOf(id);
+  return alias ? exact(alias) : null;
 }
 
 /** PURE: a path's economics = its best funnel in the ranking's order (a measured one before any estimate,

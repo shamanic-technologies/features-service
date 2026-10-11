@@ -115,6 +115,39 @@ export const SOURCING_ORIGINS: readonly SourcingOrigin[] = [
 
 export const SOURCING_ORIGIN_SLUGS: readonly string[] = SOURCING_ORIGINS.map((o) => o.slug);
 
+// ── LEAD SOURCING: the sourcing channel that picks its own sources (owner 2026-10-11) ─────────────────
+//
+// A sales funnel is a straight line: ONE channel per leg. On Start -> Lead found that channel is either one
+// ORIGIN above (Apollo Cold Filters, ...) or LEAD SOURCING, where human-service decides which origins to use for
+// the brand, by measured ROI and in line with the brand's client profiles and ICP qualification. It is a channel
+// like any other (one leg, Start -> Lead found, reactive on `lead_requested`, run by us), NOT an origin: an origin
+// is where a person's data comes from (one audience list kind), Lead Sourcing is a choice among them. So a serve
+// it files keeps its ORIGIN from the audience it served from (`originOfServe` falls through to the list kind),
+// and per-origin figures stay exact under it.
+
+/** The Lead Sourcing channel (owner 2026-10-11: "a new generic channel named exactly Lead Sourcing"). */
+export const LEAD_SOURCING_CHANNEL = {
+  slug: "lead-sourcing",
+  name: "Lead Sourcing",
+  description: "We pick the sources that bring you the most clients.",
+  displayOrder: 100,
+} as const;
+export const LEAD_SOURCING_SLUG: string = LEAD_SOURCING_CHANNEL.slug;
+
+/**
+ * Every SOURCING channel: a channel whose one leg is Start -> Lead found, i.e. a source campaign. The origins
+ * and Lead Sourcing. Use THIS (never the origin list) wherever the question is "is this a source campaign /
+ * a sourcing pipe"; use the origins only where the question is "which list did this person come from".
+ */
+export const SOURCING_CHANNEL_SLUGS: readonly string[] = [...SOURCING_ORIGIN_SLUGS, LEAD_SOURCING_SLUG];
+const SOURCING_CHANNELS = new Set(SOURCING_CHANNEL_SLUGS);
+const LIVE_SOURCING_CHANNELS = new Set([...SOURCING_ORIGINS.filter((o) => o.live).map((o) => o.slug), LEAD_SOURCING_SLUG]);
+
+/** A sourcing channel (an origin, or Lead Sourcing), live or retired. */
+export const isSourcingChannel = (slug: string | null | undefined): boolean => !!slug && SOURCING_CHANNELS.has(slug);
+/** A sourcing channel we run today. */
+export const isLiveSourcingChannel = (slug: string | null | undefined): boolean => !!slug && LIVE_SOURCING_CHANNELS.has(slug);
+
 // ── SOURCE CAMPAIGNS (owner 2026-10-07: "the sources ARE campaigns") ─────────────────────────────────
 //
 // Each origin is a CAMPAIGN of the offer, ending on the step "Lead found":
@@ -164,16 +197,35 @@ export function sourcingOriginOfList(list: string | null | undefined): SourcingO
  * another origin must list it here, or its spend reads lose that sourcing cost once serves carry the
  * origin slug.
  */
+// Lead Sourcing feeds the cold email channels, which take several origins (it picks among them), so it is listed beside
+// them: a spend read about the channel counts its serves too, and billing/campaign-service read it as a source. NOT under
+// CRM email: one origin only there (nothing to pick), and a slug under two channel families is counted twice on a
+// brand running both.
 const SEARCH_AND_SIGNAL_ORIGINS = [
   "sourcing-apollo-cold-filters",
   "sourcing-apollo-buying-signals",
   "sourcing-linkedin-engagement-signals",
   "sourcing-apify-search",
+  LEAD_SOURCING_CHANNEL.slug,
 ] as const;
 export const SOURCING_ORIGINS_BY_CHANNEL: Readonly<Record<string, readonly string[]>> = {
   "sales-cold-email-outreach": SEARCH_AND_SIGNAL_ORIGINS,
   "feedback-request-cold-email-outreach": SEARCH_AND_SIGNAL_ORIGINS,
   "sales-crm-email-outreach": ["sourcing-crm-contacts"],
+};
+
+/** PURE: the outreach channels a sourcing channel feeds (its next leg may only be worked by one of these). */
+export const channelsFedBy = (sourcingSlug: string): string[] =>
+  Object.entries(SOURCING_ORIGINS_BY_CHANNEL)
+    .filter(([, slugs]) => slugs.includes(sourcingSlug))
+    .map(([channel]) => channel)
+    .sort();
+
+/** PURE: the ORIGINS (list-backed) Lead Sourcing may choose among under one outreach channel. */
+export const originsLeadSourcingMayUse = (outreachSlug: string): string[] => {
+  const fed = SOURCING_ORIGINS_BY_CHANNEL[outreachSlug] ?? [];
+  if (!fed.includes(LEAD_SOURCING_SLUG)) return [];
+  return fed.filter((s) => s !== LEAD_SOURCING_SLUG && sourcingOriginBySlug(s)?.live === true);
 };
 
 export const SOURCING_PARENT_CHANNEL_SLUGS: readonly string[] = Object.keys(SOURCING_ORIGINS_BY_CHANNEL).sort();
@@ -248,7 +300,8 @@ export function originOfUnrecorded(channelSlug: string, evidence: readonly Unrec
   // A SOURCE campaign (its featureSlug is an origin) sources from that origin and nothing else.
   const self = sourcingOriginBySlug(channelSlug);
   if (self) return self;
-  const channelOrigins = SOURCING_ORIGINS_BY_CHANNEL[channelSlug] ?? [];
+  // The list-backed origins only: Lead Sourcing picks among them, it is no list of its own.
+  const channelOrigins = (SOURCING_ORIGINS_BY_CHANNEL[channelSlug] ?? []).filter((s) => sourcingOriginBySlug(s) !== null);
   if (channelOrigins.length === 1) return sourcingOriginBySlug(channelOrigins[0]);
   const providers = new Set<LeadProvider>();
   let apolloLast: string | null = null;

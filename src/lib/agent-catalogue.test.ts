@@ -12,6 +12,8 @@ import {
   funnelIdOf,
   funnelsOfPath,
   funnelTypeOf,
+  funnelMixed,
+  legacyFunnelIdAliasOf,
   legPipes,
   legStepsOf,
   pathById,
@@ -71,9 +73,9 @@ describe("the agent catalogue model", () => {
     const old = "lead_found_to_conversation+conversation_to_paid_client";
     expect(pathById(model, old)?.id).toBe(`start_to_lead_found+${old}`);
     expect(pathLine(model, pathById(model, old)!)).toBe("Start → Lead found → Positive reply → Paid client");
-    // The funnel named Victory is one of them, keyed exactly as its stored name row.
+    // The funnel named Victory is one of them: its stored id resolves to its Lead Sourcing funnel (one channel per leg).
     const victory = "lead_found_to_conversation@sales-cold-email-outreach+conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client";
-    expect(funnelById(model, victory)?.id).toBe(victory);
+    expect(funnelById(model, victory)?.id).toBe(`start_to_lead_found@lead-sourcing+${victory}`);
   });
 
   it("values a step as LTR x the best rated route to Paid client", () => {
@@ -204,22 +206,46 @@ describe("every leg a channel, every proactive funnel from Start (owner 2026-10-
     for (const l of legs) expect(pipesOnLeg(model, l).filter((p) => p.operatedBy === "customer").length, l).toBeLessThanOrEqual(1);
   });
 
-  it("Bliss keeps its id, starts at Start, and its sourcing leg holds every source (a pool, not part of the id)", () => {
+  it("Bliss's stored id resolves to its LEAD SOURCING funnel: one channel per leg, the sourcing leg named in the id", () => {
     const bliss = funnelById(model, BLISS)!;
-    expect(bliss.id).toBe(BLISS);
+    expect(bliss.id).toBe(`start_to_lead_found@lead-sourcing+${BLISS}`);
+    expect(legacyFunnelIdAliasOf(BLISS)).toBe(bliss.id);
+    expect(funnelById(model, bliss.id)!.id).toBe(bliss.id);
     expect(bliss.pathId).toBe(`start_to_lead_found+${BLISS.replace("@sales-cold-email-outreach", "")}`);
-    expect(bliss.legs[0].legKey).toBe("start_to_lead_found");
-    expect(bliss.legs[0].pool!.map((p) => p.channelSlug)).toEqual(expect.arrayContaining(["sourcing-apollo-cold-filters", "sourcing-apollo-buying-signals", "sourcing-linkedin-engagement-signals"]));
-    expect(bliss.legs.slice(1).map((l) => l.pipe!.channelSlug)).toEqual(["sales-cold-email-outreach", "your-team-meeting-booking", "your-team-meeting-attendance", "your-team-closing-calls"]);
+    expect(bliss.legs.map((l) => l.pipe!.channelSlug)).toEqual(["lead-sourcing", "sales-cold-email-outreach", "your-team-meeting-booking", "your-team-meeting-attendance", "your-team-closing-calls"]);
     expect(funnelTypeOf(bliss)).toBe("proactive");
+    expect(funnelMixed(bliss)).toBe(false);
   });
 
-  it("the sourcing pool changes no figure: the cost runs from the outreach leg, as before", () => {
+  it("no funnel holds two channels on one leg; every sourcing pipe is its own funnel", () => {
+    for (const f of all) {
+      expect(new Set(f.legs.map((l) => l.legKey)).size, f.id).toBe(f.legs.length);
+      for (const l of f.legs) expect(legPipes(l).length, `${f.id}: ${l.legKey}`).toBe(1);
+      expect(f.id, f.id).toBe(funnelIdOf(f.legs));
+    }
+    const path = model.paths.get(funnelById(model, BLISS)!.pathId)!;
+    const sources = funnelsOfPath(model, path)
+      .filter((f) => f.legs[1].pipe!.channelSlug === "sales-cold-email-outreach" && f.legs[2].pipe!.channelSlug === "your-team-meeting-booking")
+      .map((f) => f.legs[0].pipe!.channelSlug);
+    expect(sources).toEqual(expect.arrayContaining(["lead-sourcing", "sourcing-apollo-cold-filters", "sourcing-apollo-buying-signals", "sourcing-linkedin-engagement-signals"]));
+    // A source only feeds an outreach channel that takes it: your CRM contacts never feed cold email.
+    expect(sources).not.toContain("sourcing-crm-contacts");
+  });
+
+  it("the sourcing leg changes no figure: the cost runs from the outreach leg, the same for every source", () => {
     const victory = funnelById(model, "lead_found_to_conversation@sales-cold-email-outreach+conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client")!;
+    expect(victory.id.startsWith("start_to_lead_found@lead-sourcing+")).toBe(true);
     const path = model.paths.get(victory.pathId)!;
-    const withoutPool = funnelEconomics({ ...path, legKeys: path.legKeys.slice(1), rates: path.rates.slice(1) }, victory.legs.slice(1), 3000);
+    const withoutSource = funnelEconomics({ ...path, legKeys: path.legKeys.slice(1), rates: path.rates.slice(1) }, victory.legs.slice(1), 3000);
     expect(victory.economics.costUsd).toBeCloseTo(902.22, 1);
-    expect(withoutPool.costUsd).toBeCloseTo(902.22, 1);
+    expect(withoutSource.costUsd).toBeCloseTo(902.22, 1);
+    const coldFilters = funnelById(model, victory.id.replace("@lead-sourcing", "@sourcing-apollo-cold-filters"))!;
+    expect(coldFilters.economics.costUsd).toBeCloseTo(902.22, 1);
+  });
+
+  it("a funnel id that names no funnel, and one only its legacy spelling resolves, are told apart", () => {
+    expect(funnelById(model, "start_to_lead_found@sourcing-crm-contacts+lead_found_to_conversation@sales-cold-email-outreach+conversation_to_meeting_booked+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client")).toBeNull();
+    expect(legacyFunnelIdAliasOf("conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client")).toBeNull();
   });
 });
 
