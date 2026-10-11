@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 import {
   expectedForBrand,
   expectedForCampaign,
@@ -132,5 +134,43 @@ describe("expected return: what it rests on (no fake precision)", () => {
       [3, "measured"],
       [6, "default"],
     ]);
+  });
+});
+
+describe("a funnel campaign is priced on ITS OWN path (EXPECTED-ROI-1011 follow-up)", () => {
+  const r = (legKey: string, effectiveRatePct: number, source = "default") => ({ legKey, effectiveRatePct, source, measured: { basis: "our_leads" } });
+  const inputs = {
+    lifetimeRevenueUsd: 1000,
+    rates: [
+      r("conversation_to_meeting_booked", 30),
+      r("meeting_booked_to_meeting_attended", 75),
+      r("meeting_attended_to_paid_client", 20),
+      r("conversation_to_paid_client", 5, "median"),
+    ] as never,
+    prices: new Map(),
+    fleetPrices: new Map([["conversation_to_meeting_booked|ai-meeting-booking", 2]]),
+  };
+
+  it("an unlisted reactive funnel reads its own legs and the value it ADDS, never the offer's best path", () => {
+    const m = model([visit], [], { inputs });
+    const e = expectedForCombination(m, "conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client");
+    // needed: 1 / (0.75 × 0.20) = 6.667 meetings per paying client at $2 = $13.33; people at Positive reply = 6.667 / 0.30 = 22.2,
+    // each already worth $1000 × max(5% direct, 4.5% via meetings) = $50 → $1111 → the client adds 1000 − 1111 < 0.
+    expect(e.combinationKey).toBe("conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client");
+    expect(e.roiMultiple).toBeCloseTo((1000 - (6.6667 / 0.3) * 50) / 13.3333, 2);
+    expect(e.costPerOutcome).toMatchObject({ costPerOutcomeUsd: 2, legKey: "conversation_to_meeting_booked", basis: "fleet" });
+    expect(e.assumptions.some((a) => a.source === "value_added_from:conversation")).toBe(true);
+  });
+
+  it("a proactive funnel with a team-worked leg reads its own legs (the full client value)", () => {
+    const m = model([visit], [], { inputs: { ...inputs, fleetPrices: new Map([["start_to_conversation|sales-cold-email-outreach", 40]]) } });
+    const e = expectedForCombination(m, "lead_found_to_conversation@sales-cold-email-outreach+conversation_to_paid_client");
+    expect(e.roiMultiple).toBeCloseTo(1000 / (40 / 0.05), 6);
+    expect(e.basis).toBe("fleet");
+  });
+
+  it("unpriceable (no LTR) falls to the offer's figure", () => {
+    const m = model([visit], [], { inputs: { ...inputs, lifetimeRevenueUsd: null } });
+    expect(expectedForCombination(m, "conversation_to_paid_client").combinationKey).toBe(visit.combinationKey);
   });
 });
