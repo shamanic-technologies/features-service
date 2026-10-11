@@ -111,7 +111,9 @@ export type SalesPathRateSource =
 
 /** The ONLY channels the platform manages today (defined beside the per-item minimums it decides). */
 export { MANAGED_CHANNEL_SLUGS } from "./channel-leg-minimums.js";
-import { MANAGED_CHANNEL_SLUGS, channelLegMinimumMonthlyCents } from "./channel-leg-minimums.js";
+/** The managed channels an offer's sales paths CROSS: every managed one but a person-scoped one (`PERSON_SCOPED_CHANNEL_SLUGS`). */
+export const OFFER_PATH_MANAGED_CHANNEL_SLUGS: ReadonlySet<string> = new Set([...MANAGED_CHANNEL_SLUGS].filter((s) => !PERSON_SCOPED_CHANNEL_SLUGS.has(s)));
+import { MANAGED_CHANNEL_SLUGS, PERSON_SCOPED_CHANNEL_SLUGS, channelLegMinimumMonthlyCents } from "./channel-leg-minimums.js";
 
 /**
  * The LAST rung of the cost cascade: a conservative cost per outcome for every (managed channel, leg),
@@ -500,7 +502,7 @@ function cartesian<T>(options: ReadonlyArray<readonly T[]>): T[][] {
 export function platformChannelsForLeg(
   channels: readonly SalesPathChannelInput[],
   legKey: string,
-  managed: ReadonlySet<string> = MANAGED_CHANNEL_SLUGS,
+  managed: ReadonlySet<string> = OFFER_PATH_MANAGED_CHANNEL_SLUGS,
 ): SalesPathChannelInput[] {
   return channels.filter((c) => c.operatedBy === "platform" && managed.has(c.slug) && c.legKeys.includes(legKey));
 }
@@ -522,7 +524,7 @@ export function legChannelsForScope(
   channels: readonly SalesPathChannelInput[],
   legKey: string,
   scope: SalesPathScope,
-  managed: ReadonlySet<string> = MANAGED_CHANNEL_SLUGS,
+  managed: ReadonlySet<string> = OFFER_PATH_MANAGED_CHANNEL_SLUGS,
   shortlist: ReadonlySet<string> = SALES_PATH_CATALOGUE_CHANNEL_SLUGS,
 ): SalesPathChannelInput[] {
   if (scope === "ticked") return platformChannelsForLeg(channels, legKey, managed);
@@ -565,7 +567,7 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
   const benchmarks = input.benchmarks ?? SALES_PATH_COST_BENCHMARKS;
 
   const arrows = new Map(input.rates.map((a) => [legPairKey(a.fromStep, a.toStep), a]));
-  const managed = input.managedChannelSlugs ?? MANAGED_CHANNEL_SLUGS;
+  const managed = input.managedChannelSlugs ?? OFFER_PATH_MANAGED_CHANNEL_SLUGS;
   const fleetPrices = input.fleetPrices ?? new Map<string, number>();
   const defaultCosts = input.defaultCosts ?? DEFAULT_COST_PER_OUTCOME_USD;
   const ltr = input.lifetimeRevenueUsd;

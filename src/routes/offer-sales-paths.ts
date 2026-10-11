@@ -26,7 +26,7 @@ import {
   DEFAULT_OUTCOMES_CREDIT_USD,
   enumerateSalesPaths,
   legChannelsForScope,
-  MANAGED_CHANNEL_SLUGS,
+  OFFER_PATH_MANAGED_CHANNEL_SLUGS,
   priceKey,
   type LegChannelPrice,
   type OfferSalesPathsBody,
@@ -168,8 +168,8 @@ export async function computeOfferSalesPathsModel(args: {
   const ticked = legKeysOverride ?? (salesPath.stated ? (salesPath.legKeys ?? []) : []);
   for (const chain of enumerateSalesPaths(ticked)) {
     for (const legKey of chain) {
-      for (const c of legChannelsForScope(channels, legKey, scope, MANAGED_CHANNEL_SLUGS, catalogueChannelSlugs)) {
-        if (MANAGED_CHANNEL_SLUGS.has(c.slug)) pairs.set(priceKey(legKey, c.slug), { legKey, slug: c.slug });
+      for (const c of legChannelsForScope(channels, legKey, scope, OFFER_PATH_MANAGED_CHANNEL_SLUGS, catalogueChannelSlugs)) {
+        if (OFFER_PATH_MANAGED_CHANNEL_SLUGS.has(c.slug)) pairs.set(priceKey(legKey, c.slug), { legKey, slug: c.slug });
       }
     }
   }
@@ -178,7 +178,7 @@ export async function computeOfferSalesPathsModel(args: {
   for (const key of selectedPaths?.combinationKeys ?? []) {
     for (const part of key.split("+")) {
       const [legKey, slug] = part.split("@");
-      if (slug && MANAGED_CHANNEL_SLUGS.has(slug)) pairs.set(priceKey(legKey, slug), { legKey, slug });
+      if (slug && OFFER_PATH_MANAGED_CHANNEL_SLUGS.has(slug)) pairs.set(priceKey(legKey, slug), { legKey, slug });
     }
   }
   const prices = new Map<string, LegChannelPrice>();
