@@ -7,7 +7,6 @@ import {
   enumerateSalesPaths,
   legChannelsForScope,
   MANAGED_CHANNEL_SLUGS,
-  OFFER_PATH_MANAGED_CHANNEL_SLUGS,
   priceKey,
   type LegChannelPrice,
   type SalesPathChannelInput,
@@ -70,7 +69,7 @@ describe("the catalogue shortlist", () => {
       expect(slugs.has(s)).toBe(true);
       expect(s.startsWith("agency-")).toBe(false);
     }
-    for (const s of OFFER_PATH_MANAGED_CHANNEL_SLUGS) expect(SALES_PATH_CATALOGUE_CHANNEL_SLUGS.has(s)).toBe(true);
+    for (const s of MANAGED_CHANNEL_SLUGS) expect(SALES_PATH_CATALOGUE_CHANNEL_SLUGS.has(s)).toBe(true);
   });
 
   it("lists LinkedIn Posting as a channel we do not run (owner 2026-10-07)", () => {
@@ -224,7 +223,7 @@ describe("?scope=catalogue", () => {
 
 describe("the channels an offer accepts (brand-service offer channels, owner 2026-10-04)", () => {
   it("never stated = the three we run; stated = the shortlist ∩ what the offer accepts", () => {
-    expect([...acceptedCatalogueChannels({ stated: false, channelSlugs: null })].sort()).toEqual([...OFFER_PATH_MANAGED_CHANNEL_SLUGS].sort());
+    expect([...acceptedCatalogueChannels({ stated: false, channelSlugs: null })].sort()).toEqual([...MANAGED_CHANNEL_SLUGS].sort());
     expect([...acceptedCatalogueChannels({ stated: true, channelSlugs: ["meta-ads", "seo-content", "agency-x"] })]).toEqual(["meta-ads"]);
     expect(acceptedCatalogueChannels({ stated: true, channelSlugs: [] }).size).toBe(0);
   });

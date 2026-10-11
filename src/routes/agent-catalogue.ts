@@ -1,4 +1,3 @@
-import { PERSON_SCOPED_CHANNEL_SLUGS } from "../lib/channel-leg-minimums.js";
 import { Router, type Request, type Response } from "express";
 import { apiKeyOnly } from "../middleware/auth.js";
 import {
@@ -767,8 +766,6 @@ async function listSalesFunnels(req: Request, res: Response, forceRunnable: bool
       .flatMap((p) => funnelsOfPath(model, p))
       .filter((f) => !containsChannels || f.channelSlugs.some((s) => containsChannels.includes(s)))
       .filter((f) => !runnable || funnelRunnable(f))
-      // The public list never offers a funnel through a person-scoped channel (staff Copilot follow-ups).
-      .filter((f) => !forceRunnable || !f.channelSlugs.some((s) => PERSON_SCOPED_CHANNEL_SLUGS.has(s)))
       .filter((f) => matchesQuery(q, [funnelLine(f), names.get(f.id), f.id]))
       .sort(byRoi((f: CatalogueFunnel) => f.economics, (f) => f.id, (f) => funnelTypeOf(f)));
     const shown = candidates.slice(0, limit);

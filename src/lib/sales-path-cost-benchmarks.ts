@@ -41,6 +41,7 @@ export const SALES_PATH_CATALOGUE_CHANNEL_SLUGS: ReadonlySet<string> = new Set([
   // Middle / closing
   "ai-meeting-booking",
   "ai-instant-call",
+  "ai-follow-up-email",
   "your-team-meeting-booking",
   "your-team-meeting-attendance",
   "your-team-closing-calls",
