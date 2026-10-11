@@ -96,6 +96,7 @@ import {
 } from "../lib/outcome-cause.js";
 import { parsePricing } from "../lib/pricing.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
+import { planChannelSpend, withPipeSpendAttribution } from "../lib/pipe-spend-attribution.js";
 import {
   resolveOfferChannels,
   offerCampaignIds,
@@ -330,6 +331,8 @@ export async function offerRevenueJson(args: OfferRevenueArgs): Promise<Snapshot
       cause: causeKey,
       // A windowed read carries a block the plain one does not. Absent → today's keys are unmoved.
       windowDays,
+      // Channel rows read their OWN spend since 2026-10-11 (`planChannelSpend`): a new cell, never the folded one.
+      channelSpend: "own-v1",
     }),
     orgId: headers.orgId,
     compute: async () => {
@@ -368,8 +371,11 @@ export async function offerRevenueJson(args: OfferRevenueArgs): Promise<Snapshot
       // The breakdown. LEAN on purpose (headline + costEconomics, the shape the per-offer and
       // per-workflow groups already use): a full body per channel would repeat the whole lead
       // population once per channel for figures the offer body already carries.
+      // Each channel row reads its OWN spend (owner 2026-10-11): a sourcing channel's rows filed under the outreach
+      // channel it feeds move to it, read-time (`planChannelSpend`); the offer body above keeps every row.
+      const channelSpend = planChannelSpend(channels);
       const groups = await mapWithConcurrency(channels, 4, async (channel) => {
-        const channelBody = await computeFeatureRevenue(
+        const channelBody = await withPipeSpendAttribution(channelSpend.get(channel.featureSlug) ?? null, () => computeFeatureRevenue(
           channel.featureSlug,
           brandId,
           channel.campaignIds,
@@ -383,7 +389,7 @@ export async function offerRevenueJson(args: OfferRevenueArgs): Promise<Snapshot
           offerId,
           undefined,
           causes,
-        );
+        ));
         return {
           featureSlug: channel.featureSlug,
           campaignIds: channel.campaignIds,

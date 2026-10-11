@@ -107,6 +107,7 @@ import {
 } from "../lib/outcome-cause.js";
 import { parsePricing } from "../lib/pricing.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
+import { planChannelSpend, withPipeSpendAttribution } from "../lib/pipe-spend-attribution.js";
 import {
   resolveBrandChannels,
   buildBrandChannels,
@@ -315,6 +316,8 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
         cause: causeKey,
         // A windowed read carries a block the plain one does not. Absent → today's keys are unmoved.
         windowDays,
+        // Channel rows read their OWN spend since 2026-10-11 (`planChannelSpend`): a new cell, never the folded one.
+        channelSpend: "own-v1",
       }),
       orgId: headers.orgId,
       compute: async () => {
@@ -363,8 +366,11 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
         // brand: a lead worked through two channels is one lead to the brand and belongs to both rows,
         // and a lead on a campaign campaign-service does not list is in no row (its money still counts
         // in the total above, which narrows by nothing).
+        // Each channel row reads its OWN spend (owner 2026-10-11): a sourcing channel's rows filed under the outreach
+        // channel it feeds move to it, read-time (`planChannelSpend`); the brand body above keeps every row.
+        const channelSpend = planChannelSpend(channels);
         const groups = await mapWithConcurrency(channels, 4, async (channel) => {
-          const channelBody = await computeFeatureRevenue(
+          const channelBody = await withPipeSpendAttribution(channelSpend.get(channel.featureSlug) ?? null, () => computeFeatureRevenue(
             channel.featureSlug,
             brandId,
             // `[]` reads as "no filter" everywhere downstream, so a channel campaign-service lists no
@@ -384,7 +390,7 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
             undefined,
             false,
             perOffer,
-          );
+          ));
           return {
             featureSlug: channel.featureSlug,
             campaignIds: channel.campaignIds,

@@ -50,6 +50,9 @@ const inputs = (over: Partial<CatalogueInputs> = {}): CatalogueInputs => ({
   measurements: new Map([
     ["sales-cold-email-outreach|lead_found_to_conversation", mature(40, 1)],
     ["ai-meeting-booking|conversation_to_meeting_booked", mature(2, 30)],
+    // The sourcing pipes, each on its OWN cost per lead found (owner 2026-10-11).
+    ["lead-sourcing|start_to_lead_found", mature(0.5, 100)],
+    ["sourcing-apollo-cold-filters|start_to_lead_found", mature(0.2, 100)],
   ]),
   fleetMedians: new Map(),
   lifetimeRevenueUsd: 3000,
@@ -102,8 +105,9 @@ describe("the agent catalogue model", () => {
 
   it("prices a funnel per paying client with the sales-path formula", () => {
     const f = funnelById(model, "lead_found_to_conversation@sales-cold-email-outreach+conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client")!;
-    // needed: paid 1, attended 5, booked 6.667, conversation 22.22. cost = 2 x 6.667 + 40 x 22.22 = 902.22.
-    // Both pipes are measured, but legs 2-4 convert at default rates: the cost per paying client is ESTIMATED.
+    // needed: paid 1, attended 5, booked 6.667, conversation 22.22, lead found 2222.2 (1% measured reply rate).
+    // cost = 2 x 6.667 + 40 x 22.22 + its source (Lead Sourcing, $0.50 a lead) 0.5 x 2222.2 = 2013.33.
+    // Every pipe is measured, but legs 2-4 convert at default rates: the cost per paying client is ESTIMATED.
     expect(f.economics.status).toBe("estimated");
     expect(f.economics.estimates).toEqual([
       "rate:conversation_to_meeting_booked",
@@ -111,8 +115,8 @@ describe("the agent catalogue model", () => {
       "rate:meeting_attended_to_paid_client",
       "lifetime_revenue",
     ]);
-    expect(f.economics.costUsd).toBeCloseTo(902.22, 1);
-    expect(f.economics.roi).toBeCloseTo(3000 / 902.22, 2);
+    expect(f.economics.costUsd).toBeCloseTo(2013.33, 1);
+    expect(f.economics.roi).toBeCloseTo(3000 / 2013.33, 2);
   });
 
   it("states learning, never a guessed figure, as soon as one platform pipe is unmeasured", () => {
@@ -232,15 +236,19 @@ describe("every leg a channel, every proactive funnel from Start (owner 2026-10-
     expect(sources).not.toContain("sourcing-crm-contacts");
   });
 
-  it("the sourcing leg changes no figure: the cost runs from the outreach leg, the same for every source", () => {
+  it("the sourcing leg adds its OWN cost: two funnels that differ only by their source price differently (owner 2026-10-11)", () => {
     const victory = funnelById(model, "lead_found_to_conversation@sales-cold-email-outreach+conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client")!;
     expect(victory.id.startsWith("start_to_lead_found@lead-sourcing+")).toBe(true);
     const path = model.paths.get(victory.pathId)!;
+    // Without its source the funnel is the outreach legs alone: 902.22; the source adds its cost per lead x the leads.
     const withoutSource = funnelEconomics({ ...path, legKeys: path.legKeys.slice(1), rates: path.rates.slice(1) }, victory.legs.slice(1), 3000);
-    expect(victory.economics.costUsd).toBeCloseTo(902.22, 1);
     expect(withoutSource.costUsd).toBeCloseTo(902.22, 1);
+    expect(victory.economics.costUsd).toBeCloseTo(902.22 + 0.5 * 2222.22, 1);
     const coldFilters = funnelById(model, victory.id.replace("@lead-sourcing", "@sourcing-apollo-cold-filters"))!;
-    expect(coldFilters.economics.costUsd).toBeCloseTo(902.22, 1);
+    expect(coldFilters.economics.costUsd).toBeCloseTo(902.22 + 0.2 * 2222.22, 1);
+    // A source still learning makes its funnel learning: never a guessed figure.
+    const signals = funnelById(model, victory.id.replace("@lead-sourcing", "@sourcing-apollo-buying-signals"))!;
+    expect(signals.economics).toMatchObject({ status: "learning", reason: "pipe_learning:sourcing-apollo-buying-signals|start_to_lead_found" });
   });
 
   it("a funnel id that names no funnel, and one only its legacy spelling resolves, are told apart", () => {

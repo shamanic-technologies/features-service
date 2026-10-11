@@ -13,9 +13,34 @@
 import { loadChannelCatalogue } from "./channel-declarations-store.js";
 import { funnelLeg, storedLegKeyOf } from "./funnel-legs.js";
 import { isInternalPipe } from "./meeting-leg-fleet.js";
+import { INLINE_TRIGGER_IDS } from "./channel-triggers.js";
 
 const MEMO_MS = 60_000;
 let memo: { at: number; legs: Promise<Map<string, Set<string>>> } | null = null;
+let triggerMemo: { at: number; triggers: Promise<Map<string, string | null>> } | null = null;
+
+/** `<channel>|<stored leg key>` -> the trigger its leg names (null on a proactive leg). */
+function legTriggers(): Promise<Map<string, string | null>> {
+  if (triggerMemo && Date.now() - triggerMemo.at < MEMO_MS) return triggerMemo.triggers;
+  const triggers = loadChannelCatalogue({ publishedOnly: false }).then(
+    (cat) => new Map(cat.channels.flatMap((c) => c.stepTransitions.map((t) => [`${c.slug}|${storedLegKeyOf(t.legKey)}`, t.triggerId ?? null] as const))),
+  );
+  triggerMemo = { at: Date.now(), triggers };
+  triggers.catch(() => {
+    triggerMemo = null;
+  });
+  return triggers;
+}
+
+/**
+ * The trigger when (channel, leg) is an ON-DEMAND pipe (its leg answers an INLINE trigger, `on_demand`: it runs only
+ * when another pipe asks for it, as its own unit run), else null. Measured on its own runs and its trigger's ran
+ * events (`lib/on-demand-pipe-fleet.ts`), the same rule for every such pipe.
+ */
+export async function onDemandPipeTrigger(featureSlug: string, legKey: string): Promise<string | null> {
+  const trigger = (await legTriggers()).get(`${featureSlug}|${storedLegKeyOf(legKey)}`) ?? null;
+  return trigger && INLINE_TRIGGER_IDS.has(trigger) ? trigger : null;
+}
 
 function performedLegs(): Promise<Map<string, Set<string>>> {
   if (memo && Date.now() - memo.at < MEMO_MS) return memo.legs;
@@ -40,4 +65,5 @@ export async function internalPipeToStep(featureSlug: string, legKey: string): P
 /** Test seam. */
 export function __resetPipeKind(): void {
   memo = null;
+  triggerMemo = null;
 }

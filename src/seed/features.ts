@@ -1087,8 +1087,9 @@ for (const origin of SOURCING_ORIGINS) {
       family: "sourcing",
       operatedBy: "platform",
       performedBy: "software",
-      // REACTIVE, on demand (owner 2026-10-09): it finds a lead when an outbound campaign asks for one.
-      stepTransitions: [{ from: null, to: "lead_found", mode: "reactive", triggerId: "lead_requested" }],
+      // REACTIVE, ON DEMAND (owner 2026-10-11, `on_demand` in `lib/channel-triggers.ts`): it finds a lead only when an
+      // outbound campaign asks for one, as its own run (campaign-service `POST /internal/on-demand-runs`).
+      stepTransitions: [{ from: null, to: "lead_found", mode: "reactive", triggerId: "on_demand" }],
       terms: terms(0, 1, 1),
     },
     supersededBySlug: null,
@@ -1102,7 +1103,7 @@ for (const origin of SOURCING_ORIGINS) {
 /**
  * LEAD SOURCING (owner 2026-10-11, `lib/sourcing-origins.ts` `LEAD_SOURCING_CHANNEL`): the sourcing channel that
  * picks its own sources (human-service decides which origins, per brand, by ROI and fit). Same leg and terms as an
- * origin: Start -> Lead found, reactive on `lead_requested`, run by us. A sales funnel names ONE channel on that
+ * origin: Start -> Lead found, reactive on `on_demand`, run by us. A sales funnel names ONE channel on that
  * leg: one origin, or this one.
  */
 SEED_FEATURE_DEFS.push({
@@ -1117,7 +1118,7 @@ SEED_FEATURE_DEFS.push({
     family: "sourcing",
     operatedBy: "platform",
     performedBy: "software",
-    stepTransitions: [{ from: null, to: "lead_found", mode: "reactive", triggerId: "lead_requested" }],
+    stepTransitions: [{ from: null, to: "lead_found", mode: "reactive", triggerId: "on_demand" }],
     terms: terms(0, 1, 1),
   },
   supersededBySlug: null,

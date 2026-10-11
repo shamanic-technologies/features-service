@@ -33,7 +33,7 @@ import { sumDecimalStrings } from "./decimal.js";
 import { startedBeforeParam } from "./maturity.js";
 import { fetchFleetMatureSlugStats } from "./fleet-positive-repliers.js";
 import type { EnginePerson } from "./revenue-engine.js";
-import { runsFeatureSlugsParam } from "./feature-scope.js";
+import { effectiveSpendSlugs, runsSpendSlugsParam, type SpendSlugs } from "./feature-scope.js";
 
 const FRESH_MS = 15 * 60_000;
 const STALE_MS = 6 * 60 * 60_000;
@@ -95,7 +95,7 @@ export function mergeEmailStats(maps: readonly Map<string, Record<string, number
   return out;
 }
 
-async function build(featureSlug: string, legKey: string, pricing: Pricing): Promise<Cell> {
+async function build(featureSlug: string, legKey: string, pricing: Pricing, slugs: SpendSlugs): Promise<Cell> {
   const campaigns = await fetchFleetLegCampaigns(featureSlug, legKey);
   const ids = [...new Set(campaigns.map((c) => c.campaignId))].sort();
   if (ids.length === 0) {
@@ -103,7 +103,7 @@ async function build(featureSlug: string, legKey: string, pricing: Pricing): Pro
   }
   const [costChunks, emailChunks] = await Promise.all([
     Promise.all(
-      chunk(ids, RUNS_CAMPAIGN_IDS_PER_REQUEST).map((c) => fetchPublicCosts(featureSlug, "workflowSlug", pricing, undefined, c)),
+      chunk(ids, RUNS_CAMPAIGN_IDS_PER_REQUEST).map((c) => fetchPublicCosts(featureSlug, "workflowSlug", pricing, undefined, c, slugs)),
     ),
     Promise.all(
       chunk(ids, EMAIL_GATEWAY_CAMPAIGN_IDS_PER_REQUEST).map((c) =>
@@ -117,10 +117,10 @@ async function build(featureSlug: string, legKey: string, pricing: Pricing): Pro
   };
 }
 
-function refresh(key: string, featureSlug: string, legKey: string, pricing: Pricing): Promise<Cell> {
+function refresh(key: string, featureSlug: string, legKey: string, pricing: Pricing, slugs: SpendSlugs): Promise<Cell> {
   const existing = inFlight.get(key);
   if (existing) return existing;
-  const p = build(featureSlug, legKey, pricing)
+  const p = build(featureSlug, legKey, pricing, slugs)
     .then((cell) => {
       cells.set(key, cell);
       return cell;
@@ -130,19 +130,23 @@ function refresh(key: string, featureSlug: string, legKey: string, pricing: Pric
   return p;
 }
 
-/** The fleet's evidence on `legKey` of `featureSlug`. Each call gets its own copy of the send stats. */
-export async function fetchLegFleetEvidence(featureSlug: string, legKey: string, pricing: Pricing): Promise<LegFleetEvidence> {
-  const key = `${featureSlug}|${legKey}|${pricing}`;
+/**
+ * The fleet's evidence on `legKey` of `featureSlug`. Each call gets its own copy of the send stats. `slugs` = which
+ * spend it counts (`lib/feature-scope.ts` `SpendSlugs`): `fed` (default, the forecasts) or `own` (a pipe's own cost).
+ */
+export async function fetchLegFleetEvidence(featureSlug: string, legKey: string, pricing: Pricing, requested: SpendSlugs = "fed"): Promise<LegFleetEvidence> {
+  const slugs = effectiveSpendSlugs(featureSlug, requested);
+  const key = slugs === "fed" ? `${featureSlug}|${legKey}|${pricing}` : `${featureSlug}|${legKey}|${pricing}|own`;
   const cell = cells.get(key);
   const age = cell ? Date.now() - cell.computedAt : Infinity;
   let value: LegFleetEvidence;
   if (cell && age < FRESH_MS) value = cell.value;
   else if (cell && age < STALE_MS) {
-    refresh(key, featureSlug, legKey, pricing).catch((err) =>
+    refresh(key, featureSlug, legKey, pricing, slugs).catch((err) =>
       console.error(`[features-service] leg fleet evidence refresh failed (${key}), keeping previous cell:`, err),
     );
     value = cell.value;
-  } else value = (await refresh(key, featureSlug, legKey, pricing)).value;
+  } else value = (await refresh(key, featureSlug, legKey, pricing, slugs)).value;
   // Callers overwrite reply counts in place (setReplyCountsOnSlugStats): never hand out the cached maps.
   return {
     campaigns: value.campaigns,
@@ -183,13 +187,14 @@ async function readOrgMatureCostGroups(
   campaignIds: readonly string[],
   pricing: Pricing,
   startedBefore: string,
+  slugs: SpendSlugs,
 ): Promise<CostGroup[]> {
   const baseUrl = process.env.RUNS_SERVICE_URL;
   const apiKey = process.env.RUNS_SERVICE_API_KEY;
   if (!baseUrl || !apiKey) throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
   const params = new URLSearchParams({
     groupBy: "workflowSlug",
-    featureSlugs: runsFeatureSlugsParam(featureSlug),
+    featureSlugs: runsSpendSlugsParam(featureSlug, slugs),
     campaignIds: campaignIds.join(","),
     startedBefore,
   });
@@ -224,7 +229,7 @@ export function mergeMatureCostGroups(groups: readonly CostGroup[], pricing: Pri
   }));
 }
 
-async function buildMatureCosts(featureSlug: string, legKey: string, pricing: Pricing, cutoffIso: string): Promise<MatureCostCell> {
+async function buildMatureCosts(featureSlug: string, legKey: string, pricing: Pricing, cutoffIso: string, slugs: SpendSlugs): Promise<MatureCostCell> {
   const campaigns = await fetchFleetLegCampaigns(featureSlug, legKey);
   const byOrg = new Map<string, string[]>();
   for (const c of campaigns) byOrg.set(c.orgId, [...(byOrg.get(c.orgId) ?? []), c.campaignId]);
@@ -233,7 +238,7 @@ async function buildMatureCosts(featureSlug: string, legKey: string, pricing: Pr
     chunk([...new Set(ids)].sort(), RUNS_CAMPAIGN_IDS_PER_REQUEST).map((c) => ({ orgId, ids: c })),
   );
   const perRead = await mapWithConcurrency(reads, MATURE_ORG_CONCURRENCY, (r) =>
-    readOrgMatureCostGroups(featureSlug, r.orgId, r.ids, pricing, startedBefore),
+    readOrgMatureCostGroups(featureSlug, r.orgId, r.ids, pricing, startedBefore, slugs),
   );
   return { value: mergeMatureCostGroups(perRead.flat(), pricing), computedAt: Date.now() };
 }
@@ -243,17 +248,20 @@ async function fetchLegFleetMatureCostGroups(
   legKey: string,
   pricing: Pricing,
   cutoffIso: string,
+  slugs: SpendSlugs,
 ): Promise<CostGroup[]> {
-  const key = `${featureSlug}|${legKey}|${pricing}|${cutoffIso}`;
+  // The cutoff stays LAST in the key (the prune below compares it by prefix).
+  const mode = slugs === "own" ? "own|" : "";
+  const key = `${featureSlug}|${legKey}|${pricing}|${mode}${cutoffIso}`;
   const refreshCell = (): Promise<MatureCostCell> => {
     const existing = matureCostInFlight.get(key);
     if (existing) return existing;
-    const p = buildMatureCosts(featureSlug, legKey, pricing, cutoffIso)
+    const p = buildMatureCosts(featureSlug, legKey, pricing, cutoffIso, slugs)
       .then((cell) => {
         matureCostCells.set(key, cell);
         // A cutoff moves once a day: an EARLIER cutoff's cell is never read again. Only earlier ones are
         // pruned — a slow build for yesterday finishing after today's cell exists must not delete it.
-        const prefix = `${featureSlug}|${legKey}|${pricing}|`;
+        const prefix = `${featureSlug}|${legKey}|${pricing}|${mode}`;
         for (const k of matureCostCells.keys()) {
           if (k.startsWith(prefix) && k.slice(prefix.length) < cutoffIso) matureCostCells.delete(k);
         }
@@ -298,11 +306,12 @@ export async function fetchLegFleetMatureEvidence(
   /** The requesting pair, read LIVE; NULL on a fleet read with no requesting brand. */
   own: { orgId: string; brandId: string; persons: readonly EnginePerson[] } | null,
   legCampaignIds: ReadonlySet<string>,
+  requested: SpendSlugs = "fed",
 ): Promise<LegFleetMatureEvidence | null> {
   // The person half first: a fleet whose population cannot be cut answers null with no spend read made.
   const emailStats = await fetchFleetMatureSlugStats(featureSlug, own, cutoffIso, legCampaignIds);
   if (!emailStats) return null;
-  const costGroups = await fetchLegFleetMatureCostGroups(featureSlug, legKey, pricing, cutoffIso);
+  const costGroups = await fetchLegFleetMatureCostGroups(featureSlug, legKey, pricing, cutoffIso, effectiveSpendSlugs(featureSlug, requested));
   return { cutoffIso, costGroups, emailStats };
 }
 
