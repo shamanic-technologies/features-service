@@ -46,6 +46,7 @@ import { observedCostPerOutcome } from "./cost-engine.js";
 import { decimalCentsToUsd, sumDecimalStrings } from "./decimal.js";
 import { fetchBrandCampaignRows } from "./campaign-identity-client.js";
 import { featureSlugList, runsFeatureSlugsParam, type FeatureScope } from "./feature-scope.js";
+import { attributedCampaignId, pipeRunsIds } from "./pipe-spend-attribution.js";
 import { fetchLeadsForRevenue } from "./leads-client.js";
 import { serveDatesStated } from "./mature-evidence.js";
 import { scopePredicate } from "./roi-maturity.js";
@@ -177,8 +178,11 @@ export async function fetchSpendSplit(req: SpendSplitRequest): Promise<Map<strin
   if (!url || !apiKey) throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
 
   const now = req.now ?? new Date();
-  const single = req.campaignIds.length === 1 ? req.campaignIds[0]! : undefined;
-  const family = req.campaignIds.length > 1 ? new Set(req.campaignIds) : null;
+  // A pipe of a sales funnel campaign reads its OWN spend (lib/pipe-spend-attribution.ts): an adopted outreach
+  // id's rows are read and keyed as the pipe's own; else unchanged.
+  const pipe = pipeRunsIds(req.campaignIds);
+  const single = pipe.ids.length === 1 ? pipe.ids[0]! : undefined;
+  const family = pipe.ids.length > 1 ? new Set(pipe.ids) : null;
   const legOf = new Map(req.campaigns.map((c) => [c.id, c.legKey] as const));
   const cutoffOf = (campaignId: string | null | undefined): string | null => {
     if (!campaignId) return null;
@@ -201,7 +205,7 @@ export async function fetchSpendSplit(req: SpendSplitRequest): Promise<Map<strin
     const params = new URLSearchParams({
       groupBy: req.by ? `${req.by},campaignId` : "campaignId",
       brandId: req.brandId,
-      featureSlugs: runsFeatureSlugsParam(req.featureScope),
+      featureSlugs: runsFeatureSlugsParam(req.featureScope, pipe.releasedOriginSlugs),
     });
     if (single) params.set("campaignId", single);
     if (req.workflowSlugs) params.set("workflowSlugs", req.workflowSlugs);
@@ -222,9 +226,10 @@ export async function fetchSpendSplit(req: SpendSplitRequest): Promise<Map<strin
     if (!Array.isArray(data.groups)) throw new Error("runs-service /v1/stats/costs returned no groups array");
     const out = new Map<string, { campaignId: string | null; cents: string[] }>();
     for (const group of data.groups) {
-      const campaignId = group.dimensions?.campaignId ?? null;
-      if (campaignId === "__total__") continue;
-      if (family && (!campaignId || !family.has(campaignId))) continue;
+      const rawCampaignId = group.dimensions?.campaignId ?? null;
+      if (rawCampaignId === "__total__") continue;
+      if (family && (!rawCampaignId || !family.has(rawCampaignId))) continue;
+      const campaignId = attributedCampaignId(rawCampaignId);
       const dim = req.by ? (group.dimensions?.[req.by] ?? null) : null;
       if (dim === "__total__") continue;
       const key = req.by ? pairKey(dim, campaignId) : campaignKey(campaignId);

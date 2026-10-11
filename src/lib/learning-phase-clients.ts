@@ -16,6 +16,7 @@
 import { fetchWithRetry } from "./fetch-retry.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { featureSlugList, runsFeatureSlugsParam, soleFeatureSlug, type FeatureScope } from "./feature-scope.js";
+import { activePipeSpendAttribution, attributedCampaignId } from "./pipe-spend-attribution.js";
 import { selectCostCents, type Pricing } from "./pricing.js";
 
 /** The two counted signals a grain observes, for ONE campaign id. */
@@ -165,7 +166,9 @@ export async function fetchCampaignCommittedCents(
   const params = new URLSearchParams({
     groupBy: "campaignId",
     brandId,
-    featureSlugs: runsFeatureSlugsParam(featureScope),
+    // A pipe of a sales funnel campaign reads its OWN spend (lib/pipe-spend-attribution.ts): its released origins
+    // leave the read, and an adopted outreach id's rows are keyed as the pipe's. The caller keeps only its scope.
+    featureSlugs: runsFeatureSlugsParam(featureScope, activePipeSpendAttribution()?.releasedOriginSlugs ?? []),
   });
   const response = await fetchWithRetry(`${baseUrl}/v1/stats/costs?${params}`, { headers: h });
   if (!response.ok) {
@@ -176,7 +179,7 @@ export async function fetchCampaignCommittedCents(
   const result = new Map<string, number>();
   if (!Array.isArray(data.groups)) return result;
   for (const group of data.groups) {
-    const campaignId = group.dimensions?.campaignId;
+    const campaignId = group.dimensions?.campaignId ? attributedCampaignId(group.dimensions.campaignId) : null;
     if (!campaignId) continue;
     const cents = selectCostCents(group, "totalCostInUsdCents", pricing);
     if (!Number.isFinite(cents)) continue;
