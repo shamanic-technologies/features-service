@@ -29,7 +29,9 @@ import {
   MANAGED_CHANNEL_SLUGS,
   priceKey,
   type LegChannelPrice,
+  type OfferSalesPathsBody,
   type SalesPathChannelInput,
+  type SelectedSalesPathsInput,
   type SalesPathScope,
   withCampaignRois,
   withSalesPathNames,
@@ -82,6 +84,124 @@ export function priceFromLadder(status: number, body: LadderBody): LegChannelPri
   return { costPerOutcomeUsd: best.costPerOutcomeUsd, workflowDynastySlug: best.slug, grain: best.grain, unpricedReason: null };
 }
 
+/** What one offer's sales paths read computes before naming its rows (the route and `lib/expected-return.ts`). */
+export interface OfferSalesPathsModel {
+  /** The PURE build's body (rows unnamed). */
+  body: OfferSalesPathsBody;
+  /** The offer's selection, read off its sales funnel campaigns (`lib/offer-funnel-campaigns.ts`). */
+  selectedPaths: SelectedSalesPathsInput | null;
+  /** The published channel catalogue, every sales-path campaign named. */
+  published: Awaited<ReturnType<typeof withCampaignNames>>;
+  lifetimeRevenue: Awaited<ReturnType<typeof offerLifetimeRevenue>>;
+}
+
+/**
+ * THE sales paths of one offer, as `GET /offers/:offerId/sales-paths` prices them (before the rows are named).
+ * Null = the offer is not an offer of the brand. `legKeysOverride` walks those legs instead of the ones the
+ * offer's funnel campaigns run (the expected return of an offer that runs none, `lib/expected-return.ts`);
+ * `fleetWaitMs` bounds the wait on the first fleet-cost build after a boot.
+ */
+export async function computeOfferSalesPathsModel(args: {
+  identity: { orgId: string; userId: string; runId: string };
+  offerId: string;
+  brandId: string;
+  scope: SalesPathScope;
+  legKeysOverride?: readonly string[];
+  fleetWaitMs?: number;
+}): Promise<OfferSalesPathsModel | null> {
+  const { identity, offerId, brandId, scope, legKeysOverride, fleetWaitMs } = args;
+  // HOW THE OFFER SELLS is read off its SALES FUNNEL CAMPAIGNS (owner 2026-10-10, `lib/offer-funnel-campaigns.ts`):
+  // the legs of every funnel it has a campaign on, the funnels whose campaign is on as its selection. brand-service's
+  // per-offer ticked legs, accepted channels and ticked paths are retired; the catalogue scope lists the shortlist.
+  const [rows, legEconomics] = await Promise.all([
+    fetchBrandCampaignRows(brandId, undefined, identity),
+    fetchBrandLegEconomics(brandId, identity.orgId),
+  ]);
+  const fromFunnels = offerFunnelSelection(rows, offerId, legEconomics.offers.length === 1);
+  const statedSalesPath = fromFunnels.salesPath;
+  const statedSelectedPaths = fromFunnels.selected;
+  // Both spellings of an outbound leg are ONE identity (wave 1, `lib/funnel-legs.ts`): the funnels' legs and ids are
+  // read in the spelling this service stores and serves, so a `lead_found_to_*` one finds the same chain, row, name
+  // and selection as its `start_to_*` twin. A legacy spelling reads byte-identical (resolution is the identity on it).
+  noteLegacyOutboundLegKeys(legacyOutboundLegKeysIn(statedSelectedPaths.combinationKeys ?? []), {
+    source: "campaign-service",
+    route: "GET /campaigns (salesFunnelId)",
+    caller: { service: "campaign-service", orgId: identity.orgId },
+  });
+  const salesPath = statedSalesPath.legKeys ? { ...statedSalesPath, legKeys: statedSalesPath.legKeys.map(storedLegKeyOf) } : statedSalesPath;
+  const selectedPaths = statedSelectedPaths?.combinationKeys
+    ? { ...statedSelectedPaths, combinationKeys: statedSelectedPaths.combinationKeys.map(storedCombinationKeyOf) }
+    : statedSelectedPaths;
+  // The catalogue scope lists the shortlist (the per-offer accepted channels are retired with brand-service's store).
+  const catalogueChannelSlugs = undefined;
+  const offer = legEconomics.offers.find((o) => o.offerId === offerId);
+  if (!offer) {
+    return null;
+  }
+
+  // Every offer has a lifetime revenue: its own, else the fleet median (owner 2026-10-09).
+  const lifetimeRevenue = await offerLifetimeRevenue(offer.lifetimeRevenueUsd);
+
+  const [rates, catalogue] = await Promise.all([
+    getBrandEffectiveRates(brandId, identity.orgId, legEconomics),
+    // Seeded channels + every PUBLISHED run-time declaration (`lib/channel-declarations.ts`).
+    loadChannelCatalogue({ publishedOnly: true }),
+  ]);
+  // Every sales-path campaign named first, in catalogue order (the same names `/public/channels` serves).
+  const published = await withCampaignNames(catalogue.channels);
+  const channels: SalesPathChannelInput[] = published.map((c) => ({
+    slug: c.slug,
+    name: c.name,
+    operatedBy: c.operatedBy,
+    trigger: c.trigger,
+    legKeys: c.stepTransitions.map((t) => t.legKey),
+  }));
+
+  // Only the (leg, MANAGED channel) pairs a complete path needs run a ladder: a channel we do not run has
+  // no workflow to rank (it prices on the fleet's spend, else its benchmark, in the pure build).
+  const pairs = new Map<string, { legKey: string; slug: string }>();
+  const ticked = legKeysOverride ?? (salesPath.stated ? (salesPath.legKeys ?? []) : []);
+  for (const chain of enumerateSalesPaths(ticked)) {
+    for (const legKey of chain) {
+      for (const c of legChannelsForScope(channels, legKey, scope, MANAGED_CHANNEL_SLUGS, catalogueChannelSlugs)) {
+        if (MANAGED_CHANNEL_SLUGS.has(c.slug)) pairs.set(priceKey(legKey, c.slug), { legKey, slug: c.slug });
+      }
+    }
+  }
+  const prices = new Map<string, LegChannelPrice>();
+  await mapWithConcurrency([...pairs.values()], 4, async ({ legKey, slug }) => {
+    try {
+      const { status, body } = await runLadder(identity, slug, { brandId, leg: legKey, offerId, pricing: "net" });
+      prices.set(priceKey(legKey, slug), priceFromLadder(status, body));
+    } catch (error) {
+      console.error(`[features-service] sales-paths: ladder ${slug}/${legKey} failed: ${(error as Error).message}`);
+      prices.set(priceKey(legKey, slug), { costPerOutcomeUsd: null, workflowDynastySlug: null, grain: null, unpricedReason: "ladder_failed" });
+    }
+  });
+
+  // The cascade's middle rung: the fleet's measured cost per outcome, from the last outcome-prices build
+  // (lazy import: that router is large). Right after a boot the store is EMPTY for the minutes its first
+  // build takes; this read awaits that build, and fails VISIBLY (503) past the bound — never prices a
+  // measured leg at its seeded default because the process is young (2026-10-03: $5 vs $1.41).
+  const fleetPrices = await (await import("./public.js")).awaitFleetLegCostsFromOutcomePrices(...(fleetWaitMs === undefined ? [] : [fleetWaitMs]));
+
+  const body = buildOfferSalesPaths({
+    offerId,
+    brandId,
+    stated: legKeysOverride ? true : salesPath.stated,
+    statedAt: salesPath.statedAt,
+    legKeys: legKeysOverride ?? salesPath.legKeys,
+    lifetimeRevenueUsd: lifetimeRevenue.usd,
+    rates: rates.legs,
+    channels,
+    prices,
+    fleetPrices,
+    scope,
+    catalogueChannelSlugs,
+  });
+  return { body, selectedPaths, published, lifetimeRevenue };
+}
+
 router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
   const req = rawReq as AuthenticatedRequest;
   const offerId = req.params.offerId as string;
@@ -108,95 +228,11 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
   });
 
   try {
-    // HOW THE OFFER SELLS is read off its SALES FUNNEL CAMPAIGNS (owner 2026-10-10, `lib/offer-funnel-campaigns.ts`):
-    // the legs of every funnel it has a campaign on, the funnels whose campaign is on as its selection. brand-service's
-    // per-offer ticked legs, accepted channels and ticked paths are retired; the catalogue scope lists the shortlist.
-    const [rows, legEconomics] = await Promise.all([
-      fetchBrandCampaignRows(brandId, undefined, { orgId: req.orgId, userId: req.userId, runId: req.runId }),
-      fetchBrandLegEconomics(brandId, req.orgId),
-    ]);
-    const fromFunnels = offerFunnelSelection(rows, offerId, legEconomics.offers.length === 1);
-    const statedSalesPath = fromFunnels.salesPath;
-    const statedSelectedPaths = fromFunnels.selected;
-    // Both spellings of an outbound leg are ONE identity (wave 1, `lib/funnel-legs.ts`): the funnels' legs and ids are
-    // read in the spelling this service stores and serves, so a `lead_found_to_*` one finds the same chain, row, name
-    // and selection as its `start_to_*` twin. A legacy spelling reads byte-identical (resolution is the identity on it).
-    noteLegacyOutboundLegKeys(legacyOutboundLegKeysIn(statedSelectedPaths.combinationKeys ?? []), {
-      source: "campaign-service",
-      route: "GET /campaigns (salesFunnelId)",
-      caller: { service: "campaign-service", orgId: req.orgId },
-    });
-    const salesPath = statedSalesPath.legKeys ? { ...statedSalesPath, legKeys: statedSalesPath.legKeys.map(storedLegKeyOf) } : statedSalesPath;
-    const selectedPaths = statedSelectedPaths?.combinationKeys
-      ? { ...statedSelectedPaths, combinationKeys: statedSelectedPaths.combinationKeys.map(storedCombinationKeyOf) }
-      : statedSelectedPaths;
-    // The catalogue scope lists the shortlist (the per-offer accepted channels are retired with brand-service's store).
-    const catalogueChannelSlugs = undefined;
-    const offer = legEconomics.offers.find((o) => o.offerId === offerId);
-    if (!offer) {
+    const model = await computeOfferSalesPathsModel({ identity, offerId, brandId, scope });
+    if (model === null) {
       return res.status(404).json({ error: `offer ${offerId} is not an offer of brand ${brandId}`, reason: "offer_not_found" });
     }
-
-    // Every offer has a lifetime revenue: its own, else the fleet median (owner 2026-10-09).
-    const lifetimeRevenue = await offerLifetimeRevenue(offer.lifetimeRevenueUsd);
-
-    const [rates, catalogue] = await Promise.all([
-      getBrandEffectiveRates(brandId, req.orgId, legEconomics),
-      // Seeded channels + every PUBLISHED run-time declaration (`lib/channel-declarations.ts`).
-      loadChannelCatalogue({ publishedOnly: true }),
-    ]);
-    // Every sales-path campaign named first, in catalogue order (the same names `/public/channels` serves).
-    const published = await withCampaignNames(catalogue.channels);
-    const channels: SalesPathChannelInput[] = published.map((c) => ({
-      slug: c.slug,
-      name: c.name,
-      operatedBy: c.operatedBy,
-      trigger: c.trigger,
-      legKeys: c.stepTransitions.map((t) => t.legKey),
-    }));
-
-    // Only the (leg, MANAGED channel) pairs a complete path needs run a ladder: a channel we do not run has
-    // no workflow to rank (it prices on the fleet's spend, else its benchmark, in the pure build).
-    const pairs = new Map<string, { legKey: string; slug: string }>();
-    const ticked = salesPath.stated ? (salesPath.legKeys ?? []) : [];
-    for (const chain of enumerateSalesPaths(ticked)) {
-      for (const legKey of chain) {
-        for (const c of legChannelsForScope(channels, legKey, scope, MANAGED_CHANNEL_SLUGS, catalogueChannelSlugs)) {
-          if (MANAGED_CHANNEL_SLUGS.has(c.slug)) pairs.set(priceKey(legKey, c.slug), { legKey, slug: c.slug });
-        }
-      }
-    }
-    const prices = new Map<string, LegChannelPrice>();
-    await mapWithConcurrency([...pairs.values()], 4, async ({ legKey, slug }) => {
-      try {
-        const { status, body } = await runLadder(identity, slug, { brandId, leg: legKey, offerId, pricing: "net" });
-        prices.set(priceKey(legKey, slug), priceFromLadder(status, body));
-      } catch (error) {
-        console.error(`[features-service] sales-paths: ladder ${slug}/${legKey} failed: ${(error as Error).message}`);
-        prices.set(priceKey(legKey, slug), { costPerOutcomeUsd: null, workflowDynastySlug: null, grain: null, unpricedReason: "ladder_failed" });
-      }
-    });
-
-    // The cascade's middle rung: the fleet's measured cost per outcome, from the last outcome-prices build
-    // (lazy import: that router is large). Right after a boot the store is EMPTY for the minutes its first
-    // build takes; this read awaits that build, and fails VISIBLY (503) past the bound — never prices a
-    // measured leg at its seeded default because the process is young (2026-10-03: $5 vs $1.41).
-    const fleetPrices = await (await import("./public.js")).awaitFleetLegCostsFromOutcomePrices();
-
-    const body = buildOfferSalesPaths({
-      offerId,
-      brandId,
-      stated: salesPath.stated,
-      statedAt: salesPath.statedAt,
-      legKeys: salesPath.legKeys,
-      lifetimeRevenueUsd: lifetimeRevenue.usd,
-      rates: rates.legs,
-      channels,
-      prices,
-      fleetPrices,
-      scope,
-      catalogueChannelSlugs,
-    });
+    const { body, selectedPaths, published, lifetimeRevenue } = model;
     // Every row's name, shared across clients and stable forever: assigned on first sight, in rank order.
     const names = await salesPathNamesFor(body.paths.map((p) => p.combinationKey));
     // Every campaign (channel × leg) with its ROI and what `creditUsd` buys of its outcome, read off the paths the customer selected.

@@ -9,6 +9,7 @@ import { fetchReadingFunnelKeys } from "../lib/reading-funnels.js";
 import { resolveOfferCampaignIds, OfferHasNoCampaignsError } from "../lib/offer-scope.js";
 import { fetchCampaignFamiliesSoft } from "../lib/campaign-identity-client.js";
 import { describeIdentity } from "../lib/campaign-identity.js";
+import { expectedReturnForScope, withAudienceExpectedReturns } from "../lib/expected-return.js";
 
 const router = Router();
 
@@ -173,11 +174,13 @@ router.get("/features/:featureSlug/audience-stats", apiKeyAuth, async (req, res)
     // A consumer must be able to SEE that a campaign-scoped read answered for the whole identity
     // rather than infer it from a number that moved. Same block, same vocabulary, as the one
     // `/revenue?campaignId=` already carries — one word for one concept across the two reads.
-    res.json(
-      requestedCampaignId
-        ? { ...result.envelope, campaignIdentity: describeIdentity(identity, requestedCampaignId) }
-        : result.envelope,
-    );
+    // NEVER EMPTY (owner 2026-10-11): every row's mature return, else the scope's sales path model (`lib/expected-return.ts`).
+    const scopeModel = await expectedReturnForScope({ orgId, userId, runId }, validated.brandId, {
+      campaign: identity ? { offerId: identity.offerId, featureSlug, legKeys: identity.legKeys } : null,
+      offerId: offerId ?? null,
+    });
+    const envelope = withAudienceExpectedReturns(result.envelope, scopeModel);
+    res.json(requestedCampaignId ? { ...envelope, campaignIdentity: describeIdentity(identity, requestedCampaignId) } : envelope);
   } catch (error) {
     // An offer no campaign of this brand sells has no spend to rank audiences on — named, never
     // answered with the brand's own numbers and never with a fabricated zero.

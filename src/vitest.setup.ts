@@ -70,3 +70,22 @@ vi.mock("./lib/pipe-kind.js", () => ({
 vi.mock("./lib/pipe-spend-attribution-io.js", () => ({
   resolvePipeSpendAttribution: vi.fn(async () => null),
 }));
+
+/**
+ * Suite-wide default: the EXPECTED return's per-offer model (lib/expected-return.ts) runs the offer's whole sales
+ * paths read (campaign-service, brand-service, every leg ladder), which no route fixture answers. The IO entry
+ * points resolve to a named unavailable figure here; the pure pickers stay real. `lib/expected-return.test.ts`
+ * tests them directly; a suite asserting the wire field sets its own return.
+ */
+vi.mock("./lib/expected-return.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./lib/expected-return.js")>();
+  const unavailable = async () => actual.unavailableExpectedReturn("expected_model_unavailable");
+  return {
+    ...actual,
+    expectedReturnForOffer: vi.fn(unavailable),
+    expectedReturnForFunnelCampaign: vi.fn(unavailable),
+    expectedReturnForCampaign: vi.fn(unavailable),
+    expectedReturnForBrand: vi.fn(unavailable),
+    expectedReturnForScope: vi.fn(unavailable),
+  };
+});

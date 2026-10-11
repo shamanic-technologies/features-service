@@ -65,6 +65,7 @@ import {
 } from "../lib/revenue-engine.js";
 import { traceEvent } from "../lib/trace-event.js";
 import { servedCachedJson, sendSnapshotJson, buildScopeKey } from "../lib/view-cache.js";
+import { expectedReturnForBrand, expectedReturnForCampaign, expectedReturnForOffer } from "../lib/expected-return.js";
 import {
   applyLeadDetail,
   attributedOutcomesFor,
@@ -2503,7 +2504,8 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
               const body = await computeFeatureRevenue(featureSlug, brandId, campaignIds, funnel, headers, undefined, offerPriced, false, pricing, undefined, undefined, undefined, causes);
               // `maturity`: the offer's own per-leg figures and verdict — the object every surface about
               // this offer serves, so the row agrees with the offer's own reads.
-              return { offerId: id, campaignIds, headline: body.headline, costEconomics: body.costEconomics, maturity: body.maturity ?? null };
+              const expectedReturn = await expectedReturnForOffer(headers, brandId, id, body.costEconomics.maturity);
+              return { offerId: id, campaignIds, headline: body.headline, costEconomics: body.costEconomics, maturity: body.maturity ?? null, expectedReturn };
             }),
           );
 
@@ -2570,11 +2572,22 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
                       : null;
                   const stamp = <G extends { costEconomics: CostEconomics; outcomes?: object | null }>(g: G) =>
                     unpricedCents === null ? g : stampVendorGroup(g, unpricedCents);
+                  // NEVER EMPTY (owner 2026-10-11): the identity's mature return, else its sales path's (`lib/expected-return.ts`).
+                  const expectedReturn =
+                    costBasis === "actual"
+                      ? undefined
+                      : await expectedReturnForCampaign(
+                          headers,
+                          brandId,
+                          { offerId: identity?.offerId ?? null, featureSlug, legKeys: identity?.legKeys ?? [] },
+                          body.costEconomics.maturity,
+                        );
                   return idsWithRuns.map((cid) => stamp({
                     campaignId: cid,
                     campaignIdentity: describeIdentity(identity, cid),
                     headline: body.headline,
                     costEconomics: body.costEconomics,
+                    ...(expectedReturn ? { expectedReturn } : {}),
                     // The VOLUME half — how much real outcome evidence this row's ROI and %CAC rest on.
                     // Totalled over the identity exactly as the money is (the compute above already runs
                     // over the family's WHOLE membership), and deduped inside it, so a lead served under
@@ -2737,10 +2750,26 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
         // platform comped is absent from it (they did not pay it), which is the opposite of the
         // cross-org benchmark on /workflow-projection's crossOrg grain and /public/stats/*, where
         // the same words mean what the workflow COST to produce an outcome. See lib/cost-basis.ts.
+        // NEVER EMPTY (owner 2026-10-11): the scope's mature return, else its sales path's priced on named hypotheses
+        // (`lib/expected-return.ts`). Not on a lens or a workflow slice (no sales path is about them).
+        const expectedReturn =
+          lens || workflowScope
+            ? undefined
+            : campaignId
+              ? await expectedReturnForCampaign(
+                  headers,
+                  brandId,
+                  { offerId: identity?.offerId ?? null, featureSlug, legKeys: identity?.legKeys ?? [] },
+                  body.costEconomics.maturity,
+                )
+              : offerId
+                ? await expectedReturnForOffer(headers, brandId, offerId, body.costEconomics.maturity)
+                : await expectedReturnForBrand(headers, brandId, body.costEconomics.maturity);
         return {
           featureSlug,
           costBasis: "charged" as const,
           ...applyLeadDetail(body, leadDetail),
+          ...(expectedReturn ? { expectedReturn } : {}),
           campaignIdentity: campaignId ? describeIdentity(identity, campaignId) : undefined,
           window,
           // WHAT THIS BODY ANSWERED FOR, when it was drilled into one workflow — the dynasty, its

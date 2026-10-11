@@ -4669,6 +4669,24 @@ export function fleetLegCostsFromOutcomePrices(): Map<string, number> {
   return out;
 }
 
+/**
+ * The fleet's conversion per (leg, channel), `${legKey}|${featureSlug}` → percent, from the last outcome-prices
+ * build (the best workflow's own conversion on the leg). Empty before the first build. Read by the offer ladder's
+ * expected % Conversion of the contacted row (`lib/expected-conversion.ts`).
+ */
+export function fleetLegConversionRatesFromOutcomePrices(): Map<string, number> {
+  void warmOutcomePrices();
+  const out = new Map<string, number>();
+  const value = outcomePricesStore?.value;
+  if (!value) return out;
+  for (const leg of [...value.outcomes.websiteVisit.legs, ...value.outcomes.meetingBooked.legs]) {
+    if (leg.conversionRatePct !== null && Number.isFinite(leg.conversionRatePct) && leg.conversionRatePct > 0) {
+      out.set(`${leg.legKey}|${leg.featureSlug}`, leg.conversionRatePct);
+    }
+  }
+  return out;
+}
+
 /** How long a sales-paths read waits on the first outcome-prices build after boot (~2.5 min in prod,
  *  2026-10-03) before failing visibly. Under Caddy's 310 s read timeout. */
 export const FLEET_LEG_COSTS_BOOT_WAIT_MS = 200_000;
