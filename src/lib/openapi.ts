@@ -11,6 +11,61 @@ const errorResponse = z.object({ error: z.string() });
 
 registry.register("Feature", featureResponseSchema);
 
+// ── THE EXPECTED RETURN / CONVERSION (owner 2026-10-11): never empty, each hypothesis named ──
+
+const expectedBasisSchema = z
+  .enum(["measured", "stated", "fleet", "default"])
+  .describe("What an expected figure rests on, the WEAKEST of its inputs: measured (the scope's own mature evidence / a measured rate / our own workflow's mature cost) < stated (the customer stated it: a leg rate, the offer's lifetime revenue) < fleet (the fleet median / the fleet's measured cost) < default (a seeded industry benchmark or cost). A tooltip says it in words.");
+
+const expectedReturnRef = registry.register(
+  "ExpectedReturn",
+  z
+    .object({
+      roiMultiple: z.number().nullable().describe("The EXPECTED return, never null unless unavailableReason. = the scope's own MATURE return when it has one (basis measured), else its sales path's ROI exactly as GET /offers/{offerId}/sales-paths prices it: lifetime revenue / cost per paying client, each leg's rate measured > stated > fleet median > industry default, each leg's cost best mature workflow > fleet measured > seeded default, the offer's stated lifetime revenue else the fleet median. Additive: costEconomics.roiMultiple and its maturity verdict are unchanged."),
+      basis: expectedBasisSchema.nullable(),
+      assumptions: z
+        .array(
+          z.object({
+            input: z.enum(["lifetime_revenue", "rate", "cost", "sales_path"]),
+            legKey: z.string().nullable().describe("The leg a rate or a cost is about. Null otherwise."),
+            basis: expectedBasisSchema,
+            source: z.string().describe("The producer's own word: crm_measured | measured_on_our_leads | customer_stated | fleet_median | industry_default (rate); workflow | fleet_measured | default | benchmark (cost); offer_stated | fleet_median (lifetime_revenue); not_running (sales_path: the offer runs no funnel campaign, so the figure is the best path we would sell it)."),
+          }),
+        )
+        .describe("Every input the model figure rests on, with its own source. Empty on a measured figure."),
+      combinationKey: z.string().nullable().describe("The sales path (combination key, stored spelling) the figure is read off. A funnel campaign reads its own; a campaign the best selected path running it; an offer its best selected path (proactive first); a brand its best offer. Null on a measured figure."),
+      costPerOutcome: z
+        .object({
+          costPerOutcomeUsd: z.number(),
+          legKey: z.string(),
+          stepKey: z.string().describe("The outcome the cost buys (the leg's TO step), e.g. conversation (a positive reply) or website_visit."),
+          basis: expectedBasisSchema,
+          source: z.enum(["workflow", "fleet_measured", "default", "benchmark"]),
+        })
+        .nullable()
+        .describe("The EXPECTED cost per outcome of the scope's leg on that path (a campaign's own leg; an offer's, funnel's or brand's first platform leg). Always the model's figure, also beside a measured return. Null on a path whose legs carry no platform cost."),
+      unavailableReason: z
+        .enum(["expected_model_unavailable", "expected_model_computing", "no_priced_sales_path"])
+        .nullable()
+        .describe("Why roiMultiple is null: the model could not be read (logged), is computing for the first time since a deploy (served on the next read), or no path could be priced."),
+    })
+    .describe("THE EXPECTED RETURN (owner 2026-10-11: every ROI surface always reads a value, even expected, on a stated hypothesis). See roiMultiple."),
+);
+
+const expectedConversionRef = registry.register(
+  "ExpectedConversion",
+  z
+    .object({
+      ratePct: z.number().nullable().describe("The row's EXPECTED % Conversion, never null except on Paid client (nothing converts past it) or unavailableReason. = conversionFromRowAbove.ratePct when measured, else the brand's effective rate of the leg out of the row's step on the offer's priced paths (GET /brands/{brandId}/conversion-rates: measured > stated > fleet median > industry default; the shallowest next step); the contacted row: the entry leg's fleet conversion, else a seeded cold-email benchmark (1% positive reply, 2% website visit)."),
+      basis: expectedBasisSchema.nullable(),
+      source: z.string().nullable().describe("measured | manual | median | default (the effective rate's own source) | fleet_measured | default_entry."),
+      toStep: z.string().nullable().describe("The step the rate leads to (the row above when measured)."),
+      legKey: z.string().nullable().describe("The leg the hypothesis is read off. Null when measured."),
+      unavailableReason: z.enum(["final_step", "rates_unavailable", "no_next_step"]).nullable(),
+    })
+    .describe("THE EXPECTED % CONVERSION (owner 2026-10-11: a conversion rate is never empty, on a stated hypothesis). Additive beside conversionFromRowAbove (unchanged)."),
+);
+
 // ── THE MATURITY OF A FIGURE (features-service#1196) — flash, mature, and the verdict, on every surface ──
 
 const legMaturityRuleSchema = registry.register(
@@ -959,6 +1014,7 @@ const featureRevenueResponseSchema = z.object({
   conversionRateHistory: conversionRateHistorySchema.nullable().describe("WHAT SHARE OF THE PEOPLE THIS SCOPE REACHED HAVE CONVERTED, DAY BY DAY — the dated twin of the conversion rate the outcomes block states as a scalar, and the third curve of the campaign Overview beside roiHistory and costPerOutcomeHistory. BOTH legs are CUMULATIVE since the scope's first day, for the reason roiHistory gives: outreach on a day earns conversions weeks later, so a period-grain rate oscillates between 0 and absurd and describes nothing actionable. The outcome is the scope's OWN leg's step, resolved ONCE by the same leader resolution learningPhase and costPerOutcomeHistory use, so the three curves can never be denominated in different things; the denominator is REACH, the identical base funnelSteps.contactedRecipients states. BOTH legs come off the SAME leads[] rows of the SAME campaign-scoped snapshot — no producer is re-asked and nothing is narrowed — so a campaign-scoped read divides that campaign's own population by CONSTRUCTION and can never borrow its brand's. scopeConversionRatePct is the whole scope's rate including the undated and reconciles with the outcomes block; the curve's last point covers the dated population alone, and undatedContacted / undatedOutcomes state the difference. A point's rate is null ONLY when nobody has been reached yet; a measured 0 means people were reached and nobody converted. OVERVIEW ONLY, the same gate roiHistory and spend ride: null on the lensed (?lens=) read, absent on the lean (?groupBy=) groups. NULL also when the scope names no priceable outcome step (no campaign, no leg stated, a rate the brand never declared) — learningPhase.unmeasuredReason beside it names which, so no reason vocabulary is duplicated. (features-service#992)"),
   learningPhase: learningPhaseSchema.nullable(),
   maturity: scopeMaturitySchema.nullable().optional().describe("The scope's per-leg figures on both bases and its verdict. Null where the lead population was never read (no funnel wired)."),
+  expectedReturn: expectedReturnRef.optional().describe("The scope's EXPECTED return, never empty (see ExpectedReturn): campaign (?campaignId=), offer (?offerId=, /offers/{id}/revenue) or brand (/brands/{id}/revenue, a brand-wide read). Absent on ?lens= and ?workflow= reads."),
 });
 
 const featureRevenueResponseRef = registry.register("FeatureRevenueResponse", featureRevenueResponseSchema);
@@ -980,7 +1036,7 @@ const revenueGroupSchema = z.object({
   }),
   costEconomics: revenueCostEconomicsSchema,
   outcomes: revenueOutcomesSchema.nullable().describe("The VOLUME half of this campaign's answer — how much real outcome evidence its ROI, %CAC and pipeline rest on. It exists because those three are derived from however many outcomes the campaign has produced so far: with one or two behind them they are decided by whichever one landed and swing by whole multiples on the next reply, so a consumer that cannot see the volume reads noise as a measurement. Totalled over the campaign's IDENTITY exactly as the money is — its stopped ancestors included — and deduped inside it, so a lead served under two member rows is ONE person here as it is one person to the brand, and every member of an identity carries the identical block. Across identities the counts do NOT sum to the brand (a lead worked under two campaigns is one lead to the brand and belongs to both), the same counting-people property the money half carries. NULL only when no funnel is wired for the feature and the leads were never read — never a fabricated 0."),
-  maturity: scopeMaturitySchema.nullable().optional().describe("The identity's per-leg figures and verdict — the object its own ?campaignId= read serves."),
+  maturity: scopeMaturitySchema.nullable().optional().describe("The identity's per-leg figures and verdict — the object its own ?campaignId= read serves."),  expectedReturn: expectedReturnRef.optional().describe("The identity's EXPECTED return, never empty (see ExpectedReturn), the one its own ?campaignId= read serves. Absent on the staff actual-cost read."),
 });
 
 const featureRevenueGroupedResponseSchema = z.object({
@@ -1035,7 +1091,7 @@ const revenueOfferGroupSchema = z.object({
     unpricedReason: pipelineUnpricedReasonSchema.nullable().describe("WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."),
   }),
   costEconomics: revenueCostEconomicsSchema,
-  maturity: scopeMaturitySchema.nullable().optional().describe("The offer's per-leg figures and verdict."),
+  maturity: scopeMaturitySchema.nullable().optional().describe("The offer's per-leg figures and verdict."),  expectedReturn: expectedReturnRef.optional().describe("The offer's EXPECTED return, never empty (see ExpectedReturn)."),
 });
 
 const featureRevenueByOfferResponseSchema = z.object({
@@ -1284,7 +1340,7 @@ const workflowProjectionResponseSchema = z.object({
     measured: z.boolean().describe("TRUE ⟺ the mature cut could be made. FALSE ⟹ every row is priced on flash, as before."),
     unmeasuredReason: z.enum(["serve_dates_unavailable", "mature_evidence_unavailable", "leg_scope_unavailable"]).nullable().describe("Why the cut could not be made: serve_dates_unavailable = a lead population states no serve date (lead-service's lastServedAt), so young leads could not be told from mature ones; mature_evidence_unavailable = a mature cost or person read failed on this refresh (the answer degrades to flash rather than failing); leg_scope_unavailable = the leg's campaigns could not be read."),
   }).optional().describe("THE LEG'S MATURITY RULE, echoed on a leg-keyed answer (present ⟺ `?leg=`), and whether this answer could apply it."),
-  unmeasuredReason: z.enum(["no_active_audiences", "no_active_workflows", "no_spend_recorded"]).optional().describe("Present ⟺ measured=false, and it is the whole point of the field: an empty `rows` must never be read as 'this brand has nobody to contact'. `no_active_audiences` = the brand is working no audience, so there is nothing to serve through ANY channel (rows is empty). `no_active_workflows` = this feature has no active workflow (rows is empty). `no_spend_recorded` = the brand HAS active audiences and this channel HAS active workflows, it has simply never run — rows then enumerate every (active audience × active workflow) couple, all measured=false."),
+  unmeasuredReason: z.enum(["no_active_audiences", "no_active_workflows", "no_spend_recorded"]).optional().describe("Present ⟺ measured=false, and it is the whole point of the field: an empty `rows` must never be read as 'this brand has nobody to contact'. `no_active_audiences` = the brand is working no audience, so there is nothing to serve through ANY channel (rows is empty). `no_active_workflows` = this feature has no active workflow (rows is empty); also the answer for a `?leg=` naming a pipe of a channel that sells no reading sales funnel (sourcing origins `start_to_lead_found`, AI Instant Call `conversation_to_booking_call`): 200, no `leg` block, no economics, never a 400/404. `no_spend_recorded` = the brand HAS active audiences and this channel HAS active workflows, it has simply never run — rows then enumerate every (active audience × active workflow) couple, all measured=false."),
 });
 
 registry.register("WorkflowProjectionResponse", workflowProjectionResponseSchema);
@@ -1533,7 +1589,7 @@ const audienceStatsRowSchema = z.object({
     costOfAcquisitionPct: z.number().nullable().describe("PROJECTED — what winning a customer from this audience costs as a SHARE of what that customer is worth over their lifetime, percent = 100 x costPerPaidClientUsd / brandProjection.lifetimeRevenueUsd, which is exactly 100 / returnPerDollar. Below 100 means the audience pays for itself. Served rather than left to the consumer BECAUSE it is the reciprocal of a field already on this row: a consumer dividing one of our fields into another is how two surfaces come to print two numbers for one statistic. Same statement as returnPerDollar and costPerPaidClientUsd in a third unit, so the three can never disagree, and the identical definition one grain coarser at brandProjection.costOfAcquisitionPct. PROJECTED, NOT REALIZED: do not pair it with the realized /revenue costEconomics.costOfAcquisitionPct (measured spend / measured pipeline) as if they were the same figure — this one prices what the audience's own observed unit costs imply under the brand's declared economics. An audience with no measured grain of its own inherits brandProjection verbatim (the same brand-level fallback the derived cost columns and returnPerDollar take). NULL (never 0) whenever it could not be measured — no lifetime revenue, no path to a paying client, cold start; a 0 would say winning a customer costs nothing."),
   maturity: audienceProjectionMaturitySchema.optional(),
 }).describe("PROJECTED return for this audience, on the brand's own economics — three units of ONE statement (cost per paying client, return per dollar, and that cost as a share of lifetime revenue). See returnPerDollar."),
-  maturity: scopeMaturitySchema.nullable().optional().describe("This audience's per-leg figures on both bases and its verdict. The rows' spend and outcomes plus the envelope's unattributedMaturity add up to the envelope's maturity."),
+  maturity: scopeMaturitySchema.nullable().optional().describe("This audience's per-leg figures on both bases and its verdict. The rows' spend and outcomes plus the envelope's unattributedMaturity add up to the envelope's maturity."),  expectedReturn: expectedReturnRef.optional().describe("This audience's EXPECTED return, never empty (see ExpectedReturn): its own projection.maturity mature returnPerDollar when mature (basis measured), else the scope's sales path model (the campaign's, offer's or brand's)."),
 });
 
 const audienceStatsResponseSchema = z.object({
@@ -1569,7 +1625,7 @@ const audienceStatsResponseSchema = z.object({
   }).optional().describe("Present ONLY when this brand sells SEVERAL OFFERS and the read could name none. A declared sales funnel hangs off an OFFER — each carries its own conversion rates, its own lifetime revenue and its own value proposition — so brand-service REFUSES (409 SEVERAL_OFFERS) a brand-scoped declared-funnel read for a brand selling more than one, rather than serve one proposition's economics under another's name. That refusal is NOT an outage and NOT a producer gap; it is a question with several answers, so this read DEGRADES and says so instead of failing. The VOLUME half of the body is unaffected (measured facts about spend, not about a proposition); the PROJECTED half reads null. A campaign sells exactly one offer, so naming a `campaignId` names the offer transitively and returns the fully-priced answer. Absent for every brand selling one offer, whose body is byte-unchanged."),
   campaignIdentity: campaignIdentitySchema.optional().describe("Present ONLY on a ?campaignId= read: the campaign IDENTITY these per-audience figures were totalled over. A campaign as a customer knows it is (org, brand, sales funnel, acquisition channel) and is stored as MANY rows - campaign-service mints a new one every time the workflow switches and keeps the ancestors - so asking about any member returns the same, complete campaign, and every member lands on one cache cell. Byte-same block as /features/{slug}/revenue?campaignId= carries, so the two reads name one campaign one way."),
   maturity: scopeMaturitySchema.nullable().optional().describe("The scope's own maturity (campaign, offer or brand) — the byte-same object /revenue serves for it."),
-  unattributedMaturity: scopeMaturitySchema.nullable().optional().describe("Spend and leads of this scope whose serve carried NO audience tag."),
+  unattributedMaturity: scopeMaturitySchema.nullable().optional().describe("Spend and leads of this scope whose serve carried NO audience tag."),  expectedReturn: expectedReturnRef.optional().describe("The SCOPE's expected return, never empty (see ExpectedReturn): brandProjection.maturity's mature returnPerDollar when mature, else the scope's sales path model."),
 });
 
 registry.register("AudienceStatsResponse", audienceStatsResponseSchema);
@@ -1855,6 +1911,7 @@ const exclusiveLadderSchema = z.object({
     people: z.object({ limit: z.number().int(), leads: z.array(exclusiveStepPersonSchema) }).describe("Highest value first, capped at limit; counted whole in count. reachedAt = when they were contacted."),
     conversionFromRowAbove: conversionFromRowAboveSchema,
     conversionHistory: conversionHistorySchema,
+    expectedConversionFromRowAbove: expectedConversionRef.optional().describe("Never empty: the measured % Conversion, else a named hypothesis (see ExpectedConversion)."),
   }).describe("PEOPLE CONTACTED, NOTHING YET: on the same one-row-per-person basis."),
   rows: z.array(z.object({
     step: stepRefSchema,
@@ -1871,6 +1928,7 @@ const exclusiveLadderSchema = z.object({
     hot: z.object({ limit: z.number().int(), count: z.number().int(), leads: z.array(exclusiveStepPersonSchema) }).nullable().describe("HOT LEADS ON THIS ROW: the row's people in pipeline.hotLeads (the same verdict, every hot person counted, not only the listed top), highest value first, capped at limit. A hot person is in people.ours or people.notOurs, never lost. Σ rows[].hot.count + total.hot.onContactedRow + total.hot.onNoRow = hotLeads.totalCount. Null when hotLeads is null (unpriced offer)."),
     conversionFromRowAbove: conversionFromRowAboveSchema,
     conversionHistory: conversionHistorySchema,
+    expectedConversionFromRowAbove: expectedConversionRef.optional().describe("Never empty: the measured % Conversion, else a named hypothesis (see ExpectedConversion)."),
   })).describe("The ladder's steps in climbing order. A person stands on the furthest step priced for them (else, nothing priced, the furthest reached, as notOurs; else the contacted row)."),
   total: z.object({
     people: z.number().int().describe("Distinct people on a row (contacted row included)."),
@@ -2846,6 +2904,7 @@ const salesFunnelCampaignRowSchema = z.object({
   investedUsd: z.number().describe("$ Invested since inception: the COMMITTED spend of every unit together (= `costEconomics.committedCostUsd`). Every cost row belongs to one unit, so this is exactly the sum of the units' own `committedCostUsd` (each unit's `/features/{slug}/revenue?campaignId=` read), on the requested pricing basis."),
   roiMultiple: z.number().nullable().describe("The funnel campaign's ROI (= `costEconomics.roiMultiple`) = the value it ADDS over its own spend (owner 2026-10-11): ONE engine pass over the units' people (deduped) and spend together, on the offer's terms, minus their value where it took them over (`takeoverStep`, `valueAdded`; $0 when it found them); never a sum or an average of unit ROIs. Null with a reason in `costEconomics.unmeasuredReason` (e.g. `maturing`: still learning), `headline.unpricedReason` (e.g. `no_funnel_wired`) or `moneyUnavailableReason`. Read `maturity` for the flash/mature pair and the verdict, as on a campaign row."),
   moneyUnavailableReason: z.enum(["units_price_differently"]).nullable().describe("`units_price_differently`: the units' channels price on two different funnel definitions, so no ROI can be one figure (investedUsd is still served). Null otherwise."),
+  expectedReturn: expectedReturnRef.describe("The funnel campaign's EXPECTED return, never empty (see ExpectedReturn): its own mature return (basis measured), else its own sales path (salesFunnelId = the combination key) priced on named hypotheses. roiMultiple and maturity are unchanged."),
   headline: featureRevenueResponseSchema.shape.headline.nullable().describe("The units' pipeline together and WHY it is unpriced when it is (`unpricedReason`, e.g. `no_funnel_wired`: a funnel whose units wire no funnel we price yet, like AI meeting booking), the block a campaign row serves. Null when the funnel campaign has no unit."),
   costEconomics: featureRevenueResponseSchema.shape.costEconomics.nullable().describe("The full cost economics of the units together (the block a campaign row serves). Null when the funnel campaign has no unit."),
   maturity: scopeMaturitySchema.nullable().describe("Per-leg figures and the maturity verdict of the units together (the object a campaign row serves). Null when unreadable or no unit."),
@@ -3722,7 +3781,7 @@ const accountRowSchema = z.object({
   orgActualBalanceUsd: z.number().nullable().describe("Org ACTUAL credit balance in USD (billing actual_balance_cents/100; only ACTUALIZED usage subtracted). The figure the active verdict gates on. null = billing's balance read failed (status 'unknown')."),
   autoTopupEnabled: z.boolean().nullable().describe("null = billing's balance read failed. " +"Whether the org has auto-topup enabled (billing has_auto_topup). An auto-topup org never runs dry → active regardless of momentary balance. false when absent."),
   statusUnknownReason: z.string().nullable().optional().describe("Why status is 'unknown' (billing payment-outlook and/or balance unreadable for the org, capped at 300 chars). Absent whenever the status is known."),
-  status: z.enum(["active", "payment_declined", "no_payment_method", "unknown", "reactive_only", "paused", "inactive"]).describe("'unknown' = a per-org billing read (payment-outlook or balance) failed for this org: no verdict is invented, the row is excluded from every money total and the org is named in unreadOrgReads. Otherwise: Precedence payment_declined / no_payment_method > active > paused > inactive: 'no_payment_method' iff billing cannot charge the org because it has no chargeable card (payment-outlook charge_blocked / no_chargeable_card; campaign-service stops it with stopReason no_payment_method); 'payment_declined' iff billing cannot charge it for any other reason (card declined, unusable, retries exhausted, or unsupported card country; stopReason payment_declined), whatever budget is configured or still reported running; billing's reason rides paymentDeclinedReason. Else 'active' iff runningDailyBudgetUsd>0 (PROACTIVE) && (autoTopupEnabled || orgActualBalanceUsd>runningDailyBudgetUsd); else 'reactive_only' iff runningDailyBudgetUsd==0 && reactiveRunningDailyCapUsd>0 (every proactive campaign stopped, a reactive one still on: starts no conversation, not active, not paused, excluded from every money total); else 'paused' iff configuredDailyBudgetUsd>0 (money posted, nothing running against it); else 'inactive'. There is no brand-level pause flag in this rule: that control was removed from the product and the flag lied in both directions."),
+  status: z.enum(["active", "payment_declined", "no_payment_method", "unknown", "out_of_credit", "reactive_only", "paused", "inactive"]).describe("'unknown' = a per-org billing read (payment-outlook or balance) failed for this org: no verdict is invented, the row is excluded from every money total and the org is named in unreadOrgReads. Otherwise: Precedence payment_declined / no_payment_method > active > paused > inactive: 'no_payment_method' iff billing cannot charge the org because it has no chargeable card (payment-outlook charge_blocked / no_chargeable_card; campaign-service stops it with stopReason no_payment_method); 'payment_declined' iff billing cannot charge it for any other reason (card declined, unusable, retries exhausted, or unsupported card country; stopReason payment_declined), whatever budget is configured or still reported running; billing's reason rides paymentDeclinedReason. Else 'active' iff runningDailyBudgetUsd>0 (PROACTIVE) && (autoTopupEnabled || orgActualBalanceUsd>runningDailyBudgetUsd); else 'out_of_credit' iff runningDailyBudgetUsd>0 (a proactive campaign still runs but the balance cannot fund one more day and nothing reloads it: a BILLING state, staff ask the client to top up; never 'paused', which is the customer's own choice; until 2026-10-11 such a row read 'paused'); else 'reactive_only' iff runningDailyBudgetUsd==0 && reactiveRunningDailyCapUsd>0 (every proactive campaign stopped, a reactive one still on: starts no conversation, not active, not paused, excluded from every money total); else 'paused' iff configuredDailyBudgetUsd>0 (money posted, nothing running against it); else 'inactive'. There is no brand-level pause flag in this rule: that control was removed from the product and the flag lied in both directions."),
   paymentDeclinedReason: z.string().nullable().describe("billing's own reason it cannot charge this org (payment-outlook blockedReason: card_declined, card_unusable, retries_exhausted, no_chargeable_card, card_country_unsupported) when status is 'payment_declined'; null otherwise, and null if billing blocked without naming a reason."),
   revenueSide: z.enum(["agency", "self_serve"]).nullable().describe("The ORG's side of the revenue split, derived from the stated-monthly-amounts store exactly as the agency/self-serve MRR split derives it (no org id lives in code). 'agency' = the org holds at least one stated monthly amount: it pays cash up front at its own discretion, so its budget burn is an allocation of money already received, NOT revenue still to come. 'self_serve' = it holds none: it pays through the product, so its budget burn IS its recurring revenue. Same value on every brand row of one org. null = the stated-amounts store could not be read on this build (unknown, never guessed). This service has no notion of the platform's own internal org; a consumer that must exclude it does so itself. Informational: no status, total, MRR or ARR on this payload reads it."),
   revenueClass: z.string().nullable().describe("billing-service's revenue class for the ORG (recurring | one_off | none), read from GET /internal/revenue/fleet. null = billing's read was unavailable, or billing could not read this org."),
@@ -3744,6 +3803,7 @@ const accountsStatsSchema = z.object({
   paymentDeclinedCount: z.number().int().describe("Rows billing cannot charge (status payment_declined). Excluded from every running/MRR/ARR total, like paused and inactive."),
   noPaymentMethodCount: z.number().int().describe("Rows with no chargeable card (status no_payment_method). Excluded from every running/MRR/ARR total, like paused and inactive."),
   pausedCount: z.number().int(),
+  outOfCreditCount: z.number().int().describe("Rows running a proactive campaign whose balance cannot fund one more day, with no auto-topup (status out_of_credit). Excluded from every running/MRR total, like paused."),
   statusUnknownCount: z.number().int().describe("Rows with status 'unknown' (a per-org billing read failed; see unreadOrgReads). Excluded from every running/MRR total and never counted as inactive. 0 on a healthy read."),
   inactiveCount: z.number().int(),
   totalCount: z.number().int(),
@@ -3828,7 +3888,7 @@ const customerHealthRowSchema = z.object({
   activeThisWeek: z.boolean(),
   activeThisMonth: z.boolean(),
   activeDays: z.array(z.string()).describe("The de-facto active-day timeline from billed spend (distinct UTC days, ascending)."),
-  status: z.enum(["active", "payment_declined", "no_payment_method", "unknown", "reactive_only", "paused", "inactive"]).describe("Same composition as GET /internal/stats/accounts (payment_declined > active > reactive_only > paused > inactive; payment_declined means billing cannot charge the org, reason on paymentDeclinedReason; active needs a PROACTIVE RUNNING budget > 0 AND funded/auto-topup; reactive_only means nothing proactive runs but a reactive campaign is on; paused means money posted with nothing running). 'unknown' (this board only): billing's payment-outlook read failed for this org, so whether billing can charge it is not known and no verdict is invented; the reason rides statusUnknownReason, every other column of the row is read as usual, and the rest of the board is unaffected (one org's billing failure no longer 500s the whole board, 2026-10-03). Its health badge reads red (not KNOWN active)."),
+  status: z.enum(["active", "payment_declined", "no_payment_method", "unknown", "out_of_credit", "reactive_only", "paused", "inactive"]).describe("Same composition as GET /internal/stats/accounts (payment_declined > active > out_of_credit > reactive_only > paused > inactive; payment_declined means billing cannot charge the org, reason on paymentDeclinedReason; active needs a PROACTIVE RUNNING budget > 0 AND funded/auto-topup; out_of_credit means a proactive campaign runs but the balance cannot fund one more day and there is no auto-topup (a billing state, never shown as paused; until 2026-10-11 it read paused); reactive_only means nothing proactive runs but a reactive campaign is on; paused means money posted with nothing running). 'unknown' (this board only): billing's payment-outlook read failed for this org, so whether billing can charge it is not known and no verdict is invented; the reason rides statusUnknownReason, every other column of the row is read as usual, and the rest of the board is unaffected (one org's billing failure no longer 500s the whole board, 2026-10-03). Its health badge reads red (not KNOWN active)."),
   statusUnknownReason: z.string().nullable().describe("Why status is 'unknown' (e.g. 'billing payment-outlook unreadable: … (502) …', capped at 300 chars); null whenever the status is known."),
   paymentDeclinedReason: z.string().nullable().describe("billing's own reason it cannot charge this org (payment-outlook blockedReason: card_declined, card_unusable, retries_exhausted, no_chargeable_card, card_country_unsupported) when status is 'payment_declined'; null otherwise, and null if billing blocked without naming a reason."),
   configuredDailyBudgetUsd: z.number().describe("Every ceiling this (org, brand) configured, in USD."),
@@ -3916,6 +3976,7 @@ const customerHealthStatsSchema = z.object({
   paymentDeclinedCount: z.number().int().describe("Rows billing cannot charge (status payment_declined). Excluded from every running/MRR/ARR total, like paused and inactive."),
   noPaymentMethodCount: z.number().int().describe("Rows with no chargeable card (status no_payment_method). Excluded from every running/MRR/ARR total, like paused and inactive."),
   pausedCount: z.number().int(),
+  outOfCreditCount: z.number().int().describe("Rows running a proactive campaign whose balance cannot fund one more day, with no auto-topup (status out_of_credit). Excluded from every running/MRR total, like paused."),
   statusUnknownCount: z.number().int().describe("Rows whose status could not be read (status 'unknown': billing payment-outlook or balance unreadable for the org; see unreadOrgReads). Not counted as inactive, excluded from every money total."),
   inactiveCount: z.number().int(),
   greenCount: z.number().int(),

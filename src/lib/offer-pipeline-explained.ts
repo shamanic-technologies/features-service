@@ -85,6 +85,7 @@
  * The conversion column stays the cumulative `pricedConversionFromPrevious` (step to step is a
  * cumulative notion: of those who stood on the previous step, how many reached this one).
  */
+import type { ExpectedConversion } from "./expected-conversion.js";
 import { CHANNEL_STEPS, funnelStepKeys, type ChannelStepKey } from "./acquisition-channels.js";
 import { getFunnel, restrictPathsToDeclaredLegs } from "./funnel-registry.js";
 import { LEAD_FIELD_TO_SIGNAL, stepMeasured, type StepEvidence } from "./funnel-steps.js";
@@ -454,6 +455,8 @@ export interface ExclusiveLadderRow {
   hot: ({ limit: number } & StepPeopleGroup<ExclusiveStepPerson>) | null;
   /** The row's "% Conversion" (owner 2026-10-08), see `ConversionFromRowAbove`. */
   conversionFromRowAbove: ConversionFromRowAbove | null;
+  /** Never empty: the measured % Conversion, else a named hypothesis (`lib/expected-conversion.ts`). Set by the route. */
+  expectedConversionFromRowAbove?: ExpectedConversion;
   /** The same figure, one point per day since the offer's first delivery (see `ConversionHistory`). Null unless asked, or the step is not counted. */
   conversionHistory: ConversionHistory | null;
 }
@@ -530,6 +533,8 @@ export interface ExclusiveContactedRow {
   people: { limit: number; leads: ExclusiveStepPerson[] };
   /** The row's "% Conversion": the shallowest displayed step row over (count + it). Null when no step row is displayed. */
   conversionFromRowAbove: ConversionFromRowAbove | null;
+  /** Never empty: the measured % Conversion, else a named hypothesis (`lib/expected-conversion.ts`). Set by the route. */
+  expectedConversionFromRowAbove?: ExpectedConversion;
   /** Its dated series (see `ConversionHistory`). Null unless asked. */
   conversionHistory: ConversionHistory | null;
 }

@@ -45,6 +45,9 @@ import type { ColdLeadsRead } from "../lib/step-outcomes-client.js";
 import { buildOfferPipeline, explainStepValue, offerStepSets, stepConversion } from "../lib/offer-pipeline-explained.js";
 import { contactedPricingSoft } from "./contacted-value.js";
 import { offerRevenueJson } from "./offer-economics.js";
+import { getBrandEffectiveRates, type BrandEffectiveRates } from "../lib/effective-conversion-rates.js";
+import { withExpectedConversions } from "../lib/expected-conversion.js";
+import type { SalesFunnelKey } from "../lib/sales-funnels.js";
 
 /**
  * The offer revenue read's `headline.totalPipelineUsd` (the page's Pipeline figure), through its own Gold
@@ -60,6 +63,19 @@ async function headlinePipelineSoft(args: Parameters<typeof offerRevenueJson>[0]
     console.warn(`[features-service] offer outcomes: offer revenue headline unreadable (exclusive total unreconciled): ${(err as Error).message}`);
     return null;
   }
+}
+
+/** The pipeline with every sliced-ladder row's expected % Conversion (`lib/expected-conversion.ts`). */
+async function withExpectedLadder<P extends { exclusiveLadder: Parameters<typeof withExpectedConversions>[0] }>(
+  rates: BrandEffectiveRates | null,
+  pricedFunnelKeys: readonly SalesFunnelKey[],
+  pipeline: P,
+): Promise<P> {
+  const { fleetLegConversionRatesFromOutcomePrices } = await import("./public.js");
+  return {
+    ...pipeline,
+    exclusiveLadder: withExpectedConversions(pipeline.exclusiveLadder, { rates, pricedFunnelKeys, fleetConversions: fleetLegConversionRatesFromOutcomePrices() }),
+  };
 }
 
 const router = Router();
@@ -227,6 +243,11 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
                 ),
               )
             : null;
+        // The brand's effective leg rates, the hypothesis behind every ladder row's expected % Conversion (soft).
+        const expectedRatesPromise = getBrandEffectiveRates(brandId, headers.orgId).catch((err) => {
+          console.error(`[features-service] offer outcomes: brand ${brandId} rates unreadable (expected conversions unavailable): ${(err as Error).message}`);
+          return null;
+        });
         const values = stepValues(declared);
         const sets = offerStepSets(people.persons, people.evidence);
         const pricedFunnelKeys = priceOnDeclaredFunnel(declared).pricedFunnelKeys;
@@ -252,7 +273,7 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
           outcomes,
           unattributedCampaignIds: partition.unattributedCampaignIds,
           hiddenCampaignIds: partition.hiddenCampaignIds,
-          pipeline: buildOfferPipeline({
+          pipeline: await withExpectedLadder(await expectedRatesPromise, pricedFunnelKeys, buildOfferPipeline({
             persons: people.persons,
             evidence: people.evidence,
             declared,
@@ -271,7 +292,7 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
                   today: new Date().toISOString().slice(0, 10),
                 }
               : null,
-          }),
+          })),
         };
       },
     });

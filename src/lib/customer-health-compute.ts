@@ -262,6 +262,8 @@ export interface CustomerHealthStats {
   paymentDeclinedCount: number;
   noPaymentMethodCount: number;
   pausedCount: number;
+  /** Rows running a proactive campaign with no credit to fund the next day and no auto-topup (status out_of_credit). */
+  outOfCreditCount: number;
   /** Rows whose status could not be read (status "unknown"); not counted as inactive. */
   statusUnknownCount: number;
   inactiveCount: number;
@@ -537,7 +539,7 @@ function composeHealth(
   };
 }
 
-const STATUS_RANK: Record<AccountRowStatus, number> = { active: 0, payment_declined: 1, no_payment_method: 2, unknown: 3, reactive_only: 4, paused: 5, inactive: 6 };
+const STATUS_RANK: Record<AccountRowStatus, number> = { active: 0, payment_declined: 1, no_payment_method: 2, unknown: 3, out_of_credit: 4, reactive_only: 5, paused: 6, inactive: 7 };
 
 /**
  * Build the full customer-health board. Reuses the accounts audit (identity + status + budget + balance)
@@ -774,6 +776,7 @@ export async function buildCustomerHealthBoard(
   let activeCount = 0;
   let reactiveOnlyCount = 0;
   let pausedCount = 0;
+  let outOfCreditCount = 0;
   let paymentDeclinedCount = 0;
   let noPaymentMethodCount = 0;
   let statusUnknownCount = 0;
@@ -784,6 +787,7 @@ export async function buildCustomerHealthBoard(
     if (row.status === "active") activeCount += 1;
     else if (row.status === "reactive_only") reactiveOnlyCount += 1;
     else if (row.status === "paused") pausedCount += 1;
+    else if (row.status === "out_of_credit") outOfCreditCount += 1;
     else if (row.status === "payment_declined") paymentDeclinedCount += 1;
     else if (row.status === "no_payment_method") noPaymentMethodCount += 1;
     else if (row.status === "unknown") statusUnknownCount += 1;
@@ -801,9 +805,10 @@ export async function buildCustomerHealthBoard(
       paymentDeclinedCount,
       noPaymentMethodCount,
       pausedCount,
+      outOfCreditCount,
       statusUnknownCount,
       inactiveCount:
-        rows.length - activeCount - reactiveOnlyCount - pausedCount - paymentDeclinedCount - noPaymentMethodCount - statusUnknownCount,
+        rows.length - activeCount - reactiveOnlyCount - pausedCount - outOfCreditCount - paymentDeclinedCount - noPaymentMethodCount - statusUnknownCount,
       greenCount,
       yellowCount,
       redCount,

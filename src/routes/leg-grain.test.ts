@@ -248,6 +248,34 @@ describe("workflow-projection: a LEG is answerable with no sales funnel named", 
     expect(tolerated.body.leg.legKey).toBe("meeting_booked_to_meeting_attended");
   });
 
+  it("a pipe of its channel that runs NO workflow (sourcing, AI Instant Call) answers 200 with nothing to rank, never a 400", async () => {
+    mockFetch();
+    for (const [slug, leg] of [
+      ["sourcing-apollo-cold-filters", "start_to_lead_found"],
+      ["sourcing-apollo-buying-signals", "start_to_lead_found"],
+      ["sourcing-linkedin-engagement-signals", "start_to_lead_found"],
+      ["ai-instant-call", "conversation_to_booking_call"],
+    ] as const) {
+      const res = await request(app)
+        .get(`/features/${slug}/workflow-projection?brandId=${BRAND}&leg=${leg}&campaignId=c-1&pricing=net`)
+        .set(AUTH);
+      expect(res.status, slug).toBe(200);
+      expect(res.body.featureSlug).toBe(slug);
+      expect(res.body.rows).toEqual([]);
+      expect(res.body.recommendedWorkflowDynastySlug).toBeNull();
+      expect(res.body.recommendedBudgetUsd).toBeNull();
+      expect(res.body.measured).toBe(false);
+      expect(res.body.unmeasuredReason).toBe("no_active_workflows");
+      expect(res.body.maturity).toMatchObject({ legKey: leg, measured: true, cutoffIso: null });
+    }
+    // A leg the channel does not have still fails loud.
+    const foreign = await request(app)
+      .get(`/features/sourcing-apollo-cold-filters/workflow-projection?brandId=${BRAND}&leg=signup_to_meeting_attended`)
+      .set(AUTH);
+    expect(foreign.status).toBe(400);
+    expect(foreign.body.reason).toBe("leg_unrecognised");
+  });
+
   it("naming a funnel is a 400 funnel_retired — beside a leg or alone, the parameter is retired", async () => {
     mockFetch();
     for (const query of ["leg=meeting_booked_to_meeting_attended&funnel=sales_meetings_from_conversation", "funnel=sales_meetings_from_conversation"]) {
