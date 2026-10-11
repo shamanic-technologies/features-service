@@ -1,3 +1,4 @@
+import { PERSON_SCOPED_CHANNEL_SLUGS } from "../lib/channel-leg-minimums.js";
 import { Router, type Request, type Response } from "express";
 import { apiKeyOnly } from "../middleware/auth.js";
 import {
@@ -454,7 +455,7 @@ const pipeRowOf = (m: CatalogueModel, p: CataloguePipe, name: string) => ({
 });
 
 /** A reactive funnel's trigger in customer words (`lib/funnel-descriptions.ts`); null on a proactive one. */
-const funnelCopy = (model: CatalogueModel, f: CatalogueFunnel) => ({ triggerLabel: funnelTriggerLabel(f, (k) => stepLabel(model, k)), trigger: funnelTrigger(model, f) });
+const funnelCopy = (model: CatalogueModel, f: CatalogueFunnel) => ({ triggerLabel: funnelTriggerLabel(f, (k) => stepLabel(model, k), (id) => model.triggers.get(id)?.name ?? null), trigger: funnelTrigger(model, f) });
 
 const funnelRowOf = (f: CatalogueFunnel, name: string, copy: ReturnType<typeof funnelCopy>) => ({
   id: f.id,
@@ -766,6 +767,8 @@ async function listSalesFunnels(req: Request, res: Response, forceRunnable: bool
       .flatMap((p) => funnelsOfPath(model, p))
       .filter((f) => !containsChannels || f.channelSlugs.some((s) => containsChannels.includes(s)))
       .filter((f) => !runnable || funnelRunnable(f))
+      // The public list never offers a funnel through a person-scoped channel (staff Copilot follow-ups).
+      .filter((f) => !forceRunnable || !f.channelSlugs.some((s) => PERSON_SCOPED_CHANNEL_SLUGS.has(s)))
       .filter((f) => matchesQuery(q, [funnelLine(f), names.get(f.id), f.id]))
       .sort(byRoi((f: CatalogueFunnel) => f.economics, (f) => f.id, (f) => funnelTypeOf(f)));
     const shown = candidates.slice(0, limit);
@@ -1297,7 +1300,7 @@ export async function funnelCopiesFor(ids: readonly string[]): Promise<{
   const out = new Map<string, FunnelCopy | null>(ids.map((id) => [id, null]));
   for (const [id, f] of found) {
     const name = names.get(f.id) ?? null;
-    out.set(id, { name, face: name ? faceOf(name).svgPath : null, type: funnelTypeOf(f), triggerLabel: funnelTriggerLabel(f, (k) => stepLabel(model, k)), path: funnelPathView(model, f), firstStep: funnelFirstStep(f.legs) });
+    out.set(id, { name, face: name ? faceOf(name).svgPath : null, type: funnelTypeOf(f), triggerLabel: funnelTriggerLabel(f, (k) => stepLabel(model, k), (id) => model.triggers.get(id)?.name ?? null), path: funnelPathView(model, f), firstStep: funnelFirstStep(f.legs) });
   }
   // Every pipe's steps, so a caller knows which step each of a campaign's units produces (`lib/value-added.ts`).
   const pipeSteps = new Map([...model.pipes.values()].map((p) => [p.id, { fromStep: p.fromStep, toStep: p.toStep }] as const));

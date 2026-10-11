@@ -20,7 +20,18 @@ export const MANAGED_CHANNEL_SLUGS: ReadonlySet<string> = new Set([
   "sales-cold-email-outreach",
   "ai-meeting-booking",
   "ai-instant-call",
+  // The Copilot follow-up (owner 2026-10-11): workflow-service runs it (`ai-follow-up-email-algenib`). Off the offer
+  // sales paths (`OFFER_PATH_MANAGED_CHANNEL_SLUGS`): it acts for one named person, never a way an offer sells.
+  "ai-follow-up-email",
 ]);
+
+/**
+ * Managed channels that act for ONE NAMED PERSON on a campaign's instruction (staff Copilot follow-ups, owner
+ * 2026-10-11): run like any managed channel (billing funds them, campaign-service launches them), but never offered
+ * to a customer as a way an offer sells: off the offer sales paths (`OFFER_PATH_MANAGED_CHANNEL_SLUGS`) and off the
+ * public runnable funnel list (`GET /public/catalogue/sales-funnels`).
+ */
+export const PERSON_SCOPED_CHANNEL_SLUGS: ReadonlySet<string> = new Set(["ai-follow-up-email"]);
 
 export const MANAGED_PROACTIVE_MINIMUM_MONTHLY_CENTS = 9_900;
 export const NOT_RUN_YET_MINIMUM_MONTHLY_CENTS = 150_000;
