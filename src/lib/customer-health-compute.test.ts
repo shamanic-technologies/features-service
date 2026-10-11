@@ -189,6 +189,8 @@ function makeDeps(fixtures: {
   dashboardReturns?: Map<string, DashboardReturnSignal>;
   /** When true, the dashboard-returns dep throws (exercises the fail-soft degrade → null on every row). */
   dashboardReturnsThrow?: boolean;
+  /** Per-org paid activity; "throw" = unreadable. Absent → $0 paid, no paid day. */
+  paidActivity?: Record<string, { cashPaidUsd: number; paidActiveDays: string[] } | "throw">;
 }): CustomerHealthDeps {
   const audit: AccountsAudit = {
     rows: fixtures.accounts,
@@ -245,10 +247,46 @@ function makeDeps(fixtures: {
       if (fixtures.perBrand[brandId]?.pauseHistoryThrow) throw new Error("campaign unreachable");
       return fixtures.perBrand[brandId]?.pauseHistory ?? [];
     },
+    orgPaidActivity: async (orgId) => {
+      const p = fixtures.paidActivity?.[orgId];
+      if (p === "throw") throw new Error("billing cash unreadable");
+      return p ?? { cashPaidUsd: 0, paidActiveDays: [] };
+    },
   };
 }
 
 describe("buildCustomerHealthBoard", () => {
+  it("paid active days are the days CASH funded (owner 2026-10-11): an org that never paid has none, an unreadable one is null", async () => {
+    const calls: string[] = [];
+    const deps = makeDeps({
+      accounts: [
+        account({ orgId: "aireena", brandId: "b1", status: "out_of_credit" }),
+        account({ orgId: "payer", brandId: "b2", status: "active" }),
+        account({ orgId: "payer", brandId: "b3", status: "active" }),
+        account({ orgId: "blip", brandId: "b4", status: "active" }),
+      ],
+      recencies: [recency("aireena", "2026-07-02"), recency("payer", "2026-07-14")],
+      perBrand: {},
+      paidActivity: {
+        aireena: { cashPaidUsd: 0, paidActiveDays: [] },
+        payer: { cashPaidUsd: 100, paidActiveDays: ["2026-07-10", "2026-07-14"] },
+        blip: "throw",
+      },
+    });
+    const inner = deps.orgPaidActivity;
+    deps.orgPaidActivity = (orgId, csv) => (calls.push(orgId), inner(orgId, csv));
+    const board = await buildCustomerHealthBoard(COLD_CSV, NOW, deps);
+    const by = Object.fromEntries(board.customers.map((r) => [r.brandId, r]));
+    expect(by.b1.activeDays.length).toBeGreaterThan(0); // it consumed credit...
+    expect(by.b1.paidActiveDays).toEqual([]); // ...but never paid: not a paying org
+    expect(by.b1.orgCashPaidUsd).toBe(0);
+    expect(by.b2.paidActiveDays).toEqual(["2026-07-10", "2026-07-14"]);
+    expect(by.b3.orgCashPaidUsd).toBe(100);
+    expect(by.b4.paidActiveDays).toBeNull();
+    expect(by.b4.orgCashPaidUsd).toBeNull();
+    expect(calls.filter((o) => o === "payer")).toHaveLength(1); // org-level, read once
+  });
+
   it("composes a GREEN row: active, ROI>=1, audience not near-exhausted; economics coherent", async () => {
     const deps = makeDeps({
       accounts: [account({ orgId: "a", brandId: "ba", status: "active" })],

@@ -4,6 +4,10 @@
  * revenue answers "how much MONEY was billed each period" — the exact same per-day ACTUALIZED cold-email
  * spend signal, summed in dollars instead of thresholded to a distinct-org headcount.
  *
+ * REVENUE IS CASH THE CLIENT PAID (owner rule 2026-10-11; re-based in place): every per-org day below is the
+ * CASH-FUNDED part of that day's spend (`cash-funded-spend.ts`); consumed gifts and unrepaid advances are
+ * never revenue, so an org that never paid has no revenue and no NRR cohort membership.
+ *
  * WHY reconstruct from spend. Realized revenue = the money we actually billed. features-service owns the
  * faithful HISTORICAL signal: per-day ACTUALIZED cold-email spend (runs-service). A day of real billed
  * cold-email spend is realized revenue that day (spend only happens on a non-paused, budgeted, funded
@@ -24,6 +28,7 @@ import { fetchFeatureMemberships } from "./feature-memberships-client.js";
 import { fetchBrandFirstBilledDay, fetchOrgDailySpendCents } from "./revenue-history-client.js";
 import { buildAccountsAudit, type AccountsAudit, type AccountsDeps, type UnreadOrgRead } from "./accounts-compute.js";
 import { mapWithConcurrency } from "./concurrency.js";
+import { cashFundedDailyCents, fetchOrgCashFunding, type OrgCashFunding } from "./cash-funded-spend.js";
 import { addUtcDays } from "./send-forecast-compute.js";
 import { bucketOf, enumerateBuckets, type Granularity } from "./active-users-compute.js";
 import {
@@ -160,6 +165,8 @@ export interface RevenueHistoryDeps {
   featureMemberships: (featureSlugsCsv: string) => Promise<Array<{ orgId: string }>>;
   /** Map of UTC day → actual cold-email spend (cents) for the org, since `startedAfterIso`. */
   orgDailySpendCents: (orgId: string, coldEmailSlugsCsv: string, startedAfterIso: string) => Promise<Map<string, number>>;
+  /** The org's cash paid + credit received without paying (billing). Only the cash-funded part of its spend is revenue. */
+  orgCashFunding: (orgId: string) => Promise<OrgCashFunding>;
   /**
    * LIVE fleet committed stats (accounts-audit): MRR (budget × 30), daily budget, active count — all USD —
    * plus the per-(org, brand) rows behind them. The rows are what the agency / self-serve split subtracts
@@ -273,6 +280,7 @@ export function paymentOutlookUnreadOrgsOf(audit: Pick<AccountsAudit, "unreadOrg
 const REAL_DEPS: RevenueHistoryDeps = {
   featureMemberships: async (csv) => (await fetchFeatureMemberships(csv)).map((m) => ({ orgId: m.orgId })),
   orgDailySpendCents: fetchOrgDailySpendCents,
+  orgCashFunding: fetchOrgCashFunding,
   currentFleetStats: (csv, now) => readCurrentFleetStats(csv, now),
   readCommittedSnapshots: readCommittedMrrSnapshotsSoft,
   recordRecurringSnapshot: recordRecurringMrrSnapshotSoft,
@@ -356,8 +364,14 @@ export async function buildRevenueHistory(
   // 2. Per-org ALL-TIME daily-spend map (capped fan-out) + the live fleet committed stats (accounts verdict),
   //    in parallel. One all-time fetch per org feeds every series: the trailing windows ignore out-of-window days.
   const [orgDayEntries, fleet] = await Promise.all([
+    // REVENUE IS CASH THE CLIENT PAID (owner rule 2026-10-11, `cash-funded-spend.ts`): each org's spend
+    // keeps only the part its cash funded, so consumed welcome credit / unrepaid advances are never revenue.
     mapWithConcurrency(orgIds, ORG_FANOUT_CONCURRENCY, async (orgId): Promise<[string, Map<string, number>]> => {
-      return [orgId, await deps.orgDailySpendCents(orgId, coldEmailSlugsCsv, INCEPTION_FLOOR_ISO)];
+      const [daily, funding] = await Promise.all([
+        deps.orgDailySpendCents(orgId, coldEmailSlugsCsv, INCEPTION_FLOOR_ISO),
+        deps.orgCashFunding(orgId),
+      ]);
+      return [orgId, cashFundedDailyCents(daily, funding)];
     }),
     coldEmailSlugsCsv
       ? deps.currentFleetStats(coldEmailSlugsCsv, now)
