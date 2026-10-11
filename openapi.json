@@ -24686,6 +24686,19 @@
                   },
                   "description": "The de-facto active-day timeline from billed spend (distinct UTC days, ascending)."
                 },
+                "paidActiveDays": {
+                  "type": "array",
+                  "nullable": true,
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "The days the org PAID for: the subset of its spend days its CASH funded (owner rule 2026-10-11: revenue is cash the client paid; consumed welcome credit or unrepaid advances are never revenue; non-cash credit is consumed first, then cash). 'Paying in month M' = at least one paid active day in M; an org that never paid (billing cash 0) has none, however much credit it consumed. null = billing's cash read or runs' spend read failed for this org (never guessed). Org-level: same on every brand row of one org."
+                },
+                "orgCashPaidUsd": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Cash the ORG paid us to date (billing GET /internal/accounts/by-org/:orgId/cash cash_paid_cents, net of refunds and lost disputes), USD. Org-level, never sum across rows. null = unreadable."
+                },
                 "status": {
                   "type": "string",
                   "enum": [
@@ -25178,6 +25191,8 @@
                 "activeThisWeek",
                 "activeThisMonth",
                 "activeDays",
+                "paidActiveDays",
+                "orgCashPaidUsd",
                 "status",
                 "statusUnknownReason",
                 "paymentDeclinedReason",
@@ -25483,7 +25498,7 @@
         "properties": {
           "totalRevenueUsd": {
             "type": "number",
-            "description": "Cumulative NET realized revenue since inception (all orgs, all time; post per-org usage discount), in USD (2-decimal)."
+            "description": "Cumulative NET realized revenue since inception (all orgs, all time; post per-org usage discount; CASH-FUNDED spend only, see monthly[].revenueUsd), in USD (2-decimal)."
           },
           "currentMrrUsd": {
             "type": "number",
@@ -25505,7 +25520,7 @@
                 },
                 "revenueUsd": {
                   "type": "number",
-                  "description": "NET realized revenue (summed NET actual cold-email spend after per-org usage discount, all orgs) in this bucket, in USD (2-decimal)."
+                  "description": "NET realized revenue in this bucket, in USD (2-decimal): the CASH-FUNDED part of each org's NET actual cold-email spend (owner rule 2026-10-11: revenue is cash the client paid; consumed welcome credit or unrepaid advances are never revenue; each org's non-cash credit is consumed first, then its cash, billing GET /internal/accounts/by-org/:orgId/cash). Until 2026-10-11 every consumed dollar counted. NRR rides the same basis."
                 },
                 "growthPct": {
                   "type": "number",
@@ -25537,7 +25552,7 @@
                 },
                 "revenueUsd": {
                   "type": "number",
-                  "description": "NET realized revenue (summed NET actual cold-email spend after per-org usage discount, all orgs) in this bucket, in USD (2-decimal)."
+                  "description": "NET realized revenue in this bucket, in USD (2-decimal): the CASH-FUNDED part of each org's NET actual cold-email spend (owner rule 2026-10-11: revenue is cash the client paid; consumed welcome credit or unrepaid advances are never revenue; each org's non-cash credit is consumed first, then its cash, billing GET /internal/accounts/by-org/:orgId/cash). Until 2026-10-11 every consumed dollar counted. NRR rides the same basis."
                 },
                 "growthPct": {
                   "type": "number",
@@ -25569,7 +25584,7 @@
                 },
                 "revenueUsd": {
                   "type": "number",
-                  "description": "NET realized revenue (summed NET actual cold-email spend after per-org usage discount, all orgs) in this bucket, in USD (2-decimal)."
+                  "description": "NET realized revenue in this bucket, in USD (2-decimal): the CASH-FUNDED part of each org's NET actual cold-email spend (owner rule 2026-10-11: revenue is cash the client paid; consumed welcome credit or unrepaid advances are never revenue; each org's non-cash credit is consumed first, then its cash, billing GET /internal/accounts/by-org/:orgId/cash). Until 2026-10-11 every consumed dollar counted. NRR rides the same basis."
                 },
                 "growthPct": {
                   "type": "number",
@@ -25601,7 +25616,7 @@
                 },
                 "revenueUsd": {
                   "type": "number",
-                  "description": "NET realized revenue (summed NET actual cold-email spend after per-org usage discount, all orgs) in this bucket, in USD (2-decimal)."
+                  "description": "NET realized revenue in this bucket, in USD (2-decimal): the CASH-FUNDED part of each org's NET actual cold-email spend (owner rule 2026-10-11: revenue is cash the client paid; consumed welcome credit or unrepaid advances are never revenue; each org's non-cash credit is consumed first, then its cash, billing GET /internal/accounts/by-org/:orgId/cash). Until 2026-10-11 every consumed dollar counted. NRR rides the same basis."
                 },
                 "growthPct": {
                   "type": "number",

@@ -84,6 +84,8 @@ describe("buildRevenueHistory — integration via injected deps", () => {
     activeCount?: number;
     snapshots?: Array<{ date: string; mrrUsd: number }>;
     capture?: { startedAfter?: string; recorded?: Array<{ orgId: string; revenueClass: string; mrrCents: string | null }> };
+    /** Per-org cash funding; absent = every cent of spend was cash-funded. */
+    cashFunding?: Record<string, { cashPaidCents: number; nonCashCreditCents: number }>;
   }): RevenueHistoryDeps {
     return {
       featureMemberships: async () => fixture.orgs.map((orgId) => ({ orgId })),
@@ -91,6 +93,7 @@ describe("buildRevenueHistory — integration via injected deps", () => {
         if (fixture.capture) fixture.capture.startedAfter = startedAfterIso;
         return new Map(Object.entries(fixture.dailyCents[orgId] ?? {}));
       },
+      orgCashFunding: async (orgId) => fixture.cashFunding?.[orgId] ?? { cashPaidCents: 1e12, nonCashCreditCents: 0 },
       currentFleetStats: async () => ({ recurring: fleetWorth(fixture.currentMrrUsd), pairs: [] }),
       readCommittedSnapshots: async () => fixture.snapshots ?? [],
       recordRecurringSnapshot: async (rows) => {
@@ -224,6 +227,36 @@ describe("buildRevenueHistory — integration via injected deps", () => {
     expect(history.netRevenueRetention.weekly).toHaveLength(2);
   });
 
+  it("revenue is CASH the client paid: consumed welcome credit / unrepaid advances are never revenue (owner 2026-10-11)", async () => {
+    const history = await buildRevenueHistory(
+      COLD,
+      NOW,
+      { days: 3, weeks: 2, months: 2 },
+      deps({
+        orgs: ["aireena", "payer"],
+        dailyCents: {
+          // Aireena: $9.51 of its $30 signup advance consumed this month, never paid a cent.
+          aireena: { "2026-07-14": 951 },
+          // A payer: $30 welcome credit consumed first (June), then $50 of the $100 it paid (July).
+          payer: { "2026-06-20": 3000, "2026-07-15": 5000 },
+        },
+        cashFunding: {
+          aireena: { cashPaidCents: 0, nonCashCreditCents: 3000 },
+          payer: { cashPaidCents: 10000, nonCashCreditCents: 3000 },
+        },
+        currentMrrUsd: 0,
+      }),
+    );
+    expect(history.totalRevenueUsd).toBe(50);
+    const july = history.monthly.find((b) => b.period === "2026-07");
+    const june = history.monthly.find((b) => b.period === "2026-06");
+    expect(july?.revenueUsd).toBe(50);
+    expect(june?.revenueUsd).toBe(0);
+    // NRR: nobody had revenue in June, so July has no cohort (Aireena and the June credit burn are not revenue).
+    const nrrJuly = history.netRevenueRetention.monthly.find((b) => b.period === "2026-07");
+    expect(nrrJuly?.cohortSize).toBe(0);
+  });
+
   it("empty cold-email universe → zero totals + empty since-inception line, never throws", async () => {
     const history = await buildRevenueHistory("", NOW, { days: 2, weeks: 1, months: 1 }, deps({ orgs: [], dailyCents: {}, currentMrrUsd: 0 }));
     expect(history.totalRevenueUsd).toBe(0);
@@ -279,6 +312,7 @@ describe("buildRevenueHistory — the agency / self-serve split", () => {
     return {
       featureMemberships: async () => [{ orgId: AGENCY_ORG }, { orgId: SAAS_ORG }],
       orgDailySpendCents: async () => new Map(),
+      orgCashFunding: async () => ({ cashPaidCents: 1e12, nonCashCreditCents: 0 }),
       // billing's recurring verdict: both orgs recurring, $143/day and $102/day proactive running.
       currentFleetStats: async () => ({
         recurring: {
@@ -738,6 +772,7 @@ describe("revenue history — one org's unreadable billing payment-outlook (2026
     const history = await buildRevenueHistory(COLD, NOW, { days: 2, weeks: 1, months: 1 }, {
       featureMemberships: async () => memberships.map(({ orgId }) => ({ orgId })),
       orgDailySpendCents: async (orgId) => new Map([["2026-07-15", orgId === "ok1" ? 1000 : 500]]),
+      orgCashFunding: async () => ({ cashPaidCents: 1e12, nonCashCreditCents: 0 }),
       currentFleetStats: (csv, now) => readCurrentFleetStats(csv, now, accountsDeps("bad"), recurring),
       readCommittedSnapshots: async () => [],
       recordRecurringSnapshot: async () => {},
