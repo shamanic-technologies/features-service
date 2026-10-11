@@ -43,6 +43,11 @@ export interface ChannelTriggerType {
    * that needs the lead): it draws on no budget of its own, so it never makes a funnel "mixed". Absent = false.
    */
   inline?: boolean;
+  /**
+   * How it fires (`lib/channel-declarations.ts` kinds). Absent = `event` (a service detects it on a lead and rings
+   * campaign-service). `reported` = a CALLER reports each occurrence to campaign-service's trigger-events record route.
+   */
+  kind?: "event" | "reported";
 }
 
 /**
@@ -135,6 +140,21 @@ export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
     fromStep: "purchase",
     firedBy: "lead-service",
     coded: false,
+  },
+  {
+    // REPORTED BY A CALLER (owner 2026-10-11, the Copilot follow-up): a follow-up someone planned for ONE person is
+    // due. Whoever knows it is due (the Copilot, staff) reports it to campaign-service's trigger-events record route
+    // with the person's lead id; campaign-service fires the live campaigns whose pipe names it, which act for that
+    // person and carry the instruction of what to write. The generic one: a precise condition is its own declared
+    // `reported` trigger (`src/routes/CLAUDE.md`, "Copilot follow-up").
+    id: "follow_up_due",
+    label: "Follow-up Due",
+    description: "A follow-up planned for one person is due.",
+    icon: "bell-ringing",
+    fromStep: null,
+    firedBy: "campaign-service",
+    coded: true,
+    kind: "reported",
   },
 ];
 

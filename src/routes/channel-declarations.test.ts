@@ -28,6 +28,7 @@ vi.mock("../lib/channel-declarations-store.js", async () => {
   const seeded = SEED_FEATURES.filter((f) => f.status === "active");
   return {
     listTriggerTypes: async () => mem.triggers,
+    registerStepDeclarations: async () => ({ steps: [], rates: [] }),
     listDeclaredChannels: async () => mem.channels,
     listDeclaredLegs: async () => mem.legs,
     listDeclaredSalesPaths: async () => mem.paths,
@@ -112,7 +113,7 @@ beforeEach(() => {
   mem.channels.length = 0;
   mem.legs.length = 0;
   mem.paths.length = 0;
-  mem.triggers.splice(0, mem.triggers.length, ...CHANNEL_TRIGGER_TYPES.map((t, i) => ({ ...t, origin: "code", kind: "event", params: null, displayOrder: i, createdBy: null, requestedByOrgId: null })));
+  mem.triggers.splice(0, mem.triggers.length, ...CHANNEL_TRIGGER_TYPES.map((t, i) => ({ ...t, origin: "code", kind: t.kind ?? "event", params: null, displayOrder: i, createdBy: null, requestedByOrgId: null })));
 });
 
 describe("/internal/declarations: a staff caller declares a channel, a reactive leg and a sales path live", () => {
@@ -206,6 +207,41 @@ describe("/internal/declarations: a staff caller declares a channel, a reactive 
     expect(bad.status).toBe(400);
     expect(bad.body.reason).toBe("delay_days_invalid");
     expect(mem.triggers.some((x) => x.id === "broken_delay")).toBe(false);
+  });
+
+  it("a trigger REPORTED by a caller is coded and starts a leg of the AI Follow-up Email (owner 2026-10-11)", async () => {
+    // The seeded generic one: the channel's own leg answers it.
+    const seeded = mem.triggers.find((x) => x.id === "follow_up_due");
+    expect(seeded).toMatchObject({ kind: "reported", coded: true, firedBy: "campaign-service" });
+
+    // Who reports it is stated, never assumed.
+    const missing = await request(app)
+      .post("/internal/declarations/trigger-types")
+      .set(KEY)
+      .send({ id: "cost_figure_ready", label: "Cost Figure Ready", description: "The exact cost figure is available.", icon: "bell-ringing", kind: "reported", createdBy: "copilot" });
+    expect(missing.status).toBe(400);
+    expect(missing.body.reason).toBe("params_required");
+    const firedBy = await request(app)
+      .post("/internal/declarations/trigger-types")
+      .set(KEY)
+      .send({ id: "cost_figure_ready", label: "Cost Figure Ready", description: "x", icon: "bell-ringing", kind: "reported", firedBy: "chat-service", params: { reportedBy: "chat-service" }, createdBy: "copilot" });
+    expect(firedBy.status).toBe(400);
+    expect(firedBy.body.reason).toBe("fired_by_not_declarable");
+
+    const t = await request(app)
+      .post("/internal/declarations/trigger-types")
+      .set(KEY)
+      .send({ id: "cost_figure_ready", label: "Cost Figure Ready", description: "The exact cost figure is available.", icon: "bell-ringing", kind: "reported", fromStep: "conversation", params: { reportedBy: "chat-service" }, createdBy: "copilot" });
+    expect(t.status).toBe(201);
+    expect(t.body).toMatchObject({ origin: "declared", kind: "reported", coded: true, firedBy: "campaign-service", params: { reportedBy: "chat-service" }, fromStep: "conversation" });
+
+    // A leg on the seeded channel may name it: a caller reporting it is a real firing.
+    const leg = await request(app)
+      .post("/internal/declarations/channels/ai-follow-up-email/legs")
+      .set(KEY)
+      .send({ fromStep: "conversation", toStep: "paid_client", mode: "reactive", triggerId: "cost_figure_ready", createdBy: "copilot" });
+    expect(leg.status).toBe(201);
+    expect(leg.body.leg).toMatchObject({ legKey: "conversation_to_paid_client", mode: "reactive", triggerId: "cost_figure_ready" });
   });
 
   it("a channel stated in code is read-only here", async () => {

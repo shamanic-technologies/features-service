@@ -18,6 +18,7 @@ export const CHANNEL_SHORT_DESCRIPTIONS: Readonly<Record<string, string>> = {
   "sales-cold-email-outreach": "We find your buyers and email them for you.",
   "ai-meeting-booking": "Our AI answers replies and books the meeting.",
   "ai-instant-call": "A buyer says yes? We ring your rep right away.",
+  "ai-follow-up-email": "We email one person when a follow-up is due.",
 
   // Outbound, one to one
   "pr-cold-email-outreach": "We pitch your story to the right journalists.",
