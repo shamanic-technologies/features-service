@@ -470,7 +470,7 @@ describe("agent catalogue triggers (owner 2026-10-11, the staff Triggers section
     const names = r.body.rows.map((x: { name: string }) => x.name);
     expect(new Set(names).size).toBe(names.length);
     const reply = r.body.rows.find((x: { id: string }) => x.id === "positive_reply_received");
-    expect(reply).toMatchObject({ name: "Positive reply", icon: "lightning", eventIcon: "thumbs-up", fromStep: "conversation", coded: true });
+    expect(reply).toMatchObject({ name: "Positive Reply", icon: "lightning", eventIcon: "thumbs-up", fromStep: "conversation", coded: true });
     expect(reply.color).toMatch(/^#[0-9A-F]{6}$/i);
     expect(reply.pipeCount).toBeGreaterThan(0);
   });
@@ -483,7 +483,7 @@ describe("agent catalogue triggers (owner 2026-10-11, the staff Triggers section
   it("one trigger: the reactive pipes it starts, named", async () => {
     const r = await request(app).get("/internal/catalogue/triggers/positive_reply_received").set(KEY);
     expect(r.status).toBe(200);
-    expect(r.body).toMatchObject({ object: "trigger", id: "positive_reply_received", name: "Positive reply" });
+    expect(r.body).toMatchObject({ object: "trigger", id: "positive_reply_received", name: "Positive Reply" });
     const ids = r.body.pipes.map((p: { id: string }) => p.id);
     expect(ids).toContain(MEET);
     expect(r.body.pipes.find((p: { id: string }) => p.id === MEET)).toMatchObject({ name: "Prism", mode: "reactive" });
