@@ -81,6 +81,17 @@ const CONVERTS_THE_SELF_SERVE_LEAD: readonly ChannelStepTransition[] = reactsToS
   { from: "signup", to: "paid_client" },
   { from: "form_submitted", to: "paid_client" },
 );
+// EVERY LEG A CHANNEL (owner 2026-10-11: "il y a des pipes sans channel ... Ça ne devrait pas être possible"). The
+// legs below were walked by sales paths with nobody of ours on them, so a funnel showed a bare leg. Each is the
+// customer's own work, so each is a `Your Team` channel like the meeting and closing legs above.
+const TAKES_THE_BOOKING_CALL: readonly ChannelStepTransition[] = reactsToStep({ from: "booking_call", to: "meeting_booked" });
+const CLOSES_THE_REPLY: readonly ChannelStepTransition[] = reactsToStep({ from: "conversation", to: "paid_client" });
+const CONVERTS_THE_VISIT: readonly ChannelStepTransition[] = reactsToStep(
+  { from: "website_visit", to: "signup" },
+  { from: "website_visit", to: "form_submitted" },
+  { from: "website_visit", to: "purchase" },
+);
+const DELIVERS_THE_ORDER: readonly ChannelStepTransition[] = reactsToStep({ from: "purchase", to: "paid_client" });
 
 /** Commercial terms, written the way they are set: a daily operating cost in whole cents, a minimum
  *  booking in days, and the promise on how long until the channel starts producing. */
@@ -989,6 +1000,23 @@ const PUBLISHED_CHANNELS: ChannelSeed[] = [
   { slug: "your-team-signup-conversion", name: "Your Team Signup Conversion", displayOrder: 49, icon: "user-check", family: "conversion", operatedBy: "customer", performedBy: "person", stepTransitions: CONVERTS_THE_SELF_SERVE_LEAD,
     terms: terms(0, 30, 1),
     description: "Your own team follows up the signups and form fills until they become paying clients.",
+    inputs: OFFER_INPUTS },
+
+  { slug: "your-team-booking-calls", name: "Your Team Booking Calls", displayOrder: 51, icon: "phone-call", family: "conversion", operatedBy: "customer", performedBy: "person", stepTransitions: TAKES_THE_BOOKING_CALL,
+    terms: terms(0, 30, 1),
+    description: "Your sales rep takes the call with the prospect and books the meeting.",
+    inputs: OFFER_INPUTS },
+  { slug: "your-team-reply-closing", name: "Your Team Reply Closing", displayOrder: 52, icon: "handshake", family: "conversion", operatedBy: "customer", performedBy: "person", stepTransitions: CLOSES_THE_REPLY,
+    terms: terms(0, 30, 1),
+    description: "Your own team answers the positive replies and turns them into paying clients.",
+    inputs: OFFER_INPUTS },
+  { slug: "your-team-website", name: "Your Team Website", displayOrder: 53, icon: "browser", family: "conversion", operatedBy: "customer", performedBy: "person", stepTransitions: CONVERTS_THE_VISIT,
+    terms: terms(0, 30, 1),
+    description: "Your own website turns the visits we send into signups, form fills and purchases.",
+    inputs: OFFER_INPUTS },
+  { slug: "your-team-order-delivery", name: "Your Team Order Delivery", displayOrder: 54, icon: "package", family: "conversion", operatedBy: "customer", performedBy: "person", stepTransitions: DELIVERS_THE_ORDER,
+    terms: terms(0, 30, 1),
+    description: "Your own team delivers what the buyer ordered, so the purchase becomes a paying client.",
     inputs: OFFER_INPUTS },
 ];
 

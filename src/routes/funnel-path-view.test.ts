@@ -1,31 +1,70 @@
-/** The funnel PATH the Campaigns table draws (owner 2026-10-11), served structured: never parsed from an id. */
+/**
+ * The funnel PATH the Campaigns table draws (owner 2026-10-11), served structured: never parsed from an id. From
+ * Start (a proactive funnel) or its trigger step (a reactive one) to Paid client, a channel between EVERY two steps.
+ */
 import { describe, it, expect, vi } from "vitest";
 
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 const { funnelPathView } = await import("./agent-catalogue.js");
+const { buildCatalogueModel, funnelById, funnelsOfPath } = await import("../lib/agent-catalogue.js");
+const { buildChannelCatalogue } = await import("../lib/channel-catalogue.js");
+const { SEED_FEATURES } = await import("../seed/features.js");
+const { servedLegKeyOf } = await import("../lib/funnel-legs.js");
 
-const LABELS: Record<string, string> = { lead_found: "Lead found", conversation: "Positive reply", meeting_booked: "Meeting booked", meeting_attended: "Meeting attended", paid_client: "Paid client" };
-const model = (steps: string[]) =>
-  ({ steps: new Map(Object.entries(LABELS).map(([key, label]) => [key, { key, label }])), paths: new Map([["p", { id: "p", steps }]]) }) as never;
-const pipe = (slug: string, name: string, operatedBy: "platform" | "customer") => ({ channelSlug: slug, channelName: name, operatedBy });
+const channels = buildChannelCatalogue(SEED_FEATURES.filter((f) => f.status === "active"));
+const model = buildCatalogueModel({
+  channels,
+  publishedPipeIds: new Set(channels.flatMap((c) => c.stepTransitions.map((t) => `${c.slug}|${servedLegKeyOf(c.slug, t.legKey)}`))),
+  declaredSteps: [],
+  measurements: new Map(),
+  fleetMedians: new Map(),
+  lifetimeRevenueUsd: null,
+});
+const read = (v: ReturnType<typeof funnelPathView>) => v.items.map((i) => (i.kind === "step" ? i.label : `[${i.name}]`));
 
 describe("funnelPathView", () => {
-  it("Bliss: our channel between the two steps of the leg we run, the team's legs show only their next step, ends at Paid client", () => {
-    const v = funnelPathView(model(["lead_found", "conversation", "meeting_booked", "meeting_attended", "paid_client"]), {
-      pathId: "p",
-      legs: [
-        { legKey: "lead_found_to_conversation", pipe: pipe("sales-cold-email-outreach", "Sales Cold Email Outreach", "platform") },
-        { legKey: "conversation_to_meeting_booked", pipe: null },
-        { legKey: "meeting_booked_to_meeting_attended", pipe: pipe("your-team-meeting-attendance", "Your Team Meeting Attendance", "customer") },
-        { legKey: "meeting_attended_to_paid_client", pipe: null },
-      ],
-    } as never);
-    expect(v.items.map((i) => (i.kind === "step" ? i.label : `[${i.name}]`))).toEqual([
-      "Lead found", "[Sales Cold Email Outreach]", "Positive reply", "Meeting booked", "Meeting attended", "Paid client",
+  const BLISS = "lead_found_to_conversation@sales-cold-email-outreach+conversation_to_meeting_booked+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client";
+  const MOVING = "conversation_to_booking_call@ai-instant-call+booking_call_to_meeting_booked+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client";
+
+  it("Bliss reads Start -> [its sources] -> Lead found -> [Sales Cold Email Outreach] -> Positive reply -> [Your Team ...] -> ... -> Paid client", () => {
+    const sources = ["sourcing-apollo-cold-filters", "sourcing-apollo-buying-signals", "sourcing-linkedin-engagement-signals"];
+    // The campaign's units: its three sources and its cold email (the sourcing leg shows the sources it runs).
+    const v = funnelPathView(model, funnelById(model, BLISS)!, [...sources, "sales-cold-email-outreach"]);
+    const items = read(v);
+    expect(items[0]).toBe("Start");
+    expect(items.slice(1, 4).sort()).toEqual(["[Apollo Buying Signals]", "[Apollo Cold Filters]", "[LinkedIn Engagement Signals]"].sort());
+    expect(items.slice(4)).toEqual([
+      "Lead found", "[Sales Cold Email Outreach]", "Positive reply",
+      "[Your Team Meeting Booking]", "Meeting booked",
+      "[Your Team Meeting Attendance]", "Meeting attended",
+      "[Your Team Closing Calls]", "Paid client",
     ]);
     expect(v.legs.map((l) => [l.fromStep, l.toStep, l.runByUs])).toEqual([
-      ["lead_found", "conversation", true], ["conversation", "meeting_booked", false], ["meeting_booked", "meeting_attended", false], ["meeting_attended", "paid_client", false],
+      ["start", "lead_found", true], ["lead_found", "conversation", true], ["conversation", "meeting_booked", false], ["meeting_booked", "meeting_attended", false], ["meeting_attended", "paid_client", false],
     ]);
-    expect(v.legs[2].channelName).toBe("Your Team Meeting Attendance");
+    expect(v.legs[3].channels).toEqual([{ slug: "your-team-meeting-attendance", name: "Your Team Meeting Attendance", runByUs: false }]);
+  });
+
+  it("Moving, a reactive funnel, starts on its trigger step, and the booking call leg is the customer's team's", () => {
+    expect(read(funnelPathView(model, funnelById(model, MOVING)!))).toEqual([
+      "Positive reply", "[AI Instant Call]", "Booking call", "[Your Team Booking Calls]", "Meeting booked",
+      "[Your Team Meeting Attendance]", "Meeting attended", "[Your Team Closing Calls]", "Paid client",
+    ]);
+  });
+
+  it("every catalogue funnel shows a channel between every two steps; a proactive one starts at Start", () => {
+    let funnels = 0;
+    for (const path of model.paths.values()) {
+      for (const f of funnelsOfPath(model, path)) {
+        funnels += 1;
+        const v = funnelPathView(model, f);
+        const kinds = v.items.map((i) => i.kind);
+        expect(kinds[0], f.id).toBe("step");
+        expect(kinds[kinds.length - 1], f.id).toBe("step");
+        for (let i = 1; i < kinds.length; i += 1) if (kinds[i] === "step") expect(kinds[i - 1], `${f.id} @${i}`).toBe("channel");
+        if (path.type === "proactive") expect(v.items[0], f.id).toMatchObject({ key: "start", label: "Start" });
+      }
+    }
+    expect(funnels).toBeGreaterThan(20);
   });
 });

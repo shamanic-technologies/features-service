@@ -176,6 +176,13 @@
       "when": 1791849600000,
       "tag": "0024_funnel_descriptions",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1791936000000,
+      "tag": "0025_paths_start_at_start",
+      "breakpoints": true
     }
   ]
 }

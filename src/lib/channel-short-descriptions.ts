@@ -72,6 +72,10 @@ export const CHANNEL_SHORT_DESCRIPTIONS: Readonly<Record<string, string>> = {
   "your-team-closing-calls": "You run the meetings and close the deals.",
   "agency-signup-conversion": "Our team turns signups into paying clients.",
   "your-team-signup-conversion": "Your team turns signups into paying clients.",
+  "your-team-booking-calls": "Your rep takes the call and books the meeting.",
+  "your-team-reply-closing": "Your team turns positive replies into clients.",
+  "your-team-website": "Your website turns visits into signups and sales.",
+  "your-team-order-delivery": "Your team delivers the order to the buyer.",
 };
 
 export class MissingChannelShortDescriptionError extends Error {
