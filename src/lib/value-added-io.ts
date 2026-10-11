@@ -89,13 +89,27 @@ export async function computeTakeoverReturn(args: {
     headline: added
       ? { totalPipelineUsd: added.valueAddedUsd, unpricedReason: null }
       : { totalPipelineUsd: null, unpricedReason: priced?.economics.unpricedReason ?? "no_priced_funnel" },
-    costEconomics: buildCostEconomics({
-      committedCostInUsdCents: cost.committedCents,
-      actualCostInUsdCents: cost.actualCents,
-      totalPipelineUsd: added ? added.valueAddedUsd : null,
-      lifetimeRevenueUsd: ltr,
-    }),
+    costEconomics: learningUntilMature(
+      buildCostEconomics({
+        committedCostInUsdCents: cost.committedCents,
+        actualCostInUsdCents: cost.actualCents,
+        totalPipelineUsd: added ? added.valueAddedUsd : null,
+        lifetimeRevenueUsd: ltr,
+      }),
+      leg.isMature,
+    ),
     maturity: { isMature: leg.isMature, legs: [leg] },
     valueAdded: added ? { ...added, takeoverStep } : null,
   };
+}
+
+/**
+ * LEARNING UNTIL MATURE (owner 2026-10-11, "reactive ones then read Learning/maturing like Bliss until mature"):
+ * while the takeover leg has not reached its own maturity bar (`lib/maturity.ts`, e.g. 10 outcomes), the ratios
+ * read null with `unmeasuredReason: "maturing"`, the same statement a young proactive campaign makes; never a
+ * 0x on a handful of cents. The totals (spend, value added) stay served.
+ */
+export function learningUntilMature(block: CostEconomics, isMature: boolean | null): CostEconomics {
+  if (isMature !== false || !(block.committedCostUsd > 0)) return block;
+  return { ...block, roiMultiple: null, costOfAcquisitionPct: null, costPerAcquisitionUsd: null, unmeasuredReason: "maturing" };
 }

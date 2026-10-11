@@ -70,3 +70,16 @@ describe("the catalogue prices a pipe on the same rule (valueAddedTo)", () => {
     expect(valueAddedTo(valueOf, "lead_found", "conversation")).toBe(150);
   });
 });
+
+describe("learningUntilMature", async () => {
+  vi.doMock("./leads-client.js", () => ({}));
+  const { learningUntilMature } = await import("./value-added-io.js");
+  const block = { committedCostUsd: 0.07, actualCostUsd: 0.07, roiMultiple: 0, costOfAcquisitionPct: null, costPerAcquisitionUsd: null, maturityDays: 0, unmeasuredReason: null, ratioBasis: { committedCostUsd: 0.07, totalPipelineUsd: 0 }, realizedReturn: null } as never;
+  it("below its leg's bar a campaign reads Learning (null ROI, maturing), like a young proactive one", () => {
+    expect(learningUntilMature(block, false)).toMatchObject({ roiMultiple: null, unmeasuredReason: "maturing", committedCostUsd: 0.07 });
+  });
+  it("a mature leg, or nothing spent, keeps the figure", () => {
+    expect(learningUntilMature(block, true)).toBe(block);
+    expect(learningUntilMature({ ...(block as object), committedCostUsd: 0 } as never, false)).toMatchObject({ unmeasuredReason: null });
+  });
+});
