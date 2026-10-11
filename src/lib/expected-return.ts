@@ -288,11 +288,11 @@ export function priceCombination(key: string, inputs: CombinationInputs, lifetim
   const from = legs[0].def!.fromStep?.key ?? null;
   let added = ltr;
   if (from !== null && from !== "lead_found") {
-    const r0 = rateOf(legs[0].legKey);
     const route = bestRouteToPaid(from, rates);
-    if (!r0 || !route) return null;
-    // People at the takeover step per paying client × what one was already worth there.
-    added = ltr - (needed / (r0.effectiveRatePct! / 100)) * ltr * route.p;
+    if (!route) return null;
+    // The people it MOVED (its first leg's outcomes per paying client) × what each was already worth at the
+    // takeover step; the ones it did not move keep their value and add nothing (catalogue `funnelEconomics`).
+    added = ltr - needed * ltr * route.p;
     assumptions.push({ input: "sales_path", legKey: legs[0].legKey, basis: route.basis, source: `value_added_from:${from}` });
   }
   return {
