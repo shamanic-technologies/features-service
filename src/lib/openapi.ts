@@ -33,7 +33,7 @@ const expectedReturnRef = registry.register(
           }),
         )
         .describe("Every input the model figure rests on, with its own source. Empty on a measured figure."),
-      combinationKey: z.string().nullable().describe("The sales path (combination key, stored spelling) the figure is read off. A funnel campaign reads its own; a campaign the best selected path running it; an offer its best selected path (proactive first); a brand its best offer. Null on a measured figure."),
+      combinationKey: z.string().nullable().describe("The sales path (combination key, stored spelling) the figure is read off. A funnel campaign reads its OWN (the listed path, else its own legs priced on the same rates and costs; a reactive funnel on the value it adds over what its people were already worth at the trigger step), the offer's only when its own cannot be priced; a campaign the best selected path running it; an offer its best selected path (proactive first); a brand its best offer. Null on a measured figure."),
       costPerOutcome: z
         .object({
           costPerOutcomeUsd: z.number(),

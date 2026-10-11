@@ -14,7 +14,7 @@ import { Router } from "express";
 import { apiKeyAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import { loadChannelCatalogue } from "../lib/channel-declarations-store.js";
 import { fetchBrandLegEconomics } from "../lib/brand-leg-economics-client.js";
-import { getBrandEffectiveRates } from "../lib/effective-conversion-rates.js";
+import { getBrandEffectiveRates, type EffectiveArrowRate } from "../lib/effective-conversion-rates.js";
 import { SalesFunnelsUnavailableError } from "../lib/sales-funnels-client.js";
 import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
 import { offerFunnelSelection } from "../lib/offer-funnel-campaigns.js";
@@ -93,6 +93,11 @@ export interface OfferSalesPathsModel {
   /** The published channel catalogue, every sales-path campaign named. */
   published: Awaited<ReturnType<typeof withCampaignNames>>;
   lifetimeRevenue: Awaited<ReturnType<typeof offerLifetimeRevenue>>;
+  /** The inputs the paths were priced on, so a combination the build does not list (a reactive funnel, a leg the
+   *  customer's team works) is priced on the SAME rates and costs (`lib/expected-return.ts`). */
+  rates: EffectiveArrowRate[];
+  prices: ReadonlyMap<string, LegChannelPrice>;
+  fleetPrices: ReadonlyMap<string, number>;
 }
 
 /**
@@ -168,6 +173,14 @@ export async function computeOfferSalesPathsModel(args: {
       }
     }
   }
+  // Every managed (leg, channel) of the offer's OWN funnel campaigns too: a reactive funnel starts on a trigger
+  // step no enumerated chain starts from, and its row is priced on its own legs.
+  for (const key of selectedPaths?.combinationKeys ?? []) {
+    for (const part of key.split("+")) {
+      const [legKey, slug] = part.split("@");
+      if (slug && MANAGED_CHANNEL_SLUGS.has(slug)) pairs.set(priceKey(legKey, slug), { legKey, slug });
+    }
+  }
   const prices = new Map<string, LegChannelPrice>();
   await mapWithConcurrency([...pairs.values()], 4, async ({ legKey, slug }) => {
     try {
@@ -199,7 +212,7 @@ export async function computeOfferSalesPathsModel(args: {
     scope,
     catalogueChannelSlugs,
   });
-  return { body, selectedPaths, published, lifetimeRevenue };
+  return { body, selectedPaths, published, lifetimeRevenue, rates: rates.legs, prices, fleetPrices };
 }
 
 router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {

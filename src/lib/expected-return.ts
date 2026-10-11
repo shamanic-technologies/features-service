@@ -29,8 +29,17 @@
  * Null only when the model cannot be READ (`unavailableReason`), loudly, never a 502 of the read carrying it.
  * The model is memoized per (org, brand, offer), served stale while it refreshes behind.
  */
-import { FUNNEL_LEG_KEYS, storedCombinationKeyOf, storedLegKeyOf } from "./funnel-legs.js";
-import type { OfferSalesPathsBody, SalesPath, SalesPathCostSource, SalesPathRateSource } from "./offer-sales-paths.js";
+import { FUNNEL_LEG_KEYS, FUNNEL_LEGS, funnelLeg, storedCombinationKeyOf, storedLegKeyOf } from "./funnel-legs.js";
+import {
+  DEFAULT_COST_PER_OUTCOME_USD,
+  resolveLegChannelCost,
+  type LegChannelPrice,
+  type OfferSalesPathsBody,
+  type SalesPath,
+  type SalesPathCostSource,
+  type SalesPathRateSource,
+} from "./offer-sales-paths.js";
+import type { EffectiveArrowRate, EffectiveRateSource } from "./effective-conversion-rates.js";
 import type { OfferLifetimeRevenueSource as LifetimeRevenueSource } from "./offer-lifetime-revenue.js";
 import type { AudienceStatsEnvelope } from "./audience-stats-compute.js";
 
@@ -160,6 +169,16 @@ export interface OfferExpectedModel {
   lifetimeRevenueSource: LifetimeRevenueSource | null;
   /** True when the offer runs no funnel campaign and the model walked every catalogue leg. */
   notRunning: boolean;
+  /** What the paths were priced on, to price a combination the build does not list. Absent = list only. */
+  inputs?: CombinationInputs;
+}
+
+/** The rates, costs and lifetime revenue an offer's paths are priced on (`computeOfferSalesPathsModel`). */
+export interface CombinationInputs {
+  lifetimeRevenueUsd: number | null;
+  rates: readonly EffectiveArrowRate[];
+  prices: ReadonlyMap<string, LegChannelPrice>;
+  fleetPrices: ReadonlyMap<string, number>;
 }
 
 const priced = (paths: readonly SalesPath[]): SalesPath[] => paths.filter((p) => p.roi !== null && Number.isFinite(p.roi));
@@ -180,11 +199,110 @@ export function expectedForOffer(m: OfferExpectedModel): ExpectedReturn {
   return path ? expectedFromPath(path, m.lifetimeRevenueSource, null, notRunningAssumption(m)) : unavailableExpectedReturn("no_priced_sales_path");
 }
 
-/** PURE: a sales funnel campaign's expected return (its own path, else the offer's). */
+/**
+ * PURE: a sales funnel campaign's expected return, on ITS OWN path: the listed path when the build lists it
+ * (byte-same as the Sales path page), else its own legs priced on the SAME rates and costs (`priceCombination`:
+ * a reactive funnel, a leg the customer's team works). Only a combination that cannot be priced at all falls to
+ * the offer's figure.
+ */
 export function expectedForCombination(m: OfferExpectedModel, salesFunnelId: string): ExpectedReturn {
   const key = storedCombinationKeyOf(salesFunnelId);
   const path = priced(m.body.paths).find((p) => p.combinationKey === key);
-  return path ? expectedFromPath(path, m.lifetimeRevenueSource, null) : expectedForOffer(m);
+  if (path) return expectedFromPath(path, m.lifetimeRevenueSource, null);
+  const own = m.inputs ? priceCombination(key, m.inputs, m.lifetimeRevenueSource) : null;
+  return own ?? expectedForOffer(m);
+}
+
+const RATE_WORD: Record<EffectiveRateSource, { basis: ExpectedBasis; source: (r: EffectiveArrowRate) => string }> = {
+  measured: { basis: "measured", source: (r) => (r.measured.basis === "crm" ? "crm_measured" : "measured_on_our_leads") },
+  manual: { basis: "stated", source: () => "customer_stated" },
+  median: { basis: "fleet", source: () => "fleet_median" },
+  default: { basis: "default", source: () => "industry_default" },
+};
+
+/**
+ * PURE: P(paying client | a person at `step`) over the BEST route of catalogue legs on the brand's rates, with the
+ * weakest basis it rests on. 1 at Paid client; null when no route is rated.
+ */
+function bestRouteToPaid(step: string, rates: ReadonlyMap<string, EffectiveArrowRate>, seen: ReadonlySet<string> = new Set()): { p: number; basis: ExpectedBasis } | null {
+  if (step === "paid_client") return { p: 1, basis: "measured" };
+  let best: { p: number; basis: ExpectedBasis } | null = null;
+  for (const leg of FUNNEL_LEGS) {
+    if (leg.fromStep?.key !== step || seen.has(leg.toStep.key)) continue;
+    const r = rates.get(leg.legKey);
+    if (!r || r.effectiveRatePct === null || r.source === null) continue;
+    const rest = bestRouteToPaid(leg.toStep.key, rates, new Set([...seen, step]));
+    if (!rest) continue;
+    const p = (r.effectiveRatePct / 100) * rest.p;
+    if (!best || p > best.p) best = { p, basis: weakest([RATE_WORD[r.source].basis, rest.basis]) };
+  }
+  return best;
+}
+
+/**
+ * PURE: one combination (`legKey[@channel]+...`, stored spelling) priced on the offer's inputs, the sales-path
+ * formula: cost per paying client = Σ platform leg cost × outcomes needed (each leg's cost: workflow > fleet
+ * measured > seeded default; a leg the customer's team works costs nothing); ROI = the value it ADDS per paying
+ * client ÷ that cost, where a funnel starting on a valued step (a reactive one, on a trigger) is credited the
+ * client MINUS what the people it took over were already worth there (best rated route to Paid client, the
+ * campaign's own value-added rule, `lib/value-added.ts`). Null when a leg is unrated or a platform leg unpriced.
+ */
+export function priceCombination(key: string, inputs: CombinationInputs, lifetimeRevenueSource: LifetimeRevenueSource | null): ExpectedReturn | null {
+  const ltr = inputs.lifetimeRevenueUsd;
+  if (ltr === null || !(ltr > 0)) return null;
+  const rates = new Map(inputs.rates.filter((r) => r.legKey).map((r) => [r.legKey!, r]));
+  const legs = key.split("+").map((part) => {
+    const [legKey, slug] = part.split("@");
+    return { legKey: storedLegKeyOf(legKey), slug: slug ?? null, def: funnelLeg(storedLegKeyOf(legKey)) };
+  });
+  if (legs.length === 0 || legs.some((l) => l.def === null) || legs[legs.length - 1].def!.toStep.key !== "paid_client") return null;
+
+  const assumptions: ExpectedAssumption[] = [];
+  if (lifetimeRevenueSource) assumptions.push({ input: "lifetime_revenue", legKey: null, basis: LTR_BASIS[lifetimeRevenueSource], source: lifetimeRevenueSource });
+  let needed = 1;
+  let cost = 0;
+  let costOfFirstPlatform: ExpectedCostPerOutcome | null = null;
+  const rateOf = (legKey: string) => {
+    const r = rates.get(legKey);
+    return r && r.effectiveRatePct !== null && r.effectiveRatePct > 0 && r.source !== null ? r : null;
+  };
+  for (let i = legs.length - 1; i >= 0; i -= 1) {
+    const l = legs[i];
+    if (l.slug) {
+      const k = `${l.legKey}|${l.slug}`;
+      const c = resolveLegChannelCost(inputs.prices.get(k), inputs.fleetPrices.get(k), DEFAULT_COST_PER_OUTCOME_USD.get(k));
+      if (c.costPerOutcomeUsd === null || c.costSource === null) return null;
+      cost += c.costPerOutcomeUsd * needed;
+      assumptions.push({ input: "cost", legKey: l.legKey, basis: COST_BASIS[c.costSource], source: c.costSource });
+      costOfFirstPlatform = { costPerOutcomeUsd: c.costPerOutcomeUsd, legKey: l.legKey, stepKey: l.def!.toStep.key, basis: COST_BASIS[c.costSource], source: c.costSource };
+    }
+    if (i === 0) break;
+    const r = rateOf(l.legKey);
+    if (!r) return null;
+    assumptions.push({ input: "rate", legKey: l.legKey, basis: RATE_WORD[r.source!].basis, source: RATE_WORD[r.source!].source(r) });
+    needed /= r.effectiveRatePct! / 100;
+  }
+  if (!(cost > 0)) return null;
+
+  // Where it took its people over: the first leg's start, unless that is nothing / Lead found (worth $0).
+  const from = legs[0].def!.fromStep?.key ?? null;
+  let added = ltr;
+  if (from !== null && from !== "lead_found") {
+    const r0 = rateOf(legs[0].legKey);
+    const route = bestRouteToPaid(from, rates);
+    if (!r0 || !route) return null;
+    // People at the takeover step per paying client × what one was already worth there.
+    added = ltr - (needed / (r0.effectiveRatePct! / 100)) * ltr * route.p;
+    assumptions.push({ input: "sales_path", legKey: legs[0].legKey, basis: route.basis, source: `value_added_from:${from}` });
+  }
+  return {
+    roiMultiple: added / cost,
+    basis: weakest(assumptions.map((a) => a.basis)),
+    assumptions,
+    combinationKey: key,
+    costPerOutcome: costOfFirstPlatform,
+    unavailableReason: null,
+  };
 }
 
 /** PURE: a campaign's (one channel × leg) expected return: best selected path running it, else best path running it, else the offer's. */
@@ -251,6 +369,13 @@ export function __resetExpectedReturnMemo(): void {
   entries.clear();
 }
 
+const inputsOf = (m: { lifetimeRevenue: { usd: number | null }; rates: EffectiveArrowRate[]; prices: ReadonlyMap<string, LegChannelPrice>; fleetPrices: ReadonlyMap<string, number> }): CombinationInputs => ({
+  lifetimeRevenueUsd: m.lifetimeRevenue.usd,
+  rates: m.rates,
+  prices: m.prices,
+  fleetPrices: m.fleetPrices,
+});
+
 async function computeModel(identity: ExpectedIdentity, brandId: string, offerId: string): Promise<OfferExpectedModel | null> {
   const { computeOfferSalesPathsModel } = await import("../routes/offer-sales-paths.js");
   const id = { orgId: identity.orgId, userId: identity.userId ?? "", runId: identity.runId ?? "" };
@@ -260,12 +385,12 @@ async function computeModel(identity: ExpectedIdentity, brandId: string, offerId
   if (own === null) return null;
   const selected = own.selectedPaths?.combinationKeys ?? [];
   if (own.body.status === "ok" && priced(own.body.paths).length > 0) {
-    return { offerId, body: own.body, selected, lifetimeRevenueSource: own.lifetimeRevenue.source, notRunning: false };
+    return { offerId, body: own.body, selected, lifetimeRevenueSource: own.lifetimeRevenue.source, notRunning: false, inputs: inputsOf(own) };
   }
   // Runs no funnel (or none prices): what we would sell it, every catalogue leg.
   const all = await run(FUNNEL_LEG_KEYS);
   if (all === null) return null;
-  return { offerId, body: all.body, selected: [], lifetimeRevenueSource: all.lifetimeRevenue.source, notRunning: true };
+  return { offerId, body: all.body, selected: [], lifetimeRevenueSource: all.lifetimeRevenue.source, notRunning: true, inputs: inputsOf(all) };
 }
 
 /**
