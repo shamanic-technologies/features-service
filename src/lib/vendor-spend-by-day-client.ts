@@ -24,6 +24,7 @@
 import { fetchWithRetry } from "./fetch-retry.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { campaignScopeIds } from "./campaign-scope.js";
+import { pipeRunsScope } from "./pipe-spend-attribution.js";
 import { runsFeatureSlugsParam } from "./feature-scope.js";
 import { RUNS_CAMPAIGN_IDS_PER_REQUEST, SPEND_BY_DAY_MEMBER_CONCURRENCY } from "./brand-spend-by-day-client.js";
 import type { DatedSpendReader, VendorSpendDay } from "./actual-cost-history.js";
@@ -49,12 +50,13 @@ async function fetchOne(
   orgId: string,
   workflowDynastySlug: string | undefined,
   startedAfter: string | undefined,
+  releasedOriginSlugs: readonly string[] = [],
 ): Promise<Map<string, VendorSpendDay>> {
   const url = process.env.RUNS_SERVICE_URL;
   const apiKey = process.env.RUNS_SERVICE_API_KEY;
   if (!url || !apiKey) throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
 
-  const params = new URLSearchParams({ interval: "day", featureSlugs: runsFeatureSlugsParam(featureScope), orgId, brandId });
+  const params = new URLSearchParams({ interval: "day", featureSlugs: runsFeatureSlugsParam(featureScope, releasedOriginSlugs), orgId, brandId });
   if (typeof campaign === "string") params.set("campaignId", campaign);
   else if (campaign) params.set("campaignIds", campaign.join(","));
   if (workflowDynastySlug) params.set("workflowDynastySlug", workflowDynastySlug);
@@ -99,16 +101,19 @@ function merge(prev: VendorSpendDay | undefined, next: VendorSpendDay): VendorSp
 export async function fetchBrandVendorSpendByDay(
   ...[brandId, campaignScope, featureScope, headers, , workflowDynastySlug, startedAfter]: Parameters<DatedSpendReader>
 ): Promise<Map<string, VendorSpendDay>> {
-  const members = campaignScopeIds(campaignScope);
+  // A pipe of a sales funnel campaign reads its OWN spend (lib/pipe-spend-attribution.ts); else unchanged.
+  const pipe = pipeRunsScope(campaignScope);
+  const members = campaignScopeIds(pipe.campaignScope);
+  const released = pipe.releasedOriginSlugs;
   if (members.length <= 1) {
-    return fetchOne(brandId, members[0], featureScope, headers.orgId, workflowDynastySlug, startedAfter);
+    return fetchOne(brandId, members[0], featureScope, headers.orgId, workflowDynastySlug, startedAfter, released);
   }
   const chunks: string[][] = [];
   for (let i = 0; i < members.length; i += RUNS_CAMPAIGN_IDS_PER_REQUEST) {
     chunks.push(members.slice(i, i + RUNS_CAMPAIGN_IDS_PER_REQUEST));
   }
   const parts = await mapWithConcurrency(chunks, SPEND_BY_DAY_MEMBER_CONCURRENCY, (chunk) =>
-    fetchOne(brandId, chunk, featureScope, headers.orgId, workflowDynastySlug, startedAfter),
+    fetchOne(brandId, chunk, featureScope, headers.orgId, workflowDynastySlug, startedAfter, released),
   );
   const byDay = new Map<string, VendorSpendDay>();
   for (const part of parts) {

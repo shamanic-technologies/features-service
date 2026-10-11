@@ -28,6 +28,7 @@ import { fetchWithRetry } from "./fetch-retry.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { isVendorPricing, type Pricing } from "./pricing.js";
 import { campaignScopeIds, type CampaignFilter } from "./campaign-scope.js";
+import { pipeRunsScope } from "./pipe-spend-attribution.js";
 import { runsFeatureSlugsParam, type FeatureScope } from "./feature-scope.js";
 
 /**
@@ -55,6 +56,7 @@ async function fetchDatedSpendForCampaign(
   pricing: Pricing,
   workflowDynastySlug: string | undefined,
   startedAfter?: string,
+  releasedOriginSlugs: readonly string[] = [],
 ): Promise<Map<string, number>> {
   const url = process.env.RUNS_SERVICE_URL;
   const apiKey = process.env.RUNS_SERVICE_API_KEY;
@@ -64,7 +66,7 @@ async function fetchDatedSpendForCampaign(
 
   const params = new URLSearchParams({
     interval: "day",
-    featureSlugs: runsFeatureSlugsParam(featureScope),
+    featureSlugs: runsFeatureSlugsParam(featureScope, releasedOriginSlugs),
     orgId: headers.orgId,
     brandId,
   });
@@ -185,7 +187,10 @@ export async function fetchBrandCommittedSpendByDay(
   // maturing campaigns' own recent spend (`lib/roi-maturity.ts`). Omitted → the whole history.
   startedAfter?: string,
 ): Promise<Map<string, number>> {
-  const members = campaignScopeIds(campaignScope);
+  // A pipe of a sales funnel campaign reads its OWN spend (lib/pipe-spend-attribution.ts); else unchanged.
+  const pipe = pipeRunsScope(campaignScope);
+  const members = campaignScopeIds(pipe.campaignScope);
+  const released = pipe.releasedOriginSlugs;
 
   // The brand-wide and single-campaign paths are the original ONE request, unchanged.
   if (members.length <= 1) {
@@ -197,6 +202,7 @@ export async function fetchBrandCommittedSpendByDay(
       pricing,
       workflowDynastySlug,
       startedAfter,
+      released,
     );
   }
 
@@ -209,7 +215,7 @@ export async function fetchBrandCommittedSpendByDay(
     chunks.push(members.slice(i, i + RUNS_CAMPAIGN_IDS_PER_REQUEST));
   }
   const perMember = await mapWithConcurrency(chunks, SPEND_BY_DAY_MEMBER_CONCURRENCY, (chunk) =>
-    fetchDatedSpendForCampaign(brandId, chunk, featureScope, headers, pricing, workflowDynastySlug, startedAfter),
+    fetchDatedSpendForCampaign(brandId, chunk, featureScope, headers, pricing, workflowDynastySlug, startedAfter, released),
   );
 
   const byDay = new Map<string, number>();

@@ -63,7 +63,13 @@ export function soleFeatureSlug(scope: FeatureScope): string | undefined {
  * outreach slug today and its origin's slug once lead-service / human-service switch, so a spend figure
  * reads the same in both states; a run carries ONE slug, so the producer's `IN (...)` counts it once.
  * Only for runs-service: email-gateway, workflow-service and lead reads keep `featureSlugsParam`.
+ * `releasedOriginSlugs`: the origins a pipe's sibling sourcing pipe owns (`pipeRunsScope`); omitted = byte-identical.
  */
-export function runsFeatureSlugsParam(scope: FeatureScope): string {
-  return withSourcingSlugs(featureSlugList(scope)).join(",");
+export function runsFeatureSlugsParam(scope: FeatureScope, releasedOriginSlugs: readonly string[] = []): string {
+  // An origin a sibling sourcing pipe owns (`lib/pipe-spend-attribution.ts`) leaves the EXPANSION only: a slug the
+  // scope names itself is never dropped, so the filter can never go empty (= unfiltered at runs).
+  const own = new Set(featureSlugList(scope));
+  return withSourcingSlugs([...own])
+    .filter((s) => own.has(s) || !releasedOriginSlugs.includes(s))
+    .join(",");
 }

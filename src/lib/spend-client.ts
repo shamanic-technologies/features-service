@@ -31,6 +31,7 @@
 import { fetchWithRetry } from "./fetch-retry.js";
 import { selectCostCents, type Pricing } from "./pricing.js";
 import { campaignFamilySet, campaignScopeIds, singleCampaignId, type CampaignFilter } from "./campaign-scope.js";
+import { pipeRunsScope } from "./pipe-spend-attribution.js";
 import { runsFeatureSlugsParam, type FeatureScope } from "./feature-scope.js";
 
 export interface SpendSource {
@@ -188,7 +189,7 @@ export async function fetchSpendBreakdown(
   // One campaign, or the family sharing one identity (see campaign-identity.ts). A family
   // co-groups campaignId and re-aggregates by costName here, so the whole family still costs the
   // same TWO runs calls a single campaign does.
-  campaignScope: CampaignFilter,
+  requestedCampaignScope: CampaignFilter,
   // ONE channel, or the SET an offer is sold through (lib/feature-scope.ts). runs comma-splits
   // `featureSlugs`, so a multi-channel offer still costs the same TWO calls.
   featureScope: FeatureScope,
@@ -220,6 +221,8 @@ export async function fetchSpendBreakdown(
     throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
   }
 
+  // A pipe of a sales funnel campaign reads its OWN spend (lib/pipe-spend-attribution.ts); else unchanged.
+  const { campaignScope, releasedOriginSlugs } = pipeRunsScope(requestedCampaignScope);
   const campaignId = singleCampaignId(campaignScope);
   const family = campaignFamilySet(campaignScope);
   const groupBy = family ? "costName,campaignId" : "costName";
@@ -229,7 +232,7 @@ export async function fetchSpendBreakdown(
   // By-source (groupBy=costName): the per-line-item rows carrying committed + actual. The totals are
   // Σ of these, so "Total spent" == sum of the source list the dashboard renders (coherent by
   // construction) for each of committed / actual / provisioned.
-  const featureSlugs = runsFeatureSlugsParam(featureScope);
+  const featureSlugs = runsFeatureSlugsParam(featureScope, releasedOriginSlugs);
   const sourceParams = new URLSearchParams({ groupBy, brandId, featureSlugs });
   if (campaignId) sourceParams.set("campaignId", campaignId);
   if (workflowSlugs) sourceParams.set("workflowSlugs", workflowSlugs);
