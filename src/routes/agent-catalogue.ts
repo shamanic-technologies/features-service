@@ -76,6 +76,8 @@ import { campaignNameKeyOf } from "../lib/offer-sales-paths.js";
 import { getBrandEffectiveRates, getFleetArrowMedians, getFleetLifetimeRevenueMedian, legPairKey, peekFleetStatedMedians, type FleetArrowMedians } from "../lib/effective-conversion-rates.js";
 import { fetchBrandLegEconomics } from "../lib/brand-leg-economics-client.js";
 import { fetchTeamCrmLegRates } from "../lib/team-crm-leg-rates.js";
+import { fetchOfferSteps, OfferStepsOfferNotFoundError, OfferStepsUnreadableError, type OfferSteps } from "../lib/offer-steps-client.js";
+import { ALWAYS_PRESENT_STEPS, missingStepsOf, setAsideCountByStep, splitByOfferSteps } from "../lib/offer-step-fit.js";
 import { offerLifetimeRevenue } from "../lib/offer-lifetime-revenue.js";
 import { loadFleetCell, storeFleetCell } from "../lib/fleet-cell-store.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
@@ -287,6 +289,8 @@ export interface OfferContext {
   lifetimeRevenueUsd: number | null;
   lifetimeRevenueSource: "offer_stated" | "fleet_median" | null;
   rates: Map<string, { ratePct: number; source: "offer_measured" | "offer_stated" | "offer_team_measured" }>;
+  /** The steps the offer's business has (owner 2026-10-12, `lib/offer-step-fit.ts`): a funnel through a step it does not have is SET ASIDE. */
+  steps: OfferSteps;
 }
 
 async function offerContextOf(req: Request): Promise<OfferContext | null> {
@@ -303,10 +307,12 @@ async function offerContextOf(req: Request): Promise<OfferContext | null> {
   const teamLegs = (await loadChannelCatalogue({ publishedOnly: false })).channels
     .filter((c) => c.operatedBy === "customer")
     .flatMap((c) => c.stepTransitions.filter((t) => t.from !== null).map((t) => ({ fromStep: t.from!.key, toStep: t.to.key })));
-  const [ltr, effective, teamRates] = await Promise.all([
+  const header = (k: string) => (typeof req.headers[k] === "string" ? (req.headers[k] as string) : undefined);
+  const [ltr, effective, teamRates, steps] = await Promise.all([
     offerLifetimeRevenue(offer.lifetimeRevenueUsd),
     getBrandEffectiveRates(brandId, orgId, legEconomics),
     fetchTeamCrmLegRates(orgId, brandId, teamLegs),
+    fetchOfferSteps(brandId, offerId, { orgId, userId: header("x-user-id"), runId: header("x-run-id") }),
   ]);
   const rates = new Map<string, { ratePct: number; source: "offer_measured" | "offer_stated" | "offer_team_measured" }>();
   for (const r of effective.legs) {
@@ -315,8 +321,26 @@ async function offerContextOf(req: Request): Promise<OfferContext | null> {
   }
   // A leg the brand's effective rates leave unrated: the team's own history on it (`lib/team-crm-leg-rates.ts`).
   for (const [leg, r] of teamRates) if (!rates.has(leg) && r.ratePct > 0) rates.set(leg, { ratePct: r.ratePct, source: "offer_team_measured" });
-  return { offerId, brandId, lifetimeRevenueUsd: ltr.usd, lifetimeRevenueSource: ltr.source, rates };
+  return { offerId, brandId, lifetimeRevenueUsd: ltr.usd, lifetimeRevenueSource: ltr.source, rates, steps };
 }
+
+/**
+ * What the offer stated about its steps, served beside every per-offer list/detail (owner 2026-10-12):
+ * `stated:false` = never said (nothing set aside); `alwaysPresent` = the steps counted present by definition.
+ */
+const offerStepsEcho = (o: OfferContext, m: CatalogueModel) => ({
+  stated: o.steps.stated,
+  steps: o.steps.steps ? o.steps.steps.map((k) => ({ id: k, name: stepLabel(m, k) })) : null,
+  statedAt: o.steps.statedAt,
+  alwaysPresent: ALWAYS_PRESENT_STEPS.map((k) => ({ id: k, name: stepLabel(m, k) })),
+});
+
+/** The steps a set-aside row lacks, `{id, name}` like a path detail's steps. */
+const missingStepsWire = (m: CatalogueModel, keys: readonly string[]) => keys.map((k) => ({ id: k, name: stepLabel(m, k) }));
+
+/** `setAsideByStep`: each missing step with how many set-aside rows it accounts for (the question to ask the client first). */
+const setAsideByStepWire = (m: CatalogueModel, setAside: ReadonlyArray<{ missingSteps: readonly string[] }>) =>
+  setAsideCountByStep(setAside).map((c) => ({ id: c.step, name: stepLabel(m, c.step), setAsideCount: c.setAsideCount }));
 
 /** The `offer` block a per-offer read answers with (null on the fleet catalogue). */
 const offerEcho = (o: OfferContext | null) =>
@@ -450,6 +474,8 @@ function page<T>(rows: T[], limit: number) {
 }
 
 function fail(res: Response, err: unknown, what: string): void {
+  if (err instanceof OfferStepsUnreadableError) return void res.status(502).json({ error: err.message, reason: "offer_steps_unreadable" });
+  if (err instanceof OfferStepsOfferNotFoundError) return void res.status(404).json({ error: err.message, reason: "offer_not_found" });
   if (err instanceof PipeStatsUnreadableError) return void res.status(502).json({ error: err.message, reason: "pipe_stats_unreadable" });
   if (err instanceof BadQuery) return void res.status(400).json({ error: err.message, reason: err.reason });
   if (err instanceof DeclarationError) return void res.status(err.status).json({ error: err.message, reason: err.reason });
@@ -559,7 +585,8 @@ router.get("/internal/catalogue/sales-paths", apiKeyOnly, async (req, res) => {
     const q = qOf(req);
     const containsRaw = listOf(req, "containsSteps", false);
     const runnable = runnableOf(req);
-    const { model, names } = await loadModel();
+    const offer = await offerContextOf(req);
+    const { model, names } = await loadModel(offer);
     let contains: string[] | null = null;
     if (containsRaw) {
       contains = containsRaw.map((raw) => {
@@ -568,16 +595,38 @@ router.get("/internal/catalogue/sales-paths", apiKeyOnly, async (req, res) => {
         return key;
       });
     }
-    const candidates = [...model.paths.values()]
+    const matching = [...model.paths.values()]
       .filter((p) => !contains || p.steps.some((s) => contains!.includes(s)))
       .filter((p) => !runnable || pathRunnable(model, p))
       .filter((p) => matchesQuery(q, [pathLine(model, p), names.get(salesPathNameKeyOf(p.id)), p.id]))
       .map((p) => ({ p, e: pathEconomics(model, p) }))
       .sort(byRoi((x) => x.e, (x) => x.p.id, (x) => x.p.type));
+    // Per offer (owner 2026-10-12): a path through a step the offer's business does not have is SET ASIDE.
+    const { kept: candidates, setAside } = offer ? splitByOfferSteps(matching, (x) => x.p.steps, offer.steps) : { kept: matching, setAside: [] };
     const shown = candidates.slice(0, limit);
-    const n = await named(shown.map((x) => salesPathNameKeyOf(x.p.id)), names);
-    const rows = candidates.map((x, i) => (i < limit ? pathRowOf(model, x.p, n.get(salesPathNameKeyOf(x.p.id))!) : null)).filter(Boolean);
-    res.json({ object: "sales_path", costUnit: "per_paying_client", order: "roi_desc", total: candidates.length, truncated: candidates.length > limit, rows });
+    const shownAside = setAside.slice(0, limit);
+    const n = await named([...shown, ...shownAside.map((x) => x.item)].map((x) => salesPathNameKeyOf(x.p.id)), names);
+    const rows = shown.map((x) => pathRowOf(model, x.p, n.get(salesPathNameKeyOf(x.p.id))!));
+    res.json({
+      object: "sales_path",
+      costUnit: "per_paying_client",
+      order: "roi_desc",
+      total: candidates.length,
+      truncated: candidates.length > limit,
+      rows,
+      ...(offer
+        ? {
+            offer: offerEcho(offer),
+            offerSteps: offerStepsEcho(offer, model),
+            setAside: {
+              total: setAside.length,
+              truncated: setAside.length > limit,
+              rows: shownAside.map((x) => ({ id: x.item.p.id, name: n.get(salesPathNameKeyOf(x.item.p.id))!, line: pathLine(model, x.item.p), missingSteps: missingStepsWire(model, x.missingSteps) })),
+            },
+            setAsideByStep: setAsideByStepWire(model, setAside),
+          }
+        : {}),
+    });
   } catch (err) {
     fail(res, err, "list sales paths");
   }
@@ -585,7 +634,8 @@ router.get("/internal/catalogue/sales-paths", apiKeyOnly, async (req, res) => {
 
 router.get("/internal/catalogue/sales-paths/:id", apiKeyOnly, async (req, res) => {
   try {
-    const { model, names } = await loadModel();
+    const offer = await offerContextOf(req);
+    const { model, names } = await loadModel(offer);
     const path = pathById(model, req.params.id);
     if (!path) return void res.status(404).json({ error: `no sales path ${req.params.id}`, reason: "sales_path_not_found" });
     const n = await named([salesPathNameKeyOf(path.id)], names);
@@ -619,6 +669,7 @@ router.get("/internal/catalogue/sales-paths/:id", apiKeyOnly, async (req, res) =
       runnable: pathRunnable(model, path),
       salesFunnelCount: funnels.length,
       lifetimeRevenueUsd: model.lifetimeRevenueUsd,
+      ...(offer ? offerFitOf(model, offer, path.steps) : {}),
     });
   } catch (err) {
     fail(res, err, "get sales path");
@@ -867,14 +918,19 @@ async function listSalesFunnels(req: Request, res: Response, forceRunnable: bool
           return p;
         })
       : [...model.paths.values()];
-    const candidates = onPaths
+    const matching = onPaths
       .flatMap((p) => funnelsOfPath(model, p))
       .filter((f) => !containsChannels || f.channelSlugs.some((s) => containsChannels.includes(s)))
       .filter((f) => !runnable || funnelRunnable(f))
       .filter((f) => matchesQuery(q, [funnelLine(f), names.get(f.id), f.id]))
       .sort(byRoi((f: CatalogueFunnel) => f.economics, (f) => f.id, (f) => funnelTypeOf(f)));
+    // Per offer (owner 2026-10-12): a funnel through a step the offer's business does not have is SET ASIDE, never proposed.
+    const { kept: candidates, setAside } = offer
+      ? splitByOfferSteps(matching, (f) => model.paths.get(f.pathId)!.steps, offer.steps)
+      : { kept: matching, setAside: [] };
     const shown = candidates.slice(0, limit);
-    const n = await named(shown.map((f) => f.id), names);
+    const shownAside = setAside.slice(0, limit);
+    const n = await named([...shown.map((f) => f.id), ...shownAside.map((x) => x.item.id)], names);
     res.json({
       object: "sales_funnel",
       costUnit: "per_paying_client",
@@ -882,7 +938,18 @@ async function listSalesFunnels(req: Request, res: Response, forceRunnable: bool
       total: candidates.length,
       truncated: candidates.length > limit,
       rows: shown.map((f) => funnelRowOf(f, n.get(f.id)!, funnelCopy(model, f))),
-      ...(offer ? { offer: offerEcho(offer) } : {}),
+      ...(offer
+        ? {
+            offer: offerEcho(offer),
+            offerSteps: offerStepsEcho(offer, model),
+            setAside: {
+              total: setAside.length,
+              truncated: setAside.length > limit,
+              rows: shownAside.map((x) => ({ id: x.item.id, name: n.get(x.item.id)!, line: funnelLine(x.item), missingSteps: missingStepsWire(model, x.missingSteps) })),
+            },
+            setAsideByStep: setAsideByStepWire(model, setAside),
+          }
+        : {}),
     });
   } catch (err) {
     fail(res, err, "list sales funnels");
@@ -928,11 +995,17 @@ async function funnelDetail(model: CatalogueModel, f: CatalogueFunnel, names: Ma
     costUnit: "per_paying_client",
     lifetimeRevenueUsd: model.lifetimeRevenueUsd,
     lifetimeRevenueSource: offer ? offer.lifetimeRevenueSource : "fleet_median_stated",
-    ...(offer ? { offer: offerEcho(offer) } : {}),
+    ...(offer ? offerFitOf(model, offer, path.steps) : {}),
     runnable: funnelRunnable(f),
   mixed: funnelMixed(f),
     draft: !funnelPublished(f),
   };
+}
+
+/** A per-offer detail: the offer, its stated steps, and whether this funnel/path is set aside for a step it lacks. */
+function offerFitOf(model: CatalogueModel, offer: OfferContext, steps: readonly string[]) {
+  const missing = missingStepsOf(steps, offer.steps);
+  return { offer: offerEcho(offer), offerSteps: offerStepsEcho(offer, model), setAside: missing.length > 0, missingSteps: missingStepsWire(model, missing) };
 }
 
 const funnelPublished = (f: CatalogueFunnel): boolean => f.legs.every((l) => legPipes(l).some((p) => p.published));
