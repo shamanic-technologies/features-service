@@ -22,6 +22,13 @@
  * outcomes ÷ spend. NOT the catalogue headline: the headline prices the pipe on its BEST MATURE workflow on the
  * incurred basis; these figures are the WHOLE pipe (every workflow, flash, net).
  *
+ * CONVERSION RATES (owner 2026-10-12, same page: "les taux de conversion since inception snapshot et over time"): between
+ * every two CONSECUTIVE volumes, plus first volume -> outcome when there are three or more, in PERCENT (numerator ÷
+ * denominator × 100, 2 decimals), each with its two counts. Denominator 0 = null + `no_input_yet`, an unmeasured
+ * volume = null + `volume_not_measured`, never 0. Same cohort basis as the volumes: an entry pipe's two counts are the
+ * SAME serve-dated people (a cohort rate); an internal pipe's counts are each dated by their own event, so a day's
+ * cumulative rate compares events to that day (an outcome can land days after the hand-over), not one cohort.
+ *
  * HISTORY: one point per UTC day from the first activity (spend or a dated volume) to today, every figure
  * CUMULATIVE as it stood that day. An undated count (in no day) enters on the LAST point only, so the snapshot IS
  * the last point by construction (`undated` states how many).
@@ -77,6 +84,24 @@ export interface PipeStatsPoint {
   volumes: Record<string, number | null>;
   costPerOutcomeUsd: number | null;
   roi: number | null;
+  /** conversion rate key -> cumulative rate that day, percent (null with no input yet or an unmeasured volume). */
+  conversionRates: Record<string, number | null>;
+}
+
+export type ConversionRateUnavailableReason = "no_input_yet" | "volume_not_measured";
+
+export interface PipeStatsConversionRate {
+  key: string;
+  fromKey: string;
+  toKey: string;
+  label: string;
+  /** Count of `toKey` since inception (dated + undated). */
+  numerator: number | null;
+  /** Count of `fromKey` since inception (dated + undated). */
+  denominator: number | null;
+  /** numerator ÷ denominator × 100, 2 decimals. */
+  ratePct: number | null;
+  unavailableReason: ConversionRateUnavailableReason | null;
 }
 
 export interface PipeStatsFigures {
@@ -89,6 +114,7 @@ export interface PipeStatsFigures {
   valuePerOutcomeUsd: number | null;
   roi: number | null;
   roiUnavailableReason: "step_unvalued" | "no_cost_per_outcome" | null;
+  conversionRates: PipeStatsConversionRate[];
   history: PipeStatsPoint[];
 }
 
@@ -116,6 +142,20 @@ function ratios(spend: number, outcomes: number | null, valuePerOutcome: number 
   return { cost: cost === null ? null : round2(cost), costReason, roi: roi === null ? null : round2(roi), roiReason };
 }
 
+/** PURE: which volume pairs are rated: every consecutive pair, then first -> last when that is not one of them. */
+export function conversionPairs(volumes: readonly Pick<VolumeInput, "key" | "label">[]): Array<{ key: string; fromKey: string; toKey: string; label: string }> {
+  const pair = (a: Pick<VolumeInput, "key" | "label">, b: Pick<VolumeInput, "key" | "label">) => ({ key: `${a.key}_to_${b.key}`, fromKey: a.key, toKey: b.key, label: `${a.label} → ${b.label}` });
+  const out = volumes.slice(1).map((v, i) => pair(volumes[i]!, v));
+  if (volumes.length >= 3) out.push(pair(volumes[0]!, volumes[volumes.length - 1]!));
+  return out;
+}
+
+function rateOf(numerator: number | null, denominator: number | null): { ratePct: number | null; unavailableReason: ConversionRateUnavailableReason | null } {
+  if (numerator === null || denominator === null) return { ratePct: null, unavailableReason: "volume_not_measured" };
+  if (denominator === 0) return { ratePct: null, unavailableReason: "no_input_yet" };
+  return { ratePct: round2((numerator / denominator) * 100), unavailableReason: null };
+}
+
 /** PURE: the snapshot and its cumulative daily history (see the header). `today` = the UTC day of the read. */
 export function buildPipeStats(input: {
   volumes: VolumeInput[];
@@ -130,6 +170,7 @@ export function buildPipeStats(input: {
   const first = days.size > 0 ? [...days].sort()[0]! : null;
   const anyUndated = input.volumes.some((v) => v.undated > 0);
 
+  const pairs = conversionPairs(input.volumes);
   const history: PipeStatsPoint[] = [];
   const cum = new Map<string, number>(input.volumes.map((v) => [v.key, 0]));
   let spend = 0;
@@ -149,7 +190,9 @@ export function buildPipeStats(input: {
         volumes[v.key] = last ? n + v.undated : n;
       }
       const r = ratios(spend, volumes[input.outcomeKey] ?? null, input.valuePerOutcomeUsd);
-      history.push({ date: day, spendUsd: round2(spend), volumes, costPerOutcomeUsd: r.cost, roi: r.roi });
+      const conversionRates: Record<string, number | null> = {};
+      for (const p of pairs) conversionRates[p.key] = rateOf(volumes[p.toKey] ?? null, volumes[p.fromKey] ?? null).ratePct;
+      history.push({ date: day, spendUsd: round2(spend), volumes, costPerOutcomeUsd: r.cost, roi: r.roi, conversionRates });
     }
   }
   // Spend or counts dated after today (clock skew) still belong to the snapshot.
@@ -169,6 +212,11 @@ export function buildPipeStats(input: {
     valuePerOutcomeUsd: input.valuePerOutcomeUsd === null ? null : round2(input.valuePerOutcomeUsd),
     roi: r.roi,
     roiUnavailableReason: r.roiReason,
+    conversionRates: pairs.map((p) => {
+      const numerator = totals.get(p.toKey) ?? null;
+      const denominator = totals.get(p.fromKey) ?? null;
+      return { ...p, numerator, denominator, ...rateOf(numerator, denominator) };
+    }),
     history,
   };
 }
