@@ -41,6 +41,8 @@ const fetchStepOutcomes = vi.fn();
 vi.mock("../lib/step-outcomes-client.js", () => ({ fetchStepOutcomes: (...a: unknown[]) => fetchStepOutcomes(...a) }));
 const fetchCampaignCalls = vi.fn();
 vi.mock("../lib/campaign-calls-client.js", () => ({ fetchCampaignCalls: (...a: unknown[]) => fetchCampaignCalls(...a) }));
+const fetchLeadsFound = vi.fn();
+vi.mock("../lib/on-demand-pipe-fleet.js", () => ({ fetchLeadsFound: (...a: unknown[]) => fetchLeadsFound(...a) }));
 const fetchRunsCostCents = vi.fn();
 vi.mock("../lib/runs-cost-client.js", () => ({ fetchRunsCostCents: (...a: unknown[]) => fetchRunsCostCents(...a) }));
 
@@ -53,22 +55,21 @@ const unit = (campaignId: string, featureSlug: string, legKey: string) => ({ cam
 const FC = (id: string, salesFunnelId: string, units: unknown[]) => ({ id, brandId: "b1", offerId: "of1", salesFunnelId, salesFunnelName: "Bliss", status: "ongoing", stopReason: null, createdAt: "2026-10-10T00:00:00Z", units });
 
 beforeEach(() => {
-  for (const m of [fetchSalesFunnelCampaigns, fetchLeadBucketCounts, fetchFollowupActionRows, fetchStepOutcomes, fetchCampaignCalls, fetchRunsCostCents]) m.mockReset();
+  for (const m of [fetchSalesFunnelCampaigns, fetchLeadBucketCounts, fetchFollowupActionRows, fetchStepOutcomes, fetchCampaignCalls, fetchRunsCostCents, fetchLeadsFound]) m.mockReset();
+  fetchLeadsFound.mockResolvedValue({ recordedSince: null, counts: [] });
 });
 
 describe("GET /brands/:brandId/sales-funnel-campaigns/:id/activity", () => {
-  it("proactive: every step off the people-holding units' lead-service counts MERGED by max (never a sum), rates served", async () => {
+  it("proactive: Lead found = what its source found (per source campaign), later steps off the outreach unit's counts, rates served", async () => {
     fetchSalesFunnelCampaigns.mockResolvedValue([FC("fc1", PROACTIVE, [unit("src", "sourcing-apollo-cold-filters", "start_to_lead_found"), unit("ce", "sales-cold-email-outreach", "lead_found_to_conversation")])]);
-    // The source holds every lead it found (230); the outreach unit the 226 it was handed and worked.
-    fetchLeadBucketCounts.mockImplementation(async (id: string) =>
-      id === "src"
-        ? { total: 230, counts: { contacted: 0, positive_reply: 0, meeting_booked: 0, sale: 0 }, people: { sent: 0, delivered: 0, interested: 0 } }
-        : { total: 226, counts: { contacted: 223, positive_reply: 2, meeting_booked: 1, sale: 0 }, people: { sent: 182, delivered: 180, interested: 1 } },
-    );
+    // The source found 230 (lead-service leads-found, its own campaign); the outreach unit holds the 226 it was handed.
+    fetchLeadsFound.mockResolvedValue({ recordedSince: null, counts: [{ campaignId: "src", ran: 230 }, { campaignId: "other-funnel-src", ran: 999 }] });
+    fetchLeadBucketCounts.mockResolvedValue({ total: 226, counts: { contacted: 223, positive_reply: 2, meeting_booked: 1, sale: 0 }, people: { sent: 182, delivered: 180, interested: 1 } });
 
     const res = await request(app).get("/brands/b1/sales-funnel-campaigns/fc1/activity").set(AUTH);
     expect(res.status).toBe(200);
-    expect(fetchLeadBucketCounts.mock.calls.map((c) => c[0]).sort()).toEqual(["ce", "src"]);
+    // Never the source's bucket-counts: lead-service resolves it to its identity (a sibling funnel's source on the brand).
+    expect(fetchLeadBucketCounts.mock.calls.map((c) => c[0])).toEqual(["ce"]);
     expect(res.body.funnel.mode).toBe("proactive");
     expect(res.body.funnel.steps.map((s: { key: string; people: number }) => [s.key, s.people])).toEqual([
       ["lead_found", 230], ["contacted", 223], ["delivered", 180], ["conversation", 2], ["meeting_booked", 1], ["paid_client", 0],
@@ -76,19 +77,30 @@ describe("GET /brands/:brandId/sales-funnel-campaigns/:id/activity", () => {
     expect(res.body.funnel.steps[1].rateToNextPct).toBe(80.72);
     const ce = res.body.pipes.find((p: { campaignId: string }) => p.campaignId === "ce");
     expect(ce).toMatchObject({ kind: "outreach", people: { found: 226, contacted: 223, sent: 182, delivered: 180, reachedToStep: 2 }, dailySource: "campaign_revenue", calls: null, callsUnavailableReason: "pipe_places_no_calls" });
-    expect(res.body.pipes.find((p: { campaignId: string }) => p.campaignId === "src")).toMatchObject({ kind: "sourcing", people: { found: 230 }, work: null, dailySource: null });
+    expect(res.body.pipes.find((p: { campaignId: string }) => p.campaignId === "src")).toMatchObject({ kind: "sourcing", people: null, work: null });
     expect(fetchFollowupActionRows).not.toHaveBeenCalled();
   });
 
   it("a leads-only funnel (Start -> Lead found -> your team): Lead found = the leads its source found, nobody contacted", async () => {
     fetchSalesFunnelCampaigns.mockResolvedValue([FC("fc3", LEADS_ONLY, [unit("team", "your-team-closing-calls", "lead_found_to_paid_client"), unit("src", "sourcing-apollo-cold-filters", "start_to_lead_found")])]);
-    const empty = { contacted: 0, positive_reply: 0, sale: 0 };
-    fetchLeadBucketCounts.mockImplementation(async (id: string) => ({ total: id === "src" ? 13 : 0, counts: empty, people: { sent: 0, delivered: 0, interested: 0 } }));
+    fetchLeadsFound.mockResolvedValue({ recordedSince: null, counts: [{ campaignId: "src", ran: 30 }] });
+    // The team's unit works Lead found onward: lead-service holds nobody under it yet.
+    fetchLeadBucketCounts.mockResolvedValue({ total: 0, counts: { contacted: 0, positive_reply: 0, sale: 0 }, people: { sent: 0, delivered: 0, interested: 0 } });
 
     const res = await request(app).get("/brands/b1/sales-funnel-campaigns/fc3/activity").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.funnelUnavailableReason).toBeNull();
-    expect(res.body.funnel.steps.map((s: { key: string; people: number }) => [s.key, s.people])).toEqual([["lead_found", 13], ["contacted", 0], ["delivered", 0], ["paid_client", 0]]);
+    expect(fetchLeadBucketCounts.mock.calls.map((c) => c[0])).toEqual(["team"]);
+    expect(res.body.funnel.steps.map((s: { key: string; people: number | null }) => [s.key, s.people])).toEqual([["lead_found", 30], ["contacted", 0], ["delivered", 0], ["paid_client", 0]]);
+  });
+
+  it("a stopped funnel whose source found nothing reads 0, never a sibling funnel's source", async () => {
+    fetchSalesFunnelCampaigns.mockResolvedValue([FC("perky", PROACTIVE, [unit("src-old", "sourcing-apollo-cold-filters", "start_to_lead_found"), unit("ce", "sales-cold-email-outreach", "lead_found_to_conversation")])]);
+    fetchLeadsFound.mockResolvedValue({ recordedSince: null, counts: [{ campaignId: "src-smiling", ran: 30 }] });
+    fetchLeadBucketCounts.mockResolvedValue({ total: 0, counts: { contacted: 0, positive_reply: 0, meeting_booked: 0, sale: 0 }, people: { sent: 0, delivered: 0, interested: 0 } });
+
+    const res = await request(app).get("/brands/b1/sales-funnel-campaigns/perky/activity").set(AUTH);
+    expect(res.body.funnel.steps[0]).toMatchObject({ key: "lead_found", people: 0 });
   });
 
   it("reactive call funnel: handed people, the calls placed as the act, a booked meeting among them; the call pipe serves its calls", async () => {
