@@ -11121,10 +11121,11 @@
                                     "outranked",
                                     "below_learning_bar",
                                     "to_exceeds_from",
+                                    "zero_not_conclusive",
                                     "too_few_brands",
                                     "crm_measures_this_leg"
                                   ],
-                                  "description": "Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. too_few_brands: a median over fewer than 5 brands. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."
+                                  "description": "Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. zero_not_conclusive: 0 at TO, on too few at FROM to rule out the next source's rate p (kept only once (1 - p)^FROM <= 5%, about 3 / p people: 598 at 0.5%). too_few_brands: a median over fewer than 5 brands. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."
                                 }
                               },
                               "required": [
@@ -11612,10 +11613,11 @@
                                         "outranked",
                                         "below_learning_bar",
                                         "to_exceeds_from",
+                                        "zero_not_conclusive",
                                         "too_few_brands",
                                         "crm_measures_this_leg"
                                       ],
-                                      "description": "Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. too_few_brands: a median over fewer than 5 brands. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."
+                                      "description": "Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. zero_not_conclusive: 0 at TO, on too few at FROM to rule out the next source's rate p (kept only once (1 - p)^FROM <= 5%, about 3 / p people: 598 at 0.5%). too_few_brands: a median over fewer than 5 brands. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."
                                     }
                                   },
                                   "required": [
@@ -20864,6 +20866,14 @@
                 "type": "number",
                 "nullable": true
               },
+              "people": {
+                "type": "integer",
+                "description": "Distinct PEOPLE on the paths (one person on two offers = one person, two leads)."
+              },
+              "peopleEmailed": {
+                "type": "integer",
+                "description": "Distinct people one of our emails was SENT to: equals GET /brands/{brandId}/revenue outcomes.sending.recipientsSent (not recipientsContacted, which also counts people queued in a sequence and never sent). The rest of `people` entered on a later step (a meeting statement, an engagement with the video) with no email."
+              },
               "unattributedCostUsd": {
                 "type": "number",
                 "description": "Spend no person carries (Σ unattributedCost)."
@@ -20916,6 +20926,8 @@
               "revenueUsd",
               "costUsd",
               "roi",
+              "people",
+              "peopleEmailed",
               "unattributedCostUsd",
               "unattributedCost",
               "totalCostUsd",
@@ -21912,9 +21924,10 @@
                               "step_not_counted",
                               "evidence_unreadable",
                               "below_learning_bar",
-                              "to_exceeds_from"
+                              "to_exceeds_from",
+                              "zero_not_conclusive"
                             ],
-                            "description": "Why the measured rate is not the effective one; null when it is. to_exceeds_from: more leads at TO than FROM, so the ratio is no probability (never clamped)."
+                            "description": "Why the measured rate is not the effective one; null when it is. to_exceeds_from: more leads at TO than FROM, so the ratio is no probability (never clamped). zero_not_conclusive: 0 leads at TO, on too few at FROM to rule out the next source's rate p (a measured 0% counts only once (1 - p)^FROM <= 5%, about 3 / p leads)."
                           }
                         },
                         "required": [
@@ -22011,10 +22024,11 @@
                                 "outranked",
                                 "below_learning_bar",
                                 "to_exceeds_from",
+                                "zero_not_conclusive",
                                 "too_few_brands",
                                 "crm_measures_this_leg"
                               ],
-                              "description": "Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. too_few_brands: a median over fewer than 5 brands. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."
+                              "description": "Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. zero_not_conclusive: 0 at TO, on too few at FROM to rule out the next source's rate p (kept only once (1 - p)^FROM <= 5%, about 3 / p people: 598 at 0.5%). too_few_brands: a median over fewer than 5 brands. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."
                             }
                           },
                           "required": [
@@ -22163,9 +22177,10 @@
                         "step_not_counted",
                         "evidence_unreadable",
                         "below_learning_bar",
-                        "to_exceeds_from"
+                        "to_exceeds_from",
+                        "zero_not_conclusive"
                       ],
-                      "description": "Why the measured rate is not the effective one; null when it is. to_exceeds_from: more leads at TO than FROM, so the ratio is no probability (never clamped)."
+                      "description": "Why the measured rate is not the effective one; null when it is. to_exceeds_from: more leads at TO than FROM, so the ratio is no probability (never clamped). zero_not_conclusive: 0 leads at TO, on too few at FROM to rule out the next source's rate p (a measured 0% counts only once (1 - p)^FROM <= 5%, about 3 / p leads)."
                     }
                   },
                   "required": [
@@ -22262,10 +22277,11 @@
                           "outranked",
                           "below_learning_bar",
                           "to_exceeds_from",
+                          "zero_not_conclusive",
                           "too_few_brands",
                           "crm_measures_this_leg"
                         ],
-                        "description": "Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. too_few_brands: a median over fewer than 5 brands. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."
+                        "description": "Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. zero_not_conclusive: 0 at TO, on too few at FROM to rule out the next source's rate p (kept only once (1 - p)^FROM <= 5%, about 3 / p people: 598 at 0.5%). too_few_brands: a median over fewer than 5 brands. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."
                       }
                     },
                     "required": [
@@ -52575,9 +52591,10 @@
                               "default",
                               "measured_pipe",
                               "offer_measured",
-                              "offer_stated"
+                              "offer_stated",
+                              "offer_team_measured"
                             ],
-                            "description": "`fleet_median` = median of the rates brands STATED (>= 5 brands); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion; per-offer read only: `offer_measured` (the brand's own measured rate) / `offer_stated` (the rate it stated). Null on the entry leg (not used by the cost)."
+                            "description": "`fleet_median` = median of the rates brands STATED (>= 5 brands); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion; per-offer read only: `offer_measured` (the brand's own measured rate) / `offer_stated` (the rate it stated) / `offer_team_measured` (a leg its own team works, measured on its tools' history through crm-service, when neither of the first two exists). Null on the entry leg (not used by the cost)."
                           },
                           "rateMeasured": {
                             "type": "boolean"
@@ -52794,6 +52811,7 @@
                                   "measured_pipe",
                                   "offer_measured",
                                   "offer_stated",
+                                  "offer_team_measured",
                                   "default_entry"
                                 ]
                               },
@@ -53100,9 +53118,10 @@
                               "default",
                               "measured_pipe",
                               "offer_measured",
-                              "offer_stated"
+                              "offer_stated",
+                              "offer_team_measured"
                             ],
-                            "description": "`fleet_median` = median of the rates brands STATED (>= 5 brands); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion; per-offer read only: `offer_measured` (the brand's own measured rate) / `offer_stated` (the rate it stated). Null on the entry leg (not used by the cost)."
+                            "description": "`fleet_median` = median of the rates brands STATED (>= 5 brands); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion; per-offer read only: `offer_measured` (the brand's own measured rate) / `offer_stated` (the rate it stated) / `offer_team_measured` (a leg its own team works, measured on its tools' history through crm-service, when neither of the first two exists). Null on the entry leg (not used by the cost)."
                           },
                           "rateMeasured": {
                             "type": "boolean"
@@ -53319,6 +53338,7 @@
                                   "measured_pipe",
                                   "offer_measured",
                                   "offer_stated",
+                                  "offer_team_measured",
                                   "default_entry"
                                 ]
                               },
@@ -53683,9 +53703,10 @@
                               "default",
                               "measured_pipe",
                               "offer_measured",
-                              "offer_stated"
+                              "offer_stated",
+                              "offer_team_measured"
                             ],
-                            "description": "`fleet_median` = median of the rates brands STATED (>= 5 brands); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion; per-offer read only: `offer_measured` (the brand's own measured rate) / `offer_stated` (the rate it stated). Null on the entry leg (not used by the cost)."
+                            "description": "`fleet_median` = median of the rates brands STATED (>= 5 brands); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion; per-offer read only: `offer_measured` (the brand's own measured rate) / `offer_stated` (the rate it stated) / `offer_team_measured` (a leg its own team works, measured on its tools' history through crm-service, when neither of the first two exists). Null on the entry leg (not used by the cost)."
                           },
                           "rateMeasured": {
                             "type": "boolean"
@@ -53902,6 +53923,7 @@
                                   "measured_pipe",
                                   "offer_measured",
                                   "offer_stated",
+                                  "offer_team_measured",
                                   "default_entry"
                                 ]
                               },

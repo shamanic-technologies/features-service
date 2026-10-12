@@ -355,7 +355,7 @@ export type PublicFunnelLeg = FunnelLegDef & { reactive: boolean; maturity: Publ
  *  rather than per funnel. Their figures overlap and must never be summed. Each leg states its OWN
  *  maturity rule, read from the one module every figure is cut on, so a published parameter and a
  *  served figure can never disagree. */
-export function funnelLegCatalogue(): PublicFunnelLeg[] {
+export function funnelLegCatalogue(channels: readonly Pick<PublicChannel, "stepTransitions">[] = []): PublicFunnelLeg[] {
   const funnelLegs = FUNNEL_LEGS.map((a) => {
     const { legKey: _legKey, ...maturity } = legMaturity(a.legKey);
     return {
@@ -374,7 +374,28 @@ export function funnelLegCatalogue(): PublicFunnelLeg[] {
     if (!twin) throw new Error(`[features-service] outbound leg ${c.legKey}: the funnel leg ${c.legacyLegKey} is not in the catalogue`);
     return { ...twin, legKey: c.legKey, fromStep: { ...c.fromStep }, funnelKeys: [...twin.funnelKeys], reactive: false };
   });
-  return [...funnelLegs, ...outboundLegs];
+  // Every OTHER leg a published channel performs (owner 2026-10-12, FORM-SUBMITTED-TRIGGER-1012: AI Meeting
+  // Booking's declared `form_submitted_to_meeting_booked` was on its channel but not in this list, so
+  // campaign-service refused it as "not a leg features-service publishes"). A leg no sales funnel walks: no
+  // funnelKeys, the channel's own mode, the default maturity rule. Appended, so every leg before keeps its place.
+  const listed = new Set([...funnelLegs, ...outboundLegs].map((l) => l.legKey));
+  const pipeLegs: PublicFunnelLeg[] = [];
+  for (const channel of channels) {
+    for (const t of channel.stepTransitions) {
+      if (listed.has(t.legKey)) continue;
+      listed.add(t.legKey);
+      const { legKey: _legKey, ...maturity } = legMaturity(t.legKey);
+      pipeLegs.push({
+        legKey: t.legKey,
+        fromStep: t.from == null ? null : { ...CHANNEL_STEPS[t.from.key as ChannelStepKey] },
+        toStep: { ...CHANNEL_STEPS[t.to.key as ChannelStepKey] },
+        funnelKeys: [],
+        reactive: t.reactive,
+        maturity,
+      });
+    }
+  }
+  return [...funnelLegs, ...outboundLegs, ...pipeLegs];
 }
 
 /** The step vocabulary itself, published beside the channels so a consumer never has to hardcode it. */

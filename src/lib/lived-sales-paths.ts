@@ -54,6 +54,8 @@ export interface JourneyAct {
   /** Null when the act names no campaign: it still says somebody of ours acted, it carries no spend. */
   campaignId: string | null;
   firstActedAt: string | null;
+  /** lead-service's act kind (`email` = our sends, `followup` = a follow-up pipe acted); absent = unstated. */
+  kind?: string;
 }
 
 /** One person x offer as the timeline holds it (offer null = facts with no offer). */
@@ -104,6 +106,10 @@ export interface LivedPathRow {
 
 export interface LivedTotals {
   leads: number;
+  /** Distinct PEOPLE on the paths (a person on two offers is one person here, two `leads`). */
+  people: number;
+  /** Distinct people one of our emails was SENT to (an `email` act): the brand's `outcomes.sending.recipientsSent`. */
+  peopleEmailed: number;
   paidClients: number;
   notOurPaidClients: number;
   revenueUsd: number | null;
@@ -125,7 +131,7 @@ export interface LivedFunnelGroup {
   funnelCampaignId: string | null;
   salesFunnelId: string | null;
   salesFunnelName: string | null;
-  totals: Omit<LivedTotals, "unattributedCost" | "unattributedCostUsd" | "totalCostUsd" | "unplacedFacts" | "excludedJourneys">;
+  totals: Omit<LivedTotals, "unattributedCost" | "unattributedCostUsd" | "totalCostUsd" | "unplacedFacts" | "excludedJourneys" | "people" | "peopleEmailed">;
   paths: LivedPathRow[];
 }
 
@@ -361,8 +367,10 @@ export function computeLivedPaths(inputs: LivedPathInputs): LivedPathsResult {
     })
     .sort((a, b) => (a.funnelCampaignId === null ? 1 : 0) - (b.funnelCampaignId === null ? 1 : 0) || (b.totals.roi ?? -1) - (a.totals.roi ?? -1) || b.totals.leads - a.totals.leads);
 
+  const people = new Set(placed.map((p) => p.journey.leadId)).size;
+  const peopleEmailed = new Set(placed.filter((p) => p.journey.acts.some((a) => a.kind === "email")).map((p) => p.journey.leadId)).size;
   return {
-    totals: { ...whole.totals, unattributedCostUsd, unattributedCost: unattributed, totalCostUsd, unplacedFacts, excludedJourneys },
+    totals: { ...whole.totals, people, peopleEmailed, unattributedCostUsd, unattributedCost: unattributed, totalCostUsd, unplacedFacts, excludedJourneys },
     paths: whole.paths,
     funnels,
   };

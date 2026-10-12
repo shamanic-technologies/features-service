@@ -27,6 +27,15 @@ vi.mock("../db/index.js", () => ({
   sql: {},
 }));
 
+// The published catalogue a leg no sales funnel walks is looked up in (`publishedPipeLeg`): AI Meeting Booking
+// performs the declared form leg (owner 2026-10-12, FORM-SUBMITTED-TRIGGER-1012).
+vi.mock("../lib/channel-declarations-store.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/channel-declarations-store.js")>()),
+  loadChannelCatalogue: vi.fn(async () => ({
+    channels: [{ slug: "ai-meeting-booking", stepTransitions: [{ legKey: "form_submitted_to_meeting_booked", from: { key: "form_submitted" }, to: { key: "meeting_booked" }, reactive: true }] }],
+    declared: { channels: [], legs: [], triggers: [] },
+  })),
+}));
 vi.mock("../lib/env.js", () => ({ validateRequiredEnv: vi.fn(), REQUIRED_ENV: [] }));
 vi.mock("../instrument.js", () => ({}));
 // These suites pin the grains on email-gateway counts alone: the person-grain reply set is not read,
@@ -246,6 +255,25 @@ describe("workflow-projection: a LEG is answerable with no sales funnel named", 
     const tolerated = await get("leg=Meeting-Booked-To-Meeting-Attended");
     expect(tolerated.status).toBe(200);
     expect(tolerated.body.leg.legKey).toBe("meeting_booked_to_meeting_attended");
+  });
+
+  it("a PUBLISHED channel leg no sales funnel walks (AI Meeting Booking's declared form leg) answers 200 from its ASSIGNED workflows (owner 2026-10-12, FORM-SUBMITTED-TRIGGER-1012)", async () => {
+    mockFetch();
+    const { fetchLegAssignments } = await import("../lib/workflow-leg-assignments.js");
+    vi.mocked(fetchLegAssignments).mockResolvedValueOnce(
+      new Map([["ai-meeting-booking-fulu", {
+        featureSlug: "ai-meeting-booking", legKey: "form_submitted_to_meeting_booked", workflowDynastySlug: "ai-meeting-booking-fulu",
+        state: "active" as const, decidedBy: "workflow-service", decidedAt: "2026-10-12T15:40:43.001Z", note: null,
+      }]]),
+    );
+    const form = await request(app)
+      .get(`/features/ai-meeting-booking/workflow-projection?brandId=${BRAND}&leg=form_submitted_to_meeting_booked&campaignId=c-1&pricing=net`)
+      .set(AUTH);
+    expect(form.status).toBe(200);
+    expect(vi.mocked(fetchLegAssignments)).toHaveBeenCalledWith("ai-meeting-booking", "form_submitted_to_meeting_booked");
+    expect(form.body.rows.map((r: { workflow: { workflowDynastySlug: string } }) => r.workflow.workflowDynastySlug)).toEqual(["ai-meeting-booking-fulu"]);
+    expect(form.body.recommendedWorkflowDynastySlug).toBe("ai-meeting-booking-fulu");
+    expect(form.body.rows[0].modelEligibility.eligible).toBe(true);
   });
 
   it("a pipe no sales funnel prices (sourcing, AI Instant Call) answers 200 with the workflows ASSIGNED to it, never a 400/404", async () => {
