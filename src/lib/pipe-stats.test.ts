@@ -129,6 +129,8 @@ describe("customer-team pipe (owner 2026-10-12: their team's rate on the same le
     expect(s.volumes.map((v) => v.total)).toEqual([null, null]);
     expect(s.conversionRates[0]).toMatchObject({ ratePct: null, unavailableReason: "volume_not_measured" });
     expect(teamSource).toMatchObject({ available: false, unavailableReason: "from_step_not_recorded", brandsCounted: 0 });
+    // A brand two orgs hold: the most specific reason wins over the empty org's.
+    expect(customerTeamVolumes(pipe, [{ available: false, reason: "no_connected_source" }, { available: false, reason: "from_step_not_recorded" }], true).teamSource.unavailableReason).toBe("from_step_not_recorded");
     // Fleet with nobody answering names that, per-brand reasons counted.
     expect(customerTeamVolumes(pipe, [{ available: false, reason: "no_connection" }], false).teamSource.unavailableReason).toBe("no_brand_answers");
   });
