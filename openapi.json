@@ -11121,10 +11121,11 @@
                                     "outranked",
                                     "below_learning_bar",
                                     "to_exceeds_from",
+                                    "zero_not_conclusive",
                                     "too_few_brands",
                                     "crm_measures_this_leg"
                                   ],
-                                  "description": "Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. too_few_brands: a median over fewer than 5 brands. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."
+                                  "description": "Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. zero_not_conclusive: 0 at TO, on too few at FROM to rule out the next source's rate p (kept only once (1 - p)^FROM <= 5%, about 3 / p people: 598 at 0.5%). too_few_brands: a median over fewer than 5 brands. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."
                                 }
                               },
                               "required": [
@@ -11612,10 +11613,11 @@
                                         "outranked",
                                         "below_learning_bar",
                                         "to_exceeds_from",
+                                        "zero_not_conclusive",
                                         "too_few_brands",
                                         "crm_measures_this_leg"
                                       ],
-                                      "description": "Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. too_few_brands: a median over fewer than 5 brands. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."
+                                      "description": "Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. zero_not_conclusive: 0 at TO, on too few at FROM to rule out the next source's rate p (kept only once (1 - p)^FROM <= 5%, about 3 / p people: 598 at 0.5%). too_few_brands: a median over fewer than 5 brands. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."
                                     }
                                   },
                                   "required": [
@@ -21459,9 +21461,10 @@
                               "step_not_counted",
                               "evidence_unreadable",
                               "below_learning_bar",
-                              "to_exceeds_from"
+                              "to_exceeds_from",
+                              "zero_not_conclusive"
                             ],
-                            "description": "Why the measured rate is not the effective one; null when it is. to_exceeds_from: more leads at TO than FROM, so the ratio is no probability (never clamped)."
+                            "description": "Why the measured rate is not the effective one; null when it is. to_exceeds_from: more leads at TO than FROM, so the ratio is no probability (never clamped). zero_not_conclusive: 0 leads at TO, on too few at FROM to rule out the next source's rate p (a measured 0% counts only once (1 - p)^FROM <= 5%, about 3 / p leads)."
                           }
                         },
                         "required": [
@@ -21558,10 +21561,11 @@
                                 "outranked",
                                 "below_learning_bar",
                                 "to_exceeds_from",
+                                "zero_not_conclusive",
                                 "too_few_brands",
                                 "crm_measures_this_leg"
                               ],
-                              "description": "Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. too_few_brands: a median over fewer than 5 brands. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."
+                              "description": "Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. zero_not_conclusive: 0 at TO, on too few at FROM to rule out the next source's rate p (kept only once (1 - p)^FROM <= 5%, about 3 / p people: 598 at 0.5%). too_few_brands: a median over fewer than 5 brands. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."
                             }
                           },
                           "required": [
@@ -21710,9 +21714,10 @@
                         "step_not_counted",
                         "evidence_unreadable",
                         "below_learning_bar",
-                        "to_exceeds_from"
+                        "to_exceeds_from",
+                        "zero_not_conclusive"
                       ],
-                      "description": "Why the measured rate is not the effective one; null when it is. to_exceeds_from: more leads at TO than FROM, so the ratio is no probability (never clamped)."
+                      "description": "Why the measured rate is not the effective one; null when it is. to_exceeds_from: more leads at TO than FROM, so the ratio is no probability (never clamped). zero_not_conclusive: 0 leads at TO, on too few at FROM to rule out the next source's rate p (a measured 0% counts only once (1 - p)^FROM <= 5%, about 3 / p leads)."
                     }
                   },
                   "required": [
@@ -21809,10 +21814,11 @@
                           "outranked",
                           "below_learning_bar",
                           "to_exceeds_from",
+                          "zero_not_conclusive",
                           "too_few_brands",
                           "crm_measures_this_leg"
                         ],
-                        "description": "Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. too_few_brands: a median over fewer than 5 brands. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."
+                        "description": "Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. zero_not_conclusive: 0 at TO, on too few at FROM to rule out the next source's rate p (kept only once (1 - p)^FROM <= 5%, about 3 / p people: 598 at 0.5%). too_few_brands: a median over fewer than 5 brands. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."
                       }
                     },
                     "required": [

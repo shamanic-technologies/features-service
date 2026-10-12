@@ -124,6 +124,23 @@ export function fleetMedianApplies(medianRate: { ratePct: number | null; brandCo
   return medianRate.ratePct !== null && medianRate.brandCount >= MIN_FLEET_MEDIAN_BRANDS;
 }
 
+/**
+ * A measured 0% must have SEEN enough attempts to rule out the rate it would replace (owner 2026-10-12, Doc
+ * Dinners website visit → meeting booked read 0 of 119 and priced every funnel through the leg as impossible,
+ * while the 0.5% default predicts 0.6 bookings on 119 visits). Zero successes over n attempts is kept only
+ * when, at the next source's rate p, seeing none would happen at most `ZERO_CONCLUSIVE_MAX_CHANCE` of the
+ * time: (1 − p)^n ≤ 5%, i.e. n ≥ ln(0.05) ÷ ln(1 − p) ≈ 3 ÷ p (the "rule of three"; 598 at 0.5%, 149 at 2%).
+ * Every leg, every brand, both measurement bases alike. A rate with any success is untouched.
+ */
+export const ZERO_CONCLUSIVE_MAX_CHANCE = 0.05;
+
+/** PURE: whether `fromReached` attempts with zero successes prove the rate is below `nextRatePct` (see above). */
+export function zeroIsConclusive(fromReached: number, nextRatePct: number | null): boolean {
+  if (nextRatePct === null || nextRatePct <= 0) return true;
+  if (nextRatePct >= 100) return fromReached > 0;
+  return Math.pow(1 - nextRatePct / 100, fromReached) <= ZERO_CONCLUSIVE_MAX_CHANCE;
+}
+
 export type EffectiveRateSource = "measured" | "manual" | "median" | "default";
 
 /** Why an arrow's measured rate is not the effective one. */
@@ -135,7 +152,9 @@ export type MeasuredRateGap =
   /** Counted, but fewer than `MIN_MEASURED_FROM_REACHED` leads reached the FROM step. */
   | "below_learning_bar"
   /** More leads reached TO than FROM — the FROM step is under-counted, so the ratio is no probability. */
-  | "to_exceeds_from";
+  | "to_exceeds_from"
+  /** Zero leads reached TO, on too few at FROM to rule out the next source's rate (see `zeroIsConclusive`). */
+  | "zero_not_conclusive";
 
 /** WHERE a measured rate was read: this brand's leads, or the client's whole CRM. */
 export type MeasurementBasis = "our_leads" | "crm";
@@ -222,10 +241,10 @@ export interface RateCandidate {
   /**
    * Null when kept. Otherwise why not: `outranked` (usable, a source earlier in the precedence won),
    * `below_learning_bar` (fewer than `MIN_MEASURED_FROM_REACHED` at FROM), `to_exceeds_from` (no
-   * probability), `too_few_brands` (median over fewer than `MIN_FLEET_MEDIAN_BRANDS`),
+   * probability), `zero_not_conclusive` (0 at TO on too few at FROM to rule out the next source, `zeroIsConclusive`), `too_few_brands` (median over fewer than `MIN_FLEET_MEDIAN_BRANDS`),
    * `crm_measures_this_leg` (our leads, when the client's CRM is where this leg is measured).
    */
-  notKeptReason: "outranked" | "below_learning_bar" | "to_exceeds_from" | "too_few_brands" | "crm_measures_this_leg" | null;
+  notKeptReason: "outranked" | "below_learning_bar" | "to_exceeds_from" | "zero_not_conclusive" | "too_few_brands" | "crm_measures_this_leg" | null;
 }
 
 /** PURE: the candidates of a resolved leg (see `RateCandidate`). `ourLeads` = the our-leads measurement beside a CRM one. */
@@ -242,7 +261,7 @@ export function rateCandidatesOf(
     out.push({ basis, ratePct, ...none, ...extra, kept, notKeptReason: kept ? null : (blocked ?? "outranked") });
   };
   const measuredBlock = (m: MeasuredArrowRate): RateCandidate["notKeptReason"] =>
-    m.gap === "below_learning_bar" || m.gap === "to_exceeds_from" ? m.gap : null;
+    m.gap === "below_learning_bar" || m.gap === "to_exceeds_from" || m.gap === "zero_not_conclusive" ? m.gap : null;
   for (const m of [leg.measured, ourLeads]) {
     if (!m || m.ratePct === null) continue;
     const counts = { fromReached: m.fromReached, toReached: m.toReached, outcomesCounted: m.outcomesCounted };
@@ -722,12 +741,10 @@ export function resolveArrow(
   /** The our-leads measurement when `measured` is the CRM's: a candidate shown beside it, never weighed. */
   ourLeadsMeasured: MeasuredArrowRate | null = null,
 ): EffectiveArrowRate {
+  // The first source after MEASURED that holds a number: what a measured rate replaces.
   let effectiveRatePct: number | null = null;
   let source: EffectiveRateSource | null = null;
-  if (measured.sufficient && measured.ratePct !== null) {
-    effectiveRatePct = measured.ratePct;
-    source = "measured";
-  } else if (manualRatePct !== null) {
+  if (manualRatePct !== null) {
     effectiveRatePct = manualRatePct;
     source = "manual";
   } else if (medianRate.ratePct !== null && fleetMedianApplies(medianRate)) {
@@ -736,6 +753,14 @@ export function resolveArrow(
   } else if (defaultRatePct !== null) {
     effectiveRatePct = defaultRatePct;
     source = "default";
+  }
+  // A measured 0% that has not seen enough attempts to rule that rate out proves nothing: the next source wins.
+  if (measured.sufficient && measured.toReached === 0 && !zeroIsConclusive(measured.fromReached ?? 0, effectiveRatePct)) {
+    measured = { ...measured, sufficient: false, gap: "zero_not_conclusive" };
+  }
+  if (measured.sufficient && measured.ratePct !== null) {
+    effectiveRatePct = measured.ratePct;
+    source = "measured";
   }
   const resolved = {
     fromStep,
