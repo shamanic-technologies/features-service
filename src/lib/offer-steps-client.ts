@@ -53,7 +53,10 @@ export async function fetchOfferSteps(
     throw new OfferStepsUnreadableError(`brand-service offer steps read failed: ${(err as Error).message}`);
   }
   const text = await response.text();
-  if (response.status === 404) throw new OfferStepsOfferNotFoundError(`brand-service: offer ${offerId} is not an offer of brand ${brandId} (${text})`);
+  // 404: the offer is not on the brand; 403: the caller's org does not hold the brand. Both = not this org's offer.
+  if (response.status === 404 || response.status === 403) {
+    throw new OfferStepsOfferNotFoundError(`brand-service (${response.status}): offer ${offerId} of brand ${brandId} is not held by the caller's org (${text})`);
+  }
   if (!response.ok) throw new OfferStepsUnreadableError(`brand-service offer steps read failed (${response.status}): ${text}`);
   let body: unknown;
   try {
