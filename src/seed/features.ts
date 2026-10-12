@@ -78,7 +78,14 @@ const RINGS_THE_REP: readonly ChannelStepTransition[] = reactsToStep({ from: "co
 // The Copilot follow-up (owner 2026-10-11): ONE warm email to ONE person the brand already knows (a signup, toward paying), written
 // from the campaign's instruction, the moment a caller reports the follow-up due. It can START a thread (AI meeting
 // booking only answers inside one). A precise condition is its own `reported` trigger on a leg declared at run time.
-const FOLLOWS_UP: readonly ChannelStepTransition[] = [{ from: "signup", to: "paid_client", mode: "reactive", triggerId: "follow_up_due" }];
+// The second leg answers `github_issue_in_prod` (owner 2026-10-12): the Copilot told someone it was talking with an
+// estimate, filed the GitHub issue that builds the exact figure, and this email goes out by itself the moment that
+// issue is in production. ONE trigger per (channel, leg), so it is its own leg: Positive reply (a person in
+// conversation with us) -> Paid client.
+const FOLLOWS_UP: readonly ChannelStepTransition[] = [
+  { from: "signup", to: "paid_client", mode: "reactive", triggerId: "follow_up_due" },
+  { from: "conversation", to: "paid_client", mode: "reactive", triggerId: "github_issue_in_prod" },
+];
 const GETS_THE_MEETING_HELD: readonly ChannelStepTransition[] = reactsToStep({ from: "meeting_booked", to: "meeting_attended" });
 const CLOSES_THE_MEETING: readonly ChannelStepTransition[] = reactsToStep({ from: "meeting_attended", to: "paid_client" });
 const CONVERTS_THE_SELF_SERVE_LEAD: readonly ChannelStepTransition[] = reactsToStep(

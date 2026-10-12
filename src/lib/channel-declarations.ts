@@ -34,6 +34,9 @@
  *    That route is a real, generic door: anything that knows the occurrence rings it, so the kind is coded. The
  *    declaration NAMES who reports it (`params.reportedBy`, required): an honest statement of who rings, never
  *    "someone will".
+ *  - `github_issue_in_prod` (owner 2026-10-12): campaign-service's detector sees the GitHub issue a campaign waits on
+ *    reach production. ONE coded trigger of that kind (`lib/channel-triggers.ts`); the issue is a per-campaign fact
+ *    at campaign-service, so the kind is never declared again (400 `trigger_kind_not_declarable`).
  * campaign-service runs the `delay` and `poll` detectors since #601 (deployed 2026-10-10), so both kinds are
  * in the set and every declared trigger of those kinds is coded. Their params are validated HERE with the
  * detector's own rules (`parseDelayParams`, `parsePollParams`), so a malformed declaration never reaches it.
@@ -102,7 +105,7 @@ export interface DeclaredLeg {
   updatedAt: string;
 }
 
-export const TRIGGER_KINDS = ["event", "delay", "poll", "reported"] as const;
+export const TRIGGER_KINDS = ["event", "delay", "poll", "reported", "github_issue_in_prod"] as const;
 export type TriggerKind = (typeof TRIGGER_KINDS)[number];
 
 /** The kinds a service fires GENERICALLY for any declared trigger of that kind (see the header): campaign-service's
@@ -406,6 +409,10 @@ export function parseTriggerInput(body: Body, existing: readonly TriggerTypeReco
   if (body.coded !== undefined) throw bad("coded_not_declarable", "coded is not declared: a trigger is coded once a service fires its kind");
   const kind = body.kind;
   if (!(TRIGGER_KINDS as readonly unknown[]).includes(kind)) throw bad("trigger_kind_unrecognised", `kind must be one of ${TRIGGER_KINDS.join(", ")}`);
+  if (kind === "github_issue_in_prod") {
+    // ONE general type, coded (`lib/channel-triggers.ts`): the issue a campaign waits on is stated per campaign at campaign-service.
+    throw bad("trigger_kind_not_declarable", "github_issue_in_prod is one coded trigger (github_issue_in_prod): name it on the pipe and state the issue on the campaign");
+  }
   let fromStep: ChannelStepKey | null = null;
   let params: Record<string, unknown> | null = null;
   let firedBy: string;
