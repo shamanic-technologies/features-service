@@ -13,6 +13,7 @@
  * the channel still fails loud.
  */
 import { SEED_FEATURES } from "../seed/features.js";
+import { loadChannelCatalogue } from "./channel-declarations-store.js";
 import { legKeyFor } from "./funnel-legs.js";
 import { DISPLAY_ONLY_SALES_FUNNELS } from "./sales-funnels.js";
 
@@ -25,4 +26,18 @@ export function unpricedPipeLeg(featureSlug: string, rawLeg: string): string | n
   if (!feature || feature.salesFunnels.some((k) => !DISPLAY_ONLY_SALES_FUNNELS.has(k))) return null;
   const wanted = normalise(rawLeg);
   return (feature.acquisitionChannel?.stepTransitions ?? []).some((t) => legKeyFor(t) === wanted) ? wanted : null;
+}
+
+/**
+ * A PUBLISHED leg of the channel that no sales funnel walks (owner 2026-10-12, FORM-SUBMITTED-TRIGGER-1012): a
+ * leg declared at run time on a channel that does sell reading funnels, e.g. AI Meeting Booking's
+ * `form_submitted_to_meeting_booked`. Like an unpriced pipe it runs its ASSIGNED workflows. Read only when the
+ * word names no funnel leg (`matchChannelLegKey` missed), so the funnel path pays nothing for it. Null = the
+ * channel publishes no such leg (the caller still fails loud).
+ */
+export async function publishedPipeLeg(featureSlug: string, rawLeg: string): Promise<string | null> {
+  const wanted = normalise(rawLeg);
+  const { channels } = await loadChannelCatalogue({ publishedOnly: true });
+  const channel = channels.find((c) => c.slug === featureSlug);
+  return channel?.stepTransitions.some((t) => t.legKey === wanted) ? wanted : null;
 }

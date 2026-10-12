@@ -3383,14 +3383,17 @@ export async function handlePublicChannels(res: import("express").Response): Pro
     key: "catalogue",
     windows: LIFETIME_AGGREGATE_WINDOWS,
     label: "acquisition-channel catalogue",
-    compute: async () => ({
-      channels: await withCampaignNames(await loadPublishedChannels()),
+    compute: async () => {
+      const channels = await withCampaignNames(await loadPublishedChannels());
+      return {
+      channels,
       funnels: salesFunnelCatalogue(),
-      legs: funnelLegCatalogue(),
+      legs: funnelLegCatalogue(channels),
       steps: channelStepCatalogue(),
       legKeyCorrespondence: OUTBOUND_LEG_KEY_CORRESPONDENCE,
       triggers: await loadChannelTriggers(),
-    }),
+      };
+    },
   });
   res.json(payload);
 }

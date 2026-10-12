@@ -47,7 +47,7 @@ import { fetchOfferScopeIdsSoft } from "../lib/offer-scope.js";
 import { withInteractiveReads } from "../lib/lead-copy.js";
 import { describeIdentity, type CampaignIdentity, type CampaignIdentityView } from "../lib/campaign-identity.js";
 import { DEFAULT_MAXIMIZE, MAXIMIZE_ERROR, parseMaximize, type Maximize } from "../lib/maximize.js";
-import { unpricedPipeLeg } from "../lib/unpriced-pipes.js";
+import { publishedPipeLeg, unpricedPipeLeg } from "../lib/unpriced-pipes.js";
 import {
   buildObservedPicks,
   fetchCampaignTriggerRunsSoft,
@@ -1292,7 +1292,8 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
   if (legParam != null && legParam !== "") {
     // A pipe no sales funnel prices (sourcing, AI Instant Call) is answered from its ASSIGNED workflows,
     // never refused as an unknown or undeclared leg (lib/unpriced-pipes.ts).
-    const pipeLegKey = unpricedPipeLeg(featureSlug, legParam);
+    const pipeLegKey = unpricedPipeLeg(featureSlug, legParam)
+      ?? (matchChannelLegKey(featureSlug, legParam) ? null : await publishedPipeLeg(featureSlug, legParam));
     if (pipeLegKey) {
       const maximizeParam = parseMaximize(req.query as Record<string, unknown>);
       if (!maximizeParam.ok) return res.status(400).json({ error: MAXIMIZE_ERROR, reason: "maximize_unrecognised" });
