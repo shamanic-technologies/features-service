@@ -12,6 +12,7 @@ import {
   fleetMedianApplies,
   crmMeasurementOf,
   crmArrowRate,
+  zeroIsConclusive,
   type BrandStepMeasurement,
 } from "./effective-conversion-rates.js";
 import { ALL_STEP_EVIDENCE, type LeadStepField } from "./funnel-steps.js";
@@ -219,6 +220,73 @@ describe("resolveArrow — measured, else manual, else median, else null", () =>
       source: null,
       unresolvedReason: "no_rate_available",
     });
+  });
+});
+
+describe("a measured 0% must have seen enough attempts to rule out the next source (owner 2026-10-12)", () => {
+  /** Doc Dinners: 119 visits, 0 bookings; 30 positive replies, 8 bookings. */
+  const DOC_DINNERS: BrandStepMeasurement = {
+    contactedRecipients: 2000,
+    evidence: ALL_STEP_EVIDENCE,
+    reached: [
+      ...times(119, lead({ clicked: true })),
+      ...times(8, lead({ repliedPositive: true, meetingBooked: true })),
+      ...times(22, lead({ repliedPositive: true })),
+    ],
+  };
+  const none = { ratePct: null, brandCount: 0 };
+
+  it("the rule: (1 - p)^n <= 5%, about 3 / p attempts", () => {
+    expect(zeroIsConclusive(119, 0.5)).toBe(false); // 0.995^119 = 55%: 0 of 119 is what a 0.5% leg looks like
+    expect(zeroIsConclusive(597, 0.5)).toBe(false);
+    expect(zeroIsConclusive(598, 0.5)).toBe(true);
+    expect(zeroIsConclusive(148, 2)).toBe(false);
+    expect(zeroIsConclusive(149, 2)).toBe(true);
+    // Nothing to fall back to, or a stated 0: the measured 0 stands.
+    expect(zeroIsConclusive(10, null)).toBe(true);
+    expect(zeroIsConclusive(10, 0)).toBe(true);
+  });
+
+  it("0 of 119 visits does not price as 0%: the default wins, the measurement is shown with its reason", () => {
+    const measured = measuredArrowRate(DOC_DINNERS, "clicked", "meetingBooked");
+    expect(measured).toMatchObject({ fromReached: 119, toReached: 0, ratePct: 0, sufficient: true });
+    const leg = resolveArrow("Website visit", "Meeting booked", measured, null, none, 0.5);
+    expect(leg).toMatchObject({
+      effectiveRatePct: 0.5,
+      source: "default",
+      measured: { fromReached: 119, toReached: 0, ratePct: 0, sufficient: false, gap: "zero_not_conclusive" },
+    });
+    expect(leg.candidates).toEqual([
+      expect.objectContaining({ basis: "our_leads", ratePct: 0, fromReached: 119, toReached: 0, kept: false, notKeptReason: "zero_not_conclusive" }),
+      expect.objectContaining({ basis: "default", ratePct: 0.5, kept: true, notKeptReason: null }),
+    ]);
+  });
+
+  it("the comparison is against the NEXT source: the client's own statement, else the median, else the default", () => {
+    const measured = measuredArrowRate(DOC_DINNERS, "clicked", "meetingBooked");
+    // Stated 5%: 0 of 119 IS conclusive against 5% (0.95^119 = 0.2%), so the measured 0% stands.
+    expect(resolveArrow("Website visit", "Meeting booked", measured, 5, none, 0.5)).toMatchObject({ effectiveRatePct: 0, source: "measured" });
+    // Stated 1%: 0.99^119 = 30%, not conclusive, the statement wins.
+    expect(resolveArrow("Website visit", "Meeting booked", measured, 1, none, 0.5)).toMatchObject({ effectiveRatePct: 1, source: "manual" });
+    expect(resolveArrow("Website visit", "Meeting booked", measured, null, { ratePct: 0.8, brandCount: 6 }, 0.5)).toMatchObject({
+      effectiveRatePct: 0.8,
+      source: "median",
+    });
+  });
+
+  it("a leg with real successes keeps its measured rate exactly (8 of 30 = 26.67%)", () => {
+    const measured = measuredArrowRate(DOC_DINNERS, "repliedPositive", "meetingBooked");
+    const leg = resolveArrow("Positive reply", "Meeting booked", measured, null, none, 10);
+    expect(leg).toMatchObject({ source: "measured", measured: { fromReached: 30, toReached: 8, sufficient: true, gap: null } });
+    expect(leg.effectiveRatePct).toBeCloseTo(26.6667, 3);
+  });
+
+  it("every reader of the brand's legs sees the same rule (buildBrandEffectiveRates)", () => {
+    const rates = buildBrandEffectiveRates({ brandId: "b", measurement: DOC_DINNERS, manual: [], medians: new Map(), funnelKeys: [] } as never);
+    const visit = rates.legs.find((l) => l.fromStep === "Website visit" && l.toStep === "Meeting booked")!;
+    expect(visit.source).not.toBe("measured");
+    expect(visit.effectiveRatePct).toBeGreaterThan(0);
+    expect(visit.measured.gap).toBe("zero_not_conclusive");
   });
 });
 
