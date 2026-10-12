@@ -8,8 +8,8 @@ describe("a pipe's figures by calendar period (owner 2026-10-12, PIPE-PERIODS-10
   it("reproduces the owner's hand table: per quarter and month, not cumulative, plus a since-inception row", () => {
     const p = buildPipePeriods({
       counts: [
-        { key: "reachedFrom", counts: dated({ "2024-12-06": 2, "2026-01-10": 50, "2026-03-31": 32, "2026-04-02": 47, "2026-10-05": 7 }, 1) },
-        { key: "outcomes", counts: dated({ "2024-12-06": 1, "2026-01-10": 40, "2026-03-31": 21, "2026-04-02": 18 }) },
+        { key: "reachedFrom", counts: dated({ "2024-12-06": 2, "2026-01-10": 50, "2026-03-31": 32, "2026-04-02": 47, "2026-10-05": 7 }, 1), datedBy: "input_day" },
+        { key: "outcomes", counts: dated({ "2024-12-06": 1, "2026-01-10": 40, "2026-03-31": 21, "2026-04-02": 18 }), datedBy: "input_day" },
       ],
       ratePairs: pairs,
       outcomeKey: "outcomes",
@@ -36,9 +36,9 @@ describe("a pipe's figures by calendar period (owner 2026-10-12, PIPE-PERIODS-10
   it("serves spend and cost per outcome per period where the pipe has spend; unmeasured counts stay null", () => {
     const p = buildPipePeriods({
       counts: [
-        { key: "handed", counts: dated({ "2026-09-03": 10, "2026-10-01": 4 }) },
-        { key: "outcomes", counts: dated({ "2026-09-20": 2 }) },
-        { key: "unmeasured", counts: null },
+        { key: "handed", counts: dated({ "2026-09-03": 10, "2026-10-01": 4 }), datedBy: "input_day" },
+        { key: "outcomes", counts: dated({ "2026-09-20": 2 }), datedBy: "input_day" },
+        { key: "unmeasured", counts: null, datedBy: "input_day" },
       ],
       ratePairs: [{ key: "handed_to_outcomes", fromKey: "handed", toKey: "outcomes" }],
       outcomeKey: "outcomes",
@@ -53,9 +53,25 @@ describe("a pipe's figures by calendar period (owner 2026-10-12, PIPE-PERIODS-10
   });
 
   it("nothing dated: only the total row", () => {
-    const p = buildPipePeriods({ counts: [{ key: "outcomes", counts: dated({}, 3) }], ratePairs: [], outcomeKey: "outcomes", spendByDay: new Map(), today: "2026-10-12" });
+    const p = buildPipePeriods({ counts: [{ key: "outcomes", counts: dated({}, 3), datedBy: "input_day" }], ratePairs: [], outcomeKey: "outcomes", spendByDay: new Map(), today: "2026-10-12" });
     expect(p.quarters).toEqual([]);
     expect(p.months).toEqual([]);
     expect(p.total).toMatchObject({ label: "Since inception", startDate: null, counts: { outcomes: 3 } });
+  });
+});
+
+describe("periods are a COHORT where the producer allows it (to ⊆ from in every period)", () => {
+  it("internal pipe: acted on / reached filed on the hand-over day", async () => {
+    const { internalPipeCohort } = await import("./funnel-campaign-activity.js");
+    const rows = [
+      { leadId: "a", firstClaimedAt: "2026-09-30T10:00:00Z", firstActedAt: "2026-10-01T10:00:00Z", actedCount: 1 },
+      { leadId: "b", firstClaimedAt: "2026-10-02T10:00:00Z", firstActedAt: null, actedCount: 0 },
+      { leadId: "c", firstClaimedAt: null, firstActedAt: "2026-10-03T10:00:00Z", actedCount: 1 },
+    ];
+    const c = internalPipeCohort("meeting_booked", rows, new Map([["a", "2026-10-04T00:00:00Z"], ["z", "2026-10-04T00:00:00Z"]]));
+    expect(Object.fromEntries(c.actedOn.daily)).toEqual({ "2026-09-30": 1 });
+    expect(c.actedOn.undated).toBe(1);
+    // `a` booked in October, filed on its September hand-over; `z` was never handed to the pipe.
+    expect(Object.fromEntries(c.reached!.daily)).toEqual({ "2026-09-30": 1 });
   });
 });

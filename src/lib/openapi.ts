@@ -6471,7 +6471,7 @@ const pipePeriodRow = z.object({
   label: z.string().describe("Printable as is: `Q1 2026`, `Oct 2026`, `Since Dec 2024`."),
   startDate: z.string().nullable().describe("First UTC day of the period (total row: first activity day; null with no dated activity)."),
   endDate: z.string().describe("Last UTC day of the period (total row: today)."),
-  counts: z.record(z.string(), z.number().int().nullable()).describe("Count key -> count filed in the period by its OWN date (see the volume's `datedBy`), NOT cumulative. Null = unmeasured. The total row adds the undated counts."),
+  counts: z.record(z.string(), z.number().int().nullable()).describe("Count key -> count filed in the period (see `countsDatedBy`), NOT cumulative. Null = unmeasured. The total row adds the undated counts."),
   ratesPct: z.record(z.string(), z.number().nullable()).describe("Rate key -> the period's `to` count ÷ its `from` count × 100, PERCENT, 2 decimals. Null with a reason, never 0 for no input (a measured 0 over a real input IS 0)."),
   rateUnavailableReasons: z.record(z.string(), z.enum(["no_input_yet", "volume_not_measured"]).nullable()),
   spendUsd: z.number().nullable().describe("NET spend of ours in the period; null when the figure has no spend of ours (customer time)."),
@@ -6480,7 +6480,8 @@ const pipePeriodRow = z.object({
 const pipePeriodsSchema = (counts: string, rates: string) =>
   z
     .object({
-      basis: z.literal("calendar_period_own_date").describe("Every count filed in the calendar period of its own date (the serve that took the person = a cohort rate; else the event itself = an event rate: an outcome landing in the next period counts there). Undated counts sit in no period, only in `total`."),
+      basis: z.literal("calendar_period").describe("Calendar quarters and months, NOT cumulative. Undated counts sit in no period, only in `total`."),
+      countsDatedBy: z.record(z.string(), z.enum(["input_day", "own_date"])).describe("Count key -> where it is filed. `input_day` = a COHORT (owner's table \"Q1 2026: 82 form leads, 61 of them booked\"): the person is filed on the day they entered the pipe's input (serve, hand-over, reaching `from`), so to ⊆ from and the rate ≤ 100% in every period. `own_date` = the count's own event day (only where the producer dates nothing else): a period can read above its input."),
       total: pipePeriodRow.describe("Since inception, dated + undated: equals the snapshot."),
       quarters: z.array(pipePeriodRow).describe("Every calendar quarter from the first activity to today's, oldest first (an empty one reads 0)."),
       months: z.array(pipePeriodRow).describe("Every calendar month from the first activity to today's, oldest first."),

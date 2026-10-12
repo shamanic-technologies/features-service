@@ -146,6 +146,9 @@ export interface BrandFigures {
    *  who reached `to` under the same rule. Empty without a focus pipe. */
   focusActed: DatedCount;
   focusReached: DatedCount;
+  /** `reached` / `focusReached` COHORT-dated: filed on the day the person reached `from` (for `periods`). */
+  reachedByFromDay: DatedCount;
+  focusReachedByFromDay: DatedCount;
 }
 
 /** PURE: one brand's left-to-their-team volumes and our pipes' rate, from per-person facts. */
@@ -162,6 +165,7 @@ export function ourLeadsToTeamFigures(input: {
 }): BrandFigures {
   const left: DatedCount = { daily: new Map(), undated: 0 };
   const reached: DatedCount = { daily: new Map(), undated: 0 };
+  const reachedByFromDay: DatedCount = { daily: new Map(), undated: 0 };
   const add = (v: DatedCount, day: string | null) => {
     if (day === null) v.undated++;
     else v.daily.set(day, (v.daily.get(day) ?? 0) + 1);
@@ -177,7 +181,10 @@ export function ourLeadsToTeamFigures(input: {
     }
     add(left, dayOf(fromAt));
     const to = reachedToAt(fromAt, input.toAtByLead.get(leadId));
-    if (to !== undefined) add(reached, to);
+    if (to !== undefined) {
+      add(reached, to);
+      add(reachedByFromDay, dayOf(fromAt));
+    }
   }
   // A person our pipes acted on but no producing campaign in scope brought: dated by the first action on them.
   const fromAtOfActed = (leadId: string) => (fromAtOf.has(leadId) ? fromAtOf.get(leadId)! : (input.acted.get(leadId) ?? null));
@@ -185,11 +192,15 @@ export function ourLeadsToTeamFigures(input: {
   for (const leadId of input.actedInScope) if (reachedToAt(fromAtOfActed(leadId), input.toAtByLead.get(leadId)) !== undefined) ourOutcomes++;
   const focusActed: DatedCount = { daily: new Map(), undated: 0 };
   const focusReached: DatedCount = { daily: new Map(), undated: 0 };
+  const focusReachedByFromDay: DatedCount = { daily: new Map(), undated: 0 };
   for (const leadId of input.focusActedInScope ?? []) {
     const fromAt = fromAtOfActed(leadId);
     add(focusActed, dayOf(fromAt));
     const to = reachedToAt(fromAt, input.toAtByLead.get(leadId));
-    if (to !== undefined) add(focusReached, to);
+    if (to !== undefined) {
+      add(focusReached, to);
+      add(focusReachedByFromDay, dayOf(fromAt));
+    }
   }
   const actedOn = input.actedInScope.size;
   return {
@@ -200,6 +211,8 @@ export function ourLeadsToTeamFigures(input: {
     ourPipesRate: { actedOn, outcomes: ourOutcomes, ratePct: actedOn > 0 ? round2((ourOutcomes / actedOn) * 100) : null, unavailableReason: actedOn > 0 ? null : "no_input_yet" },
     focusActed,
     focusReached,
+    reachedByFromDay,
+    focusReachedByFromDay,
   };
 }
 
@@ -230,7 +243,7 @@ export function buildOurLeadsToTeam(
   const figures = buildPipeStats({
     volumes: [
       { key: "leftToTeam", label: `${p.fromStepLabel ?? "People"} we brought, left to their team`, role: "input", datedBy: measured ? "event_day" : null, ...from },
-      { key: "outcomes", label: `${p.toStepLabel} (their team, on our leads)`, role: "outcome", datedBy: measured ? "event_day" : null, ...to },
+      { key: "outcomes", label: `${p.toStepLabel} (their team, on our leads)`, role: "outcome", datedBy: measured ? "event_day" : null, ...to, ...(measured ? { cohort: sum((f) => f.reachedByFromDay) } : {}) },
     ],
     outcomeKey: "outcomes",
     spendByDay: new Map(),

@@ -49,7 +49,7 @@ import { fetchFleetLegCampaigns, type FleetLegCampaign } from "./fleet-leg-campa
 import { fetchFleetServeDayCounts } from "./fleet-positive-repliers.js";
 import { fetchFollowupActionRows, type FollowupActionRow } from "./followup-actions-client.js";
 import { fetchStepOutcomes } from "./step-outcomes-client.js";
-import { ACT_IS_OUTCOME_STEPS, OUTCOME_EVENT_OF_STEP, earliestOutcomeByLead, internalPipeWork } from "./funnel-campaign-activity.js";
+import { ACT_IS_OUTCOME_STEPS, OUTCOME_EVENT_OF_STEP, earliestOutcomeByLead, internalPipeCohort, internalPipeWork } from "./funnel-campaign-activity.js";
 import { fetchLeadsFound } from "./on-demand-pipe-fleet.js";
 import { INLINE_TRIGGER_IDS } from "./channel-triggers.js";
 import { RUNS_CAMPAIGN_IDS_PER_REQUEST } from "./brand-spend-by-day-client.js";
@@ -80,6 +80,9 @@ export interface VolumeInput {
   datedBy: DatedBy;
   daily: Map<string, number> | null;
   undated: number;
+  /** The same people filed on the day they entered the pipe's INPUT (cohort), for `periods`; absent = the input itself
+   *  or a count only dated by its own event. */
+  cohort?: { daily: ReadonlyMap<string, number>; undated: number };
 }
 
 export interface PipeStatsVolume {
@@ -239,7 +242,13 @@ export function buildPipeStats(input: {
     }),
     history,
     periods: buildPipePeriods({
-      counts: input.volumes.map((v) => ({ key: v.key, counts: v.daily === null ? null : { daily: v.daily, undated: v.undated } })),
+      counts: input.volumes.map((v, i) =>
+        v.daily === null
+          ? { key: v.key, counts: null, datedBy: "own_date" as const }
+          : v.cohort
+            ? { key: v.key, counts: v.cohort, datedBy: "input_day" as const }
+            : { key: v.key, counts: { daily: v.daily, undated: v.undated }, datedBy: i === 0 || v.datedBy === "serve_day" ? ("input_day" as const) : ("own_date" as const) },
+      ),
       ratePairs: pairs,
       outcomeKey: input.outcomeKey,
       spendByDay: input.hasSpend === false ? null : input.spendByDay,
@@ -320,22 +329,33 @@ async function internalVolumes(p: PipeStatsPipe, campaigns: readonly FleetLegCam
       fetchFollowupActionRows(brandId, ids) as Promise<FollowupActionRow[]>,
       event ? fetchStepOutcomes(brandId, event).then(earliestOutcomeByLead) : Promise.resolve(null),
     ]);
-    return internalPipeWork(p.toStep, rows, outcomes);
+    return { work: internalPipeWork(p.toStep, rows, outcomes), cohort: internalPipeCohort(p.toStep, rows, outcomes) };
   });
   const sum = (field: "handed" | "actedOn" | "reached") => {
     const daily = new Map<string, number>();
     let undated = 0;
-    for (const w of works) {
+    for (const { work: w } of works) {
       for (const d of w.daily) if (d[field] > 0) daily.set(d.date, (daily.get(d.date) ?? 0) + d[field]);
       undated += w.undated[field];
+    }
+    return { daily, undated };
+  };
+  const cohortOf = (field: "actedOn" | "reached") => {
+    const daily = new Map<string, number>();
+    let undated = 0;
+    for (const { cohort } of works) {
+      const c = cohort[field];
+      if (!c) continue;
+      for (const [d, n] of c.daily) daily.set(d, (daily.get(d) ?? 0) + n);
+      undated += c.undated;
     }
     return { daily, undated };
   };
   const reached = sum("reached");
   return [
     { key: "handed", label: `${p.fromStepLabel ?? "People"} received`, role: "input", datedBy: "event_day", ...sum("handed") },
-    { key: "actedOn", label: "Acted on", role: "action", datedBy: "event_day", ...sum("actedOn") },
-    { key: "outcomes", label: p.toStepLabel, role: "outcome", datedBy: countsReached ? "event_day" : null, daily: countsReached ? reached.daily : null, undated: countsReached ? reached.undated : 0 },
+    { key: "actedOn", label: "Acted on", role: "action", datedBy: "event_day", ...sum("actedOn"), cohort: cohortOf("actedOn") },
+    { key: "outcomes", label: p.toStepLabel, role: "outcome", datedBy: countsReached ? "event_day" : null, daily: countsReached ? reached.daily : null, undated: countsReached ? reached.undated : 0, ...(countsReached ? { cohort: cohortOf("reached") } : {}) },
   ];
 }
 
@@ -510,8 +530,8 @@ export async function computePipeStats(p: PipeStatsPipe, scope: PipeStatsScope, 
       fromStepLabel: p.fromStepLabel,
       toStepLabel: p.toStepLabel,
       reason,
-      team: perBrand && { from: sumDated(perBrand.map((f) => f.left)), to: sumDated(perBrand.map((f) => f.reached)) },
-      pipe: perBrand && { from: sumDated(perBrand.map((f) => f.focusActed)), to: sumDated(perBrand.map((f) => f.focusReached)) },
+      team: perBrand && { from: sumDated(perBrand.map((f) => f.left)), to: sumDated(perBrand.map((f) => f.reached)), toByFromDay: sumDated(perBrand.map((f) => f.reachedByFromDay)) },
+      pipe: perBrand && { from: sumDated(perBrand.map((f) => f.focusActed)), to: sumDated(perBrand.map((f) => f.focusReached)), toByFromDay: sumDated(perBrand.map((f) => f.focusReachedByFromDay)) },
       spendByDay,
       today,
     });

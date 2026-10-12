@@ -118,8 +118,8 @@ export function buildPipeTeamImpact(input: {
   fromStepLabel: string | null;
   toStepLabel: string;
   reason: OurLeadsToTeamReason | null;
-  team: { from: DatedCount; to: DatedCount } | null;
-  pipe: { from: DatedCount; to: DatedCount } | null;
+  team: { from: DatedCount; to: DatedCount; toByFromDay?: DatedCount } | null;
+  pipe: { from: DatedCount; to: DatedCount; toByFromDay?: DatedCount } | null;
   /** This pipe's NET spend per UTC day in scope. */
   spendByDay: ReadonlyMap<string, number>;
   today: string;
@@ -222,17 +222,17 @@ export function buildPipeTeamImpact(input: {
 
 /** PURE: the two rows by calendar period, and the points between their rates per period (null when either is). */
 function teamImpactPeriods(
-  team: { from: DatedCount; to: DatedCount } | null,
-  pipe: { from: DatedCount; to: DatedCount } | null,
+  team: { from: DatedCount; to: DatedCount; toByFromDay?: DatedCount } | null,
+  pipe: { from: DatedCount; to: DatedCount; toByFromDay?: DatedCount } | null,
   spendByDay: ReadonlyMap<string, number>,
   today: string,
 ): PipeTeamImpact["periods"] {
   const periods = buildPipePeriods({
     counts: [
-      { key: "teamAloneFrom", counts: team?.from ?? null },
-      { key: "teamAloneTo", counts: team?.to ?? null },
-      { key: "teamPlusPipeFrom", counts: pipe?.from ?? null },
-      { key: "teamPlusPipeTo", counts: pipe?.to ?? null },
+      { key: "teamAloneFrom", counts: team?.from ?? null, datedBy: "input_day" },
+      { key: "teamAloneTo", counts: team ? (team.toByFromDay ?? team.to) : null, datedBy: team?.toByFromDay ? "input_day" : "own_date" },
+      { key: "teamPlusPipeFrom", counts: pipe?.from ?? null, datedBy: "input_day" },
+      { key: "teamPlusPipeTo", counts: pipe ? (pipe.toByFromDay ?? pipe.to) : null, datedBy: pipe?.toByFromDay ? "input_day" : "own_date" },
     ],
     ratePairs: [
       { key: "teamAlone", fromKey: "teamAloneFrom", toKey: "teamAloneTo" },

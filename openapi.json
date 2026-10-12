@@ -49959,9 +49959,20 @@
                                 "basis": {
                                   "type": "string",
                                   "enum": [
-                                    "calendar_period_own_date"
+                                    "calendar_period"
                                   ],
-                                  "description": "Every count filed in the calendar period of its own date (the serve that took the person = a cohort rate; else the event itself = an event rate: an outcome landing in the next period counts there). Undated counts sit in no period, only in `total`."
+                                  "description": "Calendar quarters and months, NOT cumulative. Undated counts sit in no period, only in `total`."
+                                },
+                                "countsDatedBy": {
+                                  "type": "object",
+                                  "additionalProperties": {
+                                    "type": "string",
+                                    "enum": [
+                                      "input_day",
+                                      "own_date"
+                                    ]
+                                  },
+                                  "description": "Count key -> where it is filed. `input_day` = a COHORT (owner's table \"Q1 2026: 82 form leads, 61 of them booked\"): the person is filed on the day they entered the pipe's input (serve, hand-over, reaching `from`), so to ⊆ from and the rate ≤ 100% in every period. `own_date` = the count's own event day (only where the producer dates nothing else): a period can read above its input."
                                 },
                                 "total": {
                                   "type": "object",
@@ -49997,7 +50008,7 @@
                                         "type": "integer",
                                         "nullable": true
                                       },
-                                      "description": "Count key -> count filed in the period by its OWN date (see the volume's `datedBy`), NOT cumulative. Null = unmeasured. The total row adds the undated counts."
+                                      "description": "Count key -> count filed in the period (see `countsDatedBy`), NOT cumulative. Null = unmeasured. The total row adds the undated counts."
                                     },
                                     "ratesPct": {
                                       "type": "object",
@@ -50079,7 +50090,7 @@
                                           "type": "integer",
                                           "nullable": true
                                         },
-                                        "description": "Count key -> count filed in the period by its OWN date (see the volume's `datedBy`), NOT cumulative. Null = unmeasured. The total row adds the undated counts."
+                                        "description": "Count key -> count filed in the period (see `countsDatedBy`), NOT cumulative. Null = unmeasured. The total row adds the undated counts."
                                       },
                                       "ratesPct": {
                                         "type": "object",
@@ -50162,7 +50173,7 @@
                                           "type": "integer",
                                           "nullable": true
                                         },
-                                        "description": "Count key -> count filed in the period by its OWN date (see the volume's `datedBy`), NOT cumulative. Null = unmeasured. The total row adds the undated counts."
+                                        "description": "Count key -> count filed in the period (see `countsDatedBy`), NOT cumulative. Null = unmeasured. The total row adds the undated counts."
                                       },
                                       "ratesPct": {
                                         "type": "object",
@@ -50212,6 +50223,7 @@
                               },
                               "required": [
                                 "basis",
+                                "countsDatedBy",
                                 "total",
                                 "quarters",
                                 "months"
@@ -50545,9 +50557,20 @@
                                 "basis": {
                                   "type": "string",
                                   "enum": [
-                                    "calendar_period_own_date"
+                                    "calendar_period"
                                   ],
-                                  "description": "Every count filed in the calendar period of its own date (the serve that took the person = a cohort rate; else the event itself = an event rate: an outcome landing in the next period counts there). Undated counts sit in no period, only in `total`."
+                                  "description": "Calendar quarters and months, NOT cumulative. Undated counts sit in no period, only in `total`."
+                                },
+                                "countsDatedBy": {
+                                  "type": "object",
+                                  "additionalProperties": {
+                                    "type": "string",
+                                    "enum": [
+                                      "input_day",
+                                      "own_date"
+                                    ]
+                                  },
+                                  "description": "Count key -> where it is filed. `input_day` = a COHORT (owner's table \"Q1 2026: 82 form leads, 61 of them booked\"): the person is filed on the day they entered the pipe's input (serve, hand-over, reaching `from`), so to ⊆ from and the rate ≤ 100% in every period. `own_date` = the count's own event day (only where the producer dates nothing else): a period can read above its input."
                                 },
                                 "total": {
                                   "type": "object",
@@ -50583,7 +50606,7 @@
                                         "type": "integer",
                                         "nullable": true
                                       },
-                                      "description": "Count key -> count filed in the period by its OWN date (see the volume's `datedBy`), NOT cumulative. Null = unmeasured. The total row adds the undated counts."
+                                      "description": "Count key -> count filed in the period (see `countsDatedBy`), NOT cumulative. Null = unmeasured. The total row adds the undated counts."
                                     },
                                     "ratesPct": {
                                       "type": "object",
@@ -50665,7 +50688,7 @@
                                           "type": "integer",
                                           "nullable": true
                                         },
-                                        "description": "Count key -> count filed in the period by its OWN date (see the volume's `datedBy`), NOT cumulative. Null = unmeasured. The total row adds the undated counts."
+                                        "description": "Count key -> count filed in the period (see `countsDatedBy`), NOT cumulative. Null = unmeasured. The total row adds the undated counts."
                                       },
                                       "ratesPct": {
                                         "type": "object",
@@ -50748,7 +50771,7 @@
                                           "type": "integer",
                                           "nullable": true
                                         },
-                                        "description": "Count key -> count filed in the period by its OWN date (see the volume's `datedBy`), NOT cumulative. Null = unmeasured. The total row adds the undated counts."
+                                        "description": "Count key -> count filed in the period (see `countsDatedBy`), NOT cumulative. Null = unmeasured. The total row adds the undated counts."
                                       },
                                       "ratesPct": {
                                         "type": "object",
@@ -50806,6 +50829,7 @@
                               },
                               "required": [
                                 "basis",
+                                "countsDatedBy",
                                 "total",
                                 "quarters",
                                 "months",
@@ -51046,9 +51070,20 @@
                             "basis": {
                               "type": "string",
                               "enum": [
-                                "calendar_period_own_date"
+                                "calendar_period"
                               ],
-                              "description": "Every count filed in the calendar period of its own date (the serve that took the person = a cohort rate; else the event itself = an event rate: an outcome landing in the next period counts there). Undated counts sit in no period, only in `total`."
+                              "description": "Calendar quarters and months, NOT cumulative. Undated counts sit in no period, only in `total`."
+                            },
+                            "countsDatedBy": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": "string",
+                                "enum": [
+                                  "input_day",
+                                  "own_date"
+                                ]
+                              },
+                              "description": "Count key -> where it is filed. `input_day` = a COHORT (owner's table \"Q1 2026: 82 form leads, 61 of them booked\"): the person is filed on the day they entered the pipe's input (serve, hand-over, reaching `from`), so to ⊆ from and the rate ≤ 100% in every period. `own_date` = the count's own event day (only where the producer dates nothing else): a period can read above its input."
                             },
                             "total": {
                               "type": "object",
@@ -51084,7 +51119,7 @@
                                     "type": "integer",
                                     "nullable": true
                                   },
-                                  "description": "Count key -> count filed in the period by its OWN date (see the volume's `datedBy`), NOT cumulative. Null = unmeasured. The total row adds the undated counts."
+                                  "description": "Count key -> count filed in the period (see `countsDatedBy`), NOT cumulative. Null = unmeasured. The total row adds the undated counts."
                                 },
                                 "ratesPct": {
                                   "type": "object",
@@ -51166,7 +51201,7 @@
                                       "type": "integer",
                                       "nullable": true
                                     },
-                                    "description": "Count key -> count filed in the period by its OWN date (see the volume's `datedBy`), NOT cumulative. Null = unmeasured. The total row adds the undated counts."
+                                    "description": "Count key -> count filed in the period (see `countsDatedBy`), NOT cumulative. Null = unmeasured. The total row adds the undated counts."
                                   },
                                   "ratesPct": {
                                     "type": "object",
@@ -51249,7 +51284,7 @@
                                       "type": "integer",
                                       "nullable": true
                                     },
-                                    "description": "Count key -> count filed in the period by its OWN date (see the volume's `datedBy`), NOT cumulative. Null = unmeasured. The total row adds the undated counts."
+                                    "description": "Count key -> count filed in the period (see `countsDatedBy`), NOT cumulative. Null = unmeasured. The total row adds the undated counts."
                                   },
                                   "ratesPct": {
                                     "type": "object",
@@ -51299,6 +51334,7 @@
                           },
                           "required": [
                             "basis",
+                            "countsDatedBy",
                             "total",
                             "quarters",
                             "months"
