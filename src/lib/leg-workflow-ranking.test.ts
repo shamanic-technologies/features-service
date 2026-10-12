@@ -91,4 +91,16 @@ describe("rankLegWorkflows", () => {
     const roi = Object.fromEntries(rows.map((r) => [r.workflowDynastySlug, r.roiMultiple]));
     expect(roi).toEqual({ a: 5, b: null, c: null });
   });
+
+  it("lists a workflow ASSIGNED to the leg before its first run, never an empty list (owner 2026-10-10)", () => {
+    const rows = rankLegWorkflows({
+      byDynasty: new Map([["raven", wf([14, 400, 1], [0, 0, 0])]]),
+      names: new Map(),
+      assignments: new Map([["algenib", "active"], ["raven", "active"]]),
+      pipelineUsd: new Map(),
+      billedSpendUsd: new Map(),
+    });
+    expect(rows.map((r) => r.workflowDynastySlug)).toEqual(["raven", "algenib"]);
+    expect(rows[1]).toMatchObject({ assignment: "active", selectable: true, outcomes: 0, spentUsd: 0, costPerOutcomeUsd: null, basis: "flash" });
+  });
 });
