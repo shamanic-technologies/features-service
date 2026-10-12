@@ -53,6 +53,17 @@ export const DEFAULT_LEG_RATE_PCT: Readonly<Partial<Record<LegPair, number>>> = 
   "purchase>paid_client": 95,
 };
 
+/**
+ * The last rung of an ENTRY leg's conversion (out of Contacted / Lead found): share of people reaching the entry
+ * step on a cold email, used only when the fleet has measured none. Conservative cold-email benchmarks: ~1% reply
+ * positively, ~2% click through to the website. Read by the offer ladder's contacted row (`lib/expected-conversion.ts`)
+ * and the catalogue's expected funnel figures (`lib/agent-catalogue.ts`).
+ */
+export const DEFAULT_ENTRY_RATE_PCT: Readonly<Partial<Record<ChannelStepKey, number>>> = {
+  conversation: 1,
+  website_visit: 2,
+};
+
 /** The default for the leg between two of our step keys, or null when none is seeded (a guard failure). */
 export function defaultLegRatePct(from: ChannelStepKey, to: ChannelStepKey): number | null {
   return DEFAULT_LEG_RATE_PCT[`${from}>${to}` as LegPair] ?? DECLARED_LEG_RATE_PCT.get(`${from}>${to}`) ?? null;
