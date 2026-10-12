@@ -49552,9 +49552,10 @@
                           "enum": [
                             "entry",
                             "internal",
-                            "on_demand"
+                            "on_demand",
+                            "customer_team"
                           ],
-                          "description": "How the pipe's volumes are measured (where its leg starts and its trigger, never its channel): entry = persons contacted and reaching the `to` step (serve-dated); internal = people handed to it, acted on, reaching its `to` step (event-dated, lead-service follow-up ledger); on_demand = leads found (undated counts)."
+                          "description": "How the pipe's volumes are measured (who works the leg, where it starts and its trigger, never its channel): entry = persons contacted and reaching the `to` step (serve-dated); internal = people handed to it, acted on, reaching its `to` step (event-dated, lead-service follow-up ledger); on_demand = leads found (undated counts); customer_team (owner 2026-10-12: every `your-team-*` pipe, operatedBy customer) = the brand's OWN tools via crm-service: `reachedFrom` = the brand's people who reached the pipe's `from` step and whom our campaigns never contacted (the customer team's own leads), `outcomes` = how many of THOSE reached its `to` step, each event-dated; no spend (customer time), so costPerOutcomeUsd/roi are null. Read beside our own pipe on the same leg to compare their team's rate with ours."
                         },
                         "basis": {
                           "type": "string",
@@ -49577,6 +49578,78 @@
                           "nullable": true,
                           "description": "On-demand pipe: spend counted from its first recorded event (the pipe price's window). Null otherwise."
                         },
+                        "teamSource": {
+                          "type": "object",
+                          "nullable": true,
+                          "properties": {
+                            "producer": {
+                              "type": "string",
+                              "enum": [
+                                "crm-service"
+                              ]
+                            },
+                            "population": {
+                              "type": "string",
+                              "enum": [
+                                "brand_people_reached_from_not_contacted_by_us"
+                              ],
+                              "description": "Who counts: people of the brand, from every tool the brand connected (CRM, inbox, payments, signups), who reached the pipe's `from` step and were never contacted by our campaigns; the outcome counts only those of them who also reached the `to` step (numerator inside the denominator)."
+                            },
+                            "available": {
+                              "type": "boolean",
+                              "description": "True when at least one brand of the scope answered; false = both volumes are null (unmeasured), never 0."
+                            },
+                            "unavailableReason": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "Null when available. One brand: crm-service's own reason (e.g. no connected tool, not synced, the `from` or `to` step recorded by none of the brand's tools). Fleet: `no_brand_answers`. `leg_has_no_from_step` for a leg out of nothing."
+                            },
+                            "unavailableBrands": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": "integer"
+                              },
+                              "description": "Per crm-service reason, how many brands of the scope could not answer."
+                            },
+                            "brandsCounted": {
+                              "type": "integer",
+                              "description": "Brands summed into the volumes (fleet = every brand crm-service answers for)."
+                            },
+                            "fromSources": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              },
+                              "description": "The brand tools evidencing the `from` step (e.g. gohighlevel, gmail), unioned over the brands counted."
+                            },
+                            "toSources": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              },
+                              "description": "The brand tools evidencing the `to` step."
+                            },
+                            "offerNarrowed": {
+                              "type": "boolean",
+                              "enum": [
+                                false
+                              ],
+                              "description": "A CRM person carries no offer: an offer scope reads its brand's people."
+                            }
+                          },
+                          "required": [
+                            "producer",
+                            "population",
+                            "available",
+                            "unavailableReason",
+                            "unavailableBrands",
+                            "brandsCounted",
+                            "fromSources",
+                            "toSources",
+                            "offerNarrowed"
+                          ],
+                          "description": "customer_team pipe only (else null): where its volumes come from and why they are unmeasured."
+                        },
                         "computedAt": {
                           "type": "string"
                         },
@@ -49592,7 +49665,7 @@
                             "properties": {
                               "key": {
                                 "type": "string",
-                                "description": "`contacted` | `handed` | `actedOn` | `outcomes` (the outcome volume is always `outcomes`)."
+                                "description": "`contacted` | `handed` | `actedOn` | `reachedFrom` (customer_team) | `outcomes` (the outcome volume is always `outcomes`)."
                               },
                               "label": {
                                 "type": "string",
@@ -49796,6 +49869,7 @@
                         "costBasis",
                         "campaignCount",
                         "spendSince",
+                        "teamSource",
                         "computedAt",
                         "firstActivityDay",
                         "volumes",
