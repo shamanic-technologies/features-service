@@ -2978,6 +2978,104 @@ registry.registerPath({
   },
 });
 
+// ── LIVED SALES PATHS (owner 2026-10-12): the way each person ACTUALLY came, measured, ranked ──
+
+const livedExpectedSchema = z
+  .object({
+    salesPathId: z.string().describe("The catalogue sales path this lived path IS (same id spelling)."),
+    name: z.string().nullable().describe("The catalogue's name for it; null when the catalogue has not named it yet (never minted by this read)."),
+    status: z.string().describe("The catalogue's status of its expected figures: measured | estimated | learning | customer_time."),
+    costUsd: z.number().nullable().describe("EXPECTED cost per paying client (the catalogue's path economics, the same as GET /internal/catalogue/sales-paths/{id})."),
+    roi: z.number().nullable().describe("EXPECTED return (lifetime revenue / expected cost per paying client)."),
+    roiBasis: z.enum(["measured", "estimated"]).nullable(),
+  })
+  .describe("PLANNED beside LIVED: the catalogue's expected economics of the same path. Null when the catalogue has no such path (a way nobody planned) or `expectedUnavailableReason` is set.");
+
+const livedPathRowSchema = z.object({
+  pathId: z.string().describe("The lived path in the catalogue's sales path id spelling: served leg keys `+`-joined from Start to Paid client, e.g. `start_to_industry_update_video+industry_update_video_to_website_visit+website_visit_to_signup+signup_to_paid_client`."),
+  steps: z.array(z.string()).describe("The catalogue steps lived between Start and Paid client, in order (a person our campaign acted on first entered at lead_found; a person whose first fact is a step entered there)."),
+  leads: z.number().int().describe("People x offers who lived exactly these steps, paid or not (one person on two offers counts once per offer, each on its own path)."),
+  paidClients: z.number().int().describe("Of them, those who became a paid client that is OURS (the timeline says attributable)."),
+  notOurPaidClients: z.number().int().describe("Of them, those who paid but not because of us (the customer's own channel, or nobody could tell): counted, never priced."),
+  revenueUsd: z.number().nullable().describe("Σ over our paid clients of the stated sale amount, else the offer's lifetime revenue (stated, else the fleet median). Null when a paid client has neither (unavailableReason paid_client_unpriced), never $0."),
+  costUsd: z.number().describe("This path's share of the spend: every campaign's committed spend split equally across the people x offers it acted on (entry spend shared across the people it reached, plus each later pipe's spend across the people it worked)."),
+  roi: z.number().nullable().describe("revenueUsd / costUsd. Null while the path has no paid client (status learning), never a fake 0 or infinity."),
+  status: z.enum(["measured", "learning"]).describe("measured: at least one paid client. learning: none yet (roi null)."),
+  unavailableReason: z.enum(["no_spend", "paid_client_unpriced"]).nullable(),
+  rank: z.number().int().describe("1 = best: measured with an roi (desc), then measured without one, then learning (most paid clients, then most people)."),
+  expected: livedExpectedSchema.nullable(),
+});
+
+const livedTotalsCore = {
+  leads: z.number().int().describe("Σ paths.leads."),
+  paidClients: z.number().int().describe("Σ paths.paidClients."),
+  notOurPaidClients: z.number().int(),
+  revenueUsd: z.number().nullable().describe("Σ paths.revenueUsd (null when any is)."),
+  costUsd: z.number().describe("Σ paths.costUsd: the spend placed on people."),
+  roi: z.number().nullable(),
+};
+
+const livedSalesPathsResponseRef = registry.register(
+  "LivedSalesPaths",
+  z.object({
+    brandId: z.string(),
+    offerId: z.string().nullable().describe("The offer read, or null for every offer of the brand."),
+    costBasis: z.literal("charged"),
+    pricing: z.enum(["gross", "net"]),
+    since: z.literal("inception").describe("Always since inception: a lived path is read over everyone ever reached, never a window."),
+    totals: z.object({
+      ...livedTotalsCore,
+      unattributedCostUsd: z.number().describe("Spend no person carries (Σ unattributedCost)."),
+      unattributedCost: z.array(
+        z.object({
+          reason: z.enum(["no_campaign", "acted_on_nobody"]).describe("no_campaign: spend recorded with no campaign. acted_on_nobody: a campaign (and its whole sales funnel campaign) reached nobody yet."),
+          campaignId: z.string().nullable(),
+          costUsd: z.number(),
+        }),
+      ),
+      totalCostUsd: z.number().describe("= costUsd + unattributedCostUsd = the brand's committed spend on its channels (the same spend GET /brands/{brandId}/revenue costEconomics.committedCostUsd reads, summed exactly)."),
+      unplacedFacts: z.number().int().describe("Timeline facts with no offer on a person of several offers: placed on no path, never guessed."),
+      excludedJourneys: z.number().int().describe("People x offers none of our campaigns acted on and with no fact of ours (the customer's own CRM): not a lived path of ours."),
+    }),
+    paths: z.array(livedPathRowSchema).describe("The OVERALL ranking (rank 1 first). Σ leads/paidClients/revenueUsd/costUsd = totals."),
+    funnels: z
+      .array(
+        z.object({
+          funnelCampaignId: z.string().nullable().describe("The sales funnel campaign (campaign-service) whose unit first acted on these people; null = a campaign in no sales funnel campaign."),
+          salesFunnelId: z.string().nullable(),
+          salesFunnelName: z.string().nullable(),
+          totals: z.object(livedTotalsCore),
+          paths: z.array(livedPathRowSchema).describe("The ranking WITHIN this funnel (rank restarts at 1)."),
+        }),
+      )
+      .describe("Per sales funnel campaign, best return first, the no-funnel group last. Σ over funnels = the overall totals."),
+    expectedUnavailableReason: z.string().nullable().describe("Why every `expected` is null (the catalogue's economics could not be read: catalogue_economics_not_computed_yet | catalogue_economics_unreadable); null when served."),
+  }),
+);
+
+registry.registerPath({
+  method: "get",
+  path: "/brands/{brandId}/lived-sales-paths",
+  summary: "The sales paths a brand's people ACTUALLY lived, with cost, revenue and ROI, ranked overall and per sales funnel",
+  description:
+    "Owner 2026-10-12: which way a paid client really came (video -> website visit -> signup -> paid; cold email -> positive reply -> paid ...), what each way cost and returned, ranked overall and per sales funnel campaign, beside the EXPECTED economics of the same catalogue path (planned vs lived). Built from lead-service's timeline (person x offer x brand): a fact whose label is a catalogue step key (coded or declared, e.g. industry_update_video) places the person on that step. Since inception. Org-scoped (`x-org-id`).",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ brandId: z.string() }),
+    query: z.object({
+      offerId: z.string().optional().describe("Only this offer's people, and the spend of the campaigns that sell it. Omitted: every offer."),
+      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every money figure (omitted = gross)."),
+    }),
+  },
+  responses: {
+    200: { description: "The lived paths.", content: { "application/json": { schema: livedSalesPathsResponseRef } } },
+    400: { description: "An invalid pricing value (reason: pricing_unrecognised).", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "The caller does not hold this brand (reason: brand_not_found).", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "A source could not be read (timeline, spend, funnel campaigns, offer terms): nothing is guessed (reason: lived_sales_paths_unavailable).", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 const callCountsSchema = z.object({
   requested: z.number().int().describe("Every call row recorded (twillio-service), whether or not Twilio accepted it."),
   placed: z.number().int().describe("Calls Twilio accepted and dialled (a call SID issued). The calls PLACED."),

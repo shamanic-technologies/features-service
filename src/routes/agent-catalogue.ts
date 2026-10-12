@@ -1405,3 +1405,46 @@ export async function funnelCopiesFor(ids: readonly string[]): Promise<{
 }
 
 export default router;
+
+/**
+ * The catalogue's side of a LIVED sales path (`lib/lived-sales-paths.ts`): every step key the catalogue
+ * knows (coded and declared, so a timeline label equal to a declared step is placed), and, per lived path
+ * id the catalogue also knows, its name and EXPECTED economics (the same figures `/internal/catalogue/sales-paths`
+ * serves), so a reader compares planned vs lived on one row. Never mints a name: a lived path the catalogue
+ * has not named reads `name: null`. The expected half is fail-soft (`expectedUnavailableReason`): the lived
+ * figures never wait on, nor fail with, the fleet economics build.
+ */
+export interface ExpectedPathFigures {
+  salesPathId: string;
+  name: string | null;
+  status: string;
+  costUsd: number | null;
+  roi: number | null;
+  roiBasis: "measured" | "estimated" | null;
+}
+
+export async function catalogueForLivedPaths(): Promise<{
+  stepKeys: string[];
+  expectedOf: (pathId: string) => ExpectedPathFigures | null;
+  expectedUnavailableReason: string | null;
+}> {
+  try {
+    const { model, names } = await loadModel();
+    const expectedOf = (id: string): ExpectedPathFigures | null => {
+      const p = pathById(model, id);
+      if (!p) return null;
+      const e = pathEconomics(model, p);
+      return { salesPathId: p.id, name: names.get(salesPathNameKeyOf(p.id)) ?? null, status: e.status, costUsd: e.costUsd, roi: e.roi, roiBasis: roiBasisOf(e) };
+    };
+    return { stepKeys: [...model.steps.keys()], expectedOf, expectedUnavailableReason: null };
+  } catch (error) {
+    console.error(`[features-service] lived sales paths: catalogue economics unreadable, expected figures omitted: ${(error as Error).message}`);
+    const [all, declaredSteps] = await Promise.all([loadChannelCatalogue({ publishedOnly: false }), listDeclaredSteps()]);
+    const model = buildCatalogueModel({ channels: all.channels, publishedPipeIds: new Set(), declaredSteps, measurements: new Map(), fleetMedians: new Map(), lifetimeRevenueUsd: null, triggers: [] });
+    return {
+      stepKeys: [...model.steps.keys()],
+      expectedOf: () => null,
+      expectedUnavailableReason: error instanceof StoreNotComputedError ? "catalogue_economics_not_computed_yet" : "catalogue_economics_unreadable",
+    };
+  }
+}
