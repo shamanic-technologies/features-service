@@ -6488,6 +6488,20 @@ const pipeStatsSchema = z
     valuePerOutcomeUsd: z.number().nullable().describe("The value the pipe ADDS per outcome (catalogue step values: its `to` step minus the step it takes people over at)."),
     roi: z.number().nullable().describe("valuePerOutcomeUsd × outcomes ÷ spendUsd."),
     roiUnavailableReason: pipeStatsReason(["step_unvalued", "no_cost_per_outcome"], "Why roi is null."),
+    conversionRates: z
+      .array(
+        z.object({
+          key: z.string().describe("`<fromKey>_to_<toKey>`, e.g. `handed_to_actedOn`, `actedOn_to_outcomes`, `handed_to_outcomes`, `contacted_to_outcomes`."),
+          fromKey: z.string().describe("Volume key of the denominator."),
+          toKey: z.string().describe("Volume key of the numerator."),
+          label: z.string().describe("Display label, printable as is: `<from volume label> → <to volume label>`."),
+          numerator: z.number().int().nullable().describe("The `toKey` volume's total since inception (dated + undated). Null = unmeasured."),
+          denominator: z.number().int().nullable().describe("The `fromKey` volume's total since inception (dated + undated). Null = unmeasured."),
+          ratePct: z.number().nullable().describe("numerator ÷ denominator × 100, PERCENT, 2 decimals. Null with `unavailableReason`, never 0 for a missing input (a measured 0 numerator over a real input IS 0)."),
+          unavailableReason: pipeStatsReason(["no_input_yet", "volume_not_measured"], "Why ratePct is null: `no_input_yet` = denominator 0; `volume_not_measured` = a volume no producer counts."),
+        }),
+      )
+      .describe("Owner 2026-10-12: conversion rates since inception between every two CONSECUTIVE volumes, then first volume -> outcome when there are 3+ volumes (none for a one-volume on-demand pipe). Same basis as the volumes: an entry pipe's two counts are the SAME serve-dated people (a cohort rate); an internal pipe's counts are each dated by their own event, so a rate compares events to date (an outcome can land days after the hand-over), not one cohort. Undated counts enter only the snapshot and the last history point."),
     history: z
       .array(
         z.object({
@@ -6496,6 +6510,7 @@ const pipeStatsSchema = z
           volumes: z.record(z.string(), z.number().int().nullable()).describe("Volume key -> cumulative count to that day."),
           costPerOutcomeUsd: z.number().nullable().describe("Since-inception cost per outcome as it stood that day (null with no outcome yet)."),
           roi: z.number().nullable(),
+          conversionRates: z.record(z.string(), z.number().nullable()).describe("Conversion rate key (see `conversionRates[].key`) -> cumulative rate to that day, PERCENT. Null while the input volume is 0 or a volume is unmeasured. The last point equals `conversionRates[].ratePct`."),
         }),
       )
       .describe("One point per UTC day from firstActivityDay to today, every figure cumulative. The last point IS the snapshot (undated counts enter there)."),
