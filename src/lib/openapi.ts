@@ -6175,7 +6175,7 @@ registry.registerPath({
   method: "post",
   path: "/internal/declarations/channels/{slug}/legs",
   summary: "Declare a leg on a channel (internal, api-key)",
-  description: `${DECLARATIONS_DESCRIPTION} Works on a declared channel or one stated in code. A proactive leg names no trigger; a reactive leg names ONE trigger that something FIRES today: a trigger nothing fires is refused with 409 \`trigger_not_fired\` (a leg on it would wait forever). Created live.`,
+  description: `${DECLARATIONS_DESCRIPTION} Works on a declared channel or one stated in code. A proactive leg names no trigger; a reactive leg names ONE trigger that something FIRES today: a trigger nothing fires is refused with 409 \`trigger_not_fired\` (a leg on it would wait forever), unless nothing of ours waits on it: a CUSTOMER-operated channel's leg (their team acts on the step) or a draft (\`published: false\`). Created live by default.`,
   tags: ["Internal"],
   request: {
     params: z.object({ slug: z.string() }),
@@ -6187,6 +6187,7 @@ registry.registerPath({
             toStep: z.string(),
             mode: z.enum(["proactive", "reactive"]),
             triggerId: z.string().nullable().optional().describe("Required on a reactive leg; absent/null on a proactive one."),
+            published: z.boolean().optional().describe("Default true (live). false = a DRAFT (owner 2026-10-12): internal reads only, never runnable; the only way a PLATFORM leg may name a trigger nothing fires yet (a proposal). Publishing it later re-checks the trigger (409 `trigger_not_fired`)."), 
             createdBy: z.string(),
             ...actorFields,
           }),
@@ -6464,6 +6465,27 @@ catalogueRead("/internal/catalogue/channels", "List channels (internal, api-key)
 catalogueRead("/internal/catalogue/channels/{id}", "One channel and its pipes (internal, api-key)", {}, catalogueChannelDetail, idParam("A channel slug"));
 catalogueRead("/internal/catalogue/pipes", "List pipes (internal, api-key)", { paths: z.string().optional().describe("Comma list of sales path ids: pipes on their legs."), channels: z.string().optional().describe("Comma list of channel slugs."), legKeys: z.string().optional(), runnable: catalogueRunnable, q: catalogueQ, limit: catalogueLimit }, cataloguePage(cataloguePipeRow, "pipe", "per_outcome"));
 const pipeStatsReason = (values: [string, ...string[]], why: string) => z.enum(values).nullable().describe(why);
+const pipePeriodRow = z.object({
+  period: z.string().describe("`2026-Q1` (quarter), `2026-10` (month), or `since_inception`."),
+  kind: z.enum(["month", "quarter", "since_inception"]),
+  label: z.string().describe("Printable as is: `Q1 2026`, `Oct 2026`, `Since Dec 2024`."),
+  startDate: z.string().nullable().describe("First UTC day of the period (total row: first activity day; null with no dated activity)."),
+  endDate: z.string().describe("Last UTC day of the period (total row: today)."),
+  counts: z.record(z.string(), z.number().int().nullable()).describe("Count key -> count filed in the period by its OWN date (see the volume's `datedBy`), NOT cumulative. Null = unmeasured. The total row adds the undated counts."),
+  ratesPct: z.record(z.string(), z.number().nullable()).describe("Rate key -> the period's `to` count ÷ its `from` count × 100, PERCENT, 2 decimals. Null with a reason, never 0 for no input (a measured 0 over a real input IS 0)."),
+  rateUnavailableReasons: z.record(z.string(), z.enum(["no_input_yet", "volume_not_measured"]).nullable()),
+  spendUsd: z.number().nullable().describe("NET spend of ours in the period; null when the figure has no spend of ours (customer time)."),
+  costPerOutcomeUsd: z.number().nullable().describe("spendUsd ÷ the period's outcome count; null with no outcome, no spend, or no spend of ours."),
+});
+const pipePeriodsSchema = (counts: string, rates: string) =>
+  z
+    .object({
+      basis: z.literal("calendar_period_own_date").describe("Every count filed in the calendar period of its own date (the serve that took the person = a cohort rate; else the event itself = an event rate: an outcome landing in the next period counts there). Undated counts sit in no period, only in `total`."),
+      total: pipePeriodRow.describe("Since inception, dated + undated: equals the snapshot."),
+      quarters: z.array(pipePeriodRow).describe("Every calendar quarter from the first activity to today's, oldest first (an empty one reads 0)."),
+      months: z.array(pipePeriodRow).describe("Every calendar month from the first activity to today's, oldest first."),
+    })
+    .describe(`Owner 2026-10-12 (PIPE-PERIODS-1012): the same figures by calendar quarter and month, NOT cumulative, plus a since-inception row; the dashboard renders it as is. Counts: ${counts}. Rates: ${rates}.`);
 const pipeStatsSchema = z
   .object({
     scope: z.object({ kind: z.enum(["fleet", "brand", "offer"]), brandId: z.string().nullable(), offerId: z.string().nullable() }).describe("The campaigns counted: every org's on the pipe (fleet), one brand's, or one offer's of that brand. Same read on fewer campaigns, so fleet >= brand >= offer."),
@@ -6503,6 +6525,7 @@ const pipeStatsSchema = z
         volumes: z.array(z.object({ key: z.string().describe("`leftToTeam` | `outcomes`."), label: z.string(), role: z.enum(["input", "action", "outcome"]), datedBy: z.enum(["serve_day", "event_day"]).nullable(), total: z.number().int().nullable(), undated: z.number().int() })),
         conversionRates: z.array(z.object({ key: z.string(), fromKey: z.string(), toKey: z.string(), label: z.string(), numerator: z.number().int().nullable(), denominator: z.number().int().nullable(), ratePct: z.number().nullable(), unavailableReason: pipeStatsReason(["no_input_yet", "volume_not_measured"], "Why ratePct is null.") })).describe("`leftToTeam_to_outcomes`: their team's rate on the people we brought them, PERCENT."),
         history: z.array(z.object({ date: z.string(), volumes: z.record(z.string(), z.number().int().nullable()), conversionRates: z.record(z.string(), z.number().nullable()) })).describe("One cumulative point per UTC day from firstActivityDay to today; the last point IS the snapshot."),
+        periods: pipePeriodsSchema("`leftToTeam`, `outcomes`", "`leftToTeam_to_outcomes`; no spend (customer time)"),
         ourPipesRate: z
           .object({
             actedOn: z.number().int().nullable().describe("People our pipes on the leg acted on in the scope."),
@@ -6558,6 +6581,8 @@ const pipeStatsSchema = z
             }),
           )
           .describe("One CUMULATIVE point per UTC day from firstActivityDay to today; undated counts enter on the last point, so the last point IS the snapshot (rows + impact)."),
+        periods: pipePeriodsSchema("`teamAloneFrom`, `teamAloneTo`, `teamPlusPipeFrom`, `teamPlusPipeTo`", "`teamAlone`, `teamPlusPipe`; spend and cost per outcome = this pipe's (the team + pipe row)")
+          .extend({ impactPointsDiff: z.record(z.string(), z.number().nullable()).describe("Period (`period` of each row, `since_inception` included) -> teamPlusPipe rate − teamAlone rate in POINTS; null when either rate is.") }),
       })
       .nullable()
       .describe("PLATFORM pipe whose leg (same `from`, same `to`) also has a customer-team pipe only, else null (owner 2026-10-12): the table \"your team alone\" vs \"your team + this pipe\" and this pipe's impact, one rule for every such pipe. Additive."),
@@ -6608,6 +6633,7 @@ const pipeStatsSchema = z
         }),
       )
       .describe("One point per UTC day from firstActivityDay to today, every figure cumulative. The last point IS the snapshot (undated counts enter there)."),
+    periods: pipePeriodsSchema("the volume keys (`volumes[].key`)", "the conversion rate keys (`conversionRates[].key`); spend/cost per outcome on every pipe but customer_team"),
   })
   .optional()
   .describe("Present only with `stats=true`.");
@@ -6683,8 +6709,8 @@ catalogueCreate(
 catalogueCreate(
   "/internal/catalogue/pipes",
   "Declare a pipe (internal, api-key)",
-  "One leg on one channel (a declared leg, `POST /internal/declarations/channels/{slug}/legs` rules: a reactive pipe names a trigger something fires). A leg out of a step nothing rates states `conversionRatePct` (400 `conversion_rate_required`). Named with a never-given bird. Created live (owner 2026-10-12): clients see it at once.",
-  z.object({ channelSlug: z.string(), fromStep: z.string().nullable().describe("null = from nothing."), toStep: z.string(), mode: z.enum(["proactive", "reactive"]), triggerId: z.string().nullable().optional(), conversionRatePct: z.number().optional(), ...catalogueActor }),
+  "One leg on one channel (a declared leg, `POST /internal/declarations/channels/{slug}/legs` rules: a reactive pipe names a trigger something fires, unless it is a customer-team pipe or a draft). A leg out of a step nothing rates states `conversionRatePct` (400 `conversion_rate_required`). Named with a never-given bird. Created live (owner 2026-10-12): clients see it at once.",
+  z.object({ channelSlug: z.string(), fromStep: z.string().nullable().describe("null = from nothing."), toStep: z.string(), mode: z.enum(["proactive", "reactive"]), triggerId: z.string().nullable().optional(), conversionRatePct: z.number().optional(), published: z.boolean().optional().describe("Default true (live). false = a DRAFT (owner 2026-10-12): internal reads only, never runnable; the only way a PLATFORM leg may name a trigger nothing fires yet (a proposal). Publishing it later re-checks the trigger (409 `trigger_not_fired`)."), ...catalogueActor }),
   cataloguePipeDetail,
 );
 catalogueCreate(

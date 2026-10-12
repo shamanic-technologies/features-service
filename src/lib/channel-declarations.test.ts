@@ -110,11 +110,11 @@ const refused = (fn: () => unknown, status: number, reason: string) => {
 
 const build = (channels: DeclaredChannel[], legs: DeclaredLeg[], publishedOnly: boolean) => {
   const m = mergeDeclarations(SEEDED, { channels, legs, triggers: TRIGGERS }, { publishedOnly }, { shortDescriptionOf: channelShortDescription, channelTypeOfSlug: channelTypeOf });
-  return buildChannelCatalogue(m.rows, m.shortDescriptionOf, m.channelTypeOfSlug, m.triggerOf);
+  return buildChannelCatalogue(m.rows, m.shortDescriptionOf, m.channelTypeOfSlug, m.triggerOf, m.isDraftLeg);
 };
 
 describe("a leg can only name a trigger something FIRES, checked at creation (owner 2026-10-09)", () => {
-  const channel = { slug: "whatsapp-concierge", managed: false, legKeys: new Set<string>() };
+  const channel = { slug: "whatsapp-concierge", managed: false, operatedBy: "platform" as const, legKeys: new Set<string>() };
 
   it("refuses a reactive leg on a trigger nothing fires, with a named 409", () => {
     // `meeting_booked` is coded in the list but no service fires it yet.
@@ -137,7 +137,19 @@ describe("a leg can only name a trigger something FIRES, checked at creation (ow
       toStep: "meeting_booked",
       mode: "reactive",
       triggerId: "positive_reply_received",
+      published: true,
     });
+  });
+
+  it("lets nothing of ours wait on an unfired trigger: a customer-team leg, or a platform DRAFT (owner 2026-10-12, PIPE-FORM-TO-MEETING)", () => {
+    const leg = { fromStep: "form_submitted", toStep: "meeting_booked", mode: "reactive", triggerId: "form_submitted" };
+    // Their team acts on the step itself, like the seeded your-team-* legs.
+    expect(parseLegInput(leg, { ...channel, slug: "your-team-meeting-booking", operatedBy: "customer" }, TRIGGERS)).toMatchObject({ triggerId: "form_submitted", published: true });
+    // A platform pipe on it is a DRAFT (a proposal staff shows), never published while nothing fires it.
+    expect(parseLegInput({ ...leg, published: false }, { ...channel, slug: "ai-meeting-booking", managed: true }, TRIGGERS)).toMatchObject({ triggerId: "form_submitted", published: false });
+    refused(() => parseLegInput(leg, { ...channel, slug: "ai-meeting-booking", managed: true }, TRIGGERS), 409, "trigger_not_fired");
+    refused(() => parseLegInput({ ...leg, published: "no" }, channel, TRIGGERS), 400, "published_invalid");
+    refused(() => checkLegRun("reactive", "form_submitted", TRIGGERS, { unfiredAllowed: false }), 409, "trigger_not_fired");
   });
 
   it("refuses an unknown trigger, a reactive leg with none, a proactive leg with one", () => {
@@ -153,7 +165,7 @@ describe("a leg can only name a trigger something FIRES, checked at creation (ow
     refused(() => parseLegInput({ fromStep: "signup", toStep: "signup", mode: "proactive" }, channel, TRIGGERS), 400, "leg_goes_nowhere");
     // An outbound channel's `lead_found_to_conversation` IS its computed `start_to_conversation` entry leg.
     refused(
-      () => parseLegInput({ fromStep: "lead_found", toStep: "conversation", mode: "proactive" }, { slug: "sales-cold-email-outreach", managed: true, legKeys: new Set(["start_to_conversation"]) }, TRIGGERS),
+      () => parseLegInput({ fromStep: "lead_found", toStep: "conversation", mode: "proactive" }, { slug: "sales-cold-email-outreach", managed: true, operatedBy: "platform", legKeys: new Set(["start_to_conversation"]) }, TRIGGERS),
       409,
       "leg_exists",
     );
@@ -245,6 +257,10 @@ describe("a declared channel", () => {
   it("the catalogue build still refuses a stored leg naming a trigger nothing fires on a channel we run", () => {
     const bad = declaredLeg({ channelSlug: "ai-meeting-booking", legKey: "meeting_booked_to_meeting_attended", fromStep: "meeting_booked", toStep: "meeting_attended", triggerId: "meeting_booked", published: true });
     expect(() => build([], [bad], true)).toThrow(/nothing fires yet/);
+    // The same leg as a DRAFT (never runnable) is a proposal: the full catalogue holds it, the client one does not.
+    const draft = { ...bad, published: false };
+    expect(build([], [draft], false).find((c) => c.slug === "ai-meeting-booking")!.stepTransitions.some((t) => t.legKey === "meeting_booked_to_meeting_attended")).toBe(true);
+    expect(build([], [draft], true).find((c) => c.slug === "ai-meeting-booking")!.stepTransitions.some((t) => t.legKey === "meeting_booked_to_meeting_attended")).toBe(false);
   });
 
   it("states where its price comes from, never a made-up number", () => {

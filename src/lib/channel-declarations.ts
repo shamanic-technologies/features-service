@@ -471,6 +471,8 @@ export function parseTriggerPatch(body: Body, current: TriggerTypeRecord, existi
 export interface LegChannelContext {
   slug: string;
   managed: boolean;
+  /** `customer`: the customer's own team works the leg; nothing of ours waits on its trigger. */
+  operatedBy: "platform" | "customer";
   /** Every leg key the channel already performs (seeded blob + declared), stored spelling. */
   legKeys: ReadonlySet<string>;
 }
@@ -481,14 +483,25 @@ export interface LegInput {
   toStep: ChannelStepKey;
   mode: LegMode;
   triggerId: string | null;
+  /** False = a DRAFT (staff's hide switch): served on internal reads only, never runnable. */
+  published: boolean;
 }
 
 /**
  * THE GUARANTEE, AT CREATION: a proactive leg names no trigger; a reactive leg names exactly one, it exists,
- * and something FIRES it today. A trigger nothing fires is refused with 409 `trigger_not_fired`, on every
- * channel (a leg nobody can start is not a leg anybody can buy).
+ * and something FIRES it today. A trigger nothing fires is refused with 409 `trigger_not_fired` (a leg nobody
+ * can start is not a leg anybody can buy) UNLESS nothing of ours waits on it (owner 2026-10-12, PIPE-FORM-TO-MEETING):
+ *  - a CUSTOMER-operated leg (`your-team-*`): their team acts on the step itself, exactly like the seeded
+ *    `your-team-*` legs on uncoded step triggers (the boot guard only holds MANAGED legs to a coded trigger);
+ *  - a DRAFT leg (`published: false`): a proposal staff can show on the Pipe page, never served to a client nor
+ *    runnable; publishing it re-runs this guarantee (PATCH `published: true` = 409 while nothing fires it).
  */
-export function checkLegRun(mode: unknown, triggerId: unknown, triggers: readonly TriggerTypeRecord[]): { mode: LegMode; triggerId: string | null } {
+export function checkLegRun(
+  mode: unknown,
+  triggerId: unknown,
+  triggers: readonly TriggerTypeRecord[],
+  opts: { unfiredAllowed: boolean } = { unfiredAllowed: false },
+): { mode: LegMode; triggerId: string | null } {
   if (!(LEG_MODES as readonly unknown[]).includes(mode)) throw bad("mode_unrecognised", `mode must be one of ${LEG_MODES.join(", ")}`);
   if (mode === "proactive") {
     if (triggerId != null) throw bad("proactive_leg_has_trigger", "a proactive leg runs on its own budget and names no trigger");
@@ -498,7 +511,7 @@ export function checkLegRun(mode: unknown, triggerId: unknown, triggers: readonl
   const codedType = channelTriggerType(triggerId);
   const trigger = codedType ? { kind: "event" as const, origin: "code" as const, coded: codedType.coded } : triggers.find((t) => t.id === triggerId);
   if (!trigger) throw new DeclarationError(404, "trigger_not_found", `no trigger type ${triggerId}`);
-  if (!isTriggerCoded(trigger)) {
+  if (!isTriggerCoded(trigger) && !opts.unfiredAllowed) {
     throw new DeclarationError(
       409,
       "trigger_not_fired",
@@ -515,12 +528,14 @@ export function parseLegInput(body: Body, channel: LegChannelContext, triggers: 
   if (fromStep === undefined) throw bad("from_step_required", "fromStep is required (null = from nothing)");
   const toStep = step(body.toStep, "toStep");
   if (fromStep === toStep) throw bad("leg_goes_nowhere", `a leg from ${toStep} to itself moves nobody`);
-  const run = checkLegRun(body.mode, body.triggerId, triggers);
+  if (body.published !== undefined && typeof body.published !== "boolean") throw bad("published_invalid", "published must be a boolean (false = a draft)");
+  const published = body.published !== false;
+  const run = checkLegRun(body.mode, body.triggerId, triggers, { unfiredAllowed: channel.operatedBy === "customer" || !published });
   const legKey = legKeyFor({ from: fromStep, to: toStep });
   // An outbound channel's `lead_found_to_*` IS its computed `start_to_*` entry leg (wave 2).
   const computed = isOutboundChannel(channel.slug) ? storedLegKeyOf(legKey) : legKey;
   if (channel.legKeys.has(computed)) throw new DeclarationError(409, "leg_exists", `${channel.slug} already performs ${legKey}`);
-  return { legKey, fromStep, toStep, ...run };
+  return { legKey, fromStep, toStep, ...run, published };
 }
 
 // ── Merge into the catalogue ────────────────────────────────────────────────────────────────────────
@@ -547,6 +562,8 @@ export interface MergedCatalogueInput {
   shortDescriptionOf: (slug: string) => string;
   channelTypeOfSlug: (slug: string) => ChannelType;
   triggerOf: (id: string) => { coded: boolean } | null;
+  /** A declared leg staff has not published (a draft): the boot guard does not hold it to a fired trigger. */
+  isDraftLeg: (slug: string, legKey: string) => boolean;
 }
 
 /**
@@ -577,7 +594,9 @@ export function mergeDeclarations(
     rows.push({ slug: c.slug, name: c.name, description: c.description, icon: c.icon, displayOrder: c.displayOrder, acquisitionChannel: blobOf(c, legs), supersededBySlug: null });
   }
   const declaredTriggers = new Map(declared.triggers.filter((t) => t.origin === "declared").map((t) => [t.id, t]));
+  const draftLegs = new Set(visibleLegs.filter((l) => !l.published).map((l) => `${l.channelSlug}|${l.legKey}`));
   return {
+    isDraftLeg: (slug, legKey) => draftLegs.has(`${slug}|${legKey}`),
     rows,
     shortDescriptionOf: (slug) => declaredBySlug.get(slug)?.shortDescription ?? base.shortDescriptionOf(slug),
     channelTypeOfSlug: (slug) => declaredBySlug.get(slug)?.channelType ?? base.channelTypeOfSlug(slug),
