@@ -27428,9 +27428,10 @@
                     "event",
                     "delay",
                     "poll",
-                    "reported"
+                    "reported",
+                    "github_issue_in_prod"
                   ],
-                  "description": "`event`: a service detects something on a lead. `delay`: N days after a step, if nothing happened. `poll`: a new item appeared at a source. `reported`: a caller reports each occurrence to campaign-service's trigger-events record route (`params.reportedBy` names who)."
+                  "description": "`event`: a service detects something on a lead. `delay`: N days after a step, if nothing happened. `poll`: a new item appeared at a source. `reported`: a caller reports each occurrence to campaign-service's trigger-events record route (`params.reportedBy` names who). `github_issue_in_prod`: campaign-service's detector sees the GitHub issue a campaign waits on (stated per campaign at campaign-service) reach production."
                 },
                 "params": {
                   "type": "object",
@@ -45922,7 +45923,8 @@
                               "event",
                               "delay",
                               "poll",
-                              "reported"
+                              "reported",
+                              "github_issue_in_prod"
                             ]
                           },
                           "params": {
@@ -46003,7 +46005,8 @@
                       "event",
                       "delay",
                       "poll",
-                      "reported"
+                      "reported",
+                      "github_issue_in_prod"
                     ]
                   },
                   "fromStep": {
@@ -46087,7 +46090,8 @@
                         "event",
                         "delay",
                         "poll",
-                        "reported"
+                        "reported",
+                        "github_issue_in_prod"
                       ]
                     },
                     "params": {
@@ -46201,7 +46205,8 @@
                         "event",
                         "delay",
                         "poll",
-                        "reported"
+                        "reported",
+                        "github_issue_in_prod"
                       ]
                     },
                     "params": {
@@ -46333,7 +46338,8 @@
                         "event",
                         "delay",
                         "poll",
-                        "reported"
+                        "reported",
+                        "github_issue_in_prod"
                       ]
                     },
                     "params": {

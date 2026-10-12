@@ -199,9 +199,9 @@ describe("every leg a channel, every proactive funnel from Start (owner 2026-10-
       ["website_visit_to_form_submitted", "your-team-website"],
       ["purchase_to_paid_client", "your-team-order-delivery"],
     ]) {
-      const on = pipesOnLeg(model, leg);
+      // A platform channel may also work the leg (AI Follow-up Email on Positive reply -> Paid client); the customer's is Your Team.
+      const on = pipesOnLeg(model, leg).filter((p) => p.operatedBy === "customer");
       expect(on.map((p) => p.channelSlug), leg).toEqual([slug]);
-      expect(on[0].operatedBy, leg).toBe("customer");
     }
   });
 

@@ -239,9 +239,30 @@ describe("/internal/declarations: a staff caller declares a channel, a reactive 
     const leg = await request(app)
       .post("/internal/declarations/channels/ai-follow-up-email/legs")
       .set(KEY)
-      .send({ fromStep: "conversation", toStep: "paid_client", mode: "reactive", triggerId: "cost_figure_ready", createdBy: "copilot" });
+      .send({ fromStep: "meeting_attended", toStep: "paid_client", mode: "reactive", triggerId: "cost_figure_ready", createdBy: "copilot" });
     expect(leg.status).toBe(201);
-    expect(leg.body.leg).toMatchObject({ legKey: "conversation_to_paid_client", mode: "reactive", triggerId: "cost_figure_ready" });
+    expect(leg.body.leg).toMatchObject({ legKey: "meeting_attended_to_paid_client", mode: "reactive", triggerId: "cost_figure_ready" });
+  });
+
+  it("a GitHub issue in prod is ONE coded trigger: never declared again, and any channel's declared reactive leg may name it (owner 2026-10-12)", async () => {
+    const seeded = mem.triggers.find((x) => x.id === "github_issue_in_prod");
+    expect(seeded).toMatchObject({ kind: "github_issue_in_prod", coded: true, firedBy: "campaign-service", origin: "code", params: null });
+
+    const twin = await request(app)
+      .post("/internal/declarations/trigger-types")
+      .set(KEY)
+      .send({ id: "issue_42_shipped", label: "Issue 42 Shipped", description: "x", icon: "github-logo", kind: "github_issue_in_prod", createdBy: "copilot" });
+    expect(twin.status).toBe(400);
+    expect(twin.body.reason).toBe("trigger_kind_not_declarable");
+
+    // Not an AI Follow-up Email exception: a declared channel's reactive leg names it like any coded trigger.
+    await request(app).post("/internal/declarations/channels").set(KEY).send(channelBody).expect(201);
+    const leg = await request(app)
+      .post(`/internal/declarations/channels/${SLUG}/legs`)
+      .set(KEY)
+      .send({ fromStep: "conversation", toStep: "paid_client", mode: "reactive", triggerId: "github_issue_in_prod", createdBy: "copilot" });
+    expect(leg.status).toBe(201);
+    expect(leg.body.leg).toMatchObject({ legKey: "conversation_to_paid_client", mode: "reactive", triggerId: "github_issue_in_prod" });
   });
 
   it("a channel stated in code is read-only here", async () => {

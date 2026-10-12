@@ -47,7 +47,7 @@ export interface ChannelTriggerType {
    * How it fires (`lib/channel-declarations.ts` kinds). Absent = `event` (a service detects it on a lead and rings
    * campaign-service). `reported` = a CALLER reports each occurrence to campaign-service's trigger-events record route.
    */
-  kind?: "event" | "reported";
+  kind?: "event" | "reported" | "github_issue_in_prod";
 }
 
 /**
@@ -171,6 +171,22 @@ export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
     firedBy: "campaign-service",
     coded: true,
     kind: "reported",
+  },
+  {
+    // A GITHUB ISSUE REACHED PRODUCTION (owner 2026-10-12: "un nouveau type de trigger qui se déclenche quand une issue
+    // GitHub est en prod"). The Copilot gives an estimate when no endpoint serves the exact figure, files a GitHub issue
+    // on the repo that must build it, and starts a campaign that waits on THAT issue. Which issue (repo + number) is a
+    // per-campaign fact stated at campaign-service, never a parameter here: one general type, every campaign its own
+    // issue. campaign-service's in-process detector (same loop as `delay` / `poll`) selects it by its kind and fires the
+    // campaigns whose issue is live. Any channel's reactive leg may name it.
+    id: "github_issue_in_prod",
+    label: "GitHub Issue In Prod",
+    description: "A GitHub issue this campaign waits on reached production.",
+    icon: "github-logo",
+    fromStep: null,
+    firedBy: "campaign-service",
+    coded: true,
+    kind: "github_issue_in_prod",
   },
 ];
 
