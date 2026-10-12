@@ -26,4 +26,11 @@ describe("a reactive funnel names what starts it, in customer words", () => {
   it("a funnel on a trigger other than its step's own reads that trigger's name (Follow-up Due, not Signups)", () => {
     expect(funnelTriggerLabel(byId("signup_to_paid_client@ai-follow-up-email"), label, tname)).toBe("Follow-up Due");
   });
+  it("the Copilot's GitHub-issue follow-up is one reactive funnel, AI Follow-up Email answering GitHub Issue In Prod (owner 2026-10-12)", () => {
+    const f = byId("conversation_to_paid_client@ai-follow-up-email");
+    expect(f.legs.map((l) => l.pipe?.id)).toEqual(["ai-follow-up-email|conversation_to_paid_client"]);
+    expect(f.legs.every((l) => l.pipe?.mode === "reactive")).toBe(true);
+    expect(f.legs[0].pipe?.triggerId).toBe("github_issue_in_prod");
+    expect(funnelTriggerLabel(f, label, tname)).toBe("GitHub Issue In Prod");
+  });
 });
