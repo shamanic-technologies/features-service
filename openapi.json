@@ -49679,6 +49679,65 @@
                           ],
                           "description": "Why roi is null."
                         },
+                        "conversionRates": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string",
+                                "description": "`<fromKey>_to_<toKey>`, e.g. `handed_to_actedOn`, `actedOn_to_outcomes`, `handed_to_outcomes`, `contacted_to_outcomes`."
+                              },
+                              "fromKey": {
+                                "type": "string",
+                                "description": "Volume key of the denominator."
+                              },
+                              "toKey": {
+                                "type": "string",
+                                "description": "Volume key of the numerator."
+                              },
+                              "label": {
+                                "type": "string",
+                                "description": "Display label, printable as is: `<from volume label> → <to volume label>`."
+                              },
+                              "numerator": {
+                                "type": "integer",
+                                "nullable": true,
+                                "description": "The `toKey` volume's total since inception (dated + undated). Null = unmeasured."
+                              },
+                              "denominator": {
+                                "type": "integer",
+                                "nullable": true,
+                                "description": "The `fromKey` volume's total since inception (dated + undated). Null = unmeasured."
+                              },
+                              "ratePct": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "numerator ÷ denominator × 100, PERCENT, 2 decimals. Null with `unavailableReason`, never 0 for a missing input (a measured 0 numerator over a real input IS 0)."
+                              },
+                              "unavailableReason": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "no_input_yet",
+                                  "volume_not_measured"
+                                ],
+                                "description": "Why ratePct is null: `no_input_yet` = denominator 0; `volume_not_measured` = a volume no producer counts."
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "fromKey",
+                              "toKey",
+                              "label",
+                              "numerator",
+                              "denominator",
+                              "ratePct",
+                              "unavailableReason"
+                            ]
+                          },
+                          "description": "Owner 2026-10-12: conversion rates since inception between every two CONSECUTIVE volumes, then first volume -> outcome when there are 3+ volumes (none for a one-volume on-demand pipe). Same basis as the volumes: an entry pipe's two counts are the SAME serve-dated people (a cohort rate); an internal pipe's counts are each dated by their own event, so a rate compares events to date (an outcome can land days after the hand-over), not one cohort. Undated counts enter only the snapshot and the last history point."
+                        },
                         "history": {
                           "type": "array",
                           "items": {
@@ -49708,6 +49767,14 @@
                               "roi": {
                                 "type": "number",
                                 "nullable": true
+                              },
+                              "conversionRates": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "number",
+                                  "nullable": true
+                                },
+                                "description": "Conversion rate key (see `conversionRates[].key`) -> cumulative rate to that day, PERCENT. Null while the input volume is 0 or a volume is unmeasured. The last point equals `conversionRates[].ratePct`."
                               }
                             },
                             "required": [
@@ -49715,7 +49782,8 @@
                               "spendUsd",
                               "volumes",
                               "costPerOutcomeUsd",
-                              "roi"
+                              "roi",
+                              "conversionRates"
                             ]
                           },
                           "description": "One point per UTC day from firstActivityDay to today, every figure cumulative. The last point IS the snapshot (undated counts enter there)."
@@ -49738,6 +49806,7 @@
                         "valuePerOutcomeUsd",
                         "roi",
                         "roiUnavailableReason",
+                        "conversionRates",
                         "history"
                       ],
                       "description": "Present only with `stats=true`."
