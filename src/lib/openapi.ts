@@ -2889,8 +2889,8 @@ const funnelActivityStepSchema = z.object({
 
 const funnelCampaignFunnelSchema = z
   .object({
-    mode: z.enum(["proactive", "reactive"]).describe("`proactive` (the funnel starts at Lead found: its people are the leads its units hold, what its sourcing unit found and its outreach unit was handed, lead-service's Leads page set) | `reactive` (it starts at another step: its people are the people its units were HANDED, lead-service follow-up ledger)."),
-    steps: z.array(funnelActivityStepSchema).describe("Every step of the campaign's path (Start excluded) in reading order, in PEOPLE since inception, each with the rate to the next. Proactive: every figure is lead-service's `bucket-counts` over the units holding people (sourcing + outreach) MERGED by max (one person sits under each unit that held them: never a sum). Lead found = the leads found (`total`), then Contacted (`counts.contacted`) and Delivered (`people.delivered`: people an email reached; 0 on a funnel sending no email, e.g. a leads-only funnel), then each later step = lead-service's bucket for it. Reactive: the first step = people handed; an act step (Booking call) = people the performing unit acted on (the call placed); every later step = handed people with an attributed outcome at that step."),
+    mode: z.enum(["proactive", "reactive"]).describe("`proactive` (the funnel starts at Lead found: its people are the leads it found, then the people its outreach unit worked) | `reactive` (it starts at another step: its people are the people its units were HANDED, lead-service follow-up ledger)."),
+    steps: z.array(funnelActivityStepSchema).describe("Every step of the campaign's path (Start excluded) in reading order, in PEOPLE since inception, each with the rate to the next. Proactive: Lead found = the leads THIS campaign found = the larger of its sourcing unit's finds (lead-service `leads-found` `found`, per source campaign, never merged with a sibling funnel's source) and the people its outreach unit holds (it held every found lead before 2026-10-12). Then Contacted (`counts.contacted`) and Delivered (`people.delivered`: people an email reached), then each later step = lead-service's `bucket-counts` of its outreach units, merged by max (never a sum). A funnel with no outreach unit (a leads-only funnel: Start -> Lead found -> your team) contacts nobody: Contacted and Delivered are 0, later steps `step_not_counted`. Reactive: the first step = people handed; an act step (Booking call) = people the performing unit acted on (the call placed); every later step = handed people with an attributed outcome at that step."),
   })
   .nullable()
   .describe("The whole funnel of this campaign. Null only with `funnelUnavailableReason`.");
@@ -3029,7 +3029,7 @@ const salesFunnelCampaignActivityResponseRef = registry.register(
           status: z.string(),
           fromStep: z.string().nullable().describe("The pipe's from step (null = from nothing: a sourcing pipe)."),
           toStep: z.string().nullable().describe("The step the pipe produces."),
-          kind: z.enum(["sourcing", "outreach", "takeover"]).nullable().describe("`sourcing` (from nothing to Lead found: holds what it finds, its outreach pipe works them) | `outreach` (from Lead found: holds the people) | `takeover` (from any later step: acts on people another campaign holds, e.g. AI Meeting Booking, AI Instant Call). Null when the pipe is unknown to the catalogue."),
+          kind: z.enum(["sourcing", "outreach", "takeover"]).nullable().describe("`sourcing` (from nothing to Lead found: its finds are the funnel's Lead found, its outreach pipe works them) | `outreach` (from Lead found: holds the people) | `takeover` (from any later step: acts on people another campaign holds, e.g. AI Meeting Booking, AI Instant Call). Null when the pipe is unknown to the catalogue."),
           people: z
             .object({
               found: z.number().int().describe("Leads the pipe holds (lead-service `total`)."),
@@ -3039,7 +3039,7 @@ const salesFunnelCampaignActivityResponseRef = registry.register(
               reachedToStep: z.number().int().nullable().describe("People at the pipe's `toStep` (lead-service's bucket for it); null when no bucket counts that step."),
             })
             .nullable()
-            .describe("A SOURCING or OUTREACH pipe's people counts since inception (a sourcing pipe's `found` = the leads it found). Null on a takeover pipe."),
+            .describe("An OUTREACH pipe's people counts since inception. Null on other kinds."),
           work: z
             .object({
               handed: z.number().int().describe("Distinct people handed to the pipe since inception."),

@@ -5,14 +5,16 @@
  * THE FUNNEL, in PEOPLE, along the campaign's own path (its catalogue funnel's steps, Start excluded). Who the
  * people are depends only on where the funnel STARTS (one rule for every funnel, `lib/meeting-leg-fleet.ts`
  * `isInternalPipe`):
- *   - it starts at Lead found (proactive): its people are held by the units that FIND or WORK them (its sourcing
- *     unit stores what it finds since 2026-10-12, lead-service LEADS-ONLY-FUNNEL-CAMPAIGN; its outreach unit holds the
- *     people it was handed, and held every found lead before). Every step is lead-service's people count
- *     (`/orgs/leads/bucket-counts`, the Leads page's own set) MERGED over those units by MAX per figure
- *     (`mergeBucketCounts`): the same person sits under each unit that held them, so a sum double counts; the units
- *     hold nested sets (a unit works the people found before it), so the largest is the funnel's. Two outreach rungs
- *     are served after Lead found: Contacted (`counts.contacted`) and Delivered (`people.delivered`: people an email
- *     reached; 0 on a funnel that sends none, e.g. a leads-only funnel: Start -> Lead found -> your team);
+ *   - it starts at Lead found (proactive): Lead found = the leads it FOUND = the larger of (a) what its sourcing unit
+ *     found, lead-service `GET /internal/source-campaigns/leads-found` `found` for THAT source campaign (a source stores
+ *     its finds under its own campaign since 2026-10-12; read per campaign, never `bucket-counts`, which resolves a
+ *     campaign to its IDENTITY and so counts a sibling funnel's source on the same brand: prod 2026-10-12, a stopped
+ *     funnel read another's 26 leads) and (b) the people its outreach unit holds (it held every found lead before).
+ *     Every later step is lead-service's people count of its OUTREACH units (`/orgs/leads/bucket-counts`, the Leads
+ *     page's own set), MERGED by MAX per figure (`mergeBucketCounts`; one person, several units: never a sum). Two
+ *     outreach rungs follow Lead found: Contacted (`counts.contacted`) and Delivered (`people.delivered`: people an
+ *     email reached); a funnel with no outreach unit contacts nobody (both 0, true by construction: a leads-only
+ *     funnel, Start -> Lead found -> your team) and its later steps are `step_not_counted`;
  *   - it starts at any other step (reactive: Positive reply -> ...): it holds nobody, its units take people over.
  *     Its people = the people its units were HANDED (lead-service follow-up ledger); the first step counts them, a
  *     step a unit performs as an act (Booking call: the act IS the call placed, lead-service's rule) counts the
@@ -88,21 +90,31 @@ export function mergeBucketCounts(
   };
 }
 
-/** PURE: a proactive funnel's steps off its units' merged lead-service counts (`mergeBucketCounts`). */
+/**
+ * PURE: a proactive funnel's steps. `bucket` = its outreach units' merged lead-service counts (`mergeBucketCounts`),
+ * null when it has none; `sourcedLeads` = the leads its sourcing units found (lead-service `leads-found`, per source
+ * campaign). Lead found = the larger of the two.
+ */
 export function proactiveFunnelSteps(
   path: readonly PathStep[],
-  bucket: { total: number; counts: Record<string, number>; people: { delivered: number } },
+  bucket: { total: number; counts: Record<string, number>; people: { delivered: number } } | null,
+  sourcedLeads = 0,
 ): FunnelActivityStep[] {
   const out: Array<Omit<FunnelActivityStep, "rateToNextPct">> = [];
   for (const s of path) {
     if (s.key === "lead_found") {
-      out.push({ key: s.key, label: s.label, kind: "step", people: bucket.total, unmeasuredReason: null });
+      out.push({ key: s.key, label: s.label, kind: "step", people: Math.max(sourcedLeads, bucket?.total ?? 0), unmeasuredReason: null });
+      if (!bucket) {
+        out.push({ key: "contacted", label: "Contacted", kind: "outreach", people: 0, unmeasuredReason: null });
+        out.push({ key: "delivered", label: "Delivered", kind: "outreach", people: 0, unmeasuredReason: null });
+        continue;
+      }
       out.push({ key: "contacted", label: "Contacted", kind: "outreach", people: bucket.counts.contacted ?? null, unmeasuredReason: bucket.counts.contacted === undefined ? "not_counted_by_lead_service" : null });
       out.push({ key: "delivered", label: "Delivered", kind: "outreach", people: bucket.people.delivered, unmeasuredReason: null });
       continue;
     }
     const b = BUCKET_OF_STEP[s.key];
-    const n = b ? bucket.counts[b] : undefined;
+    const n = b && bucket ? bucket.counts[b] : undefined;
     out.push({ key: s.key, label: s.label, kind: "step", people: typeof n === "number" ? n : null, unmeasuredReason: typeof n === "number" ? null : "step_not_counted" });
   }
   return withRates(out);

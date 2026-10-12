@@ -15,6 +15,7 @@ import {
   SOURCING_ORIGIN_SLUGS,
   SOURCING_ORIGINS,
   SOURCING_ORIGINS_BY_CHANNEL,
+  originsLeadSourcingMayUse,
 } from "./sourcing-origins.js";
 import { SEED_FEATURES } from "../seed/features.js";
 
@@ -59,18 +60,31 @@ describe("sourcing origins", () => {
       "sourcing-apify-search",
       "sourcing-apollo-buying-signals",
       "sourcing-apollo-cold-filters",
+      "sourcing-crm-contacts",
       "sourcing-linkedin-engagement-signals",
     ]);
+    expect(withSourcingSlugs(["cold-whatsapp-outreach"])).toEqual(["cold-whatsapp-outreach", "sourcing-crm-contacts"]);
     expect(withSourcingSlugs(["sales-crm-email-outreach"])).toEqual(["sales-crm-email-outreach", "sourcing-crm-contacts"]);
     expect(withSourcingSlugs(["ai-meeting-booking"])).toEqual(["ai-meeting-booking"]);
   });
 
-  it("every origin is served by at least one sourcing channel, and no origin by two channel families", () => {
+  it("every origin is served by at least one sourcing channel; Your CRM Contacts feeds cold email and cold WhatsApp (owner 2026-10-12)", () => {
     const servedBy = new Map<string, string[]>();
     for (const [channel, origins] of Object.entries(SOURCING_ORIGINS_BY_CHANNEL)) for (const o of origins) servedBy.set(o, [...(servedBy.get(o) ?? []), channel]);
     for (const slug of SOURCING_ORIGIN_SLUGS) expect(servedBy.has(slug), slug).toBe(true);
-    // a CRM origin under cold email would be counted twice on a brand running both channels
-    expect(servedBy.get("sourcing-crm-contacts")).toEqual(["sales-crm-email-outreach"]);
+    expect([...servedBy.get("sourcing-crm-contacts")!].sort()).toEqual(["cold-whatsapp-outreach", "sales-cold-email-outreach", "sales-crm-email-outreach"]);
+    // WhatsApp reaches a phone: only the brand's own contacts carry one we send to.
+    expect(SOURCING_ORIGINS_BY_CHANNEL["cold-whatsapp-outreach"]).toEqual(["sourcing-crm-contacts"]);
+  });
+
+  it("Lead Sourcing never picks the brand's own contacts, even on a channel they feed", () => {
+    expect(originsLeadSourcingMayUse("sales-cold-email-outreach")).not.toContain("sourcing-crm-contacts");
+    expect(originsLeadSourcingMayUse("sales-cold-email-outreach")).toEqual([
+      "sourcing-apollo-cold-filters",
+      "sourcing-apollo-buying-signals",
+      "sourcing-linkedin-engagement-signals",
+    ]);
+    expect(originsLeadSourcingMayUse("cold-whatsapp-outreach")).toEqual([]);
   });
 });
 

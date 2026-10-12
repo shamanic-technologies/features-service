@@ -10,7 +10,7 @@
  *     a step other than Lead found: AI Meeting Booking, AI Instant Call) serves the people it was handed, acted on and
  *     brought to its own `to` step, in total and per UTC day. An outreach pipe serves its lead-service people counts
  *     (its day-by-day series is the unit campaign's own revenue read, `dailySource`). A sourcing pipe hands its leads
- *     to the outreach pipe; both serve their own lead-service people counts (the funnel's steps merge them).
+ *     to the outreach pipe; the funnel's Lead found counts what it found (lead-service `leads-found`).
  * Money (invested, ROI) is the funnel campaigns table read's (`routes/sales-funnel-campaigns.ts`), never re-served here.
  * Since inception only. Producers unreadable = 502; an unknown campaign = 404 `sales_funnel_campaign_not_found`.
  */
@@ -27,6 +27,7 @@ import { fetchStepOutcomes } from "../lib/step-outcomes-client.js";
 import { isInternalPipe } from "../lib/meeting-leg-fleet.js";
 import { fetchCampaignCalls, type CampaignCalls } from "../lib/campaign-calls-client.js";
 import { fetchRunsCostCents } from "../lib/runs-cost-client.js";
+import { fetchLeadsFound } from "../lib/on-demand-pipe-fleet.js";
 import { parsePricing, type Pricing } from "../lib/pricing.js";
 import {
   ACT_IS_OUTCOME_STEPS,
@@ -55,7 +56,7 @@ interface PipeActivity {
   fromStep: string | null;
   toStep: string | null;
   kind: PipeKind | null;
-  /** Sourcing or outreach pipe: its lead-service people counts (`found` = the people it holds: found, or handed). */
+  /** Outreach pipe: its lead-service people counts (`found` = the people it holds). */
   people: { found: number; contacted: number; sent: number; delivered: number; reachedToStep: number | null } | null;
   /** Takeover pipe: handed / acted on / reached, in total and per UTC day. */
   work: PipeWork | null;
@@ -124,13 +125,17 @@ export function funnelCampaignActivity(row: SalesFunnelCampaignRow, brandId: str
         return isInternalPipe(s.fromStep) ? "takeover" : "outreach";
       };
       const takeover = row.units.filter((u) => kindOf(u) === "takeover");
-      // The units that hold the funnel's people: what its sourcing units found, what its outreach units were handed.
-      const holders = row.units.filter((u) => kindOf(u) === "sourcing" || kindOf(u) === "outreach");
+      const outreach = row.units.filter((u) => kindOf(u) === "outreach");
+      const sourcing = row.units.filter((u) => kindOf(u) === "sourcing");
 
-      // Reads, in parallel: each people-holding unit's counts, the takeover units' ledger, the call figures.
+      // Reads, in parallel: each outreach unit's people counts, the sources' finds, the takeover units' ledger, the call figures.
       const callUnits = takeover.filter((u) => stepsOf(u)?.toStep === CALL_STEP);
-      const [bucketByUnit, ledger, callsByUnit, callSpendByUnit] = await Promise.all([
-        Promise.all(holders.map(async (u) => [u.campaignId, await fetchLeadBucketCounts(u.campaignId, headers)] as const)).then((e) => new Map<string, LeadBucketCounts>(e)),
+      const [foundBySource, bucketByUnit, ledger, callsByUnit, callSpendByUnit] = await Promise.all([
+        // The leads each sourcing unit found, per source campaign (never identity-resolved).
+        sourcing.length > 0
+          ? fetchLeadsFound().then((f) => new Map(f.counts.map((c) => [c.campaignId, c.ran] as const)))
+          : Promise.resolve(new Map<string, number>()),
+        Promise.all(outreach.map(async (u) => [u.campaignId, await fetchLeadBucketCounts(u.campaignId, headers)] as const)).then((e) => new Map<string, LeadBucketCounts>(e)),
         takeover.length > 0 ? fetchFollowupActionRows(brandId, takeover.map((u) => u.campaignId)) : Promise.resolve([] as FollowupActionRow[]),
         // The call figures ride FAIL-SOFT with a loud log: an unreadable twillio-service leaves the pipe's `calls`
         // null + `calls_unreadable`, never a 502 of the whole funnel.
@@ -174,14 +179,14 @@ export function funnelCampaignActivity(row: SalesFunnelCampaignRow, brandId: str
         const raw = isCall ? callsByUnit.get(u.campaignId) ?? null : null;
         const calls = raw ? pipeCalls(raw, callSpendByUnit.get(u.campaignId) ?? null) : null;
         const callsUnavailableReason = isCall ? (calls ? null : "calls_unreadable") : "pipe_places_no_calls";
-        if (kind === "outreach" || kind === "sourcing") {
+        if (kind === "outreach") {
           const b = bucketByUnit.get(u.campaignId)!;
           const toBucket = s ? BUCKET_OF_STEP[s.toStep] : undefined;
           return {
             ...base,
             people: { found: b.total, contacted: b.counts.contacted ?? 0, sent: b.people.sent, delivered: b.people.delivered, reachedToStep: toBucket && typeof b.counts[toBucket] === "number" ? b.counts[toBucket] : null },
             work: null,
-            dailySource: kind === "outreach" ? ("campaign_revenue" as const) : null,
+            dailySource: "campaign_revenue" as const,
             calls,
             callsUnavailableReason,
           };
@@ -198,8 +203,12 @@ export function funnelCampaignActivity(row: SalesFunnelCampaignRow, brandId: str
       let funnelUnavailableReason: string | null = null;
       if (!copy) funnelUnavailableReason = "sales_funnel_not_in_catalogue";
       else if (!isReactive) {
-        if (holders.length === 0) funnelUnavailableReason = "no_unit_holds_people";
-        else funnel = { mode: "proactive", steps: proactiveFunnelSteps(path, mergeBucketCounts(holders.map((u) => bucketByUnit.get(u.campaignId)!))) };
+        if (outreach.length === 0 && sourcing.length === 0) funnelUnavailableReason = "no_unit_holds_people";
+        else {
+          const bucket = outreach.length > 0 ? mergeBucketCounts(outreach.map((u) => bucketByUnit.get(u.campaignId)!)) : null;
+          const sourced = sourcing.reduce((n, u) => n + (foundBySource.get(u.campaignId) ?? 0), 0);
+          funnel = { mode: "proactive", steps: proactiveFunnelSteps(path, bucket, sourced) };
+        }
       } else {
         const handed = new Set(ledger.map((r) => r.leadId));
         const actedByStep = new Map<string, Set<string>>();
