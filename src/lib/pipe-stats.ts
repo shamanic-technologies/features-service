@@ -340,6 +340,10 @@ export interface TeamSource {
   offerNarrowed: false;
 }
 
+/** Most specific first: a step the brand's tools do not record, then not synced, then nothing connected, then no people. */
+const TEAM_REASON_ORDER = ["from_step_not_recorded", "to_step_not_recorded", "step_not_in_crm_vocabulary", "not_synced", "no_connected_source", "no_people_scope"];
+const reasonRank = (r: string): number => (TEAM_REASON_ORDER.indexOf(r) === -1 ? TEAM_REASON_ORDER.length : TEAM_REASON_ORDER.indexOf(r));
+
 /** PURE: a scope's customer-team volumes from the producer's per-brand answers (see the header). */
 export function customerTeamVolumes(
   p: Pick<PipeStatsPipe, "fromStepLabel" | "toStepLabel">,
@@ -362,7 +366,10 @@ export function customerTeamVolumes(
   const measured = answered.length > 0;
   const from = measured ? sum((r) => r.from) : { daily: null, undated: 0 };
   const to = measured ? sum((r) => r.to) : { daily: null, undated: 0 };
-  const firstReason = reaches.find((r): r is Extract<TeamLegReach, { available: false }> => !r.available)?.reason ?? "no_brand_answers";
+  // A brand two orgs hold answers once per org: the most SPECIFIC reason wins (an org with tools that do not record the
+  // step says more than an empty org of the same brand).
+  const reasons = reaches.filter((r): r is Extract<TeamLegReach, { available: false }> => !r.available).map((r) => r.reason);
+  const firstReason = [...reasons].sort((a, b) => reasonRank(a) - reasonRank(b))[0] ?? "no_brand_answers";
   return {
     volumes: [
       { key: "reachedFrom", label: `${p.fromStepLabel ?? "People"} (their team)`, role: "input", datedBy: measured ? "event_day" : null, ...from },
