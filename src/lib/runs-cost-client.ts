@@ -25,7 +25,7 @@
  */
 import { fetchWithRetry } from "./fetch-retry.js";
 import { runsCostsUrl, selectCostCents, selectCostCentsString, type Pricing } from "./pricing.js";
-import { sumDecimalStrings } from "./decimal.js";
+import { decimalCentsToUsd, sumDecimalStrings } from "./decimal.js";
 import { startedBeforeParam } from "./maturity.js";
 import { campaignFamilySet, singleCampaignId, type CampaignFilter } from "./campaign-scope.js";
 import { runsFeatureSlugsParam, type FeatureScope } from "./feature-scope.js";
@@ -467,4 +467,36 @@ export async function fetchMatureSpendCents(
     bySlug.set(slug, { committedCents: cents(v.committed), actualCents: cents(v.actual) });
   }
   return { total, bySlug };
+}
+
+/**
+ * The SAME brand + channel-set COMMITTED spend `fetchRunsCostCents` reads, kept SPLIT per raw campaign id
+ * (key `null` = spend recorded with no campaign), summed exactly from the producer's decimal text so the
+ * campaigns add up to the scope to the cent. The cost leg of the lived sales paths
+ * (`lib/lived-sales-paths.ts`), which shares each campaign's spend across the people it acted on.
+ * Fail-loud, like its siblings: a swallowed error would read as free campaigns.
+ */
+export async function fetchRunsCostUsdByCampaign(
+  brandId: string,
+  featureScope: FeatureScope,
+  headers: { orgId: string; userId?: string; runId?: string },
+  pricing: Pricing = "gross",
+): Promise<Map<string | null, number>> {
+  const url = process.env.RUNS_SERVICE_URL;
+  const apiKey = process.env.RUNS_SERVICE_API_KEY;
+  if (!url || !apiKey) throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
+  const params = new URLSearchParams({ groupBy: "campaignId", brandId, featureSlugs: runsFeatureSlugsParam(featureScope) });
+  const reqHeaders: Record<string, string> = { "x-api-key": apiKey, "x-org-id": headers.orgId, "x-brand-id": brandId };
+  if (headers.userId) reqHeaders["x-user-id"] = headers.userId;
+  if (headers.runId) reqHeaders["x-run-id"] = headers.runId;
+  const response = await fetchWithRetry(runsCostsUrl(url, "org", pricing, params), { headers: reqHeaders });
+  if (!response.ok) throw new Error(`runs-service /v1/stats/costs?groupBy=campaignId failed (${response.status}): ${await response.text()}`);
+  const data = (await response.json()) as { groups?: Array<Record<string, unknown> & { dimensions?: Record<string, string | null> }> };
+  if (!Array.isArray(data.groups)) throw new Error("runs-service /v1/stats/costs returned no groups array");
+  const cents = new Map<string | null, string[]>();
+  for (const group of data.groups) {
+    const cid = group.dimensions?.campaignId ?? null;
+    cents.set(cid, [...(cents.get(cid) ?? []), selectCostCentsString(group, "totalCostInUsdCents", pricing)]);
+  }
+  return new Map([...cents].map(([cid, values]) => [cid, decimalCentsToUsd(sumDecimalStrings(values))]));
 }
