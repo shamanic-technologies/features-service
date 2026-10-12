@@ -58,7 +58,8 @@ import { selectCostCentsString } from "./pricing.js";
 import { effectiveSpendSlugs, runsSpendSlugsParam } from "./feature-scope.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { fetchTeamLegReach, fetchTeamLegReachBrands, type TeamLegReach } from "./team-leg-reach-client.js";
-import { fetchOurLeadsToTeam, type LegPipeRef, type OurLeadsToTeam } from "./team-on-our-leads.js";
+import { fetchLegPopulations, fetchOurLeadsToTeam, type LegPipeRef, type LegPopulations, type OurLeadsToTeam } from "./team-on-our-leads.js";
+import { buildPipeTeamImpact, sumDated, type PipeTeamImpact } from "./pipe-team-impact.js";
 
 export type PipeStatsKind = "entry" | "internal" | "on_demand" | "customer_team";
 export type VolumeRole = "input" | "action" | "outcome";
@@ -267,6 +268,9 @@ export interface PipeStatsPipe {
   /** Customer-team pipe: the PLATFORM pipes whose `to` is its `from` (they bring people to it) and those on its own
    *  leg (their action takes a person off the team), for `ourLeadsToTeam` (`lib/team-on-our-leads.ts`). */
   legNeighbours?: { producingPipes: readonly LegPipeRef[]; ourPipesOnLeg: readonly LegPipeRef[] };
+  /** PLATFORM pipe whose leg (same `from`, same `to`) also has a customer-team pipe: those team channels and the leg's
+   *  platform neighbours, for `teamImpact` (`lib/pipe-team-impact.ts`). Absent = no customer-team co-leg. */
+  teamCoLeg?: { teamChannelSlugs: readonly string[]; producingPipes: readonly LegPipeRef[]; ourPipesOnLeg: readonly LegPipeRef[] };
 }
 
 /** PURE: the measure rule's kind (where the leg starts, its trigger), never the channel. */
@@ -444,6 +448,9 @@ export interface PipeStatsBody extends PipeStatsFigures {
   /** Customer-team pipe only (else null): the same pipe measured on the people OUR campaigns brought to its `from`
    *  step and our pipes on the leg left to the team, beside our pipes' rate (`lib/team-on-our-leads.ts`). */
   ourLeadsToTeam: OurLeadsToTeam | null;
+  /** Platform pipe with a customer-team co-leg only (else null): "your team alone" vs "your team + this pipe" on the
+   *  people our campaigns brought to `from`, and this pipe's impact (`lib/pipe-team-impact.ts`). */
+  teamImpact: PipeTeamImpact | null;
   computedAt: string;
 }
 
@@ -458,6 +465,16 @@ export async function computePipeStats(p: PipeStatsPipe, scope: PipeStatsScope, 
   let spendSince: string | null = null;
   let teamSource: TeamSource | null = null;
   let ourLeadsToTeam: OurLeadsToTeam | null = null;
+  // A platform pipe sharing its leg with a customer team: the leg's populations, this pipe in focus (read beside the volumes).
+  const coLeg = kind !== "customer_team" ? p.teamCoLeg : undefined;
+  const populations: Promise<LegPopulations> | null = coLeg
+    ? fetchLegPopulations(
+        { fromStep: p.fromStep, toStep: p.toStep, fromStepLabel: p.fromStepLabel, toStepLabel: p.toStepLabel, producingPipes: coLeg.producingPipes, ourPipesOnLeg: coLeg.ourPipesOnLeg, focusPipes: [{ channelSlug: p.channelSlug, computedLegKey: p.computedLegKey }] },
+        scope,
+      )
+    : null;
+  // Settle it whatever the volumes do (no unhandled rejection), rethrown below: fail-loud like every pipe-stats read.
+  populations?.catch(() => undefined);
   if (kind === "customer_team") {
     let team: Awaited<ReturnType<typeof fetchCustomerTeamVolumes>>;
     [team, ourLeadsToTeam] = await Promise.all([
@@ -471,8 +488,23 @@ export async function computePipeStats(p: PipeStatsPipe, scope: PipeStatsScope, 
   else ({ volumes, since: spendSince } = await onDemandVolumes(p, idSet));
   // On-demand with no recorded event yet: nothing found, nothing counted as spent on it.
   const spendByDay = ids.length === 0 || kind === "customer_team" || (kind === "on_demand" && spendSince === null) ? new Map<string, number>() : await fetchCampaignsNetSpendByDay(p.channelSlug, ids, spendSince);
-  const figures = buildPipeStats({ volumes, outcomeKey: "outcomes", spendByDay, valuePerOutcomeUsd, today: new Date().toISOString().slice(0, 10) });
-  return { scope, kind, basis: "since_inception", costBasis: "net_charged", campaignCount: ids.length, spendSince, teamSource, ourLeadsToTeam, computedAt: new Date().toISOString(), ...figures };
+  const today = new Date().toISOString().slice(0, 10);
+  const figures = buildPipeStats({ volumes, outcomeKey: "outcomes", spendByDay, valuePerOutcomeUsd, today });
+  let teamImpact: PipeTeamImpact | null = null;
+  if (coLeg && populations) {
+    const { perBrand, reason } = await populations;
+    teamImpact = buildPipeTeamImpact({
+      teamChannelSlugs: coLeg.teamChannelSlugs,
+      fromStepLabel: p.fromStepLabel,
+      toStepLabel: p.toStepLabel,
+      reason,
+      team: perBrand && { from: sumDated(perBrand.map((f) => f.left)), to: sumDated(perBrand.map((f) => f.reached)) },
+      pipe: perBrand && { from: sumDated(perBrand.map((f) => f.focusActed)), to: sumDated(perBrand.map((f) => f.focusReached)) },
+      spendByDay,
+      today,
+    });
+  }
+  return { scope, kind, basis: "since_inception", costBasis: "net_charged", campaignCount: ids.length, spendSince, teamSource, ourLeadsToTeam, teamImpact, computedAt: new Date().toISOString(), ...figures };
 }
 
 // ── Held per (pipe, scope), stale-while-revalidate (15 min fresh / 6 h stale, single-flight) ────────

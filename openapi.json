@@ -49915,6 +49915,285 @@
                           ],
                           "description": "customer_team pipe only (else null), owner 2026-10-12: the same pipe measured on the people OUR campaigns brought to its `from` step and our pipes left to the customer's team, beside our pipes' own rate. Additive: the top-level volumes keep their meaning."
                         },
+                        "teamImpact": {
+                          "type": "object",
+                          "nullable": true,
+                          "properties": {
+                            "population": {
+                              "type": "string",
+                              "enum": [
+                                "people_our_campaigns_brought_to_from"
+                              ],
+                              "description": "Both rows count the people OUR campaigns brought to the leg's `from` step (the campaigns of every platform pipe landing on it, narrowed to the scope), each once, from the day they reached `from`; `to` = lead-service's attributed outcome of the `to` step (the brand's CRM facts and staff statements) on or after that day."
+                            },
+                            "teamChannelSlugs": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              },
+                              "description": "The customer-team channels sharing this pipe's leg (same `from`, same `to`)."
+                            },
+                            "fromStepLabel": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "Column label: the leg's `from` step (e.g. Positive reply)."
+                            },
+                            "toStepLabel": {
+                              "type": "string",
+                              "description": "Column label: the leg's `to` step (e.g. Meeting booked)."
+                            },
+                            "available": {
+                              "type": "boolean",
+                              "description": "False = every count null (unmeasured), never 0; see unavailableReason."
+                            },
+                            "unavailableReason": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "leg_has_no_from_step",
+                                "from_step_not_produced_by_our_campaigns",
+                                "to_step_not_recorded_for_our_leads",
+                                "no_campaign_of_ours_brings_people_to_from"
+                              ]
+                            },
+                            "rows": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "key": {
+                                    "type": "string",
+                                    "enum": [
+                                      "team_alone",
+                                      "team_plus_pipe"
+                                    ],
+                                    "description": "team_alone = the people none of our pipes on the leg acted on (their team had them alone; = the customer-team pipe's `ourLeadsToTeam`). team_plus_pipe = the people THIS pipe's campaigns in scope acted on, their team assumed still on."
+                                  },
+                                  "label": {
+                                    "type": "string"
+                                  },
+                                  "fromCount": {
+                                    "type": "integer",
+                                    "nullable": true,
+                                    "description": "People at the `from` step in this row. Null = unmeasured."
+                                  },
+                                  "toCount": {
+                                    "type": "integer",
+                                    "nullable": true,
+                                    "description": "Of them, reached `to` on or after the day they reached `from`."
+                                  },
+                                  "undatedFrom": {
+                                    "type": "integer",
+                                    "description": "Of fromCount, in no day (enters the history's last point only)."
+                                  },
+                                  "undatedTo": {
+                                    "type": "integer",
+                                    "description": "Of toCount, in no day."
+                                  },
+                                  "ratePct": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "toCount ÷ fromCount × 100, 2 decimals."
+                                  },
+                                  "rateUnavailableReason": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "no_input_yet",
+                                      "volume_not_measured",
+                                      "leg_has_no_from_step",
+                                      "from_step_not_produced_by_our_campaigns",
+                                      "to_step_not_recorded_for_our_leads",
+                                      "no_campaign_of_ours_brings_people_to_from"
+                                    ]
+                                  },
+                                  "spendUsd": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "NET spend of ours (team_plus_pipe: this pipe's spend in scope, the stats' own `spendUsd`); team_alone: null."
+                                  },
+                                  "costPerOutcomeUsd": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "team_plus_pipe: spendUsd ÷ toCount (null while 0). team_alone: null (customer time)."
+                                  },
+                                  "costPerOutcomeUnavailableReason": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "customer_team_time",
+                                      "no_outcome_yet",
+                                      "outcome_not_measured",
+                                      "no_spend_recorded"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "label",
+                                  "fromCount",
+                                  "toCount",
+                                  "undatedFrom",
+                                  "undatedTo",
+                                  "ratePct",
+                                  "rateUnavailableReason",
+                                  "spendUsd",
+                                  "costPerOutcomeUsd",
+                                  "costPerOutcomeUnavailableReason"
+                                ]
+                              },
+                              "description": "Always two rows, team_alone then team_plus_pipe: the table to render as is."
+                            },
+                            "impact": {
+                              "type": "object",
+                              "properties": {
+                                "pointsDiff": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "team_plus_pipe ratePct − team_alone ratePct, percentage POINTS (computed on unrounded rates), 2 decimals."
+                                },
+                                "pointsDiffUnavailableReason": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "enum": [
+                                    "team_alone_not_measured",
+                                    "team_alone_no_input",
+                                    "team_plus_pipe_not_measured",
+                                    "team_plus_pipe_no_input"
+                                  ]
+                                },
+                                "ratio": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "team_plus_pipe rate ÷ team_alone rate, 2 decimals (1.5 = ×1.5)."
+                                },
+                                "ratioUnavailableReason": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "enum": [
+                                    "team_alone_not_measured",
+                                    "team_alone_no_input",
+                                    "team_plus_pipe_not_measured",
+                                    "team_plus_pipe_no_input",
+                                    "team_alone_rate_zero"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "pointsDiff",
+                                "pointsDiffUnavailableReason",
+                                "ratio",
+                                "ratioUnavailableReason"
+                              ],
+                              "description": "This pipe's impact on top of their team. Null + reason, never 0, when a side is unmeasured or has nobody at `from` (ratio also when the team-alone rate is 0)."
+                            },
+                            "firstActivityDay": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "history": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "date": {
+                                    "type": "string"
+                                  },
+                                  "teamAlone": {
+                                    "type": "object",
+                                    "properties": {
+                                      "fromCount": {
+                                        "type": "integer",
+                                        "nullable": true
+                                      },
+                                      "toCount": {
+                                        "type": "integer",
+                                        "nullable": true
+                                      },
+                                      "ratePct": {
+                                        "type": "number",
+                                        "nullable": true
+                                      }
+                                    },
+                                    "required": [
+                                      "fromCount",
+                                      "toCount",
+                                      "ratePct"
+                                    ]
+                                  },
+                                  "teamPlusPipe": {
+                                    "type": "object",
+                                    "properties": {
+                                      "fromCount": {
+                                        "type": "integer",
+                                        "nullable": true
+                                      },
+                                      "toCount": {
+                                        "type": "integer",
+                                        "nullable": true
+                                      },
+                                      "ratePct": {
+                                        "type": "number",
+                                        "nullable": true
+                                      },
+                                      "spendUsd": {
+                                        "type": "number"
+                                      },
+                                      "costPerOutcomeUsd": {
+                                        "type": "number",
+                                        "nullable": true
+                                      }
+                                    },
+                                    "required": [
+                                      "fromCount",
+                                      "toCount",
+                                      "ratePct",
+                                      "spendUsd",
+                                      "costPerOutcomeUsd"
+                                    ]
+                                  },
+                                  "impact": {
+                                    "type": "object",
+                                    "properties": {
+                                      "pointsDiff": {
+                                        "type": "number",
+                                        "nullable": true
+                                      },
+                                      "ratio": {
+                                        "type": "number",
+                                        "nullable": true
+                                      }
+                                    },
+                                    "required": [
+                                      "pointsDiff",
+                                      "ratio"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "date",
+                                  "teamAlone",
+                                  "teamPlusPipe",
+                                  "impact"
+                                ]
+                              },
+                              "description": "One CUMULATIVE point per UTC day from firstActivityDay to today; undated counts enter on the last point, so the last point IS the snapshot (rows + impact)."
+                            }
+                          },
+                          "required": [
+                            "population",
+                            "teamChannelSlugs",
+                            "fromStepLabel",
+                            "toStepLabel",
+                            "available",
+                            "unavailableReason",
+                            "rows",
+                            "impact",
+                            "firstActivityDay",
+                            "history"
+                          ],
+                          "description": "PLATFORM pipe whose leg (same `from`, same `to`) also has a customer-team pipe only, else null (owner 2026-10-12): the table \"your team alone\" vs \"your team + this pipe\" and this pipe's impact, one rule for every such pipe. Additive."
+                        },
                         "computedAt": {
                           "type": "string"
                         },
@@ -50136,6 +50415,7 @@
                         "spendSince",
                         "teamSource",
                         "ourLeadsToTeam",
+                        "teamImpact",
                         "computedAt",
                         "firstActivityDay",
                         "volumes",
