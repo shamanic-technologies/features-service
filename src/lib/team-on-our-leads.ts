@@ -51,6 +51,9 @@ export interface OurLeadsToTeamPipe {
   producingPipes: readonly LegPipeRef[];
   /** PLATFORM pipes on the SAME leg: a person one of them acted on is not left to the customer's team. */
   ourPipesOnLeg: readonly LegPipeRef[];
+  /** ONE platform pipe on the leg whose own people are also counted (`focus*` figures): the platform pipe's page
+   *  reads "team alone vs team + this pipe" (`lib/pipe-team-impact.ts`). Absent = none. */
+  focusPipes?: readonly LegPipeRef[];
 }
 
 export type OurLeadsToTeamReason =
@@ -136,6 +139,10 @@ export interface BrandFigures {
   broughtToFrom: number;
   actedOnByOurPipes: number;
   ourPipesRate: OurPipesRate;
+  /** The people the FOCUS pipe's campaigns in scope acted on (dated by the day they reached `from`), and those of them
+   *  who reached `to` under the same rule. Empty without a focus pipe. */
+  focusActed: DatedCount;
+  focusReached: DatedCount;
 }
 
 /** PURE: one brand's left-to-their-team volumes and our pipes' rate, from per-person facts. */
@@ -147,6 +154,8 @@ export function ourLeadsToTeamFigures(input: {
   actedInScope: ReadonlySet<string>;
   /** Lead -> every date it reached `to` (null = undated). */
   toAtByLead: ReadonlyMap<string, ReadonlyArray<string | null>>;
+  /** Of `acted`, the leads the FOCUS pipe's campaigns in scope acted on. */
+  focusActedInScope?: ReadonlySet<string>;
 }): BrandFigures {
   const left: DatedCount = { daily: new Map(), undated: 0 };
   const reached: DatedCount = { daily: new Map(), undated: 0 };
@@ -167,10 +176,17 @@ export function ourLeadsToTeamFigures(input: {
     const to = reachedToAt(fromAt, input.toAtByLead.get(leadId));
     if (to !== undefined) add(reached, to);
   }
+  // A person our pipes acted on but no producing campaign in scope brought: dated by the first action on them.
+  const fromAtOfActed = (leadId: string) => (fromAtOf.has(leadId) ? fromAtOf.get(leadId)! : (input.acted.get(leadId) ?? null));
   let ourOutcomes = 0;
-  for (const leadId of input.actedInScope) {
-    const fromAt = fromAtOf.has(leadId) ? fromAtOf.get(leadId)! : (input.acted.get(leadId) ?? null);
-    if (reachedToAt(fromAt, input.toAtByLead.get(leadId)) !== undefined) ourOutcomes++;
+  for (const leadId of input.actedInScope) if (reachedToAt(fromAtOfActed(leadId), input.toAtByLead.get(leadId)) !== undefined) ourOutcomes++;
+  const focusActed: DatedCount = { daily: new Map(), undated: 0 };
+  const focusReached: DatedCount = { daily: new Map(), undated: 0 };
+  for (const leadId of input.focusActedInScope ?? []) {
+    const fromAt = fromAtOfActed(leadId);
+    add(focusActed, dayOf(fromAt));
+    const to = reachedToAt(fromAt, input.toAtByLead.get(leadId));
+    if (to !== undefined) add(focusReached, to);
   }
   const actedOn = input.actedInScope.size;
   return {
@@ -179,6 +195,8 @@ export function ourLeadsToTeamFigures(input: {
     broughtToFrom: fromAtOf.size,
     actedOnByOurPipes: actedOfBrought,
     ourPipesRate: { actedOn, outcomes: ourOutcomes, ratePct: actedOn > 0 ? round2((ourOutcomes / actedOn) * 100) : null, unavailableReason: actedOn > 0 ? null : "no_input_yet" },
+    focusActed,
+    focusReached,
   };
 }
 
@@ -261,12 +279,29 @@ async function snapshotBrought(orgId: string, brandId: string, ids: readonly str
   });
 }
 
+/** What the leg's two populations rest on: per-brand figures, or the reason they cannot be measured. */
+export interface LegPopulations {
+  meta: { fromEvidence: OurLeadsToTeam["fromEvidence"]; producingChannels: string[]; ourChannelsOnLeg: string[]; toSources: string[] };
+  perBrand: BrandFigures[] | null;
+  reason: OurLeadsToTeamReason | null;
+}
+
 /** IO: the block for one customer-team pipe and one scope (see the header). Fail-loud on any producer failure. */
 export async function fetchOurLeadsToTeam(
   p: OurLeadsToTeamPipe,
   scope: { brandId: string | null; offerId: string | null },
   today: string = new Date().toISOString().slice(0, 10),
 ): Promise<OurLeadsToTeam> {
+  const { meta, perBrand, reason } = await fetchLegPopulations(p, scope);
+  return buildOurLeadsToTeam(p, meta, perBrand, reason, today);
+}
+
+/** IO: per brand in scope, the people our campaigns brought to `from`, who our pipes (and the focus pipe) acted on,
+ *  and who reached `to` (see the header). Fail-loud on any producer failure. */
+export async function fetchLegPopulations(
+  p: OurLeadsToTeamPipe,
+  scope: { brandId: string | null; offerId: string | null },
+): Promise<LegPopulations> {
   const producingChannels = sortedUnique(p.producingPipes.map((q) => q.channelSlug));
   const ourChannelsOnLeg = sortedUnique(p.ourPipesOnLeg.map((q) => q.channelSlug));
   const signal = p.fromStep ? SNAPSHOT_SIGNAL_OF_STEP[p.fromStep] : undefined;
@@ -274,12 +309,12 @@ export async function fetchOurLeadsToTeam(
   const toEvent = OUTCOME_EVENT_OF_STEP[p.toStep];
   const fromEvidence: OurLeadsToTeam["fromEvidence"] = signal ? "lead_snapshot" : fromEvent ? "attributed_outcomes" : null;
   const meta = { fromEvidence, producingChannels, ourChannelsOnLeg, toSources: [] as string[] };
-  const refuse = (reason: OurLeadsToTeamReason) => buildOurLeadsToTeam(p, meta, null, reason, today);
+  const refuse = (reason: OurLeadsToTeamReason): LegPopulations => ({ meta, perBrand: null, reason });
   if (p.fromStep === null) return refuse("leg_has_no_from_step");
   if (!signal && !fromEvent) return refuse("from_step_not_produced_by_our_campaigns");
   if (!toEvent) return refuse("to_step_not_recorded_for_our_leads");
 
-  const [producing, onLeg] = await fetchFleetLegCampaignsFor([p.producingPipes, p.ourPipesOnLeg]);
+  const [producing, onLeg, focus] = await fetchFleetLegCampaignsFor([p.producingPipes, p.ourPipesOnLeg, p.focusPipes ?? []]);
   const inScope = (c: FleetLegCampaign) => c.brandId !== null && (scope.brandId === null || c.brandId === scope.brandId) && (scope.offerId === null || c.offerId === scope.offerId);
   // brand -> org -> producing campaign ids in scope.
   const brands = new Map<string, Map<string, string[]>>();
@@ -295,6 +330,7 @@ export async function fetchOurLeadsToTeam(
       const brandOnLeg = onLeg.filter((c) => c.brandId === brandId);
       const actingIds = sortedUnique(brandOnLeg.map((c) => c.campaignId));
       const actingInScope = new Set(brandOnLeg.filter(inScope).map((c) => c.campaignId));
+      const focusInScope = new Set(focus.filter((c) => c.brandId === brandId && inScope(c)).map((c) => c.campaignId));
       const scopeIds = new Set([...orgs.values()].flat());
       const [brought, actionRows, toRows] = await Promise.all([
         signal
@@ -307,15 +343,17 @@ export async function fetchOurLeadsToTeam(
       ]);
       const acted = new Map<string, string | null>();
       const actedInScope = new Set<string>();
+      const focusActedInScope = new Set<string>();
       for (const r of actionRows) {
         if (r.actedCount <= 0) continue;
         acted.set(r.leadId, acted.has(r.leadId) ? minIso(acted.get(r.leadId)!, r.firstActedAt) : r.firstActedAt);
         if (actingInScope.has(r.actingCampaignId)) actedInScope.add(r.leadId);
+        if (focusInScope.has(r.actingCampaignId)) focusActedInScope.add(r.leadId);
       }
       const broughtIds = new Set(brought.map((b) => b.leadId));
       for (const r of toRows) if (broughtIds.has(r.leadId) || acted.has(r.leadId)) toSources.add(r.source);
-      return ourLeadsToTeamFigures({ brought, acted, actedInScope, toAtByLead: datesByLead(toRows) });
+      return ourLeadsToTeamFigures({ brought, acted, actedInScope, toAtByLead: datesByLead(toRows), focusActedInScope });
     }),
   );
-  return buildOurLeadsToTeam(p, { ...meta, toSources: sortedUnique(toSources) }, perBrand, null, today);
+  return { meta: { ...meta, toSources: sortedUnique(toSources) }, perBrand, reason: null };
 }
