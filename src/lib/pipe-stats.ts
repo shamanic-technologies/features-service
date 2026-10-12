@@ -29,6 +29,15 @@
  * SAME serve-dated people (a cohort rate); an internal pipe's counts are each dated by their own event, so a day's
  * cumulative rate compares events to that day (an outcome can land days after the hand-over), not one cohort.
  *
+ * CUSTOMER-TEAM pipe (`operatedBy: customer`, every `your-team-*` channel; owner 2026-10-12, "comparer leur conv rate
+ * historique avec ceux qu'on a traités nous-mêmes"): no campaign of ours works it, so its volumes come from the brand's
+ * OWN tools (crm-service, `lib/team-leg-reach-client.ts`): the people of the brand who reached the pipe's `from` step and
+ * whom our campaigns never contacted (the customer team's own leads), and how many of THOSE reached its `to` step, each
+ * dated by its own event. Spend is none (the customer's time costs us nothing), so cost per outcome and ROI are null
+ * with a reason. A brand the CRM cannot answer serves both volumes UNMEASURED (null) + `teamSource.unavailableReason`,
+ * never 0. Offer scope = the brand's CRM (a CRM person carries no offer: `teamSource.offerNarrowed: false`); fleet
+ * scope = the sum over every brand crm-service answers for. One rule for every customer-team pipe and leg.
+ *
  * HISTORY: one point per UTC day from the first activity (spend or a dated volume) to today, every figure
  * CUMULATIVE as it stood that day. An undated count (in no day) enters on the LAST point only, so the snapshot IS
  * the last point by construction (`undated` states how many).
@@ -45,8 +54,9 @@ import { fetchWithRetry } from "./fetch-retry.js";
 import { selectCostCentsString } from "./pricing.js";
 import { effectiveSpendSlugs, runsSpendSlugsParam } from "./feature-scope.js";
 import { mapWithConcurrency } from "./concurrency.js";
+import { fetchTeamLegReach, fetchTeamLegReachBrands, type TeamLegReach } from "./team-leg-reach-client.js";
 
-export type PipeStatsKind = "entry" | "internal" | "on_demand";
+export type PipeStatsKind = "entry" | "internal" | "on_demand" | "customer_team";
 export type VolumeRole = "input" | "action" | "outcome";
 export type DatedBy = "serve_day" | "event_day" | null;
 
@@ -248,10 +258,13 @@ export interface PipeStatsPipe {
   toStepLabel: string;
   /** The pipe's trigger: an inline one makes it on-demand. */
   triggerId: string | null;
+  /** `customer`: the customer's own team works the leg (`your-team-*`); its volumes come from their tools. */
+  operatedBy: "platform" | "customer";
 }
 
 /** PURE: the measure rule's kind (where the leg starts, its trigger), never the channel. */
-export function pipeStatsKind(p: Pick<PipeStatsPipe, "fromStep" | "triggerId">): PipeStatsKind {
+export function pipeStatsKind(p: Pick<PipeStatsPipe, "fromStep" | "triggerId"> & Partial<Pick<PipeStatsPipe, "operatedBy">>): PipeStatsKind {
+  if (p.operatedBy === "customer") return "customer_team";
   if (p.triggerId !== null && INLINE_TRIGGER_IDS.has(p.triggerId)) return "on_demand";
   if (p.fromStep !== null && p.fromStep !== "lead_found") return "internal";
   return "entry";
@@ -308,6 +321,78 @@ async function onDemandVolumes(p: PipeStatsPipe, ids: ReadonlySet<string>): Prom
   return { volumes: [{ key: "outcomes", label: p.toStepLabel, role: "outcome", datedBy: null, daily: new Map(), undated: found }], since };
 }
 
+/** Where a customer-team pipe's volumes come from, and why they are unmeasured when they are. */
+export interface TeamSource {
+  producer: "crm-service";
+  population: "brand_people_reached_from_not_contacted_by_us";
+  /** True when at least one brand of the scope answered. */
+  available: boolean;
+  /** Null when available; else the producer's reason (one brand) or `no_brand_answers` (fleet). */
+  unavailableReason: string | null;
+  /** Fleet: per producer reason, how many brands could not answer. */
+  unavailableBrands: Record<string, number>;
+  /** Brands summed into the volumes. */
+  brandsCounted: number;
+  /** Sources (the brand's tools) evidencing each end, unioned over the brands counted. */
+  fromSources: string[];
+  toSources: string[];
+  /** Always false: a CRM person carries no offer, so an offer scope reads its brand's people. */
+  offerNarrowed: false;
+}
+
+/** PURE: a scope's customer-team volumes from the producer's per-brand answers (see the header). */
+export function customerTeamVolumes(
+  p: Pick<PipeStatsPipe, "fromStepLabel" | "toStepLabel">,
+  reaches: ReadonlyArray<TeamLegReach>,
+  singleBrand: boolean,
+): { volumes: VolumeInput[]; teamSource: TeamSource } {
+  const answered = reaches.filter((r): r is Extract<TeamLegReach, { available: true }> => r.available);
+  const unavailableBrands: Record<string, number> = {};
+  for (const r of reaches) if (!r.available) unavailableBrands[r.reason] = (unavailableBrands[r.reason] ?? 0) + 1;
+  const sum = (pick: (r: (typeof answered)[number]) => { daily: ReadonlyMap<string, number>; undated: number }) => {
+    const daily = new Map<string, number>();
+    let undated = 0;
+    for (const r of answered) {
+      const v = pick(r);
+      for (const [d, n] of v.daily) daily.set(d, (daily.get(d) ?? 0) + n);
+      undated += v.undated;
+    }
+    return { daily, undated };
+  };
+  const measured = answered.length > 0;
+  const from = measured ? sum((r) => r.from) : { daily: null, undated: 0 };
+  const to = measured ? sum((r) => r.to) : { daily: null, undated: 0 };
+  const firstReason = reaches.find((r): r is Extract<TeamLegReach, { available: false }> => !r.available)?.reason ?? "no_brand_answers";
+  return {
+    volumes: [
+      { key: "reachedFrom", label: `${p.fromStepLabel ?? "People"} (their team)`, role: "input", datedBy: measured ? "event_day" : null, ...from },
+      { key: "outcomes", label: `${p.toStepLabel} (their team)`, role: "outcome", datedBy: measured ? "event_day" : null, ...to },
+    ],
+    teamSource: {
+      producer: "crm-service",
+      population: "brand_people_reached_from_not_contacted_by_us",
+      available: measured,
+      unavailableReason: measured ? null : singleBrand ? firstReason : "no_brand_answers",
+      unavailableBrands,
+      brandsCounted: answered.length,
+      fromSources: [...new Set(answered.flatMap((r) => r.fromSources))].sort(),
+      toSources: [...new Set(answered.flatMap((r) => r.toSources))].sort(),
+      offerNarrowed: false,
+    },
+  };
+}
+
+async function fetchCustomerTeamVolumes(p: PipeStatsPipe, scope: PipeStatsScope) {
+  const fromStep = p.fromStep;
+  if (fromStep === null) return customerTeamVolumes(p, [{ available: false, reason: "leg_has_no_from_step" }], true);
+  const { steps, brands } = await fetchTeamLegReachBrands();
+  // A brand two orgs hold is read once per org and summed (crm-service's people are per org).
+  const asked = scope.brandId === null ? brands : brands.filter((b) => b.brandId === scope.brandId);
+  if (asked.length === 0) return customerTeamVolumes(p, [{ available: false, reason: "no_people_scope" }], scope.brandId !== null);
+  const reaches = await mapWithConcurrency(asked, 4, (b) => fetchTeamLegReach(b, steps, fromStep, p.toStep));
+  return customerTeamVolumes(p, reaches, scope.brandId !== null);
+}
+
 /** NET spend per UTC day of `campaignIds` on the channel's own slug (runs-service, comped spend absent). Fail-loud. */
 export async function fetchCampaignsNetSpendByDay(featureSlug: string, campaignIds: readonly string[], startedAfter: string | null): Promise<Map<string, number>> {
   const out = new Map<string, number>();
@@ -338,6 +423,8 @@ export interface PipeStatsBody extends PipeStatsFigures {
   campaignCount: number;
   /** An on-demand pipe's window opens on its first recorded event (spend before it is not counted); else null. */
   spendSince: string | null;
+  /** Customer-team pipe only (else null): where its volumes come from, and why they are unmeasured. */
+  teamSource: TeamSource | null;
   computedAt: string;
 }
 
@@ -350,13 +437,15 @@ export async function computePipeStats(p: PipeStatsPipe, scope: PipeStatsScope, 
   const kind = pipeStatsKind(p);
   let volumes: VolumeInput[];
   let spendSince: string | null = null;
-  if (kind === "entry") volumes = await entryVolumes(p, idSet);
+  let teamSource: TeamSource | null = null;
+  if (kind === "customer_team") ({ volumes, teamSource } = await fetchCustomerTeamVolumes(p, scope));
+  else if (kind === "entry") volumes = await entryVolumes(p, idSet);
   else if (kind === "internal") volumes = await internalVolumes(p, campaigns);
   else ({ volumes, since: spendSince } = await onDemandVolumes(p, idSet));
   // On-demand with no recorded event yet: nothing found, nothing counted as spent on it.
-  const spendByDay = ids.length === 0 || (kind === "on_demand" && spendSince === null) ? new Map<string, number>() : await fetchCampaignsNetSpendByDay(p.channelSlug, ids, spendSince);
+  const spendByDay = ids.length === 0 || kind === "customer_team" || (kind === "on_demand" && spendSince === null) ? new Map<string, number>() : await fetchCampaignsNetSpendByDay(p.channelSlug, ids, spendSince);
   const figures = buildPipeStats({ volumes, outcomeKey: "outcomes", spendByDay, valuePerOutcomeUsd, today: new Date().toISOString().slice(0, 10) });
-  return { scope, kind, basis: "since_inception", costBasis: "net_charged", campaignCount: ids.length, spendSince, computedAt: new Date().toISOString(), ...figures };
+  return { scope, kind, basis: "since_inception", costBasis: "net_charged", campaignCount: ids.length, spendSince, teamSource, computedAt: new Date().toISOString(), ...figures };
 }
 
 // ── Held per (pipe, scope), stale-while-revalidate (15 min fresh / 6 h stale, single-flight) ────────

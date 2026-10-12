@@ -773,6 +773,7 @@ router.get("/internal/catalogue/pipes/:id", apiKeyOnly, async (req, res) => {
         fromStepLabel: p.fromStep ? stepLabel(model, p.fromStep) : null,
         toStepLabel: stepLabel(model, p.toStep),
         triggerId: p.triggerId,
+        operatedBy: p.operatedBy,
       },
       scope,
       valueAddedTo((st) => model.steps.get(st)?.valueUsd ?? null, p.fromStep, p.toStep),

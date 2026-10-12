@@ -6462,17 +6462,31 @@ const pipeStatsReason = (values: [string, ...string[]], why: string) => z.enum(v
 const pipeStatsSchema = z
   .object({
     scope: z.object({ kind: z.enum(["fleet", "brand", "offer"]), brandId: z.string().nullable(), offerId: z.string().nullable() }).describe("The campaigns counted: every org's on the pipe (fleet), one brand's, or one offer's of that brand. Same read on fewer campaigns, so fleet >= brand >= offer."),
-    kind: z.enum(["entry", "internal", "on_demand"]).describe("How the pipe's volumes are measured (where its leg starts and its trigger, never its channel): entry = persons contacted and reaching the `to` step (serve-dated); internal = people handed to it, acted on, reaching its `to` step (event-dated, lead-service follow-up ledger); on_demand = leads found (undated counts)."),
+    kind: z.enum(["entry", "internal", "on_demand", "customer_team"]).describe("How the pipe's volumes are measured (who works the leg, where it starts and its trigger, never its channel): entry = persons contacted and reaching the `to` step (serve-dated); internal = people handed to it, acted on, reaching its `to` step (event-dated, lead-service follow-up ledger); on_demand = leads found (undated counts); customer_team (owner 2026-10-12: every `your-team-*` pipe, operatedBy customer) = the brand's OWN tools via crm-service: `reachedFrom` = the brand's people who reached the pipe's `from` step and whom our campaigns never contacted (the customer team's own leads), `outcomes` = how many of THOSE reached its `to` step, each event-dated; no spend (customer time), so costPerOutcomeUsd/roi are null. Read beside our own pipe on the same leg to compare their team's rate with ours."),
     basis: z.literal("since_inception"),
     costBasis: z.literal("net_charged").describe("Spend = what orgs pay (runs' net charged amounts, comped spend absent), every cost row filed under the pipe's campaigns on its own slug."),
     campaignCount: z.number().int(),
     spendSince: z.string().nullable().describe("On-demand pipe: spend counted from its first recorded event (the pipe price's window). Null otherwise."),
+    teamSource: z
+      .object({
+        producer: z.literal("crm-service"),
+        population: z.literal("brand_people_reached_from_not_contacted_by_us").describe("Who counts: people of the brand, from every tool the brand connected (CRM, inbox, payments, signups), who reached the pipe's `from` step and were never contacted by our campaigns; the outcome counts only those of them who also reached the `to` step (numerator inside the denominator)."),
+        available: z.boolean().describe("True when at least one brand of the scope answered; false = both volumes are null (unmeasured), never 0."),
+        unavailableReason: z.string().nullable().describe("Null when available. One brand: crm-service's own reason (e.g. no connected tool, not synced, the `from` or `to` step recorded by none of the brand's tools). Fleet: `no_brand_answers`. `leg_has_no_from_step` for a leg out of nothing."),
+        unavailableBrands: z.record(z.string(), z.number().int()).describe("Per crm-service reason, how many brands of the scope could not answer."),
+        brandsCounted: z.number().int().describe("Brands summed into the volumes (fleet = every brand crm-service answers for)."),
+        fromSources: z.array(z.string()).describe("The brand tools evidencing the `from` step (e.g. gohighlevel, gmail), unioned over the brands counted."),
+        toSources: z.array(z.string()).describe("The brand tools evidencing the `to` step."),
+        offerNarrowed: z.literal(false).describe("A CRM person carries no offer: an offer scope reads its brand's people."),
+      })
+      .nullable()
+      .describe("customer_team pipe only (else null): where its volumes come from and why they are unmeasured."),
     computedAt: z.string(),
     firstActivityDay: z.string().nullable().describe("UTC day of the first dated spend or volume; null = nothing yet."),
     volumes: z
       .array(
         z.object({
-          key: z.string().describe("`contacted` | `handed` | `actedOn` | `outcomes` (the outcome volume is always `outcomes`)."),
+          key: z.string().describe("`contacted` | `handed` | `actedOn` | `reachedFrom` (customer_team) | `outcomes` (the outcome volume is always `outcomes`)."),
           label: z.string().describe("Display label, in the pipe's own words (step labels from the catalogue)."),
           role: z.enum(["input", "action", "outcome"]),
           datedBy: z.enum(["serve_day", "event_day"]).nullable().describe("What date a count is filed on in the history; null = undated or unmeasured."),
