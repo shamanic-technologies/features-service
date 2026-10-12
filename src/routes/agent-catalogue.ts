@@ -49,6 +49,7 @@ import {
   type PipeMeasurement,
 } from "../lib/agent-catalogue.js";
 import { faceOf, faceSvg } from "../lib/catalogue-faces.js";
+import { getPipeStats, type PipeStatsScope } from "../lib/pipe-stats.js";
 import { matchChannelStepKey, CHANNEL_STEPS } from "../lib/acquisition-channels.js";
 import {
   insertLeg,
@@ -419,6 +420,7 @@ function page<T>(rows: T[], limit: number) {
 }
 
 function fail(res: Response, err: unknown, what: string): void {
+  if (err instanceof PipeStatsUnreadableError) return void res.status(502).json({ error: err.message, reason: "pipe_stats_unreadable" });
   if (err instanceof BadQuery) return void res.status(400).json({ error: err.message, reason: err.reason });
   if (err instanceof DeclarationError) return void res.status(err.status).json({ error: err.message, reason: err.reason });
   if (err instanceof StoreNotComputedError) return void res.status(503).json({ error: err.message, reason: "catalogue_economics_not_computed_yet" });
@@ -726,13 +728,56 @@ function pipeDetail(model: CatalogueModel, p: CataloguePipe, name: string) {
   };
 }
 
+/**
+ * `?stats=true` (owner 2026-10-12, the staff Pipe page): the pipe's own volumes, net spend, cost per outcome, ROI since
+ * inception and their daily history (`lib/pipe-stats.ts`), fleet-wide, or narrowed to `brandId` / `offerId` (an offer
+ * of that brand). Null scope params = the fleet. An offer without its brand is refused (400 `brand_required`).
+ */
+class PipeStatsUnreadableError extends Error {}
+
+/** A producer the stats read needs failed: 502 `pipe_stats_unreadable`, named, never a bare 500. */
+async function readPipeStats(...args: Parameters<typeof getPipeStats>) {
+  try {
+    return await getPipeStats(...args);
+  } catch (err) {
+    console.error(`[features-service] agent catalogue: pipe stats of ${args[0]} unreadable:`, err);
+    throw new PipeStatsUnreadableError((err as Error).message);
+  }
+}
+
+function pipeStatsScopeOf(req: Request): PipeStatsScope | null {
+  if (req.query.stats !== "true") return null;
+  const str = (v: unknown): string | null => (typeof v === "string" && v.trim() !== "" ? v.trim() : null);
+  const brandId = str(req.query.brandId);
+  const offerId = str(req.query.offerId);
+  if (offerId && !brandId) throw new BadQuery("brand_required", "an offer-scoped pipe stats read also names its brandId");
+  return { kind: offerId ? "offer" : brandId ? "brand" : "fleet", brandId, offerId };
+}
+
 router.get("/internal/catalogue/pipes/:id", apiKeyOnly, async (req, res) => {
   try {
+    const scope = pipeStatsScopeOf(req);
     const { model, names } = await loadModel();
     const p = model.pipes.get(req.params.id);
     if (!p) return void res.status(404).json({ error: `no pipe ${req.params.id}`, reason: "pipe_not_found" });
     const n = await named([nameKeyOfPipe(p)], names);
-    res.json(pipeDetail(model, p, n.get(nameKeyOfPipe(p))!));
+    const detail = pipeDetail(model, p, n.get(nameKeyOfPipe(p))!);
+    if (!scope) return void res.json(detail);
+    const stats = await readPipeStats(
+      p.id,
+      {
+        channelSlug: p.channelSlug,
+        computedLegKey: p.computedLegKey,
+        fromStep: p.fromStep,
+        toStep: p.toStep,
+        fromStepLabel: p.fromStep ? stepLabel(model, p.fromStep) : null,
+        toStepLabel: stepLabel(model, p.toStep),
+        triggerId: p.triggerId,
+      },
+      scope,
+      valueAddedTo((st) => model.steps.get(st)?.valueUsd ?? null, p.fromStep, p.toStep),
+    );
+    res.json({ ...detail, stats });
   } catch (err) {
     fail(res, err, "get pipe");
   }

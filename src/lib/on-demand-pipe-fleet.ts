@@ -83,7 +83,7 @@ export function onDemandPipeFigures(input: {
   return { byDynasty, unattributedLeads };
 }
 
-async function fetchRanCounts(triggerId: string): Promise<{ recordedSince: string | null; counts: RanCount[] }> {
+export async function fetchRanCounts(triggerId: string): Promise<{ recordedSince: string | null; counts: RanCount[] }> {
   const url = process.env.CAMPAIGN_SERVICE_URL;
   const apiKey = process.env.CAMPAIGN_SERVICE_API_KEY;
   if (!url || !apiKey) throw new Error("CAMPAIGN_SERVICE_URL or CAMPAIGN_SERVICE_API_KEY not configured");
