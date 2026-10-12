@@ -79,7 +79,8 @@ import { offerLifetimeRevenue } from "../lib/offer-lifetime-revenue.js";
 import { loadFleetCell, storeFleetCell } from "../lib/fleet-cell-store.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
 import { awaitWarmStore, StoreNotComputedError } from "../lib/await-warm-store.js";
-import { servedLegKeyOf, storedCombinationKeyOf } from "../lib/funnel-legs.js";
+import { servedLegKeyOf, storedCombinationKeyOf, storedLegKeyOf } from "../lib/funnel-legs.js";
+import { listLegAssignments } from "../lib/workflow-leg-assignments.js";
 import { invalidateChannelCatalogue, fleetLegPrice, readLegWorkflowRanking } from "./public.js";
 
 /**
@@ -313,19 +314,22 @@ const offerEcho = (o: OfferContext | null) =>
 async function loadModel(offer: OfferContext | null = null): Promise<Loaded> {
   await installPersistedFigures();
   void warmCatalogueMeasurements();
-  const [measurements, all, pub, declaredSteps, names, triggers] = await Promise.all([
+  const [measurements, all, pub, declaredSteps, names, triggers, assignments] = await Promise.all([
     awaitWarmStore(() => measurementStore?.value ?? null, warmCatalogueMeasurements, MEASUREMENTS_BOOT_WAIT_MS, "catalogue economics"),
     loadChannelCatalogue({ publishedOnly: false }),
     loadChannelCatalogue({ publishedOnly: true }),
     listDeclaredSteps(),
     allNamesByKey(),
     listTriggerTypes(),
+    listLegAssignments(),
   ]);
+  const workflowPipeKeys = new Set(assignments.filter((a) => a.state === "active").map((a) => `${a.featureSlug}|${storedLegKeyOf(a.legKey)}`));
   const { arrows: medians, lifetimeRevenue: ltr } = await fleetMediansFor(measurements.fleet);
   const publishedPipeIds = new Set(pub.channels.flatMap((c) => c.stepTransitions.map((t) => pipeIdOf(c.slug, servedPipeLegKey(c.slug, t.legKey)))));
   const model = buildCatalogueModel({
     channels: all.channels,
     publishedPipeIds,
+    workflowPipeKeys,
     declaredSteps,
     measurements: measurements.byPipe,
     fleetMedians: medians,

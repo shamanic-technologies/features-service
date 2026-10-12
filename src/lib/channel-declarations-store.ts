@@ -146,7 +146,7 @@ export async function insertChannel(input: ChannelInput, createdBy: string, requ
     .from(declaredChannels);
   const [row] = await db
     .insert(declaredChannels)
-    .values({ ...input, displayOrder: next, published: false, createdBy, requestedByOrgId })
+    .values({ ...input, displayOrder: next, published: true, publishedAt: new Date(), publishedBy: createdBy, createdBy, requestedByOrgId })
     .returning();
   return channelOf(row);
 }
@@ -170,7 +170,7 @@ export async function updateChannel(slug: string, patch: ChannelPatch, updatedBy
 export async function insertLeg(channelSlug: string, input: LegInput, createdBy: string, requestedByOrgId: string | null): Promise<DeclaredLeg> {
   const [row] = await db
     .insert(declaredChannelLegs)
-    .values({ channelSlug, ...input, published: false, createdBy, requestedByOrgId })
+    .values({ channelSlug, ...input, published: true, createdBy, requestedByOrgId })
     .returning();
   return legOf(row);
 }
