@@ -75,6 +75,7 @@ const LEAD_SOURCING_PIPE_ID = `${LEAD_SOURCING_SLUG}|${SOURCE_LEG_KEY}`;
 import { campaignNameKeyOf } from "../lib/offer-sales-paths.js";
 import { getBrandEffectiveRates, getFleetArrowMedians, getFleetLifetimeRevenueMedian, legPairKey, peekFleetStatedMedians, type FleetArrowMedians } from "../lib/effective-conversion-rates.js";
 import { fetchBrandLegEconomics } from "../lib/brand-leg-economics-client.js";
+import { fetchTeamCrmLegRates } from "../lib/team-crm-leg-rates.js";
 import { offerLifetimeRevenue } from "../lib/offer-lifetime-revenue.js";
 import { loadFleetCell, storeFleetCell } from "../lib/fleet-cell-store.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
@@ -285,7 +286,7 @@ export interface OfferContext {
   brandId: string;
   lifetimeRevenueUsd: number | null;
   lifetimeRevenueSource: "offer_stated" | "fleet_median" | null;
-  rates: Map<string, { ratePct: number; source: "offer_measured" | "offer_stated" }>;
+  rates: Map<string, { ratePct: number; source: "offer_measured" | "offer_stated" | "offer_team_measured" }>;
 }
 
 async function offerContextOf(req: Request): Promise<OfferContext | null> {
@@ -298,12 +299,22 @@ async function offerContextOf(req: Request): Promise<OfferContext | null> {
   const legEconomics = await fetchBrandLegEconomics(brandId, orgId);
   const offer = legEconomics.offers.find((o) => o.offerId === offerId);
   if (!offer) throw new DeclarationError(404, "offer_not_found", `offer ${offerId} is not an offer of brand ${brandId}`);
-  const [ltr, effective] = await Promise.all([offerLifetimeRevenue(offer.lifetimeRevenueUsd), getBrandEffectiveRates(brandId, orgId, legEconomics)]);
-  const rates = new Map<string, { ratePct: number; source: "offer_measured" | "offer_stated" }>();
+  // Every leg the customer's own team works (a step to a step): its rate may be read off the brand's tools.
+  const teamLegs = (await loadChannelCatalogue({ publishedOnly: false })).channels
+    .filter((c) => c.operatedBy === "customer")
+    .flatMap((c) => c.stepTransitions.filter((t) => t.from !== null).map((t) => ({ fromStep: t.from!.key, toStep: t.to.key })));
+  const [ltr, effective, teamRates] = await Promise.all([
+    offerLifetimeRevenue(offer.lifetimeRevenueUsd),
+    getBrandEffectiveRates(brandId, orgId, legEconomics),
+    fetchTeamCrmLegRates(orgId, brandId, teamLegs),
+  ]);
+  const rates = new Map<string, { ratePct: number; source: "offer_measured" | "offer_stated" | "offer_team_measured" }>();
   for (const r of effective.legs) {
     if (r.effectiveRatePct === null || (r.source !== "measured" && r.source !== "manual")) continue;
     rates.set(legPairKey(r.fromStep, r.toStep), { ratePct: r.effectiveRatePct, source: r.source === "measured" ? "offer_measured" : "offer_stated" });
   }
+  // A leg the brand's effective rates leave unrated: the team's own history on it (`lib/team-crm-leg-rates.ts`).
+  for (const [leg, r] of teamRates) if (!rates.has(leg) && r.ratePct > 0) rates.set(leg, { ratePct: r.ratePct, source: "offer_team_measured" });
   return { offerId, brandId, lifetimeRevenueUsd: ltr.usd, lifetimeRevenueSource: ltr.source, rates };
 }
 

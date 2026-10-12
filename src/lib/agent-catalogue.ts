@@ -228,7 +228,7 @@ export interface CatalogueInputs {
    * own leads / CRM, or stated by the customer), keyed `${fromStep}>${toStep}`; a leg absent here keeps
    * the fleet rate. Absent on the fleet catalogue.
    */
-  offerRates?: ReadonlyMap<string, { ratePct: number; source: "offer_measured" | "offer_stated" }>;
+  offerRates?: ReadonlyMap<string, { ratePct: number; source: "offer_measured" | "offer_stated" | "offer_team_measured" }>;
   /** The trigger types stored (`channel_trigger_types`: the coded ones and those declared at run time). The coded
    *  list (`lib/channel-triggers.ts`) is read in any case: it is what boot upserts. */
   triggers?: ReadonlyArray<{ id: string; label: string }>;
@@ -461,10 +461,10 @@ function buildPipes(inputs: CatalogueInputs, valueOf: (step: string) => number |
 
 /** PURE: the rate of a non-entry leg between two steps (fleet median > default incl. declared). */
 /** Where a leg rate comes from. `offer_*` only on a per-offer read (the offer's brand's own rate). */
-export type CatalogueRateSource = "fleet_median" | "default" | "measured_pipe" | "offer_measured" | "offer_stated" | null;
+export type CatalogueRateSource = "fleet_median" | "default" | "measured_pipe" | "offer_measured" | "offer_stated" | "offer_team_measured" | null;
 
 /** A rate that is a measured outcome (never an estimate): the fleet's measured conversion, or the brand's own measured one. */
-export const isMeasuredRate = (source: CatalogueRateSource): boolean => source === "measured_pipe" || source === "offer_measured";
+export const isMeasuredRate = (source: CatalogueRateSource): boolean => source === "measured_pipe" || source === "offer_measured" || source === "offer_team_measured";
 
 export function legRateOf(medians: FleetArrowMedians, from: string, to: string): { ratePct: number | null; source: "fleet_median" | "default" | null } {
   const median = medians.get(legPairKey(from, to));
@@ -511,7 +511,7 @@ const weakest = (bases: ReadonlyArray<ExpectedBasis | null>): ExpectedBasis | nu
 
 /** The basis of a path leg rate in the words of `lib/expected-return.ts`. */
 export const rateBasisOf = (source: CatalogueRateSource | "default_entry"): ExpectedBasis | null =>
-  source === "measured_pipe" || source === "offer_measured"
+  source === "measured_pipe" || source === "offer_measured" || source === "offer_team_measured"
     ? "measured"
     : source === "offer_stated"
       ? "stated"
@@ -707,8 +707,11 @@ export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
         steps: [chain[0].fromStep ?? "start", ...chain.map((l) => l.toStep)].filter((s) => s !== "start"),
         rates: chain.map((l, i) => {
           if (i === 0) return { legKey: l.legKey, ratePct: null, source: null };
-          // A leg out of Lead found has no stated rate: the best mature pipe's measured conversion prices it.
+          // A leg out of Lead found: the brand's own rate (per-offer read) where it has one, else the best mature
+          // pipe's measured conversion.
           if (l.fromStep === SOURCED_STEP) {
+            const own = inputs.offerRates?.get(`${l.fromStep}>${l.toStep}`);
+            if (own) return { legKey: l.legKey, ratePct: own.ratePct, source: own.source };
             const r = measuredEntryRate(pipes.values(), l.legKey);
             return { legKey: l.legKey, ratePct: r, source: r === null ? null : ("measured_pipe" as const) };
           }
