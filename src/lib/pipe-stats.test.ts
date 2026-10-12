@@ -109,6 +109,17 @@ describe("customer-team pipe (owner 2026-10-12: their team's rate on the same le
     to: { daily: new Map(Object.entries(to)), undated: 0 },
     fromSources,
     toSources,
+    toByFromDay: null,
+  });
+
+  it("periods read the producer's cohort (TO on the FROM day) when every brand serves it", () => {
+    const withCohort = { ...answered({ "2026-09-30": 2 }, { "2026-10-02": 2 }), toByFromDay: { daily: new Map([["2026-09-30", 2]]), undated: 0 } };
+    const s = buildPipeStats({ ...customerTeamVolumes(pipe, [withCohort], true), outcomeKey: "outcomes", spendByDay: new Map(), valuePerOutcomeUsd: null, today: "2026-10-03", hasSpend: false });
+    expect(s.periods.countsDatedBy).toEqual({ reachedFrom: "input_day", outcomes: "input_day" });
+    expect(s.periods.months.map((m) => [m.period, m.counts.reachedFrom, m.counts.outcomes, m.ratesPct.reachedFrom_to_outcomes])).toEqual([["2026-09", 2, 2, 100], ["2026-10", 0, 0, null]]);
+    // One brand without it: the booking-day count stands, stated.
+    const mixed = buildPipeStats({ ...customerTeamVolumes(pipe, [withCohort, answered({}, {})], false), outcomeKey: "outcomes", spendByDay: new Map(), valuePerOutcomeUsd: null, today: "2026-10-03", hasSpend: false });
+    expect(mixed.periods.countsDatedBy.outcomes).toBe("own_date");
   });
 
   it("is chosen by who works the leg (operatedBy), never by the channel", () => {
