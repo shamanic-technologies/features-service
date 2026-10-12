@@ -51970,9 +51970,10 @@
                               "default",
                               "measured_pipe",
                               "offer_measured",
-                              "offer_stated"
+                              "offer_stated",
+                              "offer_team_measured"
                             ],
-                            "description": "`fleet_median` = median of the rates brands STATED (>= 5 brands); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion; per-offer read only: `offer_measured` (the brand's own measured rate) / `offer_stated` (the rate it stated). Null on the entry leg (not used by the cost)."
+                            "description": "`fleet_median` = median of the rates brands STATED (>= 5 brands); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion; per-offer read only: `offer_measured` (the brand's own measured rate) / `offer_stated` (the rate it stated) / `offer_team_measured` (a leg its own team works, measured on its tools' history through crm-service, when neither of the first two exists). Null on the entry leg (not used by the cost)."
                           },
                           "rateMeasured": {
                             "type": "boolean"
@@ -52189,6 +52190,7 @@
                                   "measured_pipe",
                                   "offer_measured",
                                   "offer_stated",
+                                  "offer_team_measured",
                                   "default_entry"
                                 ]
                               },
@@ -52495,9 +52497,10 @@
                               "default",
                               "measured_pipe",
                               "offer_measured",
-                              "offer_stated"
+                              "offer_stated",
+                              "offer_team_measured"
                             ],
-                            "description": "`fleet_median` = median of the rates brands STATED (>= 5 brands); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion; per-offer read only: `offer_measured` (the brand's own measured rate) / `offer_stated` (the rate it stated). Null on the entry leg (not used by the cost)."
+                            "description": "`fleet_median` = median of the rates brands STATED (>= 5 brands); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion; per-offer read only: `offer_measured` (the brand's own measured rate) / `offer_stated` (the rate it stated) / `offer_team_measured` (a leg its own team works, measured on its tools' history through crm-service, when neither of the first two exists). Null on the entry leg (not used by the cost)."
                           },
                           "rateMeasured": {
                             "type": "boolean"
@@ -52714,6 +52717,7 @@
                                   "measured_pipe",
                                   "offer_measured",
                                   "offer_stated",
+                                  "offer_team_measured",
                                   "default_entry"
                                 ]
                               },
@@ -53078,9 +53082,10 @@
                               "default",
                               "measured_pipe",
                               "offer_measured",
-                              "offer_stated"
+                              "offer_stated",
+                              "offer_team_measured"
                             ],
-                            "description": "`fleet_median` = median of the rates brands STATED (>= 5 brands); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion; per-offer read only: `offer_measured` (the brand's own measured rate) / `offer_stated` (the rate it stated). Null on the entry leg (not used by the cost)."
+                            "description": "`fleet_median` = median of the rates brands STATED (>= 5 brands); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion; per-offer read only: `offer_measured` (the brand's own measured rate) / `offer_stated` (the rate it stated) / `offer_team_measured` (a leg its own team works, measured on its tools' history through crm-service, when neither of the first two exists). Null on the entry leg (not used by the cost)."
                           },
                           "rateMeasured": {
                             "type": "boolean"
@@ -53297,6 +53302,7 @@
                                   "measured_pipe",
                                   "offer_measured",
                                   "offer_stated",
+                                  "offer_team_measured",
                                   "default_entry"
                                 ]
                               },

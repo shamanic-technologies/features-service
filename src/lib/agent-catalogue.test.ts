@@ -428,4 +428,24 @@ describe("a learning funnel still serves an EXPECTED cost per paying client and 
     expect(f.expected.legs[1]).toMatchObject({ ratePct: 1, rateSource: "default_entry", rateBasis: "default", costPerOutcomeUsd: 50, costSource: "default" });
     expect(f.expected.basis).toBe("default");
   });
+
+  it("prices a team leg out of Lead found on the brand's own history (owner 2026-10-12)", () => {
+    const SOARING = "start_to_lead_found@sourcing-crm-contacts+lead_found_to_paid_client";
+    // The customer's team closing CRM leads directly (declared in prod, 2026-10-12).
+    const legs: DeclaredLeg[] = [
+      { channelSlug: "your-team-closing-calls", legKey: "lead_found_to_paid_client", fromStep: "lead_found", toStep: "paid_client", mode: "proactive", triggerId: null, published: true, createdBy: "t", requestedByOrgId: null, createdAt: "", updatedAt: "" },
+    ];
+    const merged = mergeDeclarations(SEEDED, { channels: [], legs, triggers: [] }, { publishedOnly: false }, { shortDescriptionOf: channelShortDescription, channelTypeOfSlug: channelTypeOf });
+    const withTeam = buildChannelCatalogue(merged.rows, merged.shortDescriptionOf, merged.channelTypeOfSlug, merged.triggerOf);
+    const own = buildCatalogueModel(inputs({ channels: withTeam, publishedPipeIds: allPipeIds(withTeam), offerRates: new Map([["lead_found>paid_client", { ratePct: 0.5, source: "offer_team_measured" as const }]]), lifetimeRevenueUsd: 2500, lifetimeRevenueBasis: "stated" }));
+    const f = funnelById(own, SOARING)!;
+    expect(f.expected.unavailableReason).toBeNull();
+    expect(f.expected.legs[1]).toMatchObject({ ratePct: 0.5, rateSource: "offer_team_measured", rateBasis: "measured", costSource: "customer_team" });
+    // 200 CRM leads per client at the borrowed $0.50 per lead found.
+    expect(f.expected.costUsd).toBeCloseTo(100, 1);
+    expect(f.expected.roi).toBeCloseTo(25, 1);
+    // Without the brand's own rate the leg has none: a named reason, never a blank.
+    const bare = buildCatalogueModel(inputs({ channels: withTeam, publishedPipeIds: allPipeIds(withTeam) }));
+    expect(funnelById(bare, SOARING)!.expected.unavailableReason).toBe("leg_unrated:lead_found_to_paid_client");
+  });
 });
