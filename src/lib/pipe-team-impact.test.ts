@@ -39,6 +39,19 @@ describe("team alone vs team + this pipe (owner 2026-10-12)", () => {
     expect(b.periods.impactPointsDiff).toMatchObject({ since_inception: 8.33, "2026-10": 5, "2026-Q4": 5 });
   });
 
+  it("periods file each outcome on the day the person reached `from` when the cohort is given", () => {
+    const c = buildPipeTeamImpact({
+      ...labels,
+      reason: null,
+      team: { from: dated({ "2026-09-30": 2 }), to: dated({ "2026-10-02": 2 }), toByFromDay: dated({ "2026-09-30": 2 }) },
+      pipe: { from: dated({}), to: dated({}) },
+      spendByDay: new Map(),
+      today: "2026-10-05",
+    });
+    expect(c.periods.countsDatedBy).toMatchObject({ teamAloneTo: "input_day", teamPlusPipeTo: "own_date" });
+    expect(c.periods.months.map((m) => [m.period, m.counts.teamAloneFrom, m.counts.teamAloneTo, m.ratesPct.teamAlone])).toEqual([["2026-09", 2, 2, 100], ["2026-10", 0, 0, null]]);
+  });
+
   it("unmeasured = null + reason, never 0; a 0 team rate keeps the points but not the ratio", () => {
     const none = buildPipeTeamImpact({ ...labels, reason: "no_campaign_of_ours_brings_people_to_from", team: null, pipe: null, spendByDay: new Map(), today: "2026-10-05" });
     expect(none).toMatchObject({ available: false, unavailableReason: "no_campaign_of_ours_brings_people_to_from", history: [] });
