@@ -140,13 +140,18 @@ export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
     coded: false,
   },
   {
+    // FIRED by crm-service (owner 2026-10-12, FORM-SUBMITTED-TRIGGER-1012, Doc Dinners' "AI auto responder"): each NEW
+    // form submission in a brand's connected CRM (GoHighLevel today, any CRM later) is reported to campaign-service's
+    // generic trigger door naming the person and what they asked, so a reactive pipe out of `form_submitted` (AI
+    // meeting booking's `form_submitted_to_meeting_booked`) answers within minutes. A calendar's own booking form is
+    // the booking, never this trigger.
     id: "form_submitted",
     label: "Form Submitted",
     description: "A prospect filled in a form.",
     icon: "clipboard-text",
     fromStep: "form_submitted",
-    firedBy: "lead-service",
-    coded: false,
+    firedBy: "crm-service",
+    coded: true,
   },
   {
     id: "purchase_made",
