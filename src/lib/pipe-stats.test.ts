@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
-const { buildPipeStats, campaignsInScope, pipeStatsKind } = await import("./pipe-stats.js");
+const { buildPipeStats, campaignsInScope, customerTeamVolumes, pipeStatsKind } = await import("./pipe-stats.js");
 
 const vol = (key: string, role: "input" | "action" | "outcome", days: Record<string, number> | null, undated = 0) => ({
   key,
@@ -96,5 +96,40 @@ describe("scope and kind", () => {
     expect(pipeStatsKind({ fromStep: "lead_found", triggerId: null })).toBe("entry");
     expect(pipeStatsKind({ fromStep: null, triggerId: null })).toBe("entry");
     expect(pipeStatsKind({ fromStep: null, triggerId: "on_demand" })).toBe("on_demand");
+  });
+});
+
+describe("customer-team pipe (owner 2026-10-12: their team's rate on the same leg, from their tools)", () => {
+  const pipe = { fromStepLabel: "Conversation", toStepLabel: "Meeting booked" };
+  const answered = (from: Record<string, number>, to: Record<string, number>, fromSources = ["gohighlevel"], toSources = ["gohighlevel"]) => ({
+    available: true as const,
+    from: { daily: new Map(Object.entries(from)), undated: 0 },
+    to: { daily: new Map(Object.entries(to)), undated: 0 },
+    fromSources,
+    toSources,
+  });
+
+  it("is chosen by who works the leg (operatedBy), never by the channel", () => {
+    expect(pipeStatsKind({ fromStep: "conversation", triggerId: null, operatedBy: "customer" })).toBe("customer_team");
+    expect(pipeStatsKind({ fromStep: "conversation", triggerId: null, operatedBy: "platform" })).toBe("internal");
+  });
+
+  it("sums the brands that answered and rates of the people who reached FROM, how many reached TO", () => {
+    const { volumes, teamSource } = customerTeamVolumes(pipe, [answered({ "2026-10-01": 8, "2026-10-02": 2 }, { "2026-10-03": 3 }), answered({ "2026-10-02": 10 }, { "2026-10-02": 1 }, ["gmail"], ["gmail"]), { available: false, reason: "no_connection" }], false);
+    const s = buildPipeStats({ volumes, outcomeKey: "outcomes", spendByDay: new Map(), valuePerOutcomeUsd: 100, today: "2026-10-03" });
+    expect(s.volumes.map((v) => [v.key, v.total])).toEqual([["reachedFrom", 20], ["outcomes", 4]]);
+    expect(s.conversionRates).toEqual([expect.objectContaining({ key: "reachedFrom_to_outcomes", numerator: 4, denominator: 20, ratePct: 20 })]);
+    expect(s.costPerOutcomeUnavailableReason).toBe("no_spend_recorded");
+    expect(teamSource).toMatchObject({ available: true, unavailableReason: null, brandsCounted: 2, unavailableBrands: { no_connection: 1 }, fromSources: ["gmail", "gohighlevel"], offerNarrowed: false });
+  });
+
+  it("an unanswerable brand is UNMEASURED with the producer's reason, never 0", () => {
+    const { volumes, teamSource } = customerTeamVolumes(pipe, [{ available: false, reason: "from_step_not_recorded" }], true);
+    const s = buildPipeStats({ volumes, outcomeKey: "outcomes", spendByDay: new Map(), valuePerOutcomeUsd: 100, today: "2026-10-03" });
+    expect(s.volumes.map((v) => v.total)).toEqual([null, null]);
+    expect(s.conversionRates[0]).toMatchObject({ ratePct: null, unavailableReason: "volume_not_measured" });
+    expect(teamSource).toMatchObject({ available: false, unavailableReason: "from_step_not_recorded", brandsCounted: 0 });
+    // Fleet with nobody answering names that, per-brand reasons counted.
+    expect(customerTeamVolumes(pipe, [{ available: false, reason: "no_connection" }], false).teamSource.unavailableReason).toBe("no_brand_answers");
   });
 });
