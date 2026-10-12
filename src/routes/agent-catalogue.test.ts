@@ -45,6 +45,19 @@ vi.mock("../lib/brand-leg-economics-client.js", async (importOriginal) => ({
   fetchBrandLegEconomics: async () => ({ legRates: [], offers: [{ offerId: "offer-1", lifetimeRevenueUsd: 12000 }] }),
 }));
 
+// The steps the offer's business has (brand-service): never stated by default, so every per-offer read keeps today's list.
+const offerSteps = vi.hoisted(() => ({ value: { stated: false, steps: null as string[] | null, statedAt: null as string | null }, fail: false }));
+vi.mock("../lib/offer-steps-client.js", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../lib/offer-steps-client.js")>();
+  return {
+    ...real,
+    fetchOfferSteps: async (_b: string, offerId: string) => {
+      if (offerSteps.fail) throw new real.OfferStepsUnreadableError("brand-service offer steps read failed (503): down");
+      return { offerId, ...offerSteps.value };
+    },
+  };
+});
+
 const pipeStats = vi.hoisted(() => ({ get: null as null | ((...a: unknown[]) => Promise<unknown>) }));
 vi.mock("../lib/pipe-stats.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -137,6 +150,8 @@ beforeEach(() => {
   mem.paths = [];
   mem.triggers = [];
   mem.assignments = [];
+  offerSteps.value = { stated: false, steps: null, statedAt: null };
+  offerSteps.fail = false;
   __setCatalogueMeasurementsForTest(
     new Map([
       [COLD, { basis: "mature", costPerOutcomeUsd: 40, conversionRatePct: 1, workflowDynastySlug: "orion" }],
@@ -241,6 +256,66 @@ describe("agent catalogue lists (context-window sized)", () => {
     expect((await request(app).get("/internal/catalogue/sales-funnels").query({ offerId: "offer-1" }).set(KEY)).body.reason).toBe("brand_required");
     expect((await request(app).get("/internal/catalogue/sales-funnels").query({ offerId: "offer-1", brandId: "b1" }).set(KEY)).body.reason).toBe("org_required");
     expect((await request(app).get("/internal/catalogue/sales-funnels").query({ offerId: "nope", brandId: "b1" }).set({ ...KEY, "x-org-id": "o1" })).status).toBe(404);
+  });
+
+  it("per offer, sets aside every funnel and path through a step the offer's business does not have (owner 2026-10-12)", async () => {
+    const H = { ...KEY, "x-org-id": "o1" };
+    const Q = { offerId: "offer-1", brandId: "b1", limit: 25 };
+    // Never stated: the same list as before, nothing set aside.
+    const unknown = (await request(app).get("/internal/catalogue/sales-funnels").query(Q).set(H)).body;
+    const fleet = (await request(app).get("/internal/catalogue/sales-funnels").query({ limit: 25 }).set(KEY)).body;
+    expect(unknown.total).toBe(fleet.total);
+    expect(new Set(unknown.rows.map((r: { id: string }) => r.id))).toEqual(new Set(fleet.rows.map((r: { id: string }) => r.id)));
+    expect(unknown.offerSteps).toMatchObject({ stated: false, steps: null });
+    expect(unknown.setAside).toEqual({ total: 0, truncated: false, rows: [] });
+    expect(unknown.setAsideByStep).toEqual([]);
+
+    // Doc Dinners' statement: no purchase step. Lead found and Paid client count as present by definition.
+    offerSteps.value = { stated: true, steps: ["conversation", "booking_call", "meeting_booked", "meeting_attended", "website_visit"], statedAt: "2026-10-08T00:00:00.000Z" };
+    const stated = (await request(app).get("/internal/catalogue/sales-funnels").query(Q).set(H)).body;
+    expect(stated.offerSteps.alwaysPresent.map((s: { id: string }) => s.id)).toEqual(["lead_found", "paid_client"]);
+    expect(stated.total + stated.setAside.total).toBe(unknown.total);
+    expect(stated.total).toBeGreaterThan(0);
+    expect(stated.setAside.total).toBeGreaterThan(0);
+    // A funnel id spells its legs: no kept funnel walks a step the offer lacks.
+    for (const r of stated.rows) expect(r.id).not.toMatch(/purchase|signup|form_submitted/);
+    // The cold email -> AI meeting booking funnel walks only stated steps: kept.
+    expect(stated.rows.map((r: { name: string }) => r.name)).toContain("Victory");
+    for (const r of stated.setAside.rows) {
+      expect(r.missingSteps.length).toBeGreaterThan(0);
+      for (const m of r.missingSteps) expect(["purchase", "signup", "form_submitted", "industry_update_video"]).toContain(m.id);
+    }
+    const purchases = (await request(app).get("/internal/catalogue/sales-funnels").query({ ...Q, q: "website_visit_to_purchase" }).set(H)).body;
+    expect(purchases.total).toBe(0);
+    const purchase = purchases.setAside.rows[0];
+    expect(purchase.missingSteps).toContainEqual({ id: "purchase", name: "Direct purchase" });
+    expect(stated.setAsideByStep.find((s: { id: string }) => s.id === "purchase")).toMatchObject({ name: "Direct purchase" });
+    expect(stated.setAsideByStep.reduce((n: number, s: { setAsideCount: number }) => Math.max(n, s.setAsideCount), 0)).toBeLessThanOrEqual(stated.setAside.total);
+
+    // Detail: a set-aside funnel says so and names its missing steps; a kept one is not set aside.
+    const aside = (await request(app).get(`/internal/catalogue/sales-funnels/${encodeURIComponent(purchase.id)}`).query(Q).set(H)).body;
+    expect(aside).toMatchObject({ setAside: true, offerSteps: { stated: true } });
+    expect(aside.missingSteps).toContainEqual({ id: "purchase", name: "Direct purchase" });
+    const victory = stated.rows.find((r: { name: string }) => r.name === "Victory");
+    expect((await request(app).get(`/internal/catalogue/sales-funnels/${encodeURIComponent(victory.id)}`).query(Q).set(H)).body).toMatchObject({ setAside: false, missingSteps: [] });
+    // The fleet detail carries none of it.
+    expect((await request(app).get(`/internal/catalogue/sales-funnels/${encodeURIComponent(victory.id)}`).set(KEY)).body).not.toHaveProperty("setAside");
+
+    // Same rule on the sales paths.
+    const paths = (await request(app).get("/internal/catalogue/sales-paths").query(Q).set(H)).body;
+    const fleetPaths = (await request(app).get("/internal/catalogue/sales-paths").query({ limit: 25 }).set(KEY)).body;
+    expect(paths.total + paths.setAside.total).toBe(fleetPaths.total);
+    for (const r of paths.rows) expect(r.line).not.toMatch(/Direct purchase|Signup|Form submitted/);
+    expect((await request(app).get("/internal/catalogue/sales-paths").query({ ...Q, q: "Direct purchase" }).set(H)).body).toMatchObject({ total: 0, setAside: { total: expect.any(Number) } });
+    const asidePath = paths.setAside.rows[0];
+    expect((await request(app).get(`/internal/catalogue/sales-paths/${encodeURIComponent(asidePath.id)}`).query(Q).set(H)).body).toMatchObject({ setAside: true });
+    expect(fleetPaths).not.toHaveProperty("setAside");
+
+    // Unreadable statement: a named 502, never an unfiltered list.
+    offerSteps.fail = true;
+    const down = await request(app).get("/internal/catalogue/sales-funnels").query(Q).set(H);
+    expect(down.status).toBe(502);
+    expect(down.body.reason).toBe("offer_steps_unreadable");
   });
 
   it("a funnel serves no customer sentence (withdrawn 2026-10-11); a reactive one names its trigger", async () => {
