@@ -39,7 +39,8 @@
  * LinkedIn Engagement Signals, Your CRM Contacts) or Lead Sourcing, where human-service picks the origins per brand
  * (`lib/sourcing-origins.ts`). Each is a normal pipe with its own figures, and the funnel's id names it like every
  * other leg (`start_to_lead_found@<sourcing slug>+...`). A sourcing pipe only feeds an outreach channel that takes
- * it (`SOURCING_ORIGINS_BY_CHANNEL`): Your CRM Contacts never feeds cold email.
+ * it (`SOURCING_ORIGINS_BY_CHANNEL`): Your CRM Contacts feeds cold email and cold WhatsApp, cold WhatsApp takes no
+ * other origin.
  * A funnel id from BEFORE the sourcing leg was named (it starts out of Lead found) is that funnel with LEAD SOURCING
  * on its sourcing leg (`funnelById` resolves it, `legacyFunnelIdAliasOf`): the multi-source funnels moved to Lead
  * Sourcing (owner's migration), and every stored id (campaign-service, billing caps) keeps resolving. Their NAME
