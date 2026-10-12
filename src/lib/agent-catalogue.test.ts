@@ -26,6 +26,7 @@ import {
   STEP_ICONS,
   FAMILY_GLYPHS,
   stepEconomics,
+  expectedPipeCost,
   type CatalogueInputs,
   type PipeMeasurement,
 } from "./agent-catalogue.js";
@@ -361,5 +362,70 @@ describe("catalogue icons are Phosphor names only (owner 2026-10-10)", () => {
       ...Object.values(FAMILY_GLYPHS).filter((g): g is NonNullable<typeof g> => g !== null),
     ];
     expect([...new Set(served)].filter((i) => !PHOSPHOR.has(i))).toEqual([]);
+  });
+});
+
+describe("a learning funnel still serves an EXPECTED cost per paying client and roi (FUNNEL-EXPECTED-ROI-1012)", () => {
+  const WONDERFUL = "start_to_lead_found@sourcing-crm-contacts+lead_found_to_conversation@sales-cold-email-outreach+conversation_to_meeting_booked+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client";
+  // Doc Dinners-like offer: its own measured rates on the team legs, a stated $2,500 client value.
+  const offerRates = new Map([
+    ["conversation>meeting_booked", { ratePct: 26.67, source: "offer_measured" as const }],
+    ["meeting_booked>meeting_attended", { ratePct: 16.8, source: "offer_measured" as const }],
+    ["meeting_attended>paid_client", { ratePct: 65.12, source: "offer_measured" as const }],
+  ]);
+  const model = buildCatalogueModel(inputs({ offerRates, lifetimeRevenueUsd: 2500, lifetimeRevenueBasis: "stated" }));
+
+  it("prices a funnel whose source pipe has no fleet history on another source's mature price, each leg naming its basis", () => {
+    const f = funnelById(model, WONDERFUL)!;
+    expect(f.economics.status).toBe("learning");
+    const e = f.expected;
+    expect(e.unavailableReason).toBeNull();
+    const [source, email, booking, attended, closing] = e.legs;
+    // The CRM source has no fleet history: the highest mature price of another source on Start -> Lead found.
+    expect(source).toMatchObject({ pipeId: "sourcing-crm-contacts|start_to_lead_found", costPerOutcomeUsd: 0.5, costSource: "same_leg_fleet", costBasis: "fleet", ratePct: null });
+    expect(email).toMatchObject({ costPerOutcomeUsd: 40, costSource: "workflow", costBasis: "measured", ratePct: 1, rateSource: "measured_pipe", rateBasis: "measured" });
+    expect(booking).toMatchObject({ costPerOutcomeUsd: 0, costSource: "customer_team", costBasis: null, ratePct: 26.67, rateSource: "offer_measured" });
+    expect(attended.rateSource).toBe("offer_measured");
+    expect(closing).toMatchObject({ outcomesNeededPerPayingClient: 1, ratePct: 65.12 });
+    // cost = 40 x positive replies needed + 0.5 x leads found needed.
+    const replies = 1 / 0.6512 / 0.168 / 0.2667;
+    expect(email.outcomesNeededPerPayingClient).toBeCloseTo(replies, 1);
+    const cost = 40 * replies + 0.5 * (replies / 0.01);
+    expect(e.costUsd).toBeCloseTo(cost, 0);
+    expect(e.roi).toBeCloseTo(2500 / cost, 1);
+    expect(e.basis).toBe("fleet");
+    expect(e.lifetimeRevenueBasis).toBe("stated");
+  });
+
+  it("equals the measured/estimated figure on a priced funnel", () => {
+    for (const f of [...model.paths.values()].flatMap((p) => funnelsOfPath(model, p))) {
+      if (f.economics.status !== "measured" && f.economics.status !== "estimated") continue;
+      expect(f.expected.costUsd, f.id).toBeCloseTo(f.economics.costUsd!, 1);
+      if (f.economics.roi !== null) expect(f.expected.roi, f.id).toBeCloseTo(f.economics.roi, 1);
+    }
+  });
+
+  it("never leaves a funnel null without a named reason", () => {
+    for (const f of [...model.paths.values()].flatMap((p) => funnelsOfPath(model, p))) {
+      if (f.expected.roi === null) expect(f.expected.unavailableReason, f.id).toMatch(/\w/);
+    }
+  });
+
+  it("takes a pipe's cost in order: mature workflow > seeded default > benchmark > flash > another channel on the leg", () => {
+    const p = (id: string) => model.pipes.get(id)!;
+    expect(expectedPipeCost(p("sales-cold-email-outreach|lead_found_to_conversation"), model.pipes.values())?.source).toBe("workflow");
+    expect(expectedPipeCost(p("sales-cold-email-outreach|lead_found_to_website_visit"), model.pipes.values())).toMatchObject({ source: "default", costPerOutcomeUsd: 5 });
+    expect(expectedPipeCost(p("cold-whatsapp-outreach|lead_found_to_conversation"), model.pipes.values())).toMatchObject({ source: "same_leg_fleet", costPerOutcomeUsd: 40 });
+    const flash = buildCatalogueModel(inputs({ measurements: new Map([["cold-whatsapp-outreach|lead_found_to_conversation", { basis: "flash", costPerOutcomeUsd: 12, conversionRatePct: 2, workflowDynastySlug: "w" }]]) }));
+    expect(expectedPipeCost(flash.pipes.get("cold-whatsapp-outreach|lead_found_to_conversation")!, flash.pipes.values())).toMatchObject({ source: "flash", basis: "fleet", costPerOutcomeUsd: 12 });
+    expect(expectedPipeCost(p("your-team-meeting-booking|conversation_to_meeting_booked"), model.pipes.values())).toBeNull();
+  });
+
+  it("rates an entry leg out of Lead found nobody measured on the cold-email default", () => {
+    const bare = buildCatalogueModel(inputs({ measurements: new Map([["lead-sourcing|start_to_lead_found", mature(0.5, 100)]]) }));
+    const f = funnelById(bare, WONDERFUL)!;
+    // Cold email unmeasured: its seeded $50 per positive reply, and the 1% cold-email reply default.
+    expect(f.expected.legs[1]).toMatchObject({ ratePct: 1, rateSource: "default_entry", rateBasis: "default", costPerOutcomeUsd: 50, costSource: "default" });
+    expect(f.expected.basis).toBe("default");
   });
 });

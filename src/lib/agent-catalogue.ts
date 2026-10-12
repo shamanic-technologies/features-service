@@ -82,6 +82,19 @@
  *                  entry rate is never used by the cost), so every multi-leg funnel reads `estimated` today.
  *   PIPE / STEP / CHANNEL / WORKFLOW  the COST is measured (`status: "measured"`); the ROI divides a step
  *                  value, so `roiBasis: "estimated"`.
+ *   EXPECTED (owner 2026-10-11 "A ROI and a % Conversion are never blank (quitte à poser une hypothèse)"; 2026-10-12
+ *   FUNNEL-EXPECTED-ROI-1012): every funnel ALSO serves `expected`, the same formula where every missing input takes
+ *   an assumption, each named with its basis (`lib/expected-return.ts` words: measured < stated < fleet < default):
+ *     pipe cost per outcome  mature workflow (`workflow`, measured) > seeded default for (leg, channel) (`default`)
+ *                            > market benchmark (`benchmark`, default) > the pipe's early flash figure (`flash`,
+ *                            fleet) > another channel's mature price on the same leg, the highest (`same_leg_fleet`,
+ *                            fleet). The customer's own team costs nothing. One rule for every pipe, no slug.
+ *     leg rate               the path's rate (brand measured / stated > fleet median > default, measured pipe)
+ *                            > an entry leg's cold-email default (`DEFAULT_ENTRY_RATE_PCT`) > the seeded leg default.
+ *     lifetime revenue       the offer's stated value (stated) or the fleet median (fleet).
+ *   `basis` = the weakest input. Null only with a named `unavailableReason`. The measured/estimated figures above
+ *   never move: on a priced funnel `expected` equals them.
+ *
  *   RANKING (`byRoi`): tier first, measured > estimated > customer_time > learning, then ROI desc: a fully
  *   measured figure is never out-ranked by an estimate, however high the estimate.
  *
@@ -89,10 +102,12 @@
  */
 import { CHANNEL_STEPS, isDeclaredStepKey, type ChannelStepKey } from "./acquisition-channels.js";
 import type { PublicChannel } from "./channel-catalogue.js";
-import { defaultLegRatePct } from "./default-leg-rates.js";
+import { DEFAULT_ENTRY_RATE_PCT, defaultLegRatePct } from "./default-leg-rates.js";
+import type { ExpectedBasis } from "./expected-return.js";
 import { fleetMedianApplies, legPairKey, type FleetArrowMedians } from "./effective-conversion-rates.js";
 import { FUNNEL_LEGS, legacyFunnelIdAliasOf, servedLegKeyOf, storedLegKeyOf } from "./funnel-legs.js";
-import { combinationKeyOf } from "./offer-sales-paths.js";
+import { DEFAULT_COST_PER_OUTCOME_USD, combinationKeyOf } from "./offer-sales-paths.js";
+import { SALES_PATH_COST_BENCHMARKS } from "./sales-path-cost-benchmarks.js";
 import { faceOf, stableHash, type Face } from "./catalogue-faces.js";
 import { STEP_SIGNAL } from "./value-added.js";
 import { CHANNEL_TRIGGER_TYPES, INLINE_TRIGGER_IDS } from "./channel-triggers.js";
@@ -206,6 +221,8 @@ export interface CatalogueInputs {
   fleetMedians: FleetArrowMedians;
   /** The fleet median lifetime revenue of an offer, USD (or ONE offer's own, on a per-offer read). Null = nothing anywhere states one. */
   lifetimeRevenueUsd: number | null;
+  /** What that lifetime revenue rests on: `stated` (the offer's own) or `fleet` (a fleet median). Default `fleet`. */
+  lifetimeRevenueBasis?: ExpectedBasis;
   /**
    * A PER-OFFER read (`?offerId=`): the offer's brand's own rate of a leg where it HAS one (measured on its
    * own leads / CRM, or stated by the customer), keyed `${fromStep}>${toStep}`; a leg absent here keeps
@@ -276,6 +293,18 @@ export interface CataloguePipe {
   published: boolean;
   economics: Economics;
   measurement: PipeMeasurement | null;
+  /** The cost per outcome an EXPECTED figure takes for this pipe (see the header). Null on a customer-team pipe
+   *  (costs us nothing) and on a platform pipe nothing prices. */
+  expectedCost: ExpectedPipeCost | null;
+}
+
+/** Where an expected pipe cost comes from (see the header). */
+export type ExpectedCostSource = "workflow" | "default" | "benchmark" | "flash" | "same_leg_fleet";
+
+export interface ExpectedPipeCost {
+  costPerOutcomeUsd: number;
+  source: ExpectedCostSource;
+  basis: ExpectedBasis;
 }
 
 export interface CataloguePath {
@@ -329,6 +358,35 @@ export interface CatalogueFunnel {
   legs: FunnelLeg[];
   channelSlugs: string[];
   economics: Economics;
+  expected: ExpectedFunnelEconomics;
+}
+
+/** One leg of an expected funnel figure: its rate and its pipe's cost, each with what it rests on. */
+export interface ExpectedFunnelLeg {
+  legKey: string;
+  /** Null on the entry leg (its rate prices nothing). */
+  ratePct: number | null;
+  rateSource: CatalogueRateSource | "default_entry" | null;
+  rateBasis: ExpectedBasis | null;
+  outcomesNeededPerPayingClient: number | null;
+  pipeId: string | null;
+  /** 0 on a leg the customer's own team works. Null when unpriced. */
+  costPerOutcomeUsd: number | null;
+  costSource: ExpectedCostSource | "customer_team" | null;
+  costBasis: ExpectedBasis | null;
+}
+
+/** The EXPECTED cost per paying client and roi of a funnel (see the header). */
+export interface ExpectedFunnelEconomics {
+  costUsd: number | null;
+  roi: number | null;
+  basis: ExpectedBasis | null;
+  /** Why there is no figure: `no_lifetime_revenue`, `leg_unrated:<leg>`, `pipe_unpriced:<pipe id>`, `leg_without_pipe:<leg>`,
+   *  `customer_time_only` (nothing of ours costs anything: no return multiple). Null with a figure. */
+  unavailableReason: string | null;
+  lifetimeRevenueUsd: number | null;
+  lifetimeRevenueBasis: ExpectedBasis | null;
+  legs: ExpectedFunnelLeg[];
 }
 
 export interface CatalogueModel {
@@ -340,6 +398,7 @@ export interface CatalogueModel {
   /** Trigger slug -> its slug and name. */
   triggers: Map<string, TriggerRef>;
   lifetimeRevenueUsd: number | null;
+  lifetimeRevenueBasis: ExpectedBasis;
   channels: readonly PublicChannel[];
 }
 
@@ -393,6 +452,7 @@ function buildPipes(inputs: CatalogueInputs, valueOf: (step: string) => number |
         published: inputs.publishedPipeIds.has(id),
         economics,
         measurement,
+        expectedCost: null,
       });
     }
   }
@@ -423,6 +483,130 @@ function measuredEntryRate(pipes: Iterable<CataloguePipe>, legKey: string): numb
   }
   return best;
 }
+
+/** PURE: the cost per outcome an EXPECTED figure takes for a platform pipe (see the header); null on the customer's
+ *  team and when nothing prices it. */
+export function expectedPipeCost(p: CataloguePipe, all: Iterable<CataloguePipe>): ExpectedPipeCost | null {
+  if (p.operatedBy === "customer") return null;
+  if (p.measurement?.basis === "mature" && usable(p.measurement.costPerOutcomeUsd)) return { costPerOutcomeUsd: p.measurement.costPerOutcomeUsd, source: "workflow", basis: "measured" };
+  const key = `${p.computedLegKey}|${p.channelSlug}`;
+  const seeded = DEFAULT_COST_PER_OUTCOME_USD.get(key);
+  if (usable(seeded)) return { costPerOutcomeUsd: seeded, source: "default", basis: "default" };
+  const benchmark = SALES_PATH_COST_BENCHMARKS.get(key)?.costPerOutcomeUsd;
+  if (usable(benchmark)) return { costPerOutcomeUsd: benchmark, source: "benchmark", basis: "default" };
+  if (p.measurement?.basis === "flash" && usable(p.measurement.costPerOutcomeUsd)) return { costPerOutcomeUsd: p.measurement.costPerOutcomeUsd, source: "flash", basis: "fleet" };
+  // Another channel's mature price on the same leg (same from and to step), the highest: an assumption that never flatters.
+  let sibling: number | null = null;
+  for (const q of all) {
+    if (q.id === p.id || q.operatedBy !== "platform" || q.fromStep !== p.fromStep || q.toStep !== p.toStep) continue;
+    const c = q.measurement?.basis === "mature" ? q.measurement.costPerOutcomeUsd : null;
+    if (usable(c) && (sibling === null || c > sibling)) sibling = c;
+  }
+  return sibling === null ? null : { costPerOutcomeUsd: sibling, source: "same_leg_fleet", basis: "fleet" };
+}
+
+const BASIS_RANK: Record<ExpectedBasis, number> = { measured: 0, stated: 1, fleet: 2, default: 3 };
+const weakest = (bases: ReadonlyArray<ExpectedBasis | null>): ExpectedBasis | null =>
+  bases.reduce<ExpectedBasis | null>((w, b) => (b === null ? w : w === null || BASIS_RANK[b] > BASIS_RANK[w] ? b : w), null);
+
+/** The basis of a path leg rate in the words of `lib/expected-return.ts`. */
+export const rateBasisOf = (source: CatalogueRateSource | "default_entry"): ExpectedBasis | null =>
+  source === "measured_pipe" || source === "offer_measured"
+    ? "measured"
+    : source === "offer_stated"
+      ? "stated"
+      : source === "fleet_median"
+        ? "fleet"
+        : source === "default" || source === "default_entry"
+          ? "default"
+          : null;
+
+/**
+ * PURE: the EXPECTED economics of one funnel (see the header): `funnelEconomics`' formula where every missing input
+ * takes its assumption, each leg naming what it rests on. Never null without a reason.
+ */
+export function expectedFunnelEconomics(
+  path: CataloguePath,
+  legs: readonly FunnelLeg[],
+  lifetimeRevenueUsd: number | null,
+  lifetimeRevenueBasis: ExpectedBasis,
+  takeoverValueUsd: number | null = 0,
+): ExpectedFunnelEconomics {
+  const out: ExpectedFunnelLeg[] = [];
+  let needed: number | null = 1;
+  let cost = 0;
+  let platformLegs = 0;
+  let reason: string | null = usable(lifetimeRevenueUsd) ? null : "no_lifetime_revenue";
+  for (let i = legs.length - 1; i >= 0; i -= 1) {
+    const pipe = legs[i].pipe;
+    const legKey = path.legKeys[i];
+    const leg: ExpectedFunnelLeg = {
+      legKey,
+      ratePct: null,
+      rateSource: null,
+      rateBasis: null,
+      outcomesNeededPerPayingClient: needed === null ? null : round2(needed),
+      pipeId: pipe?.id ?? null,
+      costPerOutcomeUsd: null,
+      costSource: null,
+      costBasis: null,
+    };
+    if (!pipe) reason ??= `leg_without_pipe:${legKey}`;
+    else if (pipe.operatedBy === "customer") Object.assign(leg, { costPerOutcomeUsd: 0, costSource: "customer_team" });
+    else {
+      platformLegs += 1;
+      const c = pipe.expectedCost;
+      if (!c) reason ??= `pipe_unpriced:${pipe.id}`;
+      else {
+        Object.assign(leg, { costPerOutcomeUsd: round2(c.costPerOutcomeUsd), costSource: c.source, costBasis: c.basis });
+        if (needed !== null) cost += c.costPerOutcomeUsd * needed;
+      }
+    }
+    if (i > 0) {
+      const r = path.rates[i];
+      const from = pipe?.fromStep ?? null;
+      const to = pipe?.toStep ?? null;
+      let rate: { ratePct: number; source: CatalogueRateSource | "default_entry" } | null = usable(r.ratePct) && r.source ? { ratePct: r.ratePct, source: r.source } : null;
+      if (!rate && from === SOURCED_STEP && to && usable(DEFAULT_ENTRY_RATE_PCT[to as ChannelStepKey])) rate = { ratePct: DEFAULT_ENTRY_RATE_PCT[to as ChannelStepKey]!, source: "default_entry" };
+      if (!rate && from && to) {
+        const d = defaultLegRatePct(from as ChannelStepKey, to as ChannelStepKey);
+        if (usable(d)) rate = { ratePct: d, source: "default" };
+      }
+      if (rate) {
+        Object.assign(leg, { ratePct: rate.ratePct, rateSource: rate.source, rateBasis: rateBasisOf(rate.source) });
+        if (needed !== null) needed /= rate.ratePct / 100;
+      } else {
+        reason ??= `leg_unrated:${legKey}`;
+        needed = null;
+      }
+    }
+    out.unshift(leg);
+  }
+  if (reason === null && (platformLegs === 0 || !(cost > 0))) reason = "customer_time_only";
+  const ltrBasis = usable(lifetimeRevenueUsd) ? lifetimeRevenueBasis : null;
+  if (reason !== null || needed === null) {
+    return { costUsd: null, roi: null, basis: null, unavailableReason: reason ?? "leg_unrated", lifetimeRevenueUsd, lifetimeRevenueBasis: ltrBasis, legs: out };
+  }
+  const added = takeoverValueUsd === null ? null : lifetimeRevenueUsd! - neededAtTakeover(out) * takeoverValueUsd;
+  const basis = weakest([ltrBasis, ...out.slice(1).map((l) => l.rateBasis), ...out.map((l) => l.costBasis)]);
+  return {
+    costUsd: round2(cost),
+    roi: added === null ? null : round2(added / cost),
+    basis,
+    unavailableReason: added === null ? "takeover_step_unvalued" : null,
+    lifetimeRevenueUsd,
+    lifetimeRevenueBasis: ltrBasis,
+    legs: out,
+  };
+}
+
+/** People reaching the funnel's first leg's outcome per paying client (the takeover count `funnelEconomics` uses). */
+const neededAtTakeover = (legs: readonly ExpectedFunnelLeg[]): number => {
+  // `funnelEconomics` divides `needed` by every rate down to leg 1: the count at leg 0's outcome.
+  let needed = 1;
+  for (let i = legs.length - 1; i >= 1; i -= 1) needed /= (legs[i].ratePct as number) / 100;
+  return needed;
+};
 
 /** PURE: the whole model. */
 export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
@@ -496,6 +680,7 @@ export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
   }
 
   const pipes = buildPipes(inputs, (s) => stepValue(s).value);
+  for (const p of pipes.values()) p.expectedCost = expectedPipeCost(p, pipes.values());
 
   // Paths: chains of the legs pipes perform, from Start (a leg from nothing) to Paid client, no step twice. A leg
   // no channel performs is no path leg (see the header).
@@ -552,7 +737,16 @@ export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
   const triggers = new Map<string, TriggerRef>(
     [...CHANNEL_TRIGGER_TYPES, ...(inputs.triggers ?? [])].map((t) => [t.id, { slug: t.id, name: t.label }]),
   );
-  return { steps, pipes, paths, pathAliases, triggers, lifetimeRevenueUsd: inputs.lifetimeRevenueUsd, channels: inputs.channels };
+  return {
+    steps,
+    pipes,
+    paths,
+    pathAliases,
+    triggers,
+    lifetimeRevenueUsd: inputs.lifetimeRevenueUsd,
+    lifetimeRevenueBasis: inputs.lifetimeRevenueBasis ?? "fleet",
+    channels: inputs.channels,
+  };
 }
 
 // ── Funnels ───────────────────────────────────────────────────────────────────────────────────────
@@ -664,7 +858,14 @@ export function funnelsOfPath(model: CatalogueModel, path: CataloguePath, cap = 
         const slugs = [...new Set(acc.flatMap((l) => legPipes(l).map((p) => p.channelSlug)))];
         const takeover = funnelFirstStep(acc);
         const takeoverValue = takeover && STEP_SIGNAL[takeover] ? (model.steps.get(takeover)?.valueUsd ?? null) : 0;
-        out.set(id, { id, pathId: path.id, legs: acc, channelSlugs: slugs, economics: funnelEconomics(path, acc, model.lifetimeRevenueUsd, takeoverValue) });
+        out.set(id, {
+          id,
+          pathId: path.id,
+          legs: acc,
+          channelSlugs: slugs,
+          economics: funnelEconomics(path, acc, model.lifetimeRevenueUsd, takeoverValue),
+          expected: expectedFunnelEconomics(path, acc, model.lifetimeRevenueUsd, model.lifetimeRevenueBasis, takeoverValue),
+        });
       }
       return;
     }
