@@ -20,6 +20,7 @@ import { DEFAULT_PRICED_CAUSES } from "../lib/outcome-cause.js";
 import { assertBrandHeld, BrandOwnershipError } from "../lib/brand-ownership.js";
 import { stepValues } from "../lib/offer-outcomes.js";
 import { SEED_FEATURES } from "../seed/features.js";
+import { CONTACT_METHODS_BY_CHANNEL } from "../lib/channel-contact-methods.js";
 import {
   LEAD_FOUND_STEP,
   SOURCE_LEG_KEY,
@@ -81,6 +82,11 @@ router.get("/public/sourcing-origins", (_req, res) => {
     sourceLegKey: SOURCE_LEG_KEY,
     sourcingChannels: [...SOURCING_PARENT_CHANNEL_SLUGS],
     originsByChannel: Object.fromEntries(SOURCING_PARENT_CHANNEL_SLUGS.map((c) => [c, [...SOURCING_ORIGINS_BY_CHANNEL[c]!]])),
+    // HOW each one-to-one channel reaches a person (lib/channel-contact-methods.ts): lead-service passes it on every serve
+    // made for that channel, so a person the channel cannot write to is never consumed by it.
+    contactMethodsByChannel: Object.fromEntries(
+      Object.entries(CONTACT_METHODS_BY_CHANNEL).map(([c, m]) => [c, [...m]]),
+    ),
     // LEAD SOURCING (owner 2026-10-11): the sourcing channel that is no origin of its own; it picks among the origins
     // an outreach channel accepts (human-service decides which, per brand). Listed in `originsByChannel` beside them.
     leadSourcing: {
