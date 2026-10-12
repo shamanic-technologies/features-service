@@ -8,10 +8,11 @@
  *
  * ONE builder for every pipe (`stats.periods`) and for the "your team alone vs your team + this pipe" table
  * (`stats.teamImpact.periods`): the SAME dated counts the daily history cumulates, summed per UTC calendar month and per
- * calendar quarter, NOT cumulative, plus a since-inception total row. Each count is filed in the period of its OWN date
- * (`datedBy` on the volume says which: the serve that took the person, or the event itself), so a period's rate =
- * that period's `to` count ÷ its `from` count: a cohort rate where both counts carry the same date (entry pipe), an
- * event rate otherwise (an outcome landing in the next period is counted there). An UNDATED count sits in no period and
+ * calendar quarter, NOT cumulative, plus a since-inception total row. A COHORT where the producer allows it (the owner's
+ * table: "Q1 2026: 82 form leads, 61 of THEM booked"): a later count is filed on the day the person entered the pipe's
+ * INPUT (`countsDatedBy: input_day`: entry pipes by the serve, internal pipes by the hand-over, our leads / team impact by
+ * the day they reached `from`), so a period reads `to ⊆ from` and its rate stays ≤ 100%. A count the producer can only
+ * date by its own event (`own_date`) is filed there (it can read above the period's input). An UNDATED count sits in no period and
  * enters the total row only (`undated` states how many). Rate null with no input in the period (never 0 for "nobody
  * came"; a measured 0 outcome over a real input IS 0). Spend/cost per outcome only where the pipe has spend of ours
  * (`spend: null` = customer time, both null). Periods run from the first dated count or spend to today's, every
@@ -52,7 +53,10 @@ export interface PipePeriodRow {
 }
 
 export interface PipePeriods {
-  basis: "calendar_period_own_date";
+  basis: "calendar_period";
+  /** count key -> the date it is filed on: `input_day` (cohort: the day the person entered the pipe's input) or
+   *  `own_date` (its own event's day). */
+  countsDatedBy: Record<string, "input_day" | "own_date">;
   /** The total row: every count since inception, dated + undated (equals the snapshot). */
   total: PipePeriodRow;
   /** Calendar quarters, oldest first. */
@@ -111,7 +115,7 @@ function rate(to: number | null, from: number | null): { ratePct: number | null;
 
 /** PURE: the period table (see the header). `counts` null = unmeasured; `spendByDay` null = no spend of ours. */
 export function buildPipePeriods(input: {
-  counts: ReadonlyArray<{ key: string; counts: DatedCounts | null }>;
+  counts: ReadonlyArray<{ key: string; counts: DatedCounts | null; datedBy: "input_day" | "own_date" }>;
   ratePairs: readonly PeriodRatePair[];
   /** The count spend is divided by (cost per outcome); null = no cost per outcome. */
   outcomeKey: string | null;
@@ -153,12 +157,14 @@ export function buildPipePeriods(input: {
   };
 
   const total = row("since_inception", "since_inception", first === null ? "Since inception" : `Since ${monthLabel(monthOf(first))}`, first, input.today, () => true, true);
-  if (first === null) return { basis: "calendar_period_own_date", total, quarters: [], months: [] };
+  const countsDatedBy = Object.fromEntries(input.counts.map((c) => [c.key, c.datedBy]));
+  if (first === null) return { basis: "calendar_period", countsDatedBy, total, quarters: [], months: [] };
 
   const months = monthsBetween(monthOf(first), monthOf(input.today));
   const quarters = [...new Set(months.map((m) => quarterOf(`${m}-01`)))];
   return {
-    basis: "calendar_period_own_date",
+    basis: "calendar_period",
+    countsDatedBy,
     total,
     quarters: quarters.map((q) => {
       const b = quarterBounds(q);

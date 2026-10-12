@@ -228,6 +228,37 @@ export function internalPipeWork(
   };
 }
 
+/**
+ * PURE: the same people as `internalPipeWork`, COHORT-dated (owner 2026-10-12, PIPE-PERIODS-1012: "Q1: 82 form leads, 61
+ * of them booked"): a person acted on or reaching `to` is filed on the UTC day they were HANDED to the pipe, so any period
+ * reads `actedOn ⊆ handed` and `reached ⊆ handed` (an event-dated period can read above 100%). Undated hand-over = undated.
+ */
+export function internalPipeCohort(
+  toStep: string,
+  rows: ReadonlyArray<{ leadId: string; firstClaimedAt: string | null; firstActedAt: string | null; actedCount: number }>,
+  reachedAt: ReadonlyMap<string, string | null> | null,
+): { actedOn: { daily: Map<string, number>; undated: number }; reached: { daily: Map<string, number>; undated: number } | null } {
+  const handed = new Map<string, string | null>();
+  const acted = new Set<string>();
+  for (const r of rows) {
+    const h = handed.get(r.leadId);
+    if (!handed.has(r.leadId) || (r.firstClaimedAt && (!h || r.firstClaimedAt < h))) handed.set(r.leadId, r.firstClaimedAt ?? h ?? null);
+    if (r.actedCount > 0) acted.add(r.leadId);
+  }
+  const count = (ids: Iterable<string>) => {
+    const daily = new Map<string, number>();
+    let undated = 0;
+    for (const id of ids) {
+      const d = dayOf(handed.get(id) ?? null);
+      if (d) daily.set(d, (daily.get(d) ?? 0) + 1);
+      else undated++;
+    }
+    return { daily, undated };
+  };
+  const reachedIds = ACT_IS_OUTCOME_STEPS.has(toStep) ? acted : reachedAt ? [...reachedAt.keys()].filter((id) => handed.has(id)) : null;
+  return { actedOn: count(acted), reached: reachedIds === null ? null : count(reachedIds) };
+}
+
 /** Earliest dated outcome per lead (null when every outcome of that lead is undated). */
 export function earliestOutcomeByLead(rows: ReadonlyArray<{ leadId: string; occurredAt: string | null }>): Map<string, string | null> {
   const out = new Map<string, string | null>();
