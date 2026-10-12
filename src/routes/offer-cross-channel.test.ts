@@ -222,7 +222,7 @@ function mockFetch(fixture: Fixture): void {
         return json({
           groups: [...totals].map(([key, s]) => ({
             key,
-            broadcast: { recipientStats: { contacted: s.contacted, opened: 0, clicked: s.clicked, repliesPositive: s.repliesPositive } },
+            broadcast: { recipientStats: { contacted: s.contacted, sent: s.contacted, opened: 0, clicked: s.clicked, repliesPositive: s.repliesPositive } },
           })),
         });
       }
@@ -236,7 +236,7 @@ function mockFetch(fixture: Fixture): void {
             totals.set(day, { contacted: prev.contacted + s.contacted, opened: prev.opened + s.opened, clicked: prev.clicked + s.clicked });
           }
         }
-        return json({ groups: [...totals].map(([key, s]) => ({ key, broadcast: { recipientStats: s } })) });
+        return json({ groups: [...totals].map(([key, s]) => ({ key, broadcast: { recipientStats: { ...s, sent: s.contacted } } })) });
       }
       return json({ groups: [] });
     }

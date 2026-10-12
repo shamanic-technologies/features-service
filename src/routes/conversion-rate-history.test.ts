@@ -334,7 +334,7 @@ function mockFetch(fixture: Fixture): void {
     if (url.includes("/orgs/stats")) {
       const group = (key: string) => ({
         key,
-        broadcast: { recipientStats: { contacted: CONTACTED_TOTAL, clicked: fixture.noClicks ? 0 : CLICK_TOTAL, repliesPositive: 0 } },
+        broadcast: { recipientStats: { contacted: CONTACTED_TOTAL, sent: CONTACTED_TOTAL, clicked: fixture.noClicks ? 0 : CLICK_TOTAL, repliesPositive: 0 } },
       });
       if (url.includes("groupBy=campaignId")) return json({ groups: [group("c-live")] });
       if (url.includes("groupBy=workflowSlug")) return json({ groups: [group("azalea")] });
@@ -377,8 +377,8 @@ function mockFetch(fixture: Fixture): void {
         results: leads.map((l) => ({
           email: `${l.id}@example.com`,
           broadcast: {
-            campaign: { firstContactedAt: l.contactedAt, firstClickedAt: l.clickedAt },
-            brand: { firstContactedAt: l.contactedAt, firstClickedAt: l.clickedAt },
+            campaign: { firstContactedAt: l.contactedAt, firstSentAt: l.contactedAt, firstClickedAt: l.clickedAt },
+            brand: { firstContactedAt: l.contactedAt, firstSentAt: l.contactedAt, firstClickedAt: l.clickedAt },
           },
         })),
       });

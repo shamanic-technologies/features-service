@@ -359,7 +359,12 @@ export async function fetchLeadsForRevenue(
       // contacted figure that excluded those same 40) and moved the funnel's first-rung base. None of
       // these is a step of any funnel (they are `SALES_MILESTONES`, which carry no revenue field), so
       // stating them truthfully adds exactly zero expected value.
-      contacted: Boolean(row.contacted),
+      // CONTACTED = AN EMAIL WENT OUT (owner 2026-10-12). email-gateway's own `contacted` is "pushed into
+      // the sending queue": a lead queued and never sent (cancelled, sequence stopped) carries
+      // `contacted:true, sent:false`, and reading it made "Contacted" count people no email ever reached
+      // (580 of 18,132 on one brand). `sent` is the producer's fact that one did; a send attempt that
+      // BOUNCED was emailed too (lead-service's timeline counts it so; some carry `sent:false`).
+      contacted: Boolean(row.sent) || Boolean(row.bounced),
       sent: Boolean(row.sent),
       delivered: Boolean(row.delivered),
       bounced: Boolean(row.bounced),

@@ -97,14 +97,14 @@ const MEMBERS: Record<string, string[]> = {
 };
 
 // email -> brand-scoped broadcast outcome flags (email-gateway POST /orgs/status)
-type Outcome = { contacted?: boolean; opened?: boolean; clicked?: boolean; replied?: boolean; replyClassification?: string | null };
+type Outcome = { contacted?: boolean; sent?: boolean; opened?: boolean; clicked?: boolean; replied?: boolean; replyClassification?: string | null };
 const DEFAULT_OUTCOMES: Record<string, Outcome> = {
   // aud-a: contacted 2, opened 1, clicked 1, positiveReply 1 -> CPC = 10000/1 = 10000 (best)
-  "a1@x.com": { contacted: true, opened: true, clicked: true, replied: true, replyClassification: "positive" },
-  "a2@x.com": { contacted: true },
+  "a1@x.com": { contacted: true, sent: true, opened: true, clicked: true, replied: true, replyClassification: "positive" },
+  "a2@x.com": { contacted: true, sent: true },
   // aud-b: contacted 2, clicked 1, positiveReply 0 -> CPC = 40000/1 = 40000
-  "b1@x.com": { contacted: true, opened: true, clicked: true },
-  "b2@x.com": { contacted: true },
+  "b1@x.com": { contacted: true, sent: true, opened: true, clicked: true },
+  "b2@x.com": { contacted: true, sent: true },
 };
 
 // audienceId -> cost cents (runs /v1/stats/costs groupBy=audienceId)
@@ -558,10 +558,10 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
     mockFetch({
       // no audience member clicked -> no audience qualifies -> all rates fall back to workflow aggregate.
       outcomes: {
-        "a1@x.com": { contacted: true },
-        "a2@x.com": { contacted: true },
-        "b1@x.com": { contacted: true },
-        "b2@x.com": { contacted: true },
+        "a1@x.com": { contacted: true, sent: true },
+        "a2@x.com": { contacted: true, sent: true },
+        "b1@x.com": { contacted: true, sent: true },
+        "b2@x.com": { contacted: true, sent: true },
       },
       dailyStats: [
         { key: "2026-06-17", broadcast: { recipientStats: { contacted: 1, sent: 1, opened: 1, clicked: 1 } } },
@@ -619,7 +619,7 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
       return {
         brandCosts: [{ dimensions: { workflowSlug: "wf-a" }, totalCostInUsdCents: costCents, runCount: 1 }],
         brandEmailStats: [
-          { key: "wf-a", broadcast: { recipientStats: { contacted, clicked: 0, repliesPositive: 0 } } },
+          { key: "wf-a", broadcast: { recipientStats: { contacted, sent: contacted, clicked: 0, repliesPositive: 0 } } },
         ],
       };
     }
@@ -729,7 +729,7 @@ describe("GET /features/:featureSlug/pipeline-activity", () => {
       return {
         brandCosts: [{ dimensions: { workflowSlug: "wf-a" }, totalCostInUsdCents: costCents, runCount: 1 }],
         brandEmailStats: [
-          { key: "wf-a", broadcast: { recipientStats: { contacted, clicked: 0, repliesPositive: 0 } } },
+          { key: "wf-a", broadcast: { recipientStats: { contacted, sent: contacted, clicked: 0, repliesPositive: 0 } } },
         ],
       };
     }

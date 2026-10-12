@@ -8,7 +8,7 @@ const { fetchSequencesByDay, fetchBroadcastQueuedEmails } = await import("./sequ
 const HEADERS = { orgId: "org-1", userId: "u1", runId: "r1" };
 
 function dayGroup(key: string, contacted: number): Record<string, unknown> {
-  return { key, broadcast: { recipientStats: { contacted } } };
+  return { key, broadcast: { recipientStats: { contacted, sent: contacted } } };
 }
 
 describe("fetchSequencesByDay", () => {
@@ -62,6 +62,18 @@ describe("fetchSequencesByDay", () => {
     await expect(fetchSequencesByDay("brand-1", undefined, "f", HEADERS)).rejects.toThrow(/daily broadcast failed \(500\)/);
   });
 
+  it("counts the people EMAILED each day, never sequences queued that never sent (owner 2026-10-12)", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ groups: [{ key: "2026-07-01", broadcast: { recipientStats: { contacted: 30, sent: 0 } } }, { key: "2026-07-02", broadcast: { recipientStats: { contacted: 5, sent: 12 } } }] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+    const res = await fetchSequencesByDay("brand-1", undefined, "f", HEADERS);
+    expect(res).toEqual({ total: 12, daily: [{ date: "2026-07-02", count: 12 }], undatedCount: 0 });
+  });
+
   it("throws when a day group is missing a numeric contacted (fail loud, no silent 0)", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(
       async () =>
@@ -70,7 +82,7 @@ describe("fetchSequencesByDay", () => {
           headers: { "Content-Type": "application/json" },
         }),
     );
-    await expect(fetchSequencesByDay("brand-1", undefined, "f", HEADERS)).rejects.toThrow(/missing numeric recipientStats.contacted/);
+    await expect(fetchSequencesByDay("brand-1", undefined, "f", HEADERS)).rejects.toThrow(/missing numeric recipientStats.sent/);
   });
 
   it("throws when the response has no groups array", async () => {

@@ -9,7 +9,7 @@ import { featureSlugList, type FeatureScope } from "./feature-scope.js";
 interface BroadcastDayGroup {
   key?: string;
   broadcast?: {
-    recipientStats?: { contacted?: number };
+    recipientStats?: { contacted?: number; sent?: number };
     emailStats?: { sent?: number; delivered?: number; bounced?: number };
   };
 }
@@ -117,22 +117,23 @@ async function fetchBroadcastDays<K extends string>(
 }
 
 /**
- * Per-day OUTREACH ACTIVITY series for the Overview graph — sourced from instantly's campaign-created
- * count via email-gateway `GET /orgs/stats?type=broadcast&groupBy=day`, NOT the lead snapshot.
+ * Per-day OUTREACH ACTIVITY series for the Overview graph — the people EMAILED each day (`recipientStats.sent`:
+ * distinct recipients with a send that day, follow-ups included; never the queue-push `contacted`, which
+ * counted sequences that never sent, owner 2026-10-12) via email-gateway `GET /orgs/stats?type=broadcast&groupBy=day`, NOT the lead snapshot.
  *
  * WHY this exists alongside `recipientsContacted` (features-service#415). `recipientsContacted` counts each
  * lead ONCE, bucketed by its FIRST-ever contact date for the brand (the funnel view — "who are my leads,
  * how far did each get"). That structurally UNDER-counts daily outreach when a brand re-contacts leads it
  * already emailed: a lead re-contacted today under a new campaign back-dates to its first-contact month,
  * so "outreach today" showed 3 while 34 campaigns were launched + ~$4.60 spent today. This series answers
- * the OTHER question — "how much outreach happened each day" — by counting instantly campaigns created per
- * day (one per lead served that day, incl. re-contacts). It matches "budget spent today" by construction.
+ * the OTHER question — "how much outreach happened each day" — by counting the people an email went to that
+ * day (re-contacts and follow-ups included).
  *
  * Grain difference from `recipientsContacted` is intentional and the two are NOT reconciled: the card total
  * = distinct leads reached (unique), the graph bar = outreach actions per day (events). Each is internally
  * coherent; they legitimately differ. Do NOT try to make sum(daily) === recipientsContacted.total.
  *
- * `undatedCount` is always 0 — instantly buckets every campaign by its `created_at` day (no undated case).
+ * `undatedCount` is always 0 — every send is bucketed by its send day (no undated case).
  * Timezone is fixed UTC so the buckets align with the UTC calendar days the other actual series use.
  *
  * OVERVIEW-ONLY, fail-soft: this is display enrichment, not the pipeline total. The caller degrades a
@@ -160,9 +161,10 @@ export async function fetchSequencesByDay(
   workflowSlugs?: string,
 ): Promise<SignalSeries> {
   const byDay = await fetchBroadcastDays(brandId, campaignScope, featureScope, headers, workflowSlugs, (group) => {
-    const contacted = group.broadcast?.recipientStats?.contacted;
+    // People EMAILED that day (`sent`), never queue pushes (`contacted`), owner 2026-10-12.
+    const contacted = group.broadcast?.recipientStats?.sent;
     if (typeof contacted !== "number" || !Number.isFinite(contacted)) {
-      throw new Error(`email-gateway day group ${group.key} missing numeric recipientStats.contacted`);
+      throw new Error(`email-gateway day group ${group.key} missing numeric recipientStats.sent`);
     }
     return { contacted };
   });

@@ -150,7 +150,7 @@ function mockFetch(): void {
     }
     if (url.includes("/public/stats")) {
       return json({
-        groups: [{ key: "wf-a", broadcast: { recipientStats: { contacted: 200, opened: 90, clicked: 20 } } }],
+        groups: [{ key: "wf-a", broadcast: { recipientStats: { contacted: 200, sent: 200, opened: 90, clicked: 20 } } }],
       });
     }
     // Brand grain: no attributed spend → no own ratio → the fleet benchmark alone drives the divisor.
