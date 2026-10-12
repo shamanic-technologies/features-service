@@ -20806,6 +20806,459 @@
           "salesFunnelCampaigns"
         ]
       },
+      "LivedSalesPaths": {
+        "type": "object",
+        "properties": {
+          "brandId": {
+            "type": "string"
+          },
+          "offerId": {
+            "type": "string",
+            "nullable": true,
+            "description": "The offer read, or null for every offer of the brand."
+          },
+          "costBasis": {
+            "type": "string",
+            "enum": [
+              "charged"
+            ]
+          },
+          "pricing": {
+            "type": "string",
+            "enum": [
+              "gross",
+              "net"
+            ]
+          },
+          "since": {
+            "type": "string",
+            "enum": [
+              "inception"
+            ],
+            "description": "Always since inception: a lived path is read over everyone ever reached, never a window."
+          },
+          "totals": {
+            "type": "object",
+            "properties": {
+              "leads": {
+                "type": "integer",
+                "description": "Σ paths.leads."
+              },
+              "paidClients": {
+                "type": "integer",
+                "description": "Σ paths.paidClients."
+              },
+              "notOurPaidClients": {
+                "type": "integer"
+              },
+              "revenueUsd": {
+                "type": "number",
+                "nullable": true,
+                "description": "Σ paths.revenueUsd (null when any is)."
+              },
+              "costUsd": {
+                "type": "number",
+                "description": "Σ paths.costUsd: the spend placed on people."
+              },
+              "roi": {
+                "type": "number",
+                "nullable": true
+              },
+              "unattributedCostUsd": {
+                "type": "number",
+                "description": "Spend no person carries (Σ unattributedCost)."
+              },
+              "unattributedCost": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "no_campaign",
+                        "acted_on_nobody"
+                      ],
+                      "description": "no_campaign: spend recorded with no campaign. acted_on_nobody: a campaign (and its whole sales funnel campaign) reached nobody yet."
+                    },
+                    "campaignId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "costUsd": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "reason",
+                    "campaignId",
+                    "costUsd"
+                  ]
+                }
+              },
+              "totalCostUsd": {
+                "type": "number",
+                "description": "= costUsd + unattributedCostUsd = the brand's committed spend on its channels (the same spend GET /brands/{brandId}/revenue costEconomics.committedCostUsd reads, summed exactly)."
+              },
+              "unplacedFacts": {
+                "type": "integer",
+                "description": "Timeline facts with no offer on a person of several offers: placed on no path, never guessed."
+              },
+              "excludedJourneys": {
+                "type": "integer",
+                "description": "People x offers none of our campaigns acted on and with no fact of ours (the customer's own CRM): not a lived path of ours."
+              }
+            },
+            "required": [
+              "leads",
+              "paidClients",
+              "notOurPaidClients",
+              "revenueUsd",
+              "costUsd",
+              "roi",
+              "unattributedCostUsd",
+              "unattributedCost",
+              "totalCostUsd",
+              "unplacedFacts",
+              "excludedJourneys"
+            ]
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "pathId": {
+                  "type": "string",
+                  "description": "The lived path in the catalogue's sales path id spelling: served leg keys `+`-joined from Start to Paid client, e.g. `start_to_industry_update_video+industry_update_video_to_website_visit+website_visit_to_signup+signup_to_paid_client`."
+                },
+                "steps": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "The catalogue steps lived between Start and Paid client, in order (a person our campaign acted on first entered at lead_found; a person whose first fact is a step entered there)."
+                },
+                "leads": {
+                  "type": "integer",
+                  "description": "People x offers who lived exactly these steps, paid or not (one person on two offers counts once per offer, each on its own path)."
+                },
+                "paidClients": {
+                  "type": "integer",
+                  "description": "Of them, those who became a paid client that is OURS (the timeline says attributable)."
+                },
+                "notOurPaidClients": {
+                  "type": "integer",
+                  "description": "Of them, those who paid but not because of us (the customer's own channel, or nobody could tell): counted, never priced."
+                },
+                "revenueUsd": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Σ over our paid clients of the stated sale amount, else the offer's lifetime revenue (stated, else the fleet median). Null when a paid client has neither (unavailableReason paid_client_unpriced), never $0."
+                },
+                "costUsd": {
+                  "type": "number",
+                  "description": "This path's share of the spend: every campaign's committed spend split equally across the people x offers it acted on (entry spend shared across the people it reached, plus each later pipe's spend across the people it worked)."
+                },
+                "roi": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "revenueUsd / costUsd. Null while the path has no paid client (status learning), never a fake 0 or infinity."
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "measured",
+                    "learning"
+                  ],
+                  "description": "measured: at least one paid client. learning: none yet (roi null)."
+                },
+                "unavailableReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "no_spend",
+                    "paid_client_unpriced"
+                  ]
+                },
+                "rank": {
+                  "type": "integer",
+                  "description": "1 = best: measured with an roi (desc), then measured without one, then learning (most paid clients, then most people)."
+                },
+                "expected": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "salesPathId": {
+                      "type": "string",
+                      "description": "The catalogue sales path this lived path IS (same id spelling)."
+                    },
+                    "name": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The catalogue's name for it; null when the catalogue has not named it yet (never minted by this read)."
+                    },
+                    "status": {
+                      "type": "string",
+                      "description": "The catalogue's status of its expected figures: measured | estimated | learning | customer_time."
+                    },
+                    "costUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "EXPECTED cost per paying client (the catalogue's path economics, the same as GET /internal/catalogue/sales-paths/{id})."
+                    },
+                    "roi": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "EXPECTED return (lifetime revenue / expected cost per paying client)."
+                    },
+                    "roiBasis": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "measured",
+                        "estimated"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "salesPathId",
+                    "name",
+                    "status",
+                    "costUsd",
+                    "roi",
+                    "roiBasis"
+                  ],
+                  "description": "PLANNED beside LIVED: the catalogue's expected economics of the same path. Null when the catalogue has no such path (a way nobody planned) or `expectedUnavailableReason` is set."
+                }
+              },
+              "required": [
+                "pathId",
+                "steps",
+                "leads",
+                "paidClients",
+                "notOurPaidClients",
+                "revenueUsd",
+                "costUsd",
+                "roi",
+                "status",
+                "unavailableReason",
+                "rank",
+                "expected"
+              ]
+            },
+            "description": "The OVERALL ranking (rank 1 first). Σ leads/paidClients/revenueUsd/costUsd = totals."
+          },
+          "funnels": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "funnelCampaignId": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The sales funnel campaign (campaign-service) whose unit first acted on these people; null = a campaign in no sales funnel campaign."
+                },
+                "salesFunnelId": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "salesFunnelName": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "totals": {
+                  "type": "object",
+                  "properties": {
+                    "leads": {
+                      "type": "integer",
+                      "description": "Σ paths.leads."
+                    },
+                    "paidClients": {
+                      "type": "integer",
+                      "description": "Σ paths.paidClients."
+                    },
+                    "notOurPaidClients": {
+                      "type": "integer"
+                    },
+                    "revenueUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Σ paths.revenueUsd (null when any is)."
+                    },
+                    "costUsd": {
+                      "type": "number",
+                      "description": "Σ paths.costUsd: the spend placed on people."
+                    },
+                    "roi": {
+                      "type": "number",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "leads",
+                    "paidClients",
+                    "notOurPaidClients",
+                    "revenueUsd",
+                    "costUsd",
+                    "roi"
+                  ]
+                },
+                "paths": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "pathId": {
+                        "type": "string",
+                        "description": "The lived path in the catalogue's sales path id spelling: served leg keys `+`-joined from Start to Paid client, e.g. `start_to_industry_update_video+industry_update_video_to_website_visit+website_visit_to_signup+signup_to_paid_client`."
+                      },
+                      "steps": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "The catalogue steps lived between Start and Paid client, in order (a person our campaign acted on first entered at lead_found; a person whose first fact is a step entered there)."
+                      },
+                      "leads": {
+                        "type": "integer",
+                        "description": "People x offers who lived exactly these steps, paid or not (one person on two offers counts once per offer, each on its own path)."
+                      },
+                      "paidClients": {
+                        "type": "integer",
+                        "description": "Of them, those who became a paid client that is OURS (the timeline says attributable)."
+                      },
+                      "notOurPaidClients": {
+                        "type": "integer",
+                        "description": "Of them, those who paid but not because of us (the customer's own channel, or nobody could tell): counted, never priced."
+                      },
+                      "revenueUsd": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "Σ over our paid clients of the stated sale amount, else the offer's lifetime revenue (stated, else the fleet median). Null when a paid client has neither (unavailableReason paid_client_unpriced), never $0."
+                      },
+                      "costUsd": {
+                        "type": "number",
+                        "description": "This path's share of the spend: every campaign's committed spend split equally across the people x offers it acted on (entry spend shared across the people it reached, plus each later pipe's spend across the people it worked)."
+                      },
+                      "roi": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "revenueUsd / costUsd. Null while the path has no paid client (status learning), never a fake 0 or infinity."
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "measured",
+                          "learning"
+                        ],
+                        "description": "measured: at least one paid client. learning: none yet (roi null)."
+                      },
+                      "unavailableReason": {
+                        "type": "string",
+                        "nullable": true,
+                        "enum": [
+                          "no_spend",
+                          "paid_client_unpriced"
+                        ]
+                      },
+                      "rank": {
+                        "type": "integer",
+                        "description": "1 = best: measured with an roi (desc), then measured without one, then learning (most paid clients, then most people)."
+                      },
+                      "expected": {
+                        "type": "object",
+                        "nullable": true,
+                        "properties": {
+                          "salesPathId": {
+                            "type": "string",
+                            "description": "The catalogue sales path this lived path IS (same id spelling)."
+                          },
+                          "name": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The catalogue's name for it; null when the catalogue has not named it yet (never minted by this read)."
+                          },
+                          "status": {
+                            "type": "string",
+                            "description": "The catalogue's status of its expected figures: measured | estimated | learning | customer_time."
+                          },
+                          "costUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "EXPECTED cost per paying client (the catalogue's path economics, the same as GET /internal/catalogue/sales-paths/{id})."
+                          },
+                          "roi": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "EXPECTED return (lifetime revenue / expected cost per paying client)."
+                          },
+                          "roiBasis": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "measured",
+                              "estimated"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "salesPathId",
+                          "name",
+                          "status",
+                          "costUsd",
+                          "roi",
+                          "roiBasis"
+                        ],
+                        "description": "PLANNED beside LIVED: the catalogue's expected economics of the same path. Null when the catalogue has no such path (a way nobody planned) or `expectedUnavailableReason` is set."
+                      }
+                    },
+                    "required": [
+                      "pathId",
+                      "steps",
+                      "leads",
+                      "paidClients",
+                      "notOurPaidClients",
+                      "revenueUsd",
+                      "costUsd",
+                      "roi",
+                      "status",
+                      "unavailableReason",
+                      "rank",
+                      "expected"
+                    ]
+                  },
+                  "description": "The ranking WITHIN this funnel (rank restarts at 1)."
+                }
+              },
+              "required": [
+                "funnelCampaignId",
+                "salesFunnelId",
+                "salesFunnelName",
+                "totals",
+                "paths"
+              ]
+            },
+            "description": "Per sales funnel campaign, best return first, the no-funnel group last. Σ over funnels = the overall totals."
+          },
+          "expectedUnavailableReason": {
+            "type": "string",
+            "nullable": true,
+            "description": "Why every `expected` is null (the catalogue's economics could not be read: catalogue_economics_not_computed_yet | catalogue_economics_unreadable); null when served."
+          }
+        },
+        "required": [
+          "brandId",
+          "offerId",
+          "costBasis",
+          "pricing",
+          "since",
+          "totals",
+          "paths",
+          "funnels",
+          "expectedUnavailableReason"
+        ]
+      },
       "SalesFunnelCampaignActivityResponse": {
         "type": "object",
         "properties": {
@@ -36323,6 +36776,158 @@
           },
           "502": {
             "description": "campaign-service or a money read failed (no row is ever guessed).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/brands/{brandId}/lived-sales-paths": {
+      "get": {
+        "summary": "The sales paths a brand's people ACTUALLY lived, with cost, revenue and ROI, ranked overall and per sales funnel",
+        "description": "Owner 2026-10-12: which way a paid client really came (video -> website visit -> signup -> paid; cold email -> positive reply -> paid ...), what each way cost and returned, ranked overall and per sales funnel campaign, beside the EXPECTED economics of the same catalogue path (planned vs lived). Built from lead-service's timeline (person x offer x brand): a fact whose label is a catalogue step key (coded or declared, e.g. industry_update_video) places the person on that step. Since inception. Org-scoped (`x-org-id`).",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Only this offer's people, and the spend of the campaigns that sell it. Omitted: every offer."
+            },
+            "required": false,
+            "description": "Only this offer's people, and the spend of the campaigns that sell it. Omitted: every offer.",
+            "name": "offerId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gross",
+                "net"
+              ],
+              "description": "Pricing basis for every money figure (omitted = gross)."
+            },
+            "required": false,
+            "description": "Pricing basis for every money figure (omitted = gross).",
+            "name": "pricing",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The lived paths.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LivedSalesPaths"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An invalid pricing value (reason: pricing_unrecognised).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The caller does not hold this brand (reason: brand_not_found).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "A source could not be read (timeline, spend, funnel campaigns, offer terms): nothing is guessed (reason: lived_sales_paths_unavailable).",
             "content": {
               "application/json": {
                 "schema": {
