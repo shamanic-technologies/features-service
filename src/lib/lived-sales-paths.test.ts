@@ -105,7 +105,7 @@ describe("computeLivedPaths", () => {
         },
       ], { costByCampaign: new Map([["c1", 100], ["c2", 50]]) }),
     );
-    expect(r.totals.leads).toBe(2);
+    expect(r.totals).toMatchObject({ leads: 2, people: 1, peopleEmailed: 0 });
     expect(r.paths.map((p) => [p.pathId, p.leads, p.paidClients, p.revenueUsd, p.costUsd])).toEqual([
       ["start_to_lead_found+lead_found_to_conversation+conversation_to_paid_client", 1, 1, 2500, 100],
       ["start_to_lead_found+lead_found_to_website_visit+website_visit_to_paid_client", 1, 0, 0, 50],
@@ -176,5 +176,18 @@ describe("computeLivedPaths", () => {
     );
     expect(r.paths[0]).toMatchObject({ status: "measured", revenueUsd: null, roi: null, unavailableReason: "paid_client_unpriced" });
     expect(r.totals.revenueUsd).toBeNull();
+  });
+});
+
+describe("computeLivedPaths people", () => {
+  it("peopleEmailed counts distinct people with an email act, once across offers", () => {
+    const r = computeLivedPaths(
+      inputs([
+        { leadId: "a", offerId: "o1", acts: [{ campaignId: "c", firstActedAt: null, kind: "email" }], facts: [] },
+        { leadId: "a", offerId: "o2", acts: [{ campaignId: "d", firstActedAt: null, kind: "email" }], facts: [] },
+        { leadId: "b", offerId: "o1", acts: [], facts: [fact("meeting_booked", null, { campaignId: "c" })] },
+      ]),
+    );
+    expect(r.totals).toMatchObject({ leads: 3, people: 2, peopleEmailed: 1 });
   });
 });

@@ -20866,6 +20866,14 @@
                 "type": "number",
                 "nullable": true
               },
+              "people": {
+                "type": "integer",
+                "description": "Distinct PEOPLE on the paths (one person on two offers = one person, two leads)."
+              },
+              "peopleEmailed": {
+                "type": "integer",
+                "description": "Distinct people one of our emails was SENT to: equals GET /brands/{brandId}/revenue outcomes.sending.recipientsSent (not recipientsContacted, which also counts people queued in a sequence and never sent). The rest of `people` entered on a later step (a meeting statement, an engagement with the video) with no email."
+              },
               "unattributedCostUsd": {
                 "type": "number",
                 "description": "Spend no person carries (Σ unattributedCost)."
@@ -20918,6 +20926,8 @@
               "revenueUsd",
               "costUsd",
               "roi",
+              "people",
+              "peopleEmailed",
               "unattributedCostUsd",
               "unattributedCost",
               "totalCostUsd",
