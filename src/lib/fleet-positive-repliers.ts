@@ -260,6 +260,29 @@ export async function fetchFleetMatureSlugStats(
   return total;
 }
 
+/**
+ * THE FLEET'S PERSONS PER SERVE DAY on the named campaigns (every org's pairs from the cell, no requesting pair):
+ * `day` → [contacted, clicked, replied positively]. Day `""` = a person never served (no serve date). Read by the
+ * per-pipe stats (`lib/pipe-stats.ts`): an entry pipe's volumes and outcomes, dated by the serve that took the person.
+ */
+export async function fetchFleetServeDayCounts(featureSlug: string, campaignIds: ReadonlySet<string>): Promise<Map<string, [number, number, number]>> {
+  const out = new Map<string, [number, number, number]>();
+  if (campaignIds.size === 0) return out;
+  const cell = await getCell(featureSlug);
+  for (const pair of cell.byPair.values()) {
+    for (const [bucketKey, [c, k, r]] of pair.buckets) {
+      const { campaignId, day } = splitBucketKey(bucketKey);
+      if (!campaignId || !campaignIds.has(campaignId)) continue;
+      const t = out.get(day) ?? [0, 0, 0];
+      t[0] += c;
+      t[1] += k;
+      t[2] += r;
+      out.set(day, t);
+    }
+  }
+  return out;
+}
+
 /** Build the cell ahead of the first read (boot). Fire-and-forget; a failure is logged, never thrown. */
 export async function warmFleetPositiveRepliers(featureSlug: string): Promise<void> {
   try {

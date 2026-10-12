@@ -45,6 +45,12 @@ vi.mock("../lib/brand-leg-economics-client.js", async (importOriginal) => ({
   fetchBrandLegEconomics: async () => ({ legRates: [], offers: [{ offerId: "offer-1", lifetimeRevenueUsd: 12000 }] }),
 }));
 
+const pipeStats = vi.hoisted(() => ({ get: null as null | ((...a: unknown[]) => Promise<unknown>) }));
+vi.mock("../lib/pipe-stats.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getPipeStats: (...a: unknown[]) => pipeStats.get!(...a),
+}));
+
 const mem = vi.hoisted(() => ({ legs: [] as any[], steps: [] as any[], rates: [] as any[], chains: [] as any[], paths: [] as any[], triggers: [] as any[] }));
 vi.mock("../lib/channel-declarations-store.js", async () => {
   const { mergeDeclarations } = await import("../lib/channel-declarations.js");
@@ -359,6 +365,39 @@ describe("agent catalogue lists (context-window sized)", () => {
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toContain("image/svg+xml");
     expect(Buffer.from(res.body).toString("utf8")).toContain("<title>Victory</title>");
+  });
+});
+
+describe("pipe stats on the pipe detail (owner 2026-10-12, the staff Pipe page)", () => {
+  it("?stats=true serves the stats of the scope asked, priced on the value the pipe adds; plain detail unchanged", async () => {
+    const calls: unknown[][] = [];
+    pipeStats.get = async (...a: unknown[]) => {
+      calls.push(a);
+      return { scope: a[2], spendUsd: 10, costPerOutcomeUsd: 5, roi: 60, history: [] };
+    };
+    const plain = await request(app).get(`/internal/catalogue/pipes/${encodeURIComponent(MEET)}`).set(KEY);
+    expect(plain.body.stats).toBeUndefined();
+    expect(calls).toHaveLength(0);
+    const fleet = await request(app).get(`/internal/catalogue/pipes/${encodeURIComponent(MEET)}`).query({ stats: "true" }).set(KEY);
+    expect(fleet.status).toBe(200);
+    expect(fleet.body).toMatchObject({ name: "Prism", costUsd: 2, stats: { scope: { kind: "fleet", brandId: null, offerId: null }, costPerOutcomeUsd: 5 } });
+    // The pipe as the stats read needs it, and the value it ADDS per meeting (catalogue: roi 150 at $2).
+    expect(calls[0]![1]).toMatchObject({ channelSlug: "ai-meeting-booking", fromStep: "conversation", toStep: "meeting_booked", toStepLabel: "Meeting booked" });
+    expect(calls[0]![3]).toBe(300);
+    const offer = await request(app).get(`/internal/catalogue/pipes/${encodeURIComponent(MEET)}`).query({ stats: "true", brandId: "b-1", offerId: "o-1" }).set(KEY);
+    expect(offer.body.stats.scope).toEqual({ kind: "offer", brandId: "b-1", offerId: "o-1" });
+  });
+
+  it("an offer without its brand is refused; an unreadable producer is a named 502", async () => {
+    const bad = await request(app).get(`/internal/catalogue/pipes/${encodeURIComponent(MEET)}`).query({ stats: "true", offerId: "o-1" }).set(KEY);
+    expect(bad.status).toBe(400);
+    expect(bad.body.reason).toBe("brand_required");
+    pipeStats.get = async () => {
+      throw new Error("runs down");
+    };
+    const down = await request(app).get(`/internal/catalogue/pipes/${encodeURIComponent(MEET)}`).query({ stats: "true" }).set(KEY);
+    expect(down.status).toBe(502);
+    expect(down.body.reason).toBe("pipe_stats_unreadable");
   });
 });
 

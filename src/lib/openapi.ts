@@ -6458,7 +6458,61 @@ catalogueRead("/internal/catalogue/sales-paths/{id}", "One sales path (internal,
 catalogueRead("/internal/catalogue/channels", "List channels (internal, api-key)", { forPaths: z.string().optional().describe("Comma list of sales path ids: channels with a pipe on a leg of one of them."), legKeys: z.string().optional().describe("Comma list of leg keys."), runnable: catalogueRunnable, q: catalogueQ, limit: catalogueLimit }, cataloguePage(catalogueChannelRow, "channel", "per_outcome"));
 catalogueRead("/internal/catalogue/channels/{id}", "One channel and its pipes (internal, api-key)", {}, catalogueChannelDetail, idParam("A channel slug"));
 catalogueRead("/internal/catalogue/pipes", "List pipes (internal, api-key)", { paths: z.string().optional().describe("Comma list of sales path ids: pipes on their legs."), channels: z.string().optional().describe("Comma list of channel slugs."), legKeys: z.string().optional(), runnable: catalogueRunnable, q: catalogueQ, limit: catalogueLimit }, cataloguePage(cataloguePipeRow, "pipe", "per_outcome"));
-catalogueRead("/internal/catalogue/pipes/{id}", "One pipe (internal, api-key)", {}, cataloguePipeDetail, idParam("A pipe id `<channel slug>|<leg key>`"));
+const pipeStatsReason = (values: [string, ...string[]], why: string) => z.enum(values).nullable().describe(why);
+const pipeStatsSchema = z
+  .object({
+    scope: z.object({ kind: z.enum(["fleet", "brand", "offer"]), brandId: z.string().nullable(), offerId: z.string().nullable() }).describe("The campaigns counted: every org's on the pipe (fleet), one brand's, or one offer's of that brand. Same read on fewer campaigns, so fleet >= brand >= offer."),
+    kind: z.enum(["entry", "internal", "on_demand"]).describe("How the pipe's volumes are measured (where its leg starts and its trigger, never its channel): entry = persons contacted and reaching the `to` step (serve-dated); internal = people handed to it, acted on, reaching its `to` step (event-dated, lead-service follow-up ledger); on_demand = leads found (undated counts)."),
+    basis: z.literal("since_inception"),
+    costBasis: z.literal("net_charged").describe("Spend = what orgs pay (runs' net charged amounts, comped spend absent), every cost row filed under the pipe's campaigns on its own slug."),
+    campaignCount: z.number().int(),
+    spendSince: z.string().nullable().describe("On-demand pipe: spend counted from its first recorded event (the pipe price's window). Null otherwise."),
+    computedAt: z.string(),
+    firstActivityDay: z.string().nullable().describe("UTC day of the first dated spend or volume; null = nothing yet."),
+    volumes: z
+      .array(
+        z.object({
+          key: z.string().describe("`contacted` | `handed` | `actedOn` | `outcomes` (the outcome volume is always `outcomes`)."),
+          label: z.string().describe("Display label, in the pipe's own words (step labels from the catalogue)."),
+          role: z.enum(["input", "action", "outcome"]),
+          datedBy: z.enum(["serve_day", "event_day"]).nullable().describe("What date a count is filed on in the history; null = undated or unmeasured."),
+          total: z.number().int().nullable().describe("Since inception, dated + undated. Null = no producer counts it."),
+          undated: z.number().int().describe("Of `total`, in no day: enters the history on its last point only."),
+        }),
+      )
+      .describe("The pipe's volumes in funnel order."),
+    outcomeKey: z.literal("outcomes"),
+    spendUsd: z.number(),
+    costPerOutcomeUsd: z.number().nullable().describe("spendUsd ÷ outcomes since inception, the WHOLE pipe (every workflow, flash, net). NOT the headline `costUsd` (best mature workflow, incurred). Null while there is no outcome (learning: never a floor, never the spend)."),
+    costPerOutcomeUnavailableReason: pipeStatsReason(["no_outcome_yet", "outcome_not_measured", "no_spend_recorded"], "Why costPerOutcomeUsd is null."),
+    valuePerOutcomeUsd: z.number().nullable().describe("The value the pipe ADDS per outcome (catalogue step values: its `to` step minus the step it takes people over at)."),
+    roi: z.number().nullable().describe("valuePerOutcomeUsd × outcomes ÷ spendUsd."),
+    roiUnavailableReason: pipeStatsReason(["step_unvalued", "no_cost_per_outcome"], "Why roi is null."),
+    history: z
+      .array(
+        z.object({
+          date: z.string().describe("UTC day."),
+          spendUsd: z.number().describe("Cumulative net spend to that day."),
+          volumes: z.record(z.string(), z.number().int().nullable()).describe("Volume key -> cumulative count to that day."),
+          costPerOutcomeUsd: z.number().nullable().describe("Since-inception cost per outcome as it stood that day (null with no outcome yet)."),
+          roi: z.number().nullable(),
+        }),
+      )
+      .describe("One point per UTC day from firstActivityDay to today, every figure cumulative. The last point IS the snapshot (undated counts enter there)."),
+  })
+  .optional()
+  .describe("Present only with `stats=true`.");
+catalogueRead(
+  "/internal/catalogue/pipes/{id}",
+  "One pipe (internal, api-key)",
+  {
+    stats: z.enum(["true"]).optional().describe("Owner 2026-10-12 (staff Pipe page): add `stats`, the pipe's own volumes, net spend, cost per outcome and ROI since inception, with their daily history. Held 15 min fresh / 6 h stale per (pipe, scope); a producer failure = 502 `pipe_stats_unreadable`."),
+    brandId: z.string().optional().describe("With stats=true: only this brand's campaigns on the pipe."),
+    offerId: z.string().optional().describe("With stats=true: only the campaigns of this offer of `brandId` (400 `brand_required` without it)."),
+  },
+  cataloguePipeDetail.extend({ stats: pipeStatsSchema }),
+  idParam("A pipe id `<channel slug>|<leg key>`"),
+);
 const catalogueOfferQuery = {
   offerId: z.string().optional().describe("PER-OFFER price (2026-10-10, the signup's \"Your campaign\" step and payment wall): the same formula with THIS offer's lifetime revenue (stated, else the fleet median) and its brand's own leg rates where it has them (measured on its leads / CRM = `offer_measured`, stated = `offer_stated`), else the fleet's. Pipe costs stay the fleet's measured ones. Needs `brandId` and the `x-org-id` header (400 `brand_required` / `org_required`; 404 `offer_not_found`). Still `estimated` whenever a rate or the lifetime revenue is not measured."),
   brandId: z.string().optional().describe("The offer's brand (required with offerId)."),

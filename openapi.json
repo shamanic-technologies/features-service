@@ -49337,6 +49337,39 @@
             "description": "A pipe id `<channel slug>|<leg key>` (URL-encoded).",
             "name": "id",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true"
+              ],
+              "description": "Owner 2026-10-12 (staff Pipe page): add `stats`, the pipe's own volumes, net spend, cost per outcome and ROI since inception, with their daily history. Held 15 min fresh / 6 h stale per (pipe, scope); a producer failure = 502 `pipe_stats_unreadable`."
+            },
+            "required": false,
+            "description": "Owner 2026-10-12 (staff Pipe page): add `stats`, the pipe's own volumes, net spend, cost per outcome and ROI since inception, with their daily history. Held 15 min fresh / 6 h stale per (pipe, scope); a producer failure = 502 `pipe_stats_unreadable`.",
+            "name": "stats",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "With stats=true: only this brand's campaigns on the pipe."
+            },
+            "required": false,
+            "description": "With stats=true: only this brand's campaigns on the pipe.",
+            "name": "brandId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "With stats=true: only the campaigns of this offer of `brandId` (400 `brand_required` without it)."
+            },
+            "required": false,
+            "description": "With stats=true: only the campaigns of this offer of `brandId` (400 `brand_required` without it).",
+            "name": "offerId",
+            "in": "query"
           }
         ],
         "responses": {
@@ -49483,6 +49516,231 @@
                     "conversionRatePct": {
                       "type": "number",
                       "nullable": true
+                    },
+                    "stats": {
+                      "type": "object",
+                      "properties": {
+                        "scope": {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "fleet",
+                                "brand",
+                                "offer"
+                              ]
+                            },
+                            "brandId": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "offerId": {
+                              "type": "string",
+                              "nullable": true
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "brandId",
+                            "offerId"
+                          ],
+                          "description": "The campaigns counted: every org's on the pipe (fleet), one brand's, or one offer's of that brand. Same read on fewer campaigns, so fleet >= brand >= offer."
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "entry",
+                            "internal",
+                            "on_demand"
+                          ],
+                          "description": "How the pipe's volumes are measured (where its leg starts and its trigger, never its channel): entry = persons contacted and reaching the `to` step (serve-dated); internal = people handed to it, acted on, reaching its `to` step (event-dated, lead-service follow-up ledger); on_demand = leads found (undated counts)."
+                        },
+                        "basis": {
+                          "type": "string",
+                          "enum": [
+                            "since_inception"
+                          ]
+                        },
+                        "costBasis": {
+                          "type": "string",
+                          "enum": [
+                            "net_charged"
+                          ],
+                          "description": "Spend = what orgs pay (runs' net charged amounts, comped spend absent), every cost row filed under the pipe's campaigns on its own slug."
+                        },
+                        "campaignCount": {
+                          "type": "integer"
+                        },
+                        "spendSince": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "On-demand pipe: spend counted from its first recorded event (the pipe price's window). Null otherwise."
+                        },
+                        "computedAt": {
+                          "type": "string"
+                        },
+                        "firstActivityDay": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "UTC day of the first dated spend or volume; null = nothing yet."
+                        },
+                        "volumes": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string",
+                                "description": "`contacted` | `handed` | `actedOn` | `outcomes` (the outcome volume is always `outcomes`)."
+                              },
+                              "label": {
+                                "type": "string",
+                                "description": "Display label, in the pipe's own words (step labels from the catalogue)."
+                              },
+                              "role": {
+                                "type": "string",
+                                "enum": [
+                                  "input",
+                                  "action",
+                                  "outcome"
+                                ]
+                              },
+                              "datedBy": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "serve_day",
+                                  "event_day"
+                                ],
+                                "description": "What date a count is filed on in the history; null = undated or unmeasured."
+                              },
+                              "total": {
+                                "type": "integer",
+                                "nullable": true,
+                                "description": "Since inception, dated + undated. Null = no producer counts it."
+                              },
+                              "undated": {
+                                "type": "integer",
+                                "description": "Of `total`, in no day: enters the history on its last point only."
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "label",
+                              "role",
+                              "datedBy",
+                              "total",
+                              "undated"
+                            ]
+                          },
+                          "description": "The pipe's volumes in funnel order."
+                        },
+                        "outcomeKey": {
+                          "type": "string",
+                          "enum": [
+                            "outcomes"
+                          ]
+                        },
+                        "spendUsd": {
+                          "type": "number"
+                        },
+                        "costPerOutcomeUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "spendUsd ÷ outcomes since inception, the WHOLE pipe (every workflow, flash, net). NOT the headline `costUsd` (best mature workflow, incurred). Null while there is no outcome (learning: never a floor, never the spend)."
+                        },
+                        "costPerOutcomeUnavailableReason": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "no_outcome_yet",
+                            "outcome_not_measured",
+                            "no_spend_recorded"
+                          ],
+                          "description": "Why costPerOutcomeUsd is null."
+                        },
+                        "valuePerOutcomeUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The value the pipe ADDS per outcome (catalogue step values: its `to` step minus the step it takes people over at)."
+                        },
+                        "roi": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "valuePerOutcomeUsd × outcomes ÷ spendUsd."
+                        },
+                        "roiUnavailableReason": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "step_unvalued",
+                            "no_cost_per_outcome"
+                          ],
+                          "description": "Why roi is null."
+                        },
+                        "history": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "date": {
+                                "type": "string",
+                                "description": "UTC day."
+                              },
+                              "spendUsd": {
+                                "type": "number",
+                                "description": "Cumulative net spend to that day."
+                              },
+                              "volumes": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "integer",
+                                  "nullable": true
+                                },
+                                "description": "Volume key -> cumulative count to that day."
+                              },
+                              "costPerOutcomeUsd": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Since-inception cost per outcome as it stood that day (null with no outcome yet)."
+                              },
+                              "roi": {
+                                "type": "number",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "date",
+                              "spendUsd",
+                              "volumes",
+                              "costPerOutcomeUsd",
+                              "roi"
+                            ]
+                          },
+                          "description": "One point per UTC day from firstActivityDay to today, every figure cumulative. The last point IS the snapshot (undated counts enter there)."
+                        }
+                      },
+                      "required": [
+                        "scope",
+                        "kind",
+                        "basis",
+                        "costBasis",
+                        "campaignCount",
+                        "spendSince",
+                        "computedAt",
+                        "firstActivityDay",
+                        "volumes",
+                        "outcomeKey",
+                        "spendUsd",
+                        "costPerOutcomeUsd",
+                        "costPerOutcomeUnavailableReason",
+                        "valuePerOutcomeUsd",
+                        "roi",
+                        "roiUnavailableReason",
+                        "history"
+                      ],
+                      "description": "Present only with `stats=true`."
                     }
                   },
                   "required": [
