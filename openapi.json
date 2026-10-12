@@ -49650,6 +49650,271 @@
                           ],
                           "description": "customer_team pipe only (else null): where its volumes come from and why they are unmeasured."
                         },
+                        "ourLeadsToTeam": {
+                          "type": "object",
+                          "nullable": true,
+                          "properties": {
+                            "population": {
+                              "type": "string",
+                              "enum": [
+                                "people_our_campaigns_brought_to_from_not_acted_on_by_our_pipes"
+                              ],
+                              "description": "Who counts: the people OUR campaigns brought to the pipe's `from` step (the campaigns of every platform pipe landing on that step, narrowed to the scope) that none of OUR pipes on the same leg acted on, so the customer's team had them; the outcome counts those of them who reached the `to` step on or after the day they reached `from` (same day counts, an undated end counts). Distinct from the top-level volumes (people we never contacted)."
+                            },
+                            "available": {
+                              "type": "boolean",
+                              "description": "False = both volumes null (unmeasured), never 0; see unavailableReason."
+                            },
+                            "unavailableReason": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "leg_has_no_from_step",
+                                "from_step_not_produced_by_our_campaigns",
+                                "to_step_not_recorded_for_our_leads",
+                                "no_campaign_of_ours_brings_people_to_from"
+                              ]
+                            },
+                            "fromEvidence": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "lead_snapshot",
+                                "attributed_outcomes"
+                              ],
+                              "description": "How `from` is read: our sending's own evidence (positive reply / click, dated by email-gateway's first event or the CRM-evidenced reply date) or lead-service's attributed outcome of that step (meeting booked, signup, sale...)."
+                            },
+                            "toEvidence": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "attributed_outcomes"
+                              ],
+                              "description": "How `to` is read: lead-service's attributed outcome of that step (the brand's tools mirrored through crm-service, and staff statements), the same read our own pipe's outcomes count."
+                            },
+                            "toSources": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              },
+                              "description": "lead-service outcome sources evidencing `to` for the people counted (`tracker` = the brand's tools, `manual` = a statement)."
+                            },
+                            "producingChannels": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              },
+                              "description": "Channel slugs whose campaigns bring people to `from`."
+                            },
+                            "ourChannelsOnLeg": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              },
+                              "description": "Our channel slugs on the same leg: a person one of them acted on is not in this population."
+                            },
+                            "brandsCounted": {
+                              "type": "integer"
+                            },
+                            "broughtToFrom": {
+                              "type": "integer",
+                              "nullable": true,
+                              "description": "Every person our campaigns brought to `from` in the scope (= leftToTeam + actedOnByOurPipes)."
+                            },
+                            "actedOnByOurPipes": {
+                              "type": "integer",
+                              "nullable": true,
+                              "description": "Of broughtToFrom, those our pipes on the leg acted on (outside this population)."
+                            },
+                            "firstActivityDay": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "volumes": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "key": {
+                                    "type": "string",
+                                    "description": "`leftToTeam` | `outcomes`."
+                                  },
+                                  "label": {
+                                    "type": "string"
+                                  },
+                                  "role": {
+                                    "type": "string",
+                                    "enum": [
+                                      "input",
+                                      "action",
+                                      "outcome"
+                                    ]
+                                  },
+                                  "datedBy": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "serve_day",
+                                      "event_day"
+                                    ]
+                                  },
+                                  "total": {
+                                    "type": "integer",
+                                    "nullable": true
+                                  },
+                                  "undated": {
+                                    "type": "integer"
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "label",
+                                  "role",
+                                  "datedBy",
+                                  "total",
+                                  "undated"
+                                ]
+                              }
+                            },
+                            "conversionRates": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "key": {
+                                    "type": "string"
+                                  },
+                                  "fromKey": {
+                                    "type": "string"
+                                  },
+                                  "toKey": {
+                                    "type": "string"
+                                  },
+                                  "label": {
+                                    "type": "string"
+                                  },
+                                  "numerator": {
+                                    "type": "integer",
+                                    "nullable": true
+                                  },
+                                  "denominator": {
+                                    "type": "integer",
+                                    "nullable": true
+                                  },
+                                  "ratePct": {
+                                    "type": "number",
+                                    "nullable": true
+                                  },
+                                  "unavailableReason": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "no_input_yet",
+                                      "volume_not_measured"
+                                    ],
+                                    "description": "Why ratePct is null."
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "fromKey",
+                                  "toKey",
+                                  "label",
+                                  "numerator",
+                                  "denominator",
+                                  "ratePct",
+                                  "unavailableReason"
+                                ]
+                              },
+                              "description": "`leftToTeam_to_outcomes`: their team's rate on the people we brought them, PERCENT."
+                            },
+                            "history": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "date": {
+                                    "type": "string"
+                                  },
+                                  "volumes": {
+                                    "type": "object",
+                                    "additionalProperties": {
+                                      "type": "integer",
+                                      "nullable": true
+                                    }
+                                  },
+                                  "conversionRates": {
+                                    "type": "object",
+                                    "additionalProperties": {
+                                      "type": "number",
+                                      "nullable": true
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "date",
+                                  "volumes",
+                                  "conversionRates"
+                                ]
+                              },
+                              "description": "One cumulative point per UTC day from firstActivityDay to today; the last point IS the snapshot."
+                            },
+                            "ourPipesRate": {
+                              "type": "object",
+                              "properties": {
+                                "actedOn": {
+                                  "type": "integer",
+                                  "nullable": true,
+                                  "description": "People our pipes on the leg acted on in the scope."
+                                },
+                                "outcomes": {
+                                  "type": "integer",
+                                  "nullable": true,
+                                  "description": "Of them, reached `to` on or after the day they reached `from` (same rule as the team side)."
+                                },
+                                "ratePct": {
+                                  "type": "number",
+                                  "nullable": true
+                                },
+                                "unavailableReason": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "enum": [
+                                    "no_input_yet",
+                                    "volume_not_measured"
+                                  ],
+                                  "description": "Why ratePct is null."
+                                }
+                              },
+                              "required": [
+                                "actedOn",
+                                "outcomes",
+                                "ratePct",
+                                "unavailableReason"
+                              ],
+                              "description": "Our own pipes on the same leg, on the people they acted on: the rate to read beside the team's."
+                            }
+                          },
+                          "required": [
+                            "population",
+                            "available",
+                            "unavailableReason",
+                            "fromEvidence",
+                            "toEvidence",
+                            "toSources",
+                            "producingChannels",
+                            "ourChannelsOnLeg",
+                            "brandsCounted",
+                            "broughtToFrom",
+                            "actedOnByOurPipes",
+                            "firstActivityDay",
+                            "volumes",
+                            "conversionRates",
+                            "history",
+                            "ourPipesRate"
+                          ],
+                          "description": "customer_team pipe only (else null), owner 2026-10-12: the same pipe measured on the people OUR campaigns brought to its `from` step and our pipes left to the customer's team, beside our pipes' own rate. Additive: the top-level volumes keep their meaning."
+                        },
                         "computedAt": {
                           "type": "string"
                         },
@@ -49870,6 +50135,7 @@
                         "campaignCount",
                         "spendSince",
                         "teamSource",
+                        "ourLeadsToTeam",
                         "computedAt",
                         "firstActivityDay",
                         "volumes",

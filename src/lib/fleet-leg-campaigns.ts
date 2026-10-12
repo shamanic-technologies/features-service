@@ -52,3 +52,25 @@ export async function fetchFleetLegCampaigns(featureSlug: string, legKey: string
   if (!Array.isArray(data.campaigns)) throw new Error("campaign-service /campaigns/list returned no campaigns array");
   return filterLegCampaigns(data.campaigns, featureSlug, legKey);
 }
+
+/** The campaigns of several pipe groups from ONE campaign list read: per group, the union over its (slug, leg) pipes. */
+export async function fetchFleetLegCampaignsFor(
+  groups: ReadonlyArray<ReadonlyArray<{ channelSlug: string; computedLegKey: string }>>,
+): Promise<FleetLegCampaign[][]> {
+  if (groups.every((g) => g.length === 0)) return groups.map(() => []);
+  const url = process.env.CAMPAIGN_SERVICE_URL;
+  const apiKey = process.env.CAMPAIGN_SERVICE_API_KEY;
+  if (!url || !apiKey) throw new Error("CAMPAIGN_SERVICE_URL or CAMPAIGN_SERVICE_API_KEY not configured");
+  const response = await fetchWithRetry(`${url}/campaigns/list`, { headers: { "x-api-key": apiKey } });
+  if (!response.ok) {
+    throw new Error(`campaign-service /campaigns/list failed (${response.status}): ${await response.text()}`);
+  }
+  const data = (await response.json()) as { campaigns?: unknown };
+  if (!Array.isArray(data.campaigns)) throw new Error("campaign-service /campaigns/list returned no campaigns array");
+  const rows = data.campaigns;
+  return groups.map((g) => {
+    const byId = new Map<string, FleetLegCampaign>();
+    for (const p of g) for (const c of filterLegCampaigns(rows, p.channelSlug, p.computedLegKey)) byId.set(c.campaignId, c);
+    return [...byId.values()];
+  });
+}

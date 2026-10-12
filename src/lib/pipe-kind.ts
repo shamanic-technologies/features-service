@@ -14,6 +14,7 @@ import { loadChannelCatalogue } from "./channel-declarations-store.js";
 import { funnelLeg, storedLegKeyOf } from "./funnel-legs.js";
 import { isInternalPipe } from "./meeting-leg-fleet.js";
 import { INLINE_TRIGGER_IDS } from "./channel-triggers.js";
+import { SOURCE_LEG_KEY } from "./sourcing-origins.js";
 
 const MEMO_MS = 60_000;
 let memo: { at: number; legs: Promise<Map<string, Set<string>>> } | null = null;
@@ -38,8 +39,14 @@ function legTriggers(): Promise<Map<string, string | null>> {
  * events (`lib/on-demand-pipe-fleet.ts`), the same rule for every such pipe.
  */
 export async function onDemandPipeTrigger(featureSlug: string, legKey: string): Promise<string | null> {
-  const trigger = (await legTriggers()).get(`${featureSlug}|${storedLegKeyOf(legKey)}`) ?? null;
-  return trigger && INLINE_TRIGGER_IDS.has(trigger) ? trigger : null;
+  const key = `${featureSlug}|${storedLegKeyOf(legKey)}`;
+  const triggers = await legTriggers();
+  const trigger = triggers.get(key) ?? null;
+  if (trigger && INLINE_TRIGGER_IDS.has(trigger)) return trigger;
+  // A SOURCING pipe (Start -> Lead found) the channel performs is measured the same way once it finds leads on its own
+  // (owner 2026-10-12, proactive, no trigger): its leads found, never "contacted".
+  if (triggers.has(key) && storedLegKeyOf(legKey) === SOURCE_LEG_KEY) return "on_demand";
+  return null;
 }
 
 function performedLegs(): Promise<Map<string, Set<string>>> {

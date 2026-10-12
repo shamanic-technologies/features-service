@@ -392,6 +392,16 @@ describe("pipe stats on the pipe detail (owner 2026-10-12, the staff Pipe page)"
     expect(calls[0]![3]).toBe(300);
     const offer = await request(app).get(`/internal/catalogue/pipes/${encodeURIComponent(MEET)}`).query({ stats: "true", brandId: "b-1", offerId: "o-1" }).set(KEY);
     expect(offer.body.stats.scope).toEqual({ kind: "offer", brandId: "b-1", offerId: "o-1" });
+    // A platform pipe has no leg neighbours; a customer-team pipe names the platform pipes bringing people to its
+    // `from` step and those on its own leg (owner 2026-10-12: their team on the replies we brought them).
+    expect(calls[0]![1]).toMatchObject({ legNeighbours: undefined });
+    const team = await request(app).get(`/internal/catalogue/pipes/${encodeURIComponent("your-team-meeting-booking|conversation_to_meeting_booked")}`).query({ stats: "true" }).set(KEY);
+    expect(team.status).toBe(200);
+    const n = (calls.at(-1)![1] as { legNeighbours: { producingPipes: Array<{ channelSlug: string; computedLegKey: string }>; ourPipesOnLeg: Array<{ channelSlug: string }> } }).legNeighbours;
+    expect(n.ourPipesOnLeg.map((q) => q.channelSlug)).toContain("ai-meeting-booking");
+    expect(n.ourPipesOnLeg.map((q) => q.channelSlug)).not.toContain("your-team-meeting-booking");
+    expect(n.producingPipes.length).toBeGreaterThan(0);
+    expect(n.producingPipes.every((q) => q.computedLegKey.endsWith("_to_conversation"))).toBe(true);
   });
 
   it("an offer without its brand is refused; an unreadable producer is a named 502", async () => {

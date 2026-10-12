@@ -96,6 +96,8 @@ describe("scope and kind", () => {
     expect(pipeStatsKind({ fromStep: "lead_found", triggerId: null })).toBe("entry");
     expect(pipeStatsKind({ fromStep: null, triggerId: null })).toBe("entry");
     expect(pipeStatsKind({ fromStep: null, triggerId: "on_demand" })).toBe("on_demand");
+    // A source finding leads on its own (owner 2026-10-12, proactive, no trigger) is still measured on leads found.
+    expect(pipeStatsKind({ fromStep: null, toStep: "lead_found", triggerId: null })).toBe("on_demand");
   });
 });
 
