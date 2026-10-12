@@ -32,6 +32,13 @@ describe("team alone vs team + this pipe (owner 2026-10-12)", () => {
     expect(last.impact).toEqual({ pointsDiff: b.impact.pointsDiff, ratio: b.impact.ratio });
   });
 
+  it("serves both rows by calendar period, the total row equal to the snapshot (PIPE-PERIODS-1012)", () => {
+    expect(b.periods.total).toMatchObject({ counts: { teamAloneFrom: 24, teamAloneTo: 4, teamPlusPipeFrom: 8, teamPlusPipeTo: 2 }, ratesPct: { teamAlone: 16.67, teamPlusPipe: 25 }, spendUsd: 3.52, costPerOutcomeUsd: 1.76 });
+    expect(b.periods.months.map((m) => m.period)).toEqual(["2026-10"]);
+    expect(b.periods.months[0]).toMatchObject({ counts: { teamAloneFrom: 20, teamAloneTo: 4 }, ratesPct: { teamAlone: 20, teamPlusPipe: 25 } });
+    expect(b.periods.impactPointsDiff).toMatchObject({ since_inception: 8.33, "2026-10": 5, "2026-Q4": 5 });
+  });
+
   it("unmeasured = null + reason, never 0; a 0 team rate keeps the points but not the ratio", () => {
     const none = buildPipeTeamImpact({ ...labels, reason: "no_campaign_of_ours_brings_people_to_from", team: null, pipe: null, spendByDay: new Map(), today: "2026-10-05" });
     expect(none).toMatchObject({ available: false, unavailableReason: "no_campaign_of_ours_brings_people_to_from", history: [] });

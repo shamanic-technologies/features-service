@@ -120,7 +120,7 @@ export async function loadChannelCatalogue(opts: { publishedOnly: boolean }): Pr
   ]);
   const declared = { channels, legs, triggers };
   const merged = mergeDeclarations(rows, declared, opts, { shortDescriptionOf: channelShortDescription, channelTypeOfSlug: channelTypeOf });
-  return { channels: buildChannelCatalogue(merged.rows, merged.shortDescriptionOf, merged.channelTypeOfSlug, merged.triggerOf), declared };
+  return { channels: buildChannelCatalogue(merged.rows, merged.shortDescriptionOf, merged.channelTypeOfSlug, merged.triggerOf, merged.isDraftLeg), declared };
 }
 
 /** Every slug and (lower-cased) name already taken by a feature (any status) or a declared channel. */
@@ -170,7 +170,7 @@ export async function updateChannel(slug: string, patch: ChannelPatch, updatedBy
 export async function insertLeg(channelSlug: string, input: LegInput, createdBy: string, requestedByOrgId: string | null): Promise<DeclaredLeg> {
   const [row] = await db
     .insert(declaredChannelLegs)
-    .values({ channelSlug, ...input, published: true, createdBy, requestedByOrgId })
+    .values({ channelSlug, ...input, createdBy, requestedByOrgId })
     .returning();
   return legOf(row);
 }

@@ -216,7 +216,8 @@ router.post("/internal/declarations/channels/:slug/legs", apiKeyOnly, async (req
     const [{ views }, triggers] = await Promise.all([loadViews(), listTriggerTypes()]);
     const view = views.find((v) => v.slug === req.params.slug);
     if (!view) return void res.status(404).json({ error: `no channel ${req.params.slug}`, reason: "channel_not_found" });
-    const input = parseLegInput(body, { slug: view.slug, managed: view.channel?.managed ?? false, legKeys: new Set(view.legs.map((l) => l.legKey)) }, triggers);
+    const operatedBy = (view.channel?.operatedBy ?? view.declaration?.operatedBy)!;
+    const input = parseLegInput(body, { slug: view.slug, managed: view.channel?.managed ?? false, operatedBy, legKeys: new Set(view.legs.map((l) => l.legKey)) }, triggers);
     await insertLeg(view.slug, input, createdBy, requestedByOrgId);
     console.log(`[features-service] declarations: leg ${view.slug} ${input.legKey} (${input.mode}${input.triggerId ? ` on ${input.triggerId}` : ""}) declared by ${createdBy}`);
     const after = await channelView(view.slug);
@@ -246,9 +247,13 @@ router.patch("/internal/declarations/channels/:slug/legs/:legKey", apiKeyOnly, a
       if (typeof body.published !== "boolean") throw new DeclarationError(400, "published_invalid", "published must be a boolean");
       patch.published = body.published;
     }
-    if (body.mode !== undefined || body.triggerId !== undefined) {
-      // The guarantee re-runs on every change of how the leg runs.
-      Object.assign(patch, checkLegRun(body.mode ?? stored.mode, body.triggerId === undefined ? stored.triggerId : body.triggerId, triggers));
+    if (body.mode !== undefined || body.triggerId !== undefined || patch.published === true) {
+      // The guarantee re-runs on every change of how the leg runs, and on publishing a draft (a draft may wait on a
+      // trigger nothing fires yet; a published platform leg may not).
+      const operatedBy = (view.channel?.operatedBy ?? view.declaration?.operatedBy)!;
+      const published = patch.published ?? stored.published;
+      const run = checkLegRun(body.mode ?? stored.mode, body.triggerId === undefined ? stored.triggerId : body.triggerId, triggers, { unfiredAllowed: operatedBy === "customer" || !published });
+      if (body.mode !== undefined || body.triggerId !== undefined) Object.assign(patch, run);
     }
     if (Object.keys(patch).length === 0) throw new DeclarationError(400, "nothing_to_update", "the body changes nothing");
     await updateLeg(view.slug, legKey, patch);

@@ -45596,7 +45596,7 @@
     "/internal/declarations/channels/{slug}/legs": {
       "post": {
         "summary": "Declare a leg on a channel (internal, api-key)",
-        "description": "RUN-TIME DECLARATIONS (owner 2026-10-09: a declaration is DATA, never a PR). A staff caller (the dashboard Copilot through the gateway) creates channels, legs on a channel, trigger types and sales paths. Service-key only: a channel is shared by every client, so a write changes what every org can buy; `requestedByOrgId` records which client asked (provenance, never scope). A declared channel or leg is LIVE the moment it is created, for every client (owner 2026-10-12: never a draft waiting on staff publish); whether a pipe can RUN follows from facts (`runnable`: the customer's own team always, a platform pipe on a managed channel or holding an active workflow). Staff may still set `published: false` to hide one. Every write states `createdBy` / `updatedBy`. Errors answer `{error, reason}` with a named `reason`. Works on a declared channel or one stated in code. A proactive leg names no trigger; a reactive leg names ONE trigger that something FIRES today: a trigger nothing fires is refused with 409 `trigger_not_fired` (a leg on it would wait forever). Created live.",
+        "description": "RUN-TIME DECLARATIONS (owner 2026-10-09: a declaration is DATA, never a PR). A staff caller (the dashboard Copilot through the gateway) creates channels, legs on a channel, trigger types and sales paths. Service-key only: a channel is shared by every client, so a write changes what every org can buy; `requestedByOrgId` records which client asked (provenance, never scope). A declared channel or leg is LIVE the moment it is created, for every client (owner 2026-10-12: never a draft waiting on staff publish); whether a pipe can RUN follows from facts (`runnable`: the customer's own team always, a platform pipe on a managed channel or holding an active workflow). Staff may still set `published: false` to hide one. Every write states `createdBy` / `updatedBy`. Errors answer `{error, reason}` with a named `reason`. Works on a declared channel or one stated in code. A proactive leg names no trigger; a reactive leg names ONE trigger that something FIRES today: a trigger nothing fires is refused with 409 `trigger_not_fired` (a leg on it would wait forever), unless nothing of ours waits on it: a CUSTOMER-operated channel's leg (their team acts on the step) or a draft (`published: false`). Created live by default.",
         "tags": [
           "Internal"
         ],
@@ -45635,6 +45635,10 @@
                     "type": "string",
                     "nullable": true,
                     "description": "Required on a reactive leg; absent/null on a proactive one."
+                  },
+                  "published": {
+                    "type": "boolean",
+                    "description": "Default true (live). false = a DRAFT (owner 2026-10-12): internal reads only, never runnable; the only way a PLATFORM leg may name a trigger nothing fires yet (a proposal). Publishing it later re-checks the trigger (409 `trigger_not_fired`)."
                   },
                   "createdBy": {
                     "type": "string"
@@ -48971,7 +48975,7 @@
       },
       "post": {
         "summary": "Declare a pipe (internal, api-key)",
-        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`). One leg on one channel (a declared leg, `POST /internal/declarations/channels/{slug}/legs` rules: a reactive pipe names a trigger something fires). A leg out of a step nothing rates states `conversionRatePct` (400 `conversion_rate_required`). Named with a never-given bird. Created live (owner 2026-10-12): clients see it at once.",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`). One leg on one channel (a declared leg, `POST /internal/declarations/channels/{slug}/legs` rules: a reactive pipe names a trigger something fires, unless it is a customer-team pipe or a draft). A leg out of a step nothing rates states `conversionRatePct` (400 `conversion_rate_required`). Named with a never-given bird. Created live (owner 2026-10-12): clients see it at once.",
         "tags": [
           "Internal"
         ],
@@ -49005,6 +49009,10 @@
                   },
                   "conversionRatePct": {
                     "type": "number"
+                  },
+                  "published": {
+                    "type": "boolean",
+                    "description": "Default true (live). false = a DRAFT (owner 2026-10-12): internal reads only, never runnable; the only way a PLATFORM leg may name a trigger nothing fires yet (a proposal). Publishing it later re-checks the trigger (409 `trigger_not_fired`)."
                   },
                   "createdBy": {
                     "type": "string",
@@ -49945,6 +49953,271 @@
                               },
                               "description": "One cumulative point per UTC day from firstActivityDay to today; the last point IS the snapshot."
                             },
+                            "periods": {
+                              "type": "object",
+                              "properties": {
+                                "basis": {
+                                  "type": "string",
+                                  "enum": [
+                                    "calendar_period_own_date"
+                                  ],
+                                  "description": "Every count filed in the calendar period of its own date (the serve that took the person = a cohort rate; else the event itself = an event rate: an outcome landing in the next period counts there). Undated counts sit in no period, only in `total`."
+                                },
+                                "total": {
+                                  "type": "object",
+                                  "properties": {
+                                    "period": {
+                                      "type": "string",
+                                      "description": "`2026-Q1` (quarter), `2026-10` (month), or `since_inception`."
+                                    },
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "month",
+                                        "quarter",
+                                        "since_inception"
+                                      ]
+                                    },
+                                    "label": {
+                                      "type": "string",
+                                      "description": "Printable as is: `Q1 2026`, `Oct 2026`, `Since Dec 2024`."
+                                    },
+                                    "startDate": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "description": "First UTC day of the period (total row: first activity day; null with no dated activity)."
+                                    },
+                                    "endDate": {
+                                      "type": "string",
+                                      "description": "Last UTC day of the period (total row: today)."
+                                    },
+                                    "counts": {
+                                      "type": "object",
+                                      "additionalProperties": {
+                                        "type": "integer",
+                                        "nullable": true
+                                      },
+                                      "description": "Count key -> count filed in the period by its OWN date (see the volume's `datedBy`), NOT cumulative. Null = unmeasured. The total row adds the undated counts."
+                                    },
+                                    "ratesPct": {
+                                      "type": "object",
+                                      "additionalProperties": {
+                                        "type": "number",
+                                        "nullable": true
+                                      },
+                                      "description": "Rate key -> the period's `to` count ÷ its `from` count × 100, PERCENT, 2 decimals. Null with a reason, never 0 for no input (a measured 0 over a real input IS 0)."
+                                    },
+                                    "rateUnavailableReasons": {
+                                      "type": "object",
+                                      "additionalProperties": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "no_input_yet",
+                                          "volume_not_measured"
+                                        ]
+                                      }
+                                    },
+                                    "spendUsd": {
+                                      "type": "number",
+                                      "nullable": true,
+                                      "description": "NET spend of ours in the period; null when the figure has no spend of ours (customer time)."
+                                    },
+                                    "costPerOutcomeUsd": {
+                                      "type": "number",
+                                      "nullable": true,
+                                      "description": "spendUsd ÷ the period's outcome count; null with no outcome, no spend, or no spend of ours."
+                                    }
+                                  },
+                                  "required": [
+                                    "period",
+                                    "kind",
+                                    "label",
+                                    "startDate",
+                                    "endDate",
+                                    "counts",
+                                    "ratesPct",
+                                    "rateUnavailableReasons",
+                                    "spendUsd",
+                                    "costPerOutcomeUsd"
+                                  ],
+                                  "description": "Since inception, dated + undated: equals the snapshot."
+                                },
+                                "quarters": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "period": {
+                                        "type": "string",
+                                        "description": "`2026-Q1` (quarter), `2026-10` (month), or `since_inception`."
+                                      },
+                                      "kind": {
+                                        "type": "string",
+                                        "enum": [
+                                          "month",
+                                          "quarter",
+                                          "since_inception"
+                                        ]
+                                      },
+                                      "label": {
+                                        "type": "string",
+                                        "description": "Printable as is: `Q1 2026`, `Oct 2026`, `Since Dec 2024`."
+                                      },
+                                      "startDate": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "description": "First UTC day of the period (total row: first activity day; null with no dated activity)."
+                                      },
+                                      "endDate": {
+                                        "type": "string",
+                                        "description": "Last UTC day of the period (total row: today)."
+                                      },
+                                      "counts": {
+                                        "type": "object",
+                                        "additionalProperties": {
+                                          "type": "integer",
+                                          "nullable": true
+                                        },
+                                        "description": "Count key -> count filed in the period by its OWN date (see the volume's `datedBy`), NOT cumulative. Null = unmeasured. The total row adds the undated counts."
+                                      },
+                                      "ratesPct": {
+                                        "type": "object",
+                                        "additionalProperties": {
+                                          "type": "number",
+                                          "nullable": true
+                                        },
+                                        "description": "Rate key -> the period's `to` count ÷ its `from` count × 100, PERCENT, 2 decimals. Null with a reason, never 0 for no input (a measured 0 over a real input IS 0)."
+                                      },
+                                      "rateUnavailableReasons": {
+                                        "type": "object",
+                                        "additionalProperties": {
+                                          "type": "string",
+                                          "nullable": true,
+                                          "enum": [
+                                            "no_input_yet",
+                                            "volume_not_measured"
+                                          ]
+                                        }
+                                      },
+                                      "spendUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "NET spend of ours in the period; null when the figure has no spend of ours (customer time)."
+                                      },
+                                      "costPerOutcomeUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "spendUsd ÷ the period's outcome count; null with no outcome, no spend, or no spend of ours."
+                                      }
+                                    },
+                                    "required": [
+                                      "period",
+                                      "kind",
+                                      "label",
+                                      "startDate",
+                                      "endDate",
+                                      "counts",
+                                      "ratesPct",
+                                      "rateUnavailableReasons",
+                                      "spendUsd",
+                                      "costPerOutcomeUsd"
+                                    ]
+                                  },
+                                  "description": "Every calendar quarter from the first activity to today's, oldest first (an empty one reads 0)."
+                                },
+                                "months": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "period": {
+                                        "type": "string",
+                                        "description": "`2026-Q1` (quarter), `2026-10` (month), or `since_inception`."
+                                      },
+                                      "kind": {
+                                        "type": "string",
+                                        "enum": [
+                                          "month",
+                                          "quarter",
+                                          "since_inception"
+                                        ]
+                                      },
+                                      "label": {
+                                        "type": "string",
+                                        "description": "Printable as is: `Q1 2026`, `Oct 2026`, `Since Dec 2024`."
+                                      },
+                                      "startDate": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "description": "First UTC day of the period (total row: first activity day; null with no dated activity)."
+                                      },
+                                      "endDate": {
+                                        "type": "string",
+                                        "description": "Last UTC day of the period (total row: today)."
+                                      },
+                                      "counts": {
+                                        "type": "object",
+                                        "additionalProperties": {
+                                          "type": "integer",
+                                          "nullable": true
+                                        },
+                                        "description": "Count key -> count filed in the period by its OWN date (see the volume's `datedBy`), NOT cumulative. Null = unmeasured. The total row adds the undated counts."
+                                      },
+                                      "ratesPct": {
+                                        "type": "object",
+                                        "additionalProperties": {
+                                          "type": "number",
+                                          "nullable": true
+                                        },
+                                        "description": "Rate key -> the period's `to` count ÷ its `from` count × 100, PERCENT, 2 decimals. Null with a reason, never 0 for no input (a measured 0 over a real input IS 0)."
+                                      },
+                                      "rateUnavailableReasons": {
+                                        "type": "object",
+                                        "additionalProperties": {
+                                          "type": "string",
+                                          "nullable": true,
+                                          "enum": [
+                                            "no_input_yet",
+                                            "volume_not_measured"
+                                          ]
+                                        }
+                                      },
+                                      "spendUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "NET spend of ours in the period; null when the figure has no spend of ours (customer time)."
+                                      },
+                                      "costPerOutcomeUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "spendUsd ÷ the period's outcome count; null with no outcome, no spend, or no spend of ours."
+                                      }
+                                    },
+                                    "required": [
+                                      "period",
+                                      "kind",
+                                      "label",
+                                      "startDate",
+                                      "endDate",
+                                      "counts",
+                                      "ratesPct",
+                                      "rateUnavailableReasons",
+                                      "spendUsd",
+                                      "costPerOutcomeUsd"
+                                    ]
+                                  },
+                                  "description": "Every calendar month from the first activity to today's, oldest first."
+                                }
+                              },
+                              "required": [
+                                "basis",
+                                "total",
+                                "quarters",
+                                "months"
+                              ],
+                              "description": "Owner 2026-10-12 (PIPE-PERIODS-1012): the same figures by calendar quarter and month, NOT cumulative, plus a since-inception row; the dashboard renders it as is. Counts: `leftToTeam`, `outcomes`. Rates: `leftToTeam_to_outcomes`; no spend (customer time)."
+                            },
                             "ourPipesRate": {
                               "type": "object",
                               "properties": {
@@ -49997,6 +50270,7 @@
                             "volumes",
                             "conversionRates",
                             "history",
+                            "periods",
                             "ourPipesRate"
                           ],
                           "description": "customer_team pipe only (else null), owner 2026-10-12: the same pipe measured on the people OUR campaigns brought to its `from` step and our pipes left to the customer's team, beside our pipes' own rate. Additive: the top-level volumes keep their meaning."
@@ -50264,6 +50538,280 @@
                                 ]
                               },
                               "description": "One CUMULATIVE point per UTC day from firstActivityDay to today; undated counts enter on the last point, so the last point IS the snapshot (rows + impact)."
+                            },
+                            "periods": {
+                              "type": "object",
+                              "properties": {
+                                "basis": {
+                                  "type": "string",
+                                  "enum": [
+                                    "calendar_period_own_date"
+                                  ],
+                                  "description": "Every count filed in the calendar period of its own date (the serve that took the person = a cohort rate; else the event itself = an event rate: an outcome landing in the next period counts there). Undated counts sit in no period, only in `total`."
+                                },
+                                "total": {
+                                  "type": "object",
+                                  "properties": {
+                                    "period": {
+                                      "type": "string",
+                                      "description": "`2026-Q1` (quarter), `2026-10` (month), or `since_inception`."
+                                    },
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "month",
+                                        "quarter",
+                                        "since_inception"
+                                      ]
+                                    },
+                                    "label": {
+                                      "type": "string",
+                                      "description": "Printable as is: `Q1 2026`, `Oct 2026`, `Since Dec 2024`."
+                                    },
+                                    "startDate": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "description": "First UTC day of the period (total row: first activity day; null with no dated activity)."
+                                    },
+                                    "endDate": {
+                                      "type": "string",
+                                      "description": "Last UTC day of the period (total row: today)."
+                                    },
+                                    "counts": {
+                                      "type": "object",
+                                      "additionalProperties": {
+                                        "type": "integer",
+                                        "nullable": true
+                                      },
+                                      "description": "Count key -> count filed in the period by its OWN date (see the volume's `datedBy`), NOT cumulative. Null = unmeasured. The total row adds the undated counts."
+                                    },
+                                    "ratesPct": {
+                                      "type": "object",
+                                      "additionalProperties": {
+                                        "type": "number",
+                                        "nullable": true
+                                      },
+                                      "description": "Rate key -> the period's `to` count ÷ its `from` count × 100, PERCENT, 2 decimals. Null with a reason, never 0 for no input (a measured 0 over a real input IS 0)."
+                                    },
+                                    "rateUnavailableReasons": {
+                                      "type": "object",
+                                      "additionalProperties": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "no_input_yet",
+                                          "volume_not_measured"
+                                        ]
+                                      }
+                                    },
+                                    "spendUsd": {
+                                      "type": "number",
+                                      "nullable": true,
+                                      "description": "NET spend of ours in the period; null when the figure has no spend of ours (customer time)."
+                                    },
+                                    "costPerOutcomeUsd": {
+                                      "type": "number",
+                                      "nullable": true,
+                                      "description": "spendUsd ÷ the period's outcome count; null with no outcome, no spend, or no spend of ours."
+                                    }
+                                  },
+                                  "required": [
+                                    "period",
+                                    "kind",
+                                    "label",
+                                    "startDate",
+                                    "endDate",
+                                    "counts",
+                                    "ratesPct",
+                                    "rateUnavailableReasons",
+                                    "spendUsd",
+                                    "costPerOutcomeUsd"
+                                  ],
+                                  "description": "Since inception, dated + undated: equals the snapshot."
+                                },
+                                "quarters": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "period": {
+                                        "type": "string",
+                                        "description": "`2026-Q1` (quarter), `2026-10` (month), or `since_inception`."
+                                      },
+                                      "kind": {
+                                        "type": "string",
+                                        "enum": [
+                                          "month",
+                                          "quarter",
+                                          "since_inception"
+                                        ]
+                                      },
+                                      "label": {
+                                        "type": "string",
+                                        "description": "Printable as is: `Q1 2026`, `Oct 2026`, `Since Dec 2024`."
+                                      },
+                                      "startDate": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "description": "First UTC day of the period (total row: first activity day; null with no dated activity)."
+                                      },
+                                      "endDate": {
+                                        "type": "string",
+                                        "description": "Last UTC day of the period (total row: today)."
+                                      },
+                                      "counts": {
+                                        "type": "object",
+                                        "additionalProperties": {
+                                          "type": "integer",
+                                          "nullable": true
+                                        },
+                                        "description": "Count key -> count filed in the period by its OWN date (see the volume's `datedBy`), NOT cumulative. Null = unmeasured. The total row adds the undated counts."
+                                      },
+                                      "ratesPct": {
+                                        "type": "object",
+                                        "additionalProperties": {
+                                          "type": "number",
+                                          "nullable": true
+                                        },
+                                        "description": "Rate key -> the period's `to` count ÷ its `from` count × 100, PERCENT, 2 decimals. Null with a reason, never 0 for no input (a measured 0 over a real input IS 0)."
+                                      },
+                                      "rateUnavailableReasons": {
+                                        "type": "object",
+                                        "additionalProperties": {
+                                          "type": "string",
+                                          "nullable": true,
+                                          "enum": [
+                                            "no_input_yet",
+                                            "volume_not_measured"
+                                          ]
+                                        }
+                                      },
+                                      "spendUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "NET spend of ours in the period; null when the figure has no spend of ours (customer time)."
+                                      },
+                                      "costPerOutcomeUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "spendUsd ÷ the period's outcome count; null with no outcome, no spend, or no spend of ours."
+                                      }
+                                    },
+                                    "required": [
+                                      "period",
+                                      "kind",
+                                      "label",
+                                      "startDate",
+                                      "endDate",
+                                      "counts",
+                                      "ratesPct",
+                                      "rateUnavailableReasons",
+                                      "spendUsd",
+                                      "costPerOutcomeUsd"
+                                    ]
+                                  },
+                                  "description": "Every calendar quarter from the first activity to today's, oldest first (an empty one reads 0)."
+                                },
+                                "months": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "period": {
+                                        "type": "string",
+                                        "description": "`2026-Q1` (quarter), `2026-10` (month), or `since_inception`."
+                                      },
+                                      "kind": {
+                                        "type": "string",
+                                        "enum": [
+                                          "month",
+                                          "quarter",
+                                          "since_inception"
+                                        ]
+                                      },
+                                      "label": {
+                                        "type": "string",
+                                        "description": "Printable as is: `Q1 2026`, `Oct 2026`, `Since Dec 2024`."
+                                      },
+                                      "startDate": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "description": "First UTC day of the period (total row: first activity day; null with no dated activity)."
+                                      },
+                                      "endDate": {
+                                        "type": "string",
+                                        "description": "Last UTC day of the period (total row: today)."
+                                      },
+                                      "counts": {
+                                        "type": "object",
+                                        "additionalProperties": {
+                                          "type": "integer",
+                                          "nullable": true
+                                        },
+                                        "description": "Count key -> count filed in the period by its OWN date (see the volume's `datedBy`), NOT cumulative. Null = unmeasured. The total row adds the undated counts."
+                                      },
+                                      "ratesPct": {
+                                        "type": "object",
+                                        "additionalProperties": {
+                                          "type": "number",
+                                          "nullable": true
+                                        },
+                                        "description": "Rate key -> the period's `to` count ÷ its `from` count × 100, PERCENT, 2 decimals. Null with a reason, never 0 for no input (a measured 0 over a real input IS 0)."
+                                      },
+                                      "rateUnavailableReasons": {
+                                        "type": "object",
+                                        "additionalProperties": {
+                                          "type": "string",
+                                          "nullable": true,
+                                          "enum": [
+                                            "no_input_yet",
+                                            "volume_not_measured"
+                                          ]
+                                        }
+                                      },
+                                      "spendUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "NET spend of ours in the period; null when the figure has no spend of ours (customer time)."
+                                      },
+                                      "costPerOutcomeUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "spendUsd ÷ the period's outcome count; null with no outcome, no spend, or no spend of ours."
+                                      }
+                                    },
+                                    "required": [
+                                      "period",
+                                      "kind",
+                                      "label",
+                                      "startDate",
+                                      "endDate",
+                                      "counts",
+                                      "ratesPct",
+                                      "rateUnavailableReasons",
+                                      "spendUsd",
+                                      "costPerOutcomeUsd"
+                                    ]
+                                  },
+                                  "description": "Every calendar month from the first activity to today's, oldest first."
+                                },
+                                "impactPointsDiff": {
+                                  "type": "object",
+                                  "additionalProperties": {
+                                    "type": "number",
+                                    "nullable": true
+                                  },
+                                  "description": "Period (`period` of each row, `since_inception` included) -> teamPlusPipe rate − teamAlone rate in POINTS; null when either rate is."
+                                }
+                              },
+                              "required": [
+                                "basis",
+                                "total",
+                                "quarters",
+                                "months",
+                                "impactPointsDiff"
+                              ],
+                              "description": "Owner 2026-10-12 (PIPE-PERIODS-1012): the same figures by calendar quarter and month, NOT cumulative, plus a since-inception row; the dashboard renders it as is. Counts: `teamAloneFrom`, `teamAloneTo`, `teamPlusPipeFrom`, `teamPlusPipeTo`. Rates: `teamAlone`, `teamPlusPipe`; spend and cost per outcome = this pipe's (the team + pipe row)."
                             }
                           },
                           "required": [
@@ -50276,7 +50824,8 @@
                             "rows",
                             "impact",
                             "firstActivityDay",
-                            "history"
+                            "history",
+                            "periods"
                           ],
                           "description": "PLATFORM pipe whose leg (same `from`, same `to`) also has a customer-team pipe only, else null (owner 2026-10-12): the table \"your team alone\" vs \"your team + this pipe\" and this pipe's impact, one rule for every such pipe. Additive."
                         },
@@ -50490,6 +51039,271 @@
                             ]
                           },
                           "description": "One point per UTC day from firstActivityDay to today, every figure cumulative. The last point IS the snapshot (undated counts enter there)."
+                        },
+                        "periods": {
+                          "type": "object",
+                          "properties": {
+                            "basis": {
+                              "type": "string",
+                              "enum": [
+                                "calendar_period_own_date"
+                              ],
+                              "description": "Every count filed in the calendar period of its own date (the serve that took the person = a cohort rate; else the event itself = an event rate: an outcome landing in the next period counts there). Undated counts sit in no period, only in `total`."
+                            },
+                            "total": {
+                              "type": "object",
+                              "properties": {
+                                "period": {
+                                  "type": "string",
+                                  "description": "`2026-Q1` (quarter), `2026-10` (month), or `since_inception`."
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "month",
+                                    "quarter",
+                                    "since_inception"
+                                  ]
+                                },
+                                "label": {
+                                  "type": "string",
+                                  "description": "Printable as is: `Q1 2026`, `Oct 2026`, `Since Dec 2024`."
+                                },
+                                "startDate": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "First UTC day of the period (total row: first activity day; null with no dated activity)."
+                                },
+                                "endDate": {
+                                  "type": "string",
+                                  "description": "Last UTC day of the period (total row: today)."
+                                },
+                                "counts": {
+                                  "type": "object",
+                                  "additionalProperties": {
+                                    "type": "integer",
+                                    "nullable": true
+                                  },
+                                  "description": "Count key -> count filed in the period by its OWN date (see the volume's `datedBy`), NOT cumulative. Null = unmeasured. The total row adds the undated counts."
+                                },
+                                "ratesPct": {
+                                  "type": "object",
+                                  "additionalProperties": {
+                                    "type": "number",
+                                    "nullable": true
+                                  },
+                                  "description": "Rate key -> the period's `to` count ÷ its `from` count × 100, PERCENT, 2 decimals. Null with a reason, never 0 for no input (a measured 0 over a real input IS 0)."
+                                },
+                                "rateUnavailableReasons": {
+                                  "type": "object",
+                                  "additionalProperties": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "no_input_yet",
+                                      "volume_not_measured"
+                                    ]
+                                  }
+                                },
+                                "spendUsd": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "NET spend of ours in the period; null when the figure has no spend of ours (customer time)."
+                                },
+                                "costPerOutcomeUsd": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "spendUsd ÷ the period's outcome count; null with no outcome, no spend, or no spend of ours."
+                                }
+                              },
+                              "required": [
+                                "period",
+                                "kind",
+                                "label",
+                                "startDate",
+                                "endDate",
+                                "counts",
+                                "ratesPct",
+                                "rateUnavailableReasons",
+                                "spendUsd",
+                                "costPerOutcomeUsd"
+                              ],
+                              "description": "Since inception, dated + undated: equals the snapshot."
+                            },
+                            "quarters": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "period": {
+                                    "type": "string",
+                                    "description": "`2026-Q1` (quarter), `2026-10` (month), or `since_inception`."
+                                  },
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "month",
+                                      "quarter",
+                                      "since_inception"
+                                    ]
+                                  },
+                                  "label": {
+                                    "type": "string",
+                                    "description": "Printable as is: `Q1 2026`, `Oct 2026`, `Since Dec 2024`."
+                                  },
+                                  "startDate": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "description": "First UTC day of the period (total row: first activity day; null with no dated activity)."
+                                  },
+                                  "endDate": {
+                                    "type": "string",
+                                    "description": "Last UTC day of the period (total row: today)."
+                                  },
+                                  "counts": {
+                                    "type": "object",
+                                    "additionalProperties": {
+                                      "type": "integer",
+                                      "nullable": true
+                                    },
+                                    "description": "Count key -> count filed in the period by its OWN date (see the volume's `datedBy`), NOT cumulative. Null = unmeasured. The total row adds the undated counts."
+                                  },
+                                  "ratesPct": {
+                                    "type": "object",
+                                    "additionalProperties": {
+                                      "type": "number",
+                                      "nullable": true
+                                    },
+                                    "description": "Rate key -> the period's `to` count ÷ its `from` count × 100, PERCENT, 2 decimals. Null with a reason, never 0 for no input (a measured 0 over a real input IS 0)."
+                                  },
+                                  "rateUnavailableReasons": {
+                                    "type": "object",
+                                    "additionalProperties": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "no_input_yet",
+                                        "volume_not_measured"
+                                      ]
+                                    }
+                                  },
+                                  "spendUsd": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "NET spend of ours in the period; null when the figure has no spend of ours (customer time)."
+                                  },
+                                  "costPerOutcomeUsd": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "spendUsd ÷ the period's outcome count; null with no outcome, no spend, or no spend of ours."
+                                  }
+                                },
+                                "required": [
+                                  "period",
+                                  "kind",
+                                  "label",
+                                  "startDate",
+                                  "endDate",
+                                  "counts",
+                                  "ratesPct",
+                                  "rateUnavailableReasons",
+                                  "spendUsd",
+                                  "costPerOutcomeUsd"
+                                ]
+                              },
+                              "description": "Every calendar quarter from the first activity to today's, oldest first (an empty one reads 0)."
+                            },
+                            "months": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "period": {
+                                    "type": "string",
+                                    "description": "`2026-Q1` (quarter), `2026-10` (month), or `since_inception`."
+                                  },
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "month",
+                                      "quarter",
+                                      "since_inception"
+                                    ]
+                                  },
+                                  "label": {
+                                    "type": "string",
+                                    "description": "Printable as is: `Q1 2026`, `Oct 2026`, `Since Dec 2024`."
+                                  },
+                                  "startDate": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "description": "First UTC day of the period (total row: first activity day; null with no dated activity)."
+                                  },
+                                  "endDate": {
+                                    "type": "string",
+                                    "description": "Last UTC day of the period (total row: today)."
+                                  },
+                                  "counts": {
+                                    "type": "object",
+                                    "additionalProperties": {
+                                      "type": "integer",
+                                      "nullable": true
+                                    },
+                                    "description": "Count key -> count filed in the period by its OWN date (see the volume's `datedBy`), NOT cumulative. Null = unmeasured. The total row adds the undated counts."
+                                  },
+                                  "ratesPct": {
+                                    "type": "object",
+                                    "additionalProperties": {
+                                      "type": "number",
+                                      "nullable": true
+                                    },
+                                    "description": "Rate key -> the period's `to` count ÷ its `from` count × 100, PERCENT, 2 decimals. Null with a reason, never 0 for no input (a measured 0 over a real input IS 0)."
+                                  },
+                                  "rateUnavailableReasons": {
+                                    "type": "object",
+                                    "additionalProperties": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "no_input_yet",
+                                        "volume_not_measured"
+                                      ]
+                                    }
+                                  },
+                                  "spendUsd": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "NET spend of ours in the period; null when the figure has no spend of ours (customer time)."
+                                  },
+                                  "costPerOutcomeUsd": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "spendUsd ÷ the period's outcome count; null with no outcome, no spend, or no spend of ours."
+                                  }
+                                },
+                                "required": [
+                                  "period",
+                                  "kind",
+                                  "label",
+                                  "startDate",
+                                  "endDate",
+                                  "counts",
+                                  "ratesPct",
+                                  "rateUnavailableReasons",
+                                  "spendUsd",
+                                  "costPerOutcomeUsd"
+                                ]
+                              },
+                              "description": "Every calendar month from the first activity to today's, oldest first."
+                            }
+                          },
+                          "required": [
+                            "basis",
+                            "total",
+                            "quarters",
+                            "months"
+                          ],
+                          "description": "Owner 2026-10-12 (PIPE-PERIODS-1012): the same figures by calendar quarter and month, NOT cumulative, plus a since-inception row; the dashboard renders it as is. Counts: the volume keys (`volumes[].key`). Rates: the conversion rate keys (`conversionRates[].key`); spend/cost per outcome on every pipe but customer_team."
                         }
                       },
                       "required": [
@@ -50513,7 +51327,8 @@
                         "roi",
                         "roiUnavailableReason",
                         "conversionRates",
-                        "history"
+                        "history",
+                        "periods"
                       ],
                       "description": "Present only with `stats=true`."
                     }
