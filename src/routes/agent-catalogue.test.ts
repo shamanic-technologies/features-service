@@ -51,7 +51,11 @@ vi.mock("../lib/pipe-stats.js", async (importOriginal) => ({
   getPipeStats: (...a: unknown[]) => pipeStats.get!(...a),
 }));
 
-const mem = vi.hoisted(() => ({ legs: [] as any[], steps: [] as any[], rates: [] as any[], chains: [] as any[], paths: [] as any[], triggers: [] as any[] }));
+const mem = vi.hoisted(() => ({ legs: [] as any[], steps: [] as any[], rates: [] as any[], chains: [] as any[], paths: [] as any[], triggers: [] as any[], assignments: [] as any[] }));
+vi.mock("../lib/workflow-leg-assignments.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  listLegAssignments: async () => mem.assignments,
+}));
 vi.mock("../lib/channel-declarations-store.js", async () => {
   const { mergeDeclarations } = await import("../lib/channel-declarations.js");
   const { buildChannelCatalogue } = await import("../lib/channel-catalogue.js");
@@ -81,7 +85,8 @@ vi.mock("../lib/channel-declarations-store.js", async () => {
       return { channels: buildChannelCatalogue(m.rows, m.shortDescriptionOf, m.channelTypeOfSlug, m.triggerOf), declared };
     },
     insertLeg: async (channelSlug: string, input: any, createdBy: string) => {
-      const row = { channelSlug, ...input, published: false, createdBy, requestedByOrgId: null, createdAt: "", updatedAt: "" };
+      // Live at creation (owner 2026-10-12), as the store writes it.
+      const row = { channelSlug, ...input, published: true, createdBy, requestedByOrgId: null, createdAt: "", updatedAt: "" };
       mem.legs.push(row);
       return row;
     },
@@ -131,6 +136,7 @@ beforeEach(() => {
   mem.chains = [];
   mem.paths = [];
   mem.triggers = [];
+  mem.assignments = [];
   __setCatalogueMeasurementsForTest(
     new Map([
       [COLD, { basis: "mature", costPerOutcomeUsd: 40, conversionRatePct: 1, workflowDynastySlug: "orion" }],
@@ -412,7 +418,8 @@ describe("agent catalogue creates (data, never a PR)", () => {
 
     const p1 = await request(app).post("/internal/catalogue/pipes").set(KEY).send({ channelSlug: "organic-linkedin-publishing", fromStep: null, toStep: "linkedin_post", mode: "proactive", createdBy: "agent" });
     expect(p1.status).toBe(201);
-    expect(p1.body).toMatchObject({ id: "organic-linkedin-publishing|start_to_linkedin_post", draft: true, status: "learning" });
+    // Live the moment it is created (owner 2026-10-12): never a draft waiting on staff publish.
+    expect(p1.body).toMatchObject({ id: "organic-linkedin-publishing|start_to_linkedin_post", draft: false, status: "learning", runnable: false });
     const p2 = await request(app).post("/internal/catalogue/pipes").set(KEY).send({ channelSlug: "organic-linkedin-publishing", fromStep: "linkedin_post", toStep: "conversation", mode: "proactive", createdBy: "agent" });
     expect(p2.status).toBe(201);
 
@@ -443,6 +450,31 @@ describe("agent catalogue creates (data, never a PR)", () => {
     // No name twice across every family.
     const all = [...names.rows.values()];
     expect(new Set(all).size).toBe(all.length);
+  });
+
+  it("a LEADS-ONLY funnel (owner 2026-10-12): Start -> Lead found (a source) -> Paid client (the customer's team) is created live, not mixed, runnable", async () => {
+    const team = await request(app)
+      .post("/internal/catalogue/pipes")
+      .set(KEY)
+      .send({ channelSlug: "your-team-closing-calls", fromStep: "lead_found", toStep: "paid_client", mode: "proactive", createdBy: "copilot" });
+    expect(team.status).toBe(201);
+    expect(team.body).toMatchObject({ id: "your-team-closing-calls|lead_found_to_paid_client", draft: false, runnable: true });
+    const f = await request(app)
+      .post("/internal/catalogue/sales-funnels")
+      .set(KEY)
+      .send({ pipeIds: ["sourcing-apollo-cold-filters|start_to_lead_found", "your-team-closing-calls|lead_found_to_paid_client"], createdBy: "copilot" });
+    expect(f.status).toBe(201);
+    expect(f.body).toMatchObject({ id: "start_to_lead_found@sourcing-apollo-cold-filters+lead_found_to_paid_client", mixed: false, runnable: true, draft: false });
+  });
+
+  it("a platform pipe with an ACTIVE workflow runs; without one it does not (owner 2026-10-12: facts, never a staff click)", async () => {
+    const listed = await request(app).get("/internal/catalogue/pipes").query({ channels: "organic-linkedin-publishing" }).set(KEY);
+    const id = listed.body.rows[0].id as string;
+    expect(listed.body.rows[0].runnable).toBe(false);
+    mem.assignments = [{ featureSlug: "organic-linkedin-publishing", legKey: id.split("|")[1], workflowDynastySlug: "x", state: "deprecated", decidedBy: "s", decidedAt: "", note: null }];
+    expect((await request(app).get(`/internal/catalogue/pipes/${encodeURIComponent(id)}`).set(KEY)).body.runnable).toBe(false);
+    mem.assignments = [{ ...mem.assignments[0], state: "active" }];
+    expect((await request(app).get(`/internal/catalogue/pipes/${encodeURIComponent(id)}`).set(KEY)).body.runnable).toBe(true);
   });
 
   it("a REACTIVE-only funnel starts on a trigger step: the two campaign-service converts are creatable (owner 2026-10-10)", async () => {
