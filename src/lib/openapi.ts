@@ -6595,8 +6595,52 @@ const idParam = (what: string) => ({ id: z.string().describe(`${what} (URL-encod
 
 catalogueRead("/internal/catalogue/steps", "List steps (internal, api-key)", { q: catalogueQ, limit: catalogueLimit }, cataloguePage(catalogueStepRow, "step", "per_outcome"));
 catalogueRead("/internal/catalogue/steps/{id}", "One step (internal, api-key)", {}, catalogueStepDetail, idParam("A step key or label"));
-catalogueRead("/internal/catalogue/sales-paths", "List sales paths (internal, api-key)", { containsSteps: z.string().optional().describe("Comma list of step keys or labels: the paths containing AT LEAST ONE."), runnable: catalogueRunnable, q: catalogueQ, limit: catalogueLimit }, cataloguePage(catalogueGlyphRow, "sales_path", "per_paying_client"));
-catalogueRead("/internal/catalogue/sales-paths/{id}", "One sales path (internal, api-key)", {}, cataloguePathDetail, idParam("A sales path id"));
+const catalogueOfferQuery = {
+  offerId: z.string().optional().describe("PER-OFFER price (2026-10-10, the signup's \"Your campaign\" step and payment wall): the same formula with THIS offer's lifetime revenue (stated, else the fleet median) and its brand's own leg rates where it has them (measured on its leads / CRM = `offer_measured`, stated = `offer_stated`), else the fleet's. Pipe costs stay the fleet's measured ones. ALSO applies the offer's stated STEPS (owner 2026-10-12): a funnel or path walking a step the offer's business does not have (brand-service `GET /orgs/brands/{brandId}/offers/{offerId}/steps`; Lead found and Paid client always count as present) leaves `rows` for `setAside`, with its missing steps; an offer that never stated its steps keeps the full list. A failed steps read is 502 `offer_steps_unreadable`, never an unfiltered list. Needs `brandId` and the `x-org-id` header (400 `brand_required` / `org_required`; 404 `offer_not_found`). Still `estimated` whenever a rate or the lifetime revenue is not measured."),
+  brandId: z.string().optional().describe("The offer's brand (required with offerId)."),
+};
+const catalogueOfferEcho = z
+  .object({ offerId: z.string(), brandId: z.string(), lifetimeRevenueUsd: z.number().nullable(), lifetimeRevenueSource: z.enum(["offer_stated", "fleet_median"]).nullable(), ownRateLegs: z.number().int().describe("Legs priced on the brand's own rate.") })
+  .optional()
+  .describe("Present on a per-offer read only.");
+const catalogueStepRef = z.object({ id: z.string().describe("Step key."), name: z.string() });
+const catalogueOfferSteps = z
+  .object({
+    stated: z.boolean().describe("false = the offer never stated its steps: nothing is set aside."),
+    steps: z.array(catalogueStepRef).nullable().describe("The steps the offer's business has (null when never stated)."),
+    statedAt: z.string().nullable(),
+    alwaysPresent: z.array(catalogueStepRef).describe("Steps every business has by definition (Lead found, Paid client), counted present."),
+  })
+  .optional()
+  .describe("Per-offer read only (owner 2026-10-12): what the offer stated about the steps its business has.");
+const catalogueSetAside = z
+  .object({
+    total: z.number().int(),
+    truncated: z.boolean(),
+    rows: z.array(
+      z.object({
+        id: z.string(),
+        name: z.string(),
+        line: z.string(),
+        missingSteps: z.array(catalogueStepRef).describe("The steps of this row the offer's business does not have: ask the client about them before proposing it."),
+      }),
+    ),
+  })
+  .optional()
+  .describe("Per-offer read only: the rows matching every other filter but walking a step the offer lacks (same order and limit as `rows`). Never proposable as is.");
+const catalogueSetAsideByStep = z
+  .array(z.object({ id: z.string(), name: z.string(), setAsideCount: z.number().int().describe("Set-aside rows lacking this step.") }))
+  .optional()
+  .describe("Per-offer read only: each missing step and how many set-aside rows it accounts for, most first.");
+const catalogueOfferListFit = { offer: catalogueOfferEcho, offerSteps: catalogueOfferSteps, setAside: catalogueSetAside, setAsideByStep: catalogueSetAsideByStep };
+const catalogueOfferDetailFit = {
+  offer: catalogueOfferEcho,
+  offerSteps: catalogueOfferSteps,
+  setAside: z.boolean().optional().describe("Per-offer read only: true when this walks a step the offer's business does not have."),
+  missingSteps: z.array(catalogueStepRef).optional().describe("Per-offer read only: the steps it walks that the offer lacks (empty when kept)."),
+};
+catalogueRead("/internal/catalogue/sales-paths", "List sales paths (internal, api-key)", { containsSteps: z.string().optional().describe("Comma list of step keys or labels: the paths containing AT LEAST ONE."), runnable: catalogueRunnable, q: catalogueQ, limit: catalogueLimit, ...catalogueOfferQuery }, cataloguePage(catalogueGlyphRow, "sales_path", "per_paying_client").extend(catalogueOfferListFit));
+catalogueRead("/internal/catalogue/sales-paths/{id}", "One sales path (internal, api-key)", { ...catalogueOfferQuery }, cataloguePathDetail.extend(catalogueOfferDetailFit), idParam("A sales path id"));
 catalogueRead("/internal/catalogue/channels", "List channels (internal, api-key)", { forPaths: z.string().optional().describe("Comma list of sales path ids: channels with a pipe on a leg of one of them."), legKeys: z.string().optional().describe("Comma list of leg keys."), runnable: catalogueRunnable, q: catalogueQ, limit: catalogueLimit }, cataloguePage(catalogueChannelRow, "channel", "per_outcome"));
 catalogueRead("/internal/catalogue/channels/{id}", "One channel and its pipes (internal, api-key)", {}, catalogueChannelDetail, idParam("A channel slug"));
 catalogueRead("/internal/catalogue/pipes", "List pipes (internal, api-key)", { paths: z.string().optional().describe("Comma list of sales path ids: pipes on their legs."), channels: z.string().optional().describe("Comma list of channel slugs."), legKeys: z.string().optional(), runnable: catalogueRunnable, q: catalogueQ, limit: catalogueLimit }, cataloguePage(cataloguePipeRow, "pipe", "per_outcome"));
@@ -6785,16 +6829,8 @@ catalogueRead(
   cataloguePipeDetail.extend({ stats: pipeStatsSchema }),
   idParam("A pipe id `<channel slug>|<leg key>`"),
 );
-const catalogueOfferQuery = {
-  offerId: z.string().optional().describe("PER-OFFER price (2026-10-10, the signup's \"Your campaign\" step and payment wall): the same formula with THIS offer's lifetime revenue (stated, else the fleet median) and its brand's own leg rates where it has them (measured on its leads / CRM = `offer_measured`, stated = `offer_stated`), else the fleet's. Pipe costs stay the fleet's measured ones. Needs `brandId` and the `x-org-id` header (400 `brand_required` / `org_required`; 404 `offer_not_found`). Still `estimated` whenever a rate or the lifetime revenue is not measured."),
-  brandId: z.string().optional().describe("The offer's brand (required with offerId)."),
-};
-const catalogueOfferEcho = z
-  .object({ offerId: z.string(), brandId: z.string(), lifetimeRevenueUsd: z.number().nullable(), lifetimeRevenueSource: z.enum(["offer_stated", "fleet_median"]).nullable(), ownRateLegs: z.number().int().describe("Legs priced on the brand's own rate.") })
-  .optional()
-  .describe("Present on a per-offer read only.");
-catalogueRead("/internal/catalogue/sales-funnels", "List sales funnels (internal, api-key)", { paths: z.string().optional().describe("Comma list of sales path ids (default: every path)."), containsChannels: z.string().optional().describe("Comma list of channel slugs: funnels containing AT LEAST ONE."), runnable: catalogueRunnable, q: catalogueQ, limit: catalogueLimit, ...catalogueOfferQuery }, cataloguePage(catalogueFunnelRow, "sales_funnel", "per_paying_client").extend({ offer: catalogueOfferEcho }));
-catalogueRead("/internal/catalogue/sales-funnels/{id}", "One sales funnel (internal, api-key)", { ...catalogueOfferQuery }, catalogueFunnelDetail.extend({ offer: catalogueOfferEcho }), idParam("A sales funnel id"));
+catalogueRead("/internal/catalogue/sales-funnels", "List sales funnels (internal, api-key)", { paths: z.string().optional().describe("Comma list of sales path ids (default: every path)."), containsChannels: z.string().optional().describe("Comma list of channel slugs: funnels containing AT LEAST ONE."), runnable: catalogueRunnable, q: catalogueQ, limit: catalogueLimit, ...catalogueOfferQuery }, cataloguePage(catalogueFunnelRow, "sales_funnel", "per_paying_client").extend(catalogueOfferListFit));
+catalogueRead("/internal/catalogue/sales-funnels/{id}", "One sales funnel (internal, api-key)", { ...catalogueOfferQuery }, catalogueFunnelDetail.extend(catalogueOfferDetailFit), idParam("A sales funnel id"));
 catalogueRead("/internal/catalogue/workflows", "List the workflows of one pipe (internal, api-key)", { pipe: z.string().describe("A pipe id (required)."), q: catalogueQ, limit: catalogueLimit }, cataloguePage(catalogueGlyphRow, "workflow", "per_outcome").extend({ pipeId: z.string() }));
 catalogueRead("/internal/catalogue/workflows/{id}", "One workflow on one pipe (internal, api-key)", { pipe: z.string().describe("The pipe id (required).") }, catalogueWorkflowDetail, idParam("A workflow dynasty slug"));
 const catalogueTriggerRow = z.object({

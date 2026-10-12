@@ -48185,6 +48185,26 @@
             "description": "1..25, default 10.",
             "name": "limit",
             "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "PER-OFFER price (2026-10-10, the signup's \"Your campaign\" step and payment wall): the same formula with THIS offer's lifetime revenue (stated, else the fleet median) and its brand's own leg rates where it has them (measured on its leads / CRM = `offer_measured`, stated = `offer_stated`), else the fleet's. Pipe costs stay the fleet's measured ones. ALSO applies the offer's stated STEPS (owner 2026-10-12): a funnel or path walking a step the offer's business does not have (brand-service `GET /orgs/brands/{brandId}/offers/{offerId}/steps`; Lead found and Paid client always count as present) leaves `rows` for `setAside`, with its missing steps; an offer that never stated its steps keeps the full list. A failed steps read is 502 `offer_steps_unreadable`, never an unfiltered list. Needs `brandId` and the `x-org-id` header (400 `brand_required` / `org_required`; 404 `offer_not_found`). Still `estimated` whenever a rate or the lifetime revenue is not measured."
+            },
+            "required": false,
+            "description": "PER-OFFER price (2026-10-10, the signup's \"Your campaign\" step and payment wall): the same formula with THIS offer's lifetime revenue (stated, else the fleet median) and its brand's own leg rates where it has them (measured on its leads / CRM = `offer_measured`, stated = `offer_stated`), else the fleet's. Pipe costs stay the fleet's measured ones. ALSO applies the offer's stated STEPS (owner 2026-10-12): a funnel or path walking a step the offer's business does not have (brand-service `GET /orgs/brands/{brandId}/offers/{offerId}/steps`; Lead found and Paid client always count as present) leaves `rows` for `setAside`, with its missing steps; an offer that never stated its steps keeps the full list. A failed steps read is 502 `offer_steps_unreadable`, never an unfiltered list. Needs `brandId` and the `x-org-id` header (400 `brand_required` / `org_required`; 404 `offer_not_found`). Still `estimated` whenever a rate or the lifetime revenue is not measured.",
+            "name": "offerId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "The offer's brand (required with offerId)."
+            },
+            "required": false,
+            "description": "The offer's brand (required with offerId).",
+            "name": "brandId",
+            "in": "query"
           }
         ],
         "responses": {
@@ -48316,6 +48336,186 @@
                           "status"
                         ]
                       }
+                    },
+                    "offer": {
+                      "type": "object",
+                      "properties": {
+                        "offerId": {
+                          "type": "string"
+                        },
+                        "brandId": {
+                          "type": "string"
+                        },
+                        "lifetimeRevenueUsd": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "lifetimeRevenueSource": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "offer_stated",
+                            "fleet_median"
+                          ]
+                        },
+                        "ownRateLegs": {
+                          "type": "integer",
+                          "description": "Legs priced on the brand's own rate."
+                        }
+                      },
+                      "required": [
+                        "offerId",
+                        "brandId",
+                        "lifetimeRevenueUsd",
+                        "lifetimeRevenueSource",
+                        "ownRateLegs"
+                      ],
+                      "description": "Present on a per-offer read only."
+                    },
+                    "offerSteps": {
+                      "type": "object",
+                      "properties": {
+                        "stated": {
+                          "type": "boolean",
+                          "description": "false = the offer never stated its steps: nothing is set aside."
+                        },
+                        "steps": {
+                          "type": "array",
+                          "nullable": true,
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "description": "Step key."
+                              },
+                              "name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name"
+                            ]
+                          },
+                          "description": "The steps the offer's business has (null when never stated)."
+                        },
+                        "statedAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "alwaysPresent": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "description": "Step key."
+                              },
+                              "name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name"
+                            ]
+                          },
+                          "description": "Steps every business has by definition (Lead found, Paid client), counted present."
+                        }
+                      },
+                      "required": [
+                        "stated",
+                        "steps",
+                        "statedAt",
+                        "alwaysPresent"
+                      ],
+                      "description": "Per-offer read only (owner 2026-10-12): what the offer stated about the steps its business has."
+                    },
+                    "setAside": {
+                      "type": "object",
+                      "properties": {
+                        "total": {
+                          "type": "integer"
+                        },
+                        "truncated": {
+                          "type": "boolean"
+                        },
+                        "rows": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "line": {
+                                "type": "string"
+                              },
+                              "missingSteps": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "id": {
+                                      "type": "string",
+                                      "description": "Step key."
+                                    },
+                                    "name": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "id",
+                                    "name"
+                                  ]
+                                },
+                                "description": "The steps of this row the offer's business does not have: ask the client about them before proposing it."
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name",
+                              "line",
+                              "missingSteps"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "total",
+                        "truncated",
+                        "rows"
+                      ],
+                      "description": "Per-offer read only: the rows matching every other filter but walking a step the offer lacks (same order and limit as `rows`). Never proposable as is."
+                    },
+                    "setAsideByStep": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "setAsideCount": {
+                            "type": "integer",
+                            "description": "Set-aside rows lacking this step."
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "setAsideCount"
+                        ]
+                      },
+                      "description": "Per-offer read only: each missing step and how many set-aside rows it accounts for, most first."
                     }
                   },
                   "required": [
@@ -48632,6 +48832,26 @@
             "description": "A sales path id (URL-encoded).",
             "name": "id",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "PER-OFFER price (2026-10-10, the signup's \"Your campaign\" step and payment wall): the same formula with THIS offer's lifetime revenue (stated, else the fleet median) and its brand's own leg rates where it has them (measured on its leads / CRM = `offer_measured`, stated = `offer_stated`), else the fleet's. Pipe costs stay the fleet's measured ones. ALSO applies the offer's stated STEPS (owner 2026-10-12): a funnel or path walking a step the offer's business does not have (brand-service `GET /orgs/brands/{brandId}/offers/{offerId}/steps`; Lead found and Paid client always count as present) leaves `rows` for `setAside`, with its missing steps; an offer that never stated its steps keeps the full list. A failed steps read is 502 `offer_steps_unreadable`, never an unfiltered list. Needs `brandId` and the `x-org-id` header (400 `brand_required` / `org_required`; 404 `offer_not_found`). Still `estimated` whenever a rate or the lifetime revenue is not measured."
+            },
+            "required": false,
+            "description": "PER-OFFER price (2026-10-10, the signup's \"Your campaign\" step and payment wall): the same formula with THIS offer's lifetime revenue (stated, else the fleet median) and its brand's own leg rates where it has them (measured on its leads / CRM = `offer_measured`, stated = `offer_stated`), else the fleet's. Pipe costs stay the fleet's measured ones. ALSO applies the offer's stated STEPS (owner 2026-10-12): a funnel or path walking a step the offer's business does not have (brand-service `GET /orgs/brands/{brandId}/offers/{offerId}/steps`; Lead found and Paid client always count as present) leaves `rows` for `setAside`, with its missing steps; an offer that never stated its steps keeps the full list. A failed steps read is 502 `offer_steps_unreadable`, never an unfiltered list. Needs `brandId` and the `x-org-id` header (400 `brand_required` / `org_required`; 404 `offer_not_found`). Still `estimated` whenever a rate or the lifetime revenue is not measured.",
+            "name": "offerId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "The offer's brand (required with offerId)."
+            },
+            "required": false,
+            "description": "The offer's brand (required with offerId).",
+            "name": "brandId",
+            "in": "query"
           }
         ],
         "responses": {
@@ -48853,6 +49073,126 @@
                     "runnable": {
                       "type": "boolean",
                       "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
+                    },
+                    "offer": {
+                      "type": "object",
+                      "properties": {
+                        "offerId": {
+                          "type": "string"
+                        },
+                        "brandId": {
+                          "type": "string"
+                        },
+                        "lifetimeRevenueUsd": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "lifetimeRevenueSource": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "offer_stated",
+                            "fleet_median"
+                          ]
+                        },
+                        "ownRateLegs": {
+                          "type": "integer",
+                          "description": "Legs priced on the brand's own rate."
+                        }
+                      },
+                      "required": [
+                        "offerId",
+                        "brandId",
+                        "lifetimeRevenueUsd",
+                        "lifetimeRevenueSource",
+                        "ownRateLegs"
+                      ],
+                      "description": "Present on a per-offer read only."
+                    },
+                    "offerSteps": {
+                      "type": "object",
+                      "properties": {
+                        "stated": {
+                          "type": "boolean",
+                          "description": "false = the offer never stated its steps: nothing is set aside."
+                        },
+                        "steps": {
+                          "type": "array",
+                          "nullable": true,
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "description": "Step key."
+                              },
+                              "name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name"
+                            ]
+                          },
+                          "description": "The steps the offer's business has (null when never stated)."
+                        },
+                        "statedAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "alwaysPresent": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "description": "Step key."
+                              },
+                              "name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name"
+                            ]
+                          },
+                          "description": "Steps every business has by definition (Lead found, Paid client), counted present."
+                        }
+                      },
+                      "required": [
+                        "stated",
+                        "steps",
+                        "statedAt",
+                        "alwaysPresent"
+                      ],
+                      "description": "Per-offer read only (owner 2026-10-12): what the offer stated about the steps its business has."
+                    },
+                    "setAside": {
+                      "type": "boolean",
+                      "description": "Per-offer read only: true when this walks a step the offer's business does not have."
+                    },
+                    "missingSteps": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "description": "Step key."
+                          },
+                          "name": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name"
+                        ]
+                      },
+                      "description": "Per-offer read only: the steps it walks that the offer lacks (empty when kept)."
                     }
                   },
                   "required": [
@@ -52124,10 +52464,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "PER-OFFER price (2026-10-10, the signup's \"Your campaign\" step and payment wall): the same formula with THIS offer's lifetime revenue (stated, else the fleet median) and its brand's own leg rates where it has them (measured on its leads / CRM = `offer_measured`, stated = `offer_stated`), else the fleet's. Pipe costs stay the fleet's measured ones. Needs `brandId` and the `x-org-id` header (400 `brand_required` / `org_required`; 404 `offer_not_found`). Still `estimated` whenever a rate or the lifetime revenue is not measured."
+              "description": "PER-OFFER price (2026-10-10, the signup's \"Your campaign\" step and payment wall): the same formula with THIS offer's lifetime revenue (stated, else the fleet median) and its brand's own leg rates where it has them (measured on its leads / CRM = `offer_measured`, stated = `offer_stated`), else the fleet's. Pipe costs stay the fleet's measured ones. ALSO applies the offer's stated STEPS (owner 2026-10-12): a funnel or path walking a step the offer's business does not have (brand-service `GET /orgs/brands/{brandId}/offers/{offerId}/steps`; Lead found and Paid client always count as present) leaves `rows` for `setAside`, with its missing steps; an offer that never stated its steps keeps the full list. A failed steps read is 502 `offer_steps_unreadable`, never an unfiltered list. Needs `brandId` and the `x-org-id` header (400 `brand_required` / `org_required`; 404 `offer_not_found`). Still `estimated` whenever a rate or the lifetime revenue is not measured."
             },
             "required": false,
-            "description": "PER-OFFER price (2026-10-10, the signup's \"Your campaign\" step and payment wall): the same formula with THIS offer's lifetime revenue (stated, else the fleet median) and its brand's own leg rates where it has them (measured on its leads / CRM = `offer_measured`, stated = `offer_stated`), else the fleet's. Pipe costs stay the fleet's measured ones. Needs `brandId` and the `x-org-id` header (400 `brand_required` / `org_required`; 404 `offer_not_found`). Still `estimated` whenever a rate or the lifetime revenue is not measured.",
+            "description": "PER-OFFER price (2026-10-10, the signup's \"Your campaign\" step and payment wall): the same formula with THIS offer's lifetime revenue (stated, else the fleet median) and its brand's own leg rates where it has them (measured on its leads / CRM = `offer_measured`, stated = `offer_stated`), else the fleet's. Pipe costs stay the fleet's measured ones. ALSO applies the offer's stated STEPS (owner 2026-10-12): a funnel or path walking a step the offer's business does not have (brand-service `GET /orgs/brands/{brandId}/offers/{offerId}/steps`; Lead found and Paid client always count as present) leaves `rows` for `setAside`, with its missing steps; an offer that never stated its steps keeps the full list. A failed steps read is 502 `offer_steps_unreadable`, never an unfiltered list. Needs `brandId` and the `x-org-id` header (400 `brand_required` / `org_required`; 404 `offer_not_found`). Still `estimated` whenever a rate or the lifetime revenue is not measured.",
             "name": "offerId",
             "in": "query"
           },
@@ -52363,6 +52703,151 @@
                         "ownRateLegs"
                       ],
                       "description": "Present on a per-offer read only."
+                    },
+                    "offerSteps": {
+                      "type": "object",
+                      "properties": {
+                        "stated": {
+                          "type": "boolean",
+                          "description": "false = the offer never stated its steps: nothing is set aside."
+                        },
+                        "steps": {
+                          "type": "array",
+                          "nullable": true,
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "description": "Step key."
+                              },
+                              "name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name"
+                            ]
+                          },
+                          "description": "The steps the offer's business has (null when never stated)."
+                        },
+                        "statedAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "alwaysPresent": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "description": "Step key."
+                              },
+                              "name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name"
+                            ]
+                          },
+                          "description": "Steps every business has by definition (Lead found, Paid client), counted present."
+                        }
+                      },
+                      "required": [
+                        "stated",
+                        "steps",
+                        "statedAt",
+                        "alwaysPresent"
+                      ],
+                      "description": "Per-offer read only (owner 2026-10-12): what the offer stated about the steps its business has."
+                    },
+                    "setAside": {
+                      "type": "object",
+                      "properties": {
+                        "total": {
+                          "type": "integer"
+                        },
+                        "truncated": {
+                          "type": "boolean"
+                        },
+                        "rows": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "line": {
+                                "type": "string"
+                              },
+                              "missingSteps": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "id": {
+                                      "type": "string",
+                                      "description": "Step key."
+                                    },
+                                    "name": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "id",
+                                    "name"
+                                  ]
+                                },
+                                "description": "The steps of this row the offer's business does not have: ask the client about them before proposing it."
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name",
+                              "line",
+                              "missingSteps"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "total",
+                        "truncated",
+                        "rows"
+                      ],
+                      "description": "Per-offer read only: the rows matching every other filter but walking a step the offer lacks (same order and limit as `rows`). Never proposable as is."
+                    },
+                    "setAsideByStep": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "setAsideCount": {
+                            "type": "integer",
+                            "description": "Set-aside rows lacking this step."
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "setAsideCount"
+                        ]
+                      },
+                      "description": "Per-offer read only: each missing step and how many set-aside rows it accounts for, most first."
                     }
                   },
                   "required": [
@@ -53521,10 +54006,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "PER-OFFER price (2026-10-10, the signup's \"Your campaign\" step and payment wall): the same formula with THIS offer's lifetime revenue (stated, else the fleet median) and its brand's own leg rates where it has them (measured on its leads / CRM = `offer_measured`, stated = `offer_stated`), else the fleet's. Pipe costs stay the fleet's measured ones. Needs `brandId` and the `x-org-id` header (400 `brand_required` / `org_required`; 404 `offer_not_found`). Still `estimated` whenever a rate or the lifetime revenue is not measured."
+              "description": "PER-OFFER price (2026-10-10, the signup's \"Your campaign\" step and payment wall): the same formula with THIS offer's lifetime revenue (stated, else the fleet median) and its brand's own leg rates where it has them (measured on its leads / CRM = `offer_measured`, stated = `offer_stated`), else the fleet's. Pipe costs stay the fleet's measured ones. ALSO applies the offer's stated STEPS (owner 2026-10-12): a funnel or path walking a step the offer's business does not have (brand-service `GET /orgs/brands/{brandId}/offers/{offerId}/steps`; Lead found and Paid client always count as present) leaves `rows` for `setAside`, with its missing steps; an offer that never stated its steps keeps the full list. A failed steps read is 502 `offer_steps_unreadable`, never an unfiltered list. Needs `brandId` and the `x-org-id` header (400 `brand_required` / `org_required`; 404 `offer_not_found`). Still `estimated` whenever a rate or the lifetime revenue is not measured."
             },
             "required": false,
-            "description": "PER-OFFER price (2026-10-10, the signup's \"Your campaign\" step and payment wall): the same formula with THIS offer's lifetime revenue (stated, else the fleet median) and its brand's own leg rates where it has them (measured on its leads / CRM = `offer_measured`, stated = `offer_stated`), else the fleet's. Pipe costs stay the fleet's measured ones. Needs `brandId` and the `x-org-id` header (400 `brand_required` / `org_required`; 404 `offer_not_found`). Still `estimated` whenever a rate or the lifetime revenue is not measured.",
+            "description": "PER-OFFER price (2026-10-10, the signup's \"Your campaign\" step and payment wall): the same formula with THIS offer's lifetime revenue (stated, else the fleet median) and its brand's own leg rates where it has them (measured on its leads / CRM = `offer_measured`, stated = `offer_stated`), else the fleet's. Pipe costs stay the fleet's measured ones. ALSO applies the offer's stated STEPS (owner 2026-10-12): a funnel or path walking a step the offer's business does not have (brand-service `GET /orgs/brands/{brandId}/offers/{offerId}/steps`; Lead found and Paid client always count as present) leaves `rows` for `setAside`, with its missing steps; an offer that never stated its steps keeps the full list. A failed steps read is 502 `offer_steps_unreadable`, never an unfiltered list. Needs `brandId` and the `x-org-id` header (400 `brand_required` / `org_required`; 404 `offer_not_found`). Still `estimated` whenever a rate or the lifetime revenue is not measured.",
             "name": "offerId",
             "in": "query"
           },
@@ -54066,6 +54551,91 @@
                         "ownRateLegs"
                       ],
                       "description": "Present on a per-offer read only."
+                    },
+                    "offerSteps": {
+                      "type": "object",
+                      "properties": {
+                        "stated": {
+                          "type": "boolean",
+                          "description": "false = the offer never stated its steps: nothing is set aside."
+                        },
+                        "steps": {
+                          "type": "array",
+                          "nullable": true,
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "description": "Step key."
+                              },
+                              "name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name"
+                            ]
+                          },
+                          "description": "The steps the offer's business has (null when never stated)."
+                        },
+                        "statedAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "alwaysPresent": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "description": "Step key."
+                              },
+                              "name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name"
+                            ]
+                          },
+                          "description": "Steps every business has by definition (Lead found, Paid client), counted present."
+                        }
+                      },
+                      "required": [
+                        "stated",
+                        "steps",
+                        "statedAt",
+                        "alwaysPresent"
+                      ],
+                      "description": "Per-offer read only (owner 2026-10-12): what the offer stated about the steps its business has."
+                    },
+                    "setAside": {
+                      "type": "boolean",
+                      "description": "Per-offer read only: true when this walks a step the offer's business does not have."
+                    },
+                    "missingSteps": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "description": "Step key."
+                          },
+                          "name": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name"
+                        ]
+                      },
+                      "description": "Per-offer read only: the steps it walks that the offer lacks (empty when kept)."
                     }
                   },
                   "required": [
