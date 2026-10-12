@@ -402,6 +402,14 @@ describe("pipe stats on the pipe detail (owner 2026-10-12, the staff Pipe page)"
     expect(n.ourPipesOnLeg.map((q) => q.channelSlug)).not.toContain("your-team-meeting-booking");
     expect(n.producingPipes.length).toBeGreaterThan(0);
     expect(n.producingPipes.every((q) => q.computedLegKey.endsWith("_to_conversation"))).toBe(true);
+    // A platform pipe sharing its leg with a customer team names the team channels and the leg's platform neighbours
+    // (owner 2026-10-12: "team alone vs team + this pipe"); a customer-team pipe has none.
+    const c = (calls[0]![1] as { teamCoLeg: { teamChannelSlugs: string[]; producingPipes: Array<{ computedLegKey: string }>; ourPipesOnLeg: Array<{ channelSlug: string }> } }).teamCoLeg;
+    expect(c.teamChannelSlugs).toContain("your-team-meeting-booking");
+    expect(c.ourPipesOnLeg.map((q) => q.channelSlug)).toContain("ai-meeting-booking");
+    expect(c.ourPipesOnLeg.map((q) => q.channelSlug)).not.toContain("your-team-meeting-booking");
+    expect(c.producingPipes.every((q) => q.computedLegKey.endsWith("_to_conversation"))).toBe(true);
+    expect(calls.at(-1)![1]).toMatchObject({ teamCoLeg: undefined });
   });
 
   it("an offer without its brand is refused; an unreadable producer is a named 502", async () => {
