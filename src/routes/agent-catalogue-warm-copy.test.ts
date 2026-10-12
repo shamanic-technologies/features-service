@@ -46,6 +46,10 @@ vi.mock("../lib/effective-conversion-rates.js", async (importOriginal) => ({
 }));
 
 const mem = vi.hoisted(() => ({ legs: [] as any[], steps: [] as any[], rates: [] as any[], chains: [] as any[], paths: [] as any[] }));
+vi.mock("../lib/workflow-leg-assignments.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  listLegAssignments: async () => [],
+}));
 vi.mock("../lib/channel-declarations-store.js", async () => {
   const { mergeDeclarations } = await import("../lib/channel-declarations.js");
   const { buildChannelCatalogue } = await import("../lib/channel-catalogue.js");

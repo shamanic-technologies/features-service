@@ -90,7 +90,7 @@ import { CHANNEL_STEPS, isDeclaredStepKey, type ChannelStepKey } from "./acquisi
 import type { PublicChannel } from "./channel-catalogue.js";
 import { defaultLegRatePct } from "./default-leg-rates.js";
 import { fleetMedianApplies, legPairKey, type FleetArrowMedians } from "./effective-conversion-rates.js";
-import { FUNNEL_LEGS, legacyFunnelIdAliasOf, servedLegKeyOf } from "./funnel-legs.js";
+import { FUNNEL_LEGS, legacyFunnelIdAliasOf, servedLegKeyOf, storedLegKeyOf } from "./funnel-legs.js";
 import { combinationKeyOf } from "./offer-sales-paths.js";
 import { faceOf, stableHash, type Face } from "./catalogue-faces.js";
 import { STEP_SIGNAL } from "./value-added.js";
@@ -193,6 +193,12 @@ export interface CatalogueInputs {
   channels: readonly PublicChannel[];
   /** Pipe ids a client read shows (published channel AND leg). Others are listed with `draft: true`. */
   publishedPipeIds: ReadonlySet<string>;
+  /**
+   * `<channel slug>|<stored leg key>` of every pipe holding at least one ACTIVE workflow (`workflow_leg_assignments`,
+   * keys through `storedLegKeyOf`). A platform pipe with a workflow can run (owner 2026-10-12: whether a pipe runs
+   * follows from facts, never a staff click). Absent = none known (the pipe then runs only if its channel is managed).
+   */
+  workflowPipeKeys?: ReadonlySet<string>;
   declaredSteps: readonly DeclaredStepInput[];
   /** Pipe id -> fleet measurement. Absent = nothing measured. */
   measurements: ReadonlyMap<string, PipeMeasurement>;
@@ -264,6 +270,8 @@ export interface CataloguePipe {
   triggerId: string | null;
   operatedBy: "platform" | "customer";
   managed: boolean;
+  /** At least one ACTIVE workflow is assigned to this pipe (`CatalogueInputs.workflowPipeKeys`). */
+  hasWorkflow: boolean;
   published: boolean;
   economics: Economics;
   measurement: PipeMeasurement | null;
@@ -380,6 +388,7 @@ function buildPipes(inputs: CatalogueInputs, valueOf: (step: string) => number |
         triggerId: t.triggerId,
         operatedBy: c.operatedBy,
         managed: c.managed,
+        hasWorkflow: inputs.workflowPipeKeys?.has(`${c.slug}|${storedLegKeyOf(t.legKey)}`) ?? false,
         published: inputs.publishedPipeIds.has(id),
         economics,
         measurement,
@@ -671,12 +680,13 @@ export const funnelFirstStep = (legs: readonly FunnelLeg[]): string | null => (l
 // ── Runnable: what we run TODAY (owner rule: a customer surface never presents what we do not run) ──
 
 /**
- * PURE: a pipe we can run today. Published (channel AND leg) and either run by the customer's own team
- * (nothing of ours to run) or on a MANAGED channel (`MANAGED_CHANNEL_SLUGS` + live sourcing origins: the
- * platform runs it, a workflow exists). An unmanaged platform channel (LinkedIn posting, ads, agencies)
- * is listed in the catalogue but campaign-service answers 409 `no_workflow` on launch.
+ * PURE: a pipe we can run today, from FACTS (owner 2026-10-12, never a staff click): run by the customer's own team
+ * (nothing of ours to run: always), or a platform pipe we run (a MANAGED channel: `MANAGED_CHANNEL_SLUGS` + live
+ * sourcing origins) or holding an ACTIVE workflow. A platform pipe with neither (LinkedIn posting, ads, agencies) is
+ * listed but campaign-service answers 409 `no_workflow` on launch. `published` is true for every declaration since
+ * 2026-10-12 (created live); it stays only as staff's unpublish switch.
  */
-export const pipeRunnable = (p: CataloguePipe): boolean => p.published && (p.operatedBy === "customer" || p.managed);
+export const pipeRunnable = (p: CataloguePipe): boolean => p.published && (p.operatedBy === "customer" || p.managed || p.hasWorkflow);
 
 /**
  * PURE: a sales funnel's TYPE (owner 2026-10-10): `proactive` when at least one of its pipes is proactive

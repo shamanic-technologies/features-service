@@ -443,7 +443,7 @@ export const channelTriggerTypes = pgTable("channel_trigger_types", {
 /**
  * CHANNELS DECLARED AT RUN TIME (`lib/channel-declarations.ts`, owner 2026-10-09: a declaration is DATA,
  * never a PR). Same statement a seeded feature's acquisition-channel blob makes; merged into the catalogue
- * builder beside the feature rows. Invisible to every client read until `published`. The slug shares the
+ * builder beside the feature rows. Created `published` (live, owner 2026-10-12); hidden from client reads only if staff unpublishes it. The slug shares the
  * feature-slug namespace (a declared slug never equals a feature's).
  */
 export const declaredChannels = pgTable("declared_channels", {

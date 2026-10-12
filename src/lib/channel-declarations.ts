@@ -11,8 +11,8 @@
  *
  * STAFF ONLY (service key, `/internal/declarations/*`): a channel is shared by every client, so a write
  * changes what every org can buy. `requestedByOrgId` records which client asked (provenance, never scope).
- * A declared channel or leg is INVISIBLE to every client read (`/public/channels`, the offer sales paths)
- * until staff PUBLISHES it; the internal reads list everything with `published` stated.
+ * A declared channel or leg is LIVE the moment it is created (owner 2026-10-12: never a draft waiting on staff
+ * publish); whether a pipe RUNS follows from facts (`pipeRunnable`). `published: false` stays staff's hide switch.
  *
  * ── THE TRIGGER GUARANTEE SURVIVES GOING LIVE ──────────────────────────────────────────────────────
  *

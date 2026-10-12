@@ -5958,7 +5958,7 @@ registry.registerPath({
 // ── Run-time declarations: channels, legs, trigger types, sales paths ────────
 
 const DECLARATIONS_DESCRIPTION =
-  "RUN-TIME DECLARATIONS (owner 2026-10-09: a declaration is DATA, never a PR). A staff caller (the dashboard Copilot through the gateway) creates channels, legs on a channel, trigger types and sales paths. Service-key only: a channel is shared by every client, so a write changes what every org can buy; `requestedByOrgId` records which client asked (provenance, never scope). A declared channel or leg is INVISIBLE to every client read (`/public/channels`, `/offers/:id/sales-paths`) until staff publishes it (`published: true` on the channel AND the leg). Every write states `createdBy` / `updatedBy`. Errors answer `{error, reason}` with a named `reason`.";
+  "RUN-TIME DECLARATIONS (owner 2026-10-09: a declaration is DATA, never a PR). A staff caller (the dashboard Copilot through the gateway) creates channels, legs on a channel, trigger types and sales paths. Service-key only: a channel is shared by every client, so a write changes what every org can buy; `requestedByOrgId` records which client asked (provenance, never scope). A declared channel or leg is LIVE the moment it is created, for every client (owner 2026-10-12: never a draft waiting on staff publish); whether a pipe can RUN follows from facts (`runnable`: the customer's own team always, a platform pipe on a managed channel or holding an active workflow). Staff may still set `published: false` to hide one. Every write states `createdBy` / `updatedBy`. Errors answer `{error, reason}` with a named `reason`.";
 
 const declarationErrors = {
   400: { description: "A field is missing or invalid (`reason` names it, e.g. `slug_invalid`, `step_unrecognised`, `trigger_required`, `path_not_chained`)." },
@@ -6085,7 +6085,7 @@ registry.registerPath({
   method: "post",
   path: "/internal/declarations/channels",
   summary: "Declare a channel (internal, api-key)",
-  description: `${DECLARATIONS_DESCRIPTION} Created UNPUBLISHED with no leg; add legs, then publish.`,
+  description: `${DECLARATIONS_DESCRIPTION} Created live with no leg; add legs.`,
   tags: ["Internal"],
   request: {
     body: {
@@ -6170,7 +6170,7 @@ registry.registerPath({
   method: "post",
   path: "/internal/declarations/channels/{slug}/legs",
   summary: "Declare a leg on a channel (internal, api-key)",
-  description: `${DECLARATIONS_DESCRIPTION} Works on a declared channel or one stated in code. A proactive leg names no trigger; a reactive leg names ONE trigger that something FIRES today: a trigger nothing fires is refused with 409 \`trigger_not_fired\` (a leg on it would wait forever). Created UNPUBLISHED.`,
+  description: `${DECLARATIONS_DESCRIPTION} Works on a declared channel or one stated in code. A proactive leg names no trigger; a reactive leg names ONE trigger that something FIRES today: a trigger nothing fires is refused with 409 \`trigger_not_fired\` (a leg on it would wait forever). Created live.`,
   tags: ["Internal"],
   request: {
     params: z.object({ slug: z.string() }),
@@ -6589,7 +6589,7 @@ catalogueCreate(
 catalogueCreate(
   "/internal/catalogue/pipes",
   "Declare a pipe (internal, api-key)",
-  "One leg on one channel (a declared leg, `POST /internal/declarations/channels/{slug}/legs` rules: a reactive pipe names a trigger something fires). A leg out of a step nothing rates states `conversionRatePct` (400 `conversion_rate_required`). Named with a never-given bird. Created as a draft: clients see it once staff publishes the leg.",
+  "One leg on one channel (a declared leg, `POST /internal/declarations/channels/{slug}/legs` rules: a reactive pipe names a trigger something fires). A leg out of a step nothing rates states `conversionRatePct` (400 `conversion_rate_required`). Named with a never-given bird. Created live (owner 2026-10-12): clients see it at once.",
   z.object({ channelSlug: z.string(), fromStep: z.string().nullable().describe("null = from nothing."), toStep: z.string(), mode: z.enum(["proactive", "reactive"]), triggerId: z.string().nullable().optional(), conversionRatePct: z.number().optional(), ...catalogueActor }),
   cataloguePipeDetail,
 );
