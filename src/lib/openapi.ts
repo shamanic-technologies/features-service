@@ -3025,6 +3025,8 @@ const livedSalesPathsResponseRef = registry.register(
     since: z.literal("inception").describe("Always since inception: a lived path is read over everyone ever reached, never a window."),
     totals: z.object({
       ...livedTotalsCore,
+      people: z.number().int().describe("Distinct PEOPLE on the paths (one person on two offers = one person, two leads)."),
+      peopleEmailed: z.number().int().describe("Distinct people one of our emails was SENT to: equals GET /brands/{brandId}/revenue outcomes.sending.recipientsSent (not recipientsContacted, which also counts people queued in a sequence and never sent). The rest of `people` entered on a later step (a meeting statement, an engagement with the video) with no email."),
       unattributedCostUsd: z.number().describe("Spend no person carries (Σ unattributedCost)."),
       unattributedCost: z.array(
         z.object({

@@ -18,6 +18,7 @@ interface RawFact {
 interface RawAct {
   campaignId?: unknown;
   firstAt?: unknown;
+  kind?: unknown;
 }
 interface RawJourney {
   leadId?: unknown;
@@ -46,7 +47,10 @@ export function toJourney(raw: RawJourney): Journey {
         valueCents: typeof f.valueCents === "number" && Number.isFinite(f.valueCents) ? f.valueCents : null,
       };
     }),
-    acts: (raw.acts ?? []).map((a) => ({ campaignId: str(a.campaignId), firstActedAt: str(a.firstAt) })),
+    acts: (raw.acts ?? []).map((a) => {
+      const kind = str(a.kind);
+      return { campaignId: str(a.campaignId), firstActedAt: str(a.firstAt), ...(kind ? { kind } : {}) };
+    }),
   };
 }
 
