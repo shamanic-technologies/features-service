@@ -334,6 +334,7 @@ async function loadModel(offer: OfferContext | null = null): Promise<Loaded> {
     measurements: measurements.byPipe,
     fleetMedians: medians,
     lifetimeRevenueUsd: offer ? offer.lifetimeRevenueUsd : ltr.usd,
+    lifetimeRevenueBasis: offer?.lifetimeRevenueSource === "offer_stated" ? "stated" : "fleet",
     ...(offer ? { offerRates: offer.rates } : {}),
     triggers,
   });
@@ -410,6 +411,20 @@ const econWire = (e: Economics, per: string | null) => ({ costUsd: e.costUsd, co
 const econDetail = (e: Economics, per: string | null) => ({ ...econWire(e, per), learningReason: e.reason, estimates: e.estimates });
 
 const PER_PAYING_CLIENT = "per paying client";
+
+/**
+ * A funnel's EXPECTED figure (owner 2026-10-11 "A ROI and a % Conversion are never blank"; `lib/agent-catalogue.ts`
+ * header): the row carries the headline, the detail adds each leg's rate and cost with what it rests on.
+ */
+const expectedRowOf = (e: CatalogueFunnel["expected"]) => ({
+  status: "expected" as const,
+  costUsd: e.costUsd,
+  costPer: e.costUsd === null ? null : PER_PAYING_CLIENT,
+  roi: e.roi,
+  basis: e.basis,
+  unavailableReason: e.unavailableReason,
+});
+const expectedDetailOf = (e: CatalogueFunnel["expected"]) => ({ ...expectedRowOf(e), lifetimeRevenueUsd: e.lifetimeRevenueUsd, lifetimeRevenueBasis: e.lifetimeRevenueBasis, legs: e.legs });
 /** "per positive reply": the outcome a per-outcome cost is counted in (the step's label, lower case). */
 const perStep = (m: CatalogueModel, stepKey: string): string =>
   stepKey === "paid_client" ? PER_PAYING_CLIENT : `per ${stepLabel(m, stepKey).toLowerCase()}`;
@@ -470,6 +485,7 @@ const funnelRowOf = (f: CatalogueFunnel, name: string, copy: ReturnType<typeof f
   ...copy,
   type: funnelTypeOf(f),
   ...econWire(f.economics, PER_PAYING_CLIENT),
+  expected: expectedRowOf(f.expected),
   runnable: funnelRunnable(f),
   mixed: funnelMixed(f),
   ...(funnelPublished(f) ? {} : { draft: true }),
@@ -897,6 +913,7 @@ async function funnelDetail(model: CatalogueModel, f: CatalogueFunnel, names: Ma
         : null,
     })),
     ...econDetail(f.economics, PER_PAYING_CLIENT),
+    expected: expectedDetailOf(f.expected),
     costUnit: "per_paying_client",
     lifetimeRevenueUsd: model.lifetimeRevenueUsd,
     lifetimeRevenueSource: offer ? offer.lifetimeRevenueSource : "fleet_median_stated",

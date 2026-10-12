@@ -6408,7 +6408,40 @@ const catalogueGlyphRow = z.object({ id: z.string(), name: z.string(), icon: z.s
 const cataloguePipeRow = catalogueGlyphRow.extend({ mode: z.enum(["proactive", "reactive"]), ...catalogueRunnableField, draft: z.boolean().optional() });
 const catalogueChannelRow = z.object({ id: z.string().describe("The channel slug."), name: z.string(), icon: z.string(), line: z.string(), ...catalogueEcon, ...catalogueRunnableField });
 const catalogueFunnelCopy = { ...catalogueTriggerField, triggerLabel: z.string().nullable().describe("A REACTIVE funnel: the customer label of what starts it (e.g. `Positive replies`), shown as a tag. Null on a proactive funnel.") };
-const catalogueFunnelRow = z.object({ ...catalogueFunnelCopy, id: z.string(), name: z.string(), face: z.string().describe("Path of the name's face SVG on this service (`GET /public/catalogue/faces/{name}.svg`)."), line: z.string().describe("Who works each leg, in order."), ...catalogueEcon, ...catalogueRunnableField, mixed: z.boolean().describe("A proactive pipe AND a reactive pipe we run (platform-operated) in one funnel: its budget caps both, so the reactive part can starve the proactive one (owner 2026-10-10). A mixed funnel is never `runnable`; propose a proactive funnel and a separate reactive one."), draft: z.boolean().optional() });
+const catalogueExpectedBasis = z.enum(["measured", "stated", "fleet", "default"]);
+const catalogueExpectedRow = z
+  .object({
+    status: z.literal("expected").describe("Always `expected`: an assumption-backed figure, never measured. Show it with an `expected` mark."),
+    costUsd: z.number().nullable().describe("Expected cost per paying client, USD."),
+    costPer: z.string().nullable().describe("`per paying client`; null when `costUsd` is null."),
+    roi: z.number().nullable().describe("Expected return multiple: (lifetime revenue - what the people it takes over were already worth) / expected cost per paying client."),
+    basis: catalogueExpectedBasis.nullable().describe("The WEAKEST input it rests on (measured < stated < fleet < default). Null with no figure."),
+    unavailableReason: z
+      .string()
+      .nullable()
+      .describe("Why there is no figure: `no_lifetime_revenue`, `leg_unrated:<leg>`, `pipe_unpriced:<pipe id>`, `leg_without_pipe:<leg>`, `customer_time_only` (nothing of ours costs anything), `takeover_step_unvalued` (cost served, roi null). Null with a figure."),
+  })
+  .describe(
+    "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: mature workflow > seeded default > market benchmark > its early flash figure > another channel's mature price on the same leg (the highest); the customer's team costs 0. Leg rate: the path's (brand measured / stated > fleet median > default) > entry default. On a measured/estimated funnel it equals `costUsd`/`roi`.",
+  );
+const catalogueExpectedDetail = catalogueExpectedRow.extend({
+  lifetimeRevenueUsd: z.number().nullable(),
+  lifetimeRevenueBasis: catalogueExpectedBasis.nullable().describe("`stated` (the offer's own) or `fleet` (fleet median)."),
+  legs: z.array(
+    z.object({
+      legKey: z.string(),
+      ratePct: z.number().nullable().describe("Null on the entry leg (its rate prices nothing) or when unrated."),
+      rateSource: z.enum(["fleet_median", "default", "measured_pipe", "offer_measured", "offer_stated", "default_entry"]).nullable(),
+      rateBasis: catalogueExpectedBasis.nullable(),
+      outcomesNeededPerPayingClient: z.number().nullable(),
+      pipeId: z.string().nullable(),
+      costPerOutcomeUsd: z.number().nullable().describe("0 on a leg the customer's own team works."),
+      costSource: z.enum(["workflow", "default", "benchmark", "flash", "same_leg_fleet", "customer_team"]).nullable(),
+      costBasis: catalogueExpectedBasis.nullable().describe("Null on a customer-team leg (costs nothing) or when unpriced."),
+    }),
+  ),
+});
+const catalogueFunnelRow = z.object({ ...catalogueFunnelCopy, id: z.string(), name: z.string(), face: z.string().describe("Path of the name's face SVG on this service (`GET /public/catalogue/faces/{name}.svg`)."), line: z.string().describe("Who works each leg, in order."), ...catalogueEcon, expected: catalogueExpectedRow, ...catalogueRunnableField, mixed: z.boolean().describe("A proactive pipe AND a reactive pipe we run (platform-operated) in one funnel: its budget caps both, so the reactive part can starve the proactive one (owner 2026-10-10). A mixed funnel is never `runnable`; propose a proactive funnel and a separate reactive one."), draft: z.boolean().optional() });
 const catalogueFace = z.object({ animal: z.string(), color: z.string(), eyes: z.string(), mouth: z.string(), accessory: z.string(), svgPath: z.string() });
 
 const catalogueStepDetail = z.object({
@@ -6439,7 +6472,7 @@ const catalogueFunnelDetail = z.object({
   ...catalogueFunnelCopy,
   object: z.literal("sales_funnel"), id: z.string(), name: z.string(), face: catalogueFace, line: z.string(), salesPathId: z.string(), salesPathName: z.string().nullable(),
   legs: z.array(z.object({ legKey: z.string(), fromStep: z.string().nullable().describe("Null = Start."), toStep: z.string(), channels: z.array(z.object({ id: z.string().describe("The channel slug."), name: z.string(), runByUs: z.boolean().describe("False = the customer's own team (`Your Team`).") })).describe("The ONE channel working the leg (owner 2026-10-11: one channel per leg, the sourcing leg included: one source, or Lead Sourcing)."), pipes: z.array(z.object({ id: z.string(), name: z.string().nullable(), channelSlug: z.string(), runnable: z.boolean() })).describe("The leg's pipe, as a list of exactly one."), ratePct: z.number().nullable(), rateSource: z.enum(["fleet_median", "default", "measured_pipe", "offer_measured", "offer_stated"]).nullable().describe("`fleet_median` = median of the rates brands STATED (>= 5 brands); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion; per-offer read only: `offer_measured` (the brand's own measured rate) / `offer_stated` (the rate it stated). Null on the entry leg (not used by the cost)."), rateMeasured: z.boolean(), outcomesNeededPerPayingClient: z.number().nullable(), pipe: z.object({ id: z.string(), name: z.string().nullable(), line: z.string(), mode: z.enum(["proactive", "reactive"]), ...catalogueEcon }).nullable().describe("The leg's one pipe. On the sourcing leg (Start -> Lead found) it adds its OWN cost (owner 2026-10-11): cost per lead found x the leads one paying client needs; the outreach pipe's cost is its outreach alone, so two funnels that differ only by their source price differently.") })),
-  ...catalogueEconDetail, costUnit: z.literal("per_paying_client"), lifetimeRevenueUsd: z.number().nullable(), lifetimeRevenueSource: z.enum(["fleet_median_stated", "offer_stated", "fleet_median"]).nullable().describe("The lifetime revenue the roi divides: `fleet_median_stated` on the fleet catalogue; on a per-offer read `offer_stated` (the client value the customer typed) or `fleet_median` (the offer states none)."), ...catalogueRunnableField, mixed: z.boolean().describe("A proactive pipe AND a reactive pipe we run (platform-operated) in one funnel: its budget caps both, so the reactive part can starve the proactive one (owner 2026-10-10). A mixed funnel is never `runnable`; propose a proactive funnel and a separate reactive one."), draft: z.boolean(),
+  ...catalogueEconDetail, expected: catalogueExpectedDetail, costUnit: z.literal("per_paying_client"), lifetimeRevenueUsd: z.number().nullable(), lifetimeRevenueSource: z.enum(["fleet_median_stated", "offer_stated", "fleet_median"]).nullable().describe("The lifetime revenue the roi divides: `fleet_median_stated` on the fleet catalogue; on a per-offer read `offer_stated` (the client value the customer typed) or `fleet_median` (the offer states none)."), ...catalogueRunnableField, mixed: z.boolean().describe("A proactive pipe AND a reactive pipe we run (platform-operated) in one funnel: its budget caps both, so the reactive part can starve the proactive one (owner 2026-10-10). A mixed funnel is never `runnable`; propose a proactive funnel and a separate reactive one."), draft: z.boolean(),
 });
 const catalogueWorkflowDetail = z.object({
   object: z.literal("workflow"), id: z.string(), name: z.string(), icon: z.string(), color: z.string(), pipeId: z.string(), rank: z.number().int(), assignment: z.string(), selectable: z.boolean(),
