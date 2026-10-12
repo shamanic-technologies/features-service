@@ -50,7 +50,7 @@ import { fetchFleetServeDayCounts } from "./fleet-positive-repliers.js";
 import { fetchFollowupActionRows, type FollowupActionRow } from "./followup-actions-client.js";
 import { fetchStepOutcomes } from "./step-outcomes-client.js";
 import { ACT_IS_OUTCOME_STEPS, OUTCOME_EVENT_OF_STEP, earliestOutcomeByLead, internalPipeWork } from "./funnel-campaign-activity.js";
-import { fetchRanCounts } from "./on-demand-pipe-fleet.js";
+import { fetchLeadsFound } from "./on-demand-pipe-fleet.js";
 import { INLINE_TRIGGER_IDS } from "./channel-triggers.js";
 import { RUNS_CAMPAIGN_IDS_PER_REQUEST } from "./brand-spend-by-day-client.js";
 import { fetchWithRetry } from "./fetch-retry.js";
@@ -270,9 +270,11 @@ export interface PipeStatsPipe {
 }
 
 /** PURE: the measure rule's kind (where the leg starts, its trigger), never the channel. */
-export function pipeStatsKind(p: Pick<PipeStatsPipe, "fromStep" | "triggerId"> & Partial<Pick<PipeStatsPipe, "operatedBy">>): PipeStatsKind {
+export function pipeStatsKind(p: Pick<PipeStatsPipe, "fromStep" | "triggerId"> & Partial<Pick<PipeStatsPipe, "toStep">> & Partial<Pick<PipeStatsPipe, "operatedBy">>): PipeStatsKind {
   if (p.operatedBy === "customer") return "customer_team";
-  if (p.triggerId !== null && INLINE_TRIGGER_IDS.has(p.triggerId)) return "on_demand";
+  // A SOURCING pipe (Start -> Lead found) is measured on the leads it found, whatever its mode: proactive since
+  // 2026-10-12 (finds on its own), an inline trigger before.
+  if ((p.fromStep === null && p.toStep === "lead_found") || (p.triggerId !== null && INLINE_TRIGGER_IDS.has(p.triggerId))) return "on_demand";
   if (p.fromStep !== null && p.fromStep !== "lead_found") return "internal";
   return "entry";
 }
@@ -322,9 +324,9 @@ async function internalVolumes(p: PipeStatsPipe, campaigns: readonly FleetLegCam
 }
 
 async function onDemandVolumes(p: PipeStatsPipe, ids: ReadonlySet<string>): Promise<{ volumes: VolumeInput[]; since: string | null }> {
-  const reads = await Promise.all([...INLINE_TRIGGER_IDS].map((t) => fetchRanCounts(t)));
-  const since = reads.map((r) => r.recordedSince).filter((s): s is string => s !== null).sort()[0] ?? null;
-  const found = reads.flatMap((r) => r.counts).filter((c) => ids.has(c.campaignId)).reduce((a, c) => a + c.ran, 0);
+  const read = await fetchLeadsFound();
+  const since = read.recordedSince;
+  const found = read.counts.filter((c) => ids.has(c.campaignId)).reduce((a, c) => a + c.ran, 0);
   return { volumes: [{ key: "outcomes", label: p.toStepLabel, role: "outcome", datedBy: null, daily: new Map(), undated: found }], since };
 }
 

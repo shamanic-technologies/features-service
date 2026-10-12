@@ -84,9 +84,10 @@ describe("the sourcing features are channels like any other", () => {
       expect(t.from).toBeNull();
       expect(t.to.key).toBe("lead_found");
       expect(t.to.label).toBe("Lead found");
-      expect(t.reactive).toBe(true);
-      expect(t.mode).toBe("reactive");
-      expect(t.triggerId).toBe("on_demand");
+      // Proactive (owner 2026-10-12): every pipe is independent, a source finds leads on its own.
+      expect(t.reactive).toBe(false);
+      expect(t.mode).toBe("proactive");
+      expect(t.triggerId).toBeNull();
       expect(t.minimumMonthlyBudgetCents).toBe(0);
       expect(c.trigger).toBe("daily_budget");
       expect(c.managed).toBe(true);
@@ -99,7 +100,7 @@ describe("the sourcing features are channels like any other", () => {
   it("the deprecated origin carries the same statement on its feature row", () => {
     const apify = SEED_FEATURES.find((f) => f.slug === "sourcing-apify-search")!;
     expect(apify.status).toBe("deprecated");
-    expect(apify.acquisitionChannel?.stepTransitions).toEqual([{ from: null, to: "lead_found", mode: "reactive", triggerId: "on_demand" }]);
+    expect(apify.acquisitionChannel?.stepTransitions).toEqual([{ from: null, to: "lead_found", mode: "proactive", triggerId: null }]);
     expect(SOURCING_ORIGIN_SLUGS.every((s) => SEED_FEATURES.find((f) => f.slug === s)?.acquisitionChannel != null)).toBe(true);
   });
 

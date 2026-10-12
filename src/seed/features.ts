@@ -1094,9 +1094,11 @@ for (const origin of SOURCING_ORIGINS) {
       family: "sourcing",
       operatedBy: "platform",
       performedBy: "software",
-      // REACTIVE, ON DEMAND (owner 2026-10-11, `on_demand` in `lib/channel-triggers.ts`): it finds a lead only when an
-      // outbound campaign asks for one, as its own run (campaign-service `POST /internal/on-demand-runs`).
-      stepTransitions: [{ from: null, to: "lead_found", mode: "reactive", triggerId: "on_demand" }],
+      // PROACTIVE (owner 2026-10-12, supersedes 2026-10-11 "on demand"): EVERY PIPE IS INDEPENDENT. A source finds
+      // leads ON ITS OWN, every tick, inside its funnel campaign's caps, never waiting for a later pipe to ask; the
+      // pipe after it works the leads it found. Same rule for every source, so a funnel Start -> Lead found -> Paid
+      // client (the customer's team) finds leads and emails nobody.
+      stepTransitions: [{ from: null, to: "lead_found", mode: "proactive", triggerId: null }],
       terms: terms(0, 1, 1),
     },
     supersededBySlug: null,
@@ -1110,7 +1112,7 @@ for (const origin of SOURCING_ORIGINS) {
 /**
  * LEAD SOURCING (owner 2026-10-11, `lib/sourcing-origins.ts` `LEAD_SOURCING_CHANNEL`): the sourcing channel that
  * picks its own sources (human-service decides which origins, per brand, by ROI and fit). Same leg and terms as an
- * origin: Start -> Lead found, reactive on `on_demand`, run by us. A sales funnel names ONE channel on that
+ * origin: Start -> Lead found, proactive (finds leads on its own, owner 2026-10-12), run by us. A sales funnel names ONE channel on that
  * leg: one origin, or this one.
  */
 SEED_FEATURE_DEFS.push({
@@ -1125,7 +1127,7 @@ SEED_FEATURE_DEFS.push({
     family: "sourcing",
     operatedBy: "platform",
     performedBy: "software",
-    stepTransitions: [{ from: null, to: "lead_found", mode: "reactive", triggerId: "on_demand" }],
+    stepTransitions: [{ from: null, to: "lead_found", mode: "proactive", triggerId: null }],
     terms: terms(0, 1, 1),
   },
   supersededBySlug: null,

@@ -23,7 +23,7 @@ describe("every leg states proactive or reactive, and a reactive leg names one d
       ["proactive", null],
     ]);
     expect(leg("google-ads").every((t) => t.mode === "proactive")).toBe(true);
-    expect(leg("sourcing-apollo-cold-filters").map((t) => [t.mode, t.triggerId])).toEqual([["reactive", "on_demand"]]);
+    expect(leg("sourcing-apollo-cold-filters").map((t) => [t.mode, t.triggerId])).toEqual([["proactive", null]]);
     expect(leg("ai-meeting-booking").map((t) => [t.mode, t.triggerId])).toEqual([["reactive", "positive_reply_received"]]);
     expect(leg("ai-instant-call").map((t) => [t.mode, t.triggerId])).toEqual([["reactive", "positive_reply_received"]]);
     expect(leg("agency-meeting-attendance").map((t) => [t.mode, t.triggerId])).toEqual([["reactive", "meeting_booked"]]);
