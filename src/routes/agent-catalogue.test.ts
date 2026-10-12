@@ -546,9 +546,13 @@ describe("agent catalogue creates (data, never a PR)", () => {
     expect(none.status).toBe(400);
     expect(none.body.reason).toBe("leg_without_channel");
     expect(none.body.error).toContain("start_to_lead_found");
-    const crmUnderCold = await request(app).post("/internal/catalogue/sales-funnels").set(KEY).send({ pipeIds: ["sourcing-crm-contacts|start_to_lead_found", ...tail], createdBy: "agent" });
-    expect(crmUnderCold.status).toBe(400);
-    expect(crmUnderCold.body.reason).toBe("funnel_invalid");
+    // A source only feeds a channel that takes it: cold WhatsApp takes Your CRM Contacts only (owner 2026-10-12).
+    const coldFiltersUnderWhatsapp = await request(app)
+      .post("/internal/catalogue/sales-funnels")
+      .set(KEY)
+      .send({ pipeIds: ["sourcing-apollo-cold-filters|start_to_lead_found", "cold-whatsapp-outreach|lead_found_to_conversation", "your-team-reply-closing|conversation_to_paid_client"], createdBy: "agent" });
+    expect(coldFiltersUnderWhatsapp.status).toBe(400);
+    expect(coldFiltersUnderWhatsapp.body.reason).toBe("funnel_invalid");
     expect(mem.paths).toHaveLength(0);
 
     const ls = await request(app).post("/internal/catalogue/sales-funnels").set(KEY).send({ pipeIds: ["lead-sourcing|start_to_lead_found", ...tail], createdBy: "agent" });

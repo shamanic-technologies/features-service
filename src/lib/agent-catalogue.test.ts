@@ -13,6 +13,7 @@ import {
   funnelsOfPath,
   funnelTypeOf,
   funnelMixed,
+  funnelRunnable,
   legacyFunnelIdAliasOf,
   legPipes,
   legStepsOf,
@@ -231,9 +232,25 @@ describe("every leg a channel, every proactive funnel from Start (owner 2026-10-
     const sources = funnelsOfPath(model, path)
       .filter((f) => f.legs[1].pipe!.channelSlug === "sales-cold-email-outreach" && f.legs[2].pipe!.channelSlug === "your-team-meeting-booking")
       .map((f) => f.legs[0].pipe!.channelSlug);
-    expect(sources).toEqual(expect.arrayContaining(["lead-sourcing", "sourcing-apollo-cold-filters", "sourcing-apollo-buying-signals", "sourcing-linkedin-engagement-signals"]));
-    // A source only feeds an outreach channel that takes it: your CRM contacts never feed cold email.
-    expect(sources).not.toContain("sourcing-crm-contacts");
+    // Your CRM contacts feed cold email too (owner 2026-10-12): the brand's own people carry an email.
+    expect(sources).toEqual(expect.arrayContaining(["lead-sourcing", "sourcing-apollo-cold-filters", "sourcing-apollo-buying-signals", "sourcing-linkedin-engagement-signals", "sourcing-crm-contacts"]));
+  });
+
+  it("Your CRM Contacts -> Cold WhatsApp Outreach -> your team is a funnel; WhatsApp takes no other source (owner 2026-10-12)", () => {
+    const id = "start_to_lead_found@sourcing-crm-contacts+lead_found_to_conversation@cold-whatsapp-outreach+conversation_to_paid_client";
+    const f = funnelById(model, id)!;
+    expect(f.id).toBe(id);
+    expect(f.legs.map((l) => l.pipe!.channelSlug)).toEqual(["sourcing-crm-contacts", "cold-whatsapp-outreach", "your-team-reply-closing"]);
+    expect(funnelMixed(f)).toBe(false);
+    const path = model.paths.get(f.pathId)!;
+    const whatsappSources = funnelsOfPath(model, path)
+      .filter((g) => g.legs[1].pipe!.channelSlug === "cold-whatsapp-outreach")
+      .map((g) => g.legs[0].pipe!.channelSlug);
+    expect([...new Set(whatsappSources)]).toEqual(["sourcing-crm-contacts"]);
+    // No workflow on the WhatsApp pipe yet: offered, not runnable. Runnable the moment one is assigned.
+    expect(funnelRunnable(f)).toBe(false);
+    const withWorkflow = buildCatalogueModel(inputs({ workflowPipeKeys: new Set(["cold-whatsapp-outreach|start_to_conversation", "sourcing-crm-contacts|start_to_lead_found"]) }));
+    expect(funnelRunnable(funnelById(withWorkflow, id)!)).toBe(true);
   });
 
   it("the sourcing leg adds its OWN cost: two funnels that differ only by their source price differently (owner 2026-10-11)", () => {
@@ -252,7 +269,7 @@ describe("every leg a channel, every proactive funnel from Start (owner 2026-10-
   });
 
   it("a funnel id that names no funnel, and one only its legacy spelling resolves, are told apart", () => {
-    expect(funnelById(model, "start_to_lead_found@sourcing-crm-contacts+lead_found_to_conversation@sales-cold-email-outreach+conversation_to_meeting_booked+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client")).toBeNull();
+    expect(funnelById(model, "start_to_lead_found@sourcing-apollo-cold-filters+lead_found_to_conversation@cold-whatsapp-outreach+conversation_to_meeting_booked+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client")).toBeNull();
     expect(legacyFunnelIdAliasOf("conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client")).toBeNull();
   });
 });

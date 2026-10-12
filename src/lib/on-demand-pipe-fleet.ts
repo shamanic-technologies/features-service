@@ -89,7 +89,7 @@ export async function fetchLeadsFound(): Promise<{ recordedSince: string | null;
   const url = process.env.LEAD_SERVICE_URL;
   const apiKey = process.env.LEAD_SERVICE_API_KEY;
   if (!url || !apiKey) throw new Error("LEAD_SERVICE_URL or LEAD_SERVICE_API_KEY not configured");
-  const response = await fetchWithRetry(`${url}/internal/source-campaigns/leads-found`, { headers: { "x-api-key": apiKey } });
+  const response = await fetchWithRetry(`${url}/internal/source-campaigns/leads-found`, { headers: { "x-api-key": apiKey } }, { shareForMs: 15_000 });
   if (!response.ok) throw new Error(`lead-service leads-found failed (${response.status}): ${await response.text()}`);
   const body = (await response.json()) as { counts?: unknown; recordedSince?: unknown };
   if (!Array.isArray(body.counts)) throw new Error("lead-service leads-found returned no counts array");

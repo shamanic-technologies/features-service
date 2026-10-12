@@ -188,19 +188,21 @@ export function sourcingOriginOfList(list: string | null | undefined): SourcingO
 }
 
 /**
- * The channels whose runs SOURCE leads, and the origins each one serves from. A spend read about a
- * channel counts ONLY its own origins, so a brand running two of them never counts one channel's
- * sourcing under the other. Measured 2026-10-07 (runs × human-service audiences, lifetime):
- * `sales-cold-email-outreach` served apollo (202k) + apify (529) audiences, `feedback-request-cold-
- * email-outreach` apollo (519, inactive since 2026-08-25), `sales-crm-email-outreach` no audience so far,
- * and human-service routes CRM audiences onto it (never onto cold email). A channel that starts serving
- * another origin must list it here, or its spend reads lose that sourcing cost once serves carry the
- * origin slug.
+ * The channels whose runs SOURCE leads, and the origins each one serves from (= the sourcing pipes that may feed it in a
+ * sales funnel, `pipeFeeds`). ONE map for every outreach channel: the catalogue builds the funnels from it, billing counts
+ * a funnel's source campaigns in its budget from it (`/public/sourcing-origins` `originsByChannel`), the spend reads count
+ * and re-attribute sourcing from it. A channel that starts serving another origin must list it here.
+ * Measured 2026-10-07 (runs × human-service audiences, lifetime): `sales-cold-email-outreach` served apollo (202k) +
+ * apify (529) audiences, `feedback-request-cold-email-outreach` apollo (519, inactive since 2026-08-25),
+ * `sales-crm-email-outreach` (deprecated 2026-10-03) no audience.
+ * YOUR CRM CONTACTS (owner 2026-10-12): the brand's own people are written to on the channels that can reach them: cold
+ * email (they carry an email) and cold WhatsApp (crm-service sends from the brand's linked number). WhatsApp takes the
+ * CRM origin ONLY: it is the one origin whose people carry a phone number we send to; a cold-filters lead carries an
+ * email. An origin feeding two channels is safe for money: within an offer or a funnel campaign the sourcing pipe owns
+ * its rows (`lib/pipe-spend-attribution.ts`), and a brand-wide channel read releases every origin feeding it.
  */
 // Lead Sourcing feeds the cold email channels, which take several origins (it picks among them), so it is listed beside
-// them: a spend read about the channel counts its serves too, and billing/campaign-service read it as a source. NOT under
-// CRM email: one origin only there (nothing to pick), and a slug under two channel families is counted twice on a
-// brand running both.
+// them: a spend read about the channel counts its serves too, and billing/campaign-service read it as a source.
 const SEARCH_AND_SIGNAL_ORIGINS = [
   "sourcing-apollo-cold-filters",
   "sourcing-apollo-buying-signals",
@@ -208,10 +210,12 @@ const SEARCH_AND_SIGNAL_ORIGINS = [
   "sourcing-apify-search",
   LEAD_SOURCING_CHANNEL.slug,
 ] as const;
+const CRM_CONTACTS = "sourcing-crm-contacts";
 export const SOURCING_ORIGINS_BY_CHANNEL: Readonly<Record<string, readonly string[]>> = {
-  "sales-cold-email-outreach": SEARCH_AND_SIGNAL_ORIGINS,
+  "sales-cold-email-outreach": [...SEARCH_AND_SIGNAL_ORIGINS, CRM_CONTACTS],
   "feedback-request-cold-email-outreach": SEARCH_AND_SIGNAL_ORIGINS,
-  "sales-crm-email-outreach": ["sourcing-crm-contacts"],
+  "sales-crm-email-outreach": [CRM_CONTACTS],
+  "cold-whatsapp-outreach": [CRM_CONTACTS],
 };
 
 /** PURE: the outreach channels a sourcing channel feeds (its next leg may only be worked by one of these). */
@@ -221,11 +225,18 @@ export const channelsFedBy = (sourcingSlug: string): string[] =>
     .map(([channel]) => channel)
     .sort();
 
-/** PURE: the ORIGINS (list-backed) Lead Sourcing may choose among under one outreach channel. */
+/**
+ * PURE: the ORIGINS (list-backed) Lead Sourcing may choose among under one outreach channel: the live THIRD-PARTY
+ * origins the channel takes. The brand's own contacts (family `own_contacts`) are never picked for it: writing to the
+ * brand's own people is the brand's choice of the Your CRM Contacts pipe, never a source we choose to buy from.
+ */
 export const originsLeadSourcingMayUse = (outreachSlug: string): string[] => {
   const fed = SOURCING_ORIGINS_BY_CHANNEL[outreachSlug] ?? [];
   if (!fed.includes(LEAD_SOURCING_SLUG)) return [];
-  return fed.filter((s) => s !== LEAD_SOURCING_SLUG && sourcingOriginBySlug(s)?.live === true);
+  return fed.filter((s) => {
+    const o = sourcingOriginBySlug(s);
+    return o?.live === true && o.family !== "own_contacts";
+  });
 };
 
 export const SOURCING_PARENT_CHANNEL_SLUGS: readonly string[] = Object.keys(SOURCING_ORIGINS_BY_CHANNEL).sort();
