@@ -411,6 +411,8 @@ export function customerTeamVolumes(
   const measured = answered.length > 0;
   const from = measured ? sum((r) => r.from) : { daily: null, undated: 0 };
   const to = measured ? sum((r) => r.to) : { daily: null, undated: 0 };
+  // Cohort (periods): only when EVERY brand counted serves it, else the booking-day count stands (stated `own_date`).
+  const cohort = measured && answered.every((r) => r.toByFromDay !== null) ? sum((r) => r.toByFromDay!) : null;
   // A brand two orgs hold answers once per org: the most SPECIFIC reason wins (an org with tools that do not record the
   // step says more than an empty org of the same brand).
   const reasons = reaches.filter((r): r is Extract<TeamLegReach, { available: false }> => !r.available).map((r) => r.reason);
@@ -418,7 +420,7 @@ export function customerTeamVolumes(
   return {
     volumes: [
       { key: "reachedFrom", label: `${p.fromStepLabel ?? "People"} (their team)`, role: "input", datedBy: measured ? "event_day" : null, ...from },
-      { key: "outcomes", label: `${p.toStepLabel} (their team)`, role: "outcome", datedBy: measured ? "event_day" : null, ...to },
+      { key: "outcomes", label: `${p.toStepLabel} (their team)`, role: "outcome", datedBy: measured ? "event_day" : null, ...to, ...(cohort ? { cohort } : {}) },
     ],
     teamSource: {
       producer: "crm-service",

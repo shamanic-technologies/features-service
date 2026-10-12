@@ -29,7 +29,16 @@ describe("team leg reach client (crm-service#102 deployed shape)", () => {
       to: { daily: new Map([["2026-09-03", 2]]), undated: 0 },
       fromSources: ["gohighlevel"],
       toSources: ["gohighlevel"],
+      toByFromDay: null,
     });
+    // crm-service#107: the same TO people filed on their FROM day (cohort).
+    const c = parseTeamLegReach({
+      available: true,
+      reachedFrom: end([["2026-09-01", 3]], 0, [["gohighlevel", 3]]),
+      reachedTo: { ...end([["2026-09-03", 2]], 0, [["gohighlevel", 2]]), toBeforeFrom: 0, byFromDay: [{ day: "2026-09-01", people: 2 }], undatedFrom: 0 },
+    });
+    expect(c.available && c.toByFromDay).toEqual({ daily: new Map([["2026-09-01", 2]]), undated: 0 });
+    expect(() => parseTeamLegReach({ available: true, reachedFrom: end([], 0, []), reachedTo: { ...end([], 0, []), byFromDay: "x" } })).toThrow(/byFromDay/);
   });
 
   it("serves the producer's reason when it cannot answer; a malformed body fails loud", () => {

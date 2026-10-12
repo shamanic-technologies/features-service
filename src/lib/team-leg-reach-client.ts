@@ -24,6 +24,9 @@ export type TeamLegReach =
       to: { daily: ReadonlyMap<string, number>; undated: number };
       fromSources: string[];
       toSources: string[];
+      /** The same TO people filed on the UTC day they first reached FROM (cohort, crm-service#107); null when the
+       *  deployed producer does not serve it yet. */
+      toByFromDay: { daily: ReadonlyMap<string, number>; undated: number } | null;
     }
   | { available: false; reason: string };
 
@@ -91,12 +94,24 @@ export function parseTeamLegReach(body: Record<string, unknown>): TeamLegReach {
   }
   const from = parseEnd(body.reachedFrom, "reachedFrom");
   const to = parseEnd(body.reachedTo, "reachedTo");
+  const rawTo = body.reachedTo as Record<string, unknown>;
+  let toByFromDay: { daily: Map<string, number>; undated: number } | null = null;
+  if (rawTo.byFromDay !== undefined) {
+    if (!Array.isArray(rawTo.byFromDay) || !isCount(rawTo.undatedFrom)) throw new Error("crm-service leg-reach: malformed reachedTo.byFromDay");
+    const daily = new Map<string, number>();
+    for (const d of rawTo.byFromDay as Array<Record<string, unknown>>) {
+      if (typeof d.day !== "string" || !isCount(d.people)) throw new Error("crm-service leg-reach: malformed reachedTo.byFromDay row");
+      daily.set(d.day, (daily.get(d.day) ?? 0) + d.people);
+    }
+    toByFromDay = { daily, undated: rawTo.undatedFrom };
+  }
   return {
     available: true,
     from: { daily: from.daily, undated: from.undated },
     to: { daily: to.daily, undated: to.undated },
     fromSources: from.sources,
     toSources: to.sources,
+    toByFromDay,
   };
 }
 
