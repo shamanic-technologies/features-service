@@ -37,6 +37,9 @@
  * with a reason. A brand the CRM cannot answer serves both volumes UNMEASURED (null) + `teamSource.unavailableReason`,
  * never 0. Offer scope = the brand's CRM (a CRM person carries no offer: `teamSource.offerNarrowed: false`); fleet
  * scope = the sum over every brand crm-service answers for. One rule for every customer-team pipe and leg.
+ * Its SIBLING population (`ourLeadsToTeam`, `lib/team-on-our-leads.ts`; owner same day): the people OUR campaigns
+ * brought to its `from` step that none of our pipes on the leg acted on, and how many reached `to`, beside our pipes'
+ * own rate on the people they acted on. Additive: the volumes above keep their meaning.
  *
  * HISTORY: one point per UTC day from the first activity (spend or a dated volume) to today, every figure
  * CUMULATIVE as it stood that day. An undated count (in no day) enters on the LAST point only, so the snapshot IS
@@ -55,6 +58,7 @@ import { selectCostCentsString } from "./pricing.js";
 import { effectiveSpendSlugs, runsSpendSlugsParam } from "./feature-scope.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { fetchTeamLegReach, fetchTeamLegReachBrands, type TeamLegReach } from "./team-leg-reach-client.js";
+import { fetchOurLeadsToTeam, type LegPipeRef, type OurLeadsToTeam } from "./team-on-our-leads.js";
 
 export type PipeStatsKind = "entry" | "internal" | "on_demand" | "customer_team";
 export type VolumeRole = "input" | "action" | "outcome";
@@ -260,6 +264,9 @@ export interface PipeStatsPipe {
   triggerId: string | null;
   /** `customer`: the customer's own team works the leg (`your-team-*`); its volumes come from their tools. */
   operatedBy: "platform" | "customer";
+  /** Customer-team pipe: the PLATFORM pipes whose `to` is its `from` (they bring people to it) and those on its own
+   *  leg (their action takes a person off the team), for `ourLeadsToTeam` (`lib/team-on-our-leads.ts`). */
+  legNeighbours?: { producingPipes: readonly LegPipeRef[]; ourPipesOnLeg: readonly LegPipeRef[] };
 }
 
 /** PURE: the measure rule's kind (where the leg starts, its trigger), never the channel. */
@@ -432,6 +439,9 @@ export interface PipeStatsBody extends PipeStatsFigures {
   spendSince: string | null;
   /** Customer-team pipe only (else null): where its volumes come from, and why they are unmeasured. */
   teamSource: TeamSource | null;
+  /** Customer-team pipe only (else null): the same pipe measured on the people OUR campaigns brought to its `from`
+   *  step and our pipes on the leg left to the team, beside our pipes' rate (`lib/team-on-our-leads.ts`). */
+  ourLeadsToTeam: OurLeadsToTeam | null;
   computedAt: string;
 }
 
@@ -445,14 +455,22 @@ export async function computePipeStats(p: PipeStatsPipe, scope: PipeStatsScope, 
   let volumes: VolumeInput[];
   let spendSince: string | null = null;
   let teamSource: TeamSource | null = null;
-  if (kind === "customer_team") ({ volumes, teamSource } = await fetchCustomerTeamVolumes(p, scope));
+  let ourLeadsToTeam: OurLeadsToTeam | null = null;
+  if (kind === "customer_team") {
+    let team: Awaited<ReturnType<typeof fetchCustomerTeamVolumes>>;
+    [team, ourLeadsToTeam] = await Promise.all([
+      fetchCustomerTeamVolumes(p, scope),
+      fetchOurLeadsToTeam({ ...p, producingPipes: p.legNeighbours?.producingPipes ?? [], ourPipesOnLeg: p.legNeighbours?.ourPipesOnLeg ?? [] }, scope),
+    ]);
+    ({ volumes, teamSource } = team);
+  }
   else if (kind === "entry") volumes = await entryVolumes(p, idSet);
   else if (kind === "internal") volumes = await internalVolumes(p, campaigns);
   else ({ volumes, since: spendSince } = await onDemandVolumes(p, idSet));
   // On-demand with no recorded event yet: nothing found, nothing counted as spent on it.
   const spendByDay = ids.length === 0 || kind === "customer_team" || (kind === "on_demand" && spendSince === null) ? new Map<string, number>() : await fetchCampaignsNetSpendByDay(p.channelSlug, ids, spendSince);
   const figures = buildPipeStats({ volumes, outcomeKey: "outcomes", spendByDay, valuePerOutcomeUsd, today: new Date().toISOString().slice(0, 10) });
-  return { scope, kind, basis: "since_inception", costBasis: "net_charged", campaignCount: ids.length, spendSince, teamSource, computedAt: new Date().toISOString(), ...figures };
+  return { scope, kind, basis: "since_inception", costBasis: "net_charged", campaignCount: ids.length, spendSince, teamSource, ourLeadsToTeam, computedAt: new Date().toISOString(), ...figures };
 }
 
 // ── Held per (pipe, scope), stale-while-revalidate (15 min fresh / 6 h stale, single-flight) ────────

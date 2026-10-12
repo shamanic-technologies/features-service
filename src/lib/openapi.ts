@@ -6481,6 +6481,34 @@ const pipeStatsSchema = z
       })
       .nullable()
       .describe("customer_team pipe only (else null): where its volumes come from and why they are unmeasured."),
+    ourLeadsToTeam: z
+      .object({
+        population: z.literal("people_our_campaigns_brought_to_from_not_acted_on_by_our_pipes").describe("Who counts: the people OUR campaigns brought to the pipe's `from` step (the campaigns of every platform pipe landing on that step, narrowed to the scope) that none of OUR pipes on the same leg acted on, so the customer's team had them; the outcome counts those of them who reached the `to` step on or after the day they reached `from` (same day counts, an undated end counts). Distinct from the top-level volumes (people we never contacted)."),
+        available: z.boolean().describe("False = both volumes null (unmeasured), never 0; see unavailableReason."),
+        unavailableReason: z.enum(["leg_has_no_from_step", "from_step_not_produced_by_our_campaigns", "to_step_not_recorded_for_our_leads", "no_campaign_of_ours_brings_people_to_from"]).nullable(),
+        fromEvidence: z.enum(["lead_snapshot", "attributed_outcomes"]).nullable().describe("How `from` is read: our sending's own evidence (positive reply / click, dated by email-gateway's first event or the CRM-evidenced reply date) or lead-service's attributed outcome of that step (meeting booked, signup, sale...)."),
+        toEvidence: z.literal("attributed_outcomes").nullable().describe("How `to` is read: lead-service's attributed outcome of that step (the brand's tools mirrored through crm-service, and staff statements), the same read our own pipe's outcomes count."),
+        toSources: z.array(z.string()).describe("lead-service outcome sources evidencing `to` for the people counted (`tracker` = the brand's tools, `manual` = a statement)."),
+        producingChannels: z.array(z.string()).describe("Channel slugs whose campaigns bring people to `from`."),
+        ourChannelsOnLeg: z.array(z.string()).describe("Our channel slugs on the same leg: a person one of them acted on is not in this population."),
+        brandsCounted: z.number().int(),
+        broughtToFrom: z.number().int().nullable().describe("Every person our campaigns brought to `from` in the scope (= leftToTeam + actedOnByOurPipes)."),
+        actedOnByOurPipes: z.number().int().nullable().describe("Of broughtToFrom, those our pipes on the leg acted on (outside this population)."),
+        firstActivityDay: z.string().nullable(),
+        volumes: z.array(z.object({ key: z.string().describe("`leftToTeam` | `outcomes`."), label: z.string(), role: z.enum(["input", "action", "outcome"]), datedBy: z.enum(["serve_day", "event_day"]).nullable(), total: z.number().int().nullable(), undated: z.number().int() })),
+        conversionRates: z.array(z.object({ key: z.string(), fromKey: z.string(), toKey: z.string(), label: z.string(), numerator: z.number().int().nullable(), denominator: z.number().int().nullable(), ratePct: z.number().nullable(), unavailableReason: pipeStatsReason(["no_input_yet", "volume_not_measured"], "Why ratePct is null.") })).describe("`leftToTeam_to_outcomes`: their team's rate on the people we brought them, PERCENT."),
+        history: z.array(z.object({ date: z.string(), volumes: z.record(z.string(), z.number().int().nullable()), conversionRates: z.record(z.string(), z.number().nullable()) })).describe("One cumulative point per UTC day from firstActivityDay to today; the last point IS the snapshot."),
+        ourPipesRate: z
+          .object({
+            actedOn: z.number().int().nullable().describe("People our pipes on the leg acted on in the scope."),
+            outcomes: z.number().int().nullable().describe("Of them, reached `to` on or after the day they reached `from` (same rule as the team side)."),
+            ratePct: z.number().nullable(),
+            unavailableReason: pipeStatsReason(["no_input_yet", "volume_not_measured"], "Why ratePct is null."),
+          })
+          .describe("Our own pipes on the same leg, on the people they acted on: the rate to read beside the team's."),
+      })
+      .nullable()
+      .describe("customer_team pipe only (else null), owner 2026-10-12: the same pipe measured on the people OUR campaigns brought to its `from` step and our pipes left to the customer's team, beside our pipes' own rate. Additive: the top-level volumes keep their meaning."),
     computedAt: z.string(),
     firstActivityDay: z.string().nullable().describe("UTC day of the first dated spend or volume; null = nothing yet."),
     volumes: z

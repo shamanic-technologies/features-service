@@ -49,7 +49,7 @@ import {
   type PipeMeasurement,
 } from "../lib/agent-catalogue.js";
 import { faceOf, faceSvg } from "../lib/catalogue-faces.js";
-import { getPipeStats, type PipeStatsScope } from "../lib/pipe-stats.js";
+import { getPipeStats, type PipeStatsPipe, type PipeStatsScope } from "../lib/pipe-stats.js";
 import { matchChannelStepKey, CHANNEL_STEPS } from "../lib/acquisition-channels.js";
 import {
   insertLeg,
@@ -758,6 +758,17 @@ function pipeStatsScopeOf(req: Request): PipeStatsScope | null {
   return { kind: offerId ? "offer" : brandId ? "brand" : "fleet", brandId, offerId };
 }
 
+/** A customer-team pipe's PLATFORM neighbours: those bringing people to its `from` step, and those on its own leg. */
+function legNeighboursOf(model: Awaited<ReturnType<typeof loadModel>>["model"], p: CataloguePipe): PipeStatsPipe["legNeighbours"] {
+  if (p.operatedBy !== "customer" || p.fromStep === null) return undefined;
+  const platform = [...model.pipes.values()].filter((q) => q.operatedBy === "platform");
+  const ref = (q: CataloguePipe) => ({ channelSlug: q.channelSlug, computedLegKey: q.computedLegKey });
+  return {
+    producingPipes: platform.filter((q) => q.toStep === p.fromStep).map(ref),
+    ourPipesOnLeg: platform.filter((q) => q.fromStep === p.fromStep && q.toStep === p.toStep).map(ref),
+  };
+}
+
 router.get("/internal/catalogue/pipes/:id", apiKeyOnly, async (req, res) => {
   try {
     const scope = pipeStatsScopeOf(req);
@@ -778,6 +789,7 @@ router.get("/internal/catalogue/pipes/:id", apiKeyOnly, async (req, res) => {
         toStepLabel: stepLabel(model, p.toStep),
         triggerId: p.triggerId,
         operatedBy: p.operatedBy,
+        legNeighbours: legNeighboursOf(model, p),
       },
       scope,
       valueAddedTo((st) => model.steps.get(st)?.valueUsd ?? null, p.fromStep, p.toStep),
