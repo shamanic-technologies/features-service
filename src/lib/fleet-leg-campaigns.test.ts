@@ -10,6 +10,7 @@ describe("filterLegCampaigns", () => {
     { id: "e", orgId: "o2", brandIds: ["b2"], featureSlug: "pr-cold-email-outreach", legKey: "start_to_conversation" },
     { id: "f", orgId: "o3", featureSlug: "sales-cold-email-outreach", legKey: "start_to_conversation" },
     { orgId: "o3", featureSlug: "sales-cold-email-outreach", legKey: "start_to_conversation" },
+    { id: "s", orgId: "o4", brandIds: ["b4"], featureSlug: "lead-sourcing", legKey: "start_to_lead_found", workflowSlug: "lead-sourcing-scheat" },
   ];
 
   it("keeps only the feature's campaigns stating THIS leg — a leg-less row is in no leg", () => {
@@ -20,5 +21,7 @@ describe("filterLegCampaigns", () => {
       { campaignId: "f", orgId: "o3", brandId: null, workflowSlug: null },
     ]);
     expect(filterLegCampaigns(rows, "sales-cold-email-outreach", "start_to_website_visit").map((c) => c.campaignId)).toEqual(["b"]);
+    // The sourcing leg is no row of the funnel-leg table: its units are matched on their stated key.
+    expect(filterLegCampaigns(rows, "lead-sourcing", "start_to_lead_found")).toEqual([{ campaignId: "s", orgId: "o4", brandId: "b4", workflowSlug: "lead-sourcing-scheat" }]);
   });
 });

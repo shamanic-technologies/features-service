@@ -28,7 +28,10 @@ export function filterLegCampaigns(rows: unknown[], featureSlug: string, legKey:
     const c = raw as { id?: unknown; orgId?: unknown; featureSlug?: unknown; legKey?: unknown; brandId?: unknown; brandIds?: unknown; workflowSlug?: unknown };
     if (typeof c.id !== "string" || typeof c.orgId !== "string") return [];
     if (c.featureSlug !== featureSlug) return [];
-    if (typeof c.legKey !== "string" || matchFunnelLegKey(c.legKey) !== legKey) return [];
+    // A leg the funnel table spells (or its legacy twin), else the stated key verbatim: the sourcing leg Start -> Lead
+    // found is a leg of every source unit but no row of the funnel-leg table, and its on-demand pipe is measured on
+    // those units (`lib/on-demand-pipe-fleet.ts`).
+    if (typeof c.legKey !== "string" || (matchFunnelLegKey(c.legKey) ?? c.legKey) !== legKey) return [];
     const first = Array.isArray(c.brandIds) ? c.brandIds[0] : undefined;
     const brandId = typeof first === "string" ? first : typeof c.brandId === "string" ? c.brandId : null;
     return [{ campaignId: c.id, orgId: c.orgId, brandId, workflowSlug: typeof c.workflowSlug === "string" ? c.workflowSlug : null }];
