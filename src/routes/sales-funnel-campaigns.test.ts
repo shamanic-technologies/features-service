@@ -40,6 +40,8 @@ vi.mock("./agent-catalogue.js", () => ({
       id === "unknown" || extra.length > 0 ? null : { items: [{ kind: "step", key: "start", label: "Start" }, { kind: "channel", slug: `of:${id}`, name: "Lead Sourcing", runByUs: true }], legs: [] },
   })),
 }));
+const funnelCampaignActivity = vi.fn();
+vi.mock("./sales-funnel-campaign-activity.js", () => ({ funnelCampaignActivity: (...a: unknown[]) => funnelCampaignActivity(...a) }));
 const computeTakeoverReturn = vi.fn();
 vi.mock("../lib/value-added-io.js", () => ({ computeTakeoverReturn: (...a: unknown[]) => computeTakeoverReturn(...a) }));
 vi.mock("../lib/brand-ownership.js", () => ({ assertBrandHeld: vi.fn(async () => {}), BrandOwnershipError: class extends Error {} }));
@@ -65,6 +67,8 @@ beforeEach(() => {
   computeFeatureRevenue.mockReset();
   distinctChannelFunnels.mockReset();
   fetchWithRetry.mockReset();
+  funnelCampaignActivity.mockReset();
+  funnelCampaignActivity.mockResolvedValue({ funnel: null, funnelUnavailableReason: "sales_funnel_not_in_catalogue" });
 });
 
 describe("GET /brands/:brandId/sales-funnel-campaigns", () => {
@@ -90,6 +94,24 @@ describe("GET /brands/:brandId/sales-funnel-campaigns", () => {
     // The path is the funnel's own (one channel per leg), never re-drawn from the campaign's units.
     expect(row.path.items.slice(1).map((i: { slug: string }) => i.slug)).toEqual(["of:f1"]);
     expect(fetchWithRetry.mock.calls[0][0]).toBe("http://campaign:3000/sales-funnel-campaigns?brandId=b1");
+  });
+
+  it("every row serves what it produced, step by step (the campaign page's funnel); unreadable = null + reason, money still served", async () => {
+    fetchWithRetry.mockResolvedValue(new Response(JSON.stringify({ salesFunnelCampaigns: [FC("fc1", "f1", [unit("c1", "sourcing-apollo-cold-filters", "start_to_lead_found")]), FC("fc2", "f1", [unit("c3", "sourcing-apollo-cold-filters", "start_to_lead_found")])] })));
+    distinctChannelFunnels.mockReturnValue([{ key: "sales" }]);
+    computeFeatureRevenue.mockResolvedValue({ headline: { totalPipelineUsd: 0, unpricedReason: null }, costEconomics: { committedCostUsd: 2.24, roiMultiple: 0, unmeasuredReason: null }, maturity: { isMature: null, legs: [] } });
+    const funnel = { mode: "proactive", steps: [{ key: "lead_found", label: "Lead found", kind: "step", people: 12, rateToNextPct: 0, unmeasuredReason: null }] };
+    funnelCampaignActivity.mockImplementation(async (row: { id: string }) => {
+      if (row.id === "fc2") throw new Error("lead-service down");
+      return { funnel, funnelUnavailableReason: null };
+    });
+
+    const res = await request(app).get("/brands/b1/sales-funnel-campaigns?pricing=net").set(AUTH);
+    expect(res.status).toBe(200);
+    const [a, b] = res.body.salesFunnelCampaigns;
+    expect(a).toMatchObject({ funnel, funnelUnavailableReason: null, investedUsd: 2.24 });
+    expect(funnelCampaignActivity.mock.calls[0][3]).toBe("net");
+    expect(b).toMatchObject({ funnel: null, funnelUnavailableReason: "funnel_steps_unreadable", investedUsd: 2.24 });
   });
 
   it("units pricing on two funnel definitions: invested served, ROI null with a reason (never one funnel picked)", async () => {

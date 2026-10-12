@@ -212,7 +212,7 @@
           "combinationKey": {
             "type": "string",
             "nullable": true,
-            "description": "The sales path (combination key, stored spelling) the figure is read off. A funnel campaign reads its OWN (the listed path, else its own legs priced on the same rates and costs; a reactive funnel on the value it adds over what its people were already worth at the trigger step), the offer's only when its own cannot be priced; a campaign the best selected path running it; an offer its best selected path (proactive first); a brand its best offer. Null on a measured figure."
+            "description": "The sales path (combination key, stored spelling) the figure is read off. A funnel campaign reads its OWN (its sourcing legs dropped: a path counts from Lead found; the listed path, else its own legs priced on the same rates and costs; a reactive funnel on the value it adds over what its people were already worth at the trigger step), never the offer's: unpriceable = null + own_sales_path_unpriced; a campaign the best selected path running it; an offer its best selected path (proactive first); a brand its best offer. Null on a measured figure."
           },
           "costPerOutcome": {
             "type": "object",
@@ -263,9 +263,10 @@
             "enum": [
               "expected_model_unavailable",
               "expected_model_computing",
-              "no_priced_sales_path"
+              "no_priced_sales_path",
+              "own_sales_path_unpriced"
             ],
-            "description": "Why roiMultiple is null: the model could not be read (logged), is computing for the first time since a deploy (served on the next read), or no path could be priced."
+            "description": "Why roiMultiple is null: the model could not be read (logged), is computing for the first time since a deploy (served on the next read), no path could be priced, or a funnel campaign's OWN path cannot be priced (a leg with no rate or no platform cost, e.g. a leads-only funnel: never another funnel's figure)."
           }
         },
         "required": [
@@ -20457,9 +20458,92 @@
                       "$ref": "#/components/schemas/ExpectedReturn"
                     },
                     {
-                      "description": "The funnel campaign's EXPECTED return, never empty (see ExpectedReturn): its own mature return (basis measured), else its own sales path (salesFunnelId = the combination key) priced on named hypotheses. roiMultiple and maturity are unchanged."
+                      "description": "The funnel campaign's EXPECTED return (see ExpectedReturn): its own mature return (basis measured), else its OWN sales path (salesFunnelId = the combination key, its sourcing leg dropped: a path counts from Lead found) priced on named hypotheses. Never another funnel's figure: an own path that cannot be priced (a leads-only funnel: Start -> Lead found -> your team) is null with `unavailableReason: own_sales_path_unpriced`. roiMultiple and maturity are unchanged."
                     }
                   ]
+                },
+                "funnel": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "proactive",
+                        "reactive"
+                      ],
+                      "description": "`proactive` (the funnel starts at Lead found: its people are the leads its units hold, what its sourcing unit found and its outreach unit was handed, lead-service's Leads page set) | `reactive` (it starts at another step: its people are the people its units were HANDED, lead-service follow-up ledger)."
+                    },
+                    "steps": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string",
+                            "description": "The catalogue step key (`lead_found`, `conversation`, `meeting_booked`...), or `contacted` / `delivered` for the two outreach rungs."
+                          },
+                          "label": {
+                            "type": "string",
+                            "description": "The step's customer label (\"Positive reply\"), the catalogue's own; \"Contacted\" / \"Delivered\" on the outreach rungs."
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "step",
+                              "outreach"
+                            ],
+                            "description": "`step` = a step of the campaign's path; `outreach` = a rung of its outreach between Lead found and the next step (Contacted, Delivered)."
+                          },
+                          "people": {
+                            "type": "integer",
+                            "nullable": true,
+                            "description": "PEOPLE at this step since inception (never emails). Null only with `unmeasuredReason`."
+                          },
+                          "rateToNextPct": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "People at the next step / people here x 100 (2 decimals), served so the page divides nothing. Null on the last step, when either side is unmeasured, or when nobody is here. Steps are counted independently, so a rate can exceed 100 (e.g. a sale recorded with no meeting)."
+                          },
+                          "unmeasuredReason": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "step_not_counted",
+                              "not_counted_by_lead_service",
+                              "no_unit_performs_step",
+                              "outcomes_unreadable"
+                            ],
+                            "description": "Why `people` is null: `step_not_counted` (no producer counts this step), `no_unit_performs_step` (an act step no unit of this campaign performs), `outcomes_unreadable`. Null when counted."
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "label",
+                          "kind",
+                          "people",
+                          "rateToNextPct",
+                          "unmeasuredReason"
+                        ]
+                      },
+                      "description": "Every step of the campaign's path (Start excluded) in reading order, in PEOPLE since inception, each with the rate to the next. Proactive: every figure is lead-service's `bucket-counts` over the units holding people (sourcing + outreach) MERGED by max (one person sits under each unit that held them: never a sum). Lead found = the leads found (`total`), then Contacted (`counts.contacted`) and Delivered (`people.delivered`: people an email reached; 0 on a funnel sending no email, e.g. a leads-only funnel), then each later step = lead-service's bucket for it. Reactive: the first step = people handed; an act step (Booking call) = people the performing unit acted on (the call placed); every later step = handed people with an attributed outcome at that step."
+                    }
+                  },
+                  "required": [
+                    "mode",
+                    "steps"
+                  ],
+                  "description": "WHAT IT PRODUCED (owner 2026-10-12): its people at each step of its path since inception, Lead found included (`steps[key=lead_found].people` = the leads it found), with the rate to the next step. Byte-for-byte the campaign page's `funnel` (`/brands/{brandId}/sales-funnel-campaigns/{id}/activity`). Null only with `funnelUnavailableReason`."
+                },
+                "funnelUnavailableReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "sales_funnel_not_in_catalogue",
+                    "no_unit_holds_people",
+                    "funnel_steps_unreadable"
+                  ],
+                  "description": "Why `funnel` is null: the funnel id is unknown to the catalogue, a proactive campaign has no sourcing or outreach unit (nobody holds its people), or (campaigns table only) a producer did not answer (logged; the row's money is still served). Null when served."
                 },
                 "headline": {
                   "type": "object",
@@ -20683,6 +20767,8 @@
                 "roiMultiple",
                 "moneyUnavailableReason",
                 "expectedReturn",
+                "funnel",
+                "funnelUnavailableReason",
                 "headline",
                 "costEconomics",
                 "maturity",
@@ -20747,7 +20833,7 @@
                   "proactive",
                   "reactive"
                 ],
-                "description": "`proactive` (the funnel starts at Lead found: its people are the leads its OUTREACH unit holds, lead-service's Leads page set for that unit) | `reactive` (it starts at another step: its people are the people its units were HANDED, lead-service follow-up ledger)."
+                "description": "`proactive` (the funnel starts at Lead found: its people are the leads its units hold, what its sourcing unit found and its outreach unit was handed, lead-service's Leads page set) | `reactive` (it starts at another step: its people are the people its units were HANDED, lead-service follow-up ledger)."
               },
               "steps": {
                 "type": "array",
@@ -20801,7 +20887,7 @@
                     "unmeasuredReason"
                   ]
                 },
-                "description": "Every step of the campaign's path (Start excluded) in reading order, in PEOPLE, each with the rate to the next. Proactive: Lead found = the outreach unit's leads (lead-service `bucket-counts` `total`), then Contacted (`counts.contacted`, exactly lead-service's contacted bucket) and Delivered (`people.delivered`: people an email reached; 0 on a channel sending no email), then each later step = lead-service's bucket for it. Reactive: the first step = people handed; an act step (Booking call) = people the performing unit acted on (the call placed); every later step = handed people with an attributed outcome at that step."
+                "description": "Every step of the campaign's path (Start excluded) in reading order, in PEOPLE since inception, each with the rate to the next. Proactive: every figure is lead-service's `bucket-counts` over the units holding people (sourcing + outreach) MERGED by max (one person sits under each unit that held them: never a sum). Lead found = the leads found (`total`), then Contacted (`counts.contacted`) and Delivered (`people.delivered`: people an email reached; 0 on a funnel sending no email, e.g. a leads-only funnel), then each later step = lead-service's bucket for it. Reactive: the first step = people handed; an act step (Booking call) = people the performing unit acted on (the call placed); every later step = handed people with an attributed outcome at that step."
               }
             },
             "required": [
@@ -20815,10 +20901,10 @@
             "nullable": true,
             "enum": [
               "sales_funnel_not_in_catalogue",
-              "no_outreach_pipe",
-              "several_outreach_pipes"
+              "no_unit_holds_people",
+              "funnel_steps_unreadable"
             ],
-            "description": "Why `funnel` is null: the funnel id is unknown to the catalogue, a proactive campaign has no outreach unit (nobody holds its people), or several outreach units hold people (their counts cannot be added without double counting). Null when served."
+            "description": "Why `funnel` is null: the funnel id is unknown to the catalogue, a proactive campaign has no sourcing or outreach unit (nobody holds its people), or (campaigns table only) a producer did not answer (logged; the row's money is still served). Null when served."
           },
           "pipes": {
             "type": "array",
@@ -20859,7 +20945,7 @@
                     "outreach",
                     "takeover"
                   ],
-                  "description": "`sourcing` (from nothing to Lead found: hands its leads to the outreach pipe, counted there) | `outreach` (from Lead found: holds the people) | `takeover` (from any later step: acts on people another campaign holds, e.g. AI Meeting Booking, AI Instant Call). Null when the pipe is unknown to the catalogue."
+                  "description": "`sourcing` (from nothing to Lead found: holds what it finds, its outreach pipe works them) | `outreach` (from Lead found: holds the people) | `takeover` (from any later step: acts on people another campaign holds, e.g. AI Meeting Booking, AI Instant Call). Null when the pipe is unknown to the catalogue."
                 },
                 "people": {
                   "type": "object",
@@ -20894,7 +20980,7 @@
                     "delivered",
                     "reachedToStep"
                   ],
-                  "description": "An OUTREACH pipe's people counts since inception. Null on other kinds."
+                  "description": "A SOURCING or OUTREACH pipe's people counts since inception (a sourcing pipe's `found` = the leads it found). Null on a takeover pipe."
                 },
                 "work": {
                   "type": "object",

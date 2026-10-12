@@ -9,14 +9,16 @@ import request from "supertest";
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
 const fetchSalesFunnelCampaigns = vi.fn();
-vi.mock("./sales-funnel-campaigns.js", () => ({ fetchSalesFunnelCampaigns: (...a: unknown[]) => fetchSalesFunnelCampaigns(...a) }));
+vi.mock("../lib/sales-funnel-campaigns-client.js", () => ({ fetchSalesFunnelCampaigns: (...a: unknown[]) => fetchSalesFunnelCampaigns(...a) }));
 const PROACTIVE = "lead_found_to_conversation@sales-cold-email-outreach+conversation_to_meeting_booked+meeting_booked_to_paid_client";
 const REACTIVE = "conversation_to_booking_call@ai-instant-call+booking_call_to_meeting_booked";
+const LEADS_ONLY = "start_to_lead_found@sourcing-apollo-cold-filters+lead_found_to_paid_client";
 const step = (key: string, label: string) => ({ kind: "step", key, label });
 vi.mock("./agent-catalogue.js", () => ({
   funnelCopiesFor: vi.fn(async () => ({
     copies: new Map<string, unknown>([
       [PROACTIVE, { firstStep: null, path: { items: [step("start", "Start"), { kind: "channel" }, step("lead_found", "Lead found"), step("conversation", "Positive reply"), step("meeting_booked", "Meeting booked"), step("paid_client", "Paid client")], legs: [] } }],
+      [LEADS_ONLY, { firstStep: null, path: { items: [step("start", "Start"), { kind: "channel" }, step("lead_found", "Lead found"), { kind: "channel" }, step("paid_client", "Paid client")], legs: [] } }],
       [REACTIVE, { firstStep: "conversation", path: { items: [step("conversation", "Positive reply"), step("booking_call", "Booking call"), step("meeting_booked", "Meeting booked")], legs: [] } }],
     ]),
     pipeSteps: new Map([
@@ -24,6 +26,7 @@ vi.mock("./agent-catalogue.js", () => ({
       ["sourcing-apollo-cold-filters|start_to_lead_found", { fromStep: null, toStep: "lead_found" }],
       ["ai-meeting-booking|conversation_to_meeting_booked", { fromStep: "conversation", toStep: "meeting_booked" }],
       ["ai-instant-call|conversation_to_booking_call", { fromStep: "conversation", toStep: "booking_call" }],
+      ["your-team-closing-calls|lead_found_to_paid_client", { fromStep: "lead_found", toStep: "paid_client" }],
     ]),
     pathOf: () => null,
   })),
@@ -54,23 +57,38 @@ beforeEach(() => {
 });
 
 describe("GET /brands/:brandId/sales-funnel-campaigns/:id/activity", () => {
-  it("proactive: every step off the outreach unit's lead-service counts (Contacted = its contacted bucket), rates served", async () => {
+  it("proactive: every step off the people-holding units' lead-service counts MERGED by max (never a sum), rates served", async () => {
     fetchSalesFunnelCampaigns.mockResolvedValue([FC("fc1", PROACTIVE, [unit("src", "sourcing-apollo-cold-filters", "start_to_lead_found"), unit("ce", "sales-cold-email-outreach", "lead_found_to_conversation")])]);
-    fetchLeadBucketCounts.mockResolvedValue({ total: 226, counts: { contacted: 223, positive_reply: 2, meeting_booked: 1, sale: 0 }, people: { sent: 182, delivered: 180, interested: 1 } });
+    // The source holds every lead it found (230); the outreach unit the 226 it was handed and worked.
+    fetchLeadBucketCounts.mockImplementation(async (id: string) =>
+      id === "src"
+        ? { total: 230, counts: { contacted: 0, positive_reply: 0, meeting_booked: 0, sale: 0 }, people: { sent: 0, delivered: 0, interested: 0 } }
+        : { total: 226, counts: { contacted: 223, positive_reply: 2, meeting_booked: 1, sale: 0 }, people: { sent: 182, delivered: 180, interested: 1 } },
+    );
 
     const res = await request(app).get("/brands/b1/sales-funnel-campaigns/fc1/activity").set(AUTH);
     expect(res.status).toBe(200);
-    expect(fetchLeadBucketCounts).toHaveBeenCalledTimes(1);
-    expect(fetchLeadBucketCounts.mock.calls[0][0]).toBe("ce");
+    expect(fetchLeadBucketCounts.mock.calls.map((c) => c[0]).sort()).toEqual(["ce", "src"]);
     expect(res.body.funnel.mode).toBe("proactive");
     expect(res.body.funnel.steps.map((s: { key: string; people: number }) => [s.key, s.people])).toEqual([
-      ["lead_found", 226], ["contacted", 223], ["delivered", 180], ["conversation", 2], ["meeting_booked", 1], ["paid_client", 0],
+      ["lead_found", 230], ["contacted", 223], ["delivered", 180], ["conversation", 2], ["meeting_booked", 1], ["paid_client", 0],
     ]);
     expect(res.body.funnel.steps[1].rateToNextPct).toBe(80.72);
     const ce = res.body.pipes.find((p: { campaignId: string }) => p.campaignId === "ce");
     expect(ce).toMatchObject({ kind: "outreach", people: { found: 226, contacted: 223, sent: 182, delivered: 180, reachedToStep: 2 }, dailySource: "campaign_revenue", calls: null, callsUnavailableReason: "pipe_places_no_calls" });
-    expect(res.body.pipes.find((p: { campaignId: string }) => p.campaignId === "src")).toMatchObject({ kind: "sourcing", people: null, work: null });
+    expect(res.body.pipes.find((p: { campaignId: string }) => p.campaignId === "src")).toMatchObject({ kind: "sourcing", people: { found: 230 }, work: null, dailySource: null });
     expect(fetchFollowupActionRows).not.toHaveBeenCalled();
+  });
+
+  it("a leads-only funnel (Start -> Lead found -> your team): Lead found = the leads its source found, nobody contacted", async () => {
+    fetchSalesFunnelCampaigns.mockResolvedValue([FC("fc3", LEADS_ONLY, [unit("team", "your-team-closing-calls", "lead_found_to_paid_client"), unit("src", "sourcing-apollo-cold-filters", "start_to_lead_found")])]);
+    const empty = { contacted: 0, positive_reply: 0, sale: 0 };
+    fetchLeadBucketCounts.mockImplementation(async (id: string) => ({ total: id === "src" ? 13 : 0, counts: empty, people: { sent: 0, delivered: 0, interested: 0 } }));
+
+    const res = await request(app).get("/brands/b1/sales-funnel-campaigns/fc3/activity").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.funnelUnavailableReason).toBeNull();
+    expect(res.body.funnel.steps.map((s: { key: string; people: number }) => [s.key, s.people])).toEqual([["lead_found", 13], ["contacted", 0], ["delivered", 0], ["paid_client", 0]]);
   });
 
   it("reactive call funnel: handed people, the calls placed as the act, a booked meeting among them; the call pipe serves its calls", async () => {

@@ -5,6 +5,7 @@ import {
   expectedForBrand,
   expectedForCampaign,
   expectedForCombination,
+  pricedCombinationKeyOf,
   expectedForOffer,
   withAudienceExpectedReturns,
   withMeasuredReturn,
@@ -70,9 +71,15 @@ describe("expected return: which path a scope reads", () => {
     expect(expectedForOffer(model([reactive, unpriced], [])).combinationKey).toBe(reactive.combinationKey);
   });
 
-  it("a funnel campaign reads its own path (legacy lead_found spelling resolves), else the offer's", () => {
+  it("a funnel campaign reads its own path (legacy lead_found spelling resolves), NEVER the offer's", () => {
     expect(expectedForCombination(model([reply, visit, reactive], []), reactive.combinationKey).roiMultiple).toBe(40);
-    expect(expectedForCombination(model([reply, visit], [reply.combinationKey]), "unknown@x").combinationKey).toBe(reply.combinationKey);
+    expect(expectedForCombination(model([reply, visit], [reply.combinationKey]), "unknown@x")).toMatchObject({ roiMultiple: null, combinationKey: null, unavailableReason: "own_sales_path_unpriced" });
+  });
+
+  it("a funnel's sourcing leg (Start -> Lead found) is dropped: the path counts from Lead found", () => {
+    expect(pricedCombinationKeyOf(`start_to_lead_found@sourcing-apollo-cold-filters+${reply.combinationKey}`)).toBe(reply.combinationKey);
+    expect(expectedForCombination(model([reply, visit], []), `start_to_lead_found@sourcing-apollo-cold-filters+${reply.combinationKey}`).combinationKey).toBe(reply.combinationKey);
+    expect(pricedCombinationKeyOf("start_to_lead_found@sourcing-apollo-cold-filters")).toBe("");
   });
 
   it("a campaign reads the best path running its channel on its leg, with ITS leg's cost per outcome", () => {
@@ -169,8 +176,17 @@ describe("a funnel campaign is priced on ITS OWN path (EXPECTED-ROI-1011 follow-
     expect(e.basis).toBe("fleet");
   });
 
-  it("unpriceable (no LTR) falls to the offer's figure", () => {
+  it("unpriceable (no LTR) is null with a reason, never the offer's figure", () => {
     const m = model([visit], [], { inputs: { ...inputs, lifetimeRevenueUsd: null } });
-    expect(expectedForCombination(m, "conversation_to_paid_client").combinationKey).toBe(visit.combinationKey);
+    expect(expectedForCombination(m, "conversation_to_paid_client")).toMatchObject({ roiMultiple: null, unavailableReason: "own_sales_path_unpriced" });
+  });
+
+  it("a leads-only funnel (Start -> Lead found -> your team -> Paid client) is null with a reason, never the offer's cold-email path", () => {
+    const m = model([visit], [visit.combinationKey], { inputs });
+    expect(expectedForCombination(m, "start_to_lead_found@sourcing-apollo-cold-filters+lead_found_to_paid_client")).toMatchObject({
+      roiMultiple: null,
+      combinationKey: null,
+      unavailableReason: "own_sales_path_unpriced",
+    });
   });
 });

@@ -29,6 +29,7 @@
  * Null only when the model cannot be READ (`unavailableReason`), loudly, never a 502 of the read carrying it.
  * The model is memoized per (org, brand, offer), served stale while it refreshes behind.
  */
+import { SOURCE_LEG_KEY } from "./sourcing-origins.js";
 import { FUNNEL_LEG_KEYS, FUNNEL_LEGS, funnelLeg, storedCombinationKeyOf, storedLegKeyOf } from "./funnel-legs.js";
 import {
   DEFAULT_COST_PER_OUTCOME_USD,
@@ -63,7 +64,9 @@ export type ExpectedReturnUnavailableReason =
   /** The model is still computing for the first time since boot (served on the next read). */
   | "expected_model_computing"
   /** No path of the model could be priced. */
-  | "no_priced_sales_path";
+  | "no_priced_sales_path"
+  /** A funnel campaign's OWN path cannot be priced (a leg with no rate or no platform cost, e.g. a leads-only funnel). */
+  | "own_sales_path_unpriced";
 
 export interface ExpectedCostPerOutcome {
   costPerOutcomeUsd: number;
@@ -200,17 +203,30 @@ export function expectedForOffer(m: OfferExpectedModel): ExpectedReturn {
 }
 
 /**
+ * PURE: the combination a funnel id is priced as: stored spelling, its SOURCING legs (Start -> Lead found) dropped.
+ * A sales path counts from Lead found (a found lead is worth $0 and the sales-path model lists no sourcing leg), so a
+ * funnel `start_to_lead_found@<origin>+<rest>` is the path `<rest>`. A funnel that is ONLY sourcing prices as "".
+ */
+export function pricedCombinationKeyOf(salesFunnelId: string): string {
+  return storedCombinationKeyOf(salesFunnelId)
+    .split("+")
+    .filter((part) => part.split("@")[0] !== SOURCE_LEG_KEY)
+    .join("+");
+}
+
+/**
  * PURE: a sales funnel campaign's expected return, on ITS OWN path: the listed path when the build lists it
  * (byte-same as the Sales path page), else its own legs priced on the SAME rates and costs (`priceCombination`:
- * a reactive funnel, a leg the customer's team works). Only a combination that cannot be priced at all falls to
- * the offer's figure.
+ * a reactive funnel, a leg the customer's team works). A combination that cannot be priced is null with
+ * `own_sales_path_unpriced`, NEVER another funnel's figure (owner 2026-10-12: a leads-only funnel read the offer's
+ * cold-email path; supersedes "falls to the offer's figure").
  */
 export function expectedForCombination(m: OfferExpectedModel, salesFunnelId: string): ExpectedReturn {
-  const key = storedCombinationKeyOf(salesFunnelId);
+  const key = pricedCombinationKeyOf(salesFunnelId);
   const path = priced(m.body.paths).find((p) => p.combinationKey === key);
   if (path) return expectedFromPath(path, m.lifetimeRevenueSource, null);
-  const own = m.inputs ? priceCombination(key, m.inputs, m.lifetimeRevenueSource) : null;
-  return own ?? expectedForOffer(m);
+  const own = m.inputs && key !== "" ? priceCombination(key, m.inputs, m.lifetimeRevenueSource) : null;
+  return own ?? unavailableExpectedReturn("own_sales_path_unpriced");
 }
 
 const RATE_WORD: Record<EffectiveRateSource, { basis: ExpectedBasis; source: (r: EffectiveArrowRate) => string }> = {
