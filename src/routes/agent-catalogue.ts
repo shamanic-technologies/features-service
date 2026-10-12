@@ -769,6 +769,21 @@ function legNeighboursOf(model: Awaited<ReturnType<typeof loadModel>>["model"], 
   };
 }
 
+/** A PLATFORM pipe whose leg also has a customer-team pipe: those team channels and the leg's platform neighbours. */
+function teamCoLegOf(model: Awaited<ReturnType<typeof loadModel>>["model"], p: CataloguePipe): PipeStatsPipe["teamCoLeg"] {
+  if (p.operatedBy !== "platform") return undefined;
+  const all = [...model.pipes.values()];
+  const team = all.filter((q) => q.operatedBy === "customer" && q.fromStep === p.fromStep && q.toStep === p.toStep);
+  if (team.length === 0) return undefined;
+  const platform = all.filter((q) => q.operatedBy === "platform");
+  const ref = (q: CataloguePipe) => ({ channelSlug: q.channelSlug, computedLegKey: q.computedLegKey });
+  return {
+    teamChannelSlugs: [...new Set(team.map((q) => q.channelSlug))],
+    producingPipes: p.fromStep === null ? [] : platform.filter((q) => q.toStep === p.fromStep).map(ref),
+    ourPipesOnLeg: platform.filter((q) => q.fromStep === p.fromStep && q.toStep === p.toStep).map(ref),
+  };
+}
+
 router.get("/internal/catalogue/pipes/:id", apiKeyOnly, async (req, res) => {
   try {
     const scope = pipeStatsScopeOf(req);
@@ -790,6 +805,7 @@ router.get("/internal/catalogue/pipes/:id", apiKeyOnly, async (req, res) => {
         triggerId: p.triggerId,
         operatedBy: p.operatedBy,
         legNeighbours: legNeighboursOf(model, p),
+        teamCoLeg: teamCoLegOf(model, p),
       },
       scope,
       valueAddedTo((st) => model.steps.get(st)?.valueUsd ?? null, p.fromStep, p.toStep),

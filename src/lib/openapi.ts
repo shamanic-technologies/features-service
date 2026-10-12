@@ -6514,6 +6514,53 @@ const pipeStatsSchema = z
       })
       .nullable()
       .describe("customer_team pipe only (else null), owner 2026-10-12: the same pipe measured on the people OUR campaigns brought to its `from` step and our pipes left to the customer's team, beside our pipes' own rate. Additive: the top-level volumes keep their meaning."),
+    teamImpact: z
+      .object({
+        population: z.literal("people_our_campaigns_brought_to_from").describe("Both rows count the people OUR campaigns brought to the leg's `from` step (the campaigns of every platform pipe landing on it, narrowed to the scope), each once, from the day they reached `from`; `to` = lead-service's attributed outcome of the `to` step (the brand's CRM facts and staff statements) on or after that day."),
+        teamChannelSlugs: z.array(z.string()).describe("The customer-team channels sharing this pipe's leg (same `from`, same `to`)."),
+        fromStepLabel: z.string().nullable().describe("Column label: the leg's `from` step (e.g. Positive reply)."),
+        toStepLabel: z.string().describe("Column label: the leg's `to` step (e.g. Meeting booked)."),
+        available: z.boolean().describe("False = every count null (unmeasured), never 0; see unavailableReason."),
+        unavailableReason: z.enum(["leg_has_no_from_step", "from_step_not_produced_by_our_campaigns", "to_step_not_recorded_for_our_leads", "no_campaign_of_ours_brings_people_to_from"]).nullable(),
+        rows: z
+          .array(
+            z.object({
+              key: z.enum(["team_alone", "team_plus_pipe"]).describe("team_alone = the people none of our pipes on the leg acted on (their team had them alone; = the customer-team pipe's `ourLeadsToTeam`). team_plus_pipe = the people THIS pipe's campaigns in scope acted on, their team assumed still on."),
+              label: z.string(),
+              fromCount: z.number().int().nullable().describe("People at the `from` step in this row. Null = unmeasured."),
+              toCount: z.number().int().nullable().describe("Of them, reached `to` on or after the day they reached `from`."),
+              undatedFrom: z.number().int().describe("Of fromCount, in no day (enters the history's last point only)."),
+              undatedTo: z.number().int().describe("Of toCount, in no day."),
+              ratePct: z.number().nullable().describe("toCount ÷ fromCount × 100, 2 decimals."),
+              rateUnavailableReason: z.enum(["no_input_yet", "volume_not_measured", "leg_has_no_from_step", "from_step_not_produced_by_our_campaigns", "to_step_not_recorded_for_our_leads", "no_campaign_of_ours_brings_people_to_from"]).nullable(),
+              spendUsd: z.number().nullable().describe("NET spend of ours (team_plus_pipe: this pipe's spend in scope, the stats' own `spendUsd`); team_alone: null."),
+              costPerOutcomeUsd: z.number().nullable().describe("team_plus_pipe: spendUsd ÷ toCount (null while 0). team_alone: null (customer time)."),
+              costPerOutcomeUnavailableReason: z.enum(["customer_team_time", "no_outcome_yet", "outcome_not_measured", "no_spend_recorded"]).nullable(),
+            }),
+          )
+          .describe("Always two rows, team_alone then team_plus_pipe: the table to render as is."),
+        impact: z
+          .object({
+            pointsDiff: z.number().nullable().describe("team_plus_pipe ratePct − team_alone ratePct, percentage POINTS (computed on unrounded rates), 2 decimals."),
+            pointsDiffUnavailableReason: z.enum(["team_alone_not_measured", "team_alone_no_input", "team_plus_pipe_not_measured", "team_plus_pipe_no_input"]).nullable(),
+            ratio: z.number().nullable().describe("team_plus_pipe rate ÷ team_alone rate, 2 decimals (1.5 = ×1.5)."),
+            ratioUnavailableReason: z.enum(["team_alone_not_measured", "team_alone_no_input", "team_plus_pipe_not_measured", "team_plus_pipe_no_input", "team_alone_rate_zero"]).nullable(),
+          })
+          .describe("This pipe's impact on top of their team. Null + reason, never 0, when a side is unmeasured or has nobody at `from` (ratio also when the team-alone rate is 0)."),
+        firstActivityDay: z.string().nullable(),
+        history: z
+          .array(
+            z.object({
+              date: z.string(),
+              teamAlone: z.object({ fromCount: z.number().int().nullable(), toCount: z.number().int().nullable(), ratePct: z.number().nullable() }),
+              teamPlusPipe: z.object({ fromCount: z.number().int().nullable(), toCount: z.number().int().nullable(), ratePct: z.number().nullable(), spendUsd: z.number(), costPerOutcomeUsd: z.number().nullable() }),
+              impact: z.object({ pointsDiff: z.number().nullable(), ratio: z.number().nullable() }),
+            }),
+          )
+          .describe("One CUMULATIVE point per UTC day from firstActivityDay to today; undated counts enter on the last point, so the last point IS the snapshot (rows + impact)."),
+      })
+      .nullable()
+      .describe("PLATFORM pipe whose leg (same `from`, same `to`) also has a customer-team pipe only, else null (owner 2026-10-12): the table \"your team alone\" vs \"your team + this pipe\" and this pipe's impact, one rule for every such pipe. Additive."),
     computedAt: z.string(),
     firstActivityDay: z.string().nullable().describe("UTC day of the first dated spend or volume; null = nothing yet."),
     volumes: z
