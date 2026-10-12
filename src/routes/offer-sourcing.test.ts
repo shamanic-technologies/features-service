@@ -15,6 +15,9 @@ describe("GET /public/sourcing-origins", () => {
     expect(res.body.sourcingChannels).toEqual(Object.keys(SOURCING_ORIGINS_BY_CHANNEL).sort());
     expect(res.body.originsByChannel).toEqual(SOURCING_ORIGINS_BY_CHANNEL);
     expect(res.body.originsByChannel["sales-crm-email-outreach"]).toEqual(["sourcing-crm-contacts"]);
+    // How each one-to-one channel reaches a person (owner 2026-10-12): lead-service passes it on every serve.
+    expect(res.body.contactMethodsByChannel["cold-whatsapp-outreach"]).toEqual(["phone"]);
+    expect(res.body.contactMethodsByChannel["sales-cold-email-outreach"]).toEqual(["email"]);
     // Lead Sourcing: no origin of its own, it picks among the live origins a cold email channel takes (owner 2026-10-11).
     expect(res.body.origins.map((o: { slug: string }) => o.slug)).not.toContain("lead-sourcing");
     expect(res.body.originsByChannel["sales-cold-email-outreach"]).toContain("lead-sourcing");
