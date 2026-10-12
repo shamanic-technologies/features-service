@@ -142,14 +142,19 @@ describe("a leg can only name a trigger something FIRES, checked at creation (ow
   });
 
   it("lets nothing of ours wait on an unfired trigger: a customer-team leg, or a platform DRAFT (owner 2026-10-12, PIPE-FORM-TO-MEETING)", () => {
-    const leg = { fromStep: "form_submitted", toStep: "meeting_booked", mode: "reactive", triggerId: "form_submitted" };
+    const leg = { fromStep: "signup", toStep: "paid_client", mode: "reactive", triggerId: "signed_up" };
     // Their team acts on the step itself, like the seeded your-team-* legs.
-    expect(parseLegInput(leg, { ...channel, slug: "your-team-meeting-booking", operatedBy: "customer" }, TRIGGERS)).toMatchObject({ triggerId: "form_submitted", published: true });
+    expect(parseLegInput(leg, { ...channel, slug: "your-team-signup-conversion", operatedBy: "customer" }, TRIGGERS)).toMatchObject({ triggerId: "signed_up", published: true });
     // A platform pipe on it is a DRAFT (a proposal staff shows), never published while nothing fires it.
-    expect(parseLegInput({ ...leg, published: false }, { ...channel, slug: "ai-meeting-booking", managed: true }, TRIGGERS)).toMatchObject({ triggerId: "form_submitted", published: false });
+    expect(parseLegInput({ ...leg, published: false }, { ...channel, slug: "ai-meeting-booking", managed: true }, TRIGGERS)).toMatchObject({ triggerId: "signed_up", published: false });
     refused(() => parseLegInput(leg, { ...channel, slug: "ai-meeting-booking", managed: true }, TRIGGERS), 409, "trigger_not_fired");
     refused(() => parseLegInput({ ...leg, published: "no" }, channel, TRIGGERS), 400, "published_invalid");
-    refused(() => checkLegRun("reactive", "form_submitted", TRIGGERS, { unfiredAllowed: false }), 409, "trigger_not_fired");
+    refused(() => checkLegRun("reactive", "signed_up", TRIGGERS, { unfiredAllowed: false }), 409, "trigger_not_fired");
+  });
+
+  it("publishes AI meeting booking's form leg once crm-service fires form_submitted (owner 2026-10-12, FORM-SUBMITTED-TRIGGER-1012)", () => {
+    const leg = { fromStep: "form_submitted", toStep: "meeting_booked", mode: "reactive", triggerId: "form_submitted" };
+    expect(parseLegInput(leg, { ...channel, slug: "ai-meeting-booking", managed: true }, TRIGGERS)).toMatchObject({ triggerId: "form_submitted", published: true });
   });
 
   it("refuses an unknown trigger, a reactive leg with none, a proactive leg with one", () => {
