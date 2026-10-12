@@ -2135,6 +2135,9 @@ const sourcingOriginsResponseRef = registry.register(
     originsByChannel: z
       .record(z.string(), z.array(z.string()))
       .describe("Per sourcing channel slug, the origin slugs it serves from: a serve run of that channel may carry exactly these origin slugs (its spend reads count them). An origin not listed for a channel would drop out of that channel's figures."),
+    contactMethodsByChannel: z
+      .record(z.string(), z.array(z.enum(["email", "phone", "linkedin", "x", "instagram", "reddit"])))
+      .describe("Per one-to-one channel slug, the contact method(s) a person must carry for that channel to write to them (ALL required): email for the cold email channels, phone for WhatsApp / SMS / calls, a profile for LinkedIn / X / Instagram / Reddit. A serve made for the channel never hands out a person without them (lead-service passes it as `reachableBy`). A channel absent here states none."),
     leadFoundStep: leadFoundStepSchema,
     sourceLegKey: z.literal("start_to_lead_found").describe("The leg key of every source campaign (from nothing to lead_found)."),
     leadSourcing: z
