@@ -968,13 +968,14 @@ async function fetchAudienceSendTagEngagement(
       const rs = (broadcast?.recipientStats as Record<string, number> | undefined) ?? {};
       const prev = perAudience.get(audienceId) ?? emptyEngagement();
       const engagement: SendTagEngagement = {
-        contacted: prev.contacted + (rs.contacted ?? 0),
+        // Contacted = got at least one email (`sent`), never the queue push (owner 2026-10-12).
+        contacted: prev.contacted + (rs.sent ?? 0),
         opened: prev.opened + (rs.opened ?? 0),
         websiteClicks: prev.websiteClicks + (rs.clicked ?? 0),
         positiveReplies: prev.positiveReplies + (rs.repliesPositive ?? 0),
       };
       perAudience.set(audienceId, engagement);
-      brandGrain.contacted += rs.contacted ?? 0;
+      brandGrain.contacted += rs.sent ?? 0;
       brandGrain.opened += rs.opened ?? 0;
       brandGrain.websiteClicks += rs.clicked ?? 0;
       brandGrain.positiveReplies += rs.repliesPositive ?? 0;

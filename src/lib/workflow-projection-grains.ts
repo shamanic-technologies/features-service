@@ -144,7 +144,8 @@ function extractBroadcastRecipientStats(group: Record<string, unknown>): Record<
   const recipientStats = broadcast?.recipientStats as Record<string, number> | undefined;
   if (!recipientStats) return {};
   return {
-    recipientsContacted: recipientStats.contacted,
+    // Contacted = got at least one email (`sent`), never the queue push (owner 2026-10-12).
+    recipientsContacted: recipientStats.sent,
     recipientsClicked: recipientStats.clicked,
     recipientsRepliesPositive: recipientStats.repliesPositive,
   };

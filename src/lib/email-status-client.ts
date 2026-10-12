@@ -20,6 +20,7 @@ interface StatusScope {
   lastDeliveredAt?: string | null;
   firstContactedAt?: string | null;
   firstSentAt?: string | null;
+  firstBouncedAt?: string | null;
   firstDeliveredAt?: string | null;
   firstClickedAt?: string | null;
   firstRepliedAt?: string | null;
@@ -56,6 +57,8 @@ export interface SignalDates {
 /** Boolean/classification fields on a StatusScope (distinct from the first*At timestamps). */
 interface OutcomeScope {
   contacted?: boolean;
+  sent?: boolean;
+  bounced?: boolean;
   opened?: boolean;
   clicked?: boolean;
   replied?: boolean;
@@ -139,7 +142,8 @@ export async function fetchEmailOutcomes(
   for (const item of data.results) {
     const scope = (campaignScoped ? item.broadcast?.campaign : item.broadcast?.brand) ?? null;
     result.set(item.email, {
-      contacted: Boolean(scope?.contacted),
+      // Contacted = an email went out (`sent`, or a send that `bounced`), never the queue push (`contacted`), owner 2026-10-12.
+      contacted: Boolean(scope?.sent) || Boolean(scope?.bounced),
       opened: Boolean(scope?.opened),
       clicked: Boolean(scope?.clicked),
       positiveReply: Boolean(scope?.replied) && scope?.replyClassification === "positive",
@@ -284,7 +288,12 @@ async function fetchEventTimestampsFor(
     const broadcast = scopeFor(item.broadcast, campaignScoped);
     const transactional = scopeFor(item.transactional, campaignScoped);
     result.set(item.email, {
-      contacted: minDate(broadcast?.firstContactedAt ?? null, transactional?.firstContactedAt ?? null),
+      // Contacted = the first email that went out (owner 2026-10-12): its send, or its bounce (a send
+      // attempt that bounced was emailed), never the queue push (`firstContactedAt`).
+      contacted: minDate(
+        minDate(broadcast?.firstSentAt ?? null, transactional?.firstSentAt ?? null),
+        minDate(broadcast?.firstBouncedAt ?? null, transactional?.firstBouncedAt ?? null),
+      ),
       sent: minDate(broadcast?.firstSentAt ?? null, transactional?.firstSentAt ?? null),
       delivered: minDate(broadcast?.firstDeliveredAt ?? null, transactional?.firstDeliveredAt ?? null),
       open: minDate(broadcast?.firstOpenedAt ?? null, transactional?.firstOpenedAt ?? null),

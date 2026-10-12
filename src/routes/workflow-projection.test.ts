@@ -103,7 +103,7 @@ function costGroup(slug: string, cents: number, runCount = 10): Record<string, u
 const CROSSORG_COST = [costGroup("wf-a", 100000), costGroup("wf-b", 100000)];
 
 function emailGroup(slug: string, clicked: number, repliesPositive: number, contacted = 200): Record<string, unknown> {
-  return { key: slug, broadcast: { recipientStats: { contacted, sent: 200, delivered: 200, opened: 150, clicked, bounced: 0, repliesPositive, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 } } };
+  return { key: slug, broadcast: { recipientStats: { contacted, sent: contacted, delivered: 200, opened: 150, clicked, bounced: 0, repliesPositive, repliesNegative: 0, repliesNeutral: 0, repliesAutoReply: 0 } } };
 }
 const CROSSORG_EMAIL = [emailGroup("wf-a", 100, 50), emailGroup("wf-b", 50, 10)];
 

@@ -583,7 +583,8 @@ describe("GET /features/:featureSlug/stats — feature-scoped fan-out", () => {
     expect(hosts.has("press-kits:3000")).toBe(false);
 
     // Declared email-gateway stats populate; undeclared leads stats stay null (never fetched).
-    expect(res.body.stats.recipientsContacted).toBe(100);
+    // Contacted = recipients an email went out to (`sent` 90), never the 100 queued (owner 2026-10-12).
+    expect(res.body.stats.recipientsContacted).toBe(90);
     expect(res.body.stats.leadsServed).toBeNull();
     expect(res.body.systemStats.totalCostInUsdCents).toBe(1000);
   });
