@@ -30,10 +30,10 @@ describe("per (channel × leg) minimums on /public/channels (owner 2026-10-04)",
     expect(CATALOGUE.find((c) => c.slug === "ai-meeting-booking")!.managed).toBe(true);
   });
 
-  it("reactive ⟺ the leg STATES reactive (owner 2026-10-09: a sourcing leg from nothing is reactive, on demand)", () => {
+  it("reactive ⟺ the leg STATES reactive (owner 2026-10-12: a sourcing leg finds leads on its own, proactive)", () => {
     for (const c of CATALOGUE) for (const t of c.stepTransitions) expect(t.reactive).toBe(t.mode === "reactive");
     const sourcing = CATALOGUE.find((c) => c.slug === "sourcing-apollo-cold-filters")!.stepTransitions[0];
-    expect([sourcing.from, sourcing.reactive, sourcing.triggerId]).toEqual([null, true, "on_demand"]);
+    expect([sourcing.from, sourcing.reactive, sourcing.triggerId]).toEqual([null, false, null]);
   });
 
   it("publishes which channels a sales path can use: the shortlist, seo-content out", () => {

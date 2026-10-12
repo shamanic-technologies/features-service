@@ -5,8 +5,8 @@
  *  - PROACTIVE: it goes and finds or contacts people on its own budget. It has NO trigger: campaign-service
  *    checks it at every tick against its budget (daily, weekly, monthly) and billing. Cold email, ads.
  *  - REACTIVE: it runs ON DEMAND, and something asks for it. It names exactly ONE trigger from the list below:
- *    another pipe asking for it (`on_demand`: the sourcing channels, pulled by the outbound campaign that needs
- *    someone to contact; `lead_requested` before 2026-10-11), or an event on a lead (`positive_reply_received`: AI meeting booking,
+ *    another pipe asking for it (`on_demand`; the sourcing channels until 2026-10-12, now PROACTIVE: every pipe is
+ *    independent, a source finds leads on its own), or an event on a lead (`positive_reply_received`: AI meeting booking,
  *    the instant call; `meeting_booked`: meeting attendance...).
  *
  * Three separate things, three homes:

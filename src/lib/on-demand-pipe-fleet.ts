@@ -2,13 +2,11 @@
  * AN ON-DEMAND PIPE'S FLEET FIGURES, PER WORKFLOW (owner 2026-10-11: a sourcing pipe's spend is its OWN cost and ROI,
  * so funnels that differ only by their source price differently).
  *
- * A pipe whose trigger is INLINE (`on_demand`, `lib/channel-triggers.ts`: the sourcing channels, an origin or Lead
- * Sourcing) runs only when another pipe asks for it, each ask its OWN unit run (campaign-service
- * `POST /internal/on-demand-runs`). Like every pipe it is measured per workflow, on its UNITS (the leg's campaigns,
- * `fetchFleetLegCampaigns`), each unit credited to the workflow it runs:
- *   - OUTCOMES: the leads it found = the `ran` events of the inline triggers per unit (campaign-service
- *     `GET /internal/trigger-events/ran-counts`: lead-service records one per lead served under the unit; `on_demand`
- *     since 2026-10-11, `lead_requested` before, the same ask under its former name).
+ * A SOURCING pipe (Start -> Lead found: an origin or Lead Sourcing) finds leads on its own since 2026-10-12 (proactive,
+ * every pipe independent), on demand of an outreach run before. Like every pipe it is measured per workflow, on its
+ * UNITS (the leg's campaigns, `fetchFleetLegCampaigns`), each unit credited to the workflow it runs:
+ *   - OUTCOMES: the leads it found per unit, BOTH modes with history (lead-service
+ *     `GET /internal/source-campaigns/leads-found`, `found`; replaced campaign-service's `on_demand` ran-counts).
  *   - SPEND: every cost row of the unit's channel filed under the unit (its own slug, `runsOwnFeatureSlugsParam`;
  *     the serve and everything bought under it carry the unit's campaign), from the first recorded event on, so both
  *     halves cover the SAME window (runs-service `costs/timeseries?groupBy=campaignId&startedAfter=`, incurred basis).
@@ -22,7 +20,6 @@ import { RUNS_CAMPAIGN_IDS_PER_REQUEST } from "./brand-spend-by-day-client.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { legMaturityFigures, outcomeFigures, type LegMaturityFigures } from "./maturity.js";
 import { runsOwnFeatureSlugsParam } from "./feature-scope.js";
-import { INLINE_TRIGGER_IDS } from "./channel-triggers.js";
 
 const FRESH_MS = 15 * 60_000;
 const STALE_MS = 6 * 60 * 60_000;
@@ -83,21 +80,24 @@ export function onDemandPipeFigures(input: {
   return { byDynasty, unattributedLeads };
 }
 
-export async function fetchRanCounts(triggerId: string): Promise<{ recordedSince: string | null; counts: RanCount[] }> {
-  const url = process.env.CAMPAIGN_SERVICE_URL;
-  const apiKey = process.env.CAMPAIGN_SERVICE_API_KEY;
-  if (!url || !apiKey) throw new Error("CAMPAIGN_SERVICE_URL or CAMPAIGN_SERVICE_API_KEY not configured");
-  const response = await fetchWithRetry(`${url}/internal/trigger-events/ran-counts?${new URLSearchParams({ triggerId })}`, {
-    headers: { "x-api-key": apiKey },
-  });
-  if (!response.ok) throw new Error(`campaign-service ran-counts ${triggerId} failed (${response.status}): ${await response.text()}`);
+/**
+ * Leads FOUND per source campaign, every mode (owner 2026-10-12: a source finds leads on its own; lead-service records
+ * both its on-demand serves and its own runs, with history): lead-service `GET /internal/source-campaigns/leads-found`,
+ * re-keyed on `found`. Replaces campaign-service's `on_demand` ran-counts (on-demand serves only). Fail loud.
+ */
+export async function fetchLeadsFound(): Promise<{ recordedSince: string | null; counts: RanCount[] }> {
+  const url = process.env.LEAD_SERVICE_URL;
+  const apiKey = process.env.LEAD_SERVICE_API_KEY;
+  if (!url || !apiKey) throw new Error("LEAD_SERVICE_URL or LEAD_SERVICE_API_KEY not configured");
+  const response = await fetchWithRetry(`${url}/internal/source-campaigns/leads-found`, { headers: { "x-api-key": apiKey } });
+  if (!response.ok) throw new Error(`lead-service leads-found failed (${response.status}): ${await response.text()}`);
   const body = (await response.json()) as { counts?: unknown; recordedSince?: unknown };
-  if (!Array.isArray(body.counts)) throw new Error(`campaign-service ran-counts ${triggerId} returned no counts array`);
+  if (!Array.isArray(body.counts)) throw new Error("lead-service leads-found returned no counts array");
   return {
     recordedSince: typeof body.recordedSince === "string" ? body.recordedSince : null,
     counts: body.counts.flatMap((c) => {
-      const row = c as { campaignId?: unknown; ran?: unknown };
-      return typeof row.campaignId === "string" && typeof row.ran === "number" ? [{ campaignId: row.campaignId, ran: row.ran }] : [];
+      const row = c as { campaignId?: unknown; found?: unknown };
+      return typeof row.campaignId === "string" && typeof row.found === "number" ? [{ campaignId: row.campaignId, ran: row.found }] : [];
     }),
   };
 }
@@ -130,14 +130,13 @@ async function fetchCentsByCampaignSince(featureSlug: string, campaignIds: reado
 }
 
 async function computeOnDemandPipeFleet(featureSlug: string, legKey: string): Promise<OnDemandPipeFleet> {
-  const [campaigns, workflows, ...reads] = await Promise.all([
+  const [campaigns, workflows, found] = await Promise.all([
     fetchFleetLegCampaigns(featureSlug, legKey),
     fetchPublicWorkflows(featureSlug, "all"),
-    ...[...INLINE_TRIGGER_IDS].map((t) => fetchRanCounts(t)),
+    fetchLeadsFound(),
   ]);
-  const ranCounts = reads.flatMap((r) => r.counts);
-  const starts = reads.map((r) => r.recordedSince).filter((s): s is string => s !== null).sort();
-  const since = starts[0] ?? null;
+  const ranCounts = found.counts;
+  const since = found.recordedSince;
   const ids = campaigns.map((c) => c.campaignId);
   const centsByCampaign = since && ids.length > 0 ? await fetchCentsByCampaignSince(featureSlug, ids, since) : new Map<string, number>();
   const { byDynasty, unattributedLeads } = onDemandPipeFigures({
