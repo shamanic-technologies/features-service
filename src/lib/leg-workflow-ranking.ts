@@ -21,14 +21,16 @@
  * dynasty slug, so the order is total and the same evidence always gives the same list.
  *
  * A workflow never put on the leg (`unassigned`) that has never spent on it is not listed: it is not a
- * workflow of this leg. One that has spent on it is listed, and cannot be put forward.
+ * workflow of this leg. One that has spent on it is listed, and cannot be put forward. A workflow ASSIGNED to
+ * the leg is listed even before its first run (owner 2026-10-10: a workflow created for a pipe is active on it
+ * at once), with zero figures: a new pipe shows the workflow that will run it, never an empty list.
  *
  * A cost per outcome is observed: null at zero outcomes, never a spend floor. The return is lifetime on the
  * leg (the fleet's pipeline for the workflow ÷ what clients were billed for it), null when either is absent.
  *
  * Pure: the route reads the evidence; this orders it.
  */
-import type { LegMaturityFigures, OutcomeFigures } from "./maturity.js";
+import { legMaturityFigures, type LegMaturityFigures, type OutcomeFigures } from "./maturity.js";
 
 export type LegWorkflowAssignment = "active" | "deprecated" | "unassigned";
 
@@ -73,7 +75,11 @@ const EMPTY: OutcomeFigures = { spentUsd: 0, contacted: 0, outcomes: 0, costPerO
 /** PURE. The ordered list (see the owner rule above). */
 export function rankLegWorkflows(input: RankLegWorkflowsInput): LegWorkflowRankingRow[] {
   const rows: Omit<LegWorkflowRankingRow, "rank" | "goesFirst" | "moneyGoesHere">[] = [];
-  for (const [slug, f] of input.byDynasty) {
+  const byDynasty = new Map(input.byDynasty);
+  for (const slug of input.assignments.keys()) {
+    if (!byDynasty.has(slug)) byDynasty.set(slug, legMaturityFigures(null, EMPTY, null));
+  }
+  for (const [slug, f] of byDynasty) {
     const assignment: LegWorkflowAssignment = input.assignments.get(slug) ?? "unassigned";
     const mature = f.isMature === true && f.mature != null;
     const half = (mature ? f.mature : f.flash) ?? EMPTY;
