@@ -40,6 +40,7 @@ import { fetchSalesFunnelCampaigns, type SalesFunnelUnitRow } from "../lib/sales
 import { STEP_SIGNAL, takeoverStepOf } from "../lib/value-added.js";
 import { computeTakeoverReturn } from "../lib/value-added-io.js";
 import { expectedReturnForFunnelCampaign } from "../lib/expected-return.js";
+import { funnelCampaignActivity, type FunnelCampaignActivityBody } from "./sales-funnel-campaign-activity.js";
 
 const router = Router();
 
@@ -124,6 +125,16 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
 
       // NEVER EMPTY (owner 2026-10-11): the measured return when mature, else the funnel's own sales path priced
       // on hypotheses, each named (`lib/expected-return.ts`). Additive: `roiMultiple` and `maturity` are unchanged.
+      // WHAT IT PRODUCED, step by step in people since inception (Lead found included): the campaign page's own funnel
+      // (`funnelCampaignActivity`, one Gold cell for both reads). FAIL-SOFT: unreadable = null + reason, logged, the
+      // row's money still served.
+      const activity: { funnel: FunnelCampaignActivityBody["funnel"]; funnelUnavailableReason: string | null } = await funnelCampaignActivity(r, brandId, headers, pricing).catch(
+        (err: Error) => {
+          console.error(`[features-service] sales funnel campaign ${r.id}: funnel steps unreadable (funnel null): ${err.message}`);
+          return { funnel: null, funnelUnavailableReason: "funnel_steps_unreadable" };
+        },
+      );
+
       const expectedReturn = await expectedReturnForFunnelCampaign(
         headers,
         brandId,
@@ -155,6 +166,10 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
         roiMultiple: money && distinct.length <= 1 ? money.costEconomics.roiMultiple : null,
         moneyUnavailableReason: distinct.length > 1 ? "units_price_differently" : null,
         expectedReturn,
+        // Its people at each step of its path since inception (`steps[].people`, `rateToNextPct`; Lead found = the
+        // leads it found), the campaign page's funnel byte-for-byte.
+        funnel: activity.funnel,
+        funnelUnavailableReason: activity.funnelUnavailableReason,
         // The pipeline and WHY it is unpriced (`unpricedReason`, e.g. `no_funnel_wired` on an AI meeting
         // booking funnel), the block a campaign row serves: a null ROI always reads with its reason.
         headline: money?.headline ?? null,

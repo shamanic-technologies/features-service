@@ -5,11 +5,14 @@
  * THE FUNNEL, in PEOPLE, along the campaign's own path (its catalogue funnel's steps, Start excluded). Who the
  * people are depends only on where the funnel STARTS (one rule for every funnel, `lib/meeting-leg-fleet.ts`
  * `isInternalPipe`):
- *   - it starts at Lead found (proactive): its people are held by its OUTREACH unit (the unit working Lead found ->
- *     next step; sourcing units hand their leads to it). Every step is lead-service's people count for that unit
- *     (`/orgs/leads/bucket-counts`, the Leads page's own set), and two outreach rungs are served after Lead found:
- *     Contacted (`counts.contacted`) and Delivered (`people.delivered`: people an email reached; 0 on a channel that
- *     sends none);
+ *   - it starts at Lead found (proactive): its people are held by the units that FIND or WORK them (its sourcing
+ *     unit stores what it finds since 2026-10-12, lead-service LEADS-ONLY-FUNNEL-CAMPAIGN; its outreach unit holds the
+ *     people it was handed, and held every found lead before). Every step is lead-service's people count
+ *     (`/orgs/leads/bucket-counts`, the Leads page's own set) MERGED over those units by MAX per figure
+ *     (`mergeBucketCounts`): the same person sits under each unit that held them, so a sum double counts; the units
+ *     hold nested sets (a unit works the people found before it), so the largest is the funnel's. Two outreach rungs
+ *     are served after Lead found: Contacted (`counts.contacted`) and Delivered (`people.delivered`: people an email
+ *     reached; 0 on a funnel that sends none, e.g. a leads-only funnel: Start -> Lead found -> your team);
  *   - it starts at any other step (reactive: Positive reply -> ...): it holds nobody, its units take people over.
  *     Its people = the people its units were HANDED (lead-service follow-up ledger); the first step counts them, a
  *     step a unit performs as an act (Booking call: the act IS the call placed, lead-service's rule) counts the
@@ -71,7 +74,21 @@ export function withRates(steps: Array<Omit<FunnelActivityStep, "rateToNextPct">
   });
 }
 
-/** PURE: a proactive funnel's steps off its outreach unit's lead-service counts. */
+/** PURE: the people counts of several units of ONE funnel campaign, MAX per figure (never a sum: one person, several units). */
+export function mergeBucketCounts(
+  buckets: ReadonlyArray<{ total: number; counts: Record<string, number>; people: { sent: number; delivered: number; interested: number } }>,
+): { total: number; counts: Record<string, number>; people: { sent: number; delivered: number; interested: number } } {
+  const counts: Record<string, number> = {};
+  for (const b of buckets) for (const [k, n] of Object.entries(b.counts)) if (typeof n === "number") counts[k] = Math.max(counts[k] ?? 0, n);
+  const max = (f: (b: (typeof buckets)[number]) => number) => buckets.reduce((m, b) => Math.max(m, f(b)), 0);
+  return {
+    total: max((b) => b.total),
+    counts,
+    people: { sent: max((b) => b.people.sent), delivered: max((b) => b.people.delivered), interested: max((b) => b.people.interested) },
+  };
+}
+
+/** PURE: a proactive funnel's steps off its units' merged lead-service counts (`mergeBucketCounts`). */
 export function proactiveFunnelSteps(
   path: readonly PathStep[],
   bucket: { total: number; counts: Record<string, number>; people: { delivered: number } },
