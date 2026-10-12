@@ -291,6 +291,8 @@ export function buildChannelCatalogue(
   channelTypeOfSlug: (slug: string) => ChannelType = channelTypeOf,
   // Run-time declarations (`lib/channel-declarations.ts`): the declared trigger types beside the coded ones.
   triggerOf?: (id: string) => { coded: boolean } | null,
+  // A declared leg staff has not published: never runnable, so not held to a fired trigger.
+  isDraftLeg?: (slug: string, legKey: string) => boolean,
 ): PublicChannel[] {
   const channels: PublicChannel[] = [];
   for (const row of rows) {
@@ -333,7 +335,7 @@ export function buildChannelCatalogue(
     });
   }
   assertLegTriggersDeclared(
-    channels.flatMap((c) => c.stepTransitions.map((t) => ({ slug: c.slug, legKey: t.legKey, managed: c.managed, mode: t.mode, triggerId: t.triggerId }))),
+    channels.flatMap((c) => c.stepTransitions.map((t) => ({ slug: c.slug, legKey: t.legKey, managed: c.managed && !(isDraftLeg?.(c.slug, t.legKey) ?? false), mode: t.mode, triggerId: t.triggerId }))),
     triggerOf,
   );
   return channels.sort((a, b) => a.displayOrder - b.displayOrder || a.slug.localeCompare(b.slug));

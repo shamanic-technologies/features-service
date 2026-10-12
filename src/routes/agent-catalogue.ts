@@ -1141,7 +1141,8 @@ router.post("/internal/catalogue/pipes", apiKeyOnly, async (req, res) => {
     const declaredChannel = cat.declared.channels.find((c) => c.slug === body.channelSlug);
     if (!channel && !declaredChannel) return void res.status(404).json({ error: `no channel ${body.channelSlug}`, reason: "channel_not_found" });
     const slug = (channel?.slug ?? declaredChannel?.slug)!;
-    const input = parseLegInput(body, { slug, managed: channel?.managed ?? false, legKeys: new Set((channel?.stepTransitions ?? []).map((t) => t.legKey)) }, triggers);
+    const operatedBy = (channel?.operatedBy ?? declaredChannel?.operatedBy)!;
+    const input = parseLegInput(body, { slug, managed: channel?.managed ?? false, operatedBy, legKeys: new Set((channel?.stepTransitions ?? []).map((t) => t.legKey)) }, triggers);
     // A leg out of a real step converts at a rate: the fleet's or the seeded default, else the caller states it.
     let statedRate: number | null = null;
     if (input.fromStep !== null && input.fromStep !== "lead_found" && legRateOf(new Map(), input.fromStep, input.toStep).ratePct === null) {

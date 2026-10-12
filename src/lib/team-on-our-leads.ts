@@ -32,6 +32,7 @@ import { OUTCOME_EVENT_OF_STEP } from "./funnel-campaign-activity.js";
 import { outsideInteractiveView } from "./lead-copy.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { buildPipeStats, type PipeStatsConversionRate, type PipeStatsVolume } from "./pipe-stats.js";
+import type { PipePeriods } from "./pipe-periods.js";
 
 /** A step our own sending observes, and the lead-snapshot signal + email-gateway date that state it. */
 const SNAPSHOT_SIGNAL_OF_STEP: Readonly<Record<string, "positiveReply" | "clicked">> = { conversation: "positiveReply", website_visit: "clicked" };
@@ -101,6 +102,8 @@ export interface OurLeadsToTeam {
   volumes: PipeStatsVolume[];
   conversionRates: PipeStatsConversionRate[];
   history: Array<{ date: string; volumes: Record<string, number | null>; conversionRates: Record<string, number | null> }>;
+  /** The same counts by calendar month and quarter, not cumulative (customer time: no spend). */
+  periods: PipePeriods;
   /** Our pipes on the same leg, on the people they acted on: the rate to read beside this one. */
   ourPipesRate: OurPipesRate;
 }
@@ -233,6 +236,7 @@ export function buildOurLeadsToTeam(
     spendByDay: new Map(),
     valuePerOutcomeUsd: null,
     today,
+    hasSpend: false,
   });
   const actedOn = measured ? total((f) => f.ourPipesRate.actedOn ?? 0) : null;
   const ourOutcomes = measured ? total((f) => f.ourPipesRate.outcomes ?? 0) : null;
@@ -252,6 +256,7 @@ export function buildOurLeadsToTeam(
     volumes: figures.volumes,
     conversionRates: figures.conversionRates,
     history: figures.history.map((h) => ({ date: h.date, volumes: h.volumes, conversionRates: h.conversionRates })),
+    periods: figures.periods,
     ourPipesRate:
       actedOn === null || ourOutcomes === null
         ? { actedOn: null, outcomes: null, ratePct: null, unavailableReason: "volume_not_measured" }

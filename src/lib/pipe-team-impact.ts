@@ -19,6 +19,7 @@
  * A pipe with no customer-team co-leg serves null (nothing new).
  */
 import type { DatedCount, OurLeadsToTeamReason } from "./team-on-our-leads.js";
+import { buildPipePeriods, type PipePeriods } from "./pipe-periods.js";
 
 export type ImpactRowUnavailableReason = OurLeadsToTeamReason | "no_input_yet";
 export type ImpactUnavailableReason =
@@ -76,6 +77,10 @@ export interface PipeTeamImpact {
   impact: PipeTeamImpactFigure;
   firstActivityDay: string | null;
   history: PipeTeamImpactPoint[];
+  /** Both rows by calendar month and quarter, not cumulative, plus a since-inception row (`lib/pipe-periods.ts`):
+   *  counts `teamAloneFrom`/`teamAloneTo`/`teamPlusPipeFrom`/`teamPlusPipeTo`, rates `teamAlone`/`teamPlusPipe`, spend and
+   *  cost per outcome = this pipe's (team + pipe row), `impactPointsDiff` per period. */
+  periods: PipePeriods & { impactPointsDiff: Record<string, number | null> };
 }
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
@@ -211,7 +216,39 @@ export function buildPipeTeamImpact(input: {
     impact: impactOf(tf, rawRate(tt, tf), pf, rawRate(pt, pf)),
     firstActivityDay: first,
     history,
+    periods: teamImpactPeriods(team, pipe, input.spendByDay, input.today),
   };
+}
+
+/** PURE: the two rows by calendar period, and the points between their rates per period (null when either is). */
+function teamImpactPeriods(
+  team: { from: DatedCount; to: DatedCount } | null,
+  pipe: { from: DatedCount; to: DatedCount } | null,
+  spendByDay: ReadonlyMap<string, number>,
+  today: string,
+): PipeTeamImpact["periods"] {
+  const periods = buildPipePeriods({
+    counts: [
+      { key: "teamAloneFrom", counts: team?.from ?? null },
+      { key: "teamAloneTo", counts: team?.to ?? null },
+      { key: "teamPlusPipeFrom", counts: pipe?.from ?? null },
+      { key: "teamPlusPipeTo", counts: pipe?.to ?? null },
+    ],
+    ratePairs: [
+      { key: "teamAlone", fromKey: "teamAloneFrom", toKey: "teamAloneTo" },
+      { key: "teamPlusPipe", fromKey: "teamPlusPipeFrom", toKey: "teamPlusPipeTo" },
+    ],
+    outcomeKey: "teamPlusPipeTo",
+    spendByDay,
+    today,
+  });
+  const impactPointsDiff: Record<string, number | null> = {};
+  for (const r of [periods.total, ...periods.quarters, ...periods.months]) {
+    const a = r.ratesPct.teamAlone;
+    const b = r.ratesPct.teamPlusPipe;
+    impactPointsDiff[r.period] = a === null || b === null ? null : round2(b - a);
+  }
+  return { ...periods, impactPointsDiff };
 }
 
 /** PURE: sum per-brand dated counts. */

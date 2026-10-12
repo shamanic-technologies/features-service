@@ -60,6 +60,7 @@ import { mapWithConcurrency } from "./concurrency.js";
 import { fetchTeamLegReach, fetchTeamLegReachBrands, type TeamLegReach } from "./team-leg-reach-client.js";
 import { fetchLegPopulations, fetchOurLeadsToTeam, type LegPipeRef, type LegPopulations, type OurLeadsToTeam } from "./team-on-our-leads.js";
 import { buildPipeTeamImpact, sumDated, type PipeTeamImpact } from "./pipe-team-impact.js";
+import { buildPipePeriods, type PipePeriods } from "./pipe-periods.js";
 
 export type PipeStatsKind = "entry" | "internal" | "on_demand" | "customer_team";
 export type VolumeRole = "input" | "action" | "outcome";
@@ -131,6 +132,8 @@ export interface PipeStatsFigures {
   roiUnavailableReason: "step_unvalued" | "no_cost_per_outcome" | null;
   conversionRates: PipeStatsConversionRate[];
   history: PipeStatsPoint[];
+  /** The same counts by calendar month and quarter, not cumulative, plus a since-inception row (`lib/pipe-periods.ts`). */
+  periods: PipePeriods;
 }
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
@@ -178,6 +181,8 @@ export function buildPipeStats(input: {
   spendByDay: ReadonlyMap<string, number>;
   valuePerOutcomeUsd: number | null;
   today: string;
+  /** False = no spend of ours on this pipe (customer time): the period rows carry no spend nor cost. Default true. */
+  hasSpend?: boolean;
 }): PipeStatsFigures {
   const days = new Set<string>();
   for (const [d, usd] of input.spendByDay) if (usd !== 0 && DAY_RE.test(d)) days.add(d);
@@ -233,6 +238,13 @@ export function buildPipeStats(input: {
       return { ...p, numerator, denominator, ...rateOf(numerator, denominator) };
     }),
     history,
+    periods: buildPipePeriods({
+      counts: input.volumes.map((v) => ({ key: v.key, counts: v.daily === null ? null : { daily: v.daily, undated: v.undated } })),
+      ratePairs: pairs,
+      outcomeKey: input.outcomeKey,
+      spendByDay: input.hasSpend === false ? null : input.spendByDay,
+      today: input.today,
+    }),
   };
 }
 
@@ -489,7 +501,7 @@ export async function computePipeStats(p: PipeStatsPipe, scope: PipeStatsScope, 
   // On-demand with no recorded event yet: nothing found, nothing counted as spent on it.
   const spendByDay = ids.length === 0 || kind === "customer_team" || (kind === "on_demand" && spendSince === null) ? new Map<string, number>() : await fetchCampaignsNetSpendByDay(p.channelSlug, ids, spendSince);
   const today = new Date().toISOString().slice(0, 10);
-  const figures = buildPipeStats({ volumes, outcomeKey: "outcomes", spendByDay, valuePerOutcomeUsd, today });
+  const figures = buildPipeStats({ volumes, outcomeKey: "outcomes", spendByDay, valuePerOutcomeUsd, today, hasSpend: kind !== "customer_team" });
   let teamImpact: PipeTeamImpact | null = null;
   if (coLeg && populations) {
     const { perBrand, reason } = await populations;
