@@ -539,7 +539,7 @@ const revenueLeadSchema = z.object({
   expectedRevenueUsd: z.number().describe("Expected revenue for this lead. On a lensed (?lens=) response this is the lens's expected revenue = (conversionProbabilityPct/100) × LTR; otherwise the engine's furthest-stage EV."),
   date: z.string().nullable().describe("Most-advanced event date. Null until per-event timestamps exist (email-gateway); always null on a lensed response (Wave B dates are skipped)."),
   contacted: z.boolean().describe("True when the lead has been contacted (email-gateway delivery evidence). The same signal the Outreach stat card + pipeline-activity daily graph should count, so all three Overview surfaces agree on \"contacted\" from one snapshot (features-service#371)."),
-  contactedAt: z.string().nullable().describe("ISO timestamp of first contact (email-gateway firstContactedAt). Null when not yet contacted, or contacted with no known date. The real per-lead timestamp the daily graph buckets by — no synthesis."),
+  contactedAt: z.string().nullable().describe("ISO timestamp of the first email that went out to this lead (email-gateway firstSentAt, or firstBouncedAt for a send that bounced; never the queue push). Null when not yet contacted, or contacted with no known date. The real per-lead timestamp the daily graph buckets by — no synthesis."),
   bounced: z.boolean().describe("True when this lead's email BOUNCED. It rides the row beside `contacted` rather than erasing it — the lead IS reached (a bounce is the proof a send happened) and is simply out of the funnel, so it appears here at expectedRevenueUsd 0. Counted in outcomes.recipientsBounced and excluded from outcomes.recipientsConvertible."),
   unsubscribed: z.boolean().describe("True when this lead UNSUBSCRIBED. Same rules as bounced: reached, out of the funnel, worth 0. A row a customer opens has to say the same thing as the counts above it, which is why the reason is stated rather than left as a contacted lead that mysteriously never progressed."),
   opened: z.boolean().describe("True when the lead opened (email-gateway). The signal the Opens daily-graph actual buckets, server-computed from this same leads[] snapshot (features-service#377)."),
@@ -721,7 +721,7 @@ const spendSchema = z.object({
 // Shared verbatim by every grain that answers it (the per-campaign groups, the per-workflow groups and
 // the un-grouped brand read), because two grains counting people two ways would eventually disagree.
 const revenueOutcomesSchema = z.object({
-  recipientsContacted: z.number().describe("REACH — distinct leads this grain emailed for this brand, INCLUDING every one whose email bounced and every one who unsubscribed: we queued it, we sent it, we paid for it, so a bounce is the proof a send happened rather than a reason to forget it. The grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer. This is the figure to read for 'how many unique people did we reach out to'."),
+  recipientsContacted: z.number().describe("REACH — distinct leads this grain emailed for this brand, INCLUDING every one whose email bounced and every one who unsubscribed (a lead only queued and never sent is NOT reached): we sent it, we paid for it, so a bounce is the proof a send happened rather than a reason to forget it. The grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer. This is the figure to read for 'how many unique people did we reach out to'."),
   recipientsConvertible: z.number().describe("THE PIPELINE BASE — of the leads reached, the ones still able to convert: recipientsContacted minus everyone a bounce or an unsubscribe removed from the funnel. Every expected-value figure on this grain (headline.totalPipelineUsd, costEconomics, the leads[] EV column) rests on these people and no others, so this is the figure to read for 'how many are still eligible to convert'. SERVED rather than subtracted in the browser because it is not derivable from the counts beside it: a lead can be both bounced AND unsubscribed, so contacted − bounced − unsubscribed double-subtracts it — only the per-lead set knows the union."),
   recipientsBounced: z.number().describe("Distinct leads whose email BOUNCED. Counted inside recipientsContacted (a bounce implies a send) and excluded from recipientsConvertible (a bounced mailbox can never convert)."),
   recipientsUnsubscribed: z.number().describe("Distinct leads who UNSUBSCRIBED. Counted inside recipientsContacted (we did email them) and excluded from recipientsConvertible (they asked us to stop)."),
@@ -3026,7 +3026,7 @@ const livedSalesPathsResponseRef = registry.register(
     totals: z.object({
       ...livedTotalsCore,
       people: z.number().int().describe("Distinct PEOPLE on the paths (one person on two offers = one person, two leads)."),
-      peopleEmailed: z.number().int().describe("Distinct people one of our emails was SENT to: equals GET /brands/{brandId}/revenue outcomes.sending.recipientsSent (not recipientsContacted, which also counts people queued in a sequence and never sent). The rest of `people` entered on a later step (a meeting statement, an engagement with the video) with no email."),
+      peopleEmailed: z.number().int().describe("Distinct people one of our emails was SENT to: equals GET /brands/{brandId}/revenue outcomes.sending.recipientsSent (and recipientsContacted, which counts the same people emailed). The rest of `people` entered on a later step (a meeting statement, an engagement with the video) with no email."),
       unattributedCostUsd: z.number().describe("Spend no person carries (Σ unattributedCost)."),
       unattributedCost: z.array(
         z.object({
@@ -3761,7 +3761,7 @@ const recapBrandSchema = z.object({
   brandId: z.string(),
   emailsSent: z.number().int(),
   emailsDelivered: z.number().int(),
-  recipientsContacted: z.number().int().describe("Leads pushed into the sending queue in the window (not necessarily emailed yet)."),
+  recipientsContacted: z.number().int().describe("Leads that got at least one email in the window (same number as recipientsEmailed); never the leads only queued."),
   recipientsEmailed: z.number().int().describe("Leads that got at least one email in the window."),
   positiveReplyRatePct: z.number().nullable().describe("Positive replies per 100 contacted leads used for the expectation."),
   rateSource: z.enum(["brand_mature", "fleet"]).nullable().describe("brand_mature = the brand's own leads contacted before the start_to_conversation maturity cutoff, holding at least outcomesRequired positive replies; fleet = the public onboarding's fleet rate (best workflow on start_to_conversation). A brand a few days old is priced on the fleet rate."),
@@ -3800,8 +3800,8 @@ const orgPeriodRecapResponseRef = registry.register(
     outbound: z.object({
       emailsSent: z.number().int().describe("Emails sent in the window, every step of every sequence (email-gateway emailStats.sent per UTC day, summed). 0 is measured."),
       emailsDelivered: z.number().int(),
-      recipientsContacted: z.number().int().describe("Leads PUSHED INTO THE SENDING QUEUE in the window (dated on the push): the per-day series behind the dashboard's Outreach card, summed. NOT a count of people emailed: see recipientsEmailed and sendStatus. Equal to recipientsEnrolled."),
-      recipientsEnrolled: z.number().int().describe("Same number as recipientsContacted, named for what it is: leads lined up in the sending queue in the window."),
+      recipientsContacted: z.number().int().describe("Leads that got at least one email in the window: same number as recipientsEmailed (Contacted = an email went out, owner 2026-10-12). Leads only lined up in the queue are recipientsEnrolled."),
+      recipientsEnrolled: z.number().int().describe("Leads PUSHED INTO THE SENDING QUEUE in the window (email-gateway recipientStats.contacted, dated on the push), emailed or not yet."),
       recipientsEmailed: z.number().int().describe("Leads that got at least one email in the window (email-gateway recipientStats.sent, dated on the send event). Not subtractable from recipientsEnrolled: the two are dated on different clocks."),
       sendStatus: z.enum(["emails_sent", "lined_up_not_sent", "nothing_sent"]).describe("emails_sent = at least one email went out in the window; lined_up_not_sent = leads were queued but no email went out yet; nothing_sent = nothing queued and nothing sent."),
       deliveryRatePct: z.number().nullable().describe("100 x emailsDelivered / emailsSent in the window. The WINDOW twin of the dashboard's whole-history outcomes.sending.deliveryRatePct (lead grain); never relabel one as the other."),

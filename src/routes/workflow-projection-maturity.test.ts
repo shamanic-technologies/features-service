@@ -244,8 +244,9 @@ function mockFetch(opts: { failMatureCosts?: boolean } = {}): void {
       const groups = new Map<string, any>();
       for (const p of fixture.persons) {
         if (!keep(p as any)) continue;
-        const g = groups.get(p.workflowSlug) ?? { key: p.workflowSlug, broadcast: { recipientStats: { contacted: 0, clicked: 0, repliesPositive: 0 } } };
+        const g = groups.get(p.workflowSlug) ?? { key: p.workflowSlug, broadcast: { recipientStats: { contacted: 0, sent: 0, clicked: 0, repliesPositive: 0 } } };
         g.broadcast.recipientStats.contacted += 1;
+        g.broadcast.recipientStats.sent += 1;
         if (p.signals.clicked) g.broadcast.recipientStats.clicked += 1;
         if (p.signals.positiveReply) g.broadcast.recipientStats.repliesPositive += 1;
         groups.set(p.workflowSlug, g);

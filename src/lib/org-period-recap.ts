@@ -9,14 +9,16 @@
  *   - VOLUME is read per UTC DAY from email-gateway (`/orgs/stats?type=broadcast&groupBy=day`, the read
  *     behind the Overview's outreach bars, `lib/sequences-client.ts`) and summed over the window's days:
  *     `emailsSent` / `emailsDelivered` on the EMAIL grain (every step of every sequence), and
- *     `recipientsContacted` on the lead grain (the Outreach card's per-day series). The window is whole UTC
- *     days, both bounds inclusive.
- *   - CONTACTED IS NOT SENT. email-gateway's `contacted` counts a lead PUSHED INTO THE SENDING QUEUE (dated on
- *     the push); its `sent` counts a lead that got at least one email (dated on the send event). A brand whose
- *     mailboxes have not dispatched yet reads 302 contacted / 0 sent (Legistai, 2026-10-03). So the outbound
- *     block states both and a verdict: `recipientsEnrolled` (= `recipientsContacted`, lined up),
- *     `recipientsEmailed` (got ≥1 email in the window), `sendStatus` (`emails_sent` | `lined_up_not_sent` |
- *     `nothing_sent`). The two clocks differ, so no "queued = enrolled − emailed" subtraction is served.
+ *     the lead-grain counts (the Outreach card's per-day series). The window is whole UTC days, both bounds
+ *     inclusive.
+ *   - CONTACTED = EMAILED (owner 2026-10-12). email-gateway's own `contacted` counts a lead PUSHED INTO THE
+ *     SENDING QUEUE (dated on the push); its `sent` counts a lead that got at least one email (dated on the
+ *     send event). A brand whose mailboxes have not dispatched yet reads 302 queued / 0 sent (Legistai,
+ *     2026-10-03). So `recipientsContacted` = `recipientsEmailed` (got ≥1 email in the window, same number),
+ *     `recipientsEnrolled` = lined up in the queue, and `sendStatus` (`emails_sent` | `lined_up_not_sent` |
+ *     `nothing_sent`) says which. The two clocks differ, so no "queued = enrolled − emailed" subtraction is
+ *     served. Expected replies, the mature reply rate and "a brand that sent" all count EMAILED leads; the
+ *     +$100 line-up projection stays on enrolled (what a budget lines up).
  *   - DELIVERY RATE = delivered ÷ sent emails in the window. It is the WINDOW twin of the dashboard's
  *     whole-history `outcomes.sending.deliveryRatePct` (which is lead-grain): never relabel one as the other.
  *   - EXPECTED POSITIVE REPLIES = the window's contacted leads × a positive-reply rate per contacted lead.
@@ -77,7 +79,7 @@ export interface RecapDay {
   emailsSent: number;
   emailsDelivered: number;
   /** Leads pushed into the sending queue that day (NOT necessarily emailed). */
-  recipientsContacted: number;
+  recipientsEnrolled: number;
   /** Leads that got at least one email that day. */
   recipientsEmailed: number;
   recipientsRepliesPositive: number;
@@ -126,6 +128,7 @@ export interface RecapBrand {
   brandId: string;
   emailsSent: number;
   emailsDelivered: number;
+  /** Leads that got at least one email in the window (= `recipientsEmailed`). */
   recipientsContacted: number;
   recipientsEmailed: number;
   positiveReplyRatePct: number | null;
@@ -197,8 +200,9 @@ export interface OrgPeriodRecap {
   outbound: {
     emailsSent: number;
     emailsDelivered: number;
-    /** Leads pushed into the sending queue in the window. Same number as `recipientsEnrolled`; NOT "emailed". */
+    /** Leads that got at least one email in the window. Same number as `recipientsEmailed`. */
     recipientsContacted: number;
+    /** Leads pushed into the sending queue in the window; NOT "emailed". */
     recipientsEnrolled: number;
     /** Leads that got at least one email in the window. */
     recipientsEmailed: number;
@@ -378,18 +382,18 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
       let emailsSent = 0;
       let recipientsEmailed = 0;
       let emailsDelivered = 0;
-      let recipientsContacted = 0;
+      let recipientsEnrolled = 0;
       let matureContacted = 0;
       let matureReplies = 0;
       for (const d of series) {
         if (days.has(d.date)) {
           emailsSent += d.emailsSent;
           emailsDelivered += d.emailsDelivered;
-          recipientsContacted += d.recipientsContacted;
+          recipientsEnrolled += d.recipientsEnrolled;
           recipientsEmailed += d.recipientsEmailed;
         }
         if (d.date < cutoffDate) {
-          matureContacted += d.recipientsContacted;
+          matureContacted += d.recipientsEmailed;
           matureReplies += d.recipientsRepliesPositive;
         }
       }
@@ -397,6 +401,8 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
       const ratePct = ownMature ? (100 * matureReplies) / matureContacted : (input.fleetRate?.ratePct ?? null);
       const rateSource: ReplyRateSource | null = ownMature ? "brand_mature" : input.fleetRate ? "fleet" : null;
 
+      // Contacted = emailed (owner 2026-10-12).
+      const recipientsContacted = recipientsEmailed;
       let expectedPositiveReplies: number | null;
       let nullReason: RecapNullReason | null = null;
       if (recipientsContacted === 0) expectedPositiveReplies = 0;
@@ -412,6 +418,7 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
         emailsDelivered,
         recipientsContacted,
         recipientsEmailed,
+        _enrolled: recipientsEnrolled,
         positiveReplyRatePct: ratePct === null ? null : round(ratePct, 4),
         rateSource,
         matureCohort: {
@@ -437,7 +444,8 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
   const emailsDelivered = brands.reduce((s, b) => s + b.emailsDelivered, 0);
   const recipientsContacted = brands.reduce((s, b) => s + b.recipientsContacted, 0);
   const recipientsEmailed = brands.reduce((s, b) => s + b.recipientsEmailed, 0);
-  const sendStatus: SendStatus = emailsSent > 0 ? "emails_sent" : recipientsContacted > 0 ? "lined_up_not_sent" : "nothing_sent";
+  const recipientsEnrolled = brands.reduce((s, b) => s + b._enrolled, 0);
+  const sendStatus: SendStatus = emailsSent > 0 ? "emails_sent" : recipientsEnrolled > 0 ? "lined_up_not_sent" : "nothing_sent";
   let spendUsd = 0;
   for (const [day, usd] of input.spendByDay) if (days.has(day)) spendUsd += usd;
 
@@ -493,7 +501,7 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
   const hasSpend = spendUsd > 0;
   // Volume needs no rate and no economics: only something lined up and a spend that lined it up.
   const recipientsReason: RecapNullReason | null =
-    recipientsContacted === 0 ? "nothing_sent" : spendUsd <= 0 ? "no_spend_in_window" : null;
+    recipientsEnrolled === 0 ? "nothing_sent" : spendUsd <= 0 ? "no_spend_in_window" : null;
   return {
     orgId: input.orgId,
     window: { from: input.from, to: input.to, grain: "utc_day", days: days.size },
@@ -503,7 +511,7 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
       emailsSent,
       emailsDelivered,
       recipientsContacted,
-      recipientsEnrolled: recipientsContacted,
+      recipientsEnrolled,
       recipientsEmailed,
       sendStatus,
       deliveryRatePct: emailsSent > 0 ? round((100 * emailsDelivered) / emailsSent, 2) : null,
@@ -534,7 +542,7 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
     budgetIncrease: {
       amountUsd: BUDGET_INCREASE_USD,
       basis: "linear_at_served_return",
-      expectedAdditionalRecipientsEnrolled: recipientsReason ? null : Math.round((BUDGET_INCREASE_USD * recipientsContacted) / spendUsd),
+      expectedAdditionalRecipientsEnrolled: recipientsReason ? null : Math.round((BUDGET_INCREASE_USD * recipientsEnrolled) / spendUsd),
       expectedAdditionalRecipientsEnrolledNullReason: recipientsReason,
       expectedAdditionalPositiveReplies:
         expectedReplies !== null && hasSpend ? round((BUDGET_INCREASE_USD * expectedReplies) / spendUsd, 2) : null,
@@ -542,7 +550,7 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
       revenueMultiple: roiMultiple !== null && hasSpend ? round((spendUsd + BUDGET_INCREASE_USD) / spendUsd, 2) : null,
       nullReason: returnReason ?? (hasSpend ? repliesReason : "no_spend_in_window"),
     },
-    brands: brands.map(({ _rawReplies: _a, _returns: _b, _ltrNullReason: _d, ...rest }): RecapBrand => rest),
+    brands: brands.map(({ _rawReplies: _a, _returns: _b, _ltrNullReason: _d, _enrolled: _e, ...rest }): RecapBrand => rest),
     fleetPositiveReplyRate: input.fleetRate,
   };
 }
@@ -598,7 +606,7 @@ export async function fetchBrandBroadcastDays(orgId: string, brandId: string): P
       date: g.key,
       emailsSent: num(e.sent ?? 0, "emailStats.sent"),
       emailsDelivered: num(e.delivered ?? 0, "emailStats.delivered"),
-      recipientsContacted: num(r.contacted ?? 0, "recipientStats.contacted"),
+      recipientsEnrolled: num(r.contacted ?? 0, "recipientStats.contacted"),
       recipientsEmailed: num(r.sent ?? 0, "recipientStats.sent"),
       recipientsRepliesPositive: num(r.repliesPositive ?? 0, "recipientStats.repliesPositive"),
     };

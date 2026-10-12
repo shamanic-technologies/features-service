@@ -366,7 +366,8 @@ function extractBroadcastEmailFields(data: Record<string, unknown>): Record<stri
   const recipientStats = broadcast.recipientStats as Record<string, number> | undefined;
   if (!recipientStats) return result;
 
-  result.recipientsContacted = recipientStats.contacted;
+  // Contacted = got at least one email (`sent`), never email-gateway's queue-push `contacted` (owner 2026-10-12).
+  result.recipientsContacted = recipientStats.sent;
   result.recipientsSent = recipientStats.sent;
   result.recipientsDelivered = recipientStats.delivered;
   result.recipientsOpened = recipientStats.opened;

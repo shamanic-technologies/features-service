@@ -345,3 +345,25 @@ describe("fetchLeadsForRevenue — a positive reply the customer's CRM evidences
     expect(person.crmPositiveReplyAt).toBeNull();
   });
 });
+
+describe("fetchLeadsForRevenue — Contacted means an email went out (owner 2026-10-12)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("a lead queued in a sequence and never sent is NOT contacted (email-gateway contacted:true, sent:false)", async () => {
+    mockLeads([compactRow({ contacted: true, sent: false, clicked: false, replied: false })]);
+    const [person] = await fetchLeadsForRevenue("brand-1", undefined, HEADERS);
+    expect(person.signals.contacted).toBe(false);
+  });
+
+  it("a lead sent an email is contacted", async () => {
+    mockLeads([compactRow({ contacted: true, sent: true })]);
+    const [person] = await fetchLeadsForRevenue("brand-1", undefined, HEADERS);
+    expect(person.signals.contacted).toBe(true);
+  });
+
+  it("a send attempt that bounced is contacted even when the provider recorded no send (sentCount 0)", async () => {
+    mockLeads([compactRow({ contacted: true, sent: false, bounced: true })]);
+    const [person] = await fetchLeadsForRevenue("brand-1", undefined, HEADERS);
+    expect(person.signals.contacted).toBe(true);
+  });
+});

@@ -167,8 +167,9 @@ function mockFetch(): void {
       const rows = select(u, headers, url.includes("/public/"));
       const groups = new Map<string, any>();
       for (const r of rows) {
-        const g = groups.get(r.slug) ?? { key: r.slug, broadcast: { recipientStats: { contacted: 0, clicked: 0, repliesPositive: 0 } } };
+        const g = groups.get(r.slug) ?? { key: r.slug, broadcast: { recipientStats: { contacted: 0, sent: 0, clicked: 0, repliesPositive: 0 } } };
         g.broadcast.recipientStats.contacted += r.contacted;
+        g.broadcast.recipientStats.sent += r.contacted;
         g.broadcast.recipientStats.clicked += r.clicks;
         g.broadcast.recipientStats.repliesPositive += r.replies;
         groups.set(r.slug, g);

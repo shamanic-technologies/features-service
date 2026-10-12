@@ -3125,7 +3125,7 @@
                     "contactedAt": {
                       "type": "string",
                       "nullable": true,
-                      "description": "ISO timestamp of first contact (email-gateway firstContactedAt). Null when not yet contacted, or contacted with no known date. The real per-lead timestamp the daily graph buckets by — no synthesis."
+                      "description": "ISO timestamp of the first email that went out to this lead (email-gateway firstSentAt, or firstBouncedAt for a send that bounced; never the queue push). Null when not yet contacted, or contacted with no known date. The real per-lead timestamp the daily graph buckets by — no synthesis."
                     },
                     "bounced": {
                       "type": "boolean",
@@ -3314,7 +3314,7 @@
             "properties": {
               "recipientsContacted": {
                 "type": "number",
-                "description": "REACH — distinct leads this grain emailed for this brand, INCLUDING every one whose email bounced and every one who unsubscribed: we queued it, we sent it, we paid for it, so a bounce is the proof a send happened rather than a reason to forget it. The grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer. This is the figure to read for 'how many unique people did we reach out to'."
+                "description": "REACH — distinct leads this grain emailed for this brand, INCLUDING every one whose email bounced and every one who unsubscribed (a lead only queued and never sent is NOT reached): we sent it, we paid for it, so a bounce is the proof a send happened rather than a reason to forget it. The grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer. This is the figure to read for 'how many unique people did we reach out to'."
               },
               "recipientsConvertible": {
                 "type": "number",
@@ -4525,7 +4525,7 @@
                   "properties": {
                     "recipientsContacted": {
                       "type": "number",
-                      "description": "REACH — distinct leads this grain emailed for this brand, INCLUDING every one whose email bounced and every one who unsubscribed: we queued it, we sent it, we paid for it, so a bounce is the proof a send happened rather than a reason to forget it. The grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer. This is the figure to read for 'how many unique people did we reach out to'."
+                      "description": "REACH — distinct leads this grain emailed for this brand, INCLUDING every one whose email bounced and every one who unsubscribed (a lead only queued and never sent is NOT reached): we sent it, we paid for it, so a bounce is the proof a send happened rather than a reason to forget it. The grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer. This is the figure to read for 'how many unique people did we reach out to'."
                     },
                     "recipientsConvertible": {
                       "type": "number",
@@ -4944,7 +4944,7 @@
                   "properties": {
                     "recipientsContacted": {
                       "type": "number",
-                      "description": "REACH — distinct leads this grain emailed for this brand, INCLUDING every one whose email bounced and every one who unsubscribed: we queued it, we sent it, we paid for it, so a bounce is the proof a send happened rather than a reason to forget it. The grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer. This is the figure to read for 'how many unique people did we reach out to'."
+                      "description": "REACH — distinct leads this grain emailed for this brand, INCLUDING every one whose email bounced and every one who unsubscribed (a lead only queued and never sent is NOT reached): we sent it, we paid for it, so a bounce is the proof a send happened rather than a reason to forget it. The grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer. This is the figure to read for 'how many unique people did we reach out to'."
                     },
                     "recipientsConvertible": {
                       "type": "number",
@@ -9518,7 +9518,7 @@
                     "contactedAt": {
                       "type": "string",
                       "nullable": true,
-                      "description": "ISO timestamp of first contact (email-gateway firstContactedAt). Null when not yet contacted, or contacted with no known date. The real per-lead timestamp the daily graph buckets by — no synthesis."
+                      "description": "ISO timestamp of the first email that went out to this lead (email-gateway firstSentAt, or firstBouncedAt for a send that bounced; never the queue push). Null when not yet contacted, or contacted with no known date. The real per-lead timestamp the daily graph buckets by — no synthesis."
                     },
                     "bounced": {
                       "type": "boolean",
@@ -9707,7 +9707,7 @@
             "properties": {
               "recipientsContacted": {
                 "type": "number",
-                "description": "REACH — distinct leads this grain emailed for this brand, INCLUDING every one whose email bounced and every one who unsubscribed: we queued it, we sent it, we paid for it, so a bounce is the proof a send happened rather than a reason to forget it. The grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer. This is the figure to read for 'how many unique people did we reach out to'."
+                "description": "REACH — distinct leads this grain emailed for this brand, INCLUDING every one whose email bounced and every one who unsubscribed (a lead only queued and never sent is NOT reached): we sent it, we paid for it, so a bounce is the proof a send happened rather than a reason to forget it. The grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer. This is the figure to read for 'how many unique people did we reach out to'."
               },
               "recipientsConvertible": {
                 "type": "number",
@@ -18550,7 +18550,7 @@
                     "contactedAt": {
                       "type": "string",
                       "nullable": true,
-                      "description": "ISO timestamp of first contact (email-gateway firstContactedAt). Null when not yet contacted, or contacted with no known date. The real per-lead timestamp the daily graph buckets by — no synthesis."
+                      "description": "ISO timestamp of the first email that went out to this lead (email-gateway firstSentAt, or firstBouncedAt for a send that bounced; never the queue push). Null when not yet contacted, or contacted with no known date. The real per-lead timestamp the daily graph buckets by — no synthesis."
                     },
                     "bounced": {
                       "type": "boolean",
@@ -18739,7 +18739,7 @@
             "properties": {
               "recipientsContacted": {
                 "type": "number",
-                "description": "REACH — distinct leads this grain emailed for this brand, INCLUDING every one whose email bounced and every one who unsubscribed: we queued it, we sent it, we paid for it, so a bounce is the proof a send happened rather than a reason to forget it. The grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer. This is the figure to read for 'how many unique people did we reach out to'."
+                "description": "REACH — distinct leads this grain emailed for this brand, INCLUDING every one whose email bounced and every one who unsubscribed (a lead only queued and never sent is NOT reached): we sent it, we paid for it, so a bounce is the proof a send happened rather than a reason to forget it. The grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer. This is the figure to read for 'how many unique people did we reach out to'."
               },
               "recipientsConvertible": {
                 "type": "number",
@@ -20872,7 +20872,7 @@
               },
               "peopleEmailed": {
                 "type": "integer",
-                "description": "Distinct people one of our emails was SENT to: equals GET /brands/{brandId}/revenue outcomes.sending.recipientsSent (not recipientsContacted, which also counts people queued in a sequence and never sent). The rest of `people` entered on a later step (a meeting statement, an engagement with the video) with no email."
+                "description": "Distinct people one of our emails was SENT to: equals GET /brands/{brandId}/revenue outcomes.sending.recipientsSent (and recipientsContacted, which counts the same people emailed). The rest of `people` entered on a later step (a meeting statement, an engagement with the video) with no email."
               },
               "unattributedCostUsd": {
                 "type": "number",
@@ -24376,11 +24376,11 @@
               },
               "recipientsContacted": {
                 "type": "integer",
-                "description": "Leads PUSHED INTO THE SENDING QUEUE in the window (dated on the push): the per-day series behind the dashboard's Outreach card, summed. NOT a count of people emailed: see recipientsEmailed and sendStatus. Equal to recipientsEnrolled."
+                "description": "Leads that got at least one email in the window: same number as recipientsEmailed (Contacted = an email went out, owner 2026-10-12). Leads only lined up in the queue are recipientsEnrolled."
               },
               "recipientsEnrolled": {
                 "type": "integer",
-                "description": "Same number as recipientsContacted, named for what it is: leads lined up in the sending queue in the window."
+                "description": "Leads PUSHED INTO THE SENDING QUEUE in the window (email-gateway recipientStats.contacted, dated on the push), emailed or not yet."
               },
               "recipientsEmailed": {
                 "type": "integer",
@@ -24799,7 +24799,7 @@
                 },
                 "recipientsContacted": {
                   "type": "integer",
-                  "description": "Leads pushed into the sending queue in the window (not necessarily emailed yet)."
+                  "description": "Leads that got at least one email in the window (same number as recipientsEmailed); never the leads only queued."
                 },
                 "recipientsEmailed": {
                   "type": "integer",

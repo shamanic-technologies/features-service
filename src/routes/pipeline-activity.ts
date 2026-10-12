@@ -377,7 +377,8 @@ async function fetchDailyBroadcastActivity(
       throw new Error(`email-gateway day group ${group.key} missing broadcast recipientStats`);
     }
     result.set(group.key, {
-      outreach: readStatsNumber(stats.contacted, "recipientStats.contacted"),
+      // Outreach = people emailed that day (`sent`), never queue pushes (owner 2026-10-12).
+      outreach: readStatsNumber(stats.sent, "recipientStats.sent"),
       opens: readStatsNumber(stats.opened, "recipientStats.opened"),
       clicks: readStatsNumber(stats.clicked, "recipientStats.clicked"),
     });

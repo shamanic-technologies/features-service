@@ -24,7 +24,7 @@ const day = (date: string, sent: number, contacted: number, positive = 0, emaile
   date,
   emailsSent: sent,
   emailsDelivered: Math.round(sent * 0.95),
-  recipientsContacted: contacted,
+  recipientsEnrolled: contacted,
   recipientsEmailed: emailed,
   recipientsRepliesPositive: positive,
 });
@@ -258,20 +258,23 @@ describe("GET /internal/orgs/:orgId/period-recap", () => {
     });
   });
 
-  it("leads lined up but no email out yet → sendStatus lined_up_not_sent, never 'sent' (Legistai: 302 contacted / 0 sent)", async () => {
+  it("leads lined up but no email out yet → sendStatus lined_up_not_sent, Contacted 0: nobody was emailed (Legistai: 302 queued / 0 sent)", async () => {
     setDeps({ brandDays: async () => [day("2026-10-03", 0, 173), day("2026-10-04", 0, 129)] });
     const res = await get("from=2026-10-03&to=2026-10-04");
     expect(res.body.outbound).toEqual({
       emailsSent: 0,
       emailsDelivered: 0,
-      recipientsContacted: 302,
+      recipientsContacted: 0,
       recipientsEnrolled: 302,
       recipientsEmailed: 0,
       sendStatus: "lined_up_not_sent",
       deliveryRatePct: null,
       deliveryRateNullReason: "nothing_sent",
     });
-    expect(res.body.brands[0]).toMatchObject({ recipientsContacted: 302, recipientsEmailed: 0 });
+    expect(res.body.brands[0]).toMatchObject({ recipientsContacted: 0, recipientsEmailed: 0 });
+    // Nobody emailed → no reply expected and no return to state.
+    expect(res.body.expectedPositiveReplies).toBe(0);
+    expect(res.body.expectedReturn.nullReason).toBe("nothing_sent");
   });
 
   it("+$100 states how many more recipients it lines up, linear at current results (Legistai: 302 on $98.97 → 305)", async () => {

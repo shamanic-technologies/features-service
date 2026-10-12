@@ -185,7 +185,7 @@ function mockFetch(opts: { economics?: unknown; leads?: unknown[]; timestamps?: 
       }
       const groups = (opts.sequencesGroups ?? []).map((g) => ({
         key: g.key,
-        broadcast: { recipientStats: { contacted: g.contacted } },
+        broadcast: { recipientStats: { contacted: g.contacted, sent: g.contacted } },
       }));
       return new Response(JSON.stringify({ groups }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
@@ -333,8 +333,8 @@ describe("GET /features/:featureSlug/revenue", () => {
       economics: ECONOMICS,
       leads: HAPPY_LEADS, // both rows overlay contacted:true
       timestamps: {
-        "click@x.com": { firstContactedAt: contactedAt, firstClickedAt: daysAgo(1) },
-        "reply@y.com": { firstContactedAt: contactedAt, firstRepliedAt: daysAgo(1) },
+        "click@x.com": { firstContactedAt: contactedAt, firstSentAt: contactedAt, firstClickedAt: daysAgo(1) },
+        "reply@y.com": { firstContactedAt: contactedAt, firstSentAt: contactedAt, firstRepliedAt: daysAgo(1) },
       },
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
@@ -353,8 +353,8 @@ describe("GET /features/:featureSlug/revenue", () => {
       economics: ECONOMICS,
       leads: HAPPY_LEADS, // both rows overlay contacted:true
       timestamps: {
-        "click@x.com": { firstContactedAt: `${day}T09:00:00.000Z`, firstClickedAt: `${day}T10:00:00.000Z` },
-        "reply@y.com": { firstContactedAt: `${day}T23:30:00.000Z`, firstRepliedAt: `${day}T23:45:00.000Z` },
+        "click@x.com": { firstContactedAt: `${day}T09:00:00.000Z`, firstSentAt: `${day}T09:00:00.000Z`, firstClickedAt: `${day}T10:00:00.000Z` },
+        "reply@y.com": { firstContactedAt: `${day}T23:30:00.000Z`, firstSentAt: `${day}T23:30:00.000Z`, firstRepliedAt: `${day}T23:45:00.000Z` },
       },
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
@@ -425,8 +425,8 @@ describe("GET /features/:featureSlug/revenue", () => {
       economics: ECONOMICS,
       leads: HAPPY_LEADS, // click@x.com + reply@y.com, both contacted
       timestamps: {
-        "click@x.com": { firstContactedAt: `${day}T09:00:00.000Z`, firstOpenedAt: `${day}T09:30:00.000Z`, firstClickedAt: `${day}T10:00:00.000Z` },
-        "reply@y.com": { firstContactedAt: `${day}T23:30:00.000Z`, firstOpenedAt: `${day}T23:40:00.000Z`, firstRepliedAt: `${day}T23:45:00.000Z` },
+        "click@x.com": { firstContactedAt: `${day}T09:00:00.000Z`, firstSentAt: `${day}T09:00:00.000Z`, firstOpenedAt: `${day}T09:30:00.000Z`, firstClickedAt: `${day}T10:00:00.000Z` },
+        "reply@y.com": { firstContactedAt: `${day}T23:30:00.000Z`, firstSentAt: `${day}T23:30:00.000Z`, firstOpenedAt: `${day}T23:40:00.000Z`, firstRepliedAt: `${day}T23:45:00.000Z` },
       },
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
@@ -788,7 +788,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     mockFetch({
       salesFunnels: SINGLE_STEP_FUNNELS,
       leads: [negLead, ...LENS_LEADS],
-      timestamps: { "neg@x.com": { firstContactedAt: "2026-06-20T09:00:00.000Z", firstClickedAt: "2026-06-20T10:00:00.000Z", firstRepliedAt: "2026-06-21T09:00:00.000Z" } },
+      timestamps: { "neg@x.com": { firstContactedAt: "2026-06-20T09:00:00.000Z", firstSentAt: "2026-06-20T09:00:00.000Z", firstClickedAt: "2026-06-20T10:00:00.000Z", firstRepliedAt: "2026-06-21T09:00:00.000Z" } },
     });
     const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&lens=website_visits").set(AUTH);
     expect(res.status).toBe(200);
@@ -1818,8 +1818,8 @@ describe("GET /features/:featureSlug/revenue — the brand Overview money row", 
       leadRow({ leadId: "l2", email: "reply@y.com", replied: true, replyClassification: "positive", lead: { firstName: "R", lastName: "Y", photoUrl: null, organization: { id: "o2", name: "Org2", logoUrl: null } } }),
     ];
     const TIMESTAMPS = {
-      "click@x.com": { firstContactedAt: "2026-01-01T00:00:00Z", firstClickedAt: clickAt, firstRepliedAt: null },
-      "reply@y.com": { firstContactedAt: "2026-01-01T00:00:00Z", firstClickedAt: null, firstRepliedAt: replyAt },
+      "click@x.com": { firstContactedAt: "2026-01-01T00:00:00Z", firstSentAt: "2026-01-01T00:00:00Z", firstClickedAt: clickAt, firstRepliedAt: null },
+      "reply@y.com": { firstContactedAt: "2026-01-01T00:00:00Z", firstSentAt: "2026-01-01T00:00:00Z", firstClickedAt: null, firstRepliedAt: replyAt },
     };
     const SPEND_BY_DAY = [
       { period: "2026-01-01", actualCents: 20000 },

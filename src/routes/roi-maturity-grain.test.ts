@@ -193,7 +193,7 @@ function mockFetch(fixture: Fixture = {}): void {
     if (url.includes("/orgs/status")) {
       return json({
         results: Object.entries(CONTACTED).map(([id, at]) => {
-          const scope = { firstContactedAt: at, firstDeliveredAt: at, firstClickedAt: CLICKERS.has(id) && at ? at : null };
+          const scope = { firstContactedAt: at, firstSentAt: at, firstDeliveredAt: at, firstClickedAt: CLICKERS.has(id) && at ? at : null };
           return { email: `${id}@example.com`, broadcast: { campaign: scope, brand: scope } };
         }),
       });
