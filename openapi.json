@@ -51626,6 +51626,58 @@
                             ],
                             "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                           },
+                          "expected": {
+                            "type": "object",
+                            "properties": {
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "expected"
+                                ],
+                                "description": "Always `expected`: an assumption-backed figure, never measured. Show it with an `expected` mark."
+                              },
+                              "costUsd": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Expected cost per paying client, USD."
+                              },
+                              "costPer": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "`per paying client`; null when `costUsd` is null."
+                              },
+                              "roi": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Expected return multiple: (lifetime revenue - what the people it takes over were already worth) / expected cost per paying client."
+                              },
+                              "basis": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "measured",
+                                  "stated",
+                                  "fleet",
+                                  "default"
+                                ],
+                                "description": "The WEAKEST input it rests on (measured < stated < fleet < default). Null with no figure."
+                              },
+                              "unavailableReason": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "Why there is no figure: `no_lifetime_revenue`, `leg_unrated:<leg>`, `pipe_unpriced:<pipe id>`, `leg_without_pipe:<leg>`, `customer_time_only` (nothing of ours costs anything), `takeover_step_unvalued` (cost served, roi null). Null with a figure."
+                              }
+                            },
+                            "required": [
+                              "status",
+                              "costUsd",
+                              "costPer",
+                              "roi",
+                              "basis",
+                              "unavailableReason"
+                            ],
+                            "description": "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: mature workflow > seeded default > market benchmark > its early flash figure > another channel's mature price on the same leg (the highest); the customer's team costs 0. Leg rate: the path's (brand measured / stated > fleet median > default) > entry default. On a measured/estimated funnel it equals `costUsd`/`roi`."
+                          },
                           "runnable": {
                             "type": "boolean",
                             "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
@@ -51650,6 +51702,7 @@
                           "roi",
                           "roiBasis",
                           "status",
+                          "expected",
                           "runnable",
                           "mixed"
                         ]
@@ -52058,6 +52111,161 @@
                       "nullable": true,
                       "description": "Why it is learning (`no_fleet_history`, `no_mature_workflow_yet`, `measurement_unreadable`, `pipe_learning:<pipe id>`, `leg_unrated:<leg>`, `no_measured_funnel`, `no_measured_pipe`, `no_lifetime_revenue`). Null when measured."
                     },
+                    "expected": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "expected"
+                          ],
+                          "description": "Always `expected`: an assumption-backed figure, never measured. Show it with an `expected` mark."
+                        },
+                        "costUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Expected cost per paying client, USD."
+                        },
+                        "costPer": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "`per paying client`; null when `costUsd` is null."
+                        },
+                        "roi": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Expected return multiple: (lifetime revenue - what the people it takes over were already worth) / expected cost per paying client."
+                        },
+                        "basis": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "measured",
+                            "stated",
+                            "fleet",
+                            "default"
+                          ],
+                          "description": "The WEAKEST input it rests on (measured < stated < fleet < default). Null with no figure."
+                        },
+                        "unavailableReason": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "Why there is no figure: `no_lifetime_revenue`, `leg_unrated:<leg>`, `pipe_unpriced:<pipe id>`, `leg_without_pipe:<leg>`, `customer_time_only` (nothing of ours costs anything), `takeover_step_unvalued` (cost served, roi null). Null with a figure."
+                        },
+                        "lifetimeRevenueUsd": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "lifetimeRevenueBasis": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "measured",
+                            "stated",
+                            "fleet",
+                            "default"
+                          ],
+                          "description": "`stated` (the offer's own) or `fleet` (fleet median)."
+                        },
+                        "legs": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "legKey": {
+                                "type": "string"
+                              },
+                              "ratePct": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Null on the entry leg (its rate prices nothing) or when unrated."
+                              },
+                              "rateSource": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "fleet_median",
+                                  "default",
+                                  "measured_pipe",
+                                  "offer_measured",
+                                  "offer_stated",
+                                  "default_entry"
+                                ]
+                              },
+                              "rateBasis": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "measured",
+                                  "stated",
+                                  "fleet",
+                                  "default"
+                                ]
+                              },
+                              "outcomesNeededPerPayingClient": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "pipeId": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "costPerOutcomeUsd": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "0 on a leg the customer's own team works."
+                              },
+                              "costSource": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "workflow",
+                                  "default",
+                                  "benchmark",
+                                  "flash",
+                                  "same_leg_fleet",
+                                  "customer_team"
+                                ]
+                              },
+                              "costBasis": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "measured",
+                                  "stated",
+                                  "fleet",
+                                  "default"
+                                ],
+                                "description": "Null on a customer-team leg (costs nothing) or when unpriced."
+                              }
+                            },
+                            "required": [
+                              "legKey",
+                              "ratePct",
+                              "rateSource",
+                              "rateBasis",
+                              "outcomesNeededPerPayingClient",
+                              "pipeId",
+                              "costPerOutcomeUsd",
+                              "costSource",
+                              "costBasis"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "costUsd",
+                        "costPer",
+                        "roi",
+                        "basis",
+                        "unavailableReason",
+                        "lifetimeRevenueUsd",
+                        "lifetimeRevenueBasis",
+                        "legs"
+                      ],
+                      "description": "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: mature workflow > seeded default > market benchmark > its early flash figure > another channel's mature price on the same leg (the highest); the customer's team costs 0. Leg rate: the path's (brand measured / stated > fleet median > default) > entry default. On a measured/estimated funnel it equals `costUsd`/`roi`."
+                    },
                     "costUnit": {
                       "type": "string",
                       "enum": [
@@ -52111,6 +52319,7 @@
                     "status",
                     "estimates",
                     "learningReason",
+                    "expected",
                     "costUnit",
                     "lifetimeRevenueUsd",
                     "lifetimeRevenueSource",
@@ -52427,6 +52636,161 @@
                       "nullable": true,
                       "description": "Why it is learning (`no_fleet_history`, `no_mature_workflow_yet`, `measurement_unreadable`, `pipe_learning:<pipe id>`, `leg_unrated:<leg>`, `no_measured_funnel`, `no_measured_pipe`, `no_lifetime_revenue`). Null when measured."
                     },
+                    "expected": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "expected"
+                          ],
+                          "description": "Always `expected`: an assumption-backed figure, never measured. Show it with an `expected` mark."
+                        },
+                        "costUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Expected cost per paying client, USD."
+                        },
+                        "costPer": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "`per paying client`; null when `costUsd` is null."
+                        },
+                        "roi": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Expected return multiple: (lifetime revenue - what the people it takes over were already worth) / expected cost per paying client."
+                        },
+                        "basis": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "measured",
+                            "stated",
+                            "fleet",
+                            "default"
+                          ],
+                          "description": "The WEAKEST input it rests on (measured < stated < fleet < default). Null with no figure."
+                        },
+                        "unavailableReason": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "Why there is no figure: `no_lifetime_revenue`, `leg_unrated:<leg>`, `pipe_unpriced:<pipe id>`, `leg_without_pipe:<leg>`, `customer_time_only` (nothing of ours costs anything), `takeover_step_unvalued` (cost served, roi null). Null with a figure."
+                        },
+                        "lifetimeRevenueUsd": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "lifetimeRevenueBasis": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "measured",
+                            "stated",
+                            "fleet",
+                            "default"
+                          ],
+                          "description": "`stated` (the offer's own) or `fleet` (fleet median)."
+                        },
+                        "legs": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "legKey": {
+                                "type": "string"
+                              },
+                              "ratePct": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Null on the entry leg (its rate prices nothing) or when unrated."
+                              },
+                              "rateSource": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "fleet_median",
+                                  "default",
+                                  "measured_pipe",
+                                  "offer_measured",
+                                  "offer_stated",
+                                  "default_entry"
+                                ]
+                              },
+                              "rateBasis": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "measured",
+                                  "stated",
+                                  "fleet",
+                                  "default"
+                                ]
+                              },
+                              "outcomesNeededPerPayingClient": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "pipeId": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "costPerOutcomeUsd": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "0 on a leg the customer's own team works."
+                              },
+                              "costSource": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "workflow",
+                                  "default",
+                                  "benchmark",
+                                  "flash",
+                                  "same_leg_fleet",
+                                  "customer_team"
+                                ]
+                              },
+                              "costBasis": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "measured",
+                                  "stated",
+                                  "fleet",
+                                  "default"
+                                ],
+                                "description": "Null on a customer-team leg (costs nothing) or when unpriced."
+                              }
+                            },
+                            "required": [
+                              "legKey",
+                              "ratePct",
+                              "rateSource",
+                              "rateBasis",
+                              "outcomesNeededPerPayingClient",
+                              "pipeId",
+                              "costPerOutcomeUsd",
+                              "costSource",
+                              "costBasis"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "costUsd",
+                        "costPer",
+                        "roi",
+                        "basis",
+                        "unavailableReason",
+                        "lifetimeRevenueUsd",
+                        "lifetimeRevenueBasis",
+                        "legs"
+                      ],
+                      "description": "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: mature workflow > seeded default > market benchmark > its early flash figure > another channel's mature price on the same leg (the highest); the customer's team costs 0. Leg rate: the path's (brand measured / stated > fleet median > default) > entry default. On a measured/estimated funnel it equals `costUsd`/`roi`."
+                    },
                     "costUnit": {
                       "type": "string",
                       "enum": [
@@ -52480,6 +52844,7 @@
                     "status",
                     "estimates",
                     "learningReason",
+                    "expected",
                     "costUnit",
                     "lifetimeRevenueUsd",
                     "lifetimeRevenueSource",
@@ -52854,6 +53219,161 @@
                       "nullable": true,
                       "description": "Why it is learning (`no_fleet_history`, `no_mature_workflow_yet`, `measurement_unreadable`, `pipe_learning:<pipe id>`, `leg_unrated:<leg>`, `no_measured_funnel`, `no_measured_pipe`, `no_lifetime_revenue`). Null when measured."
                     },
+                    "expected": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "expected"
+                          ],
+                          "description": "Always `expected`: an assumption-backed figure, never measured. Show it with an `expected` mark."
+                        },
+                        "costUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Expected cost per paying client, USD."
+                        },
+                        "costPer": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "`per paying client`; null when `costUsd` is null."
+                        },
+                        "roi": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Expected return multiple: (lifetime revenue - what the people it takes over were already worth) / expected cost per paying client."
+                        },
+                        "basis": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "measured",
+                            "stated",
+                            "fleet",
+                            "default"
+                          ],
+                          "description": "The WEAKEST input it rests on (measured < stated < fleet < default). Null with no figure."
+                        },
+                        "unavailableReason": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "Why there is no figure: `no_lifetime_revenue`, `leg_unrated:<leg>`, `pipe_unpriced:<pipe id>`, `leg_without_pipe:<leg>`, `customer_time_only` (nothing of ours costs anything), `takeover_step_unvalued` (cost served, roi null). Null with a figure."
+                        },
+                        "lifetimeRevenueUsd": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "lifetimeRevenueBasis": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "measured",
+                            "stated",
+                            "fleet",
+                            "default"
+                          ],
+                          "description": "`stated` (the offer's own) or `fleet` (fleet median)."
+                        },
+                        "legs": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "legKey": {
+                                "type": "string"
+                              },
+                              "ratePct": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Null on the entry leg (its rate prices nothing) or when unrated."
+                              },
+                              "rateSource": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "fleet_median",
+                                  "default",
+                                  "measured_pipe",
+                                  "offer_measured",
+                                  "offer_stated",
+                                  "default_entry"
+                                ]
+                              },
+                              "rateBasis": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "measured",
+                                  "stated",
+                                  "fleet",
+                                  "default"
+                                ]
+                              },
+                              "outcomesNeededPerPayingClient": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "pipeId": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "costPerOutcomeUsd": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "0 on a leg the customer's own team works."
+                              },
+                              "costSource": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "workflow",
+                                  "default",
+                                  "benchmark",
+                                  "flash",
+                                  "same_leg_fleet",
+                                  "customer_team"
+                                ]
+                              },
+                              "costBasis": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "measured",
+                                  "stated",
+                                  "fleet",
+                                  "default"
+                                ],
+                                "description": "Null on a customer-team leg (costs nothing) or when unpriced."
+                              }
+                            },
+                            "required": [
+                              "legKey",
+                              "ratePct",
+                              "rateSource",
+                              "rateBasis",
+                              "outcomesNeededPerPayingClient",
+                              "pipeId",
+                              "costPerOutcomeUsd",
+                              "costSource",
+                              "costBasis"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "costUsd",
+                        "costPer",
+                        "roi",
+                        "basis",
+                        "unavailableReason",
+                        "lifetimeRevenueUsd",
+                        "lifetimeRevenueBasis",
+                        "legs"
+                      ],
+                      "description": "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: mature workflow > seeded default > market benchmark > its early flash figure > another channel's mature price on the same leg (the highest); the customer's team costs 0. Leg rate: the path's (brand measured / stated > fleet median > default) > entry default. On a measured/estimated funnel it equals `costUsd`/`roi`."
+                    },
                     "costUnit": {
                       "type": "string",
                       "enum": [
@@ -52939,6 +53459,7 @@
                     "status",
                     "estimates",
                     "learningReason",
+                    "expected",
                     "costUnit",
                     "lifetimeRevenueUsd",
                     "lifetimeRevenueSource",
@@ -53927,6 +54448,58 @@
                             ],
                             "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                           },
+                          "expected": {
+                            "type": "object",
+                            "properties": {
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "expected"
+                                ],
+                                "description": "Always `expected`: an assumption-backed figure, never measured. Show it with an `expected` mark."
+                              },
+                              "costUsd": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Expected cost per paying client, USD."
+                              },
+                              "costPer": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "`per paying client`; null when `costUsd` is null."
+                              },
+                              "roi": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Expected return multiple: (lifetime revenue - what the people it takes over were already worth) / expected cost per paying client."
+                              },
+                              "basis": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "measured",
+                                  "stated",
+                                  "fleet",
+                                  "default"
+                                ],
+                                "description": "The WEAKEST input it rests on (measured < stated < fleet < default). Null with no figure."
+                              },
+                              "unavailableReason": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "Why there is no figure: `no_lifetime_revenue`, `leg_unrated:<leg>`, `pipe_unpriced:<pipe id>`, `leg_without_pipe:<leg>`, `customer_time_only` (nothing of ours costs anything), `takeover_step_unvalued` (cost served, roi null). Null with a figure."
+                              }
+                            },
+                            "required": [
+                              "status",
+                              "costUsd",
+                              "costPer",
+                              "roi",
+                              "basis",
+                              "unavailableReason"
+                            ],
+                            "description": "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: mature workflow > seeded default > market benchmark > its early flash figure > another channel's mature price on the same leg (the highest); the customer's team costs 0. Leg rate: the path's (brand measured / stated > fleet median > default) > entry default. On a measured/estimated funnel it equals `costUsd`/`roi`."
+                          },
                           "runnable": {
                             "type": "boolean",
                             "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
@@ -53951,6 +54524,7 @@
                           "roi",
                           "roiBasis",
                           "status",
+                          "expected",
                           "runnable",
                           "mixed"
                         ]

@@ -20,15 +20,9 @@ import { FUNNEL_LEGS } from "./funnel-legs.js";
 import { LADDER_STEPS, type ConversionFromRowAbove } from "./offer-pipeline-explained.js";
 import type { SalesFunnelKey } from "./sales-funnels.js";
 
-/**
- * The last rung for the contacted row: share of contacted people reaching the entry step on a cold email, used
- * only when the fleet has measured none. Conservative cold-email benchmarks: ~1% of contacted people reply
- * positively, ~2% click through to the website.
- */
-export const DEFAULT_ENTRY_RATE_PCT: Readonly<Partial<Record<ChannelStepKey, number>>> = {
-  conversation: 1,
-  website_visit: 2,
-};
+// The last rung for the contacted row lives with the other seeded rates (`lib/default-leg-rates.ts`).
+export { DEFAULT_ENTRY_RATE_PCT } from "./default-leg-rates.js";
+import { DEFAULT_ENTRY_RATE_PCT } from "./default-leg-rates.js";
 
 /** The channel the contacted row's fleet rate is read on (every contacted person was emailed). */
 const COLD_EMAIL_SLUG = "sales-cold-email-outreach";
