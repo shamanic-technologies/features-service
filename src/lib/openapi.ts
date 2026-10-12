@@ -33,7 +33,7 @@ const expectedReturnRef = registry.register(
           }),
         )
         .describe("Every input the model figure rests on, with its own source. Empty on a measured figure."),
-      combinationKey: z.string().nullable().describe("The sales path (combination key, stored spelling) the figure is read off. A funnel campaign reads its OWN (the listed path, else its own legs priced on the same rates and costs; a reactive funnel on the value it adds over what its people were already worth at the trigger step), the offer's only when its own cannot be priced; a campaign the best selected path running it; an offer its best selected path (proactive first); a brand its best offer. Null on a measured figure."),
+      combinationKey: z.string().nullable().describe("The sales path (combination key, stored spelling) the figure is read off. A funnel campaign reads its OWN (its sourcing legs dropped: a path counts from Lead found; the listed path, else its own legs priced on the same rates and costs; a reactive funnel on the value it adds over what its people were already worth at the trigger step), never the offer's: unpriceable = null + own_sales_path_unpriced; a campaign the best selected path running it; an offer its best selected path (proactive first); a brand its best offer. Null on a measured figure."),
       costPerOutcome: z
         .object({
           costPerOutcomeUsd: z.number(),
@@ -45,9 +45,9 @@ const expectedReturnRef = registry.register(
         .nullable()
         .describe("The EXPECTED cost per outcome of the scope's leg on that path (a campaign's own leg; an offer's, funnel's or brand's first platform leg). Always the model's figure, also beside a measured return. Null on a path whose legs carry no platform cost."),
       unavailableReason: z
-        .enum(["expected_model_unavailable", "expected_model_computing", "no_priced_sales_path"])
+        .enum(["expected_model_unavailable", "expected_model_computing", "no_priced_sales_path", "own_sales_path_unpriced"])
         .nullable()
-        .describe("Why roiMultiple is null: the model could not be read (logged), is computing for the first time since a deploy (served on the next read), or no path could be priced."),
+        .describe("Why roiMultiple is null: the model could not be read (logged), is computing for the first time since a deploy (served on the next read), no path could be priced, or a funnel campaign's OWN path cannot be priced (a leg with no rate or no platform cost, e.g. a leads-only funnel: never another funnel's figure)."),
     })
     .describe("THE EXPECTED RETURN (owner 2026-10-11: every ROI surface always reads a value, even expected, on a stated hypothesis). See roiMultiple."),
 );
@@ -2878,6 +2878,24 @@ registry.registerPath({
 });
 
 
+const funnelActivityStepSchema = z.object({
+  key: z.string().describe("The catalogue step key (`lead_found`, `conversation`, `meeting_booked`...), or `contacted` / `delivered` for the two outreach rungs."),
+  label: z.string().describe("The step's customer label (\"Positive reply\"), the catalogue's own; \"Contacted\" / \"Delivered\" on the outreach rungs."),
+  kind: z.enum(["step", "outreach"]).describe("`step` = a step of the campaign's path; `outreach` = a rung of its outreach between Lead found and the next step (Contacted, Delivered)."),
+  people: z.number().int().nullable().describe("PEOPLE at this step since inception (never emails). Null only with `unmeasuredReason`."),
+  rateToNextPct: z.number().nullable().describe("People at the next step / people here x 100 (2 decimals), served so the page divides nothing. Null on the last step, when either side is unmeasured, or when nobody is here. Steps are counted independently, so a rate can exceed 100 (e.g. a sale recorded with no meeting)."),
+  unmeasuredReason: z.enum(["step_not_counted", "not_counted_by_lead_service", "no_unit_performs_step", "outcomes_unreadable"]).nullable().describe("Why `people` is null: `step_not_counted` (no producer counts this step), `no_unit_performs_step` (an act step no unit of this campaign performs), `outcomes_unreadable`. Null when counted."),
+});
+
+const funnelCampaignFunnelSchema = z
+  .object({
+    mode: z.enum(["proactive", "reactive"]).describe("`proactive` (the funnel starts at Lead found: its people are the leads its units hold, what its sourcing unit found and its outreach unit was handed, lead-service's Leads page set) | `reactive` (it starts at another step: its people are the people its units were HANDED, lead-service follow-up ledger)."),
+    steps: z.array(funnelActivityStepSchema).describe("Every step of the campaign's path (Start excluded) in reading order, in PEOPLE since inception, each with the rate to the next. Proactive: every figure is lead-service's `bucket-counts` over the units holding people (sourcing + outreach) MERGED by max (one person sits under each unit that held them: never a sum). Lead found = the leads found (`total`), then Contacted (`counts.contacted`) and Delivered (`people.delivered`: people an email reached; 0 on a funnel sending no email, e.g. a leads-only funnel), then each later step = lead-service's bucket for it. Reactive: the first step = people handed; an act step (Booking call) = people the performing unit acted on (the call placed); every later step = handed people with an attributed outcome at that step."),
+  })
+  .nullable()
+  .describe("The whole funnel of this campaign. Null only with `funnelUnavailableReason`.");
+const funnelUnavailableReasonSchema = z.enum(["sales_funnel_not_in_catalogue", "no_unit_holds_people", "funnel_steps_unreadable"]).nullable().describe("Why `funnel` is null: the funnel id is unknown to the catalogue, a proactive campaign has no sourcing or outreach unit (nobody holds its people), or (campaigns table only) a producer did not answer (logged; the row's money is still served). Null when served.");
+
 const salesFunnelCampaignRowSchema = z.object({
   id: z.string().describe("campaign-service's sales funnel campaign id."),
   brandId: z.string(),
@@ -2904,7 +2922,9 @@ const salesFunnelCampaignRowSchema = z.object({
   investedUsd: z.number().describe("$ Invested since inception: the COMMITTED spend of every unit together (= `costEconomics.committedCostUsd`). Every cost row belongs to one unit, so this is exactly the sum of the units' own `committedCostUsd` (each unit's `/features/{slug}/revenue?campaignId=` read), on the requested pricing basis."),
   roiMultiple: z.number().nullable().describe("The funnel campaign's ROI (= `costEconomics.roiMultiple`) = the value it ADDS over its own spend (owner 2026-10-11): ONE engine pass over the units' people (deduped) and spend together, on the offer's terms, minus their value where it took them over (`takeoverStep`, `valueAdded`; $0 when it found them); never a sum or an average of unit ROIs. Null with a reason in `costEconomics.unmeasuredReason` (e.g. `maturing`: still learning), `headline.unpricedReason` (e.g. `no_funnel_wired`) or `moneyUnavailableReason`. Read `maturity` for the flash/mature pair and the verdict, as on a campaign row."),
   moneyUnavailableReason: z.enum(["units_price_differently"]).nullable().describe("`units_price_differently`: the units' channels price on two different funnel definitions, so no ROI can be one figure (investedUsd is still served). Null otherwise."),
-  expectedReturn: expectedReturnRef.describe("The funnel campaign's EXPECTED return, never empty (see ExpectedReturn): its own mature return (basis measured), else its own sales path (salesFunnelId = the combination key) priced on named hypotheses. roiMultiple and maturity are unchanged."),
+  expectedReturn: expectedReturnRef.describe("The funnel campaign's EXPECTED return (see ExpectedReturn): its own mature return (basis measured), else its OWN sales path (salesFunnelId = the combination key, its sourcing leg dropped: a path counts from Lead found) priced on named hypotheses. Never another funnel's figure: an own path that cannot be priced (a leads-only funnel: Start -> Lead found -> your team) is null with `unavailableReason: own_sales_path_unpriced`. roiMultiple and maturity are unchanged."),
+  funnel: funnelCampaignFunnelSchema.describe("WHAT IT PRODUCED (owner 2026-10-12): its people at each step of its path since inception, Lead found included (`steps[key=lead_found].people` = the leads it found), with the rate to the next step. Byte-for-byte the campaign page's `funnel` (`/brands/{brandId}/sales-funnel-campaigns/{id}/activity`). Null only with `funnelUnavailableReason`."),
+  funnelUnavailableReason: funnelUnavailableReasonSchema,
   headline: featureRevenueResponseSchema.shape.headline.nullable().describe("The units' pipeline together and WHY it is unpriced when it is (`unpricedReason`, e.g. `no_funnel_wired`: a funnel whose units wire no funnel we price yet, like AI meeting booking), the block a campaign row serves. Null when the funnel campaign has no unit."),
   costEconomics: featureRevenueResponseSchema.shape.costEconomics.nullable().describe("The full cost economics of the units together (the block a campaign row serves). Null when the funnel campaign has no unit."),
   maturity: scopeMaturitySchema.nullable().describe("Per-leg figures and the maturity verdict of the units together (the object a campaign row serves). Null when unreadable or no unit."),
@@ -2979,15 +2999,6 @@ const campaignCallsSchema = z.object({
   spendUnavailableReason: z.enum(["spend_unreadable"]).nullable().describe("runs-service did not answer for this pipe (the calls stay served). Null when `spend` is served."),
 });
 
-const funnelActivityStepSchema = z.object({
-  key: z.string().describe("The catalogue step key (`lead_found`, `conversation`, `meeting_booked`...), or `contacted` / `delivered` for the two outreach rungs."),
-  label: z.string().describe("The step's customer label (\"Positive reply\"), the catalogue's own; \"Contacted\" / \"Delivered\" on the outreach rungs."),
-  kind: z.enum(["step", "outreach"]).describe("`step` = a step of the campaign's path; `outreach` = a rung of its outreach between Lead found and the next step (Contacted, Delivered)."),
-  people: z.number().int().nullable().describe("PEOPLE at this step since inception (never emails). Null only with `unmeasuredReason`."),
-  rateToNextPct: z.number().nullable().describe("People at the next step / people here x 100 (2 decimals), served so the page divides nothing. Null on the last step, when either side is unmeasured, or when nobody is here. Steps are counted independently, so a rate can exceed 100 (e.g. a sale recorded with no meeting)."),
-  unmeasuredReason: z.enum(["step_not_counted", "not_counted_by_lead_service", "no_unit_performs_step", "outcomes_unreadable"]).nullable().describe("Why `people` is null: `step_not_counted` (no producer counts this step), `no_unit_performs_step` (an act step no unit of this campaign performs), `outcomes_unreadable`. Null when counted."),
-});
-
 const pipeDaySchema = z.object({
   date: z.string().describe("UTC day, YYYY-MM-DD."),
   handed: z.number().int().describe("People first handed to the pipe that day (e.g. positive replies given to the AI Meeting Booking worker)."),
@@ -3006,14 +3017,8 @@ const salesFunnelCampaignActivityResponseRef = registry.register(
     createdAt: z.string(),
     basis: z.literal("people_since_inception").describe("Every count is PEOPLE since inception (no window)."),
     pricing: z.enum(["gross", "net"]).describe("The `?pricing=` basis echoed (it only moves `pipes[].calls.spend`)."),
-    funnel: z
-      .object({
-        mode: z.enum(["proactive", "reactive"]).describe("`proactive` (the funnel starts at Lead found: its people are the leads its OUTREACH unit holds, lead-service's Leads page set for that unit) | `reactive` (it starts at another step: its people are the people its units were HANDED, lead-service follow-up ledger)."),
-        steps: z.array(funnelActivityStepSchema).describe("Every step of the campaign's path (Start excluded) in reading order, in PEOPLE, each with the rate to the next. Proactive: Lead found = the outreach unit's leads (lead-service `bucket-counts` `total`), then Contacted (`counts.contacted`, exactly lead-service's contacted bucket) and Delivered (`people.delivered`: people an email reached; 0 on a channel sending no email), then each later step = lead-service's bucket for it. Reactive: the first step = people handed; an act step (Booking call) = people the performing unit acted on (the call placed); every later step = handed people with an attributed outcome at that step."),
-      })
-      .nullable()
-      .describe("The whole funnel of this campaign. Null only with `funnelUnavailableReason`."),
-    funnelUnavailableReason: z.enum(["sales_funnel_not_in_catalogue", "no_outreach_pipe", "several_outreach_pipes"]).nullable().describe("Why `funnel` is null: the funnel id is unknown to the catalogue, a proactive campaign has no outreach unit (nobody holds its people), or several outreach units hold people (their counts cannot be added without double counting). Null when served."),
+    funnel: funnelCampaignFunnelSchema,
+    funnelUnavailableReason: funnelUnavailableReasonSchema,
     pipes: z
       .array(
         z.object({
@@ -3024,7 +3029,7 @@ const salesFunnelCampaignActivityResponseRef = registry.register(
           status: z.string(),
           fromStep: z.string().nullable().describe("The pipe's from step (null = from nothing: a sourcing pipe)."),
           toStep: z.string().nullable().describe("The step the pipe produces."),
-          kind: z.enum(["sourcing", "outreach", "takeover"]).nullable().describe("`sourcing` (from nothing to Lead found: hands its leads to the outreach pipe, counted there) | `outreach` (from Lead found: holds the people) | `takeover` (from any later step: acts on people another campaign holds, e.g. AI Meeting Booking, AI Instant Call). Null when the pipe is unknown to the catalogue."),
+          kind: z.enum(["sourcing", "outreach", "takeover"]).nullable().describe("`sourcing` (from nothing to Lead found: holds what it finds, its outreach pipe works them) | `outreach` (from Lead found: holds the people) | `takeover` (from any later step: acts on people another campaign holds, e.g. AI Meeting Booking, AI Instant Call). Null when the pipe is unknown to the catalogue."),
           people: z
             .object({
               found: z.number().int().describe("Leads the pipe holds (lead-service `total`)."),
@@ -3034,7 +3039,7 @@ const salesFunnelCampaignActivityResponseRef = registry.register(
               reachedToStep: z.number().int().nullable().describe("People at the pipe's `toStep` (lead-service's bucket for it); null when no bucket counts that step."),
             })
             .nullable()
-            .describe("An OUTREACH pipe's people counts since inception. Null on other kinds."),
+            .describe("A SOURCING or OUTREACH pipe's people counts since inception (a sourcing pipe's `found` = the leads it found). Null on a takeover pipe."),
           work: z
             .object({
               handed: z.number().int().describe("Distinct people handed to the pipe since inception."),
