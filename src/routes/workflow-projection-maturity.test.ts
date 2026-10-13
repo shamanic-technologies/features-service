@@ -132,7 +132,7 @@ const FUNNELS = [
 
 const wf = (slug: string, dynasty: string) => ({
   id: slug, workflowSlug: slug, workflowName: slug, workflowDynastyName: dynasty, workflowDynastySlug: dynasty,
-  version: 1, status: "active", featureSlug: SLUG, createdForBrandId: null, upgradedTo: null,
+  version: 1, status: "active", workflowDynastyStatus: "active", featureSlug: SLUG, createdForBrandId: null, upgradedTo: null,
 });
 const WORKFLOWS = [wf("wf-old", "dyn-old"), wf("wf-new", "dyn-new")];
 

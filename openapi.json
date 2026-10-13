@@ -6730,7 +6730,7 @@
                     },
                     "selectable": {
                       "type": "boolean",
-                      "description": "TRUE ⟺ state is `active`. The one condition under which the selector may pick this workflow on this leg."
+                      "description": "TRUE ⟺ state is `active` AND workflow-service runs a version of the dynasty (one version active on both of its status axes). The one condition under which the selector may pick this workflow on this leg. An assigned workflow whose every version is retired reads `state: active`, `selectable: false`, and says so in `reason`."
                     },
                     "reason": {
                       "type": "string",
@@ -32432,7 +32432,7 @@
                               },
                               "selectable": {
                                 "type": "boolean",
-                                "description": "TRUE ⟺ state is `active`. The one condition under which the selector may pick this workflow on this leg."
+                                "description": "TRUE ⟺ state is `active` AND workflow-service runs a version of the dynasty (one version active on both of its status axes). The one condition under which the selector may pick this workflow on this leg. An assigned workflow whose every version is retired reads `state: active`, `selectable: false`, and says so in `reason`."
                               },
                               "reason": {
                                 "type": "string",
@@ -41661,9 +41661,13 @@
                             ],
                             "description": "The owner's assignment on the leg. An unassigned workflow that never spent on the leg is not listed."
                           },
+                          "executable": {
+                            "type": "boolean",
+                            "description": "TRUE ⟺ workflow-service runs a version of this dynasty (one version active on both of its status axes). FALSE = every version is retired: a run asked of it is refused, whatever the assignment says."
+                          },
                           "selectable": {
                             "type": "boolean",
-                            "description": "TRUE ⟺ active: the only state a run may pick."
+                            "description": "TRUE ⟺ `assignment` is active AND `executable`: the only rows a run may pick, rank, recommend or copy as a candidate."
                           },
                           "isMature": {
                             "type": "boolean",
@@ -41715,6 +41719,7 @@
                           "workflowDynastySlug",
                           "workflowDynastyName",
                           "assignment",
+                          "executable",
                           "selectable",
                           "isMature",
                           "basis",

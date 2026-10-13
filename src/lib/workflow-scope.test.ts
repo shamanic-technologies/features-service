@@ -8,7 +8,7 @@ import type { WorkflowMetadata } from "./public-stats-clients.js";
 
 const wf = (slug: string, dynasty: string, name: string): WorkflowMetadata => ({
   id: slug, workflowSlug: slug, workflowName: slug, workflowDynastyName: name,
-  workflowDynastySlug: dynasty, version: 1, status: "active",
+  workflowDynastySlug: dynasty, version: 1, status: "active", workflowDynastyStatus: "active",
   featureSlug: "sales-cold-email-outreach", createdForBrandId: null, upgradedTo: null,
 });
 

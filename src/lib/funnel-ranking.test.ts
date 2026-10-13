@@ -25,6 +25,7 @@ function wf(slug: string, dynasty: string, name: string) {
     workflowDynastySlug: dynasty,
     version: 1,
     status: "active",
+    workflowDynastyStatus: "active" as const,
     featureSlug: "sales-cold-email-outreach",
     createdForBrandId: null,
     upgradedTo: null,

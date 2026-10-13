@@ -1228,7 +1228,7 @@ const workflowProjectionRowSchema = z.object({
   scopeRank: z.number().optional().describe("THIS ROW'S POSITION AMONG THE ROWS IT IS COMPARABLE WITH — 1-based, present ⟺ `rank` is (the request named a `?leg=`). `rank` is scored over EVERY row a dynasty has, so the cell that won it is usually not the cell on screen: measured in prod 2026-09-13 the rank-1 workflow read $175 on its campaign row and $20.35 on the audience cell that crowned it, which makes a column ordered on `rank` look arbitrary. `scopeRank` orders the rows sharing this row's `audienceId` (null = the brand / campaign column) on their OWN resolved metric, under the same `?maximize=` objective, the same three groups and the same slug tie-break — a TOTAL order per scope, with non-selectable workflows (`legAssignment.selectable: false`) after every selectable one and never-run workflows last within each. The two ranks legitimately DISAGREE: `rank` says what we would put the customer on next, `scopeRank` says what the column they are reading says. Serve both; derive neither."),
   legAssignment: z.object({
     state: z.enum(["active", "deprecated", "unassigned"]).describe("`active` = the owner assigned this workflow to the leg; a new run may pick it here. `deprecated` = retired ON THIS LEG ONLY: no new run picks it here, its history stays on every stats read. `unassigned` = never put on this leg, so never selectable on it (a new workflow dynasty is on no leg until assigned)."),
-    selectable: z.boolean().describe("TRUE ⟺ state is `active`. The one condition under which the selector may pick this workflow on this leg."),
+    selectable: z.boolean().describe("TRUE ⟺ state is `active` AND workflow-service runs a version of the dynasty (one version active on both of its status axes). The one condition under which the selector may pick this workflow on this leg. An assigned workflow whose every version is retired reads `state: active`, `selectable: false`, and says so in `reason`."),
     reason: z.string().nullable().describe("Why it is not selectable, in a sentence a human reads. Null ⟺ selectable."),
     decidedBy: z.string().nullable().describe("Who decided the current state (`seed:served-a-lead-on-this-leg` for the initial seed). Null ⟺ unassigned."),
     decidedAt: z.string().nullable().describe("When (ISO). Null ⟺ unassigned."),
@@ -5152,7 +5152,8 @@ const legWorkflowRankingRowSchema = z.object({
   workflowDynastySlug: z.string(),
   workflowDynastyName: z.string().nullable(),
   assignment: z.enum(["active", "deprecated", "unassigned"]).describe("The owner's assignment on the leg. An unassigned workflow that never spent on the leg is not listed."),
-  selectable: z.boolean().describe("TRUE ⟺ active: the only state a run may pick."),
+  executable: z.boolean().describe("TRUE ⟺ workflow-service runs a version of this dynasty (one version active on both of its status axes). FALSE = every version is retired: a run asked of it is refused, whatever the assignment says."),
+  selectable: z.boolean().describe("TRUE ⟺ `assignment` is active AND `executable`: the only rows a run may pick, rank, recommend or copy as a candidate."),
   isMature: z.boolean().nullable().describe("The workflow's verdict on the fleet of the leg. Null when the mature cut could not be made."),
   basis: z.enum(["mature", "flash"]).describe("The half the figures are read on: mature when the workflow is mature, else flash."),
   costPerOutcomeUsd: z.number().nullable().describe("Observed on `basis`: spend ÷ outcomes. Null at 0 outcomes, never a spend floor."),
