@@ -32,6 +32,7 @@ import viewCacheAdminRoutes from "./routes/view-cache-admin.js";
 import workflowLegAssignmentsRoutes from "./routes/workflow-leg-assignments.js";
 import channelDeclarationsRoutes from "./routes/channel-declarations.js";
 import agentCatalogueRoutes, { warmCatalogueMeasurements } from "./routes/agent-catalogue.js";
+import { startTacticJudgmentLoop } from "./lib/tactic-judgments.js";
 import transferBrandRoutes from "./routes/transfer-brand.js";
 import orgPeriodRecapRoutes from "./routes/org-period-recap.js";
 import salesFunnelCampaignsRoutes from "./routes/sales-funnel-campaigns.js";
@@ -183,6 +184,9 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
         void warmOutcomePrices();
         // The agent catalogue's pipe economics are fleet walks too: built off the request path.
         void warmCatalogueMeasurements();
+        // Jev judges every workflow version against every tactic once (lib/tactic-judgments.ts): first sweep a minute
+        // after listen, then every 15 min, single-flight.
+        startTacticJudgmentLoop();
         // Every pipe a workflow is assigned to gets its fleet ranking warmed, whatever its channel (owner
         // 2026-10-10: no special case; this used to warm the two cold-email pipes only).
         void listLegAssignments()

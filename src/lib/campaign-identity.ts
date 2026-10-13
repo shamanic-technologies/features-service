@@ -113,6 +113,9 @@ export interface CampaignFamilies {
   /** Every member of `campaignId`'s family, itself included. `[campaignId]` when unplaceable. */
   familyOf(campaignId: string): string[];
   identityOf(campaignId: string): CampaignIdentity | null;
+  /** The sales funnel this ONE campaign row is a unit of (campaign-service's stamp), never its family's: two units of
+   *  one identity can belong to two funnels naming two plays (`lib/plays.ts`). Null = none stated / unknown row. */
+  salesFunnelIdOf(campaignId: string): string | null;
 }
 
 /** `true` when a campaign row is alive — campaign-service's own `ongoing` status. */
@@ -158,6 +161,7 @@ export function buildCampaignFamilies(rows: CampaignIdentityRow[]): CampaignFami
   }
 
   const byCampaignId = new Map<string, CampaignIdentity>();
+  const funnelById = new Map(rows.filter((r) => r.id && r.salesFunnelId).map((r) => [r.id, r.salesFunnelId!]));
 
   const register = (key: string, members: CampaignIdentityRow[]): void => {
     const campaignIds = members.map((m) => m.id).sort();
@@ -194,6 +198,9 @@ export function buildCampaignFamilies(rows: CampaignIdentityRow[]): CampaignFami
     },
     identityOf(campaignId: string): CampaignIdentity | null {
       return byCampaignId.get(campaignId) ?? null;
+    },
+    salesFunnelIdOf(campaignId: string): string | null {
+      return funnelById.get(campaignId) ?? null;
     },
   };
 }

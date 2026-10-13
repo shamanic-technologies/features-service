@@ -142,6 +142,8 @@ const email = (slug: string, contacted: number, repliesPositive: number, clicked
 });
 
 interface Options {
+  /** Extra campaign-service rows (a funnel unit naming a play). */
+  campaigns?: Array<Record<string, unknown>>;
   /** Replaces the workflow-service full listing. `"fail"` makes the read non-OK. */
   fullWorkflows?: unknown | "fail";
   /** Overrides a dynasty's brand-grain positive replies (default 10 + its index). */
@@ -198,7 +200,7 @@ function mockFetch(options: Options = {}): void {
     }
     // The brand's campaigns perform each declared funnel's entry leg: what a goal-keyed read (no leg
     // named) is priced on, now that the offer's terms are the only pricing input (owner 2026-10-05).
-    if (url.includes("/campaigns")) return json({ campaigns: legCampaignRows([CONVERSATION_FUNNEL, WEBSITE_FUNNEL], { brandId: BRAND }) });
+    if (url.includes("/campaigns")) return json({ campaigns: [...legCampaignRows([CONVERSATION_FUNNEL, WEBSITE_FUNNEL], { brandId: BRAND }), ...(options.campaigns ?? [])] });
     return json({});
   });
 }
@@ -417,5 +419,73 @@ describe("COLD START: a leg with no priced workflow still names a selectable one
     PROD_SHAPE();
     const res = await get("goal=meetingBooked");
     expect(res.body.recommendationBasis).toBeUndefined();
+  });
+});
+
+describe("a campaign's PLAY decides which workflows may run (owner 2026-10-13, lib/plays.ts)", () => {
+  const PIPE = "sales-cold-email-outreach|lead_found_to_conversation";
+  const FUNNEL = (strategy: string | null) =>
+    `start_to_lead_found@lead-sourcing+lead_found_to_conversation@sales-cold-email-outreach${strategy ? `~${strategy}` : ""}+conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client`;
+  const unit = (id: string, strategy: string | null) => ({
+    id, orgId: AUTH["x-org-id"], brandId: BRAND, brandIds: [BRAND], featureSlug: "sales-cold-email-outreach", acquisitionChannel: "sales-cold-email-outreach",
+    legKey: "start_to_conversation", offerId: null, status: "stopped", salesFunnelId: FUNNEL(strategy),
+  });
+  beforeEach(async () => {
+    vi.mocked(db.query.features.findFirst).mockResolvedValue(FEATURE as any);
+    standardAssignments();
+    mockFetch({ campaigns: [unit("unit-default", null), unit("unit-catch", "valid-catch-all")] });
+    const { loadPlayCatalogue } = await import("../lib/plays-store.js");
+    const { buildPlayCatalogue } = await import("../lib/plays.js");
+    vi.mocked(loadPlayCatalogue).mockResolvedValue(
+      buildPlayCatalogue({
+        tactics: [{ id: "catch-all", name: "Catch-all", description: "d", createdBy: "t", createdAt: "" }],
+        strategies: [
+          { id: "valid-only", name: "Valid only", description: "a", requiresTacticIds: [], excludesTacticIds: ["catch-all"], createdBy: "t", createdAt: "" },
+          { id: "valid-catch-all", name: "Valid + Catch-all", description: "b", requiresTacticIds: ["catch-all"], excludesTacticIds: [], createdBy: "t", createdAt: "" },
+        ],
+        plays: [
+          { pipeId: PIPE, strategyId: "valid-only", isDefault: true },
+          { pipeId: PIPE, strategyId: "valid-catch-all", isDefault: false },
+        ],
+        // Jev: sodium is a catch-all copy; lithium is not; nobody judged argon/neon yet.
+        verdicts: [
+          { workflowSlug: "wf-lithium-v1", tacticId: "catch-all", workflowDynastySlug: "lithium", version: 1, versionActive: true, verdict: false, probability: 0.02, model: "m", judgedAt: "" },
+          { workflowSlug: "wf-sodium-v1", tacticId: "catch-all", workflowDynastySlug: "sodium", version: 1, versionActive: true, verdict: true, probability: 0.97, model: "m", judgedAt: "" },
+        ],
+      }),
+    );
+  });
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    const { loadPlayCatalogue } = await import("../lib/plays-store.js");
+    const { buildPlayCatalogue } = await import("../lib/plays.js");
+    vi.mocked(loadPlayCatalogue).mockResolvedValue(buildPlayCatalogue({ tactics: [], strategies: [], plays: [], verdicts: [] }));
+  });
+
+  it("the DEFAULT play (Valid only) rules out the catch-all workflow; the catch-all play runs only it", async () => {
+    const def = await get("leg=start_to_conversation&campaignId=unit-default");
+    expect(def.status).toBe(200);
+    expect(def.body.play).toMatchObject({ id: PIPE, strategyId: "valid-only", default: true, source: "pipe_default", allowedWorkflowCount: 1 });
+    expect(selectableSet(def.body)).toEqual(["lithium"]);
+    expect(rowOf(def.body, "sodium").modelEligibility).toMatchObject({ eligible: false });
+    expect(rowOf(def.body, "sodium").legAssignment.reason).toContain("excludes the tactic \"Catch-all\"");
+
+    const catchAll = await get("leg=start_to_conversation&campaignId=unit-catch");
+    expect(catchAll.body.play).toMatchObject({ id: `${PIPE}~valid-catch-all`, strategyId: "valid-catch-all", default: false, source: "sales_funnel", allowedWorkflowCount: 1 });
+    expect(selectableSet(catchAll.body)).toEqual(["sodium"]);
+    expect(catchAll.body.recommendedWorkflowDynastySlug).toBe("sodium");
+    // MOVES NO FIGURE: a play changes who may run, never what anyone measured.
+    expect(rowOf(catchAll.body, "lithium").resolved).toEqual(rowOf(def.body, "lithium").resolved);
+  });
+
+  it("nothing allowed = nothing recommended, stated (campaign-service holds, never falls back)", async () => {
+    const { loadPlayCatalogue } = await import("../lib/plays-store.js");
+    const current = await loadPlayCatalogue();
+    current.tacticsByDynasty.get("sodium")!.set("catch-all", false);
+    const res = await get("leg=start_to_conversation&campaignId=unit-catch");
+    expect(res.body.play.allowedWorkflowCount).toBe(0);
+    expect(res.body.recommendedWorkflowDynastySlug).toBeNull();
+    expect(res.body.recommendationWithheldReason).toBe("no_eligible_workflow");
+    expect(res.body.rows.every((r: any) => r.modelEligibility?.eligible !== true)).toBe(true);
   });
 });

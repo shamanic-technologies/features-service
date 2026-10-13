@@ -4617,6 +4617,23 @@ export async function fleetLegPrice(featureSlug: string, legKey: string): Promis
   return pickLegPrice({ legKey, featureSlug, byDynasty: new Map(figures.byDynasty), excluded, campaignCount: figures.campaignCount });
 }
 
+/**
+ * The price of each PLAY of a pipe (`lib/plays.ts`): the same pick as `fleetLegPrice` over the same figures, minus the
+ * dynasties each play's strategy excludes. `strategyExclusions(dynasties)` names, for every dynasty with figures, the
+ * excluded set of each play in order. A play excluding nothing prices byte-equal to the pipe.
+ */
+export async function fleetPlayPrices(
+  featureSlug: string,
+  legKey: string,
+  strategyExclusions: (dynasties: readonly string[]) => ReadonlyArray<ReadonlySet<string>>,
+): Promise<LegPrice[]> {
+  const [figures, excluded] = await Promise.all([fleetPipeFigures(featureSlug, legKey), deprecatedOnLeg(featureSlug, legKey)]);
+  const byDynasty = new Map(figures.byDynasty);
+  return strategyExclusions([...byDynasty.keys()]).map((more) =>
+    pickLegPrice({ legKey, featureSlug, byDynasty, excluded: new Set([...excluded, ...more]), campaignCount: figures.campaignCount }),
+  );
+}
+
 export async function computeOutcomePrices(): Promise<OutcomePricesPayload> {
   const [visitLeg, replyLeg, meetingFleet, meetingExcluded] = await Promise.all([
     coldEmailLegPrice("start_to_website_visit"),
