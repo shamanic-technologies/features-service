@@ -381,6 +381,6 @@ describe("GET /public/channel-outcome-economics (wave C4)", () => {
       );
     }
     const cat = await request(app).get("/public/channels");
-    expect(Object.keys(cat.body).sort()).toEqual(["channels", "emailDelivery", "funnels", "legKeyCorrespondence", "legs", "steps", "triggers"]);
+    expect(Object.keys(cat.body).sort()).toEqual(["channels", "emailDelivery", "funnels", "legKeyCorrespondence", "legs", "meetingBookingGain", "steps", "triggers"]);
   });
 });
