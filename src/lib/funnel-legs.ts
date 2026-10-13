@@ -228,9 +228,11 @@ export function storedCombinationKeyOf(raw: string): string {
     .map((part) => {
       const at = part.indexOf("@");
       if (at < 0) return storedLegKeyOf(part);
-      const slug = part.slice(at + 1);
+      const slugPart = part.slice(at + 1);
+      // A non-default PLAY rides the slug as `~<strategy>` (`lib/plays.ts`): the leg is spelled for the channel.
+      const slug = slugPart.split("~")[0];
       const leg = part.slice(0, at);
-      return `${isOutboundLegKeySpelling(leg) && !isOutboundChannel(slug) ? leg : storedLegKeyOf(leg)}@${slug}`;
+      return `${isOutboundLegKeySpelling(leg) && !isOutboundChannel(slug) ? leg : storedLegKeyOf(leg)}@${slugPart}`;
     })
     .join("+");
 }
@@ -261,7 +263,7 @@ export function servedCombinationKeyOf(key: string): string {
     .split("+")
     .map((part) => {
       const at = part.indexOf("@");
-      return at < 0 ? part : `${servedLegKeyOf(part.slice(at + 1), part.slice(0, at))}@${part.slice(at + 1)}`;
+      return at < 0 ? part : `${servedLegKeyOf(part.slice(at + 1).split("~")[0], part.slice(0, at))}@${part.slice(at + 1)}`;
     })
     .join("+");
 }
@@ -294,7 +296,7 @@ export function servedNameKeyOf(key: string): string {
 export function entryChannelOfCombinationKey(key: string): string | null {
   const first = key.split("+")[0] ?? "";
   const at = first.indexOf("@");
-  return at < 0 ? null : first.slice(at + 1);
+  return at < 0 ? null : first.slice(at + 1).split("~")[0];
 }
 
 /** The leg itself, or null when nothing names it. */

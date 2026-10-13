@@ -89,3 +89,27 @@ vi.mock("./lib/expected-return.js", async (importOriginal) => {
     expectedReturnForScope: vi.fn(unavailable),
   };
 });
+
+/**
+ * Suite-wide default: tactics, strategies, plays and Jev verdicts (lib/plays-store.ts) are Postgres rows no route
+ * fixture holds. The empty catalogue here = no pipe catalogues a play, so every read is byte-unchanged (the pipe runs
+ * every assigned workflow, as before plays). Suites asserting plays set their own return; the sweep never runs.
+ */
+vi.mock("./lib/plays-store.js", async () => {
+  const { buildPlayCatalogue } = await import("./lib/plays.js");
+  return {
+    loadPlayCatalogue: vi.fn(async () => buildPlayCatalogue({ tactics: [], strategies: [], plays: [], verdicts: [] })),
+    invalidatePlayCatalogue: vi.fn(),
+    listVerdicts: vi.fn(async () => []),
+    insertTactic: vi.fn(),
+    insertStrategy: vi.fn(),
+    insertPlay: vi.fn(),
+    insertVerdict: vi.fn(async () => undefined),
+    refreshVersionActive: vi.fn(async () => undefined),
+  };
+});
+vi.mock("./lib/tactic-judgments.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./lib/tactic-judgments.js")>()),
+  kickTacticJudgments: vi.fn(async () => ({ versions: 0, judged: 0, failed: 0, alreadyJudged: 0 })),
+  startTacticJudgmentLoop: vi.fn(),
+}));

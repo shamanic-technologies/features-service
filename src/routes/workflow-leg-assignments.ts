@@ -1,3 +1,4 @@
+import { kickTacticJudgments } from "../lib/tactic-judgments.js";
 import { Router } from "express";
 import { eq } from "drizzle-orm";
 import { apiKeyOnly } from "../middleware/auth.js";
@@ -167,6 +168,8 @@ router.post("/internal/workflow-leg-assignments/register", apiKeyOnly, async (re
     });
     const servedLeg = servedLegKeyOf(featureSlug, transition.legKey);
     console.log(`[features-service] workflow ${workflowDynastySlug} ${result.created ? "registered ACTIVE on" : "already stated on"} pipe ${featureSlug}|${servedLeg} (${result.assignment.state}) by ${registeredBy}`);
+    // A workflow born on a pipe is judged on every tactic within minutes (lib/tactic-judgments.ts).
+    void kickTacticJudgments(new Set([workflowDynastySlug]));
     res.status(result.created ? 201 : 200).json({
       created: result.created,
       assignment: result.assignment,

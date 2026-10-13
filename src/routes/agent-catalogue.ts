@@ -37,6 +37,8 @@ import {
   phosphorIconOf,
   pipeIdOf,
   pipeLine,
+  pipeOrPlayById,
+  playsOfPipe,
   salesPathNameKeyOf,
   stepEconomics,
   stepLabel,
@@ -47,6 +49,7 @@ import {
   type Economics,
   type FunnelLeg,
   type PipeMeasurement,
+  type PlayInput,
 } from "../lib/agent-catalogue.js";
 import { faceOf, faceSvg } from "../lib/catalogue-faces.js";
 import { getPipeStats, type PipeStatsPipe, type PipeStatsScope } from "../lib/pipe-stats.js";
@@ -84,7 +87,12 @@ import { mapWithConcurrency } from "../lib/concurrency.js";
 import { awaitWarmStore, StoreNotComputedError } from "../lib/await-warm-store.js";
 import { servedLegKeyOf, storedCombinationKeyOf, storedLegKeyOf } from "../lib/funnel-legs.js";
 import { listLegAssignments } from "../lib/workflow-leg-assignments.js";
-import { invalidateChannelCatalogue, fleetLegPrice, readLegWorkflowRanking } from "./public.js";
+import { invalidateChannelCatalogue, fleetLegPrice, fleetPlayPrices, readLegWorkflowRanking } from "./public.js";
+import type { LegPrice } from "../lib/outcome-prices.js";
+import type { LegAssignmentRow } from "../lib/workflow-leg-assignments.js";
+import { insertPlay, insertStrategy, insertTactic, listVerdicts, loadPlayCatalogue } from "../lib/plays-store.js";
+import { kickTacticJudgments } from "../lib/tactic-judgments.js";
+import { defaultStrategyOf, excludedDynasties, playIdOf, tacticNameOf, type PlayCatalogue, type Strategy, type Tactic } from "../lib/plays.js";
 
 /**
  * THE AGENT CATALOGUE (owner 2026-10-10, "chat first"; the model and every formula: `lib/agent-catalogue.ts`).
@@ -116,6 +124,8 @@ const MEASUREMENTS_BOOT_WAIT_MS = 150_000;
 
 interface MeasurementStore {
   byPipe: Map<string, PipeMeasurement>;
+  /** Every NON-default play's measurement, keyed by play id (`lib/plays.ts`). A pipe's default play is `byPipe`. */
+  byPlay: Map<string, PipeMeasurement>;
   /** Pipes whose fleet read failed: served `learning` with reason `measurement_unreadable`, logged loud. */
   unreadable: Set<string>;
   computedAt: string;
@@ -136,6 +146,7 @@ const FIGURES_CELL_KEY = "agent-catalogue-figures";
 interface StoredFigures {
   computedAt: string;
   byPipe: Array<[string, PipeMeasurement]>;
+  byPlay?: Array<[string, PipeMeasurement]>;
   unreadable: string[];
   fleet: { arrows: Array<[string, { ratePct: number | null; brandCount: number }]>; lifetimeRevenue: { usd: number | null; offerCount: number } } | null;
 }
@@ -144,6 +155,7 @@ export function serializeFigures(v: MeasurementStore): string {
   const out: StoredFigures = {
     computedAt: v.computedAt,
     byPipe: [...v.byPipe],
+    byPlay: [...v.byPlay],
     unreadable: [...v.unreadable],
     fleet: v.fleet ? { arrows: [...v.fleet.arrows], lifetimeRevenue: v.fleet.lifetimeRevenue } : null,
   };
@@ -155,6 +167,7 @@ export function parseFigures(text: string): MeasurementStore {
   if (!Array.isArray(s.byPipe) || !Array.isArray(s.unreadable) || typeof s.computedAt !== "string") throw new Error("not a stored catalogue figures cell");
   return {
     byPipe: new Map(s.byPipe),
+    byPlay: new Map(s.byPlay ?? []),
     unreadable: new Set(s.unreadable),
     computedAt: s.computedAt,
     fleet: s.fleet ? { arrows: new Map(s.fleet.arrows), lifetimeRevenue: s.fleet.lifetimeRevenue } : null,
@@ -200,17 +213,39 @@ async function computeMeasurements(): Promise<MeasurementStore> {
     c.operatedBy === "platform" ? c.stepTransitions.map((t) => ({ slug: c.slug, computedLegKey: t.legKey, id: pipeIdOf(c.slug, servedPipeLegKey(c.slug, t.legKey)) })) : [],
   );
   const byPipe = new Map<string, PipeMeasurement>();
+  const byPlay = new Map<string, PipeMeasurement>();
   const unreadable = new Set<string>();
+  const plays = await loadPlayCatalogue();
+  const nameOf = tacticNameOf(plays);
   // A pipe whose read fails in THIS build keeps the measurement of the build it replaces (the last computed
   // figure, same rule as the whole store): one transient fleet-read timeout must not turn a measured pipe
   // learning for a whole fresh window, nor be persisted for the next process (2026-10-10: Lumen read
   // `measurement_unreadable` after a restart). Only a pipe never measured reads unreadable.
   const previous = measurementStore?.value.byPipe ?? new Map<string, PipeMeasurement>();
+  const previousPlays = measurementStore?.value.byPlay ?? new Map<string, PipeMeasurement>();
+  const measured = (price: LegPrice): PipeMeasurement => ({ basis: price.basis, costPerOutcomeUsd: price.costPerOutcomeUsd, conversionRatePct: price.conversionRatePct, workflowDynastySlug: price.workflowDynastySlug });
   await mapWithConcurrency(pipes, MEASUREMENT_CONCURRENCY, async (p) => {
+    // A pipe cataloguing plays prices each on its best ALLOWED workflow; its default play is the pipe's own figure.
+    const catalogued = plays.playsByPipe.get(p.id) ?? [];
     try {
-      const price = await withTimeout(fleetLegPrice(p.slug, p.computedLegKey), MEASUREMENT_TIMEOUT_MS, `pipe ${p.id}`);
-      byPipe.set(p.id, { basis: price.basis, costPerOutcomeUsd: price.costPerOutcomeUsd, conversionRatePct: price.conversionRatePct, workflowDynastySlug: price.workflowDynastySlug });
+      if (catalogued.length === 0) {
+        byPipe.set(p.id, measured(await withTimeout(fleetLegPrice(p.slug, p.computedLegKey), MEASUREMENT_TIMEOUT_MS, `pipe ${p.id}`)));
+        return;
+      }
+      const strategiesInOrder = [defaultStrategyOf(plays, p.id), ...catalogued.filter((x) => !x.isDefault).map((x) => plays.strategies.get(x.strategyId) ?? null)];
+      const prices = await withTimeout(
+        fleetPlayPrices(p.slug, p.computedLegKey, (dynasties) => strategiesInOrder.map((st) => new Set(excludedDynasties(st, dynasties, plays.tacticsByDynasty, nameOf).keys()))),
+        MEASUREMENT_TIMEOUT_MS,
+        `pipe ${p.id}`,
+      );
+      byPipe.set(p.id, measured(prices[0]));
+      catalogued.filter((x) => !x.isDefault).forEach((x, i) => byPlay.set(playIdOf(p.id, x.strategyId), measured(prices[i + 1])));
     } catch (error) {
+      for (const x of catalogued) {
+        const id = playIdOf(p.id, x.strategyId);
+        const lastPlay = previousPlays.get(id);
+        if (!x.isDefault && lastPlay) byPlay.set(id, lastPlay);
+      }
       const last = previous.get(p.id);
       if (last) {
         byPipe.set(p.id, last);
@@ -223,7 +258,7 @@ async function computeMeasurements(): Promise<MeasurementStore> {
   });
   // The medians beside the figures (a background build may wait on the fleet sweep; a read never does).
   const [arrows, lifetimeRevenue] = await Promise.all([getFleetArrowMedians(), getFleetLifetimeRevenueMedian()]);
-  return { byPipe, unreadable, computedAt: new Date().toISOString(), fleet: { arrows, lifetimeRevenue } };
+  return { byPipe, byPlay, unreadable, computedAt: new Date().toISOString(), fleet: { arrows, lifetimeRevenue } };
 }
 
 /** Rebuild in the background when absent or past its fresh window (single-flight). */
@@ -244,8 +279,8 @@ export function warmCatalogueMeasurements(): Promise<void> {
 }
 
 /** Test seams. */
-export function __setCatalogueMeasurementsForTest(byPipe: Map<string, PipeMeasurement>): void {
-  measurementStore = { value: { byPipe, unreadable: new Set(), computedAt: new Date(0).toISOString(), fleet: null }, at: Date.now() };
+export function __setCatalogueMeasurementsForTest(byPipe: Map<string, PipeMeasurement>, byPlay?: Map<string, PipeMeasurement>): void {
+  measurementStore = { value: { byPipe, byPlay: byPlay ?? new Map(), unreadable: new Set(), computedAt: new Date(0).toISOString(), fleet: null }, at: Date.now() };
 }
 export function __resetCatalogueMeasurements(): void {
   measurementStore = null;
@@ -349,7 +384,7 @@ const offerEcho = (o: OfferContext | null) =>
 async function loadModel(offer: OfferContext | null = null): Promise<Loaded> {
   await installPersistedFigures();
   void warmCatalogueMeasurements();
-  const [measurements, all, pub, declaredSteps, names, triggers, assignments] = await Promise.all([
+  const [measurements, all, pub, declaredSteps, names, triggers, assignments, playCatalogue] = await Promise.all([
     awaitWarmStore(() => measurementStore?.value ?? null, warmCatalogueMeasurements, MEASUREMENTS_BOOT_WAIT_MS, "catalogue economics"),
     loadChannelCatalogue({ publishedOnly: false }),
     loadChannelCatalogue({ publishedOnly: true }),
@@ -357,6 +392,7 @@ async function loadModel(offer: OfferContext | null = null): Promise<Loaded> {
     allNamesByKey(),
     listTriggerTypes(),
     listLegAssignments(),
+    loadPlayCatalogue(),
   ]);
   const workflowPipeKeys = new Set(assignments.filter((a) => a.state === "active").map((a) => `${a.featureSlug}|${storedLegKeyOf(a.legKey)}`));
   const { arrows: medians, lifetimeRevenue: ltr } = await fleetMediansFor(measurements.fleet);
@@ -372,6 +408,7 @@ async function loadModel(offer: OfferContext | null = null): Promise<Loaded> {
     lifetimeRevenueBasis: offer?.lifetimeRevenueSource === "offer_stated" ? "stated" : "fleet",
     ...(offer ? { offerRates: offer.rates } : {}),
     triggers,
+    plays: playInputsOf(playCatalogue, assignments, measurements.byPlay),
   });
   for (const id of measurements.unreadable) {
     const p = model.pipes.get(id);
@@ -381,6 +418,38 @@ async function loadModel(offer: OfferContext | null = null): Promise<Loaded> {
 }
 
 const nameKeyOfPipe = (p: Pick<CataloguePipe, "channelSlug" | "legKey">): string => campaignNameKeyOf(p.channelSlug, p.legKey);
+
+/**
+ * Each cataloguing pipe's plays as the model prices them (`lib/plays.ts`): the default play and the others, each with
+ * what its strategy excludes among the workflows ASSIGNED to the pipe, read LIVE (a verdict stored a minute ago
+ * already counts), and its measurement from the last figures build.
+ */
+function playInputsOf(c: PlayCatalogue, assignments: readonly LegAssignmentRow[], byPlay: ReadonlyMap<string, PipeMeasurement>): Map<string, { default: PlayInput | null; others: PlayInput[] }> {
+  const nameOf = tacticNameOf(c);
+  const out = new Map<string, { default: PlayInput | null; others: PlayInput[] }>();
+  for (const [pipeId, list] of c.playsByPipe) {
+    const [slug, leg] = [pipeId.slice(0, pipeId.indexOf("|")), pipeId.slice(pipeId.indexOf("|") + 1)];
+    const onPipe = assignments.filter((a) => a.featureSlug === slug && storedLegKeyOf(a.legKey) === storedLegKeyOf(leg));
+    const inputOf = (strategyId: string): PlayInput | null => {
+      const st = c.strategies.get(strategyId);
+      if (!st) return null;
+      const excluded = excludedDynasties(st, onPipe.map((a) => a.workflowDynastySlug), c.tacticsByDynasty, nameOf);
+      return {
+        strategyId,
+        strategyName: st.name,
+        measurement: byPlay.get(playIdOf(pipeId, strategyId)) ?? null,
+        allowedActiveWorkflowCount: onPipe.filter((a) => a.state === "active" && !excluded.has(a.workflowDynastySlug)).length,
+        excludedDynasties: [...excluded.keys()].sort(),
+      };
+    };
+    const def = list.find((p) => p.isDefault);
+    out.set(pipeId, {
+      default: def ? inputOf(def.strategyId) : null,
+      others: list.filter((p) => !p.isDefault).map((p) => inputOf(p.strategyId)).filter((p): p is PlayInput => p !== null),
+    });
+  }
+  return out;
+}
 
 // ── Query parsing ─────────────────────────────────────────────────────────────────────────────────
 
@@ -807,8 +876,39 @@ function pipeDetail(model: CatalogueModel, p: CataloguePipe, name: string) {
     bestWorkflowSlug: p.measurement?.workflowDynastySlug ?? null,
     measuredBasis: p.measurement?.basis ?? null,
     conversionRatePct: p.measurement?.conversionRatePct ?? null,
+    play: playOf(p),
+    // ROI PER PLAY (owner 2026-10-13): every play of the pipe with its own figure, default first.
+    plays: playsOfPipe(model, model.pipes.get(p.play?.basePipeId ?? p.id) ?? p).map((x) => playRowOf(model, x)),
   };
 }
+
+/** The play a pipe object is (`lib/plays.ts`); null on a pipe cataloguing no play. */
+const playOf = (p: CataloguePipe) =>
+  p.play
+    ? {
+        pipeId: p.play.basePipeId,
+        strategyId: p.play.strategyId,
+        strategyName: p.play.strategyName,
+        default: p.play.isDefault,
+        allowedActiveWorkflowCount: p.play.allowedActiveWorkflowCount,
+        excludedWorkflowDynastySlugs: p.play.excludedDynasties,
+      }
+    : null;
+
+/** One play of a pipe as listed: its id (what a sales funnel names), its strategy, its own figures. */
+const playRowOf = (m: CatalogueModel, p: CataloguePipe) => ({
+  object: "play" as const,
+  id: p.id,
+  pipeId: p.play?.basePipeId ?? p.id,
+  strategyId: p.play?.strategyId ?? null,
+  strategyName: p.play?.strategyName ?? null,
+  default: p.play?.isDefault ?? true,
+  ...econWire(p.economics, perStep(m, p.toStep)),
+  bestWorkflowSlug: p.measurement?.workflowDynastySlug ?? null,
+  measuredBasis: p.measurement?.basis ?? null,
+  allowedActiveWorkflowCount: p.play?.allowedActiveWorkflowCount ?? null,
+  runnable: pipeRunnable(p),
+});
 
 /**
  * `?stats=true` (owner 2026-10-12, the staff Pipe page): the pipe's own volumes, net spend, cost per outcome, ROI since
@@ -866,7 +966,9 @@ router.get("/internal/catalogue/pipes/:id", apiKeyOnly, async (req, res) => {
   try {
     const scope = pipeStatsScopeOf(req);
     const { model, names } = await loadModel();
-    const p = model.pipes.get(req.params.id);
+    // A PLAY id (`<pipe id>~<strategy id>`) answers like its pipe, as that play (campaign-service reads a funnel's
+    // legs through here).
+    const p = pipeOrPlayById(model, req.params.id);
     if (!p) return void res.status(404).json({ error: `no pipe ${req.params.id}`, reason: "pipe_not_found" });
     const n = await named([nameKeyOfPipe(p)], names);
     const detail = pipeDetail(model, p, n.get(nameKeyOfPipe(p))!);
@@ -1029,9 +1131,11 @@ router.get("/internal/catalogue/sales-funnels/:id", apiKeyOnly, async (req, res)
 async function workflowRows(model: CatalogueModel, pipe: CataloguePipe) {
   const ranking = await readLegWorkflowRanking(pipe.channelSlug, pipe.computedLegKey);
   if (!ranking) return null;
+  // A play lists only the workflows its strategy allows (`lib/plays.ts`).
+  const excluded = new Set(pipe.play?.excludedDynasties ?? []);
   // The value the pipe ADDS per outcome (`valueAddedTo`, `lib/value-added.ts`), every workflow on it alike.
   const value = valueAddedTo((st) => model.steps.get(st)?.valueUsd ?? null, pipe.fromStep, pipe.toStep);
-  return ranking.rows.map((r) => {
+  return ranking.rows.filter((r) => !excluded.has(r.workflowDynastySlug)).map((r) => {
     const name = r.workflowDynastyName ?? r.workflowDynastySlug;
     const mature = r.isMature === true && r.basis === "mature" && r.costPerOutcomeUsd !== null && r.costPerOutcomeUsd > 0;
     const e: Economics = mature
@@ -1054,7 +1158,7 @@ router.get("/internal/catalogue/workflows", apiKeyOnly, async (req, res) => {
     const pipeId = typeof req.query.pipe === "string" ? req.query.pipe.replace(/ /g, "+") : null;
     if (!pipeId) throw new BadQuery("pipe_required", "pipe is required (a pipe id, `<channel slug>|<leg key>`)");
     const { model } = await loadModel();
-    const pipe = model.pipes.get(pipeId);
+    const pipe = pipeOrPlayById(model, pipeId);
     if (!pipe) return void res.status(404).json({ error: `no pipe ${pipeId}`, reason: "pipe_not_found" });
     const rows = pipe.operatedBy === "customer" ? [] : await workflowRows(model, pipe);
     if (rows === null) return void res.status(503).json({ error: `the workflow ranking of ${pipeId} is not computed yet`, reason: "workflow_ranking_not_computed_yet" });
@@ -1078,8 +1182,8 @@ router.get("/internal/catalogue/workflows/:id", apiKeyOnly, async (req, res) => 
   try {
     const pipeId = typeof req.query.pipe === "string" ? req.query.pipe.replace(/ /g, "+") : null;
     if (!pipeId) throw new BadQuery("pipe_required", "pipe is required (the pipe the workflow runs on)");
-    const { model } = await loadModel();
-    const pipe = model.pipes.get(pipeId);
+    const [{ model }, plays] = await Promise.all([loadModel(), loadPlayCatalogue()]);
+    const pipe = pipeOrPlayById(model, pipeId);
     if (!pipe) return void res.status(404).json({ error: `no pipe ${pipeId}`, reason: "pipe_not_found" });
     const rows = await workflowRows(model, pipe);
     if (rows === null) return void res.status(503).json({ error: `the workflow ranking of ${pipeId} is not computed yet`, reason: "workflow_ranking_not_computed_yet" });
@@ -1104,6 +1208,8 @@ router.get("/internal/catalogue/workflows/:id", apiKeyOnly, async (req, res) => 
       holdsTheMoney: x.r.moneyGoesHere,
       ...econDetail(x.e, perStep(model, pipe.toStep)),
       costUnit: "per_outcome",
+      // Every tactic Jev judged on this workflow's CURRENT version (`lib/plays.ts`); absent = not judged yet.
+      tactics: [...plays.tactics.values()].map((t) => ({ id: t.id, name: t.name, follows: plays.tacticsByDynasty.get(x.r.workflowDynastySlug)?.get(t.id) ?? null })),
     });
   } catch (err) {
     fail(res, err, "get workflow");
@@ -1303,13 +1409,15 @@ router.post("/internal/catalogue/sales-funnels", apiKeyOnly, async (req, res) =>
     // EVERY LEG A CHANNEL (owner 2026-10-11): a leg is named by the pipe working it, never bare. A leg the customer's
     // own team works is its `Your Team` pipe.
     const bare = (raw as string[]).findIndex((entry) => !entry.includes("|"));
+    // A pipe id or a PLAY id (`<pipe id>~<strategy id>`, `GET /internal/catalogue/plays?pipe=`): a funnel is a straight
+    // line of plays (owner 2026-10-13); a bare pipe id is its default play.
     if (bare >= 0) {
       throw bad("bare_leg_refused", `pipeIds[${bare}]: ${raw[bare]} is a leg, not a pipe. Every leg is worked by a channel: name its pipe (GET /internal/catalogue/pipes?legKeys=${raw[bare]}), a Your Team pipe when the customer's own team works it`);
     }
     const { model, names } = await loadModel();
     const picked = (raw as string[]).map((entry, i) => {
-      const p = model.pipes.get(entry);
-      if (!p) throw new DeclarationError(404, "pipe_not_found", `pipeIds[${i}]: no pipe ${entry}`);
+      const p = pipeOrPlayById(model, entry);
+      if (!p) throw new DeclarationError(404, "pipe_not_found", `pipeIds[${i}]: no pipe or play ${entry} (GET /internal/catalogue/plays?pipe=)`);
       return p;
     });
     // ONE CHANNEL PER LEG (owner 2026-10-11): a sales funnel is a straight line. Two pipes on one leg, or a leg of
@@ -1347,6 +1455,178 @@ router.post("/internal/catalogue/sales-funnels", apiKeyOnly, async (req, res) =>
     res.status(existed ? 200 : 201).json({ created: !existed, ...(await funnelDetail(model, funnel, n)) });
   } catch (err) {
     fail(res, err, "create sales funnel");
+  }
+});
+
+// ── Tactics, strategies, plays (owner 2026-10-13, `lib/plays.ts`) ──────────────────────────────────
+
+/**
+ * A TACTIC is a yes/no tag Jev puts on every workflow version (judged once on the tactic's description); a STRATEGY
+ * requires and excludes tactics; a PLAY is a pipe x a strategy. Not the dashboard's "Strategy page" (audience and
+ * workflow ranking): another word for another thing. Names and descriptions are unique (409 on a taken one).
+ */
+const tacticRowOf = (c: PlayCatalogue, t: Tactic) => {
+  const judged = [...c.tacticsByDynasty.values()].filter((m) => m.has(t.id));
+  return {
+    object: "tactic" as const,
+    id: t.id,
+    name: t.name,
+    description: t.description,
+    // On each workflow's CURRENT version (the one a run executes).
+    workflowsJudged: judged.length,
+    workflowsFollowing: judged.filter((m) => m.get(t.id) === true).length,
+  };
+};
+
+const strategyRowOf = (c: PlayCatalogue, st: Strategy) => ({
+  object: "strategy" as const,
+  id: st.id,
+  name: st.name,
+  description: st.description,
+  requires: st.requiresTacticIds.map((id) => ({ id, name: c.tactics.get(id)?.name ?? id })),
+  excludes: st.excludesTacticIds.map((id) => ({ id, name: c.tactics.get(id)?.name ?? id })),
+  pipeIds: [...c.playsByPipe].filter(([, ps]) => ps.some((x) => x.strategyId === st.id)).map(([pipeId]) => pipeId).sort(),
+});
+
+router.get("/internal/catalogue/tactics", apiKeyOnly, async (req, res) => {
+  try {
+    const q = qOf(req);
+    const c = await loadPlayCatalogue();
+    const rows = [...c.tactics.values()].sort((a, b) => (a.id < b.id ? -1 : 1)).filter((t) => matchesQuery(q, [t.name, t.id, t.description])).map((t) => tacticRowOf(c, t));
+    res.json({ object: "tactic", order: "id", ...page(rows, limitOf(req)) });
+  } catch (err) {
+    fail(res, err, "list tactics");
+  }
+});
+
+router.get("/internal/catalogue/tactics/:id", apiKeyOnly, async (req, res) => {
+  try {
+    const c = await loadPlayCatalogue();
+    const t = c.tactics.get(req.params.id);
+    if (!t) return void res.status(404).json({ error: `no tactic ${req.params.id}`, reason: "tactic_not_found" });
+    const verdicts = (await listVerdicts(t.id)).sort((a, b) => (a.workflowSlug < b.workflowSlug ? -1 : 1));
+    res.json({
+      ...tacticRowOf(c, t),
+      createdBy: t.createdBy,
+      createdAt: t.createdAt,
+      // Every workflow VERSION judged, with Jev's probability and the model release that answered.
+      verdicts: verdicts.map((v) => ({ workflowSlug: v.workflowSlug, workflowDynastySlug: v.workflowDynastySlug, version: v.version, versionActive: v.versionActive, follows: v.verdict, probability: v.probability, model: v.model, judgedAt: v.judgedAt })),
+    });
+  } catch (err) {
+    fail(res, err, "get tactic");
+  }
+});
+
+router.post("/internal/catalogue/tactics", apiKeyOnly, async (req, res) => {
+  const body = (req.body ?? {}) as Body;
+  try {
+    const t = await insertTactic({ name: text(body, "name", 60), description: text(body, "description", 500), createdBy: actorOf(body) });
+    console.log(`[features-service] agent catalogue: tactic ${t.id} declared by ${t.createdBy}; Jev judges every workflow version on it`);
+    void kickTacticJudgments();
+    res.status(201).json(tacticRowOf(await loadPlayCatalogue(), t));
+  } catch (err) {
+    fail(res, err, "create tactic");
+  }
+});
+
+router.get("/internal/catalogue/strategies", apiKeyOnly, async (req, res) => {
+  try {
+    const q = qOf(req);
+    const c = await loadPlayCatalogue();
+    const rows = [...c.strategies.values()].sort((a, b) => (a.id < b.id ? -1 : 1)).filter((st) => matchesQuery(q, [st.name, st.id, st.description])).map((st) => strategyRowOf(c, st));
+    res.json({ object: "strategy", order: "id", ...page(rows, limitOf(req)) });
+  } catch (err) {
+    fail(res, err, "list strategies");
+  }
+});
+
+router.get("/internal/catalogue/strategies/:id", apiKeyOnly, async (req, res) => {
+  try {
+    const c = await loadPlayCatalogue();
+    const st = c.strategies.get(req.params.id);
+    if (!st) return void res.status(404).json({ error: `no strategy ${req.params.id}`, reason: "strategy_not_found" });
+    res.json({ ...strategyRowOf(c, st), createdBy: st.createdBy, createdAt: st.createdAt });
+  } catch (err) {
+    fail(res, err, "get strategy");
+  }
+});
+
+/** A list of tactic ids in a create body (absent = none). */
+function tacticIds(body: Body, field: string): string[] {
+  const v = body[field];
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v) || v.some((x) => typeof x !== "string" || x.trim() === "")) throw bad(`${field}_invalid`, `${field} must be a list of tactic ids`);
+  return [...new Set((v as string[]).map((x) => x.trim()))];
+}
+
+router.post("/internal/catalogue/strategies", apiKeyOnly, async (req, res) => {
+  const body = (req.body ?? {}) as Body;
+  try {
+    const st = await insertStrategy({
+      name: text(body, "name", 60),
+      description: text(body, "description", 500),
+      requiresTacticIds: tacticIds(body, "requires"),
+      excludesTacticIds: tacticIds(body, "excludes"),
+      createdBy: actorOf(body),
+    });
+    console.log(`[features-service] agent catalogue: strategy ${st.id} declared by ${st.createdBy}`);
+    res.status(201).json(strategyRowOf(await loadPlayCatalogue(), st));
+  } catch (err) {
+    fail(res, err, "create strategy");
+  }
+});
+
+/** `?pipe=` (a pipe id): that pipe's plays, default first. Without it: every catalogued play of every pipe. */
+router.get("/internal/catalogue/plays", apiKeyOnly, async (req, res) => {
+  try {
+    const pipeId = typeof req.query.pipe === "string" && req.query.pipe !== "" ? req.query.pipe.replace(/ /g, "+") : null;
+    const { model } = await loadModel();
+    let bases: CataloguePipe[];
+    if (pipeId) {
+      const p = model.pipes.get(pipeId);
+      if (!p) return void res.status(404).json({ error: `no pipe ${pipeId}`, reason: "pipe_not_found" });
+      bases = [p];
+    } else {
+      bases = [...model.pipes.values()].filter((p) => p.play !== null);
+    }
+    const rows = bases.flatMap((p) => playsOfPipe(model, p)).map((x) => playRowOf(model, x));
+    res.json({ object: "play", order: "pipe_then_default_first", ...page(rows, limitOf(req)) });
+  } catch (err) {
+    fail(res, err, "list plays");
+  }
+});
+
+router.get("/internal/catalogue/plays/:id", apiKeyOnly, async (req, res) => {
+  try {
+    const { model } = await loadModel();
+    const p = pipeOrPlayById(model, req.params.id);
+    if (!p) return void res.status(404).json({ error: `no play ${req.params.id}`, reason: "play_not_found" });
+    res.json({ ...playRowOf(model, p), learningReason: p.economics.reason, estimates: p.economics.estimates, excludedWorkflowDynastySlugs: p.play?.excludedDynasties ?? [] });
+  } catch (err) {
+    fail(res, err, "get play");
+  }
+});
+
+/** Catalogue a play on a pipe (`{pipeId, strategyId, createdBy}`): plays are per pipe, never invented per campaign. */
+router.post("/internal/catalogue/plays", apiKeyOnly, async (req, res) => {
+  const body = (req.body ?? {}) as Body;
+  try {
+    const createdBy = actorOf(body);
+    const pipeId = text(body, "pipeId", 200);
+    const strategyId = text(body, "strategyId", 100);
+    const before = await loadModel();
+    const pipe = before.model.pipes.get(pipeId);
+    if (!pipe) throw new DeclarationError(404, "pipe_not_found", `no pipe ${pipeId}`);
+    if (pipe.operatedBy !== "platform") throw bad("pipe_not_ours", `${pipeId} is worked by the customer's own team: no workflow of ours runs it, so no strategy chooses one`);
+    if (!pipe.play) throw bad("pipe_has_no_default_play", `${pipeId} catalogues no play yet: its default play (the strategy matching what it runs today) is declared first, by staff`);
+    const { created } = await insertPlay({ pipeId, strategyId, createdBy });
+    const { model } = await loadModel();
+    const play = pipeOrPlayById(model, playIdOf(pipeId, strategyId));
+    if (!play) throw new Error(`play ${pipeId}~${strategyId} was stored but is not in the catalogue`);
+    console.log(`[features-service] agent catalogue: play ${play.id} ${created ? "declared" : "re-declared"} by ${createdBy}`);
+    res.status(created ? 201 : 200).json({ created, ...playRowOf(model, play) });
+  } catch (err) {
+    fail(res, err, "create play");
   }
 });
 

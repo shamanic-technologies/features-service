@@ -540,3 +540,60 @@ export const declaredSalesPathChains = pgTable("declared_sales_path_chains", {
   requestedByOrgId: text("requested_by_org_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * TACTICS, STRATEGIES, PLAYS (owner 2026-10-13, migration 0028; `lib/plays.ts`). A TACTIC is a yes/no tag on a
+ * workflow VERSION; Jev judges every version against every tactic once, on the tactic's description
+ * (`lib/tactic-judgments.ts`). A STRATEGY requires and excludes tactics. A PLAY is a pipe x a strategy, catalogued per
+ * pipe (never per campaign); `is_default` = the play a campaign runs when its sales funnel names no strategy. Name and
+ * description are unique case-insensitive in both families (indexes in the migration). Not the dashboard's
+ * "Strategy page" (audience/workflow ranking): a different word for a different thing.
+ */
+export const tactics = pgTable("tactics", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description").notNull(),
+  createdBy: text("created_by").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const strategies = pgTable("strategies", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description").notNull(),
+  requiresTacticIds: text("requires_tactic_ids").array().notNull().default([]),
+  excludesTacticIds: text("excludes_tactic_ids").array().notNull().default([]),
+  createdBy: text("created_by").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const plays = pgTable(
+  "plays",
+  {
+    /** The pipe's served id (`<channel slug>|<served leg key>`). */
+    pipeId: text("pipe_id").notNull(),
+    strategyId: text("strategy_id").notNull(),
+    isDefault: boolean("is_default").notNull().default(false),
+    createdBy: text("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.pipeId, t.strategyId] })],
+);
+
+/** One Jev verdict per (workflow VERSION, tactic), judged once; `version_active` is refreshed on every sweep. */
+export const workflowTacticVerdicts = pgTable(
+  "workflow_tactic_verdicts",
+  {
+    workflowSlug: text("workflow_slug").notNull(),
+    tacticId: text("tactic_id").notNull(),
+    workflowDynastySlug: text("workflow_dynasty_slug").notNull(),
+    featureSlug: text("feature_slug").notNull(),
+    version: integer("version").notNull(),
+    versionActive: boolean("version_active").notNull(),
+    verdict: boolean("verdict").notNull(),
+    probability: doublePrecision("probability").notNull(),
+    model: text("model").notNull(),
+    judgedAt: timestamp("judged_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.workflowSlug, t.tacticId] })],
+);
