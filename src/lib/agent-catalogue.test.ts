@@ -338,6 +338,41 @@ describe("a step declared at run time ('LinkedIn post') rides legs, paths and va
   });
 });
 
+describe("a path ENDS at an outcome no pipe continues from (owner 2026-10-13, Email pushed via API -> Email sent)", () => {
+  registerDeclaredSteps([{ key: "email_sent" as never, label: "Email sent", description: "An email you wrote is sent.", shortDescription: "Your email goes out" }]);
+  // A step-less trigger starts the leg out of nothing (the seeded `follow_up_due` stands in for `email_pushed_via_api`).
+  const legs: DeclaredLeg[] = [
+    { channelSlug: "ai-follow-up-email", legKey: "start_to_email_sent", fromStep: null, toStep: "email_sent" as never, mode: "reactive", triggerId: "follow_up_due", published: true, createdBy: "t", requestedByOrgId: null, createdAt: "", updatedAt: "" },
+  ];
+  const merged = mergeDeclarations(SEEDED, { channels: [], legs, triggers: [] }, { publishedOnly: false }, { shortDescriptionOf: channelShortDescription, channelTypeOfSlug: channelTypeOf });
+  const channels = buildChannelCatalogue(merged.rows, merged.shortDescriptionOf, merged.channelTypeOfSlug, merged.triggerOf);
+  const model = buildCatalogueModel(
+    inputs({
+      channels,
+      declaredSteps: [{ key: "email_sent", label: "Email sent", description: "An email you wrote is sent.", shortDescription: "Your email goes out", icon: "paper-plane-tilt", towardStep: "conversation", towardRatePct: 1, producedBy: null }],
+    }),
+  );
+
+  it("lists the one-leg path, reactive, starting on its trigger", () => {
+    const path = pathById(model, "start_to_email_sent")!;
+    expect(path).not.toBeNull();
+    expect(path.type).toBe("reactive");
+    expect(path.steps).toEqual(["email_sent"]);
+    expect(pathLine(model, path)).toBe("Follow-up Due → Email sent");
+  });
+
+  it("composes its funnel, valued at the step's own value, never the lifetime revenue", () => {
+    const f = funnelById(model, "start_to_email_sent@ai-follow-up-email")!;
+    expect(f).not.toBeNull();
+    expect(funnelTypeOf(f)).toBe("reactive");
+    expect(model.steps.get("email_sent")!.valueUsd).not.toBeNull();
+  });
+
+  it("every other path still ends at Paid client", () => {
+    for (const p of model.paths.values()) if (p.id !== "start_to_email_sent") expect(p.steps[p.steps.length - 1]).toBe("paid_client");
+  });
+});
+
 describe("catalogue icons are Phosphor names only (owner 2026-10-10)", () => {
   // Checked against @phosphor-icons/react 2.1 (`dist/csr/<PascalName>`): every name the catalogue serves today.
   const PHOSPHOR = new Set([
