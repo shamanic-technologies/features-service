@@ -28,11 +28,12 @@ describe("plays (owner 2026-10-13)", () => {
     expect(m.get("orion")!.get("catch-all")).toBe(false);
   });
 
-  it("requires = judged yes; excludes = not judged yes (an unjudged workflow keeps today's default)", () => {
+  it("requires = judged yes; excludes = judged no; NOT judged = not allowed either way (owner 2026-10-13)", () => {
     expect(strategyVerdict(CATCH, new Map([["catch-all", true]]), name).allowed).toBe(true);
     expect(strategyVerdict(CATCH, new Map([["catch-all", false]]), name)).toMatchObject({ allowed: false });
     expect(strategyVerdict(CATCH, undefined, name).reason).toContain("not been judged");
-    expect(strategyVerdict(VALID, undefined, name).allowed).toBe(true);
+    expect(strategyVerdict(VALID, undefined, name)).toMatchObject({ allowed: false });
+    expect(strategyVerdict(VALID, undefined, name).reason).toContain("not been judged");
     expect(strategyVerdict(VALID, new Map([["catch-all", false]]), name).allowed).toBe(true);
     expect(strategyVerdict(VALID, new Map([["catch-all", true]]), name)).toMatchObject({ allowed: false });
   });

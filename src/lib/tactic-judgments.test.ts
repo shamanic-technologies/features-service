@@ -37,10 +37,12 @@ describe("Jev judges every assigned workflow version on every tactic, once", () 
       judge,
       definitions: async () => [def("orion-v1", "orion", 1, false), def("orion-v2", "orion", 2, true), def("nova-v1", "nova", 1, true), def("stray-v1", "stray", 1, true)],
     });
-    expect(r).toEqual({ versions: 3, judged: 2, failed: 0, alreadyJudged: 1 });
+    // Every version of the feature, an unassigned (retired) lineage included: a play's price picks among them all.
+    expect(r).toEqual({ versions: 4, judged: 3, failed: 0, alreadyJudged: 1 });
     expect(state.inserted.map((x) => [x.workflowSlug, x.verdict, x.probability, x.model, x.featureSlug])).toEqual([
       ["orion-v2", false, 0.04, "typesafe-x", "sales-cold-email-outreach"],
       ["nova-v1", true, 0.93, "typesafe-x", "sales-cold-email-outreach"],
+      ["stray-v1", false, 0.04, "typesafe-x", "sales-cold-email-outreach"],
     ]);
   });
 
@@ -56,5 +58,16 @@ describe("Jev judges every assigned workflow version on every tactic, once", () 
     expect(q.instructions).toContain("Sends to catch-all addresses.");
     expect(q.instructions).toContain("Ignore its name");
     expect(judgedState(def("orion-v2", "orion", 2, true) as any)).toMatchObject({ definition: { nodes: [{ id: "serve" }] } });
+  });
+});
+
+describe("a registration kick judges only the dynasty it names", () => {
+  it("narrows to the registered dynasty", async () => {
+    const r = await sweepTacticJudgments(
+      { judge: async () => ({ verdict: false, probability: 0.1, model: "m" }), definitions: async () => [def("orion-v2", "orion", 2, true), def("nova-v1", "nova", 1, true)] },
+      new Set(["nova"]),
+    );
+    expect(r.judged).toBe(1);
+    expect(state.inserted.map((x) => x.workflowSlug)).toEqual(["nova-v1"]);
   });
 });
