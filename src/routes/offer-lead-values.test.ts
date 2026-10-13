@@ -95,7 +95,6 @@ vi.mock("../lib/leads-client.js", async (orig) => ({
   fetchLeadIdsByStanding: vi.fn(async (_b: string, standing: string) =>
     new Set(standing === "sales_interest" ? ["int-a", "int-b"] : []),
   ),
-  fetchDisqualifiedLeadIds: vi.fn(async () => new Set<string>()),
 }));
 vi.mock("../lib/email-status-client.js", () => ({ fetchEventTimestamps: vi.fn(async () => null) }));
 vi.mock("../lib/observed-steps.js", () => ({ fetchObservedStepFacts: vi.fn(async () => null) }));
@@ -178,7 +177,7 @@ describe("GET /offers/:offerId/deals-value", () => {
   });
 
   it("a Disqualified MARK lead-service holds for the OFFER rules the card out ($0, ruled_out); the brand asks every mark", async () => {
-    const lc = await import("../lib/leads-client.js");
+    const lc = await import("../lib/disqualification-marks.js");
     vi.mocked(lc.fetchDisqualifiedLeadIds).mockImplementation(async (_b, offerId) => new Set(offerId === "offer-a" ? ["int-a"] : []));
     const [a, brand] = await Promise.all([
       get("/offers/offer-a/deals-value?brandId=brand-1&pricing=net"),

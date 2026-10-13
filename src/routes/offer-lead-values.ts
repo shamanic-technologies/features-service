@@ -87,9 +87,11 @@ export async function computeOfferContactedValue(
   headers: DownstreamHeaders,
   pre: Parameters<typeof loadBrandPricedPopulation>[2],
   campaignIds: string[],
+  /** The offer whose Disqualified marks apply (its own or brand-wide). */
+  offerId: string,
 ): Promise<OfferContactedValueResult> {
   const [population, brandCell] = await Promise.all([
-    loadBrandPricedPopulation(brandId, headers, pre, { campaignIds }),
+    loadBrandPricedPopulation(brandId, headers, pre, { campaignIds, offerId }),
     // Soft, exactly like the pipeline's own read of this cell (`contactedPricingSoft`): unreadable →
     // no rate, which is what the offer's pipeline prices these leads on too.
     getBrandContactedValue(brandId, headers).catch((err: Error) => {
@@ -133,7 +135,7 @@ router.get("/offers/:offerId/deals-value", apiKeyAuth, async (req, res) => {
         channels: featureSlugs.join("+"),
         campaigns: campaignSetKey(campaignIds),
         ...keyParts,
-        m: "deals-value-v3",
+        m: "deals-value-v4",
       }),
       orgId: headers.orgId,
       compute: () => computeBrandDealsValue(brandId, headers, pre, campaignIds, offerId),
@@ -160,10 +162,10 @@ router.get("/offers/:offerId/contacted-value", apiKeyAuth, async (req, res) => {
         channels: featureSlugs.join("+"),
         campaigns: campaignSetKey(campaignIds),
         ...keyParts,
-        m: "contacted-value-v4",
+        m: "contacted-value-v5",
       }),
       orgId: headers.orgId,
-      compute: () => computeOfferContactedValue(brandId, headers, pre, campaignIds),
+      compute: () => computeOfferContactedValue(brandId, headers, pre, campaignIds, offerId),
     });
     return res.json({ offerId, brandId, ...pageContactedValue(result, page) });
   } catch (error) {

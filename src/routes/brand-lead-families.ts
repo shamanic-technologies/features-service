@@ -73,6 +73,8 @@ export function leadFamiliesScopeKey(
     ),
     econ: hashKeyPart(offers.map((o) => `${o.offerId}>${pricedFingerprint(priceOnDeclaredFunnel(o.declared))}`).join(";")),
     cause,
+    // A lead lead-service marks Disqualified is priced at 0 and lands in `lost` (owner 2026-10-13).
+    m: "disq-mark-1",
   });
 }
 
@@ -152,6 +154,7 @@ router.get("/brands/:brandId/lead-families", apiKeyAuth, async (rawReq, res) => 
           }
           const people = await readOfferPersons({
             brandId,
+            offerId: o.offerId,
             campaignIds,
             headers,
             pricedFunnelKeys: o.declared.map((f) => f.funnelKey),

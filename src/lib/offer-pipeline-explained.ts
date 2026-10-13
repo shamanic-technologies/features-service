@@ -99,6 +99,7 @@ import {
   CONTACTED_VALUE_EXPIRY_DAYS,
   dedupPersonsByLead,
   expectedValueOfPerson,
+  isRuledOut,
   type ContactedPricing,
   type EnginePerson,
   type ResolvedPath,
@@ -782,7 +783,7 @@ export function buildOfferPipelineAndFamilies(input: {
       const cold = p.signals.closeWin ? undefined : coldVerdicts.get(p.leadId);
       if (cold) {
         lost.push({ ...c, lostReason: "went_cold", lostSince: cold.coldSince, coldAtStep: cold.coldAtStep });
-      } else if (!p.signals.closeWin && (p.deadSignals?.length ?? 0) > 0 && c.valueUsd === 0) {
+      } else if (!p.signals.closeWin && isRuledOut(p) && c.valueUsd === 0) {
         lost.push({ ...c, lostReason: "ruled_out", lostSince: null, coldAtStep: null });
       } else {
         ours.push(c);
@@ -869,7 +870,7 @@ export function buildOfferPipelineAndFamilies(input: {
   for (const p of persons) {
     if (p.signals.closeWin || coldIds.has(p.leadId)) continue;
     const engaged = ENGAGED_SIGNALS.some((s) => p.signals[s]);
-    if (engaged && (p.deadSignals?.length ?? 0) > 0 && valueOf(p) === 0) ruledOut.push(p);
+    if (engaged && isRuledOut(p) && valueOf(p) === 0) ruledOut.push(p);
   }
   const lostLeads: LostPipelineLead[] = [
     ...coldLeads.map((l) => ({ ...l, lostReason: "went_cold" as const, lostSince: l.coldSince })),
@@ -1129,7 +1130,7 @@ function buildExclusiveLadder(input: {
       const cold = p.signals.closeWin ? undefined : input.coldVerdicts.get(p.leadId);
       if (cold) {
         lost.push({ ...c, lostReason: "went_cold", lostSince: cold.coldSince, coldAtStep: cold.coldAtStep });
-      } else if (!p.signals.closeWin && (p.deadSignals?.length ?? 0) > 0 && c.valueUsd === 0) {
+      } else if (!p.signals.closeWin && isRuledOut(p) && c.valueUsd === 0) {
         lost.push({ ...c, lostReason: "ruled_out", lostSince: null, coldAtStep: null });
       } else {
         ours.push(c);

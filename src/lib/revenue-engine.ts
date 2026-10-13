@@ -189,6 +189,13 @@ export interface EnginePerson {
    */
   deadSignals?: readonly string[];
   /**
+   * lead-service holds a live "Disqualified" MARK on this person (its own mark beside the standing,
+   * `GET /orgs/leads/disqualifications`; applied by `lib/disqualification-marks.ts`, never re-derived).
+   * A disqualified lead has nothing left to win: every path but a stated sale (`closeWin`, a fact) is
+   * worth nothing for it, and a contacted-only one forecasts nothing. Absent = not marked.
+   */
+  disqualified?: boolean;
+  /**
    * The signals this person REACHED that are NOT OUR WIN (`lib/outcome-cause.ts`): the customer said,
    * or the whose-win rule answered, that something other than our outreach produced the outcome — or
    * nobody could tell. The rung still happened, so it is still COUNTED everywhere a rung is counted
@@ -585,6 +592,15 @@ export const ENGAGED_SIGNALS = [
  * Contacted, able to convert (no bounce, no unsubscribe) and no conversion signal of any kind yet. An
  * opener is still contacted-only: an open is a delivery milestone, not a funnel leg.
  */
+/**
+ * RULED OUT: a human stated a step will never happen for this person (`deadSignals`), or lead-service
+ * holds its Disqualified mark on them. The ONE test every "ruled_out" verdict reads (Lost leads, the
+ * `lost` family, a Deals card's zero reason).
+ */
+export function isRuledOut(person: EnginePerson): boolean {
+  return person.disqualified === true || (person.deadSignals?.length ?? 0) > 0;
+}
+
 export function isContactedOnly(person: EnginePerson): boolean {
   if (!person.signals.contacted) return false;
   if (person.signals.bounced || person.signals.unsubscribed) return false;
@@ -648,6 +664,7 @@ export function contactedLeadValue(
   pricing: ContactedPricing,
 ): number {
   if (!isContactedOnly(person)) return 0;
+  if (person.disqualified) return 0;
   if (contactedExpired(person, pricing.lastSentOnOrAfter)) return 0;
   const statedValueUsd =
     typeof person.valueUsd === "number" && Number.isFinite(person.valueUsd) && person.valueUsd >= 0
@@ -724,6 +741,9 @@ function evForPerson(
     // fired, whose whole value was a forecast of the thing that has now been ruled out. It is not in
     // the ledger either: there is no expected revenue to itemise.
     if (dead?.has(path.signal)) continue;
+    // A lead lead-service marks Disqualified is worth nothing going forward; a sale it already made
+    // stays what it was (Won is a fact, never re-priced by the mark).
+    if (person.disqualified && path.signal !== "closeWin") continue;
     if (unpriced?.has(path.signal)) continue;
     // A TERMINAL leg carrying a stated amount IS that amount — realized revenue is a fact, so it must
     // not be routed through the brand's average (nor vanish for a brand that declared no revenue).

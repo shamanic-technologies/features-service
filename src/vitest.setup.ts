@@ -113,3 +113,13 @@ vi.mock("./lib/tactic-judgments.js", async (importOriginal) => ({
   kickTacticJudgments: vi.fn(async () => ({ versions: 0, judged: 0, failed: 0, alreadyJudged: 0 })),
   startTacticJudgmentLoop: vi.fn(),
 }));
+
+/**
+ * Suite-wide default: lead-service's Disqualified MARK list (lib/disqualification-marks.ts) is a
+ * lead-service read no route fixture answers. Nobody is marked here, so every fixture prices as it
+ * states. Suites asserting the mark set their own return (or `vi.unmock` it to test the client).
+ */
+vi.mock("./lib/disqualification-marks.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./lib/disqualification-marks.js")>()),
+  fetchDisqualifiedLeadIds: vi.fn(async () => new Set<string>()),
+}));
