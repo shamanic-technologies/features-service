@@ -72,8 +72,8 @@ const ECONOMICS = {
 /** The catalogue: two versions of ONE dynasty (`dawn`) beside a second dynasty (`osprey`). */
 const WORKFLOWS = [
   { id: "w1", workflowSlug: "dawn-v1", workflowName: "Dawn v1", workflowDynastyName: "Dawn", workflowDynastySlug: "dawn", version: 1, status: "inactive", featureSlug: SALES, createdForBrandId: null, upgradedTo: "w2" },
-  { id: "w2", workflowSlug: "dawn-v2", workflowName: "Dawn v2", workflowDynastyName: "Dawn", workflowDynastySlug: "dawn", version: 2, status: "active", featureSlug: SALES, createdForBrandId: null, upgradedTo: null },
-  { id: "w3", workflowSlug: "osprey-v1", workflowName: "Osprey v1", workflowDynastyName: "Osprey", workflowDynastySlug: "osprey", version: 1, status: "active", featureSlug: SALES, createdForBrandId: null, upgradedTo: null },
+  { id: "w2", workflowSlug: "dawn-v2", workflowName: "Dawn v2", workflowDynastyName: "Dawn", workflowDynastySlug: "dawn", version: 2, status: "active", workflowDynastyStatus: "active", featureSlug: SALES, createdForBrandId: null, upgradedTo: null },
+  { id: "w3", workflowSlug: "osprey-v1", workflowName: "Osprey v1", workflowDynastyName: "Osprey", workflowDynastySlug: "osprey", version: 1, status: "active", workflowDynastyStatus: "active", featureSlug: SALES, createdForBrandId: null, upgradedTo: null },
 ];
 const dynastyOf = (slug: string) => WORKFLOWS.find((w) => w.workflowSlug === slug)?.workflowDynastySlug ?? slug;
 

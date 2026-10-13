@@ -9,6 +9,7 @@ import { isTriggerCoded } from "../lib/channel-declarations.js";
 import { STATS_REGISTRY } from "../lib/stats-registry.js";
 import {
   fetchPublicWorkflows,
+  executableDynasties,
   fetchPublicCosts,
   fetchPublicEmailStats,
   fetchDynastySpendByDay,
@@ -4874,7 +4875,7 @@ export async function computeLegWorkflowRanking(featureSlug: string, legKey: str
     roiBasis: "billed",
     computedAt: new Date().toISOString(),
     maturity: { durationDays: rule.durationDays, outcomesRequired: rule.outcomesRequired, cutoffIso: maturity.cutoffIso, measured: maturity.measured },
-    rows: rankLegWorkflows({ byDynasty, names, assignments, pipelineUsd, billedSpendUsd }),
+    rows: rankLegWorkflows({ byDynasty, names, assignments, executable: executableDynasties(workflows), pipelineUsd, billedSpendUsd }),
   };
 }
 

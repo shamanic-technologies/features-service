@@ -14,8 +14,9 @@
  *      cheapest first. They are what is worth exploring: they beat the proven price on early evidence.
  *   3. BELOW it, the other mature workflows, cheapest first.
  *   4. Then the learning workflows that do not beat it, cheapest first; one with no outcome (no price) last.
- *   5. Then every workflow deprecated on the leg, in the same order among themselves. It keeps its history
- *      on screen but can never be put forward.
+ *   5. Then every workflow deprecated on the leg, or with no version workflow-service can run (every version
+ *      retired: a run asked of it is refused), in the same order among themselves. It keeps its history on
+ *      screen but can never be put forward.
  *
  * With no mature workflow at all, every selectable one is ordered by its flash price. Ties break on the
  * dynasty slug, so the order is total and the same evidence always gives the same list.
@@ -40,7 +41,9 @@ export interface LegWorkflowRankingRow {
   workflowDynastySlug: string;
   workflowDynastyName: string | null;
   assignment: LegWorkflowAssignment;
-  /** TRUE ⟺ `assignment === "active"`: the only state a run may pick. */
+  /** workflow-service runs a version of this dynasty (both status axes active on one version). */
+  executable: boolean;
+  /** TRUE ⟺ `assignment === "active"` AND `executable`: the only rows a run may pick. */
   selectable: boolean;
   /** The workflow's verdict on the fleet of the leg. Null when the mature cut could not be made. */
   isMature: boolean | null;
@@ -64,6 +67,8 @@ export interface RankLegWorkflowsInput {
   names: ReadonlyMap<string, string | null>;
   /** Stored states only (`active` / `deprecated`); a dynasty absent here is `unassigned`. */
   assignments: ReadonlyMap<string, "active" | "deprecated">;
+  /** Dynasties workflow-service can run (`executableDynasties`). Assigned active but absent here → not selectable. */
+  executable: ReadonlySet<string>;
   /** Fleet pipeline (USD) per dynasty on the leg. Absent → unknown. */
   pipelineUsd: ReadonlyMap<string, number | null>;
   /** Billed spend (USD) per dynasty on the leg. Absent → unknown. */
@@ -90,7 +95,8 @@ export function rankLegWorkflows(input: RankLegWorkflowsInput): LegWorkflowRanki
       workflowDynastySlug: slug,
       workflowDynastyName: input.names.get(slug) ?? null,
       assignment,
-      selectable: assignment === "active",
+      executable: input.executable.has(slug),
+      selectable: assignment === "active" && input.executable.has(slug),
       isMature: f.isMature,
       basis: mature ? "mature" : "flash",
       costPerOutcomeUsd: half.costPerOutcomeUsd,

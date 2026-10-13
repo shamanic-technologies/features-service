@@ -244,13 +244,15 @@ export async function registerLegAssignment(input: {
 }
 
 /**
- * PURE: the verdict a projection row carries for its dynasty on the named leg. Only `active` is
- * selectable; a `deprecated` or never-assigned workflow is still served with its figures, and says why
+ * PURE: the verdict a projection row carries for its dynasty on the named leg. Only `active` on a dynasty
+ * workflow-service can run is selectable; a `deprecated`, never-assigned or unrunnable workflow is still served with its figures, and says why
  * it will not be picked.
  */
 export function legAssignmentVerdict(
   assignment: LegAssignmentRow | undefined,
   legLabel: string,
+  /** workflow-service has a runnable version of this dynasty (`executableDynasties`). */
+  executable: boolean,
 ): LegAssignmentVerdict {
   if (!assignment) {
     return {
@@ -266,6 +268,17 @@ export function legAssignmentVerdict(
       state: "deprecated",
       selectable: false,
       reason: `this workflow is deprecated on the "${legLabel}" leg (by ${assignment.decidedBy}, ${assignment.decidedAt.slice(0, 10)}): no new run picks it there, its history stays`,
+      decidedBy: assignment.decidedBy,
+      decidedAt: assignment.decidedAt,
+    };
+  }
+  if (!executable) {
+    // Assigned, but workflow-service runs no version of it (every version retired): a run asked of it is
+    // refused (410), so it is never picked, never recommended, and never copied as a candidate.
+    return {
+      state: "active",
+      selectable: false,
+      reason: `this workflow has no version that can run (every version is retired in workflow-service), so no campaign on the "${legLabel}" leg can run it`,
       decidedBy: assignment.decidedBy,
       decidedAt: assignment.decidedAt,
     };
