@@ -15,7 +15,11 @@
  */
 import { isSourcingChannel } from "./sourcing-origins.js";
 
-/** The ONLY channels the platform manages today. A leg nothing here publishes is the customer's team. */
+/**
+ * The channels the platform manages by statement. A channel ALSO counts as managed the moment one of its pipes holds an
+ * ACTIVE workflow (`workflow_leg_assignments`, a FACT: owner 2026-10-13, "Email Sending" declared as data must run like
+ * every channel, never by adding its slug here): `buildChannelCatalogue` `workflowChannelSlugs`.
+ */
 export const MANAGED_CHANNEL_SLUGS: ReadonlySet<string> = new Set([
   "sales-cold-email-outreach",
   "ai-meeting-booking",
@@ -30,13 +34,13 @@ export const NOT_RUN_YET_MINIMUM_MONTHLY_CENTS = 150_000;
 
 /** PURE: the minimum monthly budget of one (channel × leg) item, in whole cents. `reactive` = the leg has a from step. */
 export function channelLegMinimumMonthlyCents(
-  channel: { slug: string; operatedBy: "platform" | "customer" },
+  channel: { slug: string; operatedBy: "platform" | "customer"; managed: boolean },
   reactive: boolean,
 ): number {
   if (channel.operatedBy === "customer") return 0;
   // A SOURCE campaign is "on demand, up to $X/day" (owner 2026-10-07): no floor, which is what billing
   // has enforced on it since (minimum 0) while the catalogue did not list the sourcing channels.
   if (isSourcingChannel(channel.slug)) return 0;
-  if (!MANAGED_CHANNEL_SLUGS.has(channel.slug)) return NOT_RUN_YET_MINIMUM_MONTHLY_CENTS;
+  if (!channel.managed) return NOT_RUN_YET_MINIMUM_MONTHLY_CENTS;
   return reactive ? 0 : MANAGED_PROACTIVE_MINIMUM_MONTHLY_CENTS;
 }

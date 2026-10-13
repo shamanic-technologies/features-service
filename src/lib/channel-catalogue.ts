@@ -268,7 +268,8 @@ const stepWire = (key: ChannelStepKey): ChannelStepDefWire => ({ ...CHANNEL_STEP
 
 /** We run it today: the managed channels, and every LIVE sourcing channel (a live origin: billing has treated its
  *  source campaign as managed since 2026-10-07; Lead Sourcing, owner 2026-10-11). */
-const isManagedChannel = (slug: string): boolean => MANAGED_CHANNEL_SLUGS.has(slug) || isLiveSourcingChannel(slug);
+const isManagedChannel = (slug: string, workflowChannelSlugs: ReadonlySet<string>): boolean =>
+  MANAGED_CHANNEL_SLUGS.has(slug) || isLiveSourcingChannel(slug) || workflowChannelSlugs.has(slug);
 
 /**
  * Every acquisition channel among these feature rows, ordered as the catalogue orders features. A row
@@ -293,12 +294,15 @@ export function buildChannelCatalogue(
   triggerOf?: (id: string) => { coded: boolean } | null,
   // A declared leg staff has not published: never runnable, so not held to a fired trigger.
   isDraftLeg?: (slug: string, legKey: string) => boolean,
+  // Channels with at least one pipe holding an ACTIVE workflow (`workflow_leg_assignments`): we run them today.
+  workflowChannelSlugs: ReadonlySet<string> = new Set(),
 ): PublicChannel[] {
   const channels: PublicChannel[] = [];
   for (const row of rows) {
     if (row.supersededBySlug != null) continue;
     const channel = parseAcquisitionChannel(row.slug, row.acquisitionChannel);
     if (!channel) continue;
+    const managed = isManagedChannel(row.slug, workflowChannelSlugs);
     channels.push({
       slug: row.slug,
       name: row.name,
@@ -309,7 +313,7 @@ export function buildChannelCatalogue(
       channelType: channelTypeOfSlug(row.slug),
       family: channel.family,
       operatedBy: channel.operatedBy,
-      managed: isManagedChannel(row.slug),
+      managed,
       salesPathEligible: SALES_PATH_CATALOGUE_CHANNEL_SLUGS.has(row.slug),
       performedBy: channel.performedBy,
       trigger: channel.trigger ?? "daily_budget",
@@ -323,7 +327,7 @@ export function buildChannelCatalogue(
         reactive: t.mode === "reactive",
         mode: t.mode!,
         triggerId: t.triggerId ?? null,
-        minimumMonthlyBudgetCents: channelLegMinimumMonthlyCents({ slug: row.slug, operatedBy: channel.operatedBy }, t.mode === "reactive"),
+        minimumMonthlyBudgetCents: channelLegMinimumMonthlyCents({ slug: row.slug, operatedBy: channel.operatedBy, managed }, t.mode === "reactive"),
       })),
       producibleSteps: producibleStepsOf(channel.stepTransitions).map(stepWire),
       salesFunnels: sellableFunnelsFor(channel.stepTransitions).map((key) => ({
@@ -334,8 +338,10 @@ export function buildChannelCatalogue(
       })),
     });
   }
+  // Held on the STATED managed list only: a workflow registered on a pipe (a run-time write by workflow-service) must
+  // never make every catalogue read throw. A leg of such a channel on an unfired trigger simply never fires.
   assertLegTriggersDeclared(
-    channels.flatMap((c) => c.stepTransitions.map((t) => ({ slug: c.slug, legKey: t.legKey, managed: c.managed && !(isDraftLeg?.(c.slug, t.legKey) ?? false), mode: t.mode, triggerId: t.triggerId }))),
+    channels.flatMap((c) => c.stepTransitions.map((t) => ({ slug: c.slug, legKey: t.legKey, managed: isManagedChannel(c.slug, new Set()) && !(isDraftLeg?.(c.slug, t.legKey) ?? false), mode: t.mode, triggerId: t.triggerId }))),
     triggerOf,
   );
   return channels.sort((a, b) => a.displayOrder - b.displayOrder || a.slug.localeCompare(b.slug));
