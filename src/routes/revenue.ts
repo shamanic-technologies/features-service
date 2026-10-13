@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { applyDisqualifiedMarks, deferLoud, fetchDisqualifiedLeadIds } from "../lib/disqualification-marks.js";
 import { perOfferPricer } from "../lib/per-offer-revenue.js";
 import type { OfferPricing } from "../lib/per-offer-pricing.js";
 import { fetchBrandLegEconomics } from "../lib/brand-leg-economics-client.js";
@@ -1757,6 +1758,8 @@ export async function computeFeatureRevenue(
     // reached them (owner 2026-10-09, its Companies page read 0 companies over 8,673 contacts).
     const pricer = !lens && perOfferPricing ? perOfferPricer(perOfferPricing, funnel) : null;
     if (pricer) {
+      // lead-service's Disqualified mark (the offer's on an offer read, else the brand's): FAIL LOUD.
+      const disqualifiedRead = deferLoud(fetchDisqualifiedLeadIds(brandId, offerId ?? null, headers));
       const [observed, quals, contactedPricing] = await Promise.all([
         fetchObservedStepFacts(brandId, causes).catch((err) => {
           console.warn(`[features-service] observed step statements failed (per-offer read, projection alone): ${(err as Error).message}`);
@@ -1769,6 +1772,7 @@ export async function computeFeatureRevenue(
         contactedPricingPromise,
       ]);
       applySignalOverlays(persons, null, observed?.byEmail ?? null, quals, pricer.pricedFunnelKeys, causes);
+      applyDisqualifiedMarks(persons, await disqualifiedRead());
       const run = (people: EnginePerson[]) => computeRevenue(pricer.paths, people, 0, funnel.milestones, contactedPricing, pricer.pricingOf);
       const result = run(persons);
       const matureResult = coldBasis.kind === "mature" ? run(coldMaturePersons) : result;
@@ -1887,6 +1891,10 @@ export async function computeFeatureRevenue(
   // declared funnels are several chains, so no chain is stated rather than one being picked. Resolved
   // HERE because it decides whether the customer's statements are worth reading at all.
   const stepsFunnel = funnelForSteps(requestedFunnel, priced.pricedFunnelKeys);
+  // lead-service's Disqualified mark (owner 2026-10-13: a marked lead is ruled out, priced 0, never Hot),
+  // the offer's on an offer read, else every mark of the brand. FAIL LOUD: an empty set would price a
+  // lead somebody ruled out while its Deals card reads $0.
+  const disqualifiedRead = deferLoud(fetchDisqualifiedLeadIds(brandId, offerId ?? null, headers));
   const [timestamps, observed, quals, stepCosts, learning] = await Promise.all([
     fetchEventTimestamps(brandId, campaignId, emails, headers).catch((err) => {
       console.warn(`[features-service] event-timestamp enrichment failed (degrading to dateless): ${(err as Error).message}`);
@@ -1961,6 +1969,7 @@ export async function computeFeatureRevenue(
   // The identical merge the per-workflow grain applies (`lib/signal-overlays.ts`) — one copy, so the
   // two grains can never disagree about whether a lead opened, or when.
   applySignalOverlays(persons, timestamps, observed?.byEmail ?? null, quals, priced.pricedFunnelKeys, causes);
+  applyDisqualifiedMarks(persons, await disqualifiedRead());
 
   // Per-lead SIGNUP / FORM-SUBMISSION outcome attribution (lead-service conversion tracker). The
   // producer matches each website conversion back to a lead we emailed and exposes the DISTINCT

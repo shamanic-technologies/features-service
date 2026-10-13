@@ -12,6 +12,7 @@
  * `?cursor=` (the `nextCursor` of the previous page), or `?leadIds=` (comma-separated, ≤1000) to price
  * exactly the cards a board shows. The summary rides every page.
  */
+import { applyDisqualifiedMarks, fetchDisqualifiedLeadIds } from "../lib/disqualification-marks.js";
 import { Router } from "express";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { restrictPathsToDeclaredLegs } from "../lib/funnel-registry.js";
@@ -83,6 +84,8 @@ export async function loadBrandPricedPopulation(
      * The OFFER grain: only the leads served on these campaigns (the offer's, across every channel), read
      * exactly as `/offers/:offerId/revenue` reads them. Omitted → the whole brand (byte-unchanged).
      */
+    /** The offer whose Disqualified marks apply (its own or brand-wide); omitted → every mark of the brand. */
+    offerId?: string;
     campaignIds?: string[];
   },
 ): Promise<{
@@ -111,14 +114,17 @@ export async function loadBrandPricedPopulation(
   const emails = [...new Set(persons.map((p) => p.email).filter((e): e is string => Boolean(e)))];
   // The same per-campaign narrowing the revenue engine applies to its two campaign-keyed overlays.
   const campaignId = singleCampaignId(opts.campaignIds);
-  const [timestamps, observed, quals, signupEmails, formEmails] = await Promise.all([
+  const [timestamps, observed, quals, signupEmails, formEmails, disqualified] = await Promise.all([
     soft("event timestamps", fetchEventTimestamps(brandId, campaignId, emails, headers)),
     soft("observed step statements", fetchObservedStepFacts(brandId, pricedCauses)),
     soft("legacy qualifications", fetchQualifications(brandId, campaignId, emails, headers)),
     soft("signup attribution", fetchConversionEmails(brandId, "signup")),
     soft("form-submission attribution", fetchConversionEmails(brandId, "form_submission")),
+    // lead-service's Disqualified mark: FAIL LOUD (an empty set would price a ruled-out lead).
+    fetchDisqualifiedLeadIds(brandId, opts.offerId ?? null, headers),
   ]);
   applySignalOverlays(persons, timestamps, observed?.byEmail ?? null, quals, priced.pricedFunnelKeys, pricedCauses);
+  applyDisqualifiedMarks(persons, disqualified);
   for (const person of persons) {
     const email = person.email?.trim().toLowerCase();
     if (!email) continue;
@@ -333,7 +339,7 @@ export async function getBrandContactedValue(brandId: string, headers: Downstrea
       channels: brandFeatureSlugs(channels).join("+"),
       decl: declared.map((f) => f.funnelKey).sort().join("+") || "none",
       econ: pricedFingerprint(priced),
-      m: "contacted-value-v6",
+      m: "contacted-value-v7",
     }),
     orgId: headers.orgId,
     compute: () => computeBrandContactedValue(brandId, { orgId: headers.orgId, userId: headers.userId, runId: headers.runId }, { channels, declared }),

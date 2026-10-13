@@ -164,6 +164,7 @@ export async function offerSourcingCell(input: {
         campaignIds.length > 0
           ? readOfferPersons({
               brandId,
+              offerId,
               campaignIds,
               headers,
               pricedFunnelKeys: declared.map((f) => f.funnelKey),

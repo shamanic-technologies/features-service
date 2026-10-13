@@ -812,3 +812,23 @@ describe("computeRevenue — an organisation does not depend on the order its le
     expect(forward.organizations[0].orgDomain).toBe("a.com");
   });
 });
+
+describe("computeRevenue — lead-service's Disqualified MARK (owner 2026-10-13)", () => {
+  const WITH_SALE: ResolvedPath[] = [...PATHS, { tag: "closeWin", signal: "closeWin", expectedRevenueUsd: 1000, terminal: true }];
+
+  it("a marked lead is worth nothing going forward; an unmarked one keeps its value", () => {
+    const r = computeRevenue(WITH_SALE, [
+      person({ leadId: "dq", signals: { positiveReply: true }, disqualified: true }),
+      person({ leadId: "ok", signals: { positiveReply: true } }),
+    ]);
+    const ev = new Map(r.leads.map((l) => [l.leadId, l.expectedRevenueUsd]));
+    expect(ev.get("dq") ?? 0).toBe(0);
+    expect(ev.get("ok")).toBe(120);
+    expect(r.headline.totalPipelineUsd).toBe(120);
+  });
+
+  it("a sale it already made stays what it was: Won is a fact, never re-priced by the mark", () => {
+    const r = computeRevenue(WITH_SALE, [person({ leadId: "won", signals: { positiveReply: true, closeWin: true }, disqualified: true })], 1000);
+    expect(r.leads[0].expectedRevenueUsd).toBe(1000);
+  });
+});

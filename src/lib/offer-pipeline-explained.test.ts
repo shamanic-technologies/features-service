@@ -290,6 +290,19 @@ describe("buildOfferPipeline", () => {
     expect(run(null).lostLeads).toBeNull();
   });
 
+  it("a lead lead-service marks Disqualified is priced 0, never Hot, and Lost as ruled_out (owner 2026-10-13)", () => {
+    const rows = [...persons, person("dq", { positiveReply: true, meeting: true }, { disqualified: true })];
+    const live = [...persons, person("dq", { positiveReply: true, meeting: true })];
+    const { pipeline: p, families } = buildOfferPipelineAndFamilies({ persons: rows, evidence: ALL_STEP_EVIDENCE, declared, values, cold, sets: offerStepSets(rows, ALL_STEP_EVIDENCE) });
+    const { pipeline: before } = buildOfferPipelineAndFamilies({ persons: live, evidence: ALL_STEP_EVIDENCE, declared, values, cold, sets: offerStepSets(live, ALL_STEP_EVIDENCE) });
+    expect(before.hotLeads!.leads.map((l) => l.leadId)).toContain("dq");
+    expect(p.hotLeads!.leads.map((l) => l.leadId)).not.toContain("dq");
+    expect(p.lostLeads!.leads.find((l) => l.leadId === "dq")).toEqual(expect.objectContaining({ lostReason: "ruled_out", valueUsd: 0 }));
+    expect(families.find((f) => f.leadId === "dq")?.family).toBe("lost");
+    // the pipeline loses exactly that person's value
+    expect(p.exclusiveLadder!.total.pipelineUsd!).toBeLessThan(before.exclusiveLadder!.total.pipelineUsd!);
+  });
+
   it("caps each group's list at STEP_PEOPLE_LIMIT and still counts every one", () => {
     const many = Array.from({ length: STEP_PEOPLE_LIMIT + 7 }, (_, i) => person(`r${String(i).padStart(3, "0")}`, { positiveReply: true }));
     const p = buildOfferPipeline({ persons: many, evidence: ALL_STEP_EVIDENCE, declared, values, cold: null, sets: offerStepSets(many, ALL_STEP_EVIDENCE) });
