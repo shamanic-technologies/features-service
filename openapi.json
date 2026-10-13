@@ -20808,6 +20808,308 @@
           "salesFunnelCampaigns"
         ]
       },
+      "SalesFunnelCampaignsCopyResponse": {
+        "type": "object",
+        "properties": {
+          "brandId": {
+            "type": "string"
+          },
+          "offerId": {
+            "type": "string",
+            "nullable": true,
+            "description": "The `?offerId=` filter echoed; null = every offer of the brand."
+          },
+          "fields": {
+            "type": "string",
+            "enum": [
+              "copy"
+            ],
+            "description": "Echo of `?fields=copy`: the rows carry their copy only, no money."
+          },
+          "salesFunnelCampaigns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "campaign-service's sales funnel campaign id."
+                },
+                "brandId": {
+                  "type": "string"
+                },
+                "offerId": {
+                  "type": "string"
+                },
+                "salesFunnelId": {
+                  "type": "string",
+                  "description": "The catalogue sales funnel id (`GET /internal/catalogue/sales-funnels` rows[].id)."
+                },
+                "name": {
+                  "type": "string",
+                  "description": "The funnel campaign's name, as campaign-service serves it (`salesFunnelName`)."
+                },
+                "face": {
+                  "type": "string",
+                  "description": "Path of the name's face SVG on this service (`GET /public/catalogue/faces/{name}.svg`)."
+                },
+                "status": {
+                  "type": "string",
+                  "description": "campaign-service's status (`ongoing` | `stopped`), relayed."
+                },
+                "stopReason": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "proactive",
+                    "reactive"
+                  ],
+                  "description": "The funnel's type (catalogue `type`). Null only with `copyUnavailableReason`."
+                },
+                "triggerLabel": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "What starts a REACTIVE funnel, in customer words (\"Positive replies\"): the catalogue funnel's `triggerLabel`. Null on a proactive funnel."
+                },
+                "typeLabel": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The Campaigns table's Type column (owner 2026-10-11): \"Daily\" for a proactive funnel, `triggerLabel` for a reactive one. Null only with `copyUnavailableReason`."
+                },
+                "path": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "trigger"
+                                ]
+                              },
+                              "slug": {
+                                "type": "string",
+                                "description": "The trigger's unique slug (`positive_reply_received`)."
+                              },
+                              "name": {
+                                "type": "string",
+                                "description": "The trigger's unique name (\"Positive Reply\")."
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "slug",
+                              "name"
+                            ],
+                            "description": "A REACTIVE funnel's first item (owner 2026-10-11): its trigger, in place of its trigger step."
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "step"
+                                ]
+                              },
+                              "key": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string",
+                                "description": "The step's customer label (\"Positive reply\")."
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "key",
+                              "label"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "channel"
+                                ]
+                              },
+                              "slug": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string",
+                                "description": "The channel's display name (\"Sales Cold Email Outreach\")."
+                              },
+                              "runByUs": {
+                                "type": "boolean",
+                                "description": "We run it; false = the customer's own team (a `Your Team` channel)."
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "slug",
+                              "name",
+                              "runByUs"
+                            ]
+                          }
+                        ]
+                      },
+                      "description": "The path in reading order (owner 2026-10-11): a proactive funnel starts at Start (`key: \"start\"`), a reactive one with its TRIGGER (`kind: \"trigger\"`); then per leg the channel(s) working it, then the leg's next step, to Paid client. EVERY two steps have at least one channel between them. The sourcing leg (Start -> Lead found) lists the sources THIS campaign runs (several). Render the items joined by arrows; never parse an id."
+                    },
+                    "legs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "legKey": {
+                            "type": "string"
+                          },
+                          "fromStep": {
+                            "type": "string",
+                            "description": "`start` on the first leg of a proactive funnel."
+                          },
+                          "toStep": {
+                            "type": "string"
+                          },
+                          "runByUs": {
+                            "type": "boolean",
+                            "description": "At least one channel of the leg is ours."
+                          },
+                          "channelSlug": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The leg's one channel (owner 2026-10-11: one channel per leg, the sourcing leg included)."
+                          },
+                          "channelName": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "channels": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "slug": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                },
+                                "runByUs": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "slug",
+                                "name",
+                                "runByUs"
+                              ]
+                            },
+                            "description": "The leg's channel, as a list of exactly one."
+                          }
+                        },
+                        "required": [
+                          "legKey",
+                          "fromStep",
+                          "toStep",
+                          "runByUs",
+                          "channelSlug",
+                          "channelName",
+                          "channels"
+                        ]
+                      },
+                      "description": "The same path, one entry per leg, in order."
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "legs"
+                  ],
+                  "description": "The funnel's PATH as structured data (owner 2026-10-11: the Campaigns table shows it under the name). Null only with `copyUnavailableReason`."
+                },
+                "copyUnavailableReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "sales_funnel_not_in_catalogue"
+                  ],
+                  "description": "Why `type`, `triggerLabel`, `typeLabel` and `path` are null: the funnel id is not in this service's catalogue (logged). Null when they are served."
+                },
+                "units": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "campaignId": {
+                        "type": "string"
+                      },
+                      "pipeId": {
+                        "type": "string"
+                      },
+                      "featureSlug": {
+                        "type": "string"
+                      },
+                      "legKey": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "campaignId",
+                      "pipeId",
+                      "featureSlug",
+                      "legKey",
+                      "status"
+                    ]
+                  },
+                  "description": "The unit campaigns (one per pipe) the money is computed over, as campaign-service serves them."
+                }
+              },
+              "required": [
+                "id",
+                "brandId",
+                "offerId",
+                "salesFunnelId",
+                "name",
+                "face",
+                "status",
+                "stopReason",
+                "createdAt",
+                "type",
+                "triggerLabel",
+                "typeLabel",
+                "path",
+                "copyUnavailableReason",
+                "units"
+              ]
+            },
+            "description": "One row per sales funnel campaign, in campaign-service's order (newest first), read LIVE: a campaign created a second ago is here. Each field is byte-equal to the same field of the full row (`?fields` omitted)."
+          }
+        },
+        "required": [
+          "brandId",
+          "offerId",
+          "fields",
+          "salesFunnelCampaigns"
+        ]
+      },
       "LivedSalesPaths": {
         "type": "object",
         "properties": {
@@ -36702,6 +37004,19 @@
           {
             "schema": {
               "type": "string",
+              "enum": [
+                "copy"
+              ],
+              "description": "`copy` (owner 2026-10-13): each row's COPY only (name, face, status, Type label, path, units), no money, no activity: campaign-service's live list + the catalogue structure, well under a second, so a campaign created seconds ago is painted at once. The money of a campaign created in the last 15 minutes is computed behind this answer, so the full read that follows is a hit. Omitted: the full rows (unchanged)."
+            },
+            "required": false,
+            "description": "`copy` (owner 2026-10-13): each row's COPY only (name, face, status, Type label, path, units), no money, no activity: campaign-service's live list + the catalogue structure, well under a second, so a campaign created seconds ago is painted at once. The money of a campaign created in the last 15 minutes is computed behind this answer, so the full read that follows is a hit. Omitted: the full rows (unchanged).",
+            "name": "fields",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "format": "uuid",
               "description": "Internal org UUID from client-service"
             },
@@ -36745,17 +37060,24 @@
         ],
         "responses": {
           "200": {
-            "description": "One row per funnel campaign (an empty array when the brand has none).",
+            "description": "One row per funnel campaign (an empty array when the brand has none): the full rows, or with `?fields=copy` their copy only.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SalesFunnelCampaignsResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/SalesFunnelCampaignsResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SalesFunnelCampaignsCopyResponse"
+                    }
+                  ]
                 }
               }
             }
           },
           "400": {
-            "description": "An invalid pricing value (reason: pricing_unrecognised).",
+            "description": "An invalid pricing value (reason: pricing_unrecognised) or `fields` value (reason: fields_unrecognised).",
             "content": {
               "application/json": {
                 "schema": {
@@ -36792,6 +37114,134 @@
           },
           "502": {
             "description": "campaign-service or a money read failed (no row is ever guessed).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/brands/{brandId}/sales-funnel-campaigns/precompute": {
+      "post": {
+        "summary": "Compute a brand's sales funnel campaign rows now, before anyone reads them",
+        "description": "Called by campaign-service right after it creates a sales funnel campaign (owner 2026-10-13, INSTANT-CAMPAIGN-ROWS), with the creating request's identity headers: answers 202 at once, then computes and stores every row of `GET /brands/{brandId}/sales-funnel-campaigns` (the dashboard's `?offerId=&pricing=net` shape, brand-wide `?pricing=net`, and every shape this org already read) through the ordinary read path, so the customer's first Campaigns read answers at warm speed. Nothing about a figure moves. Api key + identity headers; not proxied by the gateway.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "offerId": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "The new campaign's offer (its offer-scoped read is warmed first). Omitted: brand-wide shapes only."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted; the reads are computed behind.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "brandId": {
+                      "type": "string"
+                    },
+                    "offerId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "accepted": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    }
+                  },
+                  "required": [
+                    "brandId",
+                    "offerId",
+                    "accepted"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed offerId (reason: offer_id_unrecognised).",
             "content": {
               "application/json": {
                 "schema": {

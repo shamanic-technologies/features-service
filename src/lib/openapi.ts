@@ -2955,6 +2955,36 @@ const salesFunnelCampaignsResponseRef = registry.register(
   }),
 );
 
+const salesFunnelCampaignCopyRowSchema = salesFunnelCampaignRowSchema.pick({
+  id: true,
+  brandId: true,
+  offerId: true,
+  salesFunnelId: true,
+  name: true,
+  face: true,
+  status: true,
+  stopReason: true,
+  createdAt: true,
+  type: true,
+  triggerLabel: true,
+  typeLabel: true,
+  path: true,
+  copyUnavailableReason: true,
+  units: true,
+});
+
+const salesFunnelCampaignsCopyResponseRef = registry.register(
+  "SalesFunnelCampaignsCopyResponse",
+  z.object({
+    brandId: z.string(),
+    offerId: z.string().nullable().describe("The `?offerId=` filter echoed; null = every offer of the brand."),
+    fields: z.literal("copy").describe("Echo of `?fields=copy`: the rows carry their copy only, no money."),
+    salesFunnelCampaigns: z
+      .array(salesFunnelCampaignCopyRowSchema)
+      .describe("One row per sales funnel campaign, in campaign-service's order (newest first), read LIVE: a campaign created a second ago is here. Each field is byte-equal to the same field of the full row (`?fields` omitted)."),
+  }),
+);
+
 registry.registerPath({
   method: "get",
   path: "/brands/{brandId}/sales-funnel-campaigns",
@@ -2968,13 +2998,38 @@ registry.registerPath({
     query: z.object({
       offerId: z.string().optional().describe("Only this offer's funnel campaigns. Omitted: every offer of the brand, each priced on its own offer's terms."),
       pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every money figure (omitted = gross). The dashboard reads `net`. NET fails loud (502) when runs' frozen net amounts are absent."),
+      fields: z
+        .enum(["copy"])
+        .optional()
+        .describe("`copy` (owner 2026-10-13): each row's COPY only (name, face, status, Type label, path, units), no money, no activity: campaign-service's live list + the catalogue structure, well under a second, so a campaign created seconds ago is painted at once. The money of a campaign created in the last 15 minutes is computed behind this answer, so the full read that follows is a hit. Omitted: the full rows (unchanged)."),
     }),
   },
   responses: {
-    200: { description: "One row per funnel campaign (an empty array when the brand has none).", content: { "application/json": { schema: salesFunnelCampaignsResponseRef } } },
-    400: { description: "An invalid pricing value (reason: pricing_unrecognised).", content: { "application/json": { schema: errorResponse } } },
+    200: {
+      description: "One row per funnel campaign (an empty array when the brand has none): the full rows, or with `?fields=copy` their copy only.",
+      content: { "application/json": { schema: z.union([salesFunnelCampaignsResponseRef, salesFunnelCampaignsCopyResponseRef]) } },
+    },
+    400: { description: "An invalid pricing value (reason: pricing_unrecognised) or `fields` value (reason: fields_unrecognised).", content: { "application/json": { schema: errorResponse } } },
     404: { description: "The caller does not hold this brand (reason: brand_not_found).", content: { "application/json": { schema: errorResponse } } },
     502: { description: "campaign-service or a money read failed (no row is ever guessed).", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/internal/brands/{brandId}/sales-funnel-campaigns/precompute",
+  summary: "Compute a brand's sales funnel campaign rows now, before anyone reads them",
+  description:
+    "Called by campaign-service right after it creates a sales funnel campaign (owner 2026-10-13, INSTANT-CAMPAIGN-ROWS), with the creating request's identity headers: answers 202 at once, then computes and stores every row of `GET /brands/{brandId}/sales-funnel-campaigns` (the dashboard's `?offerId=&pricing=net` shape, brand-wide `?pricing=net`, and every shape this org already read) through the ordinary read path, so the customer's first Campaigns read answers at warm speed. Nothing about a figure moves. Api key + identity headers; not proxied by the gateway.",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ brandId: z.string() }),
+    body: { content: { "application/json": { schema: z.object({ offerId: z.string().nullable().optional().describe("The new campaign's offer (its offer-scoped read is warmed first). Omitted: brand-wide shapes only.") }) } } },
+  },
+  responses: {
+    202: { description: "Accepted; the reads are computed behind.", content: { "application/json": { schema: z.object({ brandId: z.string(), offerId: z.string().nullable(), accepted: z.literal(true) }) } } },
+    400: { description: "A malformed offerId (reason: offer_id_unrecognised).", content: { "application/json": { schema: errorResponse } } },
   },
 });
 
