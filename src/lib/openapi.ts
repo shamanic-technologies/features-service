@@ -5495,6 +5495,29 @@ const channelCatalogueResponseSchema = registry.register(
         unavailableReason: z.enum(["email_gateway_unavailable", "no_email_sent"]).nullable().describe("Why the rate is null; null when it is served."),
       })
       .describe("FLEET EMAIL DELIVERY (owner 2026-10-13): the share of every email our sending inboxes sent that the recipient's server accepted, since inception. Served here so no consumer computes it."),
+    meetingBookingGain: z
+      .object({
+        legKey: z.literal("conversation_to_meeting_booked"),
+        basis: z.literal("positive_repliers_since_inception").describe("Fleet-wide, every positive replier since inception, attributed by lead-service from positive facts (the answer that preceded the meeting); a meeting it cannot place is counted on neither side."),
+        aiMeetingBooking: z
+          .object({
+            handledPeople: z.number().int().describe("People who replied positively and whose conversation this side held."),
+            bookedPeople: z.number().int().describe("Of them, people who booked a meeting."),
+            ratePct: z.number().nullable().describe("bookedPeople / handledPeople x 100, 2 decimals; null when nobody was handled."),
+          })
+          .nullable().describe("The side where AI Meeting Booking held the conversation. Null when lead-service is unreadable."),
+        yourTeamMeetingBooking: z
+          .object({
+            handledPeople: z.number().int().describe("People who replied positively and whose conversation this side held."),
+            bookedPeople: z.number().int().describe("Of them, people who booked a meeting."),
+            ratePct: z.number().nullable().describe("bookedPeople / handledPeople x 100, 2 decimals; null when nobody was handled."),
+          })
+          .nullable().describe("The side where the client's own team held it (Your Team Meeting Booking). Null when lead-service is unreadable."),
+        gainPctPoints: z.number().nullable().describe("AI rate minus team rate, in percentage points. Null with `unavailableReason` until EACH side booked `bookedRequiredPerSide` meetings."),
+        bookedRequiredPerSide: z.number().int().describe("The leg's maturity bar: meetings each side must have booked before the gain is served."),
+        unavailableReason: z.enum(["not_enough_meetings", "lead_service_unavailable"]).nullable(),
+      })
+      .describe("AI MEETING BOOKING GAIN (owner 2026-10-13): Positive reply -> Meeting booked rate with AI Meeting Booking vs with the client's own team, both populations served; the gain only once both sides are measured."),
   }),
 );
 
