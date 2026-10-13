@@ -21,6 +21,7 @@ import { registerDeclaredLegRates } from "./default-leg-rates.js";
 import { buildChannelCatalogue, type PublicChannel } from "./channel-catalogue.js";
 import { channelShortDescription } from "./channel-short-descriptions.js";
 import { channelTypeOf } from "./channel-types.js";
+import { listLegAssignments } from "./workflow-leg-assignments.js";
 import {
   mergeDeclarations,
   type ChannelInput,
@@ -110,17 +111,23 @@ export interface LoadedCatalogue {
  * public catalogue, the offer sales paths); the internal declaration reads see everything.
  */
 export async function loadChannelCatalogue(opts: { publishedOnly: boolean }): Promise<LoadedCatalogue> {
-  const [rows, channels, legs, triggers] = await Promise.all([
+  const [rows, channels, legs, triggers, assignments] = await Promise.all([
     db.query.features.findMany({ where: eq(features.status, "active") }),
     listDeclaredChannels(),
     listDeclaredLegs(),
     listTriggerTypes(),
+    // A channel holding an ACTIVE workflow on any of its pipes is one we run (`managed`), by fact, never by slug list.
+    listLegAssignments(),
     // Declared steps and leg rates are registered BEFORE the build parses a leg that names them.
     registerStepDeclarations(),
   ]);
   const declared = { channels, legs, triggers };
   const merged = mergeDeclarations(rows, declared, opts, { shortDescriptionOf: channelShortDescription, channelTypeOfSlug: channelTypeOf });
-  return { channels: buildChannelCatalogue(merged.rows, merged.shortDescriptionOf, merged.channelTypeOfSlug, merged.triggerOf, merged.isDraftLeg), declared };
+  const workflowChannelSlugs = new Set(assignments.filter((a) => a.state === "active").map((a) => a.featureSlug));
+  return {
+    channels: buildChannelCatalogue(merged.rows, merged.shortDescriptionOf, merged.channelTypeOfSlug, merged.triggerOf, merged.isDraftLeg, workflowChannelSlugs),
+    declared,
+  };
 }
 
 /** Every slug and (lower-cased) name already taken by a feature (any status) or a declared channel. */

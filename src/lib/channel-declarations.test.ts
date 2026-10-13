@@ -252,6 +252,21 @@ describe("a declared channel", () => {
     expect(build([declaredChannel()], [declaredLeg()], false).some((c) => c.slug === "whatsapp-concierge")).toBe(true);
   });
 
+  it("a channel holding an ACTIVE workflow is one we run: managed, no floor on a reactive leg (owner 2026-10-13, no slug list)", () => {
+    const m = mergeDeclarations(SEEDED, { channels: [declaredChannel({ published: true })], legs: [declaredLeg({ published: true })], triggers: TRIGGERS }, { publishedOnly: true }, { shortDescriptionOf: channelShortDescription, channelTypeOfSlug: channelTypeOf });
+    const without = buildChannelCatalogue(m.rows, m.shortDescriptionOf, m.channelTypeOfSlug, m.triggerOf, m.isDraftLeg).find((c) => c.slug === "whatsapp-concierge")!;
+    expect(without.managed).toBe(false);
+    expect(without.stepTransitions[0].minimumMonthlyBudgetCents).toBe(150_000);
+    const withWorkflow = buildChannelCatalogue(m.rows, m.shortDescriptionOf, m.channelTypeOfSlug, m.triggerOf, m.isDraftLeg, new Set(["whatsapp-concierge"])).find((c) => c.slug === "whatsapp-concierge")!;
+    expect(withWorkflow.managed).toBe(true);
+    expect(withWorkflow.stepTransitions[0].minimumMonthlyBudgetCents).toBe(0);
+  });
+
+  it("a workflow registered on ANY channel never makes the catalogue build throw (the trigger guard holds the stated list)", () => {
+    const all = new Set(SEEDED.map((f) => f.slug));
+    expect(() => buildChannelCatalogue(SEEDED, undefined, undefined, undefined, undefined, all)).not.toThrow();
+  });
+
   it("a declared leg on a SEEDED channel joins that channel's legs, published only", () => {
     const leg = declaredLeg({ channelSlug: "ai-meeting-booking", legKey: "website_visit_to_meeting_booked", fromStep: "website_visit", toStep: "meeting_booked", mode: "proactive", triggerId: null });
     const before = buildChannelCatalogue(SEEDED).find((c) => c.slug === "ai-meeting-booking")!.stepTransitions.length;
