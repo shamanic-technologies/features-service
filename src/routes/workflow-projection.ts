@@ -32,6 +32,8 @@ import {
   funnelsContainingLeg,
   matchFunnelLegKey,
   matchChannelLegKey,
+  servedLegKeyOf,
+  storedLegKeyOf,
   type FunnelLegDef,
 } from "../lib/funnel-legs.js";
 import {
@@ -95,6 +97,9 @@ import {
   type OutcomeFigures,
 } from "../lib/maturity.js";
 import { serveDatesStated } from "../lib/mature-evidence.js";
+import { loadPlayCatalogue } from "../lib/plays-store.js";
+import { playIdOf, resolvePlay, strategyOfFunnelLeg, strategyVerdict, tacticNameOf } from "../lib/plays.js";
+import { pipeIdOf } from "../lib/agent-catalogue.js";
 import { missionPriceOf, orderMissionWorkflows } from "../lib/mission-workflow-order.js";
 import type { EnginePerson } from "../lib/revenue-engine.js";
 
@@ -1263,6 +1268,50 @@ export async function unpricedPipeProjection(featureSlug: string, legKey: string
   };
 }
 
+/** The play a leg read runs on (`lib/plays.ts`), served as `play` beside the rows. */
+export interface PlayAnswer {
+  /** The play's id: `<pipe id>` for the default play, `<pipe id>~<strategy id>` for another. */
+  id: string;
+  pipeId: string;
+  strategyId: string;
+  strategyName: string;
+  default: boolean;
+  /** Where the play was read: the campaign's sales funnel names it, or the pipe's default (no funnel / bare leg). */
+  source: "sales_funnel" | "pipe_default";
+  /** Workflows of the rows still selectable under the play. 0 = nothing may run: hold, never fall back. */
+  allowedWorkflowCount: number;
+}
+
+/**
+ * PURE + one read: the play a leg read runs on and the dynasties its strategy rules out, or null when the pipe
+ * catalogues no play (every assigned workflow, as always). A funnel naming a strategy the pipe does not catalogue
+ * cannot be created (the catalogue refuses it); met anyway, it rules out EVERY workflow (never a silent widen).
+ */
+export async function playOfLegRead(
+  featureSlug: string,
+  legKey: string,
+  salesFunnelId: string | null,
+): Promise<{ answer: Omit<PlayAnswer, "allowedWorkflowCount">; excludedReason: (dynastySlug: string) => string | null } | null> {
+  const plays = await loadPlayCatalogue();
+  const pipeId = pipeIdOf(featureSlug, servedLegKeyOf(featureSlug, legKey));
+  if (!plays.playsByPipe.has(pipeId)) return null;
+  const sameLeg = (a: string, b: string) => storedLegKeyOf(a) === storedLegKeyOf(b);
+  const named = salesFunnelId ? strategyOfFunnelLeg(salesFunnelId, featureSlug, legKey, sameLeg) : null;
+  const resolved = resolvePlay(plays, pipeId, named);
+  const source = named ? ("sales_funnel" as const) : ("pipe_default" as const);
+  if (!resolved.known || !resolved.strategy) {
+    console.error(`[features-service] workflow-projection: sales funnel ${salesFunnelId} names play ${named} on ${pipeId}, which the pipe does not catalogue: every workflow ruled out`);
+    const reason = `the play "${named}" is not catalogued on this pipe`;
+    return { answer: { id: playIdOf(pipeId, named), pipeId, strategyId: named ?? "", strategyName: named ?? "", default: false, source }, excludedReason: () => reason };
+  }
+  const st = resolved.strategy;
+  const nameOf = tacticNameOf(plays);
+  return {
+    answer: { id: resolved.isDefault ? pipeId : playIdOf(pipeId, st.id), pipeId, strategyId: st.id, strategyName: st.name, default: resolved.isDefault, source },
+    excludedReason: (slug) => strategyVerdict(st, plays.tacticsByDynasty.get(slug), nameOf).reason,
+  };
+}
+
 export async function handleWorkflowProjection(req: Request, res: Response, costBasis: ProjectionCostBasis) {
   const { featureSlug } = req.params;
   const { orgId, userId, runId, featureSlug: headerFeatureSlug } = req as AuthenticatedRequest;
@@ -1439,8 +1488,11 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
     // ratio divides the MATURE cohort and nulls at 0 outcomes), the two columns disagreed on a brand
     // selling ONE offer, where they describe the identical set of campaigns (features-service#1172).
     let offerScopeIds: string[] | null = null;
+    // The sales funnel the named campaign is a unit of: its id names the PLAY this pipe runs (`lib/plays.ts`).
+    let campaignSalesFunnelId: string | null = null;
     if (campaignId) {
       const families = await fetchCampaignFamiliesSoft(brandId, featureSlug, { orgId, userId, runId });
+      campaignSalesFunnelId = families.salesFunnelIdOf(campaignId);
       campaignIdentity = families.identityOf(campaignId);
       campaignIdentityView = describeIdentity(campaignIdentity, campaignId);
       campaignScopeIds = campaignIdentityView.campaignIds;
@@ -1679,6 +1731,7 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
     // One verdict per DYNASTY, read from the stated assignment (never from the workflow's model or
     // price), attached to every row of that dynasty inside `projectFromEvidence`.
     let legAssignmentByDynasty: Map<string, LegAssignmentVerdict> | null = null;
+    let playAnswer: PlayAnswer | null = null;
     let modelAliasByDynasty: Map<string, string | null> | null = null;
     if (legKey && legAssignments) {
       const leg = funnelLeg(legKey)!;
@@ -1687,6 +1740,20 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
         [...dynastySlugs].map((slug) => [slug, legAssignmentVerdict(legAssignments.get(slug), leg.toStep.label)]),
       );
       modelAliasByDynasty = contentModels;
+      // ── AND WHETHER THE CAMPAIGN'S PLAY ALLOWS IT (owner 2026-10-13, `lib/plays.ts`) ─────────────────
+      // A campaign's sales funnel names a play per pipe (a strategy, or the pipe's default play); a workflow the
+      // strategy rules out is NOT selectable, so the order, the recommendation and campaign-service's filter
+      // (`modelEligibility.eligible`) all skip it, exactly like a deprecated one. Read live, fail-loud.
+      const played = await playOfLegRead(featureSlug, legKey, campaignSalesFunnelId);
+      if (played) {
+        legAssignmentByDynasty = new Map(
+          [...legAssignmentByDynasty].map(([slug, v]) => {
+            const reason = played.excludedReason(slug);
+            return [slug, v.selectable && reason ? { ...v, selectable: false, reason } : v];
+          }),
+        );
+        playAnswer = { ...played.answer, allowedWorkflowCount: [...legAssignmentByDynasty.values()].filter((v) => v.selectable).length };
+      }
     }
 
     const pricedFunnelKey = legBasisFunnelKey;
@@ -1771,6 +1838,7 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
         costBasis: "actual" as const,
         rows: actualRows,
         ...(legBlock ? { leg: legBlock } : {}),
+        ...(playAnswer ? { play: playAnswer } : {}),
         ...(campaignIdentityView ? { campaignIdentity: campaignIdentityView } : {}),
         ...(observedPicks !== undefined ? { observedPicks } : {}),
       });
@@ -1782,6 +1850,7 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
       ...response,
       rows,
       ...(legBlock ? { leg: legBlock } : {}),
+      ...(playAnswer ? { play: playAnswer } : {}),
       ...(campaignIdentityView ? { campaignIdentity: campaignIdentityView } : {}),
       ...(observedPicks !== undefined ? { observedPicks } : {}),
     });

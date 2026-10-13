@@ -1332,6 +1332,18 @@ const workflowProjectionResponseSchema = z.object({
   recommendedWorkflowDynastySlug: z.string().nullable().describe("Dynasty of the MEASURED row that best answers what the caller is maximising: under `maximize=return` (the default) the LOWEST resolved.costPerOutcomeUsd, under `maximize=conversionRate` the HIGHEST resolved.conversionRatePct. The same catalogue legitimately ranks differently under the two, so the two answers may differ for one (brand, channel, leg). An unmeasured row (explore allowance) is reachable but never recommended under either. On a `?leg=` read a workflow not assigned active on the leg (`legAssignment.selectable: false`) is never recommended either. On a MISSION read (`?leg=&campaignId=` whose campaign states an offer) whose rank-1 workflow holds a mature price (offer, else brand, else fleet), it is that rank-1 workflow, so rank 1 and the recommendation never disagree. On a `?leg=` read with no priced workflow but a selectable one, it is the rank-1 selectable workflow, flagged `recommendationBasis: \"cold_start\"`. Null when none has usable data (funnel/goal reads), or when no workflow is assigned active (then `recommendationWithheldReason` says so)."),
   recommendedBudgetUsd: z.number().nullable().describe("10 target outcomes/month × the recommended row's resolved.costPerOutcomeUsd. Null when there is no pick."),
   measured: z.boolean().describe("TRUE ⟺ at least one row rests on real evidence — every answer an established channel gives. FALSE says this acquisition channel has measured nothing for this brand yet; unmeasuredReason then names what is missing."),
+  play: z
+    .object({
+      id: z.string().describe("The play: `<pipe id>` (default) or `<pipe id>~<strategy id>`."),
+      pipeId: z.string(),
+      strategyId: z.string(),
+      strategyName: z.string(),
+      default: z.boolean(),
+      source: z.enum(["sales_funnel", "pipe_default"]).describe("`sales_funnel` = the campaign's sales funnel names this play on the pipe; `pipe_default` = it names none (or the read names no campaign)."),
+      allowedWorkflowCount: z.number().int().describe("Workflows of the rows still selectable under the play. 0 = nothing may run it: the run waits, never falls back to another workflow."),
+    })
+    .optional()
+    .describe("Owner 2026-10-13, leg reads only, present ⟺ the pipe catalogues plays (`GET /internal/catalogue/plays`). The campaign's play rules workflows out: a ruled-out workflow reads `legAssignment.selectable: false` (+ `reason`) and `modelEligibility.eligible: false`, so it is never ranked above, recommended or picked; figures never move."),
   recommendationWithheldReason: z.literal("no_eligible_workflow").optional().describe("Present ⟺ a `?leg=` read has workflows but NONE is assigned active on the leg (`legAssignment`). `recommendedWorkflowDynastySlug` is then null by refusal, never a fall back to an unassigned or deprecated workflow."),
   recommendationBasis: z.literal("cold_start").optional().describe("Present ⟺ a `?leg=` read has NO priced workflow but at least one assigned active and selectable: `recommendedWorkflowDynastySlug` is then the rank-1 selectable workflow so a consumer can START the leg (the only way it ever gets evidence). Its cost fields stay null (no invented price) and `recommendedBudgetUsd` is null. Absent whenever a priced workflow is recommended; a leg with no selectable workflow still recommends nothing."),
   maturity: legMaturityRuleSchema.extend({
@@ -2955,6 +2967,36 @@ const salesFunnelCampaignsResponseRef = registry.register(
   }),
 );
 
+const salesFunnelCampaignCopyRowSchema = salesFunnelCampaignRowSchema.pick({
+  id: true,
+  brandId: true,
+  offerId: true,
+  salesFunnelId: true,
+  name: true,
+  face: true,
+  status: true,
+  stopReason: true,
+  createdAt: true,
+  type: true,
+  triggerLabel: true,
+  typeLabel: true,
+  path: true,
+  copyUnavailableReason: true,
+  units: true,
+});
+
+const salesFunnelCampaignsCopyResponseRef = registry.register(
+  "SalesFunnelCampaignsCopyResponse",
+  z.object({
+    brandId: z.string(),
+    offerId: z.string().nullable().describe("The `?offerId=` filter echoed; null = every offer of the brand."),
+    fields: z.literal("copy").describe("Echo of `?fields=copy`: the rows carry their copy only, no money."),
+    salesFunnelCampaigns: z
+      .array(salesFunnelCampaignCopyRowSchema)
+      .describe("One row per sales funnel campaign, in campaign-service's order (newest first), read LIVE: a campaign created a second ago is here. Each field is byte-equal to the same field of the full row (`?fields` omitted)."),
+  }),
+);
+
 registry.registerPath({
   method: "get",
   path: "/brands/{brandId}/sales-funnel-campaigns",
@@ -2968,13 +3010,38 @@ registry.registerPath({
     query: z.object({
       offerId: z.string().optional().describe("Only this offer's funnel campaigns. Omitted: every offer of the brand, each priced on its own offer's terms."),
       pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every money figure (omitted = gross). The dashboard reads `net`. NET fails loud (502) when runs' frozen net amounts are absent."),
+      fields: z
+        .enum(["copy"])
+        .optional()
+        .describe("`copy` (owner 2026-10-13): each row's COPY only (name, face, status, Type label, path, units), no money, no activity: campaign-service's live list + the catalogue structure, well under a second, so a campaign created seconds ago is painted at once. The money of a campaign created in the last 15 minutes is computed behind this answer, so the full read that follows is a hit. Omitted: the full rows (unchanged)."),
     }),
   },
   responses: {
-    200: { description: "One row per funnel campaign (an empty array when the brand has none).", content: { "application/json": { schema: salesFunnelCampaignsResponseRef } } },
-    400: { description: "An invalid pricing value (reason: pricing_unrecognised).", content: { "application/json": { schema: errorResponse } } },
+    200: {
+      description: "One row per funnel campaign (an empty array when the brand has none): the full rows, or with `?fields=copy` their copy only.",
+      content: { "application/json": { schema: z.union([salesFunnelCampaignsResponseRef, salesFunnelCampaignsCopyResponseRef]) } },
+    },
+    400: { description: "An invalid pricing value (reason: pricing_unrecognised) or `fields` value (reason: fields_unrecognised).", content: { "application/json": { schema: errorResponse } } },
     404: { description: "The caller does not hold this brand (reason: brand_not_found).", content: { "application/json": { schema: errorResponse } } },
     502: { description: "campaign-service or a money read failed (no row is ever guessed).", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/internal/brands/{brandId}/sales-funnel-campaigns/precompute",
+  summary: "Compute a brand's sales funnel campaign rows now, before anyone reads them",
+  description:
+    "Called by campaign-service right after it creates a sales funnel campaign (owner 2026-10-13, INSTANT-CAMPAIGN-ROWS), with the creating request's identity headers: answers 202 at once, then computes and stores every row of `GET /brands/{brandId}/sales-funnel-campaigns` (the dashboard's `?offerId=&pricing=net` shape, brand-wide `?pricing=net`, and every shape this org already read) through the ordinary read path, so the customer's first Campaigns read answers at warm speed. Nothing about a figure moves. Api key + identity headers; not proxied by the gateway.",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ brandId: z.string() }),
+    body: { content: { "application/json": { schema: z.object({ offerId: z.string().nullable().optional().describe("The new campaign's offer (its offer-scoped read is warmed first). Omitted: brand-wide shapes only.") }) } } },
+  },
+  responses: {
+    202: { description: "Accepted; the reads are computed behind.", content: { "application/json": { schema: z.object({ brandId: z.string(), offerId: z.string().nullable(), accepted: z.literal(true) }) } } },
+    400: { description: "A malformed offerId (reason: offer_id_unrecognised).", content: { "application/json": { schema: errorResponse } } },
   },
 });
 
@@ -6561,12 +6628,39 @@ const catalogueChannelDetail = z.object({
   operatedBy: z.enum(["platform", "customer"]), performedBy: z.enum(["software", "person"]), managed: z.boolean(), ...catalogueRunnableField,
   ...catalogueEconDetail, costUnit: z.literal("per_outcome"), bestPipeId: z.string().nullable(), pipes: z.array(cataloguePipeRow),
 });
+const catalogueTacticPlayRow = z.object({
+  object: z.literal("play"),
+  id: z.string().describe("The play id a sales funnel names: the bare pipe id for the default play, `<pipe id>~<strategy id>` for another (`POST /internal/catalogue/sales-funnels` takes either in `pipeIds`). In a funnel id the leg reads `<leg>@<channel slug>~<strategy id>`."),
+  pipeId: z.string(),
+  strategyId: z.string().nullable(),
+  strategyName: z.string().nullable(),
+  default: z.boolean(),
+  ...catalogueEcon,
+  bestWorkflowSlug: z.string().nullable().describe("The allowed workflow the figure rests on."),
+  measuredBasis: z.enum(["mature", "flash"]).nullable(),
+  allowedActiveWorkflowCount: z.number().int().nullable(),
+  ...catalogueRunnableField,
+});
 const cataloguePipeDetail = z.object({
   object: z.literal("pipe"), id: z.string(), name: z.string(), icon: z.string(), color: z.string(), line: z.string(), channelSlug: z.string(), channelName: z.string(),
   legKey: z.string(), fromStep: z.string().nullable(), toStep: z.string(), mode: z.enum(["proactive", "reactive"]), triggerId: z.string().nullable(),
   operatedBy: z.enum(["platform", "customer"]), managed: z.boolean(), ...catalogueRunnableField, draft: z.boolean(),
   ...catalogueEconDetail, costUnit: z.literal("per_outcome"), toStepValueUsd: z.number().nullable(), bestWorkflowSlug: z.string().nullable(),
   measuredBasis: z.enum(["mature", "flash"]).nullable(), conversionRatePct: z.number().nullable(),
+  play: z
+    .object({
+      pipeId: z.string().describe("The pipe the play runs on."),
+      strategyId: z.string(),
+      strategyName: z.string(),
+      default: z.boolean().describe("True = the pipe's DEFAULT play: what a funnel naming the bare pipe runs (today's behaviour)."),
+      allowedActiveWorkflowCount: z.number().int().describe("Active workflows of the pipe the strategy allows. 0 = nothing can run the play: never runnable."),
+      excludedWorkflowDynastySlugs: z.array(z.string()).describe("Workflows the strategy rules out on this pipe."),
+    })
+    .nullable()
+    .describe("Owner 2026-10-13 (TACTIC = a yes/no tag Jev puts on every workflow version; STRATEGY = tactics it requires and excludes; PLAY = a pipe x a strategy). The play this object IS: a pipe id is its default play, `<pipe id>~<strategy id>` another play. Null = the pipe catalogues no play (every assigned workflow runs, as always). Not the dashboard's Strategy page."),
+  plays: z
+    .array(catalogueTacticPlayRow)
+    .describe("ROI PER PLAY (owner 2026-10-13): every play of the pipe, default first, each priced on its best ALLOWED workflow (same pick as the pipe: cheapest mature, else cheapest flash). The default play's figures are the pipe's own. A pipe cataloguing no play lists itself alone (`strategyId` null)."),
 });
 const catalogueFunnelDetail = z.object({
   ...catalogueFunnelCopy,
@@ -6578,6 +6672,7 @@ const catalogueWorkflowDetail = z.object({
   object: z.literal("workflow"), id: z.string(), name: z.string(), icon: z.string(), color: z.string(), pipeId: z.string(), rank: z.number().int(), assignment: z.string(), selectable: z.boolean(),
   isMature: z.boolean().nullable(), basis: z.enum(["mature", "flash"]), outcomes: z.number(), contacted: z.number(), spentUsd: z.number(), conversionRatePct: z.number().nullable(), holdsTheMoney: z.boolean(),
   ...catalogueEconDetail, costUnit: z.literal("per_outcome"),
+  tactics: z.array(z.object({ id: z.string(), name: z.string(), follows: z.boolean().nullable().describe("Jev's verdict on the workflow's CURRENT version; null = not judged yet.") })).describe("Owner 2026-10-13: every tactic and whether this workflow follows it."),
 });
 
 const catalogueRead = (path: string, summary: string, query: Record<string, z.ZodTypeAny>, schema: z.ZodTypeAny, params?: Record<string, z.ZodTypeAny>) =>
@@ -6851,6 +6946,52 @@ const catalogueTriggerRow = z.object({
 catalogueRead("/internal/catalogue/triggers", "List triggers: what starts a reactive pipe (internal, api-key)", { q: catalogueQ, limit: catalogueLimit }, z.object({ object: z.literal("trigger"), order: z.literal("catalogue"), total: z.number().int(), truncated: z.boolean(), rows: z.array(catalogueTriggerRow) }));
 catalogueRead("/internal/catalogue/triggers/{id}", "One trigger and the reactive pipes it starts (internal, api-key)", {}, catalogueTriggerRow.extend({ object: z.literal("trigger"), params: z.record(z.unknown()).nullable().describe("A declared delay/poll trigger's parameters."), pipes: z.array(cataloguePipeRow).describe("The reactive pipes naming it, best ROI first.") }), idParam("A trigger id"));
 
+const catalogueTacticRow = z.object({
+  object: z.literal("tactic"),
+  id: z.string(),
+  name: z.string().describe("Unique (case-insensitive)."),
+  description: z.string().describe("Unique (case-insensitive). What Jev judges every workflow version against: as precise as possible."),
+  workflowsJudged: z.number().int().describe("Workflows (current version) Jev judged on it."),
+  workflowsFollowing: z.number().int().describe("Of them, those judged to follow it."),
+});
+const catalogueStrategyRow = z.object({
+  object: z.literal("strategy"),
+  id: z.string(),
+  name: z.string().describe("Unique (case-insensitive)."),
+  description: z.string().describe("Unique (case-insensitive)."),
+  requires: z.array(catalogueStepRef).describe("Tactics a workflow must follow (judged yes) to run under it."),
+  excludes: z.array(catalogueStepRef).describe("Tactics a workflow must not follow (judged yes = ruled out; not judged yet = allowed)."),
+  pipeIds: z.array(z.string()).describe("Pipes cataloguing a play on it."),
+});
+const tacticsNote = "Owner 2026-10-13: a TACTIC is a yes/no tag Jev puts on every workflow version (judged once, on the tactic's description); a STRATEGY requires and excludes tactics; a PLAY is a pipe x a strategy, catalogued per pipe. Inside a play the workflow is still picked by ROI, among those the strategy allows. Not the dashboard's Strategy page.";
+catalogueRead("/internal/catalogue/tactics", "List tactics (internal, api-key)", { q: catalogueQ, limit: catalogueLimit }, z.object({ object: z.literal("tactic"), order: z.literal("id"), total: z.number().int(), truncated: z.boolean(), rows: z.array(catalogueTacticRow) }).describe(tacticsNote));
+catalogueRead(
+  "/internal/catalogue/tactics/{id}",
+  "One tactic and every workflow version Jev judged on it (internal, api-key)",
+  {},
+  catalogueTacticRow.extend({
+    createdBy: z.string(),
+    createdAt: z.string(),
+    verdicts: z.array(z.object({ workflowSlug: z.string(), workflowDynastySlug: z.string(), version: z.number().int(), versionActive: z.boolean(), follows: z.boolean(), probability: z.number().describe("Jev's probability of yes; follows = probability >= 0.5."), model: z.string(), judgedAt: z.string() })),
+  }),
+  idParam("A tactic id"),
+);
+catalogueRead("/internal/catalogue/strategies", "List strategies (internal, api-key)", { q: catalogueQ, limit: catalogueLimit }, z.object({ object: z.literal("strategy"), order: z.literal("id"), total: z.number().int(), truncated: z.boolean(), rows: z.array(catalogueStrategyRow) }).describe(tacticsNote));
+catalogueRead("/internal/catalogue/strategies/{id}", "One strategy (internal, api-key)", {}, catalogueStrategyRow.extend({ createdBy: z.string(), createdAt: z.string() }), idParam("A strategy id"));
+catalogueRead(
+  "/internal/catalogue/plays",
+  "List plays: a pipe x a strategy (internal, api-key)",
+  { pipe: z.string().optional().describe("A pipe id: its plays, default first. Absent: every play of every pipe cataloguing plays."), limit: catalogueLimit },
+  z.object({ object: z.literal("play"), order: z.literal("pipe_then_default_first"), total: z.number().int(), truncated: z.boolean(), rows: z.array(catalogueTacticPlayRow) }).describe(tacticsNote),
+);
+catalogueRead(
+  "/internal/catalogue/plays/{id}",
+  "One play (internal, api-key)",
+  {},
+  catalogueTacticPlayRow.extend({ learningReason: z.string().nullable(), estimates: z.array(z.string()), excludedWorkflowDynastySlugs: z.array(z.string()) }),
+  idParam("A play id (`<pipe id>` or `<pipe id>~<strategy id>`)"),
+);
+
 const catalogueCreate = (path: string, summary: string, extra: string, body: z.ZodTypeAny, schema: z.ZodTypeAny) =>
   registry.registerPath({
     method: "post",
@@ -6899,6 +7040,28 @@ catalogueCreate(
   "One pipe id per leg of a sales path, in order (a leg the customer's own team works: its `Your Team` pipe). A bare leg key is refused 400 `bare_leg_refused` (owner 2026-10-11: every leg a channel). ONE CHANNEL PER LEG (owner 2026-10-11): the sourcing leg (Start -> Lead found) included, named by ONE pipe: a source (`sourcing-apollo-cold-filters|start_to_lead_found`, ...) or Lead Sourcing (`lead-sourcing|start_to_lead_found`, we pick the sources). Two pipes on one leg = 400 `one_channel_per_leg`; a path leg no pipe names = 400 `leg_without_channel`; a source an outreach channel does not take (your CRM contacts before cold email) = 400 `funnel_invalid`. The funnel id names every leg (`start_to_lead_found@<source>+...`); a legacy id (it starts out of Lead found) reads as its Lead Sourcing funnel. Persisted (the declared sales path store the offer read already knows) and named with a never-given uplifting word + a face; an existing funnel answers 200 `created: false` with its name. Campaign-service and billing-service key a campaign on this id.",
   z.object({ pipeIds: z.array(z.string()), ...catalogueActor }),
   catalogueFunnelDetail.extend({ created: z.boolean() }),
+);
+
+catalogueCreate(
+  "/internal/catalogue/tactics",
+  "Declare a tactic (internal, api-key)",
+  "A yes/no tag on workflow versions. Its `description` is what Jev judges every version against (precise: what the workflow DOES, not what it is called). Name and description unique (409 `tactic_name_taken` / `tactic_description_taken`); id = the name slugged. Jev judges every assigned workflow version on it within minutes.",
+  z.object({ name: z.string(), description: z.string(), createdBy: z.string() }),
+  catalogueTacticRow,
+);
+catalogueCreate(
+  "/internal/catalogue/strategies",
+  "Declare a strategy (internal, api-key)",
+  "Tactics it requires and excludes (at least one; never both for one tactic: 400). Name and description unique (409 `strategy_name_taken` / `strategy_description_taken`); a second strategy with the same rule is 409 `strategy_rule_taken`. Unknown tactic: 404 `tactic_not_found`.",
+  z.object({ name: z.string(), description: z.string(), requires: z.array(z.string()).optional(), excludes: z.array(z.string()).optional(), createdBy: z.string() }),
+  catalogueStrategyRow,
+);
+catalogueCreate(
+  "/internal/catalogue/plays",
+  "Catalogue a play on a pipe (internal, api-key)",
+  "A pipe x a strategy, catalogued per pipe so its ROI compares across clients (never invented per campaign). The pipe must be a platform pipe that already catalogues its default play (400 `pipe_has_no_default_play`). Idempotent: an existing play answers 200 `created: false`.",
+  z.object({ pipeId: z.string(), strategyId: z.string(), createdBy: z.string() }),
+  catalogueTacticPlayRow.extend({ created: z.boolean() }),
 );
 
 registry.registerPath({

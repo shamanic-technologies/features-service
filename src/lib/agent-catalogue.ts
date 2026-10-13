@@ -110,6 +110,7 @@ import { DEFAULT_COST_PER_OUTCOME_USD, combinationKeyOf } from "./offer-sales-pa
 import { SALES_PATH_COST_BENCHMARKS } from "./sales-path-cost-benchmarks.js";
 import { faceOf, stableHash, type Face } from "./catalogue-faces.js";
 import { STEP_SIGNAL } from "./value-added.js";
+import { PLAY_SEPARATOR, playIdOf, splitPlayId, splitPlaySlug } from "./plays.js";
 import { CHANNEL_TRIGGER_TYPES, INLINE_TRIGGER_IDS } from "./channel-triggers.js";
 import { LEAD_SOURCING_SLUG, SOURCE_LEG_KEY, SOURCING_ORIGINS_BY_CHANNEL, isSourcingChannel } from "./sourcing-origins.js";
 
@@ -232,6 +233,35 @@ export interface CatalogueInputs {
   /** The trigger types stored (`channel_trigger_types`: the coded ones and those declared at run time). The coded
    *  list (`lib/channel-triggers.ts`) is read in any case: it is what boot upserts. */
   triggers?: ReadonlyArray<{ id: string; label: string }>;
+  /**
+   * PLAYS (owner 2026-10-13, `lib/plays.ts`): per pipe id that catalogues plays, its DEFAULT play (what its bare id
+   * runs) and its other plays, each with the measurement of its best allowed workflow. A pipe absent here has no play
+   * but its own (every assigned workflow, as always). The default play's measurement IS the pipe's (`measurements`).
+   */
+  plays?: ReadonlyMap<string, { default: PlayInput | null; others: readonly PlayInput[] }>;
+}
+
+/** One play of a pipe as the catalogue prices it. */
+export interface PlayInput {
+  strategyId: string;
+  strategyName: string;
+  /** Its best allowed workflow (`pickLegPrice` over the pipe's workflows minus those the strategy excludes). */
+  measurement: PipeMeasurement | null;
+  /** ACTIVE workflows assigned to the pipe that the strategy allows. 0 = nothing can run it: never runnable. */
+  allowedActiveWorkflowCount: number;
+  /** Dynasty slugs the strategy excludes on this pipe. */
+  excludedDynasties: readonly string[];
+}
+
+/** The play a pipe object stands for (null = a pipe cataloguing no play: every assigned workflow). */
+export interface CataloguePlayInfo {
+  /** The pipe the play runs on (its own id for the default play). */
+  basePipeId: string;
+  strategyId: string;
+  strategyName: string;
+  isDefault: boolean;
+  allowedActiveWorkflowCount: number;
+  excludedDynasties: readonly string[];
 }
 
 /** A trigger as a reactive path or funnel starts with it: its unique slug and unique name. */
@@ -296,6 +326,9 @@ export interface CataloguePipe {
   /** The cost per outcome an EXPECTED figure takes for this pipe (see the header). Null on a customer-team pipe
    *  (costs us nothing) and on a platform pipe nothing prices. */
   expectedCost: ExpectedPipeCost | null;
+  /** The play this object is (`lib/plays.ts`): a pipe's default play on the pipe itself, another play on a play variant
+   *  (`model.plays`, id `<pipe id>~<strategy id>`). Null on a pipe cataloguing no play. */
+  play: CataloguePlayInfo | null;
 }
 
 /** Where an expected pipe cost comes from (see the header). */
@@ -400,6 +433,9 @@ export interface CatalogueModel {
   lifetimeRevenueUsd: number | null;
   lifetimeRevenueBasis: ExpectedBasis;
   channels: readonly PublicChannel[];
+  /** Every NON-default play of a pipe, keyed `<pipe id>~<strategy id>` (`lib/plays.ts`): a pipe object of its own,
+   *  same channel and leg, priced on its best allowed workflow. Never listed among the pipes. */
+  plays: Map<string, CataloguePipe>;
 }
 
 export const pipeIdOf = (channelSlug: string, servedLegKey: string): string => `${channelSlug}|${servedLegKey}`;
@@ -422,20 +458,8 @@ function buildPipes(inputs: CatalogueInputs, valueOf: (step: string) => number |
       const id = pipeIdOf(c.slug, legKey);
       const measurement = inputs.measurements.get(id) ?? null;
       const toStep = t.to.key;
-      let economics: Economics;
-      if (c.operatedBy === "customer") economics = CUSTOMER_TIME();
-      else if (measurement?.basis === "mature" && usable(measurement.costPerOutcomeUsd)) {
-        // The value it ADDS (`lib/value-added.ts`): its outcome's value minus the value of the step it takes people
-        // over at (a reactive pipe answering Positive replies); from nothing / Lead found that is $0.
-        const value = valueAddedTo(valueOf, respelled ? "lead_found" : (t.from?.key ?? null), toStep);
-        economics = {
-          status: "measured",
-          costUsd: round2(measurement.costPerOutcomeUsd),
-          roi: value == null ? null : round2(value / measurement.costPerOutcomeUsd),
-          reason: null,
-          estimates: value == null ? [] : [...STEP_VALUE_ESTIMATES],
-        };
-      } else economics = LEARNING(measurement?.basis === "flash" ? "no_mature_workflow_yet" : "no_fleet_history");
+      const economics = pipeEconomicsOf(c.operatedBy, measurement, valueOf, respelled ? "lead_found" : (t.from?.key ?? null), toStep);
+      const played = inputs.plays?.get(id)?.default ?? null;
       out.set(id, {
         id,
         channelSlug: c.slug,
@@ -453,6 +477,62 @@ function buildPipes(inputs: CatalogueInputs, valueOf: (step: string) => number |
         economics,
         measurement,
         expectedCost: null,
+        play: played ? playInfoOf(id, played, true) : null,
+      });
+    }
+  }
+  return out;
+}
+
+const playInfoOf = (basePipeId: string, p: PlayInput, isDefault: boolean): CataloguePlayInfo => ({
+  basePipeId,
+  strategyId: p.strategyId,
+  strategyName: p.strategyName,
+  isDefault,
+  allowedActiveWorkflowCount: p.allowedActiveWorkflowCount,
+  excludedDynasties: p.excludedDynasties,
+});
+
+/** PURE: a pipe's (or a play's) economics from its best workflow's measurement (see the header). */
+function pipeEconomicsOf(
+  operatedBy: "platform" | "customer",
+  measurement: PipeMeasurement | null,
+  valueOf: (step: string) => number | null,
+  fromStep: string | null,
+  toStep: string,
+): Economics {
+  if (operatedBy === "customer") return CUSTOMER_TIME();
+  if (measurement?.basis === "mature" && usable(measurement.costPerOutcomeUsd)) {
+    // The value it ADDS (`lib/value-added.ts`): its outcome's value minus the value of the step it takes people
+    // over at (a reactive pipe answering Positive replies); from nothing / Lead found that is $0.
+    const value = valueAddedTo(valueOf, fromStep, toStep);
+    return {
+      status: "measured",
+      costUsd: round2(measurement.costPerOutcomeUsd),
+      roi: value == null ? null : round2(value / measurement.costPerOutcomeUsd),
+      reason: null,
+      estimates: value == null ? [] : [...STEP_VALUE_ESTIMATES],
+    };
+  }
+  return LEARNING(measurement?.basis === "flash" ? "no_mature_workflow_yet" : "no_fleet_history");
+}
+
+/** PURE: the non-default plays of every pipe, each a pipe object of its own (`CatalogueModel.plays`). */
+function buildPlayVariants(inputs: CatalogueInputs, pipes: ReadonlyMap<string, CataloguePipe>, valueOf: (step: string) => number | null): Map<string, CataloguePipe> {
+  const out = new Map<string, CataloguePipe>();
+  for (const [pipeId, plays] of inputs.plays ?? []) {
+    const base = pipes.get(pipeId);
+    if (!base) continue;
+    for (const p of plays.others) {
+      const id = playIdOf(pipeId, p.strategyId);
+      out.set(id, {
+        ...base,
+        id,
+        measurement: p.measurement,
+        economics: pipeEconomicsOf(base.operatedBy, p.measurement, valueOf, base.fromStep, base.toStep),
+        hasWorkflow: p.allowedActiveWorkflowCount > 0,
+        expectedCost: null,
+        play: playInfoOf(pipeId, p, false),
       });
     }
   }
@@ -681,6 +761,8 @@ export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
 
   const pipes = buildPipes(inputs, (s) => stepValue(s).value);
   for (const p of pipes.values()) p.expectedCost = expectedPipeCost(p, pipes.values());
+  const plays = buildPlayVariants(inputs, pipes, (s) => stepValue(s).value);
+  for (const p of plays.values()) p.expectedCost = expectedPipeCost(p, pipes.values());
 
   // Paths: chains of the legs pipes perform, from Start (a leg from nothing) to Paid client, no step twice. A leg
   // no channel performs is no path leg (see the header).
@@ -749,6 +831,7 @@ export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
     lifetimeRevenueUsd: inputs.lifetimeRevenueUsd,
     lifetimeRevenueBasis: inputs.lifetimeRevenueBasis ?? "fleet",
     channels: inputs.channels,
+    plays,
   };
 }
 
@@ -837,7 +920,43 @@ export function outcomesNeededPerPayingClient(path: CataloguePath): Array<number
  * own team works bare). Every leg is in it, the sourcing leg included (see the header).
  */
 export const funnelIdOf = (legs: readonly FunnelLeg[]): string =>
-  combinationKeyOf(legs.map((l) => ({ legKey: l.legKey, channelSlug: l.pipe?.operatedBy === "platform" ? l.pipe.channelSlug : null })));
+  combinationKeyOf(legs.map((l) => ({ legKey: l.legKey, channelSlug: l.pipe?.operatedBy === "platform" ? funnelSlugPart(l.pipe) : null })));
+
+/** A platform pipe's part of a funnel id: its slug, `~<strategy>` on a non-default play (`lib/plays.ts`). */
+const funnelSlugPart = (p: CataloguePipe): string => (p.play && !p.play.isDefault ? `${p.channelSlug}${PLAY_SEPARATOR}${p.play.strategyId}` : p.channelSlug);
+
+/**
+ * PURE: a pipe or a play by id. A play id naming the pipe's DEFAULT strategy is the pipe itself (its bare id is the
+ * default play); a strategy the pipe does not catalogue is no play: null.
+ */
+export function pipeOrPlayById(model: CatalogueModel, id: string): CataloguePipe | null {
+  const direct = model.pipes.get(id) ?? model.plays.get(id);
+  if (direct) return direct;
+  const { pipeId, strategyId } = splitPlayId(id);
+  const base = strategyId ? model.pipes.get(pipeId) : undefined;
+  return base?.play?.isDefault && base.play.strategyId === strategyId ? base : null;
+}
+
+/** PURE: every play of a pipe, default first (one entry, the pipe itself, when it catalogues none). */
+export const playsOfPipe = (model: CatalogueModel, pipe: CataloguePipe): CataloguePipe[] => [
+  pipe,
+  ...[...model.plays.values()].filter((v) => v.play?.basePipeId === pipe.id).sort((a, b) => (a.id < b.id ? -1 : 1)),
+];
+
+/** PURE: a funnel id with every `~<strategy>` naming its pipe's DEFAULT play dropped (the default play is the bare pipe). */
+function canonicalFunnelId(model: CatalogueModel, id: string): string {
+  return id
+    .split("+")
+    .map((part) => {
+      const at = part.indexOf("@");
+      if (at < 0) return part;
+      const { slug, strategyId } = splitPlaySlug(part.slice(at + 1));
+      if (!strategyId) return part;
+      const base = model.pipes.get(pipeIdOf(slug, part.slice(0, at)));
+      return base?.play?.isDefault && base.play.strategyId === strategyId ? `${part.slice(0, at)}@${slug}` : part;
+    })
+    .join("+");
+}
 
 /**
  * PURE: every funnel of a path: ONE pipe per leg (a platform pipe, or the customer's own team's), the sourcing leg
@@ -848,8 +967,11 @@ export function funnelsOfPath(model: CatalogueModel, path: CataloguePath, cap = 
   const options: FunnelLeg[][] = path.legKeys.map((legKey) => {
     const onLeg = pipesOnLeg(model, legKey);
     const platform = onLeg.filter((p) => p.operatedBy === "platform");
+    // Every non-default play of a platform pipe is its own option on the leg: a funnel differing only by a strategy
+    // is another funnel (owner 2026-10-13).
+    const variants = [...model.plays.values()].filter((v) => v.legKey === legKey).sort((a, b) => (a.id < b.id ? -1 : 1));
     const customer = onLeg.filter((p) => p.operatedBy === "customer").slice(0, 1);
-    return [...platform, ...customer].map((pipe) => ({ legKey, pipe }));
+    return [...platform, ...variants, ...customer].map((pipe) => ({ legKey, pipe }));
   });
   if (options.some((o) => o.length === 0)) return [];
   const out = new Map<string, CatalogueFunnel>();
@@ -891,7 +1013,8 @@ export const funnelFirstStep = (legs: readonly FunnelLeg[]): string | null => (l
  * listed but campaign-service answers 409 `no_workflow` on launch. `published` is true for every declaration since
  * 2026-10-12 (created live); it stays only as staff's unpublish switch.
  */
-export const pipeRunnable = (p: CataloguePipe): boolean => p.published && (p.operatedBy === "customer" || p.managed || p.hasWorkflow);
+export const pipeRunnable = (p: CataloguePipe): boolean =>
+  p.published && (p.operatedBy === "customer" || (p.play !== null && p.play.allowedActiveWorkflowCount === 0 ? false : p.managed || p.hasWorkflow));
 
 /**
  * PURE: a sales funnel's TYPE (owner 2026-10-10): `proactive` when at least one of its pipes is proactive
@@ -940,9 +1063,10 @@ export function funnelById(model: CatalogueModel, id: string): CatalogueFunnel |
     if (!path) return null;
     return funnelsOfPath(model, path).find((f) => f.id === key) ?? null;
   };
-  const found = exact(id);
+  const canonical = canonicalFunnelId(model, id);
+  const found = exact(canonical);
   if (found) return found;
-  const alias = legacyFunnelIdAliasOf(id);
+  const alias = legacyFunnelIdAliasOf(canonical);
   return alias ? exact(alias) : null;
 }
 
