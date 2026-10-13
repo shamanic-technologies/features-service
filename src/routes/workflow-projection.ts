@@ -1282,6 +1282,12 @@ export interface PlayAnswer {
   allowedWorkflowCount: number;
 }
 
+/** The play's `allowedWorkflowCount` = distinct workflows of the SERVED rows still selectable (what a picker reads). */
+const withPlayCount = (play: PlayAnswer, rows: ReadonlyArray<{ workflow: { workflowDynastySlug: string }; legAssignment?: { selectable: boolean } }>): PlayAnswer => ({
+  ...play,
+  allowedWorkflowCount: new Set(rows.filter((r) => r.legAssignment?.selectable === true).map((r) => r.workflow.workflowDynastySlug)).size,
+});
+
 /**
  * PURE + one read: the play a leg read runs on and the dynasties its strategy rules out, or null when the pipe
  * catalogues no play (every assigned workflow, as always). A funnel naming a strategy the pipe does not catalogue
@@ -1752,7 +1758,8 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
             return [slug, v.selectable && reason ? { ...v, selectable: false, reason } : v];
           }),
         );
-        playAnswer = { ...played.answer, allowedWorkflowCount: [...legAssignmentByDynasty.values()].filter((v) => v.selectable).length };
+        // Counted on the SERVED rows (`withPlayCount`): what campaign-service picks from.
+        playAnswer = { ...played.answer, allowedWorkflowCount: 0 };
       }
     }
 
@@ -1838,7 +1845,7 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
         costBasis: "actual" as const,
         rows: actualRows,
         ...(legBlock ? { leg: legBlock } : {}),
-        ...(playAnswer ? { play: playAnswer } : {}),
+        ...(playAnswer ? { play: withPlayCount(playAnswer, actualRows) } : {}),
         ...(campaignIdentityView ? { campaignIdentity: campaignIdentityView } : {}),
         ...(observedPicks !== undefined ? { observedPicks } : {}),
       });
@@ -1850,7 +1857,7 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
       ...response,
       rows,
       ...(legBlock ? { leg: legBlock } : {}),
-      ...(playAnswer ? { play: playAnswer } : {}),
+      ...(playAnswer ? { play: withPlayCount(playAnswer, rows) } : {}),
       ...(campaignIdentityView ? { campaignIdentity: campaignIdentityView } : {}),
       ...(observedPicks !== undefined ? { observedPicks } : {}),
     });

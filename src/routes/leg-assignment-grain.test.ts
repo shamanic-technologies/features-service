@@ -467,6 +467,8 @@ describe("a campaign's PLAY decides which workflows may run (owner 2026-10-13, l
     expect(def.status).toBe(200);
     expect(def.body.play).toMatchObject({ id: PIPE, strategyId: "valid-only", default: true, source: "pipe_default", allowedWorkflowCount: 1 });
     expect(selectableSet(def.body)).toEqual(["lithium"]);
+    // Counted on the served rows: the workflows a picker can actually choose.
+    expect(def.body.play.allowedWorkflowCount).toBe(selectableSet(def.body).length);
     expect(rowOf(def.body, "sodium").modelEligibility).toMatchObject({ eligible: false });
     expect(rowOf(def.body, "sodium").legAssignment.reason).toContain("excludes the tactic \"Catch-all\"");
 
