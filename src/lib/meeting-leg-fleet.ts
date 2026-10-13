@@ -31,6 +31,7 @@ import { dynastyOfSlug } from "./workflow-scope.js";
 import { legMaturityFigures, outcomeFigures, type LegMaturityFigures } from "./maturity.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import type { EnginePerson } from "./revenue-engine.js";
+import type { ChannelStepKey } from "./acquisition-channels.js";
 
 export const MEETING_BOOKING_FEATURE_SLUG = "ai-meeting-booking";
 export const MEETING_BOOKING_LEG_KEY = "conversation_to_meeting_booked";
@@ -47,18 +48,28 @@ export const MEETING_BOOKING_LEG_KEY = "conversation_to_meeting_booked";
 export const isInternalPipe = (fromStep: string | null): boolean => fromStep !== null && fromStep !== "lead_found";
 
 /**
- * Whether a person reached `step`, read off the signals the revenue engine carries. `booking_call` has no
- * signal on a lead: lead-service's own rule is that an `acted` row of a booking-call campaign IS the call
- * placed (`booking-calls.ts`), so on that step the act is the outcome. A step with no reading is `null`:
- * the pipe's outcomes are then unmeasured, never 0.
+ * Whether a person reached `step`, read off the signals the revenue engine carries. ONE reading per catalogue
+ * step a pipe can end on (typed over `ChannelStepKey`, so a new step fails the build instead of 502-ing every
+ * read of its pipes: 2026-10-13, Meeting attended and Purchase had none). The readings are the ones the
+ * funnel activity reads per step (`lib/funnel-campaign-activity.ts`): a purchase is lead-service's `sale`, the
+ * same signal as a paid client. `booking_call` has no signal on a lead: lead-service's own rule is that an
+ * `acted` row of a booking-call campaign IS the call placed (`booking-calls.ts`), so on that step the act is
+ * the outcome.
  */
-const STEP_REACHED: Readonly<Record<string, ((p: EnginePerson) => boolean) | "acted">> = {
+export const STEP_REACHED: Readonly<Record<Exclude<ChannelStepKey, "lead_found">, ((p: EnginePerson) => boolean) | "acted">> = {
   conversation: (p) => Boolean(p.signals.positiveReply),
   website_visit: (p) => Boolean(p.signals.clicked),
-  meeting_booked: (p) => Boolean(p.signals.meeting),
-  paid_client: (p) => Boolean(p.signals.closeWin),
   booking_call: "acted",
+  meeting_booked: (p) => Boolean(p.signals.meeting),
+  meeting_attended: (p) => Boolean(p.signals.meetingAttended),
+  signup: (p) => Boolean(p.signals.signup),
+  form_submitted: (p) => Boolean(p.signals.formSubmission),
+  purchase: (p) => Boolean(p.signals.closeWin),
+  paid_client: (p) => Boolean(p.signals.closeWin),
 };
+
+const stepReading = (toStep: string): ((p: EnginePerson) => boolean) | "acted" | undefined =>
+  (STEP_REACHED as Readonly<Record<string, ((p: EnginePerson) => boolean) | "acted">>)[toStep];
 
 export interface MeetingLegFleet {
   legKey: string;
@@ -148,7 +159,7 @@ export function buildMeetingLegFleet(input: {
 async function readPairActed(orgId: string, brandId: string, campaignIds: string[], toStep: string): Promise<PairActed> {
   const actedByCampaign = await fetchFollowupActedLeads(brandId, campaignIds);
   const actedIds = new Set([...actedByCampaign.values()].flatMap((s) => [...s]));
-  const reached = STEP_REACHED[toStep];
+  const reached = stepReading(toStep);
   if (reached === "acted") return { actedByCampaign, meetingLeadIds: actedIds };
   if (actedIds.size === 0) return { actedByCampaign, meetingLeadIds: new Set() };
   const headers = { orgId };
@@ -166,7 +177,7 @@ export async function computeMeetingLegFleet(): Promise<MeetingLegFleet> {
   return computeInternalPipeFleet(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY, "meeting_booked");
 }
 
-/** Thrown when an internal pipe's `to` step has no reading on a person: its outcomes cannot be counted. */
+/** Thrown when an internal pipe's `to` step is not a catalogue step (no reading on a person): its outcomes cannot be counted. */
 export class StepNotReadableError extends Error {
   constructor(readonly toStep: string) {
     super(`no reading of step ${toStep} on a person: the pipe's outcomes cannot be counted`);
@@ -175,7 +186,7 @@ export class StepNotReadableError extends Error {
 
 /** Any INTERNAL pipe across every org, per workflow dynasty (the rule above). */
 export async function computeInternalPipeFleet(featureSlug: string, legKey: string, toStep: string): Promise<MeetingLegFleet> {
-  if (!STEP_REACHED[toStep]) throw new StepNotReadableError(toStep);
+  if (!stepReading(toStep)) throw new StepNotReadableError(toStep);
   const campaigns = await fetchFleetLegCampaigns(featureSlug, legKey);
   const ids = [...new Set(campaigns.map((c) => c.campaignId))].sort();
   if (ids.length === 0) return { legKey, campaignCount: 0, byDynasty: [], unattributableCampaignIds: [], perCampaign: [] };

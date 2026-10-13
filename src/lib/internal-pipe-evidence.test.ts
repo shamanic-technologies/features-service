@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
-import { internalPipeCountsByDynasty } from "./meeting-leg-fleet.js";
+import { internalPipeCountsByDynasty, STEP_REACHED } from "./meeting-leg-fleet.js";
+import { CHANNEL_STEP_KEYS } from "./acquisition-channels.js";
+import type { EnginePerson } from "./revenue-engine.js";
 import { withInternalPipeCounts, type WorkflowProjectionEvidence } from "../routes/workflow-projection.js";
 import type { WorkflowMetadata } from "./public-stats-clients.js";
 
@@ -57,5 +59,28 @@ describe("an internal pipe is measured on the people its campaigns acted on, at 
     expect(stats.get("avior")).toMatchObject({ recipientsContacted: 1, recipientsRepliesPositive: 0 });
     expect(out.brandGrain[0][1]).toEqual({ ...zeroSends, contacted: 4, replies: 1, clicks: 0 });
     expect(out.campaignGrain![0][1]).toEqual({ ...zeroSends, contacted: 3, replies: 1, clicks: 0 });
+  });
+});
+
+describe("every step a pipe can end on has a reading on a person (2026-10-13: Meeting attended / Purchase pipes 502'd)", () => {
+  const person = (signals: Record<string, boolean>) => ({ leadId: "l", signals }) as unknown as EnginePerson;
+  const read = (step: string, signals: Record<string, boolean>) => {
+    const r = (STEP_REACHED as Record<string, ((p: EnginePerson) => boolean) | "acted">)[step];
+    return r === "acted" ? "acted" : r(person(signals));
+  };
+
+  it("covers every catalogue step but Lead found", () => {
+    expect(Object.keys(STEP_REACHED).sort()).toEqual(CHANNEL_STEP_KEYS.filter((k) => k !== "lead_found").sort());
+  });
+
+  it("reads Meeting attended on the attended rung, never on a booked meeting", () => {
+    expect(read("meeting_attended", { meetingAttended: true })).toBe(true);
+    expect(read("meeting_attended", { meeting: true })).toBe(false);
+  });
+
+  it("reads Purchase on lead-service's sale, the paid client's signal", () => {
+    expect(read("purchase", { closeWin: true })).toBe(true);
+    expect(read("purchase", { clicked: true })).toBe(false);
+    expect(read("paid_client", { closeWin: true })).toBe(true);
   });
 });
