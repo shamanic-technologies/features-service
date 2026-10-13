@@ -22,6 +22,7 @@ import {
   matchesQuery,
   pathEconomics,
   pathLine,
+  funnelTrigger,
   phosphorIconOf,
   STEP_ICONS,
   FAMILY_GLYPHS,
@@ -38,6 +39,7 @@ import { channelShortDescription } from "./channel-short-descriptions.js";
 import { channelTypeOf } from "./channel-types.js";
 import { SEED_FEATURES } from "../seed/features.js";
 import { servedLegKeyOf } from "./funnel-legs.js";
+import { funnelTriggerLabel } from "./funnel-descriptions.js";
 
 const SEEDED = SEED_FEATURES.filter((f) => f.status === "active");
 const channels = buildChannelCatalogue(SEEDED);
@@ -338,38 +340,33 @@ describe("a step declared at run time ('LinkedIn post') rides legs, paths and va
   });
 });
 
-describe("a path ENDS at an outcome no pipe continues from (owner 2026-10-13, Email pushed via API -> Email sent)", () => {
-  registerDeclaredSteps([{ key: "email_sent" as never, label: "Email sent", description: "An email you wrote is sent.", shortDescription: "Your email goes out" }]);
-  // A step-less trigger starts the leg out of nothing (the seeded `follow_up_due` stands in for `email_pushed_via_api`).
+describe("a reactive pipe out of Start (owner 2026-10-13: Email Pushed Via API -> Email Sending -> Positive reply -> ... -> Paid client)", () => {
+  // A step-less trigger starts a leg out of nothing that proactive channels also work (the seeded `follow_up_due`
+  // stands in for `email_pushed_via_api`).
   const legs: DeclaredLeg[] = [
-    { channelSlug: "ai-follow-up-email", legKey: "start_to_email_sent", fromStep: null, toStep: "email_sent" as never, mode: "reactive", triggerId: "follow_up_due", published: true, createdBy: "t", requestedByOrgId: null, createdAt: "", updatedAt: "" },
+    { channelSlug: "ai-follow-up-email", legKey: "start_to_conversation", fromStep: null, toStep: "conversation", mode: "reactive", triggerId: "follow_up_due", published: true, createdBy: "t", requestedByOrgId: null, createdAt: "", updatedAt: "" },
   ];
   const merged = mergeDeclarations(SEEDED, { channels: [], legs, triggers: [] }, { publishedOnly: false }, { shortDescriptionOf: channelShortDescription, channelTypeOfSlug: channelTypeOf });
-  const channels = buildChannelCatalogue(merged.rows, merged.shortDescriptionOf, merged.channelTypeOfSlug, merged.triggerOf);
-  const model = buildCatalogueModel(
-    inputs({
-      channels,
-      declaredSteps: [{ key: "email_sent", label: "Email sent", description: "An email you wrote is sent.", shortDescription: "Your email goes out", icon: "paper-plane-tilt", towardStep: "conversation", towardRatePct: 1, producedBy: null }],
-    }),
-  );
+  const model = buildCatalogueModel(inputs({ channels: buildChannelCatalogue(merged.rows, merged.shortDescriptionOf, merged.channelTypeOfSlug, merged.triggerOf) }));
+  const funnels = [...model.paths.values()].flatMap((p) => funnelsOfPath(model, p)).filter((f) => f.legs[0].pipe?.id === "ai-follow-up-email|start_to_conversation");
 
-  it("lists the one-leg path, reactive, starting on its trigger", () => {
-    const path = pathById(model, "start_to_email_sent")!;
-    expect(path).not.toBeNull();
-    expect(path.type).toBe("reactive");
-    expect(path.steps).toEqual(["email_sent"]);
-    expect(pathLine(model, path)).toBe("Follow-up Due → Email sent");
+  it("composes funnels that start on its trigger and end at Paid client", () => {
+    expect(funnels.length).toBeGreaterThan(0);
+    const viaMeeting = funnels.find((f) => f.legs[1]?.pipe?.id === "ai-meeting-booking|conversation_to_meeting_booked")!;
+    expect(viaMeeting).toBeDefined();
+    expect(funnelTypeOf(viaMeeting)).toBe("reactive");
+    expect(funnelTrigger(model, viaMeeting)).toEqual({ slug: "follow_up_due", name: "Follow-up Due" });
+    expect(funnelTriggerLabel(viaMeeting, (k) => k, (id) => model.triggers.get(id)?.name ?? null)).toBe("Follow-up Due");
   });
 
-  it("composes its funnel, valued at the step's own value, never the lifetime revenue", () => {
-    const f = funnelById(model, "start_to_email_sent@ai-follow-up-email")!;
-    expect(f).not.toBeNull();
-    expect(funnelTypeOf(f)).toBe("reactive");
-    expect(model.steps.get("email_sent")!.valueUsd).not.toBeNull();
+  it("a funnel whose first pipe is proactive on the same leg names no trigger", () => {
+    const path = model.paths.get(funnels[0].pathId)!;
+    const organic = funnelsOfPath(model, path).find((f) => f.legs[0].pipe?.mode === "proactive")!;
+    expect(funnelTrigger(model, organic)).toBeNull();
   });
 
-  it("every other path still ends at Paid client", () => {
-    for (const p of model.paths.values()) if (p.id !== "start_to_email_sent") expect(p.steps[p.steps.length - 1]).toBe("paid_client");
+  it("every path ends at Paid client ('une campagne valide doit tjs finir par paid client')", () => {
+    for (const p of model.paths.values()) expect(p.steps[p.steps.length - 1]).toBe("paid_client");
   });
 });
 
