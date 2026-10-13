@@ -10,6 +10,7 @@
  * read per (leg × channel) gives the money. Everything is combined HERE — a browser summing funnel
  * rungs would count a lead reached through two funnels twice.
  */
+import { applyDisqualifiedMarks, fetchDisqualifiedLeadIds } from "../lib/disqualification-marks.js";
 import { Router } from "express";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel, pricedFingerprint, type DownstreamHeaders } from "./revenue.js";
@@ -98,6 +99,8 @@ const soft = <T>(what: string, p: Promise<T>): Promise<T | null> =>
 /** The offer's people, carrying the SAME per-lead overlays the brand revenue read applies. */
 export async function readOfferPersons(input: {
   brandId: string;
+  /** The offer whose Disqualified marks apply (lead-service: its own mark, or a brand-wide one). */
+  offerId: string;
   campaignIds: string[];
   headers: DownstreamHeaders;
   pricedFunnelKeys: Parameters<typeof applySignalOverlays>[4];
@@ -108,7 +111,7 @@ export async function readOfferPersons(input: {
   const scope = input.campaignIds.length === 1 ? input.campaignIds[0] : input.campaignIds;
   const persons = await fetchLeadsForRevenue(brandId, scope, headers);
   const emails = [...new Set(persons.map((p) => p.email).filter((e): e is string => Boolean(e)))];
-  const [timestamps, observed, quals, signupEmails, formEmails] = await Promise.all([
+  const [timestamps, observed, quals, signupEmails, formEmails, disqualified] = await Promise.all([
     // The delivery dates feed the legacy-qualification cause rule on the legs that wait (the gate
     // predates the serve clock and is kept so no priced figure moves). The mature cohort itself is
     // cut on each lead's SERVE date, read off the lead row (`lib/maturity.ts`). A failure leaves every
@@ -118,8 +121,12 @@ export async function readOfferPersons(input: {
     soft("legacy qualifications", fetchQualifications(brandId, undefined, emails, headers)),
     soft("signup attribution", fetchConversionEmails(brandId, "signup")),
     soft("form-submission attribution", fetchConversionEmails(brandId, "form_submission")),
+    // lead-service's Disqualified mark: FAIL LOUD (an empty set would price, and list as Hot, a lead
+    // somebody ruled out — while its Deals card reads $0).
+    fetchDisqualifiedLeadIds(brandId, input.offerId, headers),
   ]);
   applySignalOverlays(persons, timestamps, observed?.byEmail ?? null, quals, input.pricedFunnelKeys, input.causes);
+  applyDisqualifiedMarks(persons, disqualified);
   for (const person of persons) {
     const email = person.email?.trim().toLowerCase();
     if (!email) continue;
@@ -180,6 +187,7 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
         pricing,
         cause: causeScopeKeyPart(causes),
         ...(withHistory ? { history: "1" } : {}),
+        m: "disq-mark-1",
       }),
       orgId: req.orgId,
       compute: async () => {
@@ -200,6 +208,7 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
           groupCampaignIds.length > 0
             ? readOfferPersons({
                 brandId,
+                offerId,
                 campaignIds: groupCampaignIds,
                 headers,
                 pricedFunnelKeys: declared.map((f) => f.funnelKey),

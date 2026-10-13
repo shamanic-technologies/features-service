@@ -14,7 +14,8 @@
  *     summed — a SUBSET of the all-cause pipeline (`/revenue?cause=outreach,other,unstated`).
  *     A card the engine still prices at 0 says why (`zeroValueReason`). A person lead-service holds a
  *     live "Disqualified" MARK on (its own mark beside the standing since lead-service v0.83.59, read off
- *     `GET /orgs/leads/disqualifications`, never re-derived) is RULED OUT: card at 0, `ruled_out`, adds
+ *     `GET /orgs/leads/disqualifications`, never re-derived; carried as `EnginePerson.disqualified`, which the
+ *     engine prices exactly as the pipeline does) is RULED OUT: card at 0, `ruled_out`, adds
  *     nothing to the column. The mark leaves their standing untouched, so they can still stand here.
  *   - `customer` (Won) — what was won: the amount a human STATED on the sale (whoever caused it — this
  *     column shows the deal, not our share of it), else the brand's lifetime revenue per client, and
@@ -30,7 +31,7 @@
  * reason, never 0. A person lead-service places in the column that this service's population does not
  * hold (the two reads are minutes apart) is counted in `unpricedLeadCount` and carries a null card.
  */
-import { expectedValueOfPerson, type EnginePerson, type ResolvedPath } from "./revenue-engine.js";
+import { expectedValueOfPerson, isRuledOut, type EnginePerson, type ResolvedPath } from "./revenue-engine.js";
 
 export const VALUED_STANDINGS = ["sales_interest", "customer"] as const;
 export type ValuedStanding = (typeof VALUED_STANDINGS)[number];
@@ -129,8 +130,6 @@ export function priceDealsColumns(input: {
   lifetimeRevenueUsd: number | null;
   /** lead-service's members per valued standing. */
   members: Record<ValuedStanding, ReadonlySet<string>>;
-  /** lead-service's live Disqualified marks (lead ids): an Interested card among them is ruled out. */
-  disqualified: ReadonlySet<string>;
   /** Per canonical email: the amount a human stated on the SALE, whoever caused it. */
   statedWonAmountUsdByEmail: ReadonlyMap<string, number> | null;
   pricedCauses: readonly string[];
@@ -148,7 +147,7 @@ export function priceDealsColumns(input: {
     if (standing === "sales_interest") {
       const reason: DealsColumnUnvaluedReason | null = ltr === null ? "no_economics" : !(ltr > 0) ? "no_client_value" : null;
       const values = held.map((p, i) =>
-        reason !== null || p === null ? null : input.disqualified.has(ids[i]) ? 0 : expectedValueOfPerson(p, input.paths, ltr!),
+        reason !== null || p === null ? null : expectedValueOfPerson(p, input.paths, ltr!),
       );
       return {
         ...base,
@@ -159,7 +158,7 @@ export function priceDealsColumns(input: {
           const p = held[i];
           const zeroValueReason: DealCardZeroReason | null =
             v === 0 && p
-              ? input.disqualified.has(leadId) || (p.deadSignals?.length ?? 0) > 0
+              ? isRuledOut(p)
                 ? "ruled_out"
                 : "step_not_priced"
               : null;

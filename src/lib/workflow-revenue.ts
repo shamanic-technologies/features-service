@@ -70,6 +70,7 @@
  * never a floored estimate. Projection per workflow already has its own surface:
  * `/workflow-projection`.
  */
+import { applyDisqualifiedMarks, deferLoud, fetchDisqualifiedLeadIds } from "./disqualification-marks.js";
 import { contactedPricingSoft } from "../routes/contacted-value.js";
 import type { ContactedPricing, TimeSeriesPoint } from "./revenue-engine.js";
 import { restrictPathsToDeclaredLegs, type getFunnel } from "./funnel-registry.js";
@@ -481,6 +482,8 @@ export async function computeWorkflowRevenueGroups(input: {
   // it), so they are fetched ONCE and merged before the partition — every group then prices the
   // identical lead the brand read prices.
   const emails = [...new Set(persons.map((p) => p.email).filter((e): e is string => Boolean(e)))];
+  // lead-service's Disqualified mark, brand-wide (the brand read applies the same set): FAIL LOUD.
+  const disqualifiedRead = deferLoud(fetchDisqualifiedLeadIds(brandId, null, headers));
   const [timestamps, observed, quals] = await Promise.all([
     fetchEventTimestamps(brandId, campaignId, emails, headers).catch((err) => {
       console.warn(`[features-service] event-timestamp enrichment failed (degrading to dateless): ${(err as Error).message}`);
@@ -497,6 +500,7 @@ export async function computeWorkflowRevenueGroups(input: {
     }),
   ]);
   applySignalOverlays(persons, timestamps, observed?.byEmail ?? null, quals, priced?.pricedFunnelKeys ?? [], causes);
+  applyDisqualifiedMarks(persons, await disqualifiedRead());
 
   return buildWorkflowRevenueGroups({
     persons,

@@ -275,45 +275,6 @@ export async function fetchLeadIdsByStanding(
 }
 
 /**
- * The ids of the brand's leads lead-service holds a live "Disqualified" MARK on (lead-service
- * `GET /orgs/leads/disqualifications?brandId=[&offerId=]`, v0.83.59): its own mark beside the standing,
- * never a standing (the standing `disqualified` is always empty since 2026-10-13). With an offer: the
- * people disqualified for it (its own mark, or a brand-wide one); without: every marked person of the
- * brand. Read whole (the list is unpaged), fail loud: a swallowed read would price a ruled-out lead.
- */
-export async function fetchDisqualifiedLeadIds(
-  brandId: string,
-  offerId: string | null,
-  headers: { orgId: string; userId?: string; runId?: string },
-): Promise<Set<string>> {
-  const url = process.env.LEAD_SERVICE_URL;
-  const apiKey = process.env.LEAD_SERVICE_API_KEY;
-  if (!url || !apiKey) throw new Error("LEAD_SERVICE_URL or LEAD_SERVICE_API_KEY not configured");
-  const params = new URLSearchParams({ brandId });
-  if (offerId) params.set("offerId", offerId);
-  const reqHeaders: Record<string, string> = { "x-api-key": apiKey, "x-org-id": headers.orgId, "x-brand-id": brandId };
-  if (headers.userId) reqHeaders["x-user-id"] = headers.userId;
-  if (headers.runId) reqHeaders["x-run-id"] = headers.runId;
-  const data = await leadReadSlots.run(async () => {
-    const response = await fetchWithRetry(`${url}/orgs/leads/disqualifications?${params}`, { headers: reqHeaders }, { timeoutMs: LEAD_PAGE_TIMEOUT_MS });
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`lead-service /orgs/leads/disqualifications failed (${response.status}): ${text}`);
-    }
-    return (await response.json()) as { leads?: unknown };
-  });
-  if (!Array.isArray(data.leads)) throw new Error("lead-service /orgs/leads/disqualifications returned no leads array");
-  const ids = new Set<string>();
-  for (const row of data.leads as Array<{ leadId?: unknown }>) {
-    if (typeof row?.leadId !== "string" || row.leadId === "") {
-      throw new Error("lead-service /orgs/leads/disqualifications returned a row without a leadId");
-    }
-    ids.add(row.leadId);
-  }
-  return ids;
-}
-
-/**
  * Fetch all leads for a brand (optionally one campaign) with delivery-status overlay,
  * mapped into engine persons. Fails loud on any transport / non-OK error — a swallowed
  * error would silently under-report pipeline.

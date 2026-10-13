@@ -1846,7 +1846,7 @@ const stepPersonSchema = z.object({
   probabilityPct: z.number().nullable().describe("valueUsd / (the person's stated value, else the offer's lifetime revenue) x 100."),
 });
 const lostStepPersonSchema = stepPersonSchema.extend({
-  lostReason: z.enum(["went_cold", "ruled_out"]).describe("went_cold = in coldLeads (lead-service's rule, interest we caused); ruled_out = a human stated a step will never happen and nothing priced is left (the deals board's verdict)."),
+  lostReason: z.enum(["went_cold", "ruled_out"]).describe("went_cold = in coldLeads (lead-service's rule, interest we caused); ruled_out = a human stated a step will never happen, or lead-service marks the lead Disqualified, and nothing priced is left (the deals board's verdict)."),
   lostSince: z.string().nullable().describe("went_cold: coldSince. ruled_out: null (undated here)."),
   coldAtStep: stepRefSchema.nullable().describe("went_cold: the step that never came. ruled_out: null."),
 });

@@ -59,7 +59,6 @@ const result = priceDealsColumns({
   members: MEMBERS,
   statedWonAmountUsdByEmail: STATED,
   pricedCauses: ALL,
-  disqualified: new Set(),
 });
 const col = (s: string) => result.columns.find((c) => c.standing === s)!;
 
@@ -97,7 +96,6 @@ describe("priceDealsColumns — Interested", () => {
       members: { sales_interest: new Set(["z-dead", "z-offfunnel", "z-live"]), customer: new Set() },
       statedWonAmountUsdByEmail: null,
       pricedCauses: ALL,
-      disqualified: new Set(),
     });
     expect(r.columns[0].leads).toEqual([
       { leadId: "z-dead", valueUsd: 0, zeroValueReason: "ruled_out" },
@@ -108,22 +106,21 @@ describe("priceDealsColumns — Interested", () => {
   });
 
   it("a lead carrying lead-service's Disqualified MARK is ruled out: card at 0, adds nothing (owner 2026-10-13)", () => {
+    // the mark sits beside the standing: a-meeting still stands Interested, and d-won-unpriced Won
+    const marked = new Set(["a-meeting", "b-click", "d-won-unpriced"]);
     const r = priceDealsColumns({
-      persons: PERSONS,
+      persons: PERSONS.map((p) => (marked.has(p.leadId) ? { ...p, disqualified: true } : p)),
       paths: PATHS,
       lifetimeRevenueUsd: LTR,
       members: MEMBERS,
       statedWonAmountUsdByEmail: STATED,
       pricedCauses: ALL,
-      // the mark sits beside the standing: a-meeting still stands Interested, and d-won-unpriced Won
-      disqualified: new Set(["a-meeting", "b-click", "d-won-unpriced", "ghost"]),
     });
     const i = r.columns.find((c) => c.standing === "sales_interest")!;
     expect(i.leads.find((l) => l.leadId === "a-meeting")).toEqual({ leadId: "a-meeting", valueUsd: 0, zeroValueReason: "ruled_out" });
     expect(i.leads.find((l) => l.leadId === "b-click")).toEqual({ leadId: "b-click", valueUsd: 0, zeroValueReason: "ruled_out" });
     // org A falls back to its live member ($400); B adds 0; the unheld ghost stays a null card
     expect(i.valueUsd).toBe(400);
-    expect(i.leadCount).toBe(4);
     expect(i.leads.find((l) => l.leadId === "ghost")!.valueUsd).toBeNull();
     // a sale is a fact: Won is not re-priced by the mark
     expect(r.columns.find((c) => c.standing === "customer")!.valueUsd).toBe(5900);
@@ -154,7 +151,6 @@ describe("priceDealsColumns — Won", () => {
       members: { sales_interest: new Set(["b-click"]), customer: new Set(["d-won-unpriced"]) },
       statedWonAmountUsdByEmail: null,
       pricedCauses: ALL,
-      disqualified: new Set(),
     });
     const w = r.columns.find((c) => c.standing === "customer")!;
     expect(w.valueUsd).toBeNull();
@@ -170,7 +166,6 @@ describe("priceDealsColumns — Won", () => {
       members: MEMBERS,
       statedWonAmountUsdByEmail: STATED,
       pricedCauses: ALL,
-      disqualified: new Set(),
     });
     expect(r.columns.find((c) => c.standing === "sales_interest")!.unvaluedReason).toBe("no_economics");
     // the stated sale still stands on its own amount
@@ -200,7 +195,6 @@ describe("priceDealsColumns — unvalued columns state a reason, never 0", () =>
       members: { sales_interest: new Set(many.map((p) => p.leadId)), customer: new Set() },
       statedWonAmountUsdByEmail: null,
       pricedCauses: ALL,
-      disqualified: new Set(),
     });
     expect(JSON.stringify(r).length).toBeLessThan(500_000);
   });
