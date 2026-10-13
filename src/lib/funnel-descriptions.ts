@@ -30,7 +30,9 @@ export function funnelTriggerLabel(
   triggerName: (id: string) => string | null,
 ): string | null {
   const first = f.legs[0]?.pipe;
-  if (!first || first.mode !== "reactive" || first.fromStep === null) return null;
+  if (!first || first.mode !== "reactive") return null;
+  // A reactive pipe out of Start answers a step-less trigger ("Email Pushed Via API"): its name.
+  if (first.fromStep === null) return first.triggerId !== null ? triggerName(first.triggerId) : null;
   if (first.triggerId !== null && first.triggerId !== triggerForStep(first.fromStep as Parameters<typeof triggerForStep>[0])?.id) {
     const name = triggerName(first.triggerId);
     if (name) return name;

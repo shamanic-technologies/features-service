@@ -765,9 +765,8 @@ export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
   for (const p of plays.values()) p.expectedCost = expectedPipeCost(p, pipes.values());
 
   // Paths: chains of the legs pipes perform, from Start (a leg from nothing) to Paid client, no step twice. A leg
-  // no channel performs is no path leg (see the header). A path also ENDS at an outcome no pipe continues from
-  // (owner 2026-10-13, "Email pushed via API -> Email Sending -> Email sent" launchable as its own campaign): its
-  // funnel is valued at that step's own value (`funnelsOfPath`), never the lifetime revenue.
+  // no channel performs is no path leg (see the header). A path ALWAYS ends at Paid client (owner 2026-10-13: "une
+  // campagne valide doit tjs finir par paid client"; a one-leg "Start -> Email sent" path was withdrawn).
   type PathLeg = { legKey: string; fromStep: string | null; toStep: string };
   const legsByFrom = new Map<string, Map<string, PathLeg>>();
   const addLeg = (l: PathLeg) => {
@@ -784,8 +783,7 @@ export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
     return on.length > 0 && on.every((p) => p.mode === "reactive");
   };
   const walk = (step: string, chain: PathLeg[], seen: Set<string>, type: CataloguePath["type"] = "proactive") => {
-    const terminal = chain.length > 0 && step !== "paid_client" && !legsByFrom.has(step);
-    if (step === "paid_client" || terminal) {
+    if (step === "paid_client") {
       // A path out of nothing whose first leg only reactive pipes work starts on their trigger: it is reactive.
       if (chain[0].fromStep === null && reactiveOnly(chain[0].legKey)) type = "reactive";
       const legKeys = chain.map((l) => l.legKey);
@@ -992,17 +990,13 @@ export function funnelsOfPath(model: CatalogueModel, path: CataloguePath, cap = 
         const slugs = [...new Set(acc.flatMap((l) => legPipes(l).map((p) => p.channelSlug)))];
         const takeover = funnelFirstStep(acc);
         const takeoverValue = takeover && STEP_SIGNAL[takeover] ? (model.steps.get(takeover)?.valueUsd ?? null) : 0;
-        // The value of the outcome the funnel ends at: a paying client, else (a path ending at an outcome nothing
-        // continues from) that step's own value.
-        const end = path.steps[path.steps.length - 1];
-        const endValue = end === "paid_client" ? model.lifetimeRevenueUsd : (model.steps.get(end)?.valueUsd ?? null);
         out.set(id, {
           id,
           pathId: path.id,
           legs: acc,
           channelSlugs: slugs,
-          economics: funnelEconomics(path, acc, endValue, takeoverValue),
-          expected: expectedFunnelEconomics(path, acc, endValue, model.lifetimeRevenueBasis, takeoverValue),
+          economics: funnelEconomics(path, acc, model.lifetimeRevenueUsd, takeoverValue),
+          expected: expectedFunnelEconomics(path, acc, model.lifetimeRevenueUsd, model.lifetimeRevenueBasis, takeoverValue),
         });
       }
       return;
@@ -1142,11 +1136,15 @@ export function pathTrigger(model: CatalogueModel, path: CataloguePath): Trigger
   return pipeTrigger(model, first);
 }
 
-/** PURE: the trigger a funnel starts with: its first pipe's, on a reactive path; null on a proactive one. */
+/**
+ * PURE: the trigger a funnel starts with: its first pipe's when that pipe is reactive (a reactive path, or a path out
+ * of Start whose leg this funnel works with a reactive pipe: "Email Pushed Via API -> Email Sending -> Positive reply",
+ * on the leg organic publishing works proactively); null when its first pipe is proactive.
+ */
 export function funnelTrigger(model: CatalogueModel, f: Pick<CatalogueFunnel, "pathId" | "legs">): TriggerRef | null {
-  const path = model.paths.get(f.pathId);
-  if (!path || path.type !== "reactive" || !f.legs[0]?.pipe) return null;
-  return pipeTrigger(model, f.legs[0].pipe);
+  const first = f.legs[0]?.pipe;
+  if (!model.paths.get(f.pathId) || !first || first.mode !== "reactive") return null;
+  return pipeTrigger(model, first);
 }
 
 /** PURE: "Start -> Lead found -> Positive reply -> Paid client"; a reactive path starts with its trigger
@@ -1155,7 +1153,7 @@ export const pathLine = (model: CatalogueModel, path: CataloguePath): string => 
   const trigger = pathTrigger(model, path);
   const steps = path.steps.map((s) => stepLabel(model, s));
   // A reactive path out of a trigger STEP replaces that step with the trigger; one out of nothing (a step-less
-  // trigger, "Email Pushed Via API") puts the trigger in place of Start.
+  // trigger, "Email Pushed Via API -> Positive reply -> ...") puts the trigger in place of Start.
   const fromStep = legStepsOf(model, path.legKeys[0]).fromStep;
   return (trigger ? [trigger.name, ...(fromStep === null ? steps : steps.slice(1))] : ["Start", ...steps]).join(" → ");
 };
