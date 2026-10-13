@@ -133,10 +133,10 @@ router.get("/offers/:offerId/deals-value", apiKeyAuth, async (req, res) => {
         channels: featureSlugs.join("+"),
         campaigns: campaignSetKey(campaignIds),
         ...keyParts,
-        m: "deals-value-v2",
+        m: "deals-value-v3",
       }),
       orgId: headers.orgId,
-      compute: () => computeBrandDealsValue(brandId, headers, pre, campaignIds),
+      compute: () => computeBrandDealsValue(brandId, headers, pre, campaignIds, offerId),
     });
     return res.json({ offerId, brandId, ...result });
   } catch (error) {

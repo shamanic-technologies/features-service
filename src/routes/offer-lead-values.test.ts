@@ -95,6 +95,7 @@ vi.mock("../lib/leads-client.js", async (orig) => ({
   fetchLeadIdsByStanding: vi.fn(async (_b: string, standing: string) =>
     new Set(standing === "sales_interest" ? ["int-a", "int-b"] : []),
   ),
+  fetchDisqualifiedLeadIds: vi.fn(async () => new Set<string>()),
 }));
 vi.mock("../lib/email-status-client.js", () => ({ fetchEventTimestamps: vi.fn(async () => null) }));
 vi.mock("../lib/observed-steps.js", () => ({ fetchObservedStepFacts: vi.fn(async () => null) }));
@@ -174,6 +175,22 @@ describe("GET /offers/:offerId/deals-value", () => {
       column(brand.body, "sales_interest").valueUsd!,
       6,
     );
+  });
+
+  it("a Disqualified MARK lead-service holds for the OFFER rules the card out ($0, ruled_out); the brand asks every mark", async () => {
+    const lc = await import("../lib/leads-client.js");
+    vi.mocked(lc.fetchDisqualifiedLeadIds).mockImplementation(async (_b, offerId) => new Set(offerId === "offer-a" ? ["int-a"] : []));
+    const [a, brand] = await Promise.all([
+      get("/offers/offer-a/deals-value?brandId=brand-1&pricing=net"),
+      get("/brands/brand-1/deals-value"),
+    ]);
+    expect(a.status).toBe(200);
+    expect(column(a.body, "sales_interest").leads).toEqual([{ leadId: "int-a", valueUsd: 0, zeroValueReason: "ruled_out" }]);
+    expect(column(a.body, "sales_interest").valueUsd).toBe(0);
+    expect(brand.status).toBe(200);
+    const calls = vi.mocked(lc.fetchDisqualifiedLeadIds).mock.calls.map((c) => [c[0], c[1]]);
+    expect(calls).toEqual(expect.arrayContaining([["brand-1", "offer-a"], ["brand-1", null]]));
+    vi.mocked(lc.fetchDisqualifiedLeadIds).mockImplementation(async () => new Set());
   });
 
   it("an offer no campaign sells is a named 404, never the brand's numbers", async () => {
