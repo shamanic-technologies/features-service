@@ -3415,7 +3415,7 @@ const brandDealsValueResponseSchema = z.object({
       leadId: z.string(),
       valueUsd: z.number().nullable(),
       valueSource: z.enum(["stated_amount", "lifetime_revenue"]).nullable().optional().describe("Won column only."),
-      zeroValueReason: z.enum(["ruled_out", "step_not_priced"]).nullable().optional().describe("Interested only: why the engine prices this card at exactly 0 — `ruled_out` (a human ruled it out, or it went cold), `step_not_priced` (the steps it reached are on no funnel the brand is priced on)."),
+      zeroValueReason: z.enum(["ruled_out", "step_not_priced"]).nullable().optional().describe("Interested only: why the engine prices this card at exactly 0 — `ruled_out` (a human ruled it out, it went cold, or lead-service holds its Disqualified mark on the person: GET /orgs/leads/disqualifications), `step_not_priced` (the steps it reached are on no funnel the brand is priced on)."),
     })).describe("One card per person in the column, ordered by lead id (valued columns only)."),
   })),
 });
@@ -3426,7 +3426,7 @@ registry.registerPath({
   path: "/brands/{brandId}/deals-value",
   summary: "The dollar value of each Deals-board column (lead-service standing), per column and per card",
   description:
-    "A SEPARATE figure, added to no pipeline, ROI or cost figure. Column membership is lead-service's standing (its `?standing=` filter). Interested (`sales_interest`) = each person's expected value exactly as the engine prices them (same paths, LTR, overlays), on every outcome cause, company-deduped like the pipeline. Won (`customer`) = the stated sale amount, else the lifetime revenue per client. Disqualified, opted out and not placed state no value, with a reason. The Contacted column's value is GET /brands/{brandId}/contacted-value.",
+    "A SEPARATE figure, added to no pipeline, ROI or cost figure. Column membership is lead-service's standing (its `?standing=` filter). Interested (`sales_interest`) = each person's expected value exactly as the engine prices them (same paths, LTR, overlays), on every outcome cause, company-deduped like the pipeline. Won (`customer`) = the stated sale amount, else the lifetime revenue per client. A person lead-service marks Disqualified (its own mark beside the standing) is ruled out: an Interested card at 0, `ruled_out`. The `disqualified` standing column is always empty since 2026-10-13. Disqualified, opted out and not placed state no value, with a reason. The Contacted column's value is GET /brands/{brandId}/contacted-value.",
   tags: ["Stats"],
   request: { headers: identityHeaders, params: z.object({ brandId: z.string() }) },
   responses: {

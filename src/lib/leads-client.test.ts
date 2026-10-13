@@ -367,3 +367,24 @@ describe("fetchLeadsForRevenue — Contacted means an email went out (owner 2026
     expect(person.signals.contacted).toBe(true);
   });
 });
+
+describe("fetchDisqualifiedLeadIds — lead-service's Disqualified MARK, read whole, fail loud", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("asks the brand's (and offer's) marks and returns their lead ids", async () => {
+    const { fetchDisqualifiedLeadIds } = await import("./leads-client.js");
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ brandId: "b1", offerId: "o1", total: 2, leads: [{ id: "lc1", leadId: "l1" }, { id: "lc2", leadId: "l2" }] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    expect([...(await fetchDisqualifiedLeadIds("b1", "o1", HEADERS))]).toEqual(["l1", "l2"]);
+    const url = String((fetchMock.mock.calls[0] as unknown[])[0]);
+    expect(url).toBe("http://lead:3000/orgs/leads/disqualifications?brandId=b1&offerId=o1");
+  });
+
+  it("a failed or malformed read throws, never an empty set", async () => {
+    const { fetchDisqualifiedLeadIds } = await import("./leads-client.js");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("boom", { status: 500 })));
+    await expect(fetchDisqualifiedLeadIds("b1", null, HEADERS)).rejects.toThrow(/500/);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ total: 0 }), { status: 200 })));
+    await expect(fetchDisqualifiedLeadIds("b1", null, HEADERS)).rejects.toThrow(/no leads array/);
+  });
+});
