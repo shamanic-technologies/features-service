@@ -7,6 +7,7 @@ import { features } from "../db/schema.js";
 import { funnelLeg, matchChannelLegKey, servedLegKeyOf, storedLegKeyOf } from "../lib/funnel-legs.js";
 import { loadChannelCatalogue } from "../lib/channel-declarations-store.js";
 import { fetchPublicWorkflows } from "../lib/public-stats-clients.js";
+import { invalidateChannelCatalogue } from "./public.js";
 import {
   isLegAssignmentState,
   listLegAssignmentChanges,
@@ -106,6 +107,9 @@ router.put("/internal/workflow-leg-assignments", apiKeyOnly, async (req, res) =>
       decidedBy: decidedBy.trim(),
       note: (note as string | null | undefined) ?? null,
     });
+    // An active workflow makes its channel one we run (`managed`, `lib/channel-catalogue.ts`): the cached public
+    // catalogue must show it at once, never after its 15-minute window.
+    invalidateChannelCatalogue();
     res.json(result);
   } catch (err) {
     console.error("[features-service] workflow-leg-assignments write failed:", err);
@@ -166,6 +170,7 @@ router.post("/internal/workflow-leg-assignments/register", apiKeyOnly, async (re
       registeredBy: registeredBy.trim(),
       note: (note as string | null | undefined) ?? null,
     });
+    invalidateChannelCatalogue();
     const servedLeg = servedLegKeyOf(featureSlug, transition.legKey);
     console.log(`[features-service] workflow ${workflowDynastySlug} ${result.created ? "registered ACTIVE on" : "already stated on"} pipe ${featureSlug}|${servedLeg} (${result.assignment.state}) by ${registeredBy}`);
     // A workflow born on a pipe is judged on every tactic within minutes (lib/tactic-judgments.ts).
