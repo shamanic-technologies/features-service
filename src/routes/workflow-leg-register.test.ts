@@ -29,6 +29,11 @@ vi.mock("../lib/workflow-leg-assignments.js", async (importOriginal) => ({
   },
 }));
 
+vi.mock("./public.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  invalidateChannelCatalogue: vi.fn(),
+}));
+
 process.env.FEATURES_SERVICE_API_KEY = "test-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
 process.env.NODE_ENV = "test";
@@ -47,6 +52,13 @@ describe("POST /internal/workflow-leg-assignments/register (owner 2026-10-10, op
       assignment: { state: "active", decidedBy: "workflow-service" },
       pipe: { id: "ai-meeting-booking|conversation_to_meeting_booked", fromStep: "conversation", toStep: "meeting_booked", mode: "reactive" },
     });
+  });
+
+  it("drops the cached public catalogue, so the channel reads managed at once (owner 2026-10-13, Email Sending)", async () => {
+    const { invalidateChannelCatalogue } = await import("./public.js");
+    vi.mocked(invalidateChannelCatalogue).mockClear();
+    await post({ pipeId: "ai-meeting-booking|conversation_to_meeting_booked", workflowDynastySlug: "ai-meeting-booking-avior", registeredBy: "workflow-service" });
+    expect(invalidateChannelCatalogue).toHaveBeenCalled();
   });
 
   it("is insert-if-absent: a second call returns the existing row untouched", async () => {
