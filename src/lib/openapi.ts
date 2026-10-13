@@ -7059,7 +7059,7 @@ catalogueCreate(
 catalogueCreate(
   "/internal/catalogue/plays",
   "Catalogue a play on a pipe (internal, api-key)",
-  "A pipe x a strategy, catalogued per pipe so its ROI compares across clients (never invented per campaign). The pipe must be a platform pipe that already catalogues its default play (400 `pipe_has_no_default_play`). Idempotent: an existing play answers 200 `created: false`.",
+  "A pipe x a strategy, catalogued per pipe so its ROI compares across clients (never invented per campaign). The pipe must be a platform pipe (400 `pipe_not_ours`); a pipe that catalogues no play yet takes one too (its default play stays every assigned workflow, the new play narrows it). Idempotent: an existing play answers 200 `created: false`.",
   z.object({ pipeId: z.string(), strategyId: z.string(), createdBy: z.string() }),
   catalogueTacticPlayRow.extend({ created: z.boolean() }),
 );
