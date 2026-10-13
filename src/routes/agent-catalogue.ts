@@ -1607,7 +1607,10 @@ router.get("/internal/catalogue/plays/:id", apiKeyOnly, async (req, res) => {
   }
 });
 
-/** Catalogue a play on a pipe (`{pipeId, strategyId, createdBy}`): plays are per pipe, never invented per campaign. */
+/**
+ * Catalogue a play on a pipe (`{pipeId, strategyId, createdBy}`): plays are per pipe, never invented per campaign. A pipe
+ * that catalogues no play yet takes one too: its default stays "every assigned workflow" and the play narrows it.
+ */
 router.post("/internal/catalogue/plays", apiKeyOnly, async (req, res) => {
   const body = (req.body ?? {}) as Body;
   try {
@@ -1618,7 +1621,6 @@ router.post("/internal/catalogue/plays", apiKeyOnly, async (req, res) => {
     const pipe = before.model.pipes.get(pipeId);
     if (!pipe) throw new DeclarationError(404, "pipe_not_found", `no pipe ${pipeId}`);
     if (pipe.operatedBy !== "platform") throw bad("pipe_not_ours", `${pipeId} is worked by the customer's own team: no workflow of ours runs it, so no strategy chooses one`);
-    if (!pipe.play) throw bad("pipe_has_no_default_play", `${pipeId} catalogues no play yet: its default play (the strategy matching what it runs today) is declared first, by staff`);
     const { created } = await insertPlay({ pipeId, strategyId, createdBy });
     const { model } = await loadModel();
     const play = pipeOrPlayById(model, playIdOf(pipeId, strategyId));

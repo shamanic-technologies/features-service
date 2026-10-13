@@ -140,7 +140,7 @@ const MEET = "ai-meeting-booking|conversation_to_meeting_booked";
 
 // Tactics, strategies and plays (owner 2026-10-13): the cold email pipe catalogues Valid only (default) and
 // Valid + Catch-all; Jev judged orion "no" and nova (a catch-all copy) "yes".
-const playState = vi.hoisted(() => ({ verdicts: [] as any[] }));
+const playState = vi.hoisted(() => ({ verdicts: [] as any[], added: [] as any[] }));
 vi.mock("../lib/plays-store.js", async () => {
   const { buildPlayCatalogue } = await import("../lib/plays.js");
   const tactics = [{ id: "catch-all", name: "Catch-all", description: "Sends to addresses whose mail server accepts every address, so the mailbox cannot be confirmed.", createdBy: "t", createdAt: "" }];
@@ -153,12 +153,16 @@ vi.mock("../lib/plays-store.js", async () => {
     { pipeId: "sales-cold-email-outreach|lead_found_to_conversation", strategyId: "valid-catch-all", isDefault: false },
   ];
   return {
-    loadPlayCatalogue: async () => buildPlayCatalogue({ tactics, strategies, plays, verdicts: playState.verdicts }),
+    loadPlayCatalogue: async () => buildPlayCatalogue({ tactics, strategies, plays: [...plays, ...playState.added], verdicts: playState.verdicts }),
     invalidatePlayCatalogue: () => {},
     listVerdicts: async () => playState.verdicts,
     insertTactic: vi.fn(),
     insertStrategy: vi.fn(),
-    insertPlay: vi.fn(async () => ({ created: false })),
+    insertPlay: vi.fn(async (input: { pipeId: string; strategyId: string }) => {
+      if ([...plays, ...playState.added].some((p) => p.pipeId === input.pipeId && p.strategyId === input.strategyId)) return { created: false };
+      playState.added.push({ pipeId: input.pipeId, strategyId: input.strategyId, isDefault: false });
+      return { created: true };
+    }),
     insertVerdict: vi.fn(),
     refreshVersionActive: vi.fn(),
   };
@@ -179,6 +183,7 @@ beforeEach(() => {
     { featureSlug: "sales-cold-email-outreach", legKey: "lead_found_to_conversation", workflowDynastySlug: "orion", state: "active", decidedBy: "t", decidedAt: "", note: null },
   ];
   playState.verdicts = [verdict("orion-v1", "orion", false)];
+  playState.added = [];
   __setCatalogueMeasurementsForTest(
     new Map([
       [COLD, { basis: "mature", costPerOutcomeUsd: 40, conversionRatePct: 1, workflowDynastySlug: "orion" }],
@@ -247,5 +252,26 @@ describe("plays (owner 2026-10-13): a pipe x a strategy, ROI per play", () => {
     ]);
     const detail = (await request(app).get(`/internal/catalogue/plays/${encodeURIComponent(CATCH)}`).set(KEY)).body;
     expect(detail.excludedWorkflowDynastySlugs).toEqual(["orion"]);
+  });
+
+  it("a play is added to a pipe that catalogues none yet: its default stays every assigned workflow, the play narrows it", async () => {
+    const VISIT = "sales-cold-email-outreach|lead_found_to_website_visit";
+    mem.assignments.push(
+      { featureSlug: "sales-cold-email-outreach", legKey: "lead_found_to_website_visit", workflowDynastySlug: "orion", state: "active", decidedBy: "t", decidedAt: "", note: null },
+      { featureSlug: "sales-cold-email-outreach", legKey: "lead_found_to_website_visit", workflowDynastySlug: "nova", state: "active", decidedBy: "t", decidedAt: "", note: null },
+    );
+    playState.verdicts.push(verdict("nova-v1", "nova", true));
+    const created = await request(app).post("/internal/catalogue/plays").set(KEY).send({ pipeId: VISIT, strategyId: "valid-catch-all", createdBy: "test" });
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({ created: true, id: `${VISIT}~valid-catch-all`, strategyId: "valid-catch-all", default: false, allowedActiveWorkflowCount: 1 });
+    const plays = (await request(app).get("/internal/catalogue/plays").query({ pipe: VISIT }).set(KEY)).body.rows;
+    expect(plays.map((p: any) => [p.id, p.strategyId, p.default])).toEqual([
+      [VISIT, null, true],
+      [`${VISIT}~valid-catch-all`, "valid-catch-all", false],
+    ]);
+    // Re-adding the same play is idempotent.
+    const again = await request(app).post("/internal/catalogue/plays").set(KEY).send({ pipeId: VISIT, strategyId: "valid-catch-all", createdBy: "test" });
+    expect(again.status).toBe(200);
+    expect(again.body.created).toBe(false);
   });
 });
