@@ -47,6 +47,8 @@ vi.mock("../lib/value-added-io.js", () => ({ computeTakeoverReturn: (...a: unkno
 vi.mock("../lib/brand-ownership.js", () => ({ assertBrandHeld: vi.fn(async () => {}), BrandOwnershipError: class extends Error {} }));
 const fetchWithRetry = vi.fn();
 vi.mock("../lib/fetch-retry.js", () => ({ fetchWithRetry: (...a: unknown[]) => fetchWithRetry(...a) }));
+const warmFunnelCampaignReads = vi.fn(async () => ({ urls: [], skippedReason: null }));
+vi.mock("../lib/funnel-campaign-warm.js", () => ({ warmFunnelCampaignReads: (...a: unknown[]) => warmFunnelCampaignReads(...(a as [])) }));
 vi.mock("../lib/view-cache.js", () => ({ servedCached: async (a: { compute: () => unknown }) => a.compute(), buildScopeKey: () => "k" }));
 
 process.env.FEATURES_SERVICE_API_KEY = "test-key";
@@ -68,6 +70,7 @@ beforeEach(() => {
   distinctChannelFunnels.mockReset();
   fetchWithRetry.mockReset();
   funnelCampaignActivity.mockReset();
+  warmFunnelCampaignReads.mockClear();
   funnelCampaignActivity.mockResolvedValue({ funnel: null, funnelUnavailableReason: "sales_funnel_not_in_catalogue" });
 });
 
@@ -168,5 +171,64 @@ describe("GET /brands/:brandId/sales-funnel-campaigns", () => {
     expect(motivate).toMatchObject({ takeoverStep: "conversation", roiMultiple: 50, investedUsd: 10, headline: { totalPipelineUsd: 500 } });
     expect(computeFeatureRevenue).toHaveBeenCalledTimes(1);
     expect(computeTakeoverReturn.mock.calls[0][0]).toMatchObject({ takeoverStep: "conversation", unitCampaignIds: ["c3"], takeoverLeg: { legKey: "conversation_to_meeting_booked", toStep: "meeting_booked" } });
+  });
+});
+
+describe("GET /brands/:brandId/sales-funnel-campaigns?fields=copy (INSTANT-CAMPAIGN-ROWS)", () => {
+  it("serves each row's copy, byte-equal to the full row's same fields, with no money read", async () => {
+    const rows = [FC("fc1", "f1", [unit("c1", "sourcing-apollo-cold-filters", "start_to_lead_found")]), FC("fc2", REACTIVE, [unit("c2", "ai-meeting-booking", "conversation_to_meeting_booked")]), FC("fc3", "unknown", [])];
+    fetchWithRetry.mockImplementation(async () => new Response(JSON.stringify({ salesFunnelCampaigns: rows })));
+    distinctChannelFunnels.mockReturnValue([{ key: "sales" }]);
+    computeFeatureRevenue.mockResolvedValue({ headline: null, costEconomics: { committedCostUsd: 1, roiMultiple: 1, unmeasuredReason: null }, maturity: null });
+    computeTakeoverReturn.mockResolvedValue({ headline: null, costEconomics: { committedCostUsd: 1, roiMultiple: 1, unmeasuredReason: null }, maturity: null, valueAdded: null });
+
+    const lean = await request(app).get("/brands/b1/sales-funnel-campaigns?offerId=of1&fields=copy").set(AUTH);
+    expect(lean.status).toBe(200);
+    expect(computeFeatureRevenue).not.toHaveBeenCalled();
+    expect(computeTakeoverReturn).not.toHaveBeenCalled();
+    expect(funnelCampaignActivity).not.toHaveBeenCalled();
+    expect(lean.body).toMatchObject({ brandId: "b1", offerId: "of1", fields: "copy" });
+    expect(lean.body.salesFunnelCampaigns.map((r: { typeLabel: string | null }) => r.typeLabel)).toEqual(["Daily", "Positive replies", null]);
+    expect(lean.body.salesFunnelCampaigns[2]).toMatchObject({ path: null, copyUnavailableReason: "sales_funnel_not_in_catalogue" });
+
+    const full = await request(app).get("/brands/b1/sales-funnel-campaigns?offerId=of1").set(AUTH);
+    const keys = Object.keys(lean.body.salesFunnelCampaigns[0]);
+    expect(keys).toEqual(["id", "brandId", "offerId", "salesFunnelId", "name", "face", "status", "stopReason", "createdAt", "type", "triggerLabel", "typeLabel", "path", "copyUnavailableReason", "units"]);
+    full.body.salesFunnelCampaigns.forEach((row: Record<string, unknown>, i: number) => {
+      expect(Object.fromEntries(keys.map((k) => [k, row[k]]))).toEqual(lean.body.salesFunnelCampaigns[i]);
+    });
+  });
+
+  it("warms the money of a campaign created in the last 15 minutes, under the caller's identity; an older one warms nothing", async () => {
+    const fresh = { ...FC("fc1", "f1", []), createdAt: new Date(Date.now() - 5_000).toISOString() };
+    fetchWithRetry.mockImplementation(async () => new Response(JSON.stringify({ salesFunnelCampaigns: [fresh, FC("fc2", "f1", [])] })));
+    await request(app).get("/brands/b1/sales-funnel-campaigns?fields=copy").set(AUTH).expect(200);
+    expect(warmFunnelCampaignReads).toHaveBeenCalledTimes(1);
+    expect(warmFunnelCampaignReads.mock.calls[0]).toEqual([{ brandId: "b1", offerId: "of1", identity: { orgId: AUTH["x-org-id"], userId: AUTH["x-user-id"], runId: AUTH["x-run-id"] } }]);
+
+    warmFunnelCampaignReads.mockClear();
+    fetchWithRetry.mockImplementation(async () => new Response(JSON.stringify({ salesFunnelCampaigns: [FC("fc2", "f1", [])] })));
+    await request(app).get("/brands/b1/sales-funnel-campaigns?fields=copy").set(AUTH).expect(200);
+    expect(warmFunnelCampaignReads).not.toHaveBeenCalled();
+  });
+
+  it("an unknown fields value is a 400; campaign-service down is still a 502", async () => {
+    expect((await request(app).get("/brands/b1/sales-funnel-campaigns?fields=money").set(AUTH)).body.reason).toBe("fields_unrecognised");
+    fetchWithRetry.mockResolvedValue(new Response("boom", { status: 500 }));
+    expect((await request(app).get("/brands/b1/sales-funnel-campaigns?fields=copy").set(AUTH)).status).toBe(502);
+  });
+});
+
+describe("POST /internal/brands/:brandId/sales-funnel-campaigns/precompute", () => {
+  const app2 = express().use(express.json()).use(router);
+  it("answers 202 at once and warms the brand's reads under the caller's identity", async () => {
+    const res = await request(app2).post("/internal/brands/b1/sales-funnel-campaigns/precompute").set(AUTH).send({ offerId: "of1" });
+    expect(res.status).toBe(202);
+    expect(res.body).toEqual({ brandId: "b1", offerId: "of1", accepted: true });
+    expect(warmFunnelCampaignReads.mock.calls[0]).toEqual([{ brandId: "b1", offerId: "of1", identity: { orgId: AUTH["x-org-id"], userId: AUTH["x-user-id"], runId: AUTH["x-run-id"] } }]);
+  });
+  it("no offer = brand-wide; a malformed offer = 400", async () => {
+    expect((await request(app2).post("/internal/brands/b1/sales-funnel-campaigns/precompute").set(AUTH).send({})).body.offerId).toBeNull();
+    expect((await request(app2).post("/internal/brands/b1/sales-funnel-campaigns/precompute").set(AUTH).send({ offerId: 3 })).body.reason).toBe("offer_id_unrecognised");
   });
 });

@@ -27,7 +27,7 @@ import { apiKeyAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import { computeFeatureRevenue, fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel, pricedFingerprint, type DownstreamHeaders } from "./revenue.js";
 import type { FunnelPricedEconomics } from "../lib/offer-pricing.js";
 import { distinctChannelFunnels } from "./offer-economics.js";
-import { funnelCopiesFor } from "./agent-catalogue.js";
+import { funnelCopiesFor, type FunnelCopy, type FunnelPathView } from "./agent-catalogue.js";
 import { faceOf } from "../lib/catalogue-faces.js";
 import { assertBrandHeld, BrandOwnershipError } from "../lib/brand-ownership.js";
 import { parsePricing } from "../lib/pricing.js";
@@ -41,6 +41,8 @@ import { STEP_SIGNAL, takeoverStepOf } from "../lib/value-added.js";
 import { computeTakeoverReturn } from "../lib/value-added-io.js";
 import { expectedReturnForFunnelCampaign } from "../lib/expected-return.js";
 import { funnelCampaignActivity, type FunnelCampaignActivityBody } from "./sales-funnel-campaign-activity.js";
+import { warmFunnelCampaignReads } from "../lib/funnel-campaign-warm.js";
+import type { SalesFunnelCampaignRow } from "../lib/sales-funnel-campaigns-client.js";
 
 const router = Router();
 
@@ -54,6 +56,40 @@ export function pricingForUnits(declared: DeclaredSalesFunnel[], all: FunnelPric
   return priceOnDeclaredFunnel(own, own.length === 1 ? own[0].funnelKey : undefined);
 }
 
+/** A funnel campaign created this recently has its money warmed behind a `?fields=copy` read (it may have no cell yet). */
+const FRESH_CAMPAIGN_MS = 15 * 60_000;
+
+/**
+ * PURE: a row's COPY (owner 2026-10-13, INSTANT-CAMPAIGN-ROWS): everything that depends only on the funnel
+ * campaign and its catalogue funnel, never on money. The full row starts with exactly these fields.
+ */
+export function funnelCampaignCopyRow(
+  r: SalesFunnelCampaignRow,
+  copy: Pick<FunnelCopy, "type" | "triggerLabel"> | null,
+  path: FunnelPathView | null,
+) {
+  return {
+    id: r.id,
+    brandId: r.brandId,
+    offerId: r.offerId,
+    salesFunnelId: r.salesFunnelId,
+    name: r.salesFunnelName,
+    face: faceOf(r.salesFunnelName).svgPath,
+    status: r.status,
+    stopReason: r.stopReason,
+    createdAt: r.createdAt,
+    type: copy?.type ?? null,
+    triggerLabel: copy?.triggerLabel ?? null,
+    // The Type column (owner 2026-10-11): "Daily" for a proactive funnel, its trigger for a reactive one.
+    typeLabel: copy ? (copy.type === "proactive" ? "Daily" : copy.triggerLabel) : null,
+    // The path the dashboard draws in place of the sentence (owner 2026-10-11), structured: never parsed from an id.
+    // One channel per leg (owner 2026-10-11): the funnel's own path.
+    path: copy ? path : null,
+    copyUnavailableReason: copy ? null : ("sales_funnel_not_in_catalogue" as const),
+    units: r.units.map((u) => ({ campaignId: u.campaignId, pipeId: u.pipeId, featureSlug: u.featureSlug, legKey: u.legKey, status: u.status })),
+  };
+}
+
 router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, res) => {
   try {
     const auth = req as AuthenticatedRequest & { params: { brandId: string } };
@@ -61,10 +97,29 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
     const offerFilter = typeof req.query.offerId === "string" && req.query.offerId.trim() !== "" ? req.query.offerId.trim() : null;
     const pricing = parsePricing(req.query.pricing);
     if (pricing === null) return void res.status(400).json({ error: "pricing must be one of: gross, net", reason: "pricing_unrecognised" });
+    const fields = req.query.fields;
+    if (fields !== undefined && fields !== "copy") return void res.status(400).json({ error: "fields must be: copy", reason: "fields_unrecognised" });
     const headers: DownstreamHeaders = { orgId: auth.orgId, userId: auth.userId, runId: auth.runId, featureSlug: undefined };
 
     const [rows] = await Promise.all([fetchSalesFunnelCampaigns(brandId, offerFilter, headers), assertBrandHeld(brandId, headers)]);
     const { copies, pipeSteps, pathOf } = await funnelCopiesFor([...new Set(rows.map((r) => r.salesFunnelId))]);
+
+    // `?fields=copy` (owner 2026-10-13, INSTANT-CAMPAIGN-ROWS): the rows' copy alone, live, no money read, so a
+    // campaign created seconds ago has its path and Type at once. A campaign that young may have no money cell
+    // yet: its full read is computed behind this answer, so the money read that follows is a hit.
+    if (fields === "copy") {
+      res.json({
+        brandId,
+        offerId: offerFilter,
+        fields: "copy",
+        salesFunnelCampaigns: rows.map((r) => funnelCampaignCopyRow(r, copies.get(r.salesFunnelId) ?? null, pathOf(r.salesFunnelId))),
+      });
+      const fresh = rows.filter((r) => Date.now() - Date.parse(r.createdAt) < FRESH_CAMPAIGN_MS);
+      for (const offerId of new Set(fresh.map((r) => r.offerId))) {
+        void warmFunnelCampaignReads({ brandId, offerId, identity: { orgId: auth.orgId, userId: auth.userId, runId: auth.runId } });
+      }
+      return;
+    }
 
     // The offer's terms, read ONCE per offer and shared by its funnel campaigns.
     const offerIds = [...new Set(rows.map((r) => r.offerId))];
@@ -144,24 +199,7 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
       );
 
       return {
-        id: r.id,
-        brandId: r.brandId,
-        offerId: r.offerId,
-        salesFunnelId: r.salesFunnelId,
-        name: r.salesFunnelName,
-        face: faceOf(r.salesFunnelName).svgPath,
-        status: r.status,
-        stopReason: r.stopReason,
-        createdAt: r.createdAt,
-        type: copy?.type ?? null,
-        triggerLabel: copy?.triggerLabel ?? null,
-        // The Type column (owner 2026-10-11): "Daily" for a proactive funnel, its trigger for a reactive one.
-        typeLabel: copy ? (copy.type === "proactive" ? "Daily" : copy.triggerLabel) : null,
-        // The path the dashboard draws in place of the sentence (owner 2026-10-11), structured: never parsed from an id.
-        // One channel per leg (owner 2026-10-11): the funnel's own path.
-        path: copy ? pathOf(r.salesFunnelId) : null,
-        copyUnavailableReason: copy ? null : "sales_funnel_not_in_catalogue",
-        units: r.units.map((u) => ({ campaignId: u.campaignId, pipeId: u.pipeId, featureSlug: u.featureSlug, legKey: u.legKey, status: u.status })),
+        ...funnelCampaignCopyRow(r, copy, pathOf(r.salesFunnelId)),
         investedUsd: money ? money.costEconomics.committedCostUsd : 0,
         roiMultiple: money && distinct.length <= 1 ? money.costEconomics.roiMultiple : null,
         moneyUnavailableReason: distinct.length > 1 ? "units_price_differently" : null,
@@ -188,6 +226,22 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
     console.error("[features-service] sales funnel campaigns error:", err);
     res.status(502).json({ error: "Failed to read sales funnel campaigns" });
   }
+});
+
+/**
+ * WARM A BRAND'S FUNNEL CAMPAIGN READS NOW (owner 2026-10-13, INSTANT-CAMPAIGN-ROWS): called by campaign-service
+ * right after it creates a sales funnel campaign, with the creating request's identity, so the customer's first
+ * Campaigns read is a hit. 202 at once; the reads are computed behind (`lib/funnel-campaign-warm.ts`).
+ */
+router.post("/internal/brands/:brandId/sales-funnel-campaigns/precompute", apiKeyAuth, (req, res) => {
+  const auth = req as AuthenticatedRequest & { params: { brandId: string } };
+  const body = (req.body ?? {}) as { offerId?: unknown };
+  if (body.offerId !== undefined && body.offerId !== null && (typeof body.offerId !== "string" || body.offerId.trim() === "")) {
+    return void res.status(400).json({ error: "offerId must be a non-empty string when given", reason: "offer_id_unrecognised" });
+  }
+  const offerId = typeof body.offerId === "string" ? body.offerId.trim() : null;
+  res.status(202).json({ brandId: auth.params.brandId, offerId, accepted: true });
+  void warmFunnelCampaignReads({ brandId: auth.params.brandId, offerId, identity: { orgId: auth.orgId, userId: auth.userId, runId: auth.runId } });
 });
 
 export default router;
