@@ -17,6 +17,11 @@ import { fetchWithRetry } from "./fetch-retry.js";
  * never a standing (the standing `disqualified` is always empty since 2026-10-13). With an offer: the
  * people disqualified for it (its own mark, or a brand-wide one); without: every marked person of the
  * brand. Read whole (the list is unpaged), fail loud: a swallowed read would price a ruled-out lead.
+ *
+ * A mark can also sit on the lead's COMPANY ("not our target", lead-service v0.83.65, owner 2026-10-13):
+ * listed under `companies`, it covers every lead of that company. lead-service names the leads each
+ * company mark covers (`companies[].leadIds`), and they are ruled out exactly like a lead's own mark.
+ * Company membership is lead-service's (its company key), never rebuilt here from names or domains.
  */
 export async function fetchDisqualifiedLeadIds(
   brandId: string,
@@ -37,7 +42,7 @@ export async function fetchDisqualifiedLeadIds(
       const text = await response.text();
       throw new Error(`lead-service /orgs/leads/disqualifications failed (${response.status}): ${text}`);
     }
-    return (await response.json()) as { leads?: unknown };
+    return (await response.json()) as { leads?: unknown; companies?: unknown };
   })();
   if (!Array.isArray(data.leads)) throw new Error("lead-service /orgs/leads/disqualifications returned no leads array");
   const ids = new Set<string>();
@@ -46,6 +51,18 @@ export async function fetchDisqualifiedLeadIds(
       throw new Error("lead-service /orgs/leads/disqualifications returned a row without a leadId");
     }
     ids.add(row.leadId);
+  }
+  if (!Array.isArray(data.companies)) throw new Error("lead-service /orgs/leads/disqualifications returned no companies array");
+  for (const company of data.companies as Array<{ companyKey?: unknown; leadIds?: unknown }>) {
+    if (!Array.isArray(company?.leadIds)) {
+      throw new Error(`lead-service /orgs/leads/disqualifications returned company ${String(company?.companyKey)} without leadIds`);
+    }
+    for (const leadId of company.leadIds as unknown[]) {
+      if (typeof leadId !== "string" || leadId === "") {
+        throw new Error("lead-service /orgs/leads/disqualifications returned a company lead without an id");
+      }
+      ids.add(leadId);
+    }
   }
   return ids;
 }
