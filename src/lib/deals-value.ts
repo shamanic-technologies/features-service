@@ -12,11 +12,15 @@
  *     prod (Doc Dinners, meetings booked through the CRM). The column total is company-level exactly as
  *     the pipeline is: an organisation is one client, worth the MAX over its members, organisations
  *     summed — a SUBSET of the all-cause pipeline (`/revenue?cause=outreach,other,unstated`).
- *     A card the engine still prices at 0 says why (`zeroValueReason`).
+ *     A card the engine still prices at 0 says why (`zeroValueReason`). A person lead-service holds a
+ *     live "Disqualified" MARK on (its own mark beside the standing since lead-service v0.83.59, read off
+ *     `GET /orgs/leads/disqualifications`, never re-derived) is RULED OUT: card at 0, `ruled_out`, adds
+ *     nothing to the column. The mark leaves their standing untouched, so they can still stand here.
  *   - `customer` (Won) — what was won: the amount a human STATED on the sale (whoever caused it — this
  *     column shows the deal, not our share of it), else the brand's lifetime revenue per client, and
  *     each card says which (`valueSource`). One organisation is one client: MAX over its members.
- *   - `disqualified`, `opted_out`, `not_contacted`, `unresolved` — no value, and the column SAYS so with a
+ *   - `disqualified` (always empty since 2026-10-13: lead-service kept the key, Disqualified is the mark
+ *     above), `opted_out`, `not_contacted`, `unresolved` — no value, and the column SAYS so with a
  *     reason (`unvaluedReason`), never a 0. A lead ruled out or opted out is worth nothing going forward
  *     and we do not invent a past value; a lead never placed has done nothing to price.
  *   - `contacted` / `engaged` are not valued here: the Contacted column's value is
@@ -52,7 +56,8 @@ export type DealsColumnUnvaluedReason =
 export type WonValueSource = "stated_amount" | "lifetime_revenue";
 
 export type DealCardZeroReason =
-  /** A human ruled the lead out of every funnel it could close through, or it went cold. */
+  /** A human ruled the lead out of every funnel it could close through, it went cold, or it carries
+   * lead-service's Disqualified mark. */
   | "ruled_out"
   /** The steps it reached are on no funnel the brand is priced on. */
   | "step_not_priced";
@@ -124,6 +129,8 @@ export function priceDealsColumns(input: {
   lifetimeRevenueUsd: number | null;
   /** lead-service's members per valued standing. */
   members: Record<ValuedStanding, ReadonlySet<string>>;
+  /** lead-service's live Disqualified marks (lead ids): an Interested card among them is ruled out. */
+  disqualified: ReadonlySet<string>;
   /** Per canonical email: the amount a human stated on the SALE, whoever caused it. */
   statedWonAmountUsdByEmail: ReadonlyMap<string, number> | null;
   pricedCauses: readonly string[];
@@ -140,7 +147,9 @@ export function priceDealsColumns(input: {
 
     if (standing === "sales_interest") {
       const reason: DealsColumnUnvaluedReason | null = ltr === null ? "no_economics" : !(ltr > 0) ? "no_client_value" : null;
-      const values = held.map((p) => (reason !== null || p === null ? null : expectedValueOfPerson(p, input.paths, ltr!)));
+      const values = held.map((p, i) =>
+        reason !== null || p === null ? null : input.disqualified.has(ids[i]) ? 0 : expectedValueOfPerson(p, input.paths, ltr!),
+      );
       return {
         ...base,
         ...companyTotal(held, values, reason),
@@ -149,7 +158,11 @@ export function priceDealsColumns(input: {
           const v = values[i];
           const p = held[i];
           const zeroValueReason: DealCardZeroReason | null =
-            v === 0 && p ? ((p.deadSignals?.length ?? 0) > 0 ? "ruled_out" : "step_not_priced") : null;
+            v === 0 && p
+              ? input.disqualified.has(leadId) || (p.deadSignals?.length ?? 0) > 0
+                ? "ruled_out"
+                : "step_not_priced"
+              : null;
           return { leadId, valueUsd: v === null ? null : round(v), zeroValueReason };
         }),
       };
