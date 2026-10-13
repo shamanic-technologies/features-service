@@ -127,6 +127,15 @@ describe("buildScopeKey", () => {
     const key = buildScopeKey("feat", { brandId: "b", campaignId: undefined, lens: "" });
     expect(key).toBe("feat|brandId=b");
   });
+
+  it("stores a part too long for the index as its fingerprint; short parts stay verbatim", () => {
+    const ids = Array.from({ length: 80 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`);
+    const key = buildScopeKey("offer", { brandId: "b", campaigns: ids.join("+") });
+    expect(key.length).toBeLessThan(200);
+    expect(key).toMatch(/^offer\|brandId=b&campaigns=sha256%3A[0-9a-f]{32}$/);
+    expect(buildScopeKey("offer", { brandId: "b", campaigns: ids.slice(1).join("+") })).not.toBe(key);
+    expect(buildScopeKey("offer", { brandId: "b", campaigns: "c1+c2" })).toBe("offer|brandId=b&campaigns=c1%2Bc2");
+  });
 });
 
 describe("servedCached", () => {
