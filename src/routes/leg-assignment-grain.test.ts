@@ -480,6 +480,16 @@ describe("a campaign's PLAY decides which workflows may run (owner 2026-10-13, l
     expect(rowOf(catchAll.body, "lithium").resolved).toEqual(rowOf(def.body, "lithium").resolved);
   });
 
+  it("a workflow ACTIVE on the leg but not judged yet never runs under a play naming the tactic (owner 2026-10-13)", async () => {
+    // neon: just registered active (workflow-service makes a copy active at birth), Jev has not answered yet.
+    assign("start_to_conversation", { lithium: "active", sodium: "active", argon: "deprecated", neon: "active" });
+    const res = await get("leg=start_to_conversation&campaignId=unit-default");
+    expect(selectableSet(res.body)).toEqual(["lithium"]);
+    expect(rowOf(res.body, "neon").legAssignment).toMatchObject({ state: "active", selectable: false });
+    expect(rowOf(res.body, "neon").legAssignment.reason).toContain("not been judged");
+    expect(rowOf(res.body, "neon").modelEligibility.eligible).toBe(false);
+  });
+
   it("nothing allowed = nothing recommended, stated (campaign-service holds, never falls back)", async () => {
     const { loadPlayCatalogue } = await import("../lib/plays-store.js");
     const current = await loadPlayCatalogue();
