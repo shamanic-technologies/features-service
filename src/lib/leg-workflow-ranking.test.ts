@@ -15,6 +15,7 @@ function rank(byDynasty: Record<string, LegMaturityFigures>, assignments: Record
     byDynasty: new Map(Object.entries(byDynasty)),
     names: new Map(slugs.map((s) => [s, s.toUpperCase()])),
     assignments: new Map(slugs.map((s) => [s, assignments[s] ?? "active"])),
+    executable: new Set(slugs),
     pipelineUsd: new Map(),
     billedSpendUsd: new Map(),
   });
@@ -69,6 +70,7 @@ describe("rankLegWorkflows", () => {
       ]),
       names: new Map(),
       assignments: new Map(),
+      executable: new Set(["never", "ran"]),
       pipelineUsd: new Map(),
       billedSpendUsd: new Map(),
     });
@@ -85,6 +87,7 @@ describe("rankLegWorkflows", () => {
       ]),
       names: new Map(),
       assignments: new Map([["a", "active"], ["b", "active"], ["c", "active"]]),
+      executable: new Set(["a", "b", "c"]),
       pipelineUsd: new Map([["a", 500], ["c", 500]]),
       billedSpendUsd: new Map([["a", 100], ["b", 100], ["c", 0]]),
     });
@@ -97,10 +100,30 @@ describe("rankLegWorkflows", () => {
       byDynasty: new Map([["raven", wf([14, 400, 1], [0, 0, 0])]]),
       names: new Map(),
       assignments: new Map([["algenib", "active"], ["raven", "active"]]),
+      executable: new Set(["algenib", "raven"]),
       pipelineUsd: new Map(),
       billedSpendUsd: new Map(),
     });
     expect(rows.map((r) => r.workflowDynastySlug)).toEqual(["raven", "algenib"]);
     expect(rows[1]).toMatchObject({ assignment: "active", selectable: true, outcomes: 0, spentUsd: 0, costPerOutcomeUsd: null, basis: "flash" });
+  });
+
+  // RANKING-RETIRED-SELECTABLE-1013: allegro/atlantis/bastion read "active, selectable" on a cold email leg while
+  // workflow-service had no runnable version of them (every version deprecated) and refused every run with a 410.
+  it("a workflow assigned active whose every version is retired is never selectable and sits after every runnable one", () => {
+    const rows = rankLegWorkflows({
+      byDynasty: new Map([
+        ["allegro", wf([10, 1000, 5], [10, 1000, 5])], // mature $2, cheapest, but nothing runs it
+        ["lyonesse", wf([50, 1000, 1], [50, 1000, 1])], // mature $50, runnable
+      ]),
+      names: new Map(),
+      assignments: new Map([["allegro", "active"], ["lyonesse", "active"]]),
+      executable: new Set(["lyonesse"]),
+      pipelineUsd: new Map(),
+      billedSpendUsd: new Map(),
+    });
+    expect(rows.map((r) => r.workflowDynastySlug)).toEqual(["lyonesse", "allegro"]);
+    expect(rows[0]).toMatchObject({ selectable: true, executable: true, goesFirst: true, moneyGoesHere: true });
+    expect(rows[1]).toMatchObject({ assignment: "active", executable: false, selectable: false, goesFirst: false, moneyGoesHere: false });
   });
 });

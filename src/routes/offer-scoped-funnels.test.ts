@@ -123,7 +123,7 @@ function urlOf(input: unknown): string {
 function workflow(slug: string): Record<string, unknown> {
   return {
     id: `id-${slug}`, workflowSlug: slug, workflowName: slug, workflowDynastySlug: slug, workflowDynastyName: slug,
-    version: 1, status: "active", featureSlug: FEATURE.slug, createdForBrandId: null, upgradedTo: null,
+    version: 1, status: "active", workflowDynastyStatus: "active", featureSlug: FEATURE.slug, createdForBrandId: null, upgradedTo: null,
   };
 }
 function costGroup(dimensions: Record<string, string>, cents: number, runCount = 1): Record<string, unknown> {
