@@ -20,9 +20,25 @@ export interface WorkflowMetadata {
   workflowDynastySlug: string;
   version: number;
   status: string;
+  /** The LINEAGE's retirement flag (workflow-service). A version runs only when both axes are `active`. */
+  workflowDynastyStatus: "active" | "deprecated";
   featureSlug: string;
   createdForBrandId: string | null;
   upgradedTo: string | null;
+}
+
+/**
+ * PURE. The dynasties workflow-service can EXECUTE: at least one version active on BOTH status axes (its
+ * own definition of the runnable set, `status=active` on `/public/workflows`). A dynasty whose every version
+ * is deprecated is refused with a 410 on execute, so no leg read may call it selectable
+ * (RANKING-RETIRED-SELECTABLE-1013: 29 of 50 rows on a cold email leg were such dynasties, ranked active).
+ */
+export function executableDynasties(workflows: ReadonlyArray<Pick<WorkflowMetadata, "workflowDynastySlug" | "status" | "workflowDynastyStatus">>): Set<string> {
+  const out = new Set<string>();
+  for (const w of workflows) {
+    if (w.status === "active" && w.workflowDynastyStatus === "active") out.add(w.workflowDynastySlug);
+  }
+  return out;
 }
 
 export interface CostGroup {

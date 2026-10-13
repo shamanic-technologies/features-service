@@ -65,6 +65,7 @@ import {
 import { fetchWorkflowContentModelsSoft } from "../lib/workflow-content-model-client.js";
 import {
   fetchPublicWorkflows,
+  executableDynasties,
   fetchPublicCosts,
   fetchPublicEmailStats,
   type CostGroup,
@@ -1235,9 +1236,10 @@ type ProjectionCostBasis = "billed" | "actual";
  * `no_active_workflows`; only deprecated ones → `recommendationWithheldReason: "no_eligible_workflow"`.
  */
 export async function unpricedPipeProjection(featureSlug: string, legKey: string, maximize: Maximize): Promise<WorkflowProjectionResponse> {
-  const assignments = await fetchLegAssignments(featureSlug, legKey);
+  const [assignments, workflows] = await Promise.all([fetchLegAssignments(featureSlug, legKey), fetchPublicWorkflows(featureSlug, "all")]);
+  const executable = executableDynasties(workflows);
   const verdicts = [...assignments.keys()]
-    .map((slug) => ({ slug, verdict: legAssignmentVerdict(assignments.get(slug), legKey) }))
+    .map((slug) => ({ slug, verdict: legAssignmentVerdict(assignments.get(slug), legKey, executable.has(slug)) }))
     .sort((a, b) => Number(b.verdict.selectable) - Number(a.verdict.selectable) || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
   const rows: ProjectionRow[] = verdicts.map(({ slug, verdict }, i) => ({
     audienceId: null,
@@ -1742,8 +1744,11 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
     if (legKey && legAssignments) {
       const leg = funnelLeg(legKey)!;
       const dynastySlugs = new Set(evidence.workflows.map((w) => w.workflowDynastySlug));
+      // Which of them workflow-service can RUN, read LIVE beside the cached evidence (a retirement counts at
+      // once, and a snapshot written before this field existed cannot read as "nothing runs").
+      const executable = executableDynasties(await fetchPublicWorkflows(featureSlug, "all"));
       legAssignmentByDynasty = new Map(
-        [...dynastySlugs].map((slug) => [slug, legAssignmentVerdict(legAssignments.get(slug), leg.toStep.label)]),
+        [...dynastySlugs].map((slug) => [slug, legAssignmentVerdict(legAssignments.get(slug), leg.toStep.label, executable.has(slug))]),
       );
       modelAliasByDynasty = contentModels;
       // ── AND WHETHER THE CAMPAIGN'S PLAY ALLOWS IT (owner 2026-10-13, `lib/plays.ts`) ─────────────────

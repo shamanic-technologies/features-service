@@ -97,9 +97,9 @@ const CONVERSATION_FUNNEL = {
 };
 
 const WORKFLOWS = [
-  { id: "i1", workflowSlug: "wf-lithium", workflowName: "Lithium", workflowDynastyName: "Lithium", workflowDynastySlug: "lithium", version: 1, status: "active", featureSlug: "x", createdForBrandId: null, upgradedTo: null },
-  { id: "i2", workflowSlug: "wf-sodium", workflowName: "Sodium", workflowDynastyName: "Sodium", workflowDynastySlug: "sodium", version: 1, status: "active", featureSlug: "x", createdForBrandId: null, upgradedTo: null },
-  { id: "i3", workflowSlug: "wf-argon", workflowName: "Argon", workflowDynastyName: "Argon", workflowDynastySlug: "argon", version: 1, status: "active", featureSlug: "x", createdForBrandId: null, upgradedTo: null },
+  { id: "i1", workflowSlug: "wf-lithium", workflowName: "Lithium", workflowDynastyName: "Lithium", workflowDynastySlug: "lithium", version: 1, status: "active", workflowDynastyStatus: "active", featureSlug: "x", createdForBrandId: null, upgradedTo: null },
+  { id: "i2", workflowSlug: "wf-sodium", workflowName: "Sodium", workflowDynastyName: "Sodium", workflowDynastySlug: "sodium", version: 1, status: "active", workflowDynastyStatus: "active", featureSlug: "x", createdForBrandId: null, upgradedTo: null },
+  { id: "i3", workflowSlug: "wf-argon", workflowName: "Argon", workflowDynastyName: "Argon", workflowDynastySlug: "argon", version: 1, status: "active", workflowDynastyStatus: "active", featureSlug: "x", createdForBrandId: null, upgradedTo: null },
 ];
 
 const cost = (slug: string, cents: number, audienceId?: string) => ({

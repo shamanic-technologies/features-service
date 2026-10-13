@@ -118,7 +118,18 @@ const FORM_FUNNEL = {
 };
 
 const WORKFLOWS = [
-  { id: "ida", workflowSlug: "wf-a", workflowName: "A", workflowDynastyName: "Dynasty A", workflowDynastySlug: "dyn-a", version: 1, status: "active", featureSlug: "x", createdForBrandId: null, upgradedTo: null },
+  { id: "ida", workflowSlug: "wf-a", workflowName: "A", workflowDynastyName: "Dynasty A", workflowDynastySlug: "dyn-a", version: 1, status: "active", workflowDynastyStatus: "active", featureSlug: "x", createdForBrandId: null, upgradedTo: null },
+];
+const pipeWorkflow = (featureSlug: string, dynasty: string, status: "active" | "deprecated") => ({
+  id: dynasty, workflowSlug: dynasty, workflowName: dynasty, workflowDynastyName: dynasty, workflowDynastySlug: dynasty,
+  version: 1, status, workflowDynastyStatus: "active", featureSlug, createdForBrandId: null, upgradedTo: null,
+});
+const PIPE_WORKFLOWS = [
+  pipeWorkflow("ai-meeting-booking", "ai-meeting-booking-fulu", "active"),
+  pipeWorkflow("sourcing-apollo-cold-filters", "sourcing-apollo-cold-filters-scheat", "active"),
+  pipeWorkflow("sourcing-apollo-cold-filters", "sourcing-apollo-cold-filters-old", "active"),
+  // Assigned active on its pipe, but every version retired in workflow-service (RANKING-RETIRED-SELECTABLE-1013).
+  pipeWorkflow("sourcing-apollo-cold-filters", "sourcing-apollo-cold-filters-allegro", "deprecated"),
 ];
 const cost = (slug: string, cents: number) => ({ dimensions: { workflowSlug: slug }, totalCostInUsdCents: String(cents), runCount: 10, minStartedAt: null, maxStartedAt: null });
 const email = (slug: string, clicked: number, repliesPositive: number) => ({
@@ -139,7 +150,11 @@ function mockFetch(opts: MockOpts = {}): void {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as any).url;
     const u = new URL(url, "http://x");
-    if (url.includes("/public/workflows")) return json({ workflows: WORKFLOWS });
+    if (url.includes("/public/workflows")) {
+      // The pipes no sales funnel prices run their OWN assigned workflows, each with a runnable version.
+      const pipeWorkflows = PIPE_WORKFLOWS.filter((w) => w.featureSlug === u.searchParams.get("featureSlugs"));
+      return json({ workflows: pipeWorkflows.length > 0 ? pipeWorkflows : WORKFLOWS });
+    }
     if (url.includes("/v1/stats/public/costs")) return json({ groups: costs });
     if (url.includes("/v1/stats/costs")) {
       const groupBy = u.searchParams.get("groupBy") ?? "";
@@ -322,6 +337,26 @@ describe("workflow-projection: a LEG is answerable with no sales funnel named", 
     expect(withheld.status).toBe(200);
     expect(withheld.body.recommendedWorkflowDynastySlug).toBeNull();
     expect(withheld.body.recommendationWithheldReason).toBe("no_eligible_workflow");
+
+    // Assigned active but every version retired in workflow-service (RANKING-RETIRED-SELECTABLE-1013): a run
+    // asked of it is refused, so it is listed after the runnable one, never selectable, never recommended.
+    vi.mocked(fetchLegAssignments).mockResolvedValueOnce(
+      new Map([
+        ["sourcing-apollo-cold-filters-allegro", row("sourcing-apollo-cold-filters-allegro", "active")],
+        ["sourcing-apollo-cold-filters-scheat", row("sourcing-apollo-cold-filters-scheat", "active")],
+      ]),
+    );
+    const unrunnable = await request(app)
+      .get(`/features/sourcing-apollo-cold-filters/workflow-projection?brandId=${BRAND}&leg=start_to_lead_found`)
+      .set(AUTH);
+    expect(unrunnable.status).toBe(200);
+    expect(unrunnable.body.rows.map((r: { workflow: { workflowDynastySlug: string } }) => r.workflow.workflowDynastySlug)).toEqual([
+      "sourcing-apollo-cold-filters-scheat",
+      "sourcing-apollo-cold-filters-allegro",
+    ]);
+    expect(unrunnable.body.rows[1]).toMatchObject({ legAssignment: { state: "active", selectable: false }, modelEligibility: { eligible: false } });
+    expect(unrunnable.body.rows[1].legAssignment.reason).toMatch(/no version that can run/);
+    expect(unrunnable.body.recommendedWorkflowDynastySlug).toBe("sourcing-apollo-cold-filters-scheat");
 
     // Nothing assigned (AI Instant Call today): still a 200, nothing to rank, named.
     vi.mocked(fetchLegAssignments).mockResolvedValueOnce(new Map());

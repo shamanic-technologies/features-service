@@ -114,8 +114,8 @@ const WEBSITE_FUNNEL = {
 };
 
 const WORKFLOWS = [
-  { id: "idv", workflowSlug: "wf-v", workflowName: "V", workflowDynastyName: "Volume", workflowDynastySlug: "dyn-volume", version: 1, status: "active", featureSlug: "x", createdForBrandId: null, upgradedTo: null },
-  { id: "idp", workflowSlug: "wf-p", workflowName: "P", workflowDynastyName: "Precise", workflowDynastySlug: "dyn-precise", version: 1, status: "active", featureSlug: "x", createdForBrandId: null, upgradedTo: null },
+  { id: "idv", workflowSlug: "wf-v", workflowName: "V", workflowDynastyName: "Volume", workflowDynastySlug: "dyn-volume", version: 1, status: "active", workflowDynastyStatus: "active", featureSlug: "x", createdForBrandId: null, upgradedTo: null },
+  { id: "idp", workflowSlug: "wf-p", workflowName: "P", workflowDynastyName: "Precise", workflowDynastySlug: "dyn-precise", version: 1, status: "active", workflowDynastyStatus: "active", featureSlug: "x", createdForBrandId: null, upgradedTo: null },
 ];
 
 const cost = (slug: string, cents: number) => ({ dimensions: { workflowSlug: slug }, totalCostInUsdCents: String(cents), runCount: 10, minStartedAt: null, maxStartedAt: null });
