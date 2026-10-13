@@ -126,10 +126,11 @@ export interface StrategyVerdict {
 }
 
 /**
- * PURE: may a workflow carrying `tactics` run under `strategy`? A REQUIRED tactic must be judged present (a workflow
- * not judged yet is not allowed: it never claims a tactic it was not seen to follow). An EXCLUDED tactic must not be
- * judged present: a workflow not judged yet on it is allowed, because before tactics existed no workflow followed one
- * (this keeps the default play exactly today's set, and the sweep judges a new version within minutes of its birth).
+ * PURE: may a workflow carrying `tactics` run under `strategy`? Every tactic the strategy NAMES must be judged: a
+ * REQUIRED one judged yes, an EXCLUDED one judged no. A workflow not judged yet on a named tactic is NOT allowed
+ * (owner 2026-10-13: a play never picks a version nobody judged, so an existing campaign never switches to a fresh
+ * workflow in the second before Jev answers; prod: workflow-service's catch-all copies are active on their leg the
+ * moment they are created). A strategy naming no tactic allows everything.
  */
 export function strategyVerdict(strategy: Strategy, tactics: ReadonlyMap<string, boolean> | undefined, nameOf: (tacticId: string) => string): StrategyVerdict {
   for (const t of strategy.requiresTacticIds) {
@@ -144,7 +145,15 @@ export function strategyVerdict(strategy: Strategy, tactics: ReadonlyMap<string,
     };
   }
   for (const t of strategy.excludesTacticIds) {
-    if (tactics?.get(t) === true) return { allowed: false, reason: `the strategy "${strategy.name}" excludes the tactic "${nameOf(t)}" and this workflow follows it` };
+    const v = tactics?.get(t);
+    if (v === false) continue;
+    return {
+      allowed: false,
+      reason:
+        v === undefined
+          ? `the strategy "${strategy.name}" excludes the tactic "${nameOf(t)}" and this workflow has not been judged on it yet`
+          : `the strategy "${strategy.name}" excludes the tactic "${nameOf(t)}" and this workflow follows it`,
+    };
   }
   return { allowed: true, reason: null };
 }

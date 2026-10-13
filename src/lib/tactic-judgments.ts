@@ -85,8 +85,9 @@ export interface SweepResult {
 }
 
 /**
- * One sweep: every assigned dynasty's versions x every tactic, judging what is not stored. `onlyDynasties` narrows
- * the sweep (a registration kick). Exported for tests and the staff kick route.
+ * One sweep: every version of every feature that holds a pipe workflow (retired lineages included: a play's price is
+ * picked among every measured workflow, so each one needs its verdict) x every tactic, judging what is not stored.
+ * `onlyDynasties` narrows the sweep to those dynasties (a registration kick). Exported for tests and the staff kick route.
  */
 export async function sweepTacticJudgments(deps: { judge?: typeof judgeTactic; definitions?: typeof fetchWorkflowDefinitions } = {}, onlyDynasties: ReadonlySet<string> | null = null): Promise<SweepResult> {
   const judge = deps.judge ?? judgeTactic;
@@ -108,7 +109,7 @@ export async function sweepTacticJudgments(deps: { judge?: typeof judgeTactic; d
   for (const [featureSlug, dynasties] of dynastiesByFeature) {
     let versions: WorkflowDefinition[];
     try {
-      versions = (await definitions(featureSlug)).filter((w) => dynasties.has(w.workflowDynastySlug));
+      versions = (await definitions(featureSlug)).filter((w) => !onlyDynasties || dynasties.has(w.workflowDynastySlug));
     } catch (error) {
       console.error(`[features-service] tactic judgments: workflow definitions of ${featureSlug} unreadable, judged next sweep:`, error);
       result.failed += 1;
