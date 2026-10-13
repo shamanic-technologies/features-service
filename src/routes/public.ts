@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { fetchFleetEmailDelivery, type FleetEmailDelivery } from "../lib/fleet-email-delivery.js";
 import { awaitWarmStore } from "../lib/await-warm-store.js";
 import { loadFleetCell, storeFleetCell } from "../lib/fleet-cell-store.js";
 import { eq } from "drizzle-orm";
@@ -3319,6 +3320,8 @@ async function loadPublishedChannels(): Promise<PublicChannel[]> {
 }
 
 interface ChannelCataloguePayload {
+  /** Fleet email delivery (`lib/fleet-email-delivery.ts`): the share of our sent emails the recipient server accepted. */
+  emailDelivery: FleetEmailDelivery;
   channels: PublicChannel[];
   /** EVERY declared sales funnel, mirrored from brand-service, whether or not a channel sells it today.
    *  Each states the STEP IT STARTS ON in the same vocabulary a channel's `producibleSteps` use, so
@@ -3393,6 +3396,7 @@ export async function handlePublicChannels(res: import("express").Response): Pro
       steps: channelStepCatalogue(),
       legKeyCorrespondence: OUTBOUND_LEG_KEY_CORRESPONDENCE,
       triggers: await loadChannelTriggers(),
+      emailDelivery: await fetchFleetEmailDelivery(),
       };
     },
   });
