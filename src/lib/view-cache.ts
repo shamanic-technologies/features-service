@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { hasLegacyOutboundLegKey, routeChannelOf, servedJsonTextOf } from "./served-leg-keys.js";
 import { and, desc, eq, gte, isNull, lt, or, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
@@ -880,13 +881,25 @@ async function maybePruneStaleSnapshots(): Promise<void> {
 }
 
 /**
+ * A key part longer than this is stored as its sha256 fingerprint. Postgres refuses an index row above
+ * 2704 bytes, and `scope_key` is indexed with `view`: a part listing every campaign id of an offer
+ * (`offer-sourcing` `campaigns`, prod 2026-10-13) made the persist throw on every compute, so the cell
+ * was never written and every read recomputed cold. A short part stays verbatim (existing keys unchanged).
+ */
+const SCOPE_KEY_PART_MAX_CHARS = 128;
+
+function scopeKeyPart(value: string): string {
+  return value.length > SCOPE_KEY_PART_MAX_CHARS ? `sha256:${createHash("sha256").update(value).digest("hex").slice(0, 32)}` : value;
+}
+
+/**
  * Build a canonical cache scope key from the path slug + request query. Only query params change the
  * body (identity headers do not), so the key is `featureSlug|k=v&k=v` with params sorted for stability.
  */
 export function buildScopeKey(featureSlug: string, query: Record<string, unknown>): string {
   const params: string[][] = Object.entries(query)
     .filter(([, v]) => v !== undefined && v !== null && v !== "")
-    .map(([k, v]) => [k, String(v)])
+    .map(([k, v]) => [k, scopeKeyPart(String(v))])
     .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
   return `${featureSlug}|${new URLSearchParams(params).toString()}`;
 }
