@@ -28479,6 +28479,56 @@
               ]
             },
             "description": "THE OUTBOUND LEG RENAME (LOCKED, owner 2026-10-09), legacy key <-> new key. Wave 1: every service treats both spellings as ONE identity on input. Wave 2 (now, this service): every stored outbound row carries the new key and every response serves it wherever the leg is an outbound channel's (`stepTransitions[].legKey` of an outbound channel, with `from` = Lead found; `legs[]` lists the two outbound legs beside the funnel entry legs they feed; sales-path combination/campaign keys, workflow-projection `?leg=` echoes, assignments, campaign rows). A funnel's own entry leg (`funnels[]`, a leg read with no channel) and every non-outbound channel keep `start_to_*`; the legacy spelling is still accepted on every input. A consumer joining a key read from campaign-service or billing to a name or a leg from here matches both spellings through this list."
+          },
+          "emailDelivery": {
+            "type": "object",
+            "properties": {
+              "sentEmails": {
+                "type": "integer",
+                "nullable": true,
+                "description": "Every email our sending inboxes sent since inception (email grain, follow-ups included). Null when email-gateway is unreadable."
+              },
+              "deliveredEmails": {
+                "type": "integer",
+                "nullable": true,
+                "description": "Of those, the emails the recipient's server ACCEPTED."
+              },
+              "bouncedEmails": {
+                "type": "integer",
+                "nullable": true,
+                "description": "Of those, the emails that bounced."
+              },
+              "deliveryRatePct": {
+                "type": "number",
+                "nullable": true,
+                "description": "deliveredEmails / sentEmails x 100, 2 decimals. Null with `unavailableReason`, never a guessed rate."
+              },
+              "basis": {
+                "type": "string",
+                "enum": [
+                  "every_email_our_sending_inboxes_sent"
+                ],
+                "description": "Fleet-wide: every channel sending from our inboxes (Sales Cold Email Outreach included); product/transactional email excluded. A channel with no history of its own yet (Email Sending) reads this basis."
+              },
+              "unavailableReason": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "email_gateway_unavailable",
+                  "no_email_sent"
+                ],
+                "description": "Why the rate is null; null when it is served."
+              }
+            },
+            "required": [
+              "sentEmails",
+              "deliveredEmails",
+              "bouncedEmails",
+              "deliveryRatePct",
+              "basis",
+              "unavailableReason"
+            ],
+            "description": "FLEET EMAIL DELIVERY (owner 2026-10-13): the share of every email our sending inboxes sent that the recipient's server accepted, since inception. Served here so no consumer computes it."
           }
         },
         "required": [
@@ -28487,7 +28537,8 @@
           "legs",
           "steps",
           "triggers",
-          "legKeyCorrespondence"
+          "legKeyCorrespondence",
+          "emailDelivery"
         ]
       },
       "ChannelFunnelPair": {
