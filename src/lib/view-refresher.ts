@@ -35,6 +35,8 @@ export const REFRESH_HEADER = "x-view-refresh";
  * replay but no `last_read_at` — a precompute is not a customer read.
  */
 export const PRECOMPUTE_HEADER = "x-view-precompute";
+/** {@link PRECOMPUTE_HEADER} value asking the refresher to compute the stale cells it reads before answering. */
+export const PRECOMPUTE_REFRESH = "refresh";
 /**
  * Sent with {@link REFRESH_HEADER} by the drift check: compute the target view and return its value
  * WITHOUT persisting it, so the stored cell can be compared against a fresh computation.
@@ -63,6 +65,12 @@ interface RequestReplay {
   verify?: boolean;
   /** A keeper precompute, not a customer read. */
   precompute?: boolean;
+  /**
+   * A keeper REFRESH of a held cell older than a day (`x-view-precompute: refresh`): a stale cell this
+   * request reads is computed before the answer instead of behind it, so the keeper's concurrency bound
+   * holds the work (a background refresh escapes it).
+   */
+  refreshStale?: boolean;
 }
 
 /**
@@ -102,7 +110,9 @@ function decodeTarget(raw: string): RefreshTarget | undefined {
 export function captureRequestReplay(req: Request, res: Response, next: NextFunction): void {
   const replay: RequestReplay = {};
   const rawTarget = req.headers[REFRESH_HEADER];
-  replay.precompute = req.headers[PRECOMPUTE_HEADER] === "1";
+  const precompute = req.headers[PRECOMPUTE_HEADER];
+  replay.precompute = precompute === "1" || precompute === PRECOMPUTE_REFRESH;
+  replay.refreshStale = precompute === PRECOMPUTE_REFRESH && viewCacheRole() === "refresher";
   if (viewCacheRole() === "refresher" && typeof rawTarget === "string") {
     replay.target = decodeTarget(rawTarget);
     replay.verify = req.headers[VERIFY_HEADER] === "1";
@@ -219,6 +229,11 @@ export function currentRequestReplay(): { url: string; headers: Record<string, s
     headers[name] = value;
   }
   return { url: replay.url, headers, precompute: replay.precompute === true };
+}
+
+/** Refresher role: whether this request is a keeper refresh (compute stale cells before answering). */
+export function keeperRefreshesStale(): boolean {
+  return replayStore.getStore()?.refreshStale === true;
 }
 
 /** The refresher's base URL when it is up (server role), else null. */

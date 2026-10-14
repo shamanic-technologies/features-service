@@ -51,9 +51,28 @@ export async function fetchDeclaredFunnelsSoft(
       err instanceof SalesFunnelsUnavailableError
         ? `this brand's offer terms could not be read (${(err as Error).message})`
         : (err as Error).message;
-    console.warn(`[features-service] pricing funnels unavailable for brand ${brandId} (economics null, no_priced_funnel): ${what}`);
+    warnOncePerWindow(`${orgId} ${brandId} ${offerId ?? ""} ${what}`, () =>
+      console.warn(`[features-service] pricing funnels unavailable for brand ${brandId} (economics null, no_priced_funnel): ${what}`),
+    );
     return [];
   }
+}
+
+/**
+ * The same unpriceable verdict is reached by every compute that reads the brand (a several-offer brand
+ * read brand-wide answers it on EVERY nested cell: ~740 identical lines in 5 min for one brand,
+ * 2026-10-14). The read stays as it is; its warning is said once per brand and reason per window.
+ */
+const WARN_WINDOW_MS = 10 * 60_000;
+const warnedAt = new Map<string, number>();
+
+function warnOncePerWindow(key: string, warn: () => void): void {
+  const now = Date.now();
+  const last = warnedAt.get(key);
+  if (last !== undefined && now - last < WARN_WINDOW_MS) return;
+  if (warnedAt.size > 2_000) for (const [k, at] of warnedAt) if (now - at >= WARN_WINDOW_MS) warnedAt.delete(k);
+  warnedAt.set(key, now);
+  warn();
 }
 
 /**

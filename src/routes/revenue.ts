@@ -1,3 +1,4 @@
+import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import { createHash } from "node:crypto";
 import { applyDisqualifiedMarks, deferLoud, fetchDisqualifiedLeadIds } from "../lib/disqualification-marks.js";
 import { perOfferPricer } from "../lib/per-offer-revenue.js";
@@ -2404,6 +2405,7 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
       const workflowPricing: Pricing = costBasis === "actual" ? "vendor" : pricing;
       const payload = await servedCachedJson({
         view: costBasis === "actual" ? "revenue-by-workflow-actual-cost" : "revenue-by-workflow",
+        responseShape: costBasis === "actual" ? undefined : routeResponseShapeFingerprint("/features/{featureSlug}/revenue"),
         // The IDENTITY, not the campaign row, keys the cell — so every member of a family lands on
         // ONE cell instead of paying a full fan-out per stopped ancestor, exactly as the sibling
         // campaign-scoped reads key theirs. Absent → dropped → today's brand-grain keys are unmoved.
@@ -2490,6 +2492,7 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
     if (groupBy === "offerId") {
       const payload = await servedCachedJson({
         view: "revenue-by-offer",
+        responseShape: costBasis === "actual" ? undefined : routeResponseShapeFingerprint("/features/{featureSlug}/revenue"),
         // No `campaignId` and no `funnel`: the grain is the brand's whole spend, priced on the brand's
         // own declared funnels (this service knows which campaigns sell an offer, never which funnels
         // the offer itself states — brand-service owns that, and inventing it here would price a funnel
@@ -2534,6 +2537,7 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
       const campaignPricing: Pricing = costBasis === "actual" ? "vendor" : pricing;
       const payload = await servedCachedJson({
         view: costBasis === "actual" ? "revenue-grouped-actual-cost" : "revenue-grouped",
+        responseShape: costBasis === "actual" ? undefined : routeResponseShapeFingerprint("/features/{featureSlug}/revenue"),
         scopeKey: buildScopeKey(featureSlug, { orgId, brandId, groupBy: "campaignId", pricing: campaignPricing, econ, decl, cause: causeKey }),
         orgId,
         compute: async () => {
@@ -2698,6 +2702,7 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
 
     const payload = await servedCachedJson({
       view: lens ? "revenue-lens" : "revenue",
+      responseShape: routeResponseShapeFingerprint("/features/{featureSlug}/revenue"),
       scopeKey: buildScopeKey(featureSlug, {
         orgId,
         brandId,

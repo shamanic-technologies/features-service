@@ -24,6 +24,9 @@ import { buildCampaignFamilies } from "./campaign-identity.js";
  * instantiated: they are either unbounded per brand, or not a brand's cell at all.
  */
 
+/** A uuid inside a path suffix: the request names one record of its brand, it is not a shape. */
+const RECORD_ID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
 /** Query parameters whose presence makes a request a one-off rather than a dashboard shape. */
 const NON_SHAPE_PARAMS = new Set(["workflow", "leadIds", "limit", "timezone"]);
 
@@ -57,6 +60,9 @@ export function shapeOf(url: string): RequestShape | null {
   const brandIdParam = q.has("brandId");
   const legParam = q.has("leg");
   const brandPath = /^\/brands\/[^/]+(\/.*)$/.exec(parsed.pathname);
+  // A suffix naming ONE record (`/sales-funnel-campaigns/<id>/activity`) is that record's read: as a
+  // shape it was asked of every other brand, which owns no such record (630 instances 404'd every 6 h).
+  if (brandPath && RECORD_ID.test(brandPath[1])) return null;
   if (brandPath) return { kind: "brandPath", suffix: brandPath[1], params, brandIdParam, legParam };
   const offerPath = /^\/offers\/[^/]+(\/.*)$/.exec(parsed.pathname);
   if (offerPath) return brandIdParam ? { kind: "offerPath", suffix: offerPath[1], params, brandIdParam, legParam } : null;
