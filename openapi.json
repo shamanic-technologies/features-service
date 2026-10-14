@@ -4000,7 +4000,7 @@
                   "no_expected_price",
                   "no_daily_ceiling"
                 ],
-                "description": "WHICH INGREDIENT IS MISSING, present ⟺ status is 'unmeasured'. 'no_campaigns' — this scope has none, so nothing is gathering and nothing ever will (a scope with no campaigns is NOT 'learning'). 'campaigns_unreadable' — campaign-service degraded, so we do not know which campaigns it has: a different statement from having none. 'no_leg_stated' — the leading campaign names no leg, so there is no step to count its outcomes in. 'no_outcome_evidence' — the producer behind the counts degraded. 'leg_unpriceable' — the leg needs a conversion rate the brand never declared; nothing is defaulted, averaged or borrowed. 'no_expected_price' — no cell has observed an outcome yet, so every figure we hold is an explore FLOOR rather than a price, and a floor may not found a spend target. 'no_daily_ceiling' — billing states none for this leg, so there is no rate to divide the remaining spend by. None of these is a zero."
+                "description": "WHICH INGREDIENT IS MISSING, present ⟺ status is 'unmeasured'. 'no_campaigns' — this scope has none, so nothing is gathering and nothing ever will (a scope with no campaigns is NOT 'learning'). 'campaigns_unreadable' — campaign-service degraded, so we do not know which campaigns it has: a different statement from having none. 'no_leg_stated' — the leading campaign names no leg, so there is no step to count its outcomes in. 'no_outcome_evidence' — the producer behind the counts degraded. 'leg_unpriceable' — the leg needs a conversion rate the brand never declared; nothing is defaulted, averaged or borrowed. 'no_expected_price' — no cell has observed an outcome yet, so every figure we hold is an explore FLOOR rather than a price, and a floor may not found a spend target. 'no_daily_ceiling' — the leading campaign's sales funnel states no daily budget (no max budget, volume only, one-off, reactive, or no funnel), so there is no rate to divide the remaining spend by. None of these is a zero."
               },
               "campaignId": {
                 "type": "string",
@@ -4113,7 +4113,7 @@
               "dailyCeilingUsd": {
                 "type": "number",
                 "nullable": true,
-                "description": "What billing has this LEG funded at, per day — the money that paces one campaign, read on the same key the campaign is keyed on. NULL is 'this leg has no ceiling', which billing states explicitly and which is a DIFFERENT answer from a ceiling of 0."
+                "description": "What the customer lets the leading campaign's SALES FUNNEL spend per day: its stated max budget spread over days, as billing serves it (owner 2026-10-14: a campaign IS a sales funnel campaign, what it may spend is its sales funnel caps; the per-leg daily ceiling is retired). NULL when the funnel states no daily money: no cap, a max volume only, a one-off or reactive budget, or a campaign predating funnels."
               },
               "daysRemaining": {
                 "type": "integer",
@@ -10436,7 +10436,7 @@
                   "no_expected_price",
                   "no_daily_ceiling"
                 ],
-                "description": "WHICH INGREDIENT IS MISSING, present ⟺ status is 'unmeasured'. 'no_campaigns' — this scope has none, so nothing is gathering and nothing ever will (a scope with no campaigns is NOT 'learning'). 'campaigns_unreadable' — campaign-service degraded, so we do not know which campaigns it has: a different statement from having none. 'no_leg_stated' — the leading campaign names no leg, so there is no step to count its outcomes in. 'no_outcome_evidence' — the producer behind the counts degraded. 'leg_unpriceable' — the leg needs a conversion rate the brand never declared; nothing is defaulted, averaged or borrowed. 'no_expected_price' — no cell has observed an outcome yet, so every figure we hold is an explore FLOOR rather than a price, and a floor may not found a spend target. 'no_daily_ceiling' — billing states none for this leg, so there is no rate to divide the remaining spend by. None of these is a zero."
+                "description": "WHICH INGREDIENT IS MISSING, present ⟺ status is 'unmeasured'. 'no_campaigns' — this scope has none, so nothing is gathering and nothing ever will (a scope with no campaigns is NOT 'learning'). 'campaigns_unreadable' — campaign-service degraded, so we do not know which campaigns it has: a different statement from having none. 'no_leg_stated' — the leading campaign names no leg, so there is no step to count its outcomes in. 'no_outcome_evidence' — the producer behind the counts degraded. 'leg_unpriceable' — the leg needs a conversion rate the brand never declared; nothing is defaulted, averaged or borrowed. 'no_expected_price' — no cell has observed an outcome yet, so every figure we hold is an explore FLOOR rather than a price, and a floor may not found a spend target. 'no_daily_ceiling' — the leading campaign's sales funnel states no daily budget (no max budget, volume only, one-off, reactive, or no funnel), so there is no rate to divide the remaining spend by. None of these is a zero."
               },
               "campaignId": {
                 "type": "string",
@@ -10549,7 +10549,7 @@
               "dailyCeilingUsd": {
                 "type": "number",
                 "nullable": true,
-                "description": "What billing has this LEG funded at, per day — the money that paces one campaign, read on the same key the campaign is keyed on. NULL is 'this leg has no ceiling', which billing states explicitly and which is a DIFFERENT answer from a ceiling of 0."
+                "description": "What the customer lets the leading campaign's SALES FUNNEL spend per day: its stated max budget spread over days, as billing serves it (owner 2026-10-14: a campaign IS a sales funnel campaign, what it may spend is its sales funnel caps; the per-leg daily ceiling is retired). NULL when the funnel states no daily money: no cap, a max volume only, a one-off or reactive budget, or a campaign predating funnels."
               },
               "daysRemaining": {
                 "type": "integer",
@@ -19468,7 +19468,7 @@
                   "no_expected_price",
                   "no_daily_ceiling"
                 ],
-                "description": "WHICH INGREDIENT IS MISSING, present ⟺ status is 'unmeasured'. 'no_campaigns' — this scope has none, so nothing is gathering and nothing ever will (a scope with no campaigns is NOT 'learning'). 'campaigns_unreadable' — campaign-service degraded, so we do not know which campaigns it has: a different statement from having none. 'no_leg_stated' — the leading campaign names no leg, so there is no step to count its outcomes in. 'no_outcome_evidence' — the producer behind the counts degraded. 'leg_unpriceable' — the leg needs a conversion rate the brand never declared; nothing is defaulted, averaged or borrowed. 'no_expected_price' — no cell has observed an outcome yet, so every figure we hold is an explore FLOOR rather than a price, and a floor may not found a spend target. 'no_daily_ceiling' — billing states none for this leg, so there is no rate to divide the remaining spend by. None of these is a zero."
+                "description": "WHICH INGREDIENT IS MISSING, present ⟺ status is 'unmeasured'. 'no_campaigns' — this scope has none, so nothing is gathering and nothing ever will (a scope with no campaigns is NOT 'learning'). 'campaigns_unreadable' — campaign-service degraded, so we do not know which campaigns it has: a different statement from having none. 'no_leg_stated' — the leading campaign names no leg, so there is no step to count its outcomes in. 'no_outcome_evidence' — the producer behind the counts degraded. 'leg_unpriceable' — the leg needs a conversion rate the brand never declared; nothing is defaulted, averaged or borrowed. 'no_expected_price' — no cell has observed an outcome yet, so every figure we hold is an explore FLOOR rather than a price, and a floor may not found a spend target. 'no_daily_ceiling' — the leading campaign's sales funnel states no daily budget (no max budget, volume only, one-off, reactive, or no funnel), so there is no rate to divide the remaining spend by. None of these is a zero."
               },
               "campaignId": {
                 "type": "string",
@@ -19581,7 +19581,7 @@
               "dailyCeilingUsd": {
                 "type": "number",
                 "nullable": true,
-                "description": "What billing has this LEG funded at, per day — the money that paces one campaign, read on the same key the campaign is keyed on. NULL is 'this leg has no ceiling', which billing states explicitly and which is a DIFFERENT answer from a ceiling of 0."
+                "description": "What the customer lets the leading campaign's SALES FUNNEL spend per day: its stated max budget spread over days, as billing serves it (owner 2026-10-14: a campaign IS a sales funnel campaign, what it may spend is its sales funnel caps; the per-leg daily ceiling is retired). NULL when the funnel states no daily money: no cap, a max volume only, a one-off or reactive budget, or a campaign predating funnels."
               },
               "daysRemaining": {
                 "type": "integer",

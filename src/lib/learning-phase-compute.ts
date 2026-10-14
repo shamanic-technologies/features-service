@@ -27,7 +27,7 @@ import { fetchPublicWorkflows } from "./public-stats-clients.js";
 import type { EnginePerson } from "./revenue-engine.js";
 import { fetchPositiveRepliers } from "./crm-only-repliers.js";
 import { fetchCampaignWorkflowEvidenceWithRetired, type Identity } from "./workflow-projection-grains.js";
-import { fetchCampaignCommittedCents, fetchCampaignDriverCounts, fetchLegDailyCeilingUsd } from "./learning-phase-clients.js";
+import { fetchCampaignCommittedCents, fetchCampaignDriverCounts, fetchSalesFunnelDailyBudgetUsd } from "./learning-phase-clients.js";
 import {
   buildLearningPhase,
   resolveLearningLeader,
@@ -224,7 +224,10 @@ export async function computeLearningPhase(scope: LearningPhaseScope): Promise<L
   let dailyCeilingUsd: number | null = null;
 
   if (leader) {
-    const legKey = leader.leg?.legKey ?? null;
+    const leaderRow = leader.input.campaignIds.map((id) => byId.get(id)).find((r) => r?.salesFunnelId);
+    const leaderFunnel = leaderRow?.salesFunnelId
+      ? { offerId: leaderRow.offerId ?? null, salesFunnelId: leaderRow.salesFunnelId }
+      : null;
     const [evidence, ceiling] = await Promise.all([
       // THE COUNTDOWN'S ONLY FAN-OUT, and it is paid once per scope rather than once per campaign.
       // The cells count replies on the SAME person set the per-campaign count above does.
@@ -248,8 +251,10 @@ export async function computeLearningPhase(scope: LearningPhaseScope): Promise<L
         console.warn(`[features-service] learning cells unavailable (no expected price): ${error.message}`);
         return null;
       }),
-      legKey
-        ? fetchLegDailyCeilingUsd(brandId, legKey, featureScope, headers).catch((error: Error) => {
+      // The money that paces the campaign is its SALES FUNNEL's stated budget (owner 2026-10-14); a
+      // campaign predating funnels states none, so it carries no countdown.
+      leaderFunnel
+        ? fetchSalesFunnelDailyBudgetUsd(brandId, leaderFunnel, headers).catch((error: Error) => {
             console.warn(`[features-service] learning ceiling unavailable (no countdown): ${error.message}`);
             return null;
           })
