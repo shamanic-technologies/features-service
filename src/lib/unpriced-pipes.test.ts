@@ -4,7 +4,7 @@ vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 const loadChannelCatalogue = vi.fn();
 vi.mock("./channel-declarations-store.js", () => ({ loadChannelCatalogue: (...a: unknown[]) => loadChannelCatalogue(...a) }));
 
-import { publishedPipeLeg, unpricedPipeLeg } from "./unpriced-pipes.js";
+import { publishedPipeLeg, resolvePipeLegKey, unpricedPipeLeg } from "./unpriced-pipes.js";
 import { funnelLegCatalogue } from "./channel-catalogue.js";
 
 describe("unpricedPipeLeg: a pipe whose channel sells no reading sales funnel is unpriced", () => {
@@ -59,5 +59,28 @@ describe("funnelLegCatalogue: every leg a published channel performs is listed",
       funnelKeys: [],
       reactive: true,
     });
+  });
+});
+
+// RANKING-SOURCE-LEG-1014: the public workflow ranking refused Lead Sourcing's `start_to_lead_found`, so nobody could
+// read the top workflows of the sourcing pipe. Every leg-keyed fleet read resolves a pipe's leg through this one door.
+describe("resolvePipeLegKey: every pipe's leg, no special case", () => {
+  it("resolves the sourcing leg of Lead Sourcing and of every origin", async () => {
+    loadChannelCatalogue.mockResolvedValue({ channels: [] });
+    expect(await resolvePipeLegKey("lead-sourcing", "start_to_lead_found")).toBe("start_to_lead_found");
+    expect(await resolvePipeLegKey("sourcing-apollo-cold-filters", "Start-To-Lead-Found")).toBe("start_to_lead_found");
+  });
+
+  it("keeps resolving funnel legs as before, both outbound spellings to the computed one", async () => {
+    expect(await resolvePipeLegKey("sales-cold-email-outreach", "lead_found_to_conversation")).toBe("start_to_conversation");
+    expect(await resolvePipeLegKey("sales-cold-email-outreach", "start_to_conversation")).toBe("start_to_conversation");
+  });
+
+  it("refuses a word naming no leg of the channel", async () => {
+    loadChannelCatalogue.mockResolvedValue({ channels: [] });
+    expect(await resolvePipeLegKey("lead-sourcing", "nope")).toBeNull();
+    expect(await resolvePipeLegKey("sales-cold-email-outreach", "start_to_lead_found")).toBeNull();
+    expect(await resolvePipeLegKey(undefined, "start_to_lead_found")).toBeNull();
+    expect(await resolvePipeLegKey("lead-sourcing", "")).toBeNull();
   });
 });
