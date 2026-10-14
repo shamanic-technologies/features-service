@@ -251,6 +251,8 @@ export interface PlayInput {
   measurement: PipeMeasurement | null;
   /** ACTIVE workflows assigned to the pipe that the strategy allows. 0 = nothing can run it: never runnable. */
   allowedActiveWorkflowCount: number;
+  /** Their dynasty slugs, sorted (what the play may run). */
+  allowedActiveDynasties?: readonly string[];
   /** Dynasty slugs the strategy excludes on this pipe. */
   excludedDynasties: readonly string[];
   /** Why the play allows no active workflow (`lib/plays.ts` `playBlockOf`); null when one is allowed. */
@@ -266,6 +268,7 @@ export interface CataloguePlayInfo {
   strategyDescription: string;
   isDefault: boolean;
   allowedActiveWorkflowCount: number;
+  allowedActiveDynasties: readonly string[];
   excludedDynasties: readonly string[];
   block: PlayBlock | null;
 }
@@ -497,6 +500,7 @@ const playInfoOf = (basePipeId: string, p: PlayInput, isDefault: boolean): Catal
   strategyDescription: p.strategyDescription,
   isDefault,
   allowedActiveWorkflowCount: p.allowedActiveWorkflowCount,
+  allowedActiveDynasties: p.allowedActiveDynasties ?? [],
   excludedDynasties: p.excludedDynasties,
   block: p.block ?? null,
 });
