@@ -144,17 +144,35 @@ const seedPlays = () => [
   { pipeId: "sales-cold-email-outreach|lead_found_to_conversation", strategyId: "valid-only", isDefault: true },
   { pipeId: "sales-cold-email-outreach|lead_found_to_conversation", strategyId: "valid-catch-all", isDefault: false },
 ];
-const playState = vi.hoisted(() => ({ verdicts: [] as any[], added: [] as any[], seeded: [] as any[], sweeps: [] as any[] }));
+const playState = vi.hoisted(() => ({ verdicts: [] as any[], added: [] as any[], seeded: [] as any[], sweeps: [] as any[], strategyEdits: new Map<string, any>() }));
 vi.mock("../lib/plays-store.js", async () => {
   const { buildPlayCatalogue } = await import("../lib/plays.js");
-  const tactics = [{ id: "catch-all", name: "Catch-all", description: "Sends to addresses whose mail server accepts every address, so the mailbox cannot be confirmed.", createdBy: "t", createdAt: "" }];
+  const tactics = [
+    { id: "catch-all", name: "Catch-all", description: "Sends to addresses whose mail server accepts every address, so the mailbox cannot be confirmed.", createdBy: "t", createdAt: "" },
+    { id: "unknown-email", name: "Unknown email", description: "Keeps addresses the verifier could not judge.", createdBy: "t", createdAt: "" },
+  ];
   const strategies = [
     { id: "valid-only", name: "Valid only", description: "only confirmed", requiresTacticIds: [], excludesTacticIds: ["catch-all"], createdBy: "t", createdAt: "" },
     { id: "valid-catch-all", name: "Valid + Catch-all", description: "confirmed and catch-all", requiresTacticIds: ["catch-all"], excludesTacticIds: [], createdBy: "t", createdAt: "" },
   ];
   const plays = playState.seeded;
+  const strategiesNow = () => strategies.map((st) => playState.strategyEdits.get(st.id) ?? st);
   return {
-    loadPlayCatalogue: async () => buildPlayCatalogue({ tactics, strategies, plays: [...plays, ...playState.added], verdicts: playState.verdicts, sweeps: playState.sweeps }),
+    loadPlayCatalogue: async () => buildPlayCatalogue({ tactics, strategies: strategiesNow(), plays: [...plays, ...playState.added], verdicts: playState.verdicts, sweeps: playState.sweeps }),
+    // The store's own rules are covered in lib/plays-store-strategy-edit.test.ts; here only the route's.
+    proposeStrategyEdit: vi.fn(async (input: any) => {
+      const { DeclarationError } = await import("../lib/channel-declarations.js");
+      const current = strategiesNow().find((x) => x.id === input.id);
+      if (!current) throw new DeclarationError(404, "strategy_not_found", `no strategy ${input.id}`);
+      const next = { ...current, description: input.description ?? current.description, requiresTacticIds: [...(input.requiresTacticIds ?? current.requiresTacticIds)].sort(), excludesTacticIds: [...(input.excludesTacticIds ?? current.excludesTacticIds)].sort() };
+      const changed = JSON.stringify(next) !== JSON.stringify(current);
+      return { current, next: changed ? next : current, changed };
+    }),
+    storeStrategyEdit: vi.fn(async (next: any, updatedBy: string) => {
+      const stored = { ...next, updatedBy, updatedAt: "2026-10-14T10:00:00.000Z" };
+      playState.strategyEdits.set(next.id, stored);
+      return stored;
+    }),
     invalidatePlayCatalogue: () => {},
     listVerdicts: async () => playState.verdicts,
     insertTactic: vi.fn(),
@@ -198,7 +216,7 @@ vi.mock("./public.js", async (importOriginal) => {
 });
 
 const CATCH = `${COLD}~valid-catch-all`;
-const verdict = (slug: string, dynasty: string, follows: boolean) => ({ workflowSlug: slug, tacticId: "catch-all", workflowDynastySlug: dynasty, version: 1, versionActive: true, verdict: follows, probability: follows ? 0.9 : 0.05, model: "m", judgedAt: "" });
+const verdict = (slug: string, dynasty: string, follows: boolean, tacticId = "catch-all") => ({ workflowSlug: slug, tacticId, workflowDynastySlug: dynasty, version: 1, versionActive: true, verdict: follows, probability: follows ? 0.9 : 0.05, model: "m", judgedAt: "" });
 
 beforeEach(async () => {
   // A play write rebuilds the figures behind the request: the previous test's rebuild lands before this one seeds.
@@ -216,6 +234,7 @@ beforeEach(async () => {
   playState.verdicts = [verdict("orion-v1", "orion", false)];
   playState.added = [];
   playState.sweeps = [];
+  playState.strategyEdits = new Map();
   playState.seeded.splice(0, playState.seeded.length, ...seedPlays());
   __setCatalogueMeasurementsForTest(
     new Map([
@@ -231,7 +250,10 @@ describe("plays (owner 2026-10-13): a pipe x a strategy, ROI per play", () => {
   it("serves tactics and strategies with their unique names and descriptions", async () => {
     const t = await request(app).get("/internal/catalogue/tactics").set(KEY);
     expect(t.status).toBe(200);
-    expect(t.body.rows).toEqual([expect.objectContaining({ id: "catch-all", name: "Catch-all", workflowsJudged: 1, workflowsFollowing: 0 })]);
+    expect(t.body.rows).toEqual([
+      expect.objectContaining({ id: "catch-all", name: "Catch-all", workflowsJudged: 1, workflowsFollowing: 0 }),
+      expect.objectContaining({ id: "unknown-email", name: "Unknown email", workflowsJudged: 0 }),
+    ]);
     const s = await request(app).get("/internal/catalogue/strategies").set(KEY);
     expect(s.body.rows.map((r: any) => [r.id, r.requires.map((x: any) => x.id), r.excludes.map((x: any) => x.id)])).toEqual([
       ["valid-catch-all", ["catch-all"], []],
@@ -430,5 +452,67 @@ describe("plays (owner 2026-10-13): a pipe x a strategy, ROI per play", () => {
     const res = await request(app).put(`/internal/catalogue/pipes/${encodeURIComponent("nope|start_to_lead_found")}/default-play`).set(KEY).send({ strategyId: "valid-only", decidedBy: "test" });
     expect(res.status).toBe(404);
     expect(res.body.reason).toBe("pipe_not_found");
+  });
+});
+
+// STRATEGY-EDIT-PUBLIC-1014: a new tactic (unknown-email) leaked into older strategies naming nothing about it.
+describe("a strategy's rule is edited (staff), and its plays narrow at once", () => {
+  const assign = (dynasty: string) => ({ featureSlug: "sales-cold-email-outreach", legKey: "lead_found_to_conversation", workflowDynastySlug: dynasty, state: "active", decidedBy: "t", decidedAt: "", note: null });
+  beforeEach(() => {
+    // orion: confirmed only; nova: catch-all; nebula: catch-all AND unknown emails. Every one judged on both tactics.
+    mem.assignments = [assign("orion"), assign("nova"), assign("nebula")];
+    playState.verdicts = [
+      verdict("orion-v1", "orion", false),
+      verdict("orion-v1", "orion", false, "unknown-email"),
+      verdict("nova-v1", "nova", true),
+      verdict("nova-v1", "nova", false, "unknown-email"),
+      verdict("nebula-v1", "nebula", true),
+      verdict("nebula-v1", "nebula", true, "unknown-email"),
+    ];
+  });
+  const allowed = async () =>
+    (await request(app).get("/internal/catalogue/plays").query({ pipe: COLD }).set(KEY)).body.rows.map((p: any) => [p.strategyId, p.allowedActiveWorkflowCount]);
+
+  it("Valid + Catch-all excludes unknown-email: its play runs the catch-all workflow only", async () => {
+    expect(await allowed()).toEqual([["valid-only", 1], ["valid-catch-all", 2]]);
+    const res = await request(app).patch("/internal/catalogue/strategies/valid-catch-all").set(KEY).send({ excludes: ["unknown-email"], updatedBy: "staff@distribute.you" });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      id: "valid-catch-all",
+      changed: true,
+      requires: [{ id: "catch-all", name: "Catch-all" }],
+      excludes: [{ id: "unknown-email", name: "Unknown email" }],
+      previous: { requires: [{ id: "catch-all" }], excludes: [] },
+      updatedBy: "staff@distribute.you",
+    });
+    expect(await allowed()).toEqual([["valid-only", 1], ["valid-catch-all", 1]]);
+    const detail = (await request(app).get(`/internal/catalogue/plays/${encodeURIComponent(CATCH)}`).set(KEY)).body;
+    expect(detail.excludedWorkflowDynastySlugs.sort()).toEqual(["nebula", "orion"]);
+
+    // The same rule again: nothing stored.
+    const same = await request(app).patch("/internal/catalogue/strategies/valid-catch-all").set(KEY).send({ excludes: ["unknown-email"], updatedBy: "staff@distribute.you" });
+    expect(same.body.changed).toBe(false);
+  });
+
+  it("the DEFAULT play keeps running: an edit leaving it no active workflow is refused, nothing stored", async () => {
+    const ok = await request(app).patch("/internal/catalogue/strategies/valid-only").set(KEY).send({ excludes: ["catch-all", "unknown-email"], updatedBy: "staff@distribute.you" });
+    expect(ok.status).toBe(200);
+    expect(ok.body.excludes.map((t: any) => t.id)).toEqual(["catch-all", "unknown-email"]);
+    expect(await allowed()).toEqual([["valid-only", 1], ["valid-catch-all", 2]]);
+
+    const refused = await request(app).patch("/internal/catalogue/strategies/valid-only").set(KEY).send({ requires: ["unknown-email"], excludes: ["catch-all"], updatedBy: "staff@distribute.you" });
+    expect(refused.status).toBe(409);
+    expect(refused.body.reason).toBe("default_play_runs_nothing");
+    expect(playState.strategyEdits.get("valid-only").requiresTacticIds).toEqual([]);
+  });
+
+  it("refuses an empty edit and a missing author", async () => {
+    const empty = await request(app).patch("/internal/catalogue/strategies/valid-only").set(KEY).send({ updatedBy: "x" });
+    expect(empty.status).toBe(400);
+    expect(empty.body.reason).toBe("edit_empty");
+    const noAuthor = await request(app).patch("/internal/catalogue/strategies/valid-only").set(KEY).send({ excludes: ["catch-all"] });
+    expect(noAuthor.status).toBe(400);
+    const missing = await request(app).patch("/internal/catalogue/strategies/nope").set(KEY).send({ excludes: ["catch-all"], updatedBy: "x" });
+    expect(missing.status).toBe(404);
   });
 });

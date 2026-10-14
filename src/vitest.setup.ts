@@ -104,6 +104,8 @@ vi.mock("./lib/plays-store.js", async () => {
     insertTactic: vi.fn(),
     updateTacticDescription: vi.fn(),
     insertStrategy: vi.fn(),
+    proposeStrategyEdit: vi.fn(),
+    storeStrategyEdit: vi.fn(),
     insertPlay: vi.fn(),
     insertVerdict: vi.fn(async () => undefined),
     refreshVersionActive: vi.fn(async () => undefined),

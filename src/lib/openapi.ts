@@ -7048,7 +7048,7 @@ catalogueRead(
   idParam("A tactic id"),
 );
 catalogueRead("/internal/catalogue/strategies", "List strategies (internal, api-key)", { q: catalogueQ, limit: catalogueLimit }, z.object({ object: z.literal("strategy"), order: z.literal("id"), total: z.number().int(), truncated: z.boolean(), rows: z.array(catalogueStrategyRow) }).describe(tacticsNote));
-catalogueRead("/internal/catalogue/strategies/{id}", "One strategy (internal, api-key)", {}, catalogueStrategyRow.extend({ createdBy: z.string(), createdAt: z.string() }), idParam("A strategy id"));
+catalogueRead("/internal/catalogue/strategies/{id}", "One strategy (internal, api-key)", {}, catalogueStrategyRow.extend({ createdBy: z.string(), createdAt: z.string(), updatedBy: z.string().nullable().describe("Who last edited the rule or description; null = never edited."), updatedAt: z.string().nullable() }), idParam("A strategy id"));
 catalogueRead(
   "/internal/catalogue/plays",
   "List plays: a pipe x a strategy (internal, api-key)",
@@ -7163,6 +7163,50 @@ registry.registerPath({
     401: { description: "Missing or wrong service key." },
     404: { description: "`tactic_not_found`." },
     409: { description: "`tactic_description_taken`: another tactic already has this description." },
+  },
+});
+
+registry.registerPath({
+  method: "patch",
+  path: "/internal/catalogue/strategies/{id}",
+  summary: "Edit a strategy's rule or description (internal, api-key, staff)",
+  description: `${CATALOGUE_DESCRIPTION} STRATEGY-EDIT-PUBLIC-1014 (2026-10-14): a strategy names only the tactics it knew when it was declared, so a new tactic (\`unknown-email\`) leaks into it: a workflow following the new tactic satisfies the old rule. An edit sets \`requires\` and/or \`excludes\` (each the FULL new list; absent = unchanged) and/or \`description\`. It changes what every campaign of every play on the strategy runs, so the gateway mounts it staff-only. Same rules as a create: every tactic known (404 \`tactic_not_found\`), never both required and excluded (400 \`tactic_required_and_excluded\`), at least one named (400 \`strategy_empty\`), description and rule unique among the OTHER strategies (409 \`strategy_description_taken\` / \`strategy_rule_taken\`). Name and id never move. Refused 409 \`default_play_runs_nothing\` when the strategy is a pipe's DEFAULT play and the new rule allows none of the pipe's active workflows, judged now. The plays' allowed workflows rebuild at once, their figures right behind. Nothing new = 200 \`changed: false\`.`,
+  tags: ["Internal"],
+  request: {
+    params: z.object({ id: z.string().describe("A strategy id") }),
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            requires: z.array(z.string()).optional().describe("Tactic ids a workflow must follow: the FULL new list (absent = unchanged)."),
+            excludes: z.array(z.string()).optional().describe("Tactic ids a workflow must not follow: the FULL new list (absent = unchanged)."),
+            description: z.string().optional().describe("<= 500 characters (absent = unchanged)."),
+            updatedBy: z.string().describe("Who makes the edit (the gateway sets it from the authenticated staff member)."),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      description: "The strategy after the edit.",
+      content: {
+        "application/json": {
+          schema: catalogueStrategyRow.extend({
+            changed: z.boolean().describe("false = the strategy already held this rule and description (nothing stored)."),
+            previous: z.object({ requires: z.array(catalogueStepRef), excludes: z.array(catalogueStepRef), description: z.string() }).describe("The rule and description before this edit."),
+            createdBy: z.string(),
+            createdAt: z.string(),
+            updatedBy: z.string().nullable(),
+            updatedAt: z.string().nullable(),
+          }),
+        },
+      },
+    },
+    400: { description: "`edit_empty` (nothing to change sent), `requires_invalid` / `excludes_invalid`, `description_too_long`, `updatedBy_required`, `tactic_required_and_excluded`, `strategy_empty`." },
+    401: { description: "Missing or wrong service key." },
+    404: { description: "`strategy_not_found` or `tactic_not_found`." },
+    409: { description: "`strategy_description_taken`, `strategy_rule_taken` or `default_play_runs_nothing`." },
   },
 });
 
