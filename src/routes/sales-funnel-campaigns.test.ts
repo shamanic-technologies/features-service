@@ -27,7 +27,7 @@ vi.mock("./agent-catalogue.js", () => ({
           ? null
           : id === REACTIVE
             ? { name: "Motivate", face: "/f", type: "reactive", triggerLabel: "Positive replies", shortDescription: "We book meetings with buyers who reply with interest.", shortDescriptionUnavailableReason: null, firstStep: "conversation", path: { items: [], legs: [] } }
-            : { name: "Bliss", face: "/f", type: "proactive", triggerLabel: null, firstStep: "lead_found", path: { items: [{ kind: "step", key: "lead_found", label: "Lead found" }], legs: [] } },
+            : { name: "Bliss", face: "/f", type: "proactive", triggerLabel: null, shortDescription: "We email new buyers until they reply with interest.", shortDescriptionUnavailableReason: null, firstStep: "lead_found", path: { items: [{ kind: "step", key: "lead_found", label: "Lead found" }], legs: [] } },
       ]),
     ),
     pipeSteps: new Map([
@@ -190,10 +190,13 @@ describe("GET /brands/:brandId/sales-funnel-campaigns?fields=copy (INSTANT-CAMPA
     expect(lean.body).toMatchObject({ brandId: "b1", offerId: "of1", fields: "copy" });
     expect(lean.body.salesFunnelCampaigns.map((r: { typeLabel: string | null }) => r.typeLabel)).toEqual(["Daily", "Positive replies", null]);
     expect(lean.body.salesFunnelCampaigns[2]).toMatchObject({ path: null, copyUnavailableReason: "sales_funnel_not_in_catalogue" });
+    // One short customer sentence per row (owner 2026-10-14), null + reason when the funnel is unknown.
+    expect(lean.body.salesFunnelCampaigns.map((r: { shortDescription: string | null }) => r.shortDescription)).toEqual(["We email new buyers until they reply with interest.", "We book meetings with buyers who reply with interest.", null]);
+    expect(lean.body.salesFunnelCampaigns[2]).toMatchObject({ shortDescriptionUnavailableReason: "sales_funnel_not_in_catalogue" });
 
     const full = await request(app).get("/brands/b1/sales-funnel-campaigns?offerId=of1").set(AUTH);
     const keys = Object.keys(lean.body.salesFunnelCampaigns[0]);
-    expect(keys).toEqual(["id", "brandId", "offerId", "salesFunnelId", "name", "face", "status", "stopReason", "createdAt", "type", "triggerLabel", "typeLabel", "path", "copyUnavailableReason", "units"]);
+    expect(keys).toEqual(["id", "brandId", "offerId", "salesFunnelId", "name", "face", "status", "stopReason", "createdAt", "type", "triggerLabel", "typeLabel", "shortDescription", "shortDescriptionUnavailableReason", "path", "copyUnavailableReason", "units"]);
     full.body.salesFunnelCampaigns.forEach((row: Record<string, unknown>, i: number) => {
       expect(Object.fromEntries(keys.map((k) => [k, row[k]]))).toEqual(lean.body.salesFunnelCampaigns[i]);
     });
