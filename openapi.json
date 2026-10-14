@@ -20463,7 +20463,7 @@
                 "shortDescription": {
                   "type": "string",
                   "nullable": true,
-                  "description": "ONE short customer sentence of what we do in this campaign (owner 2026-10-14: the Campaigns table shows it under the name in place of `path`), e.g. \"We email new buyers until they reply with interest.\" At most 12 words, English, no dash; composed from the funnel's legs (the client's own team steps left out), never stored. Null only with `shortDescriptionUnavailableReason`."
+                  "description": "ONE short customer sentence of what we do in this campaign (owner 2026-10-14: the Campaigns table shows it under the name in place of `path`), e.g. \"We email new buyers until they reply with interest.\" or \"Our AI books meetings with buyers who reply with interest.\" At most 12 words, English, no dash, never a channel's display name; composed from the funnel's legs (the client's own team steps left out), never stored. Null only with `shortDescriptionUnavailableReason`."
                 },
                 "shortDescriptionUnavailableReason": {
                   "type": "string",
@@ -20945,7 +20945,7 @@
                 "shortDescription": {
                   "type": "string",
                   "nullable": true,
-                  "description": "ONE short customer sentence of what we do in this campaign (owner 2026-10-14: the Campaigns table shows it under the name in place of `path`), e.g. \"We email new buyers until they reply with interest.\" At most 12 words, English, no dash; composed from the funnel's legs (the client's own team steps left out), never stored. Null only with `shortDescriptionUnavailableReason`."
+                  "description": "ONE short customer sentence of what we do in this campaign (owner 2026-10-14: the Campaigns table shows it under the name in place of `path`), e.g. \"We email new buyers until they reply with interest.\" or \"Our AI books meetings with buyers who reply with interest.\" At most 12 words, English, no dash, never a channel's display name; composed from the funnel's legs (the client's own team steps left out), never stored. Null only with `shortDescriptionUnavailableReason`."
                 },
                 "shortDescriptionUnavailableReason": {
                   "type": "string",
