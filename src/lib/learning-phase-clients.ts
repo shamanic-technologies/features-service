@@ -6,8 +6,8 @@
  *    per campaign: `groupBy=campaignId` answers for every campaign at once.
  *  - PER-CAMPAIGN COMMITTED SPEND, on the same basis and from the same ledger the money block above it
  *    rides, so "spent X of a Y target" can never contradict the "Invested X" beside it.
- *  - THE LEG'S DAILY CEILING, so the countdown has a rate to divide the remaining spend by — and so
- *    "what would raising it buy" can be answered in the same unit.
+ *  - THE SALES FUNNEL'S DAILY BUDGET (its stated max budget, per day), so the countdown has a rate to
+ *    divide the remaining spend by — and so "what would raising it buy" can be answered in the same unit.
  *
  * Both FAIL LOUD; the caller wraps them soft, because the verdict is display enrichment on a body
  * whose every other figure is already correct. A degraded read produces a NAMED `unmeasured` reason,
@@ -15,7 +15,7 @@
  */
 import { fetchWithRetry } from "./fetch-retry.js";
 import { mapWithConcurrency } from "./concurrency.js";
-import { featureSlugList, runsFeatureSlugsParam, soleFeatureSlug, type FeatureScope } from "./feature-scope.js";
+import { featureSlugList, runsFeatureSlugsParam, type FeatureScope } from "./feature-scope.js";
 import { activePipeSpendAttribution, attributedCampaignId } from "./pipe-spend-attribution.js";
 import { selectCostCents, type Pricing } from "./pricing.js";
 
@@ -93,17 +93,29 @@ export async function fetchCampaignDriverCounts(
   return result;
 }
 
+/** The sales funnel a campaign is a unit of: billing keys a funnel's caps on (brand, offer, funnel). */
+export interface SalesFunnelCapRef {
+  /** The offer the campaign states; null = it states none, and the funnel id alone must name one cap. */
+  offerId: string | null;
+  salesFunnelId: string;
+}
+
 /**
- * WHAT BILLING HAS THIS LEG FUNDED AT, per day, in dollars.
+ * WHAT THE CUSTOMER LETS THIS CAMPAIGN'S SALES FUNNEL SPEND, per day, in dollars (owner 2026-10-14:
+ * a campaign IS a sales funnel campaign; what it may spend is its sales funnel caps). Read from
+ * billing's brand list of stated sales funnel caps, the FUNNEL-WIDE entry of (offer, funnel): a cap one
+ * funnel CAMPAIGN holds is not this unit's unless we know the unit belongs to that funnel campaign,
+ * which this read does not, so it never answers here. A campaign stating no offer is matched on its
+ * funnel alone, and only when exactly ONE funnel-wide cap answers (two offers selling the same funnel
+ * = no pace, never a pick).
  *
- * A campaign is (brand, offer, acquisition channel, LEG), so this is the money that paces one campaign,
- * read on the same key the campaign is keyed on. `null` is "this leg has no ceiling" — billing states
- * that explicitly and it is a DIFFERENT answer from a ceiling of 0, so it is never derived from one.
+ * `null` = the funnel states no daily money: no cap, a max VOLUME only (pay as you go), or a budget
+ * billing does not spread over days (one-off, reactive: billing serves 0 a day for those). Never a
+ * figure the customer did not state; the per-leg daily ceiling this replaces is retired.
  */
-export async function fetchLegDailyCeilingUsd(
+export async function fetchSalesFunnelDailyBudgetUsd(
   brandId: string,
-  legKey: string,
-  featureScope: FeatureScope,
+  funnel: SalesFunnelCapRef,
   headers: { orgId: string; userId?: string; runId?: string },
 ): Promise<number | null> {
   const url = process.env.BILLING_SERVICE_URL;
@@ -113,24 +125,33 @@ export async function fetchLegDailyCeilingUsd(
   const h: Record<string, string> = { "x-api-key": apiKey, "x-org-id": headers.orgId, "x-brand-id": brandId };
   if (headers.userId) h["x-user-id"] = headers.userId;
   if (headers.runId) h["x-run-id"] = headers.runId;
-  // Attribution only — the ceiling is funded per (brand, leg) and the slug never reaches the path. At a
-  // grain spanning several channels naming one of them would attribute the read to a channel nobody asked
-  // about, so it is omitted there.
-  const featureSlug = soleFeatureSlug(featureScope);
-  if (featureSlug) h["x-feature-slug"] = featureSlug;
 
-  const path = `/internal/brands/${encodeURIComponent(brandId)}/legs/${encodeURIComponent(legKey)}/daily-budget`;
+  const query = funnel.offerId ? `?offerId=${encodeURIComponent(funnel.offerId)}` : "";
+  const path = `/internal/brands/${encodeURIComponent(brandId)}/sales-funnel-caps${query}`;
   const response = await fetchWithRetry(`${url}${path}`, { headers: h });
   if (!response.ok) {
     const body = await response.text();
     throw new Error(`billing-service ${path} failed (${response.status}): ${body}`);
   }
-  const data = (await response.json()) as { dailyBudgetCents?: string | number | null };
-  const raw = data.dailyBudgetCents;
+  const data = (await response.json()) as { caps?: unknown };
+  if (!Array.isArray(data.caps)) throw new Error(`billing-service ${path} returned no caps array`);
+  const matches = (data.caps as Array<Record<string, unknown>>).filter(
+    (c) =>
+      c.salesFunnelId === funnel.salesFunnelId &&
+      !c.salesFunnelCampaignId &&
+      (funnel.offerId == null || c.offerId === funnel.offerId),
+  );
+  if (matches.length > 1) {
+    console.warn(`[features-service] ${matches.length} funnel-wide caps answer funnel ${funnel.salesFunnelId} on brand ${brandId} with no offer stated: no pace`);
+    return null;
+  }
+  const cap = matches[0];
+  const maxBudget = cap?.maxBudget as { dailyBudgetCents?: string | number | null } | null | undefined;
+  const raw = maxBudget?.dailyBudgetCents;
   if (raw == null) return null;
   const cents = typeof raw === "number" ? raw : Number(raw);
-  if (!Number.isFinite(cents) || cents < 0) return null;
-  return cents / 100;
+  if (!Number.isFinite(cents)) throw new Error(`billing-service ${path} non-numeric dailyBudgetCents: ${JSON.stringify(raw)}`);
+  return cents > 0 ? cents / 100 : null;
 }
 
 /**

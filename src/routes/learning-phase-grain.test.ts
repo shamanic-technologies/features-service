@@ -62,6 +62,8 @@ const MEETING_LEG = "conversation_to_meeting_booked";
 const SERVED_CONVERSATION_LEG = "lead_found_to_conversation";
 const SERVED_VISIT_LEG = "lead_found_to_website_visit";
 const FUNNEL = "sales_meetings_from_conversation";
+const OFFER = "0e9a0000-0000-4000-8000-0000000000a1";
+const SALES_FUNNEL = "start_to_website_visit@sales-cold-email-outreach";
 
 function feature(slug: string): Record<string, unknown> {
   return {
@@ -103,6 +105,7 @@ interface CampaignShape {
   funnelKey?: string | null;
   acquisitionChannel?: string;
   createdAt?: string;
+  salesFunnelId?: string | null;
 }
 
 function campaign(shape: CampaignShape): Record<string, unknown> {
@@ -116,6 +119,7 @@ function campaign(shape: CampaignShape): Record<string, unknown> {
     acquisitionChannel: shape.acquisitionChannel ?? "cold_email",
     legKey: shape.legKey === undefined ? VISIT_LEG : shape.legKey,
     status: shape.status ?? "ongoing",
+    salesFunnelId: shape.salesFunnelId === undefined ? SALES_FUNNEL : shape.salesFunnelId,
     createdAt: shape.createdAt ?? "2026-08-01T00:00:00.000Z",
   };
 }
@@ -132,7 +136,7 @@ interface Fixture {
    *  is real spend the ledger reports and the cells do not — the divergence the committed figure has
    *  to be read from the ledger to avoid. Keyed by campaign id. */
   retiredLineageCents?: Record<string, number>;
-  /** billing's per-leg ceiling, in cents. `null` = this leg has none. */
+  /** The sales funnel's max budget per day, in cents, as billing serves it. `null` = no max budget. */
   dailyBudgetCents?: string | null;
   /** Make campaign-service unreachable, to drive the degrade. */
   campaignsDown?: boolean;
@@ -171,10 +175,21 @@ function mockFetch(fixture: Fixture): void {
       return json({ campaigns: fixture.campaigns });
     }
     if (url.includes("/public/workflows")) return json({ workflows: WORKFLOWS });
-    if (url.includes("/daily-budget")) {
+    // The per-leg ceiling is RETIRED (owner 2026-10-14): billing answers 404 on it, and the countdown
+    // must still answer, paced on the sales funnel's own caps.
+    if (url.includes("/legs/") && url.includes("/daily-budget")) return new Response("not found", { status: 404 });
+    if (url.includes("/sales-funnel-caps")) {
       if (fixture.billingDown) return new Response("boom", { status: 503 });
-      const cents = fixture.dailyBudgetCents === undefined ? "800" : fixture.dailyBudgetCents;
-      return json({ brandId: "b1", legKey: VISIT_LEG, dailyBudgetCents: cents, updatedAt: null, funnels: [], channels: [], offers: [], legs: [] });
+      const cents = fixture.dailyBudgetCents === undefined ? "800.0000000000" : fixture.dailyBudgetCents;
+      return json({
+        orgId: "0e9a0000-0000-4000-8000-000000000001",
+        brandId: "b1",
+        caps: [
+          // Another funnel campaign's own cap on the same funnel: never this unit's.
+          { offerId: OFFER, salesFunnelId: SALES_FUNNEL, salesFunnelCampaignId: "0e9a0000-0000-4000-8000-0000000000ff", maxBudget: { amountCents: "999999", period: "daily", dailyBudgetCents: "999999.0000000000" }, maxVolume: null },
+          { offerId: OFFER, salesFunnelId: SALES_FUNNEL, maxBudget: cents == null ? null : { amountCents: cents, period: "daily", dailyBudgetCents: cents }, maxVolume: null },
+        ],
+      });
     }
     if (url.includes("/sales-funnels")) return new Response("not found", { status: 404 });
     // The offer's terms are the ONLY pricing input (owner 2026-10-05): the funnels stating exactly
@@ -433,6 +448,20 @@ describe("the countdown a browser could not compute", () => {
 
     mockFetch({ ...LIVE_ONLY, dailyBudgetCents: null });
     expect((await learningPhase()).unmeasuredReason).toBe("no_daily_ceiling");
+
+    // A campaign predating sales funnels has no funnel caps: no pace, never a borrowed figure.
+    mockFetch({ ...LIVE_ONLY, campaigns: [campaign({ id: "c-live", salesFunnelId: null })] });
+    expect((await learningPhase()).unmeasuredReason).toBe("no_daily_ceiling");
+  });
+
+  it("paces on the SALES FUNNEL's caps and never asks billing for the retired per-leg ceiling", async () => {
+    mockFetch(LIVE_ONLY);
+    const phase = await learningPhase();
+    expect(phase.status).toBe("learning");
+    expect(phase.dailyCeilingUsd).toBe(8);
+    const urls = vi.mocked(globalThis.fetch).mock.calls.map(([input]) => String(input));
+    expect(urls.some((u) => u.includes("/sales-funnel-caps"))).toBe(true);
+    expect(urls.some((u) => u.includes("/legs/") && u.includes("/daily-budget"))).toBe(false);
   });
 
   it("has a FLOOR rather than a price when no cell has observed an outcome, and says so", async () => {
