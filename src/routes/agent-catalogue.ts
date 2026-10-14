@@ -90,7 +90,7 @@ import { listLegAssignments } from "../lib/workflow-leg-assignments.js";
 import { invalidateChannelCatalogue, fleetLegPrice, fleetPlayPrices, readLegWorkflowRanking } from "./public.js";
 import type { LegPrice } from "../lib/outcome-prices.js";
 import type { LegAssignmentRow } from "../lib/workflow-leg-assignments.js";
-import { insertPlay, insertStrategy, insertTactic, invalidatePlayCatalogue, listVerdicts, loadPlayCatalogue, updateTacticDescription } from "../lib/plays-store.js";
+import { insertPlay, insertStrategy, insertTactic, invalidatePlayCatalogue, listVerdicts, loadPlayCatalogue, proposeStrategyEdit, storeStrategyEdit, updateTacticDescription } from "../lib/plays-store.js";
 import { kickTacticJudgments, SWEEP_EVERY_MS } from "../lib/tactic-judgments.js";
 import { defaultStrategyOf, excludedDynasties, playBlockOf, playIdOf, tacticJudgingOf, tacticNameOf, type PlayCatalogue, type Strategy, type Tactic } from "../lib/plays.js";
 
@@ -1626,7 +1626,7 @@ router.get("/internal/catalogue/strategies/:id", apiKeyOnly, async (req, res) =>
     const c = await loadPlayCatalogue();
     const st = c.strategies.get(req.params.id);
     if (!st) return void res.status(404).json({ error: `no strategy ${req.params.id}`, reason: "strategy_not_found" });
-    res.json({ ...strategyRowOf(c, st), createdBy: st.createdBy, createdAt: st.createdAt });
+    res.json({ ...strategyRowOf(c, st), createdBy: st.createdBy, createdAt: st.createdAt, updatedBy: st.updatedBy ?? null, updatedAt: st.updatedAt ?? null });
   } catch (err) {
     fail(res, err, "get strategy");
   }
@@ -1654,6 +1654,57 @@ router.post("/internal/catalogue/strategies", apiKeyOnly, async (req, res) => {
     res.status(201).json(strategyRowOf(await loadPlayCatalogue(), st));
   } catch (err) {
     fail(res, err, "create strategy");
+  }
+});
+
+/** An optional list of tactic ids in an edit body (absent = unchanged). */
+function optionalTacticIds(body: Body, field: string): string[] | undefined {
+  return body[field] === undefined ? undefined : tacticIds(body, field);
+}
+
+/**
+ * STAFF: edit a strategy's rule (`requires`, `excludes`: each a full list, absent = unchanged) and/or `description`
+ * (STRATEGY-EDIT-PUBLIC-1014, 2026-10-14: a new tactic leaked into older strategies naming nothing about it). An edit
+ * changes what every campaign of every play on it runs, so the gateway mounts it staff-only (like a pipe's default
+ * play). Same rules as a create (unique description and rule, known tactics, never both, at least one); name and id
+ * never move. Refused 409 `default_play_runs_nothing` when the strategy is a pipe's DEFAULT play and the new rule
+ * allows none of its active workflows. Plays' allowed workflows and figures rebuild at once. Nothing new = `changed:false`.
+ */
+router.patch("/internal/catalogue/strategies/:id", apiKeyOnly, async (req, res) => {
+  const body = (req.body ?? {}) as Body;
+  try {
+    const updatedBy = actorOf(body, "updatedBy");
+    const requires = optionalTacticIds(body, "requires");
+    const excludes = optionalTacticIds(body, "excludes");
+    const description = body.description === undefined ? undefined : text(body, "description", 500);
+    if (requires === undefined && excludes === undefined && description === undefined) throw bad("edit_empty", "send at least one of requires, excludes, description");
+    const { current, next, changed } = await proposeStrategyEdit({ id: req.params.id, requiresTacticIds: requires, excludesTacticIds: excludes, description, updatedBy });
+    let st = current;
+    if (changed) {
+      invalidatePlayCatalogue();
+      const [c, assignments] = await Promise.all([loadPlayCatalogue(), listLegAssignments()]);
+      for (const [pipeId, ps] of c.playsByPipe) {
+        if (ps.some((p) => p.isDefault && p.strategyId === next.id)) assertStrategyRunsOnPipe(c, assignments, pipeId, next, `it is the pipe's default play, so every campaign of the pipe would have nothing to run`);
+      }
+      st = await storeStrategyEdit(next, updatedBy);
+      console.log(
+        `[features-service] agent catalogue: strategy ${st.id} edited by ${updatedBy} (requires ${JSON.stringify(current.requiresTacticIds)} -> ${JSON.stringify(st.requiresTacticIds)}, excludes ${JSON.stringify(current.excludesTacticIds)} -> ${JSON.stringify(st.excludesTacticIds)}${st.description !== current.description ? ", description changed" : ""}); plays rebuild`,
+      );
+      void refreshCatalogueMeasurementsAfterPlayWrite();
+    }
+    const c = await loadPlayCatalogue();
+    const ref = (ids: string[]) => ids.map((id) => ({ id, name: c.tactics.get(id)?.name ?? id }));
+    res.json({
+      ...strategyRowOf(c, st),
+      changed,
+      previous: { requires: ref(current.requiresTacticIds), excludes: ref(current.excludesTacticIds), description: current.description },
+      createdBy: st.createdBy,
+      createdAt: st.createdAt,
+      updatedBy: st.updatedBy ?? null,
+      updatedAt: st.updatedAt ?? null,
+    });
+  } catch (err) {
+    fail(res, err, "edit strategy");
   }
 });
 
@@ -1723,6 +1774,11 @@ async function assertDefaultPlayRuns(pipeId: string, strategyId: string): Promis
   const [c, assignments] = await Promise.all([loadPlayCatalogue(), listLegAssignments()]);
   const st = c.strategies.get(strategyId);
   if (!st) throw new DeclarationError(404, "strategy_not_found", `no strategy ${strategyId} (GET /internal/catalogue/strategies)`);
+  assertStrategyRunsOnPipe(c, assignments, pipeId, st, "as the default play, every campaign of the pipe would have nothing to run");
+}
+
+/** Refused 409 `default_play_runs_nothing` while `st` allows none of the pipe's ACTIVE workflows, judged now. */
+function assertStrategyRunsOnPipe(c: PlayCatalogue, assignments: readonly LegAssignmentRow[], pipeId: string, st: Strategy, consequence: string): void {
   const [slug, leg] = [pipeId.slice(0, pipeId.indexOf("|")), pipeId.slice(pipeId.indexOf("|") + 1)];
   const active = assignments.filter((a) => a.featureSlug === slug && storedLegKeyOf(a.legKey) === storedLegKeyOf(leg) && a.state === "active").map((a) => a.workflowDynastySlug);
   const excluded = excludedDynasties(st, active, c.tacticsByDynasty, tacticNameOf(c));
@@ -1730,7 +1786,7 @@ async function assertDefaultPlayRuns(pipeId: string, strategyId: string): Promis
     throw new DeclarationError(
       409,
       "default_play_runs_nothing",
-      `the strategy ${strategyId} allows none of the ${active.length} active workflow(s) of ${pipeId} yet (${[...excluded.values()].join("; ") || "no active workflow"}): as the default play, every campaign of the pipe would have nothing to run`,
+      `the strategy ${st.id} allows none of the ${active.length} active workflow(s) of ${pipeId} yet (${[...excluded.values()].join("; ") || "no active workflow"}): ${consequence}`,
     );
   }
 }

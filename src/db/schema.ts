@@ -568,6 +568,9 @@ export const strategies = pgTable("strategies", {
   excludesTacticIds: text("excludes_tactic_ids").array().notNull().default([]),
   createdBy: text("created_by").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  /** Who last edited requires / excludes / description, and when (migration 0033); null = never edited. */
+  updatedBy: text("updated_by"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }),
 });
 
 export const plays = pgTable(
@@ -618,7 +621,7 @@ export const workflowTacticVerdicts = pgTable(
     probability: doublePrecision("probability").notNull(),
     model: text("model").notNull(),
     judgedDescription: text("judged_description").notNull(),
-    /** How Jev read the workflow (migration 0032): `whole-in-parts` reads every step; `truncated-60k` (before 2026-10-14) cut a big DAG at 60,000 characters. */
+    /** How Jev read the workflow (migration 0033): `whole-in-parts` reads every step; `truncated-60k` (before 2026-10-14) cut a big DAG at 60,000 characters. */
     judgeRule: text("judge_rule").notNull().default("truncated-60k"),
     judgedAt: timestamp("judged_at", { withTimezone: true }).notNull().defaultNow(),
   },

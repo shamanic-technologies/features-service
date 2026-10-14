@@ -59,6 +59,8 @@ const strategyOf = (r: typeof strategies.$inferSelect): Strategy => ({
   excludesTacticIds: [...r.excludesTacticIds].sort(),
   createdBy: r.createdBy,
   createdAt: r.createdAt.toISOString(),
+  updatedBy: r.updatedBy,
+  updatedAt: r.updatedAt?.toISOString() ?? null,
 });
 const sweepOf = (r: typeof tacticJudgingSweeps.$inferSelect): TacticJudgingSweep => ({
   tacticId: r.tacticId,
@@ -151,26 +153,76 @@ export async function updateTacticDescription(input: { id: string; description: 
   return { tactic: tacticOf(row), changed: true, previousDescription: current.description };
 }
 
+/**
+ * A strategy's RULE: every tactic exists, none both required and excluded, at least one named, and no OTHER strategy
+ * holds exactly this rule (two strategies with the same rule are one strategy under two names).
+ */
+function assertStrategyRule(current: { tactics: Tactic[]; strategies: Strategy[] }, requires: string[], excludes: string[], selfId: string | null): void {
+  for (const t of [...requires, ...excludes]) {
+    if (!current.tactics.some((x) => x.id === t)) throw new DeclarationError(404, "tactic_not_found", `no tactic ${t} (GET /internal/catalogue/tactics)`);
+  }
+  const both = requires.filter((t) => excludes.includes(t));
+  if (both.length > 0) throw new DeclarationError(400, "tactic_required_and_excluded", `a strategy cannot both require and exclude ${both.join(", ")}`);
+  if (requires.length + excludes.length === 0) {
+    throw new DeclarationError(400, "strategy_empty", "a strategy requires or excludes at least one tactic");
+  }
+  const key = (r: string[], e: string[]) => `${[...r].sort().join(",")}|${[...e].sort().join(",")}`;
+  const twin = current.strategies.find((s) => s.id !== selfId && key(s.requiresTacticIds, s.excludesTacticIds) === key(requires, excludes));
+  if (twin) throw new DeclarationError(409, "strategy_rule_taken", `the strategy ${twin.id} already requires and excludes exactly these tactics`);
+}
+
 export async function insertStrategy(input: { name: string; description: string; requiresTacticIds: string[]; excludesTacticIds: string[]; createdBy: string }): Promise<Strategy> {
   const id = idOfName(input.name);
   if (!id) throw new DeclarationError(400, "name_invalid", "name must hold at least one letter or digit");
   const current = await loadPlayCatalogueFresh();
   assertUnique(current.strategies, id, input.name, input.description, "strategy");
-  for (const t of [...input.requiresTacticIds, ...input.excludesTacticIds]) {
-    if (!current.tactics.some((x) => x.id === t)) throw new DeclarationError(404, "tactic_not_found", `no tactic ${t} (GET /internal/catalogue/tactics)`);
-  }
-  const both = input.requiresTacticIds.filter((t) => input.excludesTacticIds.includes(t));
-  if (both.length > 0) throw new DeclarationError(400, "tactic_required_and_excluded", `a strategy cannot both require and exclude ${both.join(", ")}`);
-  if (input.requiresTacticIds.length + input.excludesTacticIds.length === 0) {
-    throw new DeclarationError(400, "strategy_empty", "a strategy requires or excludes at least one tactic");
-  }
-  // Two strategies with the same rule are one strategy under two names.
-  const key = (r: string[], e: string[]) => `${[...r].sort().join(",")}|${[...e].sort().join(",")}`;
-  const twin = current.strategies.find((s) => key(s.requiresTacticIds, s.excludesTacticIds) === key(input.requiresTacticIds, input.excludesTacticIds));
-  if (twin) throw new DeclarationError(409, "strategy_rule_taken", `the strategy ${twin.id} already requires and excludes exactly these tactics`);
+  assertStrategyRule(current, input.requiresTacticIds, input.excludesTacticIds, null);
   const [row] = await db
     .insert(strategies)
     .values({ id, name: input.name, description: input.description, requiresTacticIds: input.requiresTacticIds, excludesTacticIds: input.excludesTacticIds, createdBy: input.createdBy })
+    .returning();
+  invalidatePlayCatalogue();
+  return strategyOf(row);
+}
+
+export interface StrategyEdit {
+  id: string;
+  /** Absent = unchanged. */
+  requiresTacticIds?: string[];
+  excludesTacticIds?: string[];
+  description?: string;
+  updatedBy: string;
+}
+
+/** The strategy a {@link StrategyEdit} would leave, validated (unique description and rule, known tactics), not stored. */
+export async function proposeStrategyEdit(input: StrategyEdit): Promise<{ current: Strategy; next: Strategy; changed: boolean }> {
+  const all = await loadPlayCatalogueFresh();
+  const current = all.strategies.find((s) => s.id === input.id);
+  if (!current) throw new DeclarationError(404, "strategy_not_found", `no strategy ${input.id} (GET /internal/catalogue/strategies)`);
+  const next: Strategy = {
+    ...current,
+    description: input.description ?? current.description,
+    requiresTacticIds: [...(input.requiresTacticIds ?? current.requiresTacticIds)].sort(),
+    excludesTacticIds: [...(input.excludesTacticIds ?? current.excludesTacticIds)].sort(),
+  };
+  const same = (a: string[], b: string[]) => a.join(",") === b.join(",");
+  const changed = next.description !== current.description || !same(next.requiresTacticIds, current.requiresTacticIds) || !same(next.excludesTacticIds, current.excludesTacticIds);
+  if (!changed) return { current, next: current, changed };
+  const taken = all.strategies.find((s) => s.id !== input.id && s.description.toLowerCase() === next.description.toLowerCase());
+  if (taken) throw new DeclarationError(409, "strategy_description_taken", `the strategy ${taken.id} already has this description`);
+  assertStrategyRule(all, next.requiresTacticIds, next.excludesTacticIds, input.id);
+  return { current, next, changed };
+}
+
+/**
+ * Edit a strategy's rule and/or description (STRATEGY-EDIT-PUBLIC-1014). The caller validated it with
+ * {@link proposeStrategyEdit} and checked every pipe whose DEFAULT play it is still runs a workflow. Name and id never move.
+ */
+export async function storeStrategyEdit(next: Strategy, updatedBy: string): Promise<Strategy> {
+  const [row] = await db
+    .update(strategies)
+    .set({ description: next.description, requiresTacticIds: next.requiresTacticIds, excludesTacticIds: next.excludesTacticIds, updatedBy, updatedAt: new Date() })
+    .where(sql`${strategies.id} = ${next.id}`)
     .returning();
   invalidatePlayCatalogue();
   return strategyOf(row);

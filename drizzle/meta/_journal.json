@@ -230,7 +230,14 @@
       "idx": 32,
       "version": "7",
       "when": 1792540800000,
-      "tag": "0032_tactic_verdict_judge_rule",
+      "tag": "0032_strategy_edits",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1792627200000,
+      "tag": "0033_tactic_verdict_judge_rule",
       "breakpoints": true
     }
   ]
