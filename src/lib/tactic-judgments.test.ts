@@ -17,7 +17,7 @@ vi.mock("./plays-store.js", async () => {
   };
 });
 
-const { sweepTacticJudgments, tacticQuestion, judgedState } = await import("./tactic-judgments.js");
+const { sweepTacticJudgments, tacticQuestion, judgedState, judgedParts, judgeTactic, JUDGE_RULE } = await import("./tactic-judgments.js");
 
 const def = (slug: string, dynasty: string, version: number, active: boolean) => ({ workflowSlug: slug, workflowDynastySlug: dynasty, version, versionActive: active, description: "d", dag: { nodes: [{ id: "serve", params: { emailStatus: "valid" } }] } });
 
@@ -113,5 +113,56 @@ describe("every full sweep records each tactic's judging (owner 2026-10-14: a fa
   it("an unreadable feature counts as a failure of every tactic, with its reason", async () => {
     await sweepTacticJudgments({ judge: async () => ({ verdict: false, probability: 0.1, model: "m" }), definitions: async () => { throw new Error("workflow-service 503"); } });
     expect(state.sweeps).toMatchObject([{ failed: 1, lastFailure: expect.stringContaining("workflow-service 503") }]);
+  });
+});
+
+describe("Jev reads the WHOLE workflow, in parts when it is too long (2026-10-14: torcular-v4's attachment step sat past a 60k cut)", () => {
+  const bigNode = (id: string, fill: number, extra: Record<string, unknown> = {}) => ({ id, type: "script", config: { code: "x".repeat(fill), ...extra } });
+  const bigDef = (slug: string) => ({
+    workflowSlug: slug, workflowDynastySlug: slug.replace(/-v\d+$/, ""), version: 4, versionActive: true, description: "d",
+    dag: { nodes: [bigNode("compose", 30_000), bigNode("draft", 30_000), { id: "send-reply", type: "http.call", config: { service: "instantly", method: "POST", path: "/orgs/replies", body: { attachments: [{ document_id: "$ref:pick.id" }] } } }], edges: [{ from: "compose", to: "draft" }, { from: "draft", to: "send-reply" }] },
+  });
+
+  it("a DAG that fits is one part, byte for byte the state earlier verdicts were judged on", () => {
+    const w = def("orion-v2", "orion", 2, true) as any;
+    expect(judgedParts(w)).toEqual([judgedState(w)]);
+    expect(judgedParts(w)).toEqual([{ workflow: "orion-v2", description: "d", definition: w.dag }]);
+  });
+
+  it("a bigger DAG is split on whole steps, every step shown in some part, each part listing every step", () => {
+    const parts = judgedParts(bigDef("torcular-v4") as any);
+    expect(parts.length).toBeGreaterThan(1);
+    const shown = parts.flatMap((p: any) => p.stepsInThisPart.map((n: any) => n.id));
+    expect(shown).toEqual(["compose", "draft", "send-reply"]);
+    for (const p of parts as any[]) {
+      expect(p.everyStep).toEqual(["compose (script)", "draft (script)", "send-reply (http.call POST instantly/orgs/replies)"]);
+      expect(JSON.stringify(p).length).toBeLessThan(62_000);
+    }
+    expect(JSON.stringify(parts).includes("attachments")).toBe(true);
+  });
+
+  it("the workflow follows the tactic when ONE part shows the step: p is the highest part's; a failing part fails the judgment", async () => {
+    const t = { id: "attaches-offer-documents", name: "Attaches offer documents", description: "Sends a reply with an attachment.", createdBy: "t", createdAt: "" };
+    const seen: any[] = [];
+    const ask = async (state: any, q: any) => {
+      seen.push(q.instructions);
+      return { probability: JSON.stringify(state.stepsInThisPart).includes("attachments") ? 0.92 : 0.04, model: "m" };
+    };
+    const j = await judgeTactic(t, bigDef("torcular-v4") as any, ask as any);
+    expect(j).toEqual({ verdict: true, probability: 0.92, model: "m" });
+    expect(seen.every((x) => x.includes("you see part"))).toBe(true);
+    await expect(judgeTactic(t, bigDef("torcular-v4") as any, (async () => { throw new Error("402"); }) as any)).rejects.toThrow("402");
+  });
+
+  it("the sweep re-judges a verdict a cut DAG got under the old rule, never one on a DAG that fit", async () => {
+    const desc = "Sends to catch-all addresses.";
+    state.stored = [
+      { workflowSlug: "torcular-v4", tacticId: "catch-all", workflowDynastySlug: "torcular", version: 4, versionActive: true, verdict: false, probability: 0.35, model: "m", judgedDescription: desc, judgeRule: "truncated-60k", judgedAt: "" },
+      { workflowSlug: "orion-v2", tacticId: "catch-all", workflowDynastySlug: "orion", version: 2, versionActive: true, verdict: false, probability: 0.1, model: "m", judgedDescription: desc, judgeRule: "truncated-60k", judgedAt: "" },
+    ];
+    state.assignments.push({ featureSlug: "sales-cold-email-outreach", legKey: "lead_found_to_conversation", workflowDynastySlug: "torcular", state: "active" });
+    const r = await sweepTacticJudgments({ judge: async () => ({ verdict: true, probability: 0.9, model: "m2" }), definitions: async () => [def("orion-v2", "orion", 2, true), bigDef("torcular-v4")] as any });
+    expect(r).toMatchObject({ judged: 1, alreadyJudged: 1 });
+    expect(state.inserted.map((x) => [x.workflowSlug, x.judgeRule])).toEqual([["torcular-v4", JUDGE_RULE]]);
   });
 });

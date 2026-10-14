@@ -30,8 +30,17 @@ const JUDGE_CONCURRENCY = 4;
 const JUDGE_TIMEOUT_MS = 60_000;
 export const SWEEP_EVERY_MS = 15 * 60_000;
 const FIRST_SWEEP_AFTER_MS = 60_000;
-/** A DAG is sent whole up to this size (every cold email DAG today is under 13k characters). */
+/**
+ * A DAG up to this size is sent whole, in one question (every verdict judged before 2026-10-14 was asked this way).
+ * Jev's budget is 32k tokens for the state (chat-service `/internal/platform-judgments`), ~60,000 characters of DAG.
+ */
 const MAX_DAG_CHARS = 60_000;
+/**
+ * How Jev reads a workflow, stored with every verdict. A bigger DAG used to be CUT at 60,000 characters, so a step past
+ * the cut was never seen (ai-meeting-booking-torcular-v4 attaches the offer's document at char ~79,000 of 103,000 and
+ * was judged "no"). It is now read whole, in parts: a verdict on a cut DAG is re-judged by the sweep.
+ */
+export const JUDGE_RULE = "whole-in-parts";
 const QUESTION_KEY = "followsTactic";
 
 export interface TacticJudgment {
@@ -41,44 +50,113 @@ export interface TacticJudgment {
 }
 
 /** The yes/no question, built from the tactic's own description (the description is what Jev judges against). */
-export function tacticQuestion(t: Pick<Tactic, "name" | "description">) {
+export function tacticQuestion(t: Pick<Tactic, "name" | "description">, part: { index: number; count: number } | null = null) {
+  const partNote =
+    part && part.count > 1
+      ? ` The workflow is too long to read at once: you see part ${part.index} of ${part.count} of its steps, with the list of every step and how they connect. Answer yes when a step shown in full in this part does what the tactic describes; a step of another part is judged with that part.`
+      : "";
   return {
     type: "noul" as const,
     instructions:
       `Does this workflow follow the tactic "${t.name}"? The tactic: ${t.description} ` +
-      "Judge only on what the workflow actually does: its steps and the parameters each step sends. Ignore its name, its description's claims and any label.",
+      "Judge only on what the workflow actually does: its steps and the parameters each step sends. Ignore its name, its description's claims and any label." +
+      partNote,
     criteria: {
       true: `A step of the workflow, as configured, does exactly what the tactic describes: ${t.description}`,
-      false: "No step of the workflow does what the tactic describes, or the workflow does the opposite.",
+      false: part && part.count > 1 ? "No step shown in full in this part does what the tactic describes, or it does the opposite." : "No step of the workflow does what the tactic describes, or the workflow does the opposite.",
     },
   };
 }
 
-/** PURE: the state Jev reads for one version. */
-export function judgedState(w: WorkflowDefinition): Record<string, unknown> {
-  const dag = JSON.stringify(w.dag);
-  return {
-    workflow: w.workflowSlug,
-    description: w.description,
-    definition: dag.length > MAX_DAG_CHARS ? `${dag.slice(0, MAX_DAG_CHARS)} [truncated]` : w.dag,
-  };
+interface DagNode {
+  id?: unknown;
+  type?: unknown;
+  config?: { service?: unknown; method?: unknown; path?: unknown };
 }
 
-export async function judgeTactic(t: Tactic, w: WorkflowDefinition): Promise<TacticJudgment> {
+/** PURE: one line per step (id, type, and the call it makes), so a part keeps the shape of the whole workflow. */
+function stepList(nodes: readonly DagNode[]): string[] {
+  return nodes.map((n) => {
+    const c = n.config ?? {};
+    const call = typeof c.service === "string" ? ` ${String(c.method ?? "")} ${c.service}${String(c.path ?? "")}` : "";
+    return `${String(n.id)} (${String(n.type)}${call})`;
+  });
+}
+
+/**
+ * PURE: what Jev reads for one version, in as many parts as its DAG needs. A DAG up to `MAX_DAG_CHARS` is ONE part,
+ * byte for byte the state every earlier verdict was judged on. A bigger one is split on WHOLE steps (a step is never
+ * cut unless it alone exceeds a part, then it is marked `[truncated]`), each part carrying the full step list and the
+ * edges so Jev sees where the shown steps sit. Never a cut that drops steps.
+ */
+export function judgedParts(w: WorkflowDefinition, maxChars = MAX_DAG_CHARS): Array<Record<string, unknown>> {
+  const dag = JSON.stringify(w.dag);
+  if (dag.length <= maxChars) return [{ workflow: w.workflowSlug, description: w.description, definition: w.dag }];
+  const d = w.dag as { nodes?: unknown; edges?: unknown };
+  if (!d || !Array.isArray(d.nodes)) {
+    const parts: Array<Record<string, unknown>> = [];
+    for (let i = 0; i < dag.length; i += maxChars) parts.push({ workflow: w.workflowSlug, description: w.description, definitionText: dag.slice(i, i + maxChars) });
+    return parts.map((p, i) => ({ ...p, part: `${i + 1} of ${parts.length}` }));
+  }
+  const nodes = d.nodes as DagNode[];
+  const steps = stepList(nodes);
+  const edges = Array.isArray(d.edges) ? (d.edges as Array<{ from?: unknown; to?: unknown }>).map((e) => `${String(e.from)} -> ${String(e.to)}`) : [];
+  const budget = Math.max(10_000, maxChars - JSON.stringify(steps).length - JSON.stringify(edges).length);
+  const groups: unknown[][] = [];
+  let current: unknown[] = [];
+  let size = 0;
+  for (const n of nodes) {
+    let item: unknown = n;
+    let len = JSON.stringify(n).length;
+    if (len > budget) {
+      item = { id: n.id, type: n.type, truncated: `${JSON.stringify(n).slice(0, budget - 200)} [truncated]` };
+      len = budget;
+    }
+    if (current.length > 0 && size + len > budget) {
+      groups.push(current);
+      current = [];
+      size = 0;
+    }
+    current.push(item);
+    size += len;
+  }
+  if (current.length > 0) groups.push(current);
+  return groups.map((g, i) => ({ workflow: w.workflowSlug, description: w.description, part: `${i + 1} of ${groups.length}`, everyStep: steps, edges, stepsInThisPart: g }));
+}
+
+/** PURE (kept for callers reading one state): the first part. */
+export const judgedState = (w: WorkflowDefinition): Record<string, unknown> => judgedParts(w)[0];
+
+async function askOne(state: Record<string, unknown>, question: ReturnType<typeof tacticQuestion>): Promise<{ probability: number; model: string }> {
   const base = process.env.CHAT_SERVICE_URL;
   const apiKey = process.env.CHAT_SERVICE_API_KEY;
   if (!base || !apiKey) throw new Error("[features-service] CHAT_SERVICE_URL / CHAT_SERVICE_API_KEY not configured");
   const res = await fetchWithRetry(`${base}/internal/platform-judgments`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-API-Key": apiKey },
-    body: JSON.stringify({ state: judgedState(w), questions: { [QUESTION_KEY]: tacticQuestion(t) } }),
+    body: JSON.stringify({ state, questions: { [QUESTION_KEY]: question } }),
   }, { timeoutMs: JUDGE_TIMEOUT_MS });
   if (!res.ok) throw new Error(`chat-service platform-judgments ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const body = (await res.json()) as { model?: unknown; answers?: Record<string, { type?: unknown; noul?: unknown }> };
   const answer = body.answers?.[QUESTION_KEY];
   if (answer?.type !== "noul" || typeof answer.noul !== "number" || !Number.isFinite(answer.noul)) throw new Error("chat-service answered without a readable probability");
   if (typeof body.model !== "string" || body.model === "") throw new Error("chat-service answered without naming the model release");
-  return { verdict: answer.noul >= 0.5, probability: answer.noul, model: body.model };
+  return { probability: answer.noul, model: body.model };
+}
+
+/**
+ * Jev's verdict on the WHOLE workflow: one question per part (`judgedParts`); the workflow follows the tactic when ONE
+ * part shows a step doing it, so p = the highest part's. Any part failing fails the judgment (never a verdict on part
+ * of the workflow).
+ */
+export async function judgeTactic(t: Tactic, w: WorkflowDefinition, ask: typeof askOne = askOne): Promise<TacticJudgment> {
+  const parts = judgedParts(w);
+  let best: { probability: number; model: string } | null = null;
+  for (const [i, state] of parts.entries()) {
+    const a = await ask(state, tacticQuestion(t, { index: i + 1, count: parts.length }));
+    if (!best || a.probability > best.probability) best = a;
+  }
+  return { verdict: best!.probability >= 0.5, probability: best!.probability, model: best!.model };
 }
 
 export interface SweepResult {
@@ -111,7 +189,12 @@ export async function sweepTacticJudgments(deps: { judge?: typeof judgeTactic; d
   }
   // Judged on the tactic's CURRENT description; a verdict on an older text is re-judged (and replaced in place).
   const descriptionOf = new Map(tactics.map((t) => [t.id, t.description]));
-  const done = new Set(stored.filter((v) => v.judgedDescription === descriptionOf.get(v.tacticId)).map((v) => `${v.workflowSlug}|${v.tacticId}`));
+  // A verdict on a DAG read cut short (an older judge rule) is re-judged too; a DAG that fits in one part was read whole.
+  const storedOn = new Map(stored.filter((v) => v.judgedDescription === descriptionOf.get(v.tacticId)).map((v) => [`${v.workflowSlug}|${v.tacticId}`, v.judgeRule]));
+  const isDone = (w: WorkflowDefinition, tacticId: string): boolean => {
+    const key = `${w.workflowSlug}|${tacticId}`;
+    return storedOn.has(key) && (storedOn.get(key) === JUDGE_RULE || JSON.stringify(w.dag).length <= MAX_DAG_CHARS);
+  };
   const activeBySlug = new Map(stored.map((v) => [v.workflowSlug, v.versionActive]));
   const todo: Array<{ t: Tactic; w: WorkflowDefinition; featureSlug: string }> = [];
   // Per tactic: what this sweep saw (versions covered, judged, failed, the last reason Jev or a read gave).
@@ -136,7 +219,7 @@ export async function sweepTacticJudgments(deps: { judge?: typeof judgeTactic; d
       if (activeBySlug.has(w.workflowSlug) && activeBySlug.get(w.workflowSlug) !== w.versionActive) await refreshVersionActive(w.workflowSlug, w.versionActive);
       for (const t of tactics) {
         perTactic.get(t.id)!.versions += 1;
-        if (done.has(`${w.workflowSlug}|${t.id}`)) {
+        if (isDone(w, t.id)) {
           result.alreadyJudged += 1;
           perTactic.get(t.id)!.judged += 1;
         } else todo.push({ t, w, featureSlug });
@@ -146,7 +229,7 @@ export async function sweepTacticJudgments(deps: { judge?: typeof judgeTactic; d
   await mapWithConcurrency(todo, JUDGE_CONCURRENCY, async ({ t, w, featureSlug }) => {
     try {
       const j = await judge(t, w);
-      await insertVerdict({ workflowSlug: w.workflowSlug, tacticId: t.id, workflowDynastySlug: w.workflowDynastySlug, featureSlug, version: w.version, versionActive: w.versionActive, verdict: j.verdict, probability: j.probability, model: j.model, judgedDescription: t.description });
+      await insertVerdict({ workflowSlug: w.workflowSlug, tacticId: t.id, workflowDynastySlug: w.workflowDynastySlug, featureSlug, version: w.version, versionActive: w.versionActive, verdict: j.verdict, probability: j.probability, model: j.model, judgedDescription: t.description, judgeRule: JUDGE_RULE });
       result.judged += 1;
       perTactic.get(t.id)!.judged += 1;
     } catch (error) {
