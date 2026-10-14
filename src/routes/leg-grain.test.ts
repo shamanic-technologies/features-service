@@ -291,6 +291,48 @@ describe("workflow-projection: a LEG is answerable with no sales funnel named", 
     expect(form.body.rows[0].modelEligibility.eligible).toBe(true);
   });
 
+  it("a sourcing pipe's PLAY rules workflows out too: the phone play runs only the phone copy, the default only the generic (LEAK-1012)", async () => {
+    mockFetch();
+    const { fetchLegAssignments } = await import("../lib/workflow-leg-assignments.js");
+    const { loadPlayCatalogue } = await import("../lib/plays-store.js");
+    const { buildPlayCatalogue } = await import("../lib/plays.js");
+    const { playOfLegRead, unpricedPipeProjection } = await import("./workflow-projection.js");
+    const PIPE = "sourcing-apollo-cold-filters|start_to_lead_found";
+    const assignment = (slug: string) => [slug, { featureSlug: "sourcing-apollo-cold-filters", legKey: "start_to_lead_found", workflowDynastySlug: slug, state: "active" as const, decidedBy: "staff", decidedAt: "2026-10-14T00:00:00.000Z", note: null }] as const;
+    vi.mocked(fetchLegAssignments).mockResolvedValue(new Map([assignment("sourcing-apollo-cold-filters-scheat"), assignment("sourcing-apollo-cold-filters-old")]));
+    const verdict = (dynasty: string, tacticId: string, v: boolean) => ({ workflowSlug: `${dynasty}-v1`, tacticId, workflowDynastySlug: dynasty, version: 1, versionActive: true, verdict: v, probability: v ? 0.98 : 0.03, model: "m", judgedAt: "" });
+    const tactic = { id: "phone-reach", name: "Phone reach", description: "d", createdBy: "t", createdAt: "" };
+    vi.mocked(loadPlayCatalogue).mockResolvedValue(
+      buildPlayCatalogue({
+        tactics: [tactic],
+        strategies: [
+          { id: "everyone", name: "Everyone", description: "a", requiresTacticIds: [], excludesTacticIds: ["phone-reach"], createdBy: "t", createdAt: "" },
+          { id: "reachable-by-phone", name: "Reachable by phone", description: "b", requiresTacticIds: ["phone-reach"], excludesTacticIds: [], createdBy: "t", createdAt: "" },
+        ],
+        plays: [
+          { pipeId: PIPE, strategyId: "everyone", isDefault: true },
+          { pipeId: PIPE, strategyId: "reachable-by-phone", isDefault: false },
+        ],
+        verdicts: [verdict("sourcing-apollo-cold-filters-scheat", "phone-reach", false), verdict("sourcing-apollo-cold-filters-old", "phone-reach", true)],
+      }),
+    );
+    try {
+      const funnel = (strategy: string | null) => `start_to_lead_found@sourcing-apollo-cold-filters${strategy ? `~${strategy}` : ""}+lead_found_to_paid_client@your-team-closing-calls`;
+      const selectable = (b: { rows: Array<{ workflow: { workflowDynastySlug: string }; legAssignment?: { selectable: boolean } }> }) =>
+        b.rows.filter((r) => r.legAssignment?.selectable).map((r) => r.workflow.workflowDynastySlug);
+      const phone = await unpricedPipeProjection("sourcing-apollo-cold-filters", "start_to_lead_found", "return", await playOfLegRead("sourcing-apollo-cold-filters", "start_to_lead_found", funnel("reachable-by-phone")));
+      expect(selectable(phone)).toEqual(["sourcing-apollo-cold-filters-old"]);
+      expect(phone.recommendedWorkflowDynastySlug).toBe("sourcing-apollo-cold-filters-old");
+      expect((phone as { play?: unknown }).play).toMatchObject({ id: `${PIPE}~reachable-by-phone`, source: "sales_funnel", allowedWorkflowCount: 1 });
+      const def = await unpricedPipeProjection("sourcing-apollo-cold-filters", "start_to_lead_found", "return", await playOfLegRead("sourcing-apollo-cold-filters", "start_to_lead_found", funnel(null)));
+      expect(selectable(def)).toEqual(["sourcing-apollo-cold-filters-scheat"]);
+      expect((def as { play?: unknown }).play).toMatchObject({ id: PIPE, default: true, source: "pipe_default", allowedWorkflowCount: 1 });
+    } finally {
+      vi.mocked(fetchLegAssignments).mockReset();
+      vi.mocked(loadPlayCatalogue).mockResolvedValue(buildPlayCatalogue({ tactics: [], strategies: [], plays: [], verdicts: [] }));
+    }
+  });
+
   it("a pipe no sales funnel prices (sourcing, AI Instant Call) answers 200 with the workflows ASSIGNED to it, never a 400/404", async () => {
     mockFetch();
     const { fetchLegAssignments } = await import("../lib/workflow-leg-assignments.js");
