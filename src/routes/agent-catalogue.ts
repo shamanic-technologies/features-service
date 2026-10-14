@@ -1983,15 +1983,28 @@ export async function funnelCopiesFor(ids: readonly string[]): Promise<{
   /** A funnel campaign's path: its funnel's (one channel per leg). */
   pathOf: (id: string) => FunnelPathView | null;
 }> {
-  const [all, pub, declaredSteps, names, triggers] = await Promise.all([
+  const [all, pub, declaredSteps, names, triggers, assignments, playCatalogue] = await Promise.all([
     loadChannelCatalogue({ publishedOnly: false }),
     loadChannelCatalogue({ publishedOnly: true }),
     listDeclaredSteps(),
     allNamesByKey(),
     listTriggerTypes(),
+    listLegAssignments(),
+    loadPlayCatalogue(),
   ]);
   const publishedPipeIds = new Set(pub.channels.flatMap((c) => c.stepTransitions.map((t) => pipeIdOf(c.slug, servedPipeLegKey(c.slug, t.legKey)))));
-  const model = buildCatalogueModel({ channels: all.channels, publishedPipeIds, declaredSteps, measurements: new Map(), fleetMedians: new Map(), lifetimeRevenueUsd: null, triggers });
+  // The PLAYS too (structure only, no measurement): a funnel through a non-default play (`<pipe>~<strategy>`) is its
+  // own funnel, so a model without them knows no such id and a running campaign on it read as "not in the catalogue".
+  const model = buildCatalogueModel({
+    channels: all.channels,
+    publishedPipeIds,
+    declaredSteps,
+    measurements: new Map(),
+    fleetMedians: new Map(),
+    lifetimeRevenueUsd: null,
+    triggers,
+    plays: playInputsOf(playCatalogue, assignments, new Map()),
+  });
   const found = new Map(ids.flatMap((id) => {
     const f = funnelById(model, id);
     return f ? [[id, f] as const] : [];

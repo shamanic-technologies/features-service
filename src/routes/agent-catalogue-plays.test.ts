@@ -128,7 +128,7 @@ process.env.NODE_ENV = "test";
 process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 
 const app = (await import("../index.js")).default;
-const { __setCatalogueMeasurementsForTest, __awaitCatalogueMeasurementsForTest } = await import("./agent-catalogue.js");
+const { __setCatalogueMeasurementsForTest, __awaitCatalogueMeasurementsForTest, funnelCopiesFor } = await import("./agent-catalogue.js");
 const { FAMILY_WORDS } = await import("../lib/sales-path-names.js");
 const { PIPE_BIRD_WORDS, PATH_RIVER_WORDS } = await import("../lib/catalogue-names.js");
 
@@ -295,6 +295,22 @@ describe("plays (owner 2026-10-13): a pipe x a strategy, ROI per play", () => {
     // `~valid-only` spelled out is the bare funnel.
     const explicit = await request(app).get(`/internal/catalogue/sales-funnels/${encodeURIComponent(plain.body.id.replace("@sales-cold-email-outreach", "@sales-cold-email-outreach~valid-only"))}`).set(KEY);
     expect(explicit.body.id).toBe(plain.body.id);
+  });
+
+  it("a funnel through a non-default play has its customer COPY (type, path), as a running funnel campaign reads it", async () => {
+    const pipeIds = ["lead-sourcing|start_to_lead_found", CATCH, MEET, "your-team-meeting-attendance|meeting_booked_to_meeting_attended", "your-team-closing-calls|meeting_attended_to_paid_client"];
+    const created = await request(app).post("/internal/catalogue/sales-funnels").set(KEY).send({ pipeIds, createdBy: "test" });
+    expect(created.status).toBe(201);
+    expect(created.body.id).toContain("~valid-catch-all");
+    const { copies, pathOf } = await funnelCopiesFor([created.body.id]);
+    const copy = copies.get(created.body.id);
+    expect(copy).toMatchObject({ name: created.body.name, type: "proactive" });
+    const path = pathOf(created.body.id);
+    expect(path).not.toBeNull();
+    expect(path!.items.filter((i) => i.kind === "channel").map((i) => (i as { slug: string }).slug)).toEqual(
+      expect.arrayContaining(["lead-sourcing", "sales-cold-email-outreach", "ai-meeting-booking"]),
+    );
+    expect(path!.legs[1]).toMatchObject({ legKey: "lead_found_to_conversation", channelSlug: "sales-cold-email-outreach" });
   });
 
   it("once a catch-all workflow is judged and assigned, the play runs it and only it", async () => {
