@@ -2,8 +2,10 @@
  * JEV JUDGES EVERY WORKFLOW VERSION AGAINST EVERY TACTIC, ONCE (owner 2026-10-13; `lib/plays.ts`).
  *
  * Population: every version (any status) of every workflow DYNASTY assigned to a pipe (`workflow_leg_assignments`,
- * any state): the workflows a play can run. A (version, tactic) already stored is never asked again; a version is
- * immutable, so its verdict never moves. The question is asked on what the workflow DOES (its DAG and description),
+ * any state): the workflows a play can run. A (version, tactic) already judged on the tactic's CURRENT description is
+ * never asked again; a version is immutable, so its verdict moves only when the tactic's description is edited
+ * (owner 2026-10-14): a verdict judged on an older text is re-asked and replaced in place, the old one serving until
+ * then (a strategy never sees the workflow as unjudged mid-edit). The question is asked on what the workflow DOES (its DAG and description),
  * never on its name: a copy named "catch-all" that still sends to confirmed addresses only is judged "no".
  *
  * Asked through chat-service's PLATFORM twin (`/internal/platform-judgments`): no org request stands behind a sweep,
@@ -11,7 +13,7 @@
  * stored with p and the model release.
  *
  * Runs off the request path: ~60 s after boot, then every 15 min, single-flight; kicked again when a tactic is
- * declared and when a workflow is registered on a pipe, so a new version is judged within minutes of its birth.
+ * declared or edited and when a workflow is registered on a pipe, so a new version is judged within minutes of its birth.
  * Each item has its own try/catch and timeout; one failure leaves only that (version, tactic) unjudged for the
  * next sweep. Fail LOUD in the log, never a default verdict.
  */
@@ -103,7 +105,9 @@ export async function sweepTacticJudgments(deps: { judge?: typeof judgeTactic; d
     set.add(a.workflowDynastySlug);
     dynastiesByFeature.set(a.featureSlug, set);
   }
-  const done = new Set(stored.map((v) => `${v.workflowSlug}|${v.tacticId}`));
+  // Judged on the tactic's CURRENT description; a verdict on an older text is re-judged (and replaced in place).
+  const descriptionOf = new Map(tactics.map((t) => [t.id, t.description]));
+  const done = new Set(stored.filter((v) => v.judgedDescription === descriptionOf.get(v.tacticId)).map((v) => `${v.workflowSlug}|${v.tacticId}`));
   const activeBySlug = new Map(stored.map((v) => [v.workflowSlug, v.versionActive]));
   const todo: Array<{ t: Tactic; w: WorkflowDefinition; featureSlug: string }> = [];
   for (const [featureSlug, dynasties] of dynastiesByFeature) {
@@ -127,7 +131,7 @@ export async function sweepTacticJudgments(deps: { judge?: typeof judgeTactic; d
   await mapWithConcurrency(todo, JUDGE_CONCURRENCY, async ({ t, w, featureSlug }) => {
     try {
       const j = await judge(t, w);
-      await insertVerdict({ workflowSlug: w.workflowSlug, tacticId: t.id, workflowDynastySlug: w.workflowDynastySlug, featureSlug, version: w.version, versionActive: w.versionActive, verdict: j.verdict, probability: j.probability, model: j.model });
+      await insertVerdict({ workflowSlug: w.workflowSlug, tacticId: t.id, workflowDynastySlug: w.workflowDynastySlug, featureSlug, version: w.version, versionActive: w.versionActive, verdict: j.verdict, probability: j.probability, model: j.model, judgedDescription: t.description });
       result.judged += 1;
     } catch (error) {
       result.failed += 1;

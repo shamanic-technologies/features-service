@@ -7002,7 +7002,7 @@ const catalogueStrategyRow = z.object({
   excludes: z.array(catalogueStepRef).describe("Tactics a workflow must not follow (judged yes = ruled out; not judged yet = allowed)."),
   pipeIds: z.array(z.string()).describe("Pipes cataloguing a play on it."),
 });
-const tacticsNote = "Owner 2026-10-13: a TACTIC is a yes/no tag Jev puts on every workflow version (judged once, on the tactic's description); a STRATEGY requires and excludes tactics; a PLAY is a pipe x a strategy, catalogued per pipe. Inside a play the workflow is still picked by ROI, among those the strategy allows. Not the dashboard's Strategy page.";
+const tacticsNote = "Owner 2026-10-13: a TACTIC is a yes/no tag Jev puts on every workflow version (judged once per description, re-judged when the description is edited); a STRATEGY requires and excludes tactics; a PLAY is a pipe x a strategy, catalogued per pipe. Inside a play the workflow is still picked by ROI, among those the strategy allows. Not the dashboard's Strategy page.";
 catalogueRead("/internal/catalogue/tactics", "List tactics (internal, api-key)", { q: catalogueQ, limit: catalogueLimit }, z.object({ object: z.literal("tactic"), order: z.literal("id"), total: z.number().int(), truncated: z.boolean(), rows: z.array(catalogueTacticRow) }).describe(tacticsNote));
 catalogueRead(
   "/internal/catalogue/tactics/{id}",
@@ -7011,7 +7011,9 @@ catalogueRead(
   catalogueTacticRow.extend({
     createdBy: z.string(),
     createdAt: z.string(),
-    verdicts: z.array(z.object({ workflowSlug: z.string(), workflowDynastySlug: z.string(), version: z.number().int(), versionActive: z.boolean(), follows: z.boolean(), probability: z.number().describe("Jev's probability of yes; follows = probability >= 0.5."), model: z.string(), judgedAt: z.string() })),
+    updatedBy: z.string().nullable().describe("Who last edited the description; null = never edited."),
+    updatedAt: z.string().nullable(),
+    verdicts: z.array(z.object({ workflowSlug: z.string(), workflowDynastySlug: z.string(), version: z.number().int(), versionActive: z.boolean(), follows: z.boolean(), probability: z.number().describe("Jev's probability of yes; follows = probability >= 0.5."), model: z.string(), judgedAt: z.string(), onCurrentDescription: z.boolean().describe("Judged on the tactic's current description. false = the description was edited and this verdict still serves until Jev re-judges it (within minutes).") })),
   }),
   idParam("A tactic id"),
 );
@@ -7102,6 +7104,37 @@ catalogueCreate(
   z.object({ pipeId: z.string(), strategyId: z.string(), createdBy: z.string() }),
   catalogueTacticPlayRow.extend({ created: z.boolean() }),
 );
+
+registry.registerPath({
+  method: "patch",
+  path: "/internal/catalogue/tactics/{id}",
+  summary: "Edit a tactic's description (internal, api-key)",
+  description: `${CATALOGUE_DESCRIPTION} Owner 2026-10-14: the description is what Jev judges every workflow version against, so editing it re-judges every version within minutes, in place: each old verdict keeps serving until its replacement lands (no strategy sees a workflow as unjudged mid-edit; GET /internal/catalogue/tactics/{id} marks the pending ones \`onCurrentDescription: false\`). Unique like a new one (409 \`tactic_description_taken\`, case-insensitive). Name and id never move. The stored text again = 200 \`changed: false\`, nothing re-judged.`,
+  tags: ["Internal"],
+  request: {
+    params: z.object({ id: z.string().describe("A tactic id") }),
+    body: { content: { "application/json": { schema: z.object({ description: z.string().describe("<= 500 characters; what the workflow DOES."), updatedBy: z.string().describe("Who makes the edit (the gateway sets it from the authenticated caller).") }) } } },
+  },
+  responses: {
+    200: {
+      description: "The tactic after the edit.",
+      content: {
+        "application/json": {
+          schema: catalogueTacticRow.extend({
+            changed: z.boolean().describe("false = the description was already this text (nothing re-judged)."),
+            previousDescription: z.string(),
+            updatedBy: z.string().nullable(),
+            updatedAt: z.string().nullable(),
+          }),
+        },
+      },
+    },
+    400: { description: "`description_required` / `description_too_long` / `updatedBy_required`." },
+    401: { description: "Missing or wrong service key." },
+    404: { description: "`tactic_not_found`." },
+    409: { description: "`tactic_description_taken`: another tactic already has this description." },
+  },
+});
 
 registry.registerPath({
   method: "put",

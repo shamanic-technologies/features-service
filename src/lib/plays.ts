@@ -2,8 +2,9 @@
  * TACTICS, STRATEGIES AND PLAYS (owner 2026-10-13). PURE: the IO lives in `plays-store.ts`, the Jev sweep in
  * `tactic-judgments.ts`.
  *
- * - A TACTIC is a yes/no tag on a workflow VERSION ("Catch-all"). Jev judges every version against every tactic ONCE,
- *   on the tactic's description, and the answer is stored (`workflow_tactic_verdicts`).
+ * - A TACTIC is a yes/no tag on a workflow VERSION ("Catch-all"). Jev judges every version against every tactic ONCE
+ *   per description, and the answer is stored (`workflow_tactic_verdicts`). Editing a description re-judges every
+ *   version in place; the old verdict serves until the new one lands.
  * - A STRATEGY is a boolean combination of tactics: the tactics it REQUIRES and the ones it EXCLUDES ("Valid only"
  *   excludes Catch-all; "Valid + Catch-all" requires it).
  * - A PLAY is a pipe x a strategy, catalogued per pipe (`plays`), never invented per campaign, so a play's ROI
@@ -29,6 +30,9 @@ export interface Tactic {
   description: string;
   createdBy: string;
   createdAt: string;
+  /** Who last edited the description, and when; null = never edited. */
+  updatedBy?: string | null;
+  updatedAt?: string | null;
 }
 
 export interface Strategy {
