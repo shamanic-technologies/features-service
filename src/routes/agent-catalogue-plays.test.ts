@@ -216,11 +216,11 @@ describe("plays (owner 2026-10-13): a pipe x a strategy, ROI per play", () => {
 
   it("the pipe lists its plays; the DEFAULT play is the pipe itself, figure for figure", async () => {
     const pipe = (await request(app).get(`/internal/catalogue/pipes/${encodeURIComponent(COLD)}`).set(KEY)).body;
-    expect(pipe.play).toMatchObject({ strategyId: "valid-only", default: true, allowedActiveWorkflowCount: 1 });
+    expect(pipe.play).toMatchObject({ strategyId: "valid-only", strategyDescription: "only confirmed", default: true, allowedActiveWorkflowCount: 1 });
     const [def, catchAll] = pipe.plays;
-    expect(def).toMatchObject({ id: COLD, strategyId: "valid-only", default: true, costUsd: pipe.costUsd, roi: pipe.roi, status: pipe.status, runnable: true });
+    expect(def).toMatchObject({ id: COLD, strategyId: "valid-only", strategyDescription: "only confirmed", default: true, costUsd: pipe.costUsd, roi: pipe.roi, status: pipe.status, runnable: true });
     // Nothing judged Catch-all yet: the play has no workflow to run, so it is learning and never runnable.
-    expect(catchAll).toMatchObject({ id: CATCH, strategyId: "valid-catch-all", default: false, status: "learning", costUsd: null, allowedActiveWorkflowCount: 0, runnable: false });
+    expect(catchAll).toMatchObject({ id: CATCH, strategyId: "valid-catch-all", strategyDescription: "confirmed and catch-all", default: false, status: "learning", costUsd: null, allowedActiveWorkflowCount: 0, runnable: false });
   });
 
   it("a play id answers like its pipe (campaign-service reads a funnel's legs through it); an unknown strategy is a 404", async () => {

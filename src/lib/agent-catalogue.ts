@@ -245,6 +245,8 @@ export interface CatalogueInputs {
 export interface PlayInput {
   strategyId: string;
   strategyName: string;
+  /** Who the play finds or what it does, in one plain line (the strategy's description). */
+  strategyDescription: string;
   /** Its best allowed workflow (`pickLegPrice` over the pipe's workflows minus those the strategy excludes). */
   measurement: PipeMeasurement | null;
   /** ACTIVE workflows assigned to the pipe that the strategy allows. 0 = nothing can run it: never runnable. */
@@ -259,6 +261,7 @@ export interface CataloguePlayInfo {
   basePipeId: string;
   strategyId: string;
   strategyName: string;
+  strategyDescription: string;
   isDefault: boolean;
   allowedActiveWorkflowCount: number;
   excludedDynasties: readonly string[];
@@ -488,6 +491,7 @@ const playInfoOf = (basePipeId: string, p: PlayInput, isDefault: boolean): Catal
   basePipeId,
   strategyId: p.strategyId,
   strategyName: p.strategyName,
+  strategyDescription: p.strategyDescription,
   isDefault,
   allowedActiveWorkflowCount: p.allowedActiveWorkflowCount,
   excludedDynasties: p.excludedDynasties,
