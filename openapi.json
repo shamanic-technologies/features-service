@@ -57791,7 +57791,7 @@
       },
       "post": {
         "summary": "Catalogue a play on a pipe (internal, api-key)",
-        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`). A pipe x a strategy, catalogued per pipe so its ROI compares across clients (never invented per campaign). The pipe must be a platform pipe (400 `pipe_not_ours`); a pipe that catalogues no play yet takes one too (its default play stays every assigned workflow, the new play narrows it). Idempotent: an existing play answers 200 `created: false`.",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`). A pipe x a strategy, catalogued per pipe so its ROI compares across clients (never invented per campaign). The pipe must be a platform pipe (400 `pipe_not_ours`); a pipe that catalogues no play yet takes one too (its default play stays every assigned workflow, the new play narrows it). Idempotent: an existing play answers 200 `created: false`. A pipe's DEFAULT play is staff-only: PUT /internal/catalogue/pipes/{pipeId}/default-play.",
         "tags": [
           "Internal"
         ],
@@ -58239,6 +58239,187 @@
           },
           "503": {
             "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+          }
+        }
+      }
+    },
+    "/internal/catalogue/pipes/{pipeId}/default-play": {
+      "put": {
+        "summary": "Set a pipe's DEFAULT play (internal, api-key, staff)",
+        "description": "Makes a strategy the pipe's DEFAULT play: what every campaign naming no strategy on the pipe runs (the bare pipe id names it). Fleet-wide, so staff-only (never on the public play creates). One transaction: the play is catalogued if new, the previous default stays a play of the pipe. Refused 409 `default_play_runs_nothing` while the strategy allows none of the pipe's ACTIVE workflows, judged now (a workflow not judged on a tactic the strategy names is not allowed): every running campaign of the pipe would have nothing to run.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "A pipe id (`<channel slug>|<leg key>`), URL-encoded."
+            },
+            "required": true,
+            "description": "A pipe id (`<channel slug>|<leg key>`), URL-encoded.",
+            "name": "pipeId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "strategyId": {
+                    "type": "string"
+                  },
+                  "decidedBy": {
+                    "type": "string",
+                    "description": "Who decides (staff identity)."
+                  }
+                },
+                "required": [
+                  "strategyId",
+                  "decidedBy"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The pipe's default play now.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "enum": [
+                        "play"
+                      ]
+                    },
+                    "id": {
+                      "type": "string",
+                      "description": "The play id a sales funnel names: the bare pipe id for the default play, `<pipe id>~<strategy id>` for another (`POST /internal/catalogue/sales-funnels` takes either in `pipeIds`). In a funnel id the leg reads `<leg>@<channel slug>~<strategy id>`."
+                    },
+                    "pipeId": {
+                      "type": "string"
+                    },
+                    "strategyId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "strategyName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "strategyDescription": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The strategy's description: who the play finds or what it does, in one plain line (e.g. `People reachable by email (they have an email address).`). Null on a pipe cataloguing no play (`strategyId` null: every assigned workflow)."
+                    },
+                    "default": {
+                      "type": "boolean"
+                    },
+                    "costUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured or estimated."
+                    },
+                    "costPer": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The unit of `costUsd` in words, on every row: `per <outcome step>` for a step, pipe, channel (its best pipe's step) or workflow (its pipe's step), e.g. `per positive reply`; `per paying client` for a sales path or funnel. Quote it with the figure. Null when `costUsd` is null."
+                    },
+                    "roi": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Average fleet return multiple. Null unless measured or estimated."
+                    },
+                    "roiBasis": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "measured",
+                        "estimated"
+                      ],
+                      "description": "`estimated` when anything the ROI rests on is not a measured fleet outcome: every ROI today, since it divides a step value or a lifetime revenue that ends on the fleet median of STATED lifetime revenues. Null with no roi."
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "measured",
+                        "estimated",
+                        "learning",
+                        "customer_time"
+                      ],
+                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                    },
+                    "bestWorkflowSlug": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The allowed workflow the figure rests on."
+                    },
+                    "measuredBasis": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "mature",
+                        "flash"
+                      ]
+                    },
+                    "allowedActiveWorkflowCount": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "runnable": {
+                      "type": "boolean",
+                      "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
+                    },
+                    "created": {
+                      "type": "boolean",
+                      "description": "true when the play was catalogued by this write."
+                    },
+                    "defaultChanged": {
+                      "type": "boolean",
+                      "description": "false when the strategy already was the default."
+                    }
+                  },
+                  "required": [
+                    "object",
+                    "id",
+                    "pipeId",
+                    "strategyId",
+                    "strategyName",
+                    "strategyDescription",
+                    "default",
+                    "costUsd",
+                    "costPer",
+                    "roi",
+                    "roiBasis",
+                    "status",
+                    "bestWorkflowSlug",
+                    "measuredBasis",
+                    "allowedActiveWorkflowCount",
+                    "runnable",
+                    "created",
+                    "defaultChanged"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A field is missing or invalid, or `pipe_not_ours`."
+          },
+          "401": {
+            "description": "Missing or wrong service key."
+          },
+          "404": {
+            "description": "`pipe_not_found` or `strategy_not_found`."
+          },
+          "409": {
+            "description": "`default_play_runs_nothing`."
           }
         }
       }

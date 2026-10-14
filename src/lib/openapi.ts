@@ -7098,10 +7098,30 @@ catalogueCreate(
 catalogueCreate(
   "/internal/catalogue/plays",
   "Catalogue a play on a pipe (internal, api-key)",
-  "A pipe x a strategy, catalogued per pipe so its ROI compares across clients (never invented per campaign). The pipe must be a platform pipe (400 `pipe_not_ours`); a pipe that catalogues no play yet takes one too (its default play stays every assigned workflow, the new play narrows it). Idempotent: an existing play answers 200 `created: false`.",
+  "A pipe x a strategy, catalogued per pipe so its ROI compares across clients (never invented per campaign). The pipe must be a platform pipe (400 `pipe_not_ours`); a pipe that catalogues no play yet takes one too (its default play stays every assigned workflow, the new play narrows it). Idempotent: an existing play answers 200 `created: false`. A pipe's DEFAULT play is staff-only: PUT /internal/catalogue/pipes/{pipeId}/default-play.",
   z.object({ pipeId: z.string(), strategyId: z.string(), createdBy: z.string() }),
   catalogueTacticPlayRow.extend({ created: z.boolean() }),
 );
+
+registry.registerPath({
+  method: "put",
+  path: "/internal/catalogue/pipes/{pipeId}/default-play",
+  summary: "Set a pipe's DEFAULT play (internal, api-key, staff)",
+  description:
+    "Makes a strategy the pipe's DEFAULT play: what every campaign naming no strategy on the pipe runs (the bare pipe id names it). Fleet-wide, so staff-only (never on the public play creates). One transaction: the play is catalogued if new, the previous default stays a play of the pipe. Refused 409 `default_play_runs_nothing` while the strategy allows none of the pipe's ACTIVE workflows, judged now (a workflow not judged on a tactic the strategy names is not allowed): every running campaign of the pipe would have nothing to run.",
+  tags: ["Internal"],
+  request: {
+    params: z.object({ pipeId: z.string().describe("A pipe id (`<channel slug>|<leg key>`), URL-encoded.") }),
+    body: { content: { "application/json": { schema: z.object({ strategyId: z.string(), decidedBy: z.string().describe("Who decides (staff identity).") }) } } },
+  },
+  responses: {
+    200: { description: "The pipe's default play now.", content: { "application/json": { schema: catalogueTacticPlayRow.extend({ created: z.boolean().describe("true when the play was catalogued by this write."), defaultChanged: z.boolean().describe("false when the strategy already was the default.") }) } } },
+    400: { description: "A field is missing or invalid, or `pipe_not_ours`." },
+    401: { description: "Missing or wrong service key." },
+    404: { description: "`pipe_not_found` or `strategy_not_found`." },
+    409: { description: "`default_play_runs_nothing`." },
+  },
+});
 
 registry.registerPath({
   method: "get",

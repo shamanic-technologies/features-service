@@ -140,7 +140,11 @@ const MEET = "ai-meeting-booking|conversation_to_meeting_booked";
 
 // Tactics, strategies and plays (owner 2026-10-13): the cold email pipe catalogues Valid only (default) and
 // Valid + Catch-all; Jev judged orion "no" and nova (a catch-all copy) "yes".
-const playState = vi.hoisted(() => ({ verdicts: [] as any[], added: [] as any[] }));
+const seedPlays = () => [
+  { pipeId: "sales-cold-email-outreach|lead_found_to_conversation", strategyId: "valid-only", isDefault: true },
+  { pipeId: "sales-cold-email-outreach|lead_found_to_conversation", strategyId: "valid-catch-all", isDefault: false },
+];
+const playState = vi.hoisted(() => ({ verdicts: [] as any[], added: [] as any[], seeded: [] as any[] }));
 vi.mock("../lib/plays-store.js", async () => {
   const { buildPlayCatalogue } = await import("../lib/plays.js");
   const tactics = [{ id: "catch-all", name: "Catch-all", description: "Sends to addresses whose mail server accepts every address, so the mailbox cannot be confirmed.", createdBy: "t", createdAt: "" }];
@@ -148,20 +152,23 @@ vi.mock("../lib/plays-store.js", async () => {
     { id: "valid-only", name: "Valid only", description: "only confirmed", requiresTacticIds: [], excludesTacticIds: ["catch-all"], createdBy: "t", createdAt: "" },
     { id: "valid-catch-all", name: "Valid + Catch-all", description: "confirmed and catch-all", requiresTacticIds: ["catch-all"], excludesTacticIds: [], createdBy: "t", createdAt: "" },
   ];
-  const plays = [
-    { pipeId: "sales-cold-email-outreach|lead_found_to_conversation", strategyId: "valid-only", isDefault: true },
-    { pipeId: "sales-cold-email-outreach|lead_found_to_conversation", strategyId: "valid-catch-all", isDefault: false },
-  ];
+  const plays = playState.seeded;
   return {
     loadPlayCatalogue: async () => buildPlayCatalogue({ tactics, strategies, plays: [...plays, ...playState.added], verdicts: playState.verdicts }),
     invalidatePlayCatalogue: () => {},
     listVerdicts: async () => playState.verdicts,
     insertTactic: vi.fn(),
     insertStrategy: vi.fn(),
-    insertPlay: vi.fn(async (input: { pipeId: string; strategyId: string }) => {
-      if ([...plays, ...playState.added].some((p) => p.pipeId === input.pipeId && p.strategyId === input.strategyId)) return { created: false };
-      playState.added.push({ pipeId: input.pipeId, strategyId: input.strategyId, isDefault: false });
-      return { created: true };
+    insertPlay: vi.fn(async (input: { pipeId: string; strategyId: string; isDefault?: boolean }) => {
+      const all = [...plays, ...playState.added];
+      let defaultChanged = false;
+      if (input.isDefault) {
+        defaultChanged = !all.some((p) => p.pipeId === input.pipeId && p.isDefault && p.strategyId === input.strategyId);
+        if (defaultChanged) for (const p of all) if (p.pipeId === input.pipeId) p.isDefault = p.strategyId === input.strategyId;
+      }
+      if (all.some((p) => p.pipeId === input.pipeId && p.strategyId === input.strategyId)) return { created: false, defaultChanged };
+      playState.added.push({ pipeId: input.pipeId, strategyId: input.strategyId, isDefault: input.isDefault === true });
+      return { created: true, defaultChanged };
     }),
     insertVerdict: vi.fn(),
     refreshVersionActive: vi.fn(),
@@ -184,6 +191,7 @@ beforeEach(() => {
   ];
   playState.verdicts = [verdict("orion-v1", "orion", false)];
   playState.added = [];
+  playState.seeded.splice(0, playState.seeded.length, ...seedPlays());
   __setCatalogueMeasurementsForTest(
     new Map([
       [COLD, { basis: "mature", costPerOutcomeUsd: 40, conversionRatePct: 1, workflowDynastySlug: "orion" }],
@@ -273,5 +281,50 @@ describe("plays (owner 2026-10-13): a pipe x a strategy, ROI per play", () => {
     const again = await request(app).post("/internal/catalogue/plays").set(KEY).send({ pipeId: VISIT, strategyId: "valid-catch-all", createdBy: "test" });
     expect(again.status).toBe(200);
     expect(again.body.created).toBe(false);
+  });
+
+  it("staff make a strategy a pipe's DEFAULT play only while it runs one of the pipe's active workflows", async () => {
+    const VISIT = "sales-cold-email-outreach|lead_found_to_website_visit";
+    const url = `/internal/catalogue/pipes/${encodeURIComponent(VISIT)}/default-play`;
+    mem.assignments.push(
+      { featureSlug: "sales-cold-email-outreach", legKey: "lead_found_to_website_visit", workflowDynastySlug: "orion", state: "active", decidedBy: "t", decidedAt: "", note: null },
+      { featureSlug: "sales-cold-email-outreach", legKey: "lead_found_to_website_visit", workflowDynastySlug: "nova", state: "active", decidedBy: "t", decidedAt: "", note: null },
+    );
+    // nova not judged yet: Valid + Catch-all allows nothing, so it cannot be the default.
+    const refused = await request(app).put(url).set(KEY).send({ strategyId: "valid-catch-all", decidedBy: "test" });
+    expect(refused.status).toBe(409);
+    expect(refused.body.reason).toBe("default_play_runs_nothing");
+    expect(playState.added).toEqual([]);
+
+    // Valid only allows orion (judged no on catch-all): it becomes the default, the bare pipe id names it.
+    const made = await request(app).put(url).set(KEY).send({ strategyId: "valid-only", decidedBy: "test" });
+    expect(made.status).toBe(200);
+    expect(made.body).toMatchObject({ created: true, defaultChanged: true, id: VISIT, strategyId: "valid-only", default: true, allowedActiveWorkflowCount: 1 });
+    playState.verdicts.push(verdict("nova-v1", "nova", true));
+    const added = await request(app).post("/internal/catalogue/plays").set(KEY).send({ pipeId: VISIT, strategyId: "valid-catch-all", createdBy: "test" });
+    expect(added.status).toBe(201);
+    const plays = (await request(app).get("/internal/catalogue/plays").query({ pipe: VISIT }).set(KEY)).body.rows;
+    expect(plays.map((p: any) => [p.id, p.strategyId, p.default, p.allowedActiveWorkflowCount])).toEqual([
+      [VISIT, "valid-only", true, 1],
+      [`${VISIT}~valid-catch-all`, "valid-catch-all", false, 1],
+    ]);
+    // Re-stating the same default changes nothing.
+    const again = await request(app).put(url).set(KEY).send({ strategyId: "valid-only", decidedBy: "test" });
+    expect(again.status).toBe(200);
+    expect(again.body).toMatchObject({ created: false, defaultChanged: false });
+  });
+
+  it("the public play create never touches the default", async () => {
+    const res = await request(app).post("/internal/catalogue/plays").set(KEY).send({ pipeId: COLD, strategyId: "valid-catch-all", default: true, createdBy: "test" });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ created: false, default: false });
+    const plays = (await request(app).get("/internal/catalogue/plays").query({ pipe: COLD }).set(KEY)).body.rows;
+    expect(plays.map((p: any) => [p.strategyId, p.default])).toEqual([["valid-only", true], ["valid-catch-all", false]]);
+  });
+
+  it("an unknown pipe is 404", async () => {
+    const res = await request(app).put(`/internal/catalogue/pipes/${encodeURIComponent("nope|start_to_lead_found")}/default-play`).set(KEY).send({ strategyId: "valid-only", decidedBy: "test" });
+    expect(res.status).toBe(404);
+    expect(res.body.reason).toBe("pipe_not_found");
   });
 });

@@ -90,7 +90,7 @@ import { listLegAssignments } from "../lib/workflow-leg-assignments.js";
 import { invalidateChannelCatalogue, fleetLegPrice, fleetPlayPrices, readLegWorkflowRanking } from "./public.js";
 import type { LegPrice } from "../lib/outcome-prices.js";
 import type { LegAssignmentRow } from "../lib/workflow-leg-assignments.js";
-import { insertPlay, insertStrategy, insertTactic, listVerdicts, loadPlayCatalogue } from "../lib/plays-store.js";
+import { insertPlay, insertStrategy, insertTactic, invalidatePlayCatalogue, listVerdicts, loadPlayCatalogue } from "../lib/plays-store.js";
 import { kickTacticJudgments } from "../lib/tactic-judgments.js";
 import { defaultStrategyOf, excludedDynasties, playIdOf, tacticNameOf, type PlayCatalogue, type Strategy, type Tactic } from "../lib/plays.js";
 
@@ -1611,8 +1611,31 @@ router.get("/internal/catalogue/plays/:id", apiKeyOnly, async (req, res) => {
 });
 
 /**
- * Catalogue a play on a pipe (`{pipeId, strategyId, createdBy}`): plays are per pipe, never invented per campaign. A pipe
- * that catalogues no play yet takes one too: its default stays "every assigned workflow" and the play narrows it.
+ * A pipe's DEFAULT play is what every campaign naming no strategy runs: making a strategy the default is refused while
+ * it allows no ACTIVE workflow assigned to the pipe, judged NOW (a workflow not judged on a tactic the strategy names is
+ * not allowed): the switch would leave every running campaign of the pipe with nothing to run.
+ */
+async function assertDefaultPlayRuns(pipeId: string, strategyId: string): Promise<void> {
+  invalidatePlayCatalogue();
+  const [c, assignments] = await Promise.all([loadPlayCatalogue(), listLegAssignments()]);
+  const st = c.strategies.get(strategyId);
+  if (!st) throw new DeclarationError(404, "strategy_not_found", `no strategy ${strategyId} (GET /internal/catalogue/strategies)`);
+  const [slug, leg] = [pipeId.slice(0, pipeId.indexOf("|")), pipeId.slice(pipeId.indexOf("|") + 1)];
+  const active = assignments.filter((a) => a.featureSlug === slug && storedLegKeyOf(a.legKey) === storedLegKeyOf(leg) && a.state === "active").map((a) => a.workflowDynastySlug);
+  const excluded = excludedDynasties(st, active, c.tacticsByDynasty, tacticNameOf(c));
+  if (active.every((d) => excluded.has(d))) {
+    throw new DeclarationError(
+      409,
+      "default_play_runs_nothing",
+      `the strategy ${strategyId} allows none of the ${active.length} active workflow(s) of ${pipeId} yet (${[...excluded.values()].join("; ") || "no active workflow"}): as the default play, every campaign of the pipe would have nothing to run`,
+    );
+  }
+}
+
+/**
+ * Catalogue a play on a pipe (`{pipeId, strategyId, createdBy, default?}`): plays are per pipe, never invented per
+ * campaign. A pipe that catalogues no play yet takes one too: its default stays "every assigned workflow" and the play
+ * narrows it. A pipe's DEFAULT play is set by staff only (`PUT /internal/catalogue/pipes/:pipeId/default-play`).
  */
 router.post("/internal/catalogue/plays", apiKeyOnly, async (req, res) => {
   const body = (req.body ?? {}) as Body;
@@ -1630,6 +1653,34 @@ router.post("/internal/catalogue/plays", apiKeyOnly, async (req, res) => {
     if (!play) throw new Error(`play ${pipeId}~${strategyId} was stored but is not in the catalogue`);
     console.log(`[features-service] agent catalogue: play ${play.id} ${created ? "declared" : "re-declared"} by ${createdBy}`);
     res.status(created ? 201 : 200).json({ created, ...playRowOf(model, play) });
+  } catch (err) {
+    fail(res, err, "create play");
+  }
+});
+
+/**
+ * STAFF: make a strategy the pipe's DEFAULT play (`{strategyId, decidedBy}`), what every campaign naming no strategy on
+ * the pipe runs. Fleet-wide, so never on the public creates (`POST plays` is open to every client through the gateway).
+ * One transaction: the play is catalogued if new, the previous default stays a play of the pipe. Refused 409
+ * `default_play_runs_nothing` while the strategy allows none of the pipe's active workflows.
+ */
+router.put("/internal/catalogue/pipes/:pipeId/default-play", apiKeyOnly, async (req, res) => {
+  const body = (req.body ?? {}) as Body;
+  try {
+    const decidedBy = text(body, "decidedBy", 200);
+    const strategyId = text(body, "strategyId", 100);
+    const pipeId = req.params.pipeId;
+    const before = await loadModel();
+    const pipe = before.model.pipes.get(pipeId);
+    if (!pipe) throw new DeclarationError(404, "pipe_not_found", `no pipe ${pipeId}`);
+    if (pipe.operatedBy !== "platform") throw bad("pipe_not_ours", `${pipeId} is worked by the customer's own team: no workflow of ours runs it, so no strategy chooses one`);
+    await assertDefaultPlayRuns(pipeId, strategyId);
+    const { created, defaultChanged } = await insertPlay({ pipeId, strategyId, createdBy: decidedBy, isDefault: true });
+    const { model } = await loadModel();
+    const play = model.pipes.get(pipeId);
+    if (!play) throw new Error(`pipe ${pipeId} vanished from the catalogue`);
+    console.log(`[features-service] agent catalogue: ${pipeId} default play ${defaultChanged ? "set to" : "already"} ${strategyId} by ${decidedBy}${created ? " (play catalogued)" : ""}`);
+    res.json({ created, defaultChanged, ...playRowOf(model, play) });
   } catch (err) {
     fail(res, err, "create play");
   }
