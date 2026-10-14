@@ -6686,6 +6686,7 @@ const catalogueTacticPlayRow = z.object({
   bestWorkflowSlug: z.string().nullable().describe("The allowed workflow the figure rests on."),
   measuredBasis: z.enum(["mature", "flash"]).nullable(),
   allowedActiveWorkflowCount: z.number().int().nullable(),
+  allowedWorkflowDynastySlugs: z.array(z.string()).nullable().describe("WHICH active workflows (dynasty slugs) the play may run, sorted. Null on a pipe cataloguing no play (every assigned workflow runs)."),
   ...catalogueRunnableField,
   ...catalogueNotRunnable,
 });
@@ -7059,7 +7060,14 @@ catalogueRead(
   "/internal/catalogue/plays/{id}",
   "One play (internal, api-key)",
   {},
-  catalogueTacticPlayRow.extend({ learningReason: z.string().nullable(), estimates: z.array(z.string()), excludedWorkflowDynastySlugs: z.array(z.string()), salesFunnels: catalogueFunnelsCarryingPlay }),
+  catalogueTacticPlayRow.extend({ learningReason: z.string().nullable(), estimates: z.array(z.string()), excludedWorkflowDynastySlugs: z.array(z.string()),
+    allowedWorkflows: z
+      .array(z.object({ id: z.string().describe("Dynasty slug."), name: z.string(), ...catalogueEcon, isDefaultPlayPick: z.boolean().describe("The workflow the pipe's DEFAULT play runs today.") }))
+      .nullable()
+      .describe("Owner ask 2026-10-14: each workflow the play may run, with its fleet figure on the leg (`measured` = mature cost per outcome; `learning` otherwise). Null on a pipe cataloguing no play."),
+    defaultPlayPick: z.object({ playId: z.string(), bestWorkflowSlug: z.string().nullable(), measuredBasis: z.enum(["mature", "flash"]).nullable(), ...catalogueEcon }).describe("What the pipe's DEFAULT play runs today, to compare with."),
+    figuresUnavailableReason: z.enum(["workflow_ranking_not_computed_yet"]).nullable(),
+    salesFunnels: catalogueFunnelsCarryingPlay }),
   idParam("A play id (`<pipe id>` or `<pipe id>~<strategy id>`)"),
 );
 
