@@ -1235,11 +1235,22 @@ type ProjectionCostBasis = "billed" | "actual";
  * "cold_start"`, no budget), exactly the cold start of any leg. No assignment at all → `rows: []`,
  * `no_active_workflows`; only deprecated ones → `recommendationWithheldReason: "no_eligible_workflow"`.
  */
-export async function unpricedPipeProjection(featureSlug: string, legKey: string, maximize: Maximize): Promise<WorkflowProjectionResponse> {
+export async function unpricedPipeProjection(
+  featureSlug: string,
+  legKey: string,
+  maximize: Maximize,
+  played: Awaited<ReturnType<typeof playOfLegRead>> = null,
+): Promise<WorkflowProjectionResponse> {
   const [assignments, workflows] = await Promise.all([fetchLegAssignments(featureSlug, legKey), fetchPublicWorkflows(featureSlug, "all")]);
   const executable = executableDynasties(workflows);
+  // The campaign's PLAY rules workflows out here too (a sourcing pipe states WHO it finds through its plays,
+  // LEAK-1012): a ruled-out workflow is not selectable, exactly like on a priced leg.
+  const playVerdict = (slug: string, v: LegAssignmentVerdict): LegAssignmentVerdict => {
+    const reason = played?.excludedReason(slug) ?? null;
+    return v.selectable && reason ? { ...v, selectable: false, reason } : v;
+  };
   const verdicts = [...assignments.keys()]
-    .map((slug) => ({ slug, verdict: legAssignmentVerdict(assignments.get(slug), legKey, executable.has(slug)) }))
+    .map((slug) => ({ slug, verdict: playVerdict(slug, legAssignmentVerdict(assignments.get(slug), legKey, executable.has(slug))) }))
     .sort((a, b) => Number(b.verdict.selectable) - Number(a.verdict.selectable) || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
   const rows: ProjectionRow[] = verdicts.map(({ slug, verdict }, i) => ({
     audienceId: null,
@@ -1267,6 +1278,7 @@ export async function unpricedPipeProjection(featureSlug: string, legKey: string
     unmeasuredReason: recommended ? "no_spend_recorded" : "no_active_workflows",
     ...(recommended ? { recommendationBasis: "cold_start" as const } : rows.length > 0 ? { recommendationWithheldReason: "no_eligible_workflow" as const } : {}),
     maturity: { ...legMaturity(legKey), legKey, cutoffIso: null, measured: true, unmeasuredReason: null },
+    ...(played ? { play: withPlayCount({ ...played.answer, allowedWorkflowCount: 0 }, rows) } : {}),
   };
 }
 
@@ -1307,6 +1319,10 @@ export async function playOfLegRead(
   const named = salesFunnelId ? strategyOfFunnelLeg(salesFunnelId, featureSlug, legKey, sameLeg) : null;
   const resolved = resolvePlay(plays, pipeId, named);
   const source = named ? ("sales_funnel" as const) : ("pipe_default" as const);
+  // The DEFAULT play of a pipe that states no default strategy is every assigned workflow, as before plays existed
+  // (a non-default play added to such a pipe narrows only the funnels naming it; 2026-10-14: a catch-all play on
+  // the website-visit pipe ruled out every workflow for its 7 live default campaigns).
+  if (resolved.known && resolved.isDefault && !resolved.strategy) return null;
   if (!resolved.known || !resolved.strategy) {
     console.error(`[features-service] workflow-projection: sales funnel ${salesFunnelId} names play ${named} on ${pipeId}, which the pipe does not catalogue: every workflow ruled out`);
     const reason = `the play "${named}" is not catalogued on this pipe`;
@@ -1354,7 +1370,13 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
     if (pipeLegKey) {
       const maximizeParam = parseMaximize(req.query as Record<string, unknown>);
       if (!maximizeParam.ok) return res.status(400).json({ error: MAXIMIZE_ERROR, reason: "maximize_unrecognised" });
-      return res.json(await unpricedPipeProjection(featureSlug, pipeLegKey, maximizeParam.maximize));
+      // The campaign's sales funnel names the play this pipe runs (`lib/plays.ts`), as on a priced leg.
+      const unpricedCampaignId = typeof req.query.campaignId === "string" && req.query.campaignId !== "" ? req.query.campaignId : null;
+      const salesFunnelId = unpricedCampaignId
+        ? (await fetchCampaignFamiliesSoft(brandId, featureSlug, { orgId, userId, runId })).salesFunnelIdOf(unpricedCampaignId)
+        : null;
+      const played = await playOfLegRead(featureSlug, pipeLegKey, salesFunnelId);
+      return res.json(await unpricedPipeProjection(featureSlug, pipeLegKey, maximizeParam.maximize, played));
     }
     // Both spellings of an outbound leg are one identity (wave 1, `lib/funnel-legs.ts`): resolved to the stored one.
     legKey = matchChannelLegKey(featureSlug, legParam);
