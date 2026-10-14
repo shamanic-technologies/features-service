@@ -9,6 +9,7 @@
  * ADDITIVE: no existing read moves. The campaign total served here is the same committed campaign spend the
  * outcome reads print, so a dashboard showing sourcing + outreach shows today's figure split in two.
  */
+import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import { Router } from "express";
 import { apiKeyAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel, pricedFingerprint, type DownstreamHeaders } from "./revenue.js";
@@ -144,6 +145,7 @@ export async function offerSourcingCell(input: {
 
   return {
     view: "offer-sourcing",
+    responseShape: routeResponseShapeFingerprint("/offers/{offerId}/sourcing"),
     scopeKey: buildScopeKey(offerId, {
       orgId: identity.orgId,
       brandId,

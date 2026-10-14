@@ -70,6 +70,7 @@
  * and `?groupBy=` (the only grouping here is the channel breakdown, which is unconditional). Both stay
  * available per channel on the existing reads, which are untouched and still mean what they mean.
  */
+import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import { fetchPerOfferPricing, perOfferFingerprint } from "../lib/per-offer-pricing.js";
 import { Router } from "express";
 import { computeRevenueWindow, parseWindowDays, WINDOW_DAYS_ERROR } from "../lib/revenue-window.js";
@@ -298,6 +299,7 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
 
     const payload = await servedCachedJson({
       view: "brand-revenue",
+      responseShape: routeResponseShapeFingerprint("/brands/{brandId}/revenue"),
       // Keyed on the brand AND on the CHANNEL SET: a newly funded channel changes every figure while no
       // other key part moves, so without it the brand would keep replaying its pre-funding answer.
       scopeKey: buildScopeKey(brandId, {
@@ -533,6 +535,7 @@ router.get("/brands/:brandId/offers", apiKeyAuth, async (req, res) => {
 
     const payload = await servedCachedJson({
       view: "brand-offers",
+      responseShape: routeResponseShapeFingerprint("/brands/{brandId}/offers"),
       // The whole (offer × channel) partition rides the key, not just the offer list: a newly funded
       // channel on one offer changes that row's every figure while no other key part moves, so without
       // it the table would replay its pre-funding answer until the hard-stale cap.

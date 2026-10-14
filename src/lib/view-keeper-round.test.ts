@@ -87,6 +87,34 @@ describe("materializeRound", () => {
     expect(report.refreshedStale + report.computed).toBe(asked.length);
   });
 
+  it("refreshes a day-old cell BEFORE answering (x-view-precompute: refresh), a missing one as a plain precompute", async () => {
+    const old = new Date(now - 26 * 3_600_000).toISOString();
+    cells.push({ replayUrl: `/brands/${B}/revenue?pricing=net`, replayHeaders: HEADERS, orgId: "org-a", brandId: B, lastReadAt: null, computedAt: old });
+    const report = await materializeRound();
+    const byUrl = new Map(asked.map((a) => [a.url.replace("http://127.0.0.1:9999", ""), a.headers["x-view-precompute"]]));
+    expect(byUrl.get(`/brands/${B}/revenue?pricing=net`)).toBe("refresh");
+    expect(byUrl.get(`/features/sales-cold-email-outreach/revenue?brandId=${B}&campaignId=75d7-c1&pricing=net`)).toBe("1");
+    // Both brands run a live campaign: every cell counted is an ACTIVE brand's.
+    expect(report.active.brands).toBe(2);
+    expect(report.active.stale).toBe(1);
+    expect(report.active.missing).toBe(1);
+    expect(report.active.held).toBe(2);
+  });
+
+  it("does not count a cell keyed on an EARLIER build's response shape as held: its read would be a miss", async () => {
+    const { withResponseShape } = await import("./response-shape.js");
+    cells = cells.map((c, i) => ({
+      ...c,
+      // The brand page under a shape no route of this build has; the campaign page under this build's.
+      scopeKey: i === 0 ? withResponseShape(`${READ_BRAND}|pricing=net`, "0123456789ab") : withResponseShape(`x|pricing=net`),
+    }));
+    const report = await materializeRound();
+    const urls = asked.map((a) => a.url.replace("http://127.0.0.1:9999", ""));
+    expect(urls).toContain(`/brands/${READ_BRAND}/revenue?pricing=net`);
+    expect(urls).not.toContain(`/features/sales-cold-email-outreach/revenue?brandId=${READ_BRAND}&campaignId=f4d7-c1&pricing=net`);
+    expect(report.held).toBe(1);
+  });
+
   it("never replays the org under a MALFORMED identity a probe left on a cell (prod 2026-10-09, x-user-id: x)", async () => {
     // The org's most recent read is a probe's, with non-UUID ids. Adopting it made every precompute of
     // the org fail at runs-service and parked those cells for hours; the older WELL-FORMED read wins.

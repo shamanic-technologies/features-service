@@ -1,7 +1,15 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 import { buildScopeKey, familyKeyOf } from "./view-cache.js";
-import { routeResponseShapeFingerprint, shapeFingerprint, withResponseShape, withoutResponseShape } from "./response-shape.js";
+import {
+  currentShapeFingerprints,
+  isCurrentShapeKey,
+  routeResponseShapeFingerprint,
+  shapeFingerprint,
+  withResponseShape,
+  withoutResponseShape,
+} from "./response-shape.js";
 import { openApiDocument } from "./openapi.js";
 
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
@@ -90,5 +98,44 @@ describe("routeResponseShapeFingerprint", () => {
   it("fails loud on a route the document does not hold, and resolves the real lead-families route", () => {
     expect(() => routeResponseShapeFingerprint("/nope", "get", routeDoc())).toThrow(/no GET \/nope/);
     expect(routeResponseShapeFingerprint("/brands/{brandId}/lead-families", "get", openApiDocument)).toMatch(/^[0-9a-f]{12}$/);
+  });
+});
+
+describe("isCurrentShapeKey (what the keeper may count as held)", () => {
+  const current = currentShapeFingerprints();
+  it("this build's whole-document and per-route fingerprints are current", () => {
+    expect(isCurrentShapeKey(withResponseShape("b|pricing=net"))).toBe(true);
+    expect(isCurrentShapeKey(withResponseShape("b|pricing=net", routeResponseShapeFingerprint("/offers/{offerId}/revenue")))).toBe(true);
+    expect(current.has(routeResponseShapeFingerprint("/features/{featureSlug}/workflow-projection"))).toBe(true);
+  });
+  it("a fingerprint no route of this build has is an earlier build's: not current", () => {
+    expect(isCurrentShapeKey(withResponseShape("b|pricing=net", "0123456789ab"))).toBe(false);
+    expect(isCurrentShapeKey(withResponseShape("b|pricing=net", "0123456789ab-evidence-v1"))).toBe(false);
+  });
+  it("a manual marker, a versioned route fingerprint and a key with no shape are current", () => {
+    expect(isCurrentShapeKey(withResponseShape("b|m=x", "internal-measurement"))).toBe(true);
+    const ev = `${routeResponseShapeFingerprint("/features/{featureSlug}/workflow-projection")}-evidence-v1`;
+    expect(isCurrentShapeKey(withResponseShape("b|pricing=net", ev))).toBe(true);
+    expect(isCurrentShapeKey("b|pricing=net")).toBe(true);
+  });
+});
+
+describe("dashboard views keyed on their OWN route's shape", () => {
+  // A deploy that changes ANOTHER route must not make these cold (8 shape-changing deploys on
+  // 2026-10-14; an offer revenue read waited 133 s on its first read after one). Pin the call sites.
+  const read = (f: string) => readFileSync(new URL(`../routes/${f}`, import.meta.url), "utf8");
+  it.each([
+    ["offer-economics.ts", "/offers/{offerId}/revenue"],
+    ["brand-economics.ts", "/brands/{brandId}/revenue"],
+    ["brand-economics.ts", "/brands/{brandId}/offers"],
+    ["offer-outcomes.ts", "/offers/{offerId}/outcomes"],
+    ["lived-sales-paths.ts", "/brands/{brandId}/lived-sales-paths"],
+    ["offer-sourcing.ts", "/offers/{offerId}/sourcing"],
+    ["stats.ts", "/features/{featureSlug}/stats"],
+    ["revenue.ts", "/features/{featureSlug}/revenue"],
+    ["workflow-projection.ts", "/features/{featureSlug}/workflow-projection"],
+  ])("%s keys on %s", (file, path) => {
+    expect(read(file)).toContain(`routeResponseShapeFingerprint("${path}")`);
+    expect(() => routeResponseShapeFingerprint(path)).not.toThrow();
   });
 });

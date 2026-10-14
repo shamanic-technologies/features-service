@@ -1,3 +1,4 @@
+import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import { Router, type Request, type Response } from "express";
 import { getInternalPipeFleet, internalPipeCountsByDynasty, type MeetingLegFleet } from "../lib/meeting-leg-fleet.js";
 import { internalPipeToStep } from "../lib/pipe-kind.js";
@@ -106,6 +107,16 @@ import { missionPriceOf, orderMissionWorkflows } from "../lib/mission-workflow-o
 import type { EnginePerson } from "../lib/revenue-engine.js";
 
 const router = Router();
+
+/**
+ * The shape the projection's EVIDENCE cells are keyed on: this route's response shape, plus a version
+ * of the evidence value itself (bump `evidence-vN` whenever `fetchWorkflowProjectionEvidence`'s result
+ * changes structure). Keyed on the whole build's shape instead, every evidence cell went cold on every
+ * deploy that changed ANY route (8 in one day, 2026-10-14) and the first projection read after each one
+ * waited on a full evidence compute; a deploy that changes this route still re-keys them.
+ */
+const WORKFLOW_PROJECTION_EVIDENCE_SHAPE = (): string =>
+  `${routeResponseShapeFingerprint("/features/{featureSlug}/workflow-projection")}-evidence-v1`;
 
 // Target outcomes/month used to size the recommended budget (recommendedBudgetUsd = TARGET × best metric).
 export const TARGET_OUTCOMES_PER_MONTH = 10;
@@ -1642,6 +1653,7 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
     const evidenceOn = (evidencePricing: Pricing) =>
       servedCached({
         view: "workflow-projection-evidence",
+        responseShape: WORKFLOW_PROJECTION_EVIDENCE_SHAPE(),
         scopeKey: evidenceScopeKey(evidencePricing),
         orgId,
         compute: () => computeEvidence(evidencePricing),
@@ -1654,6 +1666,7 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
     const actualEvidence = () =>
       servedCached({
         view: "workflow-projection-evidence-actual",
+        responseShape: WORKFLOW_PROJECTION_EVIDENCE_SHAPE(),
         scopeKey: evidenceScopeKey("actual"),
         orgId,
         compute: async () => {
