@@ -50862,6 +50862,10 @@
                         "strategyName": {
                           "type": "string"
                         },
+                        "strategyDescription": {
+                          "type": "string",
+                          "description": "Who the play finds or what it does, in one plain line."
+                        },
                         "default": {
                           "type": "boolean",
                           "description": "True = the pipe's DEFAULT play: what a funnel naming the bare pipe runs (today's behaviour)."
@@ -50882,6 +50886,7 @@
                         "pipeId",
                         "strategyId",
                         "strategyName",
+                        "strategyDescription",
                         "default",
                         "allowedActiveWorkflowCount",
                         "excludedWorkflowDynastySlugs"
@@ -50913,6 +50918,11 @@
                           "strategyName": {
                             "type": "string",
                             "nullable": true
+                          },
+                          "strategyDescription": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The strategy's description: who the play finds or what it does, in one plain line (e.g. `People reachable by email (they have an email address).`). Null on a pipe cataloguing no play (`strategyId` null: every assigned workflow)."
                           },
                           "default": {
                             "type": "boolean"
@@ -50979,6 +50989,7 @@
                           "pipeId",
                           "strategyId",
                           "strategyName",
+                          "strategyDescription",
                           "default",
                           "costUsd",
                           "costPer",
@@ -51189,6 +51200,10 @@
                         "strategyName": {
                           "type": "string"
                         },
+                        "strategyDescription": {
+                          "type": "string",
+                          "description": "Who the play finds or what it does, in one plain line."
+                        },
                         "default": {
                           "type": "boolean",
                           "description": "True = the pipe's DEFAULT play: what a funnel naming the bare pipe runs (today's behaviour)."
@@ -51209,6 +51224,7 @@
                         "pipeId",
                         "strategyId",
                         "strategyName",
+                        "strategyDescription",
                         "default",
                         "allowedActiveWorkflowCount",
                         "excludedWorkflowDynastySlugs"
@@ -51240,6 +51256,11 @@
                           "strategyName": {
                             "type": "string",
                             "nullable": true
+                          },
+                          "strategyDescription": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The strategy's description: who the play finds or what it does, in one plain line (e.g. `People reachable by email (they have an email address).`). Null on a pipe cataloguing no play (`strategyId` null: every assigned workflow)."
                           },
                           "default": {
                             "type": "boolean"
@@ -51306,6 +51327,7 @@
                           "pipeId",
                           "strategyId",
                           "strategyName",
+                          "strategyDescription",
                           "default",
                           "costUsd",
                           "costPer",
@@ -51587,6 +51609,10 @@
                         "strategyName": {
                           "type": "string"
                         },
+                        "strategyDescription": {
+                          "type": "string",
+                          "description": "Who the play finds or what it does, in one plain line."
+                        },
                         "default": {
                           "type": "boolean",
                           "description": "True = the pipe's DEFAULT play: what a funnel naming the bare pipe runs (today's behaviour)."
@@ -51607,6 +51633,7 @@
                         "pipeId",
                         "strategyId",
                         "strategyName",
+                        "strategyDescription",
                         "default",
                         "allowedActiveWorkflowCount",
                         "excludedWorkflowDynastySlugs"
@@ -51638,6 +51665,11 @@
                           "strategyName": {
                             "type": "string",
                             "nullable": true
+                          },
+                          "strategyDescription": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The strategy's description: who the play finds or what it does, in one plain line (e.g. `People reachable by email (they have an email address).`). Null on a pipe cataloguing no play (`strategyId` null: every assigned workflow)."
                           },
                           "default": {
                             "type": "boolean"
@@ -51704,6 +51736,7 @@
                           "pipeId",
                           "strategyId",
                           "strategyName",
+                          "strategyDescription",
                           "default",
                           "costUsd",
                           "costPer",
@@ -57645,6 +57678,11 @@
                             "type": "string",
                             "nullable": true
                           },
+                          "strategyDescription": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The strategy's description: who the play finds or what it does, in one plain line (e.g. `People reachable by email (they have an email address).`). Null on a pipe cataloguing no play (`strategyId` null: every assigned workflow)."
+                          },
                           "default": {
                             "type": "boolean"
                           },
@@ -57710,6 +57748,7 @@
                           "pipeId",
                           "strategyId",
                           "strategyName",
+                          "strategyDescription",
                           "default",
                           "costUsd",
                           "costPer",
@@ -57810,6 +57849,11 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "strategyDescription": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The strategy's description: who the play finds or what it does, in one plain line (e.g. `People reachable by email (they have an email address).`). Null on a pipe cataloguing no play (`strategyId` null: every assigned workflow)."
+                    },
                     "default": {
                       "type": "boolean"
                     },
@@ -57878,6 +57922,7 @@
                     "pipeId",
                     "strategyId",
                     "strategyName",
+                    "strategyDescription",
                     "default",
                     "costUsd",
                     "costPer",
@@ -57922,6 +57967,11 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "strategyDescription": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The strategy's description: who the play finds or what it does, in one plain line (e.g. `People reachable by email (they have an email address).`). Null on a pipe cataloguing no play (`strategyId` null: every assigned workflow)."
+                    },
                     "default": {
                       "type": "boolean"
                     },
@@ -57990,6 +58040,7 @@
                     "pipeId",
                     "strategyId",
                     "strategyName",
+                    "strategyDescription",
                     "default",
                     "costUsd",
                     "costPer",
@@ -58072,6 +58123,11 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "strategyDescription": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The strategy's description: who the play finds or what it does, in one plain line (e.g. `People reachable by email (they have an email address).`). Null on a pipe cataloguing no play (`strategyId` null: every assigned workflow)."
+                    },
                     "default": {
                       "type": "boolean"
                     },
@@ -58153,6 +58209,7 @@
                     "pipeId",
                     "strategyId",
                     "strategyName",
+                    "strategyDescription",
                     "default",
                     "costUsd",
                     "costPer",
@@ -58256,6 +58313,11 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "strategyDescription": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The strategy's description: who the play finds or what it does, in one plain line (e.g. `People reachable by email (they have an email address).`). Null on a pipe cataloguing no play (`strategyId` null: every assigned workflow)."
+                    },
                     "default": {
                       "type": "boolean"
                     },
@@ -58329,6 +58391,7 @@
                     "pipeId",
                     "strategyId",
                     "strategyName",
+                    "strategyDescription",
                     "default",
                     "costUsd",
                     "costPer",

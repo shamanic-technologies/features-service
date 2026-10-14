@@ -6668,6 +6668,10 @@ const catalogueTacticPlayRow = z.object({
   pipeId: z.string(),
   strategyId: z.string().nullable(),
   strategyName: z.string().nullable(),
+  strategyDescription: z
+    .string()
+    .nullable()
+    .describe("The strategy's description: who the play finds or what it does, in one plain line (e.g. `People reachable by email (they have an email address).`). Null on a pipe cataloguing no play (`strategyId` null: every assigned workflow)."),
   default: z.boolean(),
   ...catalogueEcon,
   bestWorkflowSlug: z.string().nullable().describe("The allowed workflow the figure rests on."),
@@ -6686,6 +6690,7 @@ const cataloguePipeDetail = z.object({
       pipeId: z.string().describe("The pipe the play runs on."),
       strategyId: z.string(),
       strategyName: z.string(),
+      strategyDescription: z.string().describe("Who the play finds or what it does, in one plain line."),
       default: z.boolean().describe("True = the pipe's DEFAULT play: what a funnel naming the bare pipe runs (today's behaviour)."),
       allowedActiveWorkflowCount: z.number().int().describe("Active workflows of the pipe the strategy allows. 0 = nothing can run the play: never runnable."),
       excludedWorkflowDynastySlugs: z.array(z.string()).describe("Workflows the strategy rules out on this pipe."),
