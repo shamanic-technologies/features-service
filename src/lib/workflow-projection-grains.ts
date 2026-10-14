@@ -20,7 +20,8 @@ import { fetchWithRetry } from "./fetch-retry.js";
 import { buildWorkflowDynasties, aggregateAcrossDynasties } from "../routes/public.js";
 import type { WorkflowMetadata } from "./public-stats-clients.js";
 import { fetchActiveAudiences, fetchAudienceMemberEmails } from "./human-client.js";
-import { setPersonRepliesOnSlugStats, type CrmOnlyReplier, type PositiveReplier } from "./crm-only-repliers.js";
+import { fetchScopePersons, setPersonRepliesOnSlugStats, type CrmOnlyReplier, type PositiveReplier } from "./crm-only-repliers.js";
+import { contactedPersonsBySlug, contactedRecorderOf, setContactedCountsOnSlugStats } from "./contacted-recorder.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { runsCostsUrl, selectCostCents, selectCostCentsString, type Pricing } from "./pricing.js";
 import { type CostBasis } from "./cost-basis.js";
@@ -151,6 +152,23 @@ function extractBroadcastRecipientStats(group: Record<string, unknown>): Record<
   };
 }
 
+/**
+ * A channel that does not write by email (lib/contacted-recorder.ts, WA-CONTACTED-1014): REPLACE email-gateway's
+ * per-slug contacted, which never sees its sends, with the scope's persons lead-service states were written to.
+ * An email channel is untouched (no read made).
+ */
+async function setRecordedContacted(
+  emailStats: Map<string, Record<string, number>>,
+  brandId: string,
+  featureSlug: string,
+  campaignIds: readonly string[] | undefined,
+  identity: Identity,
+): Promise<void> {
+  if (contactedRecorderOf(featureSlug) !== "lead-service") return;
+  const persons = await fetchScopePersons(brandId, campaignIds ? [...campaignIds] : undefined, identity);
+  setContactedCountsOnSlugStats(emailStats, contactedPersonsBySlug(persons, campaignIds ? new Set(campaignIds) : null));
+}
+
 /** Per-workflow-dynasty aggregated evidence (cost + contacted/clicks/replies), rolled up over the upgrade funnel. */
 export interface WorkflowGrainEvidence {
   totalCostInUsdCents: number;
@@ -278,6 +296,7 @@ export async function fetchBrandWorkflowEvidenceWithRetired(
     fetchBrandCostGroups(brandId, featureSlug, "workflowSlug", identity, undefined, pricing),
     fetchBrandEmailStats(brandId, featureSlug, identity),
   ]);
+  await setRecordedContacted(emailStats, brandId, featureSlug, undefined, identity);
   // Select gross vs frozen-net cost per group BEFORE the dynasty rollup, so the aggregated brand-grain
   // cost is net-or-gross end to end (no post-hoc multiply).
   return rollUpGrain(
@@ -501,22 +520,32 @@ export async function fetchAudienceGrainEvidence(
   );
   const scoped = legCampaignIds ?? undefined;
 
-  const [costByAudience, outcomeByAudience, crmByAudience] = await Promise.all([
+  const [costByAudience, outcomeByAudience, crmByAudience, recordedContacted] = await Promise.all([
     fetchAudienceDynastyCosts(brandId, featureSlug, activeIds, identity, pricing, slugToDynasty, scoped),
     fetchAudienceDynastyOutcomes(brandId, featureSlug, audienceIds, identity, slugToDynasty, scoped),
     placeable.length > 0
       ? fetchAudienceCrmReplies(audienceIds, placeable, identity, slugToDynasty)
       : Promise.resolve(new Map<string, Map<string, number>>()),
+    // A channel that does not write by email (lib/contacted-recorder.ts, WA-CONTACTED-1014): its contacted per
+    // (audience x dynasty) = the brand's persons lead-service states were written to, by the audience their serve
+    // drew them from. Null on an email channel (email-gateway's send tags stand).
+    contactedRecorderOf(featureSlug) === "lead-service"
+      ? fetchScopePersons(brandId, undefined, identity).then((persons) =>
+          matureAudienceDynastyCounts(persons, null, activeIds, slugToDynasty, legSet),
+        )
+      : Promise.resolve(null),
   ]);
 
   const result: AudienceGrainEvidence[] = [];
   for (const audienceId of audienceIds) {
     const costByDynasty = costByAudience.get(audienceId) ?? new Map<string, DynastyCost>();
     const outcomeByDynasty = outcomeByAudience.get(audienceId) ?? new Map<string, DynastyOutcome>();
+    const contactedByDynasty = recordedContacted ? (recordedContacted.get(audienceId) ?? new Map<string, { contacted: number }>()) : null;
     const dynasties = new Set<string>([
       ...costByDynasty.keys(),
       ...outcomeByDynasty.keys(),
       ...(crmByAudience.get(audienceId)?.keys() ?? []),
+      ...(contactedByDynasty?.keys() ?? []),
     ]);
     const byDynasty = new Map<string, WorkflowGrainEvidence>();
     for (const dynasty of dynasties) {
@@ -525,7 +554,7 @@ export async function fetchAudienceGrainEvidence(
       byDynasty.set(dynasty, {
         totalCostInUsdCents: c.totalCostInUsdCents,
         completedRuns: c.completedRuns,
-        contacted: o.contacted,
+        contacted: contactedByDynasty ? (contactedByDynasty.get(dynasty)?.contacted ?? 0) : o.contacted,
         clicks: o.clicks,
         replies: o.replies + (crmByAudience.get(audienceId)?.get(dynasty) ?? 0),
       });
@@ -705,6 +734,7 @@ export async function fetchCampaignWorkflowEvidenceWithRetired(
     fetchCampaignCostGroups(brandId, featureSlug, campaignIds, identity, pricing),
     fetchCampaignEmailStats(brandId, featureSlug, campaignIds, identity),
   ]);
+  await setRecordedContacted(emailStats, brandId, featureSlug, campaignIds, identity);
   return rollUpGrain(
     workflows,
     mergeCostGroupsByWorkflowSlug(groups, filteredLocally ? new Set(campaignIds) : null, pricing, basis),

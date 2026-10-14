@@ -4,6 +4,8 @@
  * Service URLs and keys are read lazily from process.env.
  */
 
+import { contactedRecorderOf, setContactedCountsOnSlugStats } from "./contacted-recorder.js";
+import { fetchFleetContactedBySlug } from "./fleet-positive-repliers.js";
 import { RUNS_CAMPAIGN_IDS_PER_REQUEST } from "./brand-spend-by-day-client.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { runsCostsUrl, selectCostCentsString, type Pricing } from "./pricing.js";
@@ -296,6 +298,21 @@ export async function fetchPublicEmailStats(
     }
   } else {
     result.set("__total__", extractBroadcastEmailFields(data));
+  }
+
+  // A channel that does not write by email: email-gateway never sees its sends, so its per-workflow contacted is
+  // the fleet's persons lead-service states were written to (lib/contacted-recorder.ts, WA-CONTACTED-1014). Only
+  // the fleet-wide per-workflow read (the rankings' crossOrg grain, on a leg or not) has that person cell.
+  if (groupBy === "workflowSlug" && !(brandIds && brandIds.length > 0) && !workflowDynastySlug && contactedRecorderOf(featureSlugs) === "lead-service") {
+    const scope = campaignIds && campaignIds.length > 0 ? new Set(campaignIds) : undefined;
+    const slugs = featureSlugs.split(",").map((s) => s.trim()).filter(Boolean);
+    const perFeature = await Promise.all(slugs.map((slug) => fetchFleetContactedBySlug(slug, scope)));
+    // undefined only under the suite-wide mock (src/vitest.setup.ts): the fixture's figure stands.
+    if (perFeature.every((m) => m !== undefined)) {
+      const counts = new Map<string, number>();
+      for (const m of perFeature) for (const [slug, n] of m) counts.set(slug, (counts.get(slug) ?? 0) + n);
+      setContactedCountsOnSlugStats(result, counts);
+    }
   }
 
   return result;

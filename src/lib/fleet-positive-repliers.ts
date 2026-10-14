@@ -283,6 +283,26 @@ export async function fetchFleetServeDayCounts(featureSlug: string, campaignIds:
   return out;
 }
 
+/**
+ * THE FLEET'S CONTACTED PERSONS per workflow slug (every org's pairs from the cell), on `campaignIds` when given (a
+ * leg). The person count lead-service states (`signals.contacted`), for a channel whose sends email-gateway never
+ * sees (`lib/contacted-recorder.ts`, WA-CONTACTED-1014).
+ */
+export async function fetchFleetContactedBySlug(featureSlug: string, campaignIds?: ReadonlySet<string>): Promise<Map<string, number>> {
+  const cell = await getCell(featureSlug);
+  const out = new Map<string, number>();
+  for (const pair of cell.byPair.values()) {
+    for (const [bucketKey, [contacted]] of pair.buckets) {
+      if (contacted === 0) continue;
+      const { campaignId, slug } = splitBucketKey(bucketKey);
+      if (!slug) continue;
+      if (campaignIds && (!campaignId || !campaignIds.has(campaignId))) continue;
+      out.set(slug, (out.get(slug) ?? 0) + contacted);
+    }
+  }
+  return out;
+}
+
 /** Build the cell ahead of the first read (boot). Fire-and-forget; a failure is logged, never thrown. */
 export async function warmFleetPositiveRepliers(featureSlug: string): Promise<void> {
   try {
