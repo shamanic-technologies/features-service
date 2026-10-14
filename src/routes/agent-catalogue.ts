@@ -437,6 +437,7 @@ function playInputsOf(c: PlayCatalogue, assignments: readonly LegAssignmentRow[]
       return {
         strategyId,
         strategyName: st.name,
+        strategyDescription: st.description,
         measurement: byPlay.get(playIdOf(pipeId, strategyId)) ?? null,
         allowedActiveWorkflowCount: onPipe.filter((a) => a.state === "active" && !excluded.has(a.workflowDynastySlug)).length,
         excludedDynasties: [...excluded.keys()].sort(),
@@ -889,6 +890,7 @@ const playOf = (p: CataloguePipe) =>
         pipeId: p.play.basePipeId,
         strategyId: p.play.strategyId,
         strategyName: p.play.strategyName,
+        strategyDescription: p.play.strategyDescription,
         default: p.play.isDefault,
         allowedActiveWorkflowCount: p.play.allowedActiveWorkflowCount,
         excludedWorkflowDynastySlugs: p.play.excludedDynasties,
@@ -902,6 +904,7 @@ const playRowOf = (m: CatalogueModel, p: CataloguePipe) => ({
   pipeId: p.play?.basePipeId ?? p.id,
   strategyId: p.play?.strategyId ?? null,
   strategyName: p.play?.strategyName ?? null,
+  strategyDescription: p.play?.strategyDescription ?? null,
   default: p.play?.isDefault ?? true,
   ...econWire(p.economics, perStep(m, p.toStep)),
   bestWorkflowSlug: p.measurement?.workflowDynastySlug ?? null,
