@@ -90,7 +90,7 @@ import { listLegAssignments } from "../lib/workflow-leg-assignments.js";
 import { invalidateChannelCatalogue, fleetLegPrice, fleetPlayPrices, readLegWorkflowRanking } from "./public.js";
 import type { LegPrice } from "../lib/outcome-prices.js";
 import type { LegAssignmentRow } from "../lib/workflow-leg-assignments.js";
-import { insertPlay, insertStrategy, insertTactic, invalidatePlayCatalogue, listVerdicts, loadPlayCatalogue } from "../lib/plays-store.js";
+import { insertPlay, insertStrategy, insertTactic, invalidatePlayCatalogue, listVerdicts, loadPlayCatalogue, updateTacticDescription } from "../lib/plays-store.js";
 import { kickTacticJudgments } from "../lib/tactic-judgments.js";
 import { defaultStrategyOf, excludedDynasties, playIdOf, tacticNameOf, type PlayCatalogue, type Strategy, type Tactic } from "../lib/plays.js";
 
@@ -1512,8 +1512,11 @@ router.get("/internal/catalogue/tactics/:id", apiKeyOnly, async (req, res) => {
       ...tacticRowOf(c, t),
       createdBy: t.createdBy,
       createdAt: t.createdAt,
-      // Every workflow VERSION judged, with Jev's probability and the model release that answered.
-      verdicts: verdicts.map((v) => ({ workflowSlug: v.workflowSlug, workflowDynastySlug: v.workflowDynastySlug, version: v.version, versionActive: v.versionActive, follows: v.verdict, probability: v.probability, model: v.model, judgedAt: v.judgedAt })),
+      updatedBy: t.updatedBy ?? null,
+      updatedAt: t.updatedAt ?? null,
+      // Every workflow VERSION judged, with Jev's probability and the model release that answered. A verdict judged on an
+      // older description (the tactic was edited) still serves until the sweep re-judges it: `onCurrentDescription:false`.
+      verdicts: verdicts.map((v) => ({ workflowSlug: v.workflowSlug, workflowDynastySlug: v.workflowDynastySlug, version: v.version, versionActive: v.versionActive, follows: v.verdict, probability: v.probability, model: v.model, judgedAt: v.judgedAt, onCurrentDescription: v.judgedDescription === t.description })),
     });
   } catch (err) {
     fail(res, err, "get tactic");
@@ -1529,6 +1532,25 @@ router.post("/internal/catalogue/tactics", apiKeyOnly, async (req, res) => {
     res.status(201).json(tacticRowOf(await loadPlayCatalogue(), t));
   } catch (err) {
     fail(res, err, "create tactic");
+  }
+});
+
+/**
+ * Edit a tactic's description (owner 2026-10-14). Unique like a new one (409 `tactic_description_taken`); the name and
+ * id never move. Jev re-judges every workflow version on the new words, in place: each old verdict serves until its
+ * replacement lands, so no strategy sees a workflow as unjudged mid-edit. The same text = 200 `changed:false`.
+ */
+router.patch("/internal/catalogue/tactics/:id", apiKeyOnly, async (req, res) => {
+  const body = (req.body ?? {}) as Body;
+  try {
+    const { tactic, changed, previousDescription } = await updateTacticDescription({ id: req.params.id, description: text(body, "description", 500), updatedBy: actorOf(body, "updatedBy") });
+    if (changed) {
+      console.log(`[features-service] agent catalogue: tactic ${tactic.id} description edited by ${tactic.updatedBy} (was ${JSON.stringify(previousDescription)}); Jev re-judges every workflow version on it`);
+      void kickTacticJudgments();
+    }
+    res.json({ ...tacticRowOf(await loadPlayCatalogue(), tactic), changed, previousDescription, updatedBy: tactic.updatedBy ?? null, updatedAt: tactic.updatedAt ?? null });
+  } catch (err) {
+    fail(res, err, "edit tactic");
   }
 });
 

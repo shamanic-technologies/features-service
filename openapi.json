@@ -56783,7 +56783,7 @@
                     "truncated",
                     "rows"
                   ],
-                  "description": "Owner 2026-10-13: a TACTIC is a yes/no tag Jev puts on every workflow version (judged once, on the tactic's description); a STRATEGY requires and excludes tactics; a PLAY is a pipe x a strategy, catalogued per pipe. Inside a play the workflow is still picked by ROI, among those the strategy allows. Not the dashboard's Strategy page."
+                  "description": "Owner 2026-10-13: a TACTIC is a yes/no tag Jev puts on every workflow version (judged once per description, re-judged when the description is edited); a STRATEGY requires and excludes tactics; a PLAY is a pipe x a strategy, catalogued per pipe. Inside a play the workflow is still picked by ROI, among those the strategy allows. Not the dashboard's Strategy page."
                 }
               }
             }
@@ -57000,6 +57000,15 @@
                     "createdAt": {
                       "type": "string"
                     },
+                    "updatedBy": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Who last edited the description; null = never edited."
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "verdicts": {
                       "type": "array",
                       "items": {
@@ -57029,6 +57038,10 @@
                           },
                           "judgedAt": {
                             "type": "string"
+                          },
+                          "onCurrentDescription": {
+                            "type": "boolean",
+                            "description": "Judged on the tactic's current description. false = the description was edited and this verdict still serves until Jev re-judges it (within minutes)."
                           }
                         },
                         "required": [
@@ -57039,7 +57052,8 @@
                           "follows",
                           "probability",
                           "model",
-                          "judgedAt"
+                          "judgedAt",
+                          "onCurrentDescription"
                         ]
                       }
                     }
@@ -57053,6 +57067,8 @@
                     "workflowsFollowing",
                     "createdBy",
                     "createdAt",
+                    "updatedBy",
+                    "updatedAt",
                     "verdicts"
                   ]
                 }
@@ -57070,6 +57086,126 @@
           },
           "503": {
             "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+          }
+        }
+      },
+      "patch": {
+        "summary": "Edit a tactic's description (internal, api-key)",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`). Owner 2026-10-14: the description is what Jev judges every workflow version against, so editing it re-judges every version within minutes, in place: each old verdict keeps serving until its replacement lands (no strategy sees a workflow as unjudged mid-edit; GET /internal/catalogue/tactics/{id} marks the pending ones `onCurrentDescription: false`). Unique like a new one (409 `tactic_description_taken`, case-insensitive). Name and id never move. The stored text again = 200 `changed: false`, nothing re-judged.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "A tactic id"
+            },
+            "required": true,
+            "description": "A tactic id",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "description": {
+                    "type": "string",
+                    "description": "<= 500 characters; what the workflow DOES."
+                  },
+                  "updatedBy": {
+                    "type": "string",
+                    "description": "Who makes the edit (the gateway sets it from the authenticated caller)."
+                  }
+                },
+                "required": [
+                  "description",
+                  "updatedBy"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The tactic after the edit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "enum": [
+                        "tactic"
+                      ]
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string",
+                      "description": "Unique (case-insensitive)."
+                    },
+                    "description": {
+                      "type": "string",
+                      "description": "Unique (case-insensitive). What Jev judges every workflow version against: as precise as possible."
+                    },
+                    "workflowsJudged": {
+                      "type": "integer",
+                      "description": "Workflows (current version) Jev judged on it."
+                    },
+                    "workflowsFollowing": {
+                      "type": "integer",
+                      "description": "Of them, those judged to follow it."
+                    },
+                    "changed": {
+                      "type": "boolean",
+                      "description": "false = the description was already this text (nothing re-judged)."
+                    },
+                    "previousDescription": {
+                      "type": "string"
+                    },
+                    "updatedBy": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "object",
+                    "id",
+                    "name",
+                    "description",
+                    "workflowsJudged",
+                    "workflowsFollowing",
+                    "changed",
+                    "previousDescription",
+                    "updatedBy",
+                    "updatedAt"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`description_required` / `description_too_long` / `updatedBy_required`."
+          },
+          "401": {
+            "description": "Missing or wrong service key."
+          },
+          "404": {
+            "description": "`tactic_not_found`."
+          },
+          "409": {
+            "description": "`tactic_description_taken`: another tactic already has this description."
           }
         }
       }
@@ -57218,7 +57354,7 @@
                     "truncated",
                     "rows"
                   ],
-                  "description": "Owner 2026-10-13: a TACTIC is a yes/no tag Jev puts on every workflow version (judged once, on the tactic's description); a STRATEGY requires and excludes tactics; a PLAY is a pipe x a strategy, catalogued per pipe. Inside a play the workflow is still picked by ROI, among those the strategy allows. Not the dashboard's Strategy page."
+                  "description": "Owner 2026-10-13: a TACTIC is a yes/no tag Jev puts on every workflow version (judged once per description, re-judged when the description is edited); a STRATEGY requires and excludes tactics; a PLAY is a pipe x a strategy, catalogued per pipe. Inside a play the workflow is still picked by ROI, among those the strategy allows. Not the dashboard's Strategy page."
                 }
               }
             }
@@ -57770,7 +57906,7 @@
                     "truncated",
                     "rows"
                   ],
-                  "description": "Owner 2026-10-13: a TACTIC is a yes/no tag Jev puts on every workflow version (judged once, on the tactic's description); a STRATEGY requires and excludes tactics; a PLAY is a pipe x a strategy, catalogued per pipe. Inside a play the workflow is still picked by ROI, among those the strategy allows. Not the dashboard's Strategy page."
+                  "description": "Owner 2026-10-13: a TACTIC is a yes/no tag Jev puts on every workflow version (judged once per description, re-judged when the description is edited); a STRATEGY requires and excludes tactics; a PLAY is a pipe x a strategy, catalogued per pipe. Inside a play the workflow is still picked by ROI, among those the strategy allows. Not the dashboard's Strategy page."
                 }
               }
             }

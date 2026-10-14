@@ -158,6 +158,15 @@ vi.mock("../lib/plays-store.js", async () => {
     invalidatePlayCatalogue: () => {},
     listVerdicts: async () => playState.verdicts,
     insertTactic: vi.fn(),
+    updateTacticDescription: vi.fn(async (input: { id: string; description: string; updatedBy: string }) => {
+      const { DeclarationError } = await import("../lib/channel-declarations.js");
+      const t = tactics.find((x) => x.id === input.id);
+      if (!t) throw new DeclarationError(404, "tactic_not_found", `no tactic ${input.id}`);
+      if (input.description.toLowerCase() === "taken elsewhere.") throw new DeclarationError(409, "tactic_description_taken", "the tactic other already has this description");
+      const previousDescription = t.description;
+      if (previousDescription === input.description) return { tactic: t, changed: false, previousDescription };
+      return { tactic: { ...t, description: input.description, updatedBy: input.updatedBy, updatedAt: "2026-10-14T08:00:00.000Z" }, changed: true, previousDescription };
+    }),
     insertStrategy: vi.fn(),
     insertPlay: vi.fn(async (input: { pipeId: string; strategyId: string; isDefault?: boolean }) => {
       const all = [...plays, ...playState.added];
@@ -320,6 +329,32 @@ describe("plays (owner 2026-10-13): a pipe x a strategy, ROI per play", () => {
     expect(res.body).toMatchObject({ created: false, default: false });
     const plays = (await request(app).get("/internal/catalogue/plays").query({ pipe: COLD }).set(KEY)).body.rows;
     expect(plays.map((p: any) => [p.strategyId, p.default])).toEqual([["valid-only", true], ["valid-catch-all", false]]);
+  });
+
+  it("a tactic's description is edited (owner 2026-10-14): unique, and every workflow version is re-judged on the new words", async () => {
+    const { kickTacticJudgments } = await import("../lib/tactic-judgments.js");
+    const kick = vi.mocked(kickTacticJudgments);
+    kick.mockClear();
+    const url = "/internal/catalogue/tactics/catch-all";
+    const words = "Keeps or sends to people whose email is catch-all.";
+    const edited = await request(app).patch(url).set(KEY).send({ description: words, updatedBy: "user:u1" });
+    expect(edited.status).toBe(200);
+    expect(edited.body).toMatchObject({ id: "catch-all", name: "Catch-all", description: words, changed: true, updatedBy: "user:u1" });
+    expect(edited.body.previousDescription).toContain("Sends to addresses");
+    expect(kick).toHaveBeenCalledTimes(1);
+
+    // The stored text again: nothing to re-judge.
+    const same = await request(app).patch(url).set(KEY).send({ description: "Sends to addresses whose mail server accepts every address, so the mailbox cannot be confirmed.", updatedBy: "user:u1" });
+    expect(same.status).toBe(200);
+    expect(same.body.changed).toBe(false);
+    expect(kick).toHaveBeenCalledTimes(1);
+
+    const taken = await request(app).patch(url).set(KEY).send({ description: "Taken elsewhere.", updatedBy: "user:u1" });
+    expect(taken.status).toBe(409);
+    expect(taken.body.reason).toBe("tactic_description_taken");
+    expect((await request(app).patch("/internal/catalogue/tactics/nope").set(KEY).send({ description: words, updatedBy: "u" })).status).toBe(404);
+    expect((await request(app).patch(url).set(KEY).send({ description: "  ", updatedBy: "u" })).body.reason).toBe("description_required");
+    expect((await request(app).patch(url).set(KEY).send({ description: words })).body.reason).toBe("updatedBy_required");
   });
 
   it("an unknown pipe is 404", async () => {

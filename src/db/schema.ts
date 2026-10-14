@@ -555,6 +555,9 @@ export const tactics = pgTable("tactics", {
   description: text("description").notNull(),
   createdBy: text("created_by").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  /** Who last edited the description, and when (migration 0030); null = never edited. */
+  updatedBy: text("updated_by"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }),
 });
 
 export const strategies = pgTable("strategies", {
@@ -580,7 +583,10 @@ export const plays = pgTable(
   (t) => [primaryKey({ columns: [t.pipeId, t.strategyId] })],
 );
 
-/** One Jev verdict per (workflow VERSION, tactic), judged once; `version_active` is refreshed on every sweep. */
+/**
+ * One Jev verdict per (workflow VERSION, tactic), judged once per tactic DESCRIPTION (`judged_description`, migration
+ * 0030): an edited description re-judges the row in place; `version_active` is refreshed on every sweep.
+ */
 export const workflowTacticVerdicts = pgTable(
   "workflow_tactic_verdicts",
   {
@@ -593,6 +599,7 @@ export const workflowTacticVerdicts = pgTable(
     verdict: boolean("verdict").notNull(),
     probability: doublePrecision("probability").notNull(),
     model: text("model").notNull(),
+    judgedDescription: text("judged_description").notNull(),
     judgedAt: timestamp("judged_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.workflowSlug, t.tacticId] })],
