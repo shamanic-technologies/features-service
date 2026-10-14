@@ -14,7 +14,7 @@
  */
 import { SEED_FEATURES } from "../seed/features.js";
 import { loadChannelCatalogue } from "./channel-declarations-store.js";
-import { legKeyFor } from "./funnel-legs.js";
+import { legKeyFor, matchChannelLegKey } from "./funnel-legs.js";
 import { DISPLAY_ONLY_SALES_FUNNELS } from "./sales-funnels.js";
 
 const normalise = (raw: string): string => raw.trim().toLowerCase().replace(/[\s-]+/g, "_");
@@ -40,4 +40,16 @@ export async function publishedPipeLeg(featureSlug: string, rawLeg: string): Pro
   const { channels } = await loadChannelCatalogue({ publishedOnly: true });
   const channel = channels.find((c) => c.slug === featureSlug);
   return channel?.stepTransitions.some((t) => t.legKey === wanted) ? wanted : null;
+}
+
+/**
+ * ANY PIPE'S LEG, the one resolver every leg-keyed fleet read shares (RANKING-SOURCE-LEG-1014; owner: every pipe
+ * goes through the same mechanisms). A funnel leg (both outbound spellings) first; else a leg of the channel's own
+ * that no funnel walks (sourcing `start_to_lead_found`, AI Instant Call, a published run-time leg). Null = the word
+ * names no leg of the channel, and the caller fails loud.
+ */
+export async function resolvePipeLegKey(featureSlug: string | null | undefined, rawLeg: string): Promise<string | null> {
+  const funnelLeg = matchChannelLegKey(featureSlug, rawLeg);
+  if (funnelLeg || !featureSlug || rawLeg.trim() === "") return funnelLeg;
+  return unpricedPipeLeg(featureSlug, rawLeg) ?? (await publishedPipeLeg(featureSlug, rawLeg));
 }
