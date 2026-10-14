@@ -41,7 +41,7 @@ export interface ExpectedConversion {
   unavailableReason: ExpectedConversionUnavailableReason | null;
 }
 
-const RATE_BASIS: Record<EffectiveRateSource, ExpectedBasis> = { measured: "measured", manual: "stated", median: "fleet", default: "default" };
+const RATE_BASIS: Record<EffectiveRateSource, ExpectedBasis> = { measured: "measured", manual: "stated", default: "default" };
 
 const none = (reason: ExpectedConversionUnavailableReason): ExpectedConversion => ({
   ratePct: null,

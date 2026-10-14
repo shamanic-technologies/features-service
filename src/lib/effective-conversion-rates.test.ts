@@ -4,14 +4,12 @@ vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
 import {
   buildBrandEffectiveRates,
-  buildFleetArrowMedians,
   measuredArrowRate,
   MIN_MEASURED_FROM_REACHED,
   resolveArrow,
-  MIN_FLEET_MEDIAN_BRANDS,
-  fleetMedianApplies,
   crmMeasurementOf,
   crmArrowRate,
+  legPairKey,
   zeroIsConclusive,
   type BrandStepMeasurement,
 } from "./effective-conversion-rates.js";
@@ -163,63 +161,67 @@ describe("measuredArrowRate — the funnel-step conversion, the bar on the denom
   });
 });
 
-describe("resolveArrow — measured, else manual, else median, else null", () => {
+describe("resolveArrow — measured, else manual, else the industry default, NEVER a fleet median (owner 2026-10-14)", () => {
   const measured = measuredArrowRate(MEASUREMENT, "repliedPositive", "meetingBooked");
   const thin = measuredArrowRate(MEASUREMENT, "clicked", "meetingBooked");
-  const median = { ratePct: 22, brandCount: 7 };
 
   it("a sufficient measurement wins over a stated rate", () => {
-    expect(resolveArrow("Positive reply", "Meeting booked", measured, 70, median)).toMatchObject({
+    expect(resolveArrow("Positive reply", "Meeting booked", measured, 70)).toMatchObject({
       effectiveRatePct: 40,
       source: "measured",
       manualRatePct: 70,
-      median,
     });
   });
-  it("under the bar, the brand's own statement wins over the fleet", () => {
-    expect(resolveArrow("Website visit", "Meeting booked", thin, 5, median)).toMatchObject({ effectiveRatePct: 5, source: "manual" });
+  it("under the bar, the brand's own statement wins over the default", () => {
+    expect(resolveArrow("Website visit", "Meeting booked", thin, 5, 0.2)).toMatchObject({ effectiveRatePct: 5, source: "manual" });
   });
-  it("nothing stated, the median", () => {
-    expect(resolveArrow("Meeting booked", "Meeting attended", thin, null, median)).toMatchObject({ effectiveRatePct: 22, source: "median" });
+  it("nothing stated and nothing measured: the industry default, served as `default`", () => {
+    expect(resolveArrow("Meeting booked", "Meeting attended", thin, null, 75)).toMatchObject({ effectiveRatePct: 75, source: "default", defaultRatePct: 75 });
   });
-  it("a fleet median over FEWER than 5 brands keeps the industry default (owner rule 2026-10-03)", () => {
-    expect(MIN_FLEET_MEDIAN_BRANDS).toBe(5);
-    const four = { ratePct: 40, brandCount: 4 };
-    expect(resolveArrow("Meeting booked", "Meeting attended", thin, null, four, 75)).toMatchObject({
-      effectiveRatePct: 75,
-      source: "default",
-      median: four,
-      defaultRatePct: 75,
-    });
-  });
-  it("a fleet median over 5 brands overrides the default", () => {
-    const five = { ratePct: 40, brandCount: 5 };
-    expect(resolveArrow("Meeting booked", "Meeting attended", thin, null, five, 75)).toMatchObject({ effectiveRatePct: 40, source: "median" });
-  });
-  it("a leg leaving Website visit takes the fleet median like any leg (owner 2026-10-04, supersedes the 2026-10-03 exclusion)", () => {
-    const nine = { ratePct: 0.8, brandCount: 9 };
-    expect(resolveArrow("Website visit", "Form submitted", thin, null, nine, 0.5)).toMatchObject({
-      effectiveRatePct: 0.8,
-      source: "median",
-      median: nine,
-      defaultRatePct: 0.5,
-    });
-    expect(fleetMedianApplies(nine)).toBe(true);
-    // The 5-brand bar still holds on a visit leg: a 2-brand median stays an input, the default is served.
-    expect(fleetMedianApplies({ ratePct: 4.99, brandCount: 2 })).toBe(false);
+  it("the median block is retired: always null over 0 brands, and no candidate is ever a median", () => {
+    const leg = resolveArrow("Website visit", "Signup", thin, null, 0.2);
+    expect(leg.median).toEqual({ ratePct: null, brandCount: 0 });
+    expect(leg.candidates.map((c) => c.basis)).not.toContain("median");
+    expect(leg.candidates.every((c) => c.brandCount === null)).toBe(true);
   });
   it("on a website-visit leg the brand's own statement still wins over the default", () => {
-    expect(resolveArrow("Website visit", "Signup", thin, 7, { ratePct: 5, brandCount: 9 }, 0.5)).toMatchObject({ effectiveRatePct: 7, source: "manual" });
+    expect(resolveArrow("Website visit", "Signup", thin, 7, 0.2)).toMatchObject({ effectiveRatePct: 7, source: "manual" });
   });
-  it("the brand's own statement still wins over a thin median and the default", () => {
-    expect(resolveArrow("Website visit", "Meeting booked", thin, 3, { ratePct: 4.99, brandCount: 2 }, 1)).toMatchObject({ effectiveRatePct: 3, source: "manual" });
-  });
-  it("nothing at all: null with a reason, never a default", () => {
-    expect(resolveArrow("Website visit", "Meeting booked", thin, null, { ratePct: null, brandCount: 0 })).toMatchObject({
+  it("nothing at all: null with a reason", () => {
+    expect(resolveArrow("Website visit", "Meeting booked", thin, null)).toMatchObject({
       effectiveRatePct: null,
       source: null,
       unresolvedReason: "no_rate_available",
     });
+  });
+});
+
+describe("no leg resolves from what OTHER brands stated (owner 2026-10-14, Definitejobs read 5% on Website visit -> Signup)", () => {
+  const EMPTY: BrandStepMeasurement = { contactedRecipients: 0, evidence: ALL_STEP_EVIDENCE, reached: [] };
+  const legOf = (l: { fromStep: string; toStep: string }) => legPairKey(l.fromStep, l.toStep);
+
+  it("a brand that stated nothing and measured nothing reads 0.2% on every leg leaving Website visit, source default", () => {
+    const rates = buildBrandEffectiveRates({ brandId: "new", funnelKeys: [], measurement: EMPTY, manual: [] });
+    for (const to of ["meeting_booked", "signup", "form_submitted", "purchase"]) {
+      const leg = rates.legs.find((l) => legOf(l) === `website_visit>${to}`);
+      expect(leg, to).toBeDefined();
+      expect(leg!.effectiveRatePct, to).toBe(0.2);
+      expect(leg!.source, to).toBe("default");
+    }
+    for (const leg of rates.legs) {
+      expect(leg.source).not.toBe("median");
+      expect(leg.median).toEqual({ ratePct: null, brandCount: 0 });
+    }
+  });
+  it("a brand that STATED a visit rate keeps it", () => {
+    const rates = buildBrandEffectiveRates({
+      brandId: "stated",
+      funnelKeys: [],
+      measurement: EMPTY,
+      manual: [{ fromStep: "Website visit", toStep: "Signup", ratePct: 3, stated: true }],
+    });
+    const signup = rates.legs.find((l) => legOf(l) === "website_visit>signup")!;
+    expect(signup).toMatchObject({ effectiveRatePct: 3, source: "manual" });
   });
 });
 
@@ -234,7 +236,6 @@ describe("a measured 0% must have seen enough attempts to rule out the next sour
       ...times(22, lead({ repliedPositive: true })),
     ],
   };
-  const none = { ratePct: null, brandCount: 0 };
 
   it("the rule: (1 - p)^n <= 5%, about 3 / p attempts", () => {
     expect(zeroIsConclusive(119, 0.5)).toBe(false); // 0.995^119 = 55%: 0 of 119 is what a 0.5% leg looks like
@@ -250,7 +251,7 @@ describe("a measured 0% must have seen enough attempts to rule out the next sour
   it("0 of 119 visits does not price as 0%: the default wins, the measurement is shown with its reason", () => {
     const measured = measuredArrowRate(DOC_DINNERS, "clicked", "meetingBooked");
     expect(measured).toMatchObject({ fromReached: 119, toReached: 0, ratePct: 0, sufficient: true });
-    const leg = resolveArrow("Website visit", "Meeting booked", measured, null, none, 0.5);
+    const leg = resolveArrow("Website visit", "Meeting booked", measured, null, 0.5);
     expect(leg).toMatchObject({
       effectiveRatePct: 0.5,
       source: "default",
@@ -262,48 +263,29 @@ describe("a measured 0% must have seen enough attempts to rule out the next sour
     ]);
   });
 
-  it("the comparison is against the NEXT source: the client's own statement, else the median, else the default", () => {
+  it("the comparison is against the NEXT source: the client's own statement, else the default", () => {
     const measured = measuredArrowRate(DOC_DINNERS, "clicked", "meetingBooked");
     // Stated 5%: 0 of 119 IS conclusive against 5% (0.95^119 = 0.2%), so the measured 0% stands.
-    expect(resolveArrow("Website visit", "Meeting booked", measured, 5, none, 0.5)).toMatchObject({ effectiveRatePct: 0, source: "measured" });
+    expect(resolveArrow("Website visit", "Meeting booked", measured, 5, 0.5)).toMatchObject({ effectiveRatePct: 0, source: "measured" });
     // Stated 1%: 0.99^119 = 30%, not conclusive, the statement wins.
-    expect(resolveArrow("Website visit", "Meeting booked", measured, 1, none, 0.5)).toMatchObject({ effectiveRatePct: 1, source: "manual" });
-    expect(resolveArrow("Website visit", "Meeting booked", measured, null, { ratePct: 0.8, brandCount: 6 }, 0.5)).toMatchObject({
-      effectiveRatePct: 0.8,
-      source: "median",
-    });
+    expect(resolveArrow("Website visit", "Meeting booked", measured, 1, 0.5)).toMatchObject({ effectiveRatePct: 1, source: "manual" });
+    // Nothing stated: the default is the next source (never a fleet median, owner 2026-10-14).
+    expect(resolveArrow("Website visit", "Meeting booked", measured, null, 0.2)).toMatchObject({ effectiveRatePct: 0.2, source: "default" });
   });
 
   it("a leg with real successes keeps its measured rate exactly (8 of 30 = 26.67%)", () => {
     const measured = measuredArrowRate(DOC_DINNERS, "repliedPositive", "meetingBooked");
-    const leg = resolveArrow("Positive reply", "Meeting booked", measured, null, none, 10);
+    const leg = resolveArrow("Positive reply", "Meeting booked", measured, null, 10);
     expect(leg).toMatchObject({ source: "measured", measured: { fromReached: 30, toReached: 8, sufficient: true, gap: null } });
     expect(leg.effectiveRatePct).toBeCloseTo(26.6667, 3);
   });
 
   it("every reader of the brand's legs sees the same rule (buildBrandEffectiveRates)", () => {
-    const rates = buildBrandEffectiveRates({ brandId: "b", measurement: DOC_DINNERS, manual: [], medians: new Map(), funnelKeys: [] } as never);
+    const rates = buildBrandEffectiveRates({ brandId: "b", measurement: DOC_DINNERS, manual: [], funnelKeys: [] } as never);
     const visit = rates.legs.find((l) => l.fromStep === "Website visit" && l.toStep === "Meeting booked")!;
     expect(visit.source).not.toBe("measured");
     expect(visit.effectiveRatePct).toBeGreaterThan(0);
     expect(visit.measured.gap).toBe("zero_not_conclusive");
-  });
-});
-
-describe("buildFleetArrowMedians — the median of what brands STATED, per LEG", () => {
-  const stated = (ratePct: number | null) => [
-    { fromStep: "Positive reply", toStep: "Meeting booked", ratePct, stated: ratePct !== null },
-  ];
-  it("is the median, never the mean, over stated values only — keyed on the leg, no funnel in the key", () => {
-    const medians = buildFleetArrowMedians([stated(10), stated(20), stated(90), stated(null)]);
-    expect(medians.get("conversation>meeting_booked")).toEqual({ ratePct: 20, brandCount: 3 });
-  });
-  it("brand-service's 'Form filled' and our 'Form submitted' are ONE leg", () => {
-    const medians = buildFleetArrowMedians([
-      [{ fromStep: "Website visit", toStep: "Form filled", ratePct: 10, stated: true }],
-      [{ fromStep: "Website visit", toStep: "Form submitted", ratePct: 30, stated: true }],
-    ]);
-    expect(medians.get("website_visit>form_submitted")).toEqual({ ratePct: 20, brandCount: 2 });
   });
 });
 
@@ -313,7 +295,6 @@ describe("pricing rests on the EFFECTIVE rate", () => {
     funnelKeys: ["sales_meetings_from_conversation"],
     measurement: MEASUREMENT,
     manual: [{ fromStep: "Meeting attended", toStep: "Paid client", ratePct: 25, stated: true }],
-    medians: new Map([["meeting_booked>meeting_attended", { ratePct: 60, brandCount: 5 }]]),
   });
 
   it("each arrow resolves from its own best source", () => {
@@ -348,7 +329,7 @@ describe("pricing rests on the EFFECTIVE rate", () => {
       funnelKeys: ["sales_meetings_from_conversation", "sales_meetings_from_website"],
       measurement: MEASUREMENT,
       manual: [{ fromStep: "Meeting attended", toStep: "Paid client", ratePct: 25, stated: true }],
-      medians: new Map(),
+     
     });
     const close = both.funnels.map((f) => f.arrows.find((a) => a.toStep === "Paid client")!.effectiveRatePct);
     expect(close).toEqual([25, 25]);
@@ -365,7 +346,7 @@ describe("each arrow is named in brand-service's own step wording", () => {
         { fromStep: "Website visit", toStep: "Form filled", ratePct: 16.5, stated: true },
         { fromStep: "Form filled", toStep: "Paid client", ratePct: null, stated: false },
       ],
-      medians: new Map(),
+     
     });
     expect(rates.funnels[0].arrows.map((a) => [a.fromStep, a.toStep, a.manualRatePct])).toEqual([
       ["Website visit", "Form filled", 16.5],
@@ -382,7 +363,7 @@ describe("every leg between two steps of the PUBLIC catalogue joins the served l
   const EMPTY: BrandStepMeasurement = { contactedRecipients: 0, evidence: ALL_STEP_EVIDENCE, reached: [] };
 
   it("a brand with no statement and no measurement still gets a non-null rate on every catalogue leg, joinable by legKey AND by catalogue labels", () => {
-    const rates = buildBrandEffectiveRates({ brandId: "b0", funnelKeys: [], measurement: EMPTY, manual: [], medians: new Map() });
+    const rates = buildBrandEffectiveRates({ brandId: "b0", funnelKeys: [], measurement: EMPTY, manual: [] });
     expect(catalogue.length).toBeGreaterThan(0);
     for (const leg of catalogue) {
       const byKey = rates.legs.filter((l) => l.legKey === leg.legKey);
@@ -403,7 +384,7 @@ describe("every leg between two steps of the PUBLIC catalogue joins the served l
         { fromStep: "Website visit", toStep: "Form filled", ratePct: 16.5, stated: true },
         { fromStep: "Website visit", toStep: "Purchase", ratePct: 2.5, stated: true },
       ],
-      medians: new Map(),
+     
     });
     const form = rates.legs.find((l) => l.legKey === "website_visit_to_form_submitted")!;
     expect(form).toMatchObject({ fromStep: "Website visit", toStep: "Form filled", catalogueToStep: "Form submitted", effectiveRatePct: 16.5, source: "manual" });
@@ -415,7 +396,7 @@ describe("every leg between two steps of the PUBLIC catalogue joins the served l
   });
 
   it("the legs stay unique: one entry per leg however many spellings resolve to it", () => {
-    const rates = buildBrandEffectiveRates({ brandId: "b0", funnelKeys: [], measurement: EMPTY, manual: [], medians: new Map() });
+    const rates = buildBrandEffectiveRates({ brandId: "b0", funnelKeys: [], measurement: EMPTY, manual: [] });
     const keys = rates.legs.map((l) => l.legKey);
     expect(new Set(keys).size).toBe(keys.length);
   });
@@ -464,7 +445,7 @@ describe("a leg is measured WHERE ITS DATA LIVES — the client's CRM, or our le
       funnelKeys: ["sales_meetings_from_conversation"],
       measurement: { ...DOC_DINNERS, ...(crm ? { crm } : {}) },
       manual: [{ fromStep: "Positive reply", toStep: "Meeting booked", ratePct: 61, stated: true }],
-      medians: new Map(),
+     
     });
   const arrows = (r: ReturnType<typeof build>) => r.funnels[0].arrows;
 

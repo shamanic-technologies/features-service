@@ -6,7 +6,7 @@ import cors from "cors";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { db } from "./db/index.js";
 import { warmFleetPositiveRepliers } from "./lib/fleet-positive-repliers.js";
-import { warmFleetArrowMediansOnBoot } from "./lib/effective-conversion-rates.js";
+import { warmFleetStatedMediansOnBoot } from "./lib/effective-conversion-rates.js";
 import { coldEmailOutreachSlugs } from "./lib/send-forecast-compute.js";
 import healthRoutes from "./routes/health.js";
 import featuresRoutes from "./routes/features.js";
@@ -151,7 +151,7 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
     // Workflow projections are computed HERE, so this is the process whose fleet cell must be warm.
     warmFleetPositiveRepliersOnBoot();
     // Every priced compute reads the fleet conversion-rate medians (in-memory per process).
-    warmFleetArrowMediansOnBoot();
+    warmFleetStatedMediansOnBoot();
   });
 } else if (process.env.NODE_ENV !== "test") {
   migrate(db, { migrationsFolder: "./drizzle" })
@@ -198,7 +198,7 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
           })
           .catch((err) => console.error("[features-service] leg workflow ranking boot warm: assignments unreadable:", err));
         // Every priced read (lead families' cache key included) reads the fleet medians first.
-        warmFleetArrowMediansOnBoot();
+        warmFleetStatedMediansOnBoot();
         // With the refresher off, projections compute in this process — warm its fleet cell instead.
         if (process.env.VIEW_REFRESHER_ENABLED === "false") warmFleetPositiveRepliersOnBoot();
       });

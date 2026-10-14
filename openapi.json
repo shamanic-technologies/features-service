@@ -301,7 +301,7 @@
           "source": {
             "type": "string",
             "nullable": true,
-            "description": "measured | manual | median | default (the effective rate's own source) | fleet_measured | default_entry."
+            "description": "measured | manual | default (the effective rate's own source; median retired 2026-10-14) | fleet_measured | default_entry."
           },
           "toStep": {
             "type": "string",
@@ -11080,7 +11080,7 @@
                               "median",
                               "default"
                             ],
-                            "description": "Where the rate comes from: measured (on the client's CRM or on our leads, see measured.basis), manual (the client stated it), median (fleet median of what brands stated), default (industry benchmark)."
+                            "description": "Where the rate comes from: measured (on the client's CRM or on our leads, see measured.basis), manual (the client stated it), default (industry benchmark). median is RETIRED (2026-10-14) and never served."
                           },
                           "measured": {
                             "type": "object",
@@ -11123,7 +11123,7 @@
                                     "median",
                                     "default"
                                   ],
-                                  "description": "crm: measured on the client's whole CRM. our_leads: measured on our leads. manual: the value the client stated. median: what other brands stated for the leg (fleet median). default: industry benchmark."
+                                  "description": "crm: measured on the client's whole CRM. our_leads: measured on our leads. manual: the value the client stated. median: RETIRED 2026-10-14, never served (no brand is priced on other clients' rates). default: industry benchmark."
                                 },
                                 "ratePct": {
                                   "type": "number",
@@ -11151,7 +11151,7 @@
                                 "brandCount": {
                                   "type": "integer",
                                   "nullable": true,
-                                  "description": "median only: how many brands stated the leg. Null otherwise."
+                                  "description": "Always null since the fleet median was retired (2026-10-14); kept for readers that parse it."
                                 },
                                 "kept": {
                                   "type": "boolean",
@@ -11168,7 +11168,7 @@
                                     "too_few_brands",
                                     "crm_measures_this_leg"
                                   ],
-                                  "description": "Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. zero_not_conclusive: 0 at TO, on too few at FROM to rule out the next source's rate p (kept only once (1 - p)^FROM <= 5%, about 3 / p people: 598 at 0.5%). too_few_brands: a median over fewer than 5 brands. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."
+                                  "description": "Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. zero_not_conclusive: 0 at TO, on too few at FROM to rule out the next source's rate p (kept only once (1 - p)^FROM <= 5%, about 3 / p people: 598 at 0.5%). too_few_brands: retired with the fleet median (2026-10-14), never served. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."
                                 }
                               },
                               "required": [
@@ -11181,7 +11181,7 @@
                                 "kept",
                                 "notKeptReason"
                               ],
-                              "description": "One rate the precedence weighed for the leg (measured on the CRM > measured on our leads when the CRM does not measure the leg > the client's value > fleet median > default). The precedence is unchanged; this only shows what it weighed."
+                              "description": "One rate the precedence weighed for the leg (measured on the CRM > measured on our leads when the CRM does not measure the leg > the client's value > industry default; no fleet median since 2026-10-14). This only shows what the precedence weighed."
                             },
                             "description": "EVERY RATE CANDIDATE of the leg, in precedence order; a source with no number is absent. Exactly one is kept when the leg has a rate, and its ratePct is the leg's rate."
                           }
@@ -11572,7 +11572,7 @@
                                   "median",
                                   "default"
                                 ],
-                                "description": "Where the rate comes from: measured (on the client's CRM or on our leads, see measured.basis), manual (the client stated it), median (fleet median of what brands stated), default (industry benchmark)."
+                                "description": "Where the rate comes from: measured (on the client's CRM or on our leads, see measured.basis), manual (the client stated it), default (industry benchmark). median is RETIRED (2026-10-14) and never served."
                               },
                               "measured": {
                                 "type": "object",
@@ -11615,7 +11615,7 @@
                                         "median",
                                         "default"
                                       ],
-                                      "description": "crm: measured on the client's whole CRM. our_leads: measured on our leads. manual: the value the client stated. median: what other brands stated for the leg (fleet median). default: industry benchmark."
+                                      "description": "crm: measured on the client's whole CRM. our_leads: measured on our leads. manual: the value the client stated. median: RETIRED 2026-10-14, never served (no brand is priced on other clients' rates). default: industry benchmark."
                                     },
                                     "ratePct": {
                                       "type": "number",
@@ -11643,7 +11643,7 @@
                                     "brandCount": {
                                       "type": "integer",
                                       "nullable": true,
-                                      "description": "median only: how many brands stated the leg. Null otherwise."
+                                      "description": "Always null since the fleet median was retired (2026-10-14); kept for readers that parse it."
                                     },
                                     "kept": {
                                       "type": "boolean",
@@ -11660,7 +11660,7 @@
                                         "too_few_brands",
                                         "crm_measures_this_leg"
                                       ],
-                                      "description": "Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. zero_not_conclusive: 0 at TO, on too few at FROM to rule out the next source's rate p (kept only once (1 - p)^FROM <= 5%, about 3 / p people: 598 at 0.5%). too_few_brands: a median over fewer than 5 brands. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."
+                                      "description": "Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. zero_not_conclusive: 0 at TO, on too few at FROM to rule out the next source's rate p (kept only once (1 - p)^FROM <= 5%, about 3 / p people: 598 at 0.5%). too_few_brands: retired with the fleet median (2026-10-14), never served. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."
                                     }
                                   },
                                   "required": [
@@ -11673,7 +11673,7 @@
                                     "kept",
                                     "notKeptReason"
                                   ],
-                                  "description": "One rate the precedence weighed for the leg (measured on the CRM > measured on our leads when the CRM does not measure the leg > the client's value > fleet median > default). The precedence is unchanged; this only shows what it weighed."
+                                  "description": "One rate the precedence weighed for the leg (measured on the CRM > measured on our leads when the CRM does not measure the leg > the client's value > industry default; no fleet median since 2026-10-14). This only shows what the precedence weighed."
                                 },
                                 "description": "EVERY RATE CANDIDATE of the leg, in precedence order; a source with no number is absent. Exactly one is kept when the leg has a rate, and its ratePct is the leg's rate."
                               }
@@ -15155,7 +15155,7 @@
                           "fleetMedian",
                           "industryDefaultPct"
                         ],
-                        "description": "Every source the rate was resolved from (measured > customer stated > fleet median > industry default). The fleet median is retained only when fleetMedian.brandCount is at least 5; below that the industry default is retained. A leg leaving website_visit never takes the fleet median (every visit we produce is a cold-email click; other customers' stated visit rates describe their own inbound traffic): it reads measured > customer stated > industry default (cold-click benchmark), with the median served as an input only."
+                        "description": "Every source the rate was resolved from (measured > customer stated > industry default). fleetMedian is RETIRED (owner 2026-10-14: no brand is priced on other clients' rates): always { ratePct: null, brandCount: 0 }, and rateSource is never fleet_median."
                       },
                       "workedBy": {
                         "type": "string",
@@ -22240,7 +22240,7 @@
                           "median",
                           "default"
                         ],
-                        "description": "Which source effectiveRatePct is, in precedence order: measured on the brand's own leads (≥ minMeasuredFromReached on the FROM step), else what the brand stated by hand (brand-service brand-grain store), else the cross-org median of what brands stated (used only when at least 5 brands stated the leg, and never on a leg leaving website_visit; otherwise the default is kept), else `default`: the seeded per-leg industry benchmark (defaultRatePct), never the brand's own figure. Null only for a leg outside the catalogue that nothing prices."
+                        "description": "Which source effectiveRatePct is, in precedence order: measured on the brand's own leads (≥ minMeasuredFromReached on the FROM step), else what the brand stated by hand (brand-service brand-grain store), else `default`: the seeded per-leg industry benchmark (defaultRatePct), never the brand's own figure. Null only for a leg outside the catalogue that nothing prices."
                       },
                       "unresolvedReason": {
                         "type": "string",
@@ -22329,11 +22329,11 @@
                           "ratePct": {
                             "type": "number",
                             "nullable": true,
-                            "description": "The cross-org MEDIAN (never a mean) of the rates brands STATED for this (funnel, arrow). Null when none did."
+                            "description": "RETIRED 2026-10-14 (no brand is priced on, nor shown, other clients' rates): always null."
                           },
                           "brandCount": {
                             "type": "integer",
-                            "description": "How many brands' statements the median is taken over. The median becomes the effective rate only when this is at least 5, and never on a leg leaving website_visit."
+                            "description": "RETIRED 2026-10-14: always 0. The block stays for readers that still parse it."
                           }
                         },
                         "required": [
@@ -22360,7 +22360,7 @@
                                 "median",
                                 "default"
                               ],
-                              "description": "crm: measured on the client's whole CRM. our_leads: measured on our leads. manual: the value the client stated. median: what other brands stated for the leg (fleet median). default: industry benchmark."
+                              "description": "crm: measured on the client's whole CRM. our_leads: measured on our leads. manual: the value the client stated. median: RETIRED 2026-10-14, never served (no brand is priced on other clients' rates). default: industry benchmark."
                             },
                             "ratePct": {
                               "type": "number",
@@ -22388,7 +22388,7 @@
                             "brandCount": {
                               "type": "integer",
                               "nullable": true,
-                              "description": "median only: how many brands stated the leg. Null otherwise."
+                              "description": "Always null since the fleet median was retired (2026-10-14); kept for readers that parse it."
                             },
                             "kept": {
                               "type": "boolean",
@@ -22405,7 +22405,7 @@
                                 "too_few_brands",
                                 "crm_measures_this_leg"
                               ],
-                              "description": "Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. zero_not_conclusive: 0 at TO, on too few at FROM to rule out the next source's rate p (kept only once (1 - p)^FROM <= 5%, about 3 / p people: 598 at 0.5%). too_few_brands: a median over fewer than 5 brands. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."
+                              "description": "Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. zero_not_conclusive: 0 at TO, on too few at FROM to rule out the next source's rate p (kept only once (1 - p)^FROM <= 5%, about 3 / p people: 598 at 0.5%). too_few_brands: retired with the fleet median (2026-10-14), never served. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."
                             }
                           },
                           "required": [
@@ -22418,7 +22418,7 @@
                             "kept",
                             "notKeptReason"
                           ],
-                          "description": "One rate the precedence weighed for the leg (measured on the CRM > measured on our leads when the CRM does not measure the leg > the client's value > fleet median > default). The precedence is unchanged; this only shows what it weighed."
+                          "description": "One rate the precedence weighed for the leg (measured on the CRM > measured on our leads when the CRM does not measure the leg > the client's value > industry default; no fleet median since 2026-10-14). This only shows what the precedence weighed."
                         },
                         "description": "EVERY RATE CANDIDATE of the leg, in precedence order; a source with no number is absent. Exactly one is kept when the leg has a rate, and its ratePct is the leg's rate."
                       }
@@ -22493,7 +22493,7 @@
                     "median",
                     "default"
                   ],
-                  "description": "Which source effectiveRatePct is, in precedence order: measured on the brand's own leads (≥ minMeasuredFromReached on the FROM step), else what the brand stated by hand (brand-service brand-grain store), else the cross-org median of what brands stated (used only when at least 5 brands stated the leg, and never on a leg leaving website_visit; otherwise the default is kept), else `default`: the seeded per-leg industry benchmark (defaultRatePct), never the brand's own figure. Null only for a leg outside the catalogue that nothing prices."
+                  "description": "Which source effectiveRatePct is, in precedence order: measured on the brand's own leads (≥ minMeasuredFromReached on the FROM step), else what the brand stated by hand (brand-service brand-grain store), else `default`: the seeded per-leg industry benchmark (defaultRatePct), never the brand's own figure. Null only for a leg outside the catalogue that nothing prices."
                 },
                 "unresolvedReason": {
                   "type": "string",
@@ -22582,11 +22582,11 @@
                     "ratePct": {
                       "type": "number",
                       "nullable": true,
-                      "description": "The cross-org MEDIAN (never a mean) of the rates brands STATED for this (funnel, arrow). Null when none did."
+                      "description": "RETIRED 2026-10-14 (no brand is priced on, nor shown, other clients' rates): always null."
                     },
                     "brandCount": {
                       "type": "integer",
-                      "description": "How many brands' statements the median is taken over. The median becomes the effective rate only when this is at least 5, and never on a leg leaving website_visit."
+                      "description": "RETIRED 2026-10-14: always 0. The block stays for readers that still parse it."
                     }
                   },
                   "required": [
@@ -22613,7 +22613,7 @@
                           "median",
                           "default"
                         ],
-                        "description": "crm: measured on the client's whole CRM. our_leads: measured on our leads. manual: the value the client stated. median: what other brands stated for the leg (fleet median). default: industry benchmark."
+                        "description": "crm: measured on the client's whole CRM. our_leads: measured on our leads. manual: the value the client stated. median: RETIRED 2026-10-14, never served (no brand is priced on other clients' rates). default: industry benchmark."
                       },
                       "ratePct": {
                         "type": "number",
@@ -22641,7 +22641,7 @@
                       "brandCount": {
                         "type": "integer",
                         "nullable": true,
-                        "description": "median only: how many brands stated the leg. Null otherwise."
+                        "description": "Always null since the fleet median was retired (2026-10-14); kept for readers that parse it."
                       },
                       "kept": {
                         "type": "boolean",
@@ -22658,7 +22658,7 @@
                           "too_few_brands",
                           "crm_measures_this_leg"
                         ],
-                        "description": "Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. zero_not_conclusive: 0 at TO, on too few at FROM to rule out the next source's rate p (kept only once (1 - p)^FROM <= 5%, about 3 / p people: 598 at 0.5%). too_few_brands: a median over fewer than 5 brands. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."
+                        "description": "Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. zero_not_conclusive: 0 at TO, on too few at FROM to rule out the next source's rate p (kept only once (1 - p)^FROM <= 5%, about 3 / p people: 598 at 0.5%). too_few_brands: retired with the fleet median (2026-10-14), never served. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."
                       }
                     },
                     "required": [
@@ -22671,7 +22671,7 @@
                       "kept",
                       "notKeptReason"
                     ],
-                    "description": "One rate the precedence weighed for the leg (measured on the CRM > measured on our leads when the CRM does not measure the leg > the client's value > fleet median > default). The precedence is unchanged; this only shows what it weighed."
+                    "description": "One rate the precedence weighed for the leg (measured on the CRM > measured on our leads when the CRM does not measure the leg > the client's value > industry default; no fleet median since 2026-10-14). This only shows what the precedence weighed."
                   },
                   "description": "EVERY RATE CANDIDATE of the leg, in precedence order; a source with no number is absent. Exactly one is kept when the leg has a rate, and its ratePct is the leg's rate."
                 }
@@ -36474,7 +36474,7 @@
     "/offers/{offerId}/sales-paths": {
       "get": {
         "summary": "Every sales path an offer can sell through, ranked by ROI, with the per-leg breakdown",
-        "description": "A SALES PATH is a chain of the legs the offer sells through (the legs of its sales funnel campaigns, 2026-10-10; brand-service sales-path retired) from an ENTRY leg (from nothing) to paid_client, visiting no step twice. Formula: needed(paid_client)=1; needed(from step of leg i)=needed(to step)/(rate_i/100); legCost_i = costPerOutcome_i × needed(to step of leg i) for a leg a channel of ours works (0 for a human leg); costPerPayingClient = Σ legCost_i; roi = offer lifetime revenue ÷ costPerPayingClient. rate_i is the brand's effective leg rate (CRM-measured / measured on our leads > customer stated > fleet median, only when at least 5 brands stated the leg and never on a leg leaving website_visit > industry default). costPerOutcome_i is the NET MATURE cost per outcome of the best MATURE workflow of each platform channel's leg-keyed workflow-projection ladder (?leg=&offerId=&pricing=net; finest grain holding a mature price first, offer > brand > crossOrg, cheapest within it; never a LEARNING workflow's flash price even when it is the recommendation, owner 2026-10-05), else the channel's measured fleet cost per outcome on the leg, else a seeded default (costSource says which); every candidate channel of a leg forms its OWN row (one row per COMBINATION of a chain × one managed channel per platform leg), each ranked on its own; channel.choice says whether the row's channel is the leg's cheapest. Every row has a unique combinationKey and a shared, permanent name. Only the managed channels (sales-cold-email-outreach, ai-meeting-booking, ai-instant-call) are candidates; every other leg is the customer's team (workedBy human, cost 0). Ranked by roi descending; a path whose roi is null (reason stated) sorts last. status not_stated / no_legs_selected / no_complete_path serve paths: [] — none is invented. Additive read. ?scope=catalogue (owner 2026-10-04) walks the SAME chains as the default (only the legs the offer ticked; an unticked leg is never listed; same not_stated / no_legs_selected / no_complete_path statuses), × one channel per leg among the owner's shortlist (the per-offer accepted channels of brand-service are retired 2026-10-10) (GET /public/channels salesPathEligible; entry: sales-cold-email-outreach, cold-linkedin-outreach, cold-call-outreach, google-ads, linkedin-ads, meta-ads; middle/closing: ai-meeting-booking, ai-instant-call, your-team-meeting-booking, your-team-meeting-attendance, your-team-closing-calls, your-team-signup-conversion; no agency channel). channel.managed says whether we run it today. A channel we do not run prices on the fleet's measured cost, else a sourced market benchmark (costSource benchmark, costBenchmarkSource cites it); the customer's team (your-team-*) carries a rate and no cost, exactly as in scope=ticked, so one combination has ONE price in both scopes. Rows are ordered by roi descending, benchmark-priced or not (pricedOnBenchmark only flags them); a null roi sorts last. The default (scope=ticked) is unchanged and is what campaign-service funds.",
+        "description": "A SALES PATH is a chain of the legs the offer sells through (the legs of its sales funnel campaigns, 2026-10-10; brand-service sales-path retired) from an ENTRY leg (from nothing) to paid_client, visiting no step twice. Formula: needed(paid_client)=1; needed(from step of leg i)=needed(to step)/(rate_i/100); legCost_i = costPerOutcome_i × needed(to step of leg i) for a leg a channel of ours works (0 for a human leg); costPerPayingClient = Σ legCost_i; roi = offer lifetime revenue ÷ costPerPayingClient. rate_i is the brand's effective leg rate (CRM-measured / measured on our leads > customer stated > industry default; never a fleet median, owner 2026-10-14). costPerOutcome_i is the NET MATURE cost per outcome of the best MATURE workflow of each platform channel's leg-keyed workflow-projection ladder (?leg=&offerId=&pricing=net; finest grain holding a mature price first, offer > brand > crossOrg, cheapest within it; never a LEARNING workflow's flash price even when it is the recommendation, owner 2026-10-05), else the channel's measured fleet cost per outcome on the leg, else a seeded default (costSource says which); every candidate channel of a leg forms its OWN row (one row per COMBINATION of a chain × one managed channel per platform leg), each ranked on its own; channel.choice says whether the row's channel is the leg's cheapest. Every row has a unique combinationKey and a shared, permanent name. Only the managed channels (sales-cold-email-outreach, ai-meeting-booking, ai-instant-call) are candidates; every other leg is the customer's team (workedBy human, cost 0). Ranked by roi descending; a path whose roi is null (reason stated) sorts last. status not_stated / no_legs_selected / no_complete_path serve paths: [] — none is invented. Additive read. ?scope=catalogue (owner 2026-10-04) walks the SAME chains as the default (only the legs the offer ticked; an unticked leg is never listed; same not_stated / no_legs_selected / no_complete_path statuses), × one channel per leg among the owner's shortlist (the per-offer accepted channels of brand-service are retired 2026-10-10) (GET /public/channels salesPathEligible; entry: sales-cold-email-outreach, cold-linkedin-outreach, cold-call-outreach, google-ads, linkedin-ads, meta-ads; middle/closing: ai-meeting-booking, ai-instant-call, your-team-meeting-booking, your-team-meeting-attendance, your-team-closing-calls, your-team-signup-conversion; no agency channel). channel.managed says whether we run it today. A channel we do not run prices on the fleet's measured cost, else a sourced market benchmark (costSource benchmark, costBenchmarkSource cites it); the customer's team (your-team-*) carries a rate and no cost, exactly as in scope=ticked, so one combination has ONE price in both scopes. Rows are ordered by roi descending, benchmark-priced or not (pricedOnBenchmark only flags them); a null roi sorts last. The default (scope=ticked) is unchanged and is what campaign-service funds.",
         "tags": [
           "Stats"
         ],
@@ -38440,7 +38440,7 @@
     "/brands/{brandId}/conversion-rates": {
       "get": {
         "summary": "The effective conversion rate of every arrow of a brand's funnels, and where it came from",
-        "description": "Conversion rates are BRAND-grain: one rate per (brand, sales funnel, arrow). Every money figure this service states is priced on the rate resolved here, from three sources in order — MEASURED on the brand's own lead data once at least `minMeasuredFromReached` leads reached the arrow's FROM step, else the brand's MANUALLY stated rate, else the cross-org MEDIAN of stated rates (only when at least 5 brands stated the leg, never on a leg leaving website_visit, whose visits are cold-email clicks), else the seeded per-leg industry DEFAULT. The response carries all of them beside the effective one, so a consumer shows the value, its source, the measured n, the manual value and the median without computing anything. Right-censoring (a meeting booked yesterday cannot be attended yet) is accepted: a measured rate for a young brand reads slightly low.",
+        "description": "Conversion rates are BRAND-grain: one rate per (brand, sales funnel, arrow). Every money figure this service states is priced on the rate resolved here, from three sources in order — MEASURED on the brand's own lead data once at least `minMeasuredFromReached` leads reached the arrow's FROM step, else the brand's MANUALLY stated rate, else the seeded per-leg industry DEFAULT (owner 2026-10-14: never the median of what other brands stated; the `median` block is served null/0 for one deploy's readers). The response carries all of them beside the effective one, so a consumer shows the value, its source, the measured n and the manual value without computing anything. Right-censoring (a meeting booked yesterday cannot be attended yet) is accepted: a measured rate for a young brand reads slightly low.",
         "tags": [
           "Stats"
         ],
@@ -49030,7 +49030,7 @@
                               "learning",
                               "customer_time"
                             ],
-                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                           },
                           "declared": {
                             "type": "boolean",
@@ -49390,7 +49390,7 @@
                         "learning",
                         "customer_time"
                       ],
-                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                     },
                     "estimates": {
                       "type": "array",
@@ -49620,7 +49620,7 @@
                               "learning",
                               "customer_time"
                             ],
-                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                           },
                           "runnable": {
                             "type": "boolean",
@@ -49966,7 +49966,7 @@
                         "learning",
                         "customer_time"
                       ],
-                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                     },
                     "runnable": {
                       "type": "boolean",
@@ -50074,7 +50074,7 @@
                         "learning",
                         "customer_time"
                       ],
-                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                     },
                     "runnable": {
                       "type": "boolean",
@@ -50368,7 +50368,7 @@
                         "learning",
                         "customer_time"
                       ],
-                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                     },
                     "estimates": {
                       "type": "array",
@@ -50710,7 +50710,7 @@
                               "learning",
                               "customer_time"
                             ],
-                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                           },
                           "runnable": {
                             "type": "boolean",
@@ -50863,7 +50863,7 @@
                         "learning",
                         "customer_time"
                       ],
-                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                     },
                     "estimates": {
                       "type": "array",
@@ -50941,7 +50941,7 @@
                               "learning",
                               "customer_time"
                             ],
-                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                           },
                           "runnable": {
                             "type": "boolean",
@@ -51197,7 +51197,7 @@
                               "learning",
                               "customer_time"
                             ],
-                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                           },
                           "runnable": {
                             "type": "boolean",
@@ -51466,7 +51466,7 @@
                         "learning",
                         "customer_time"
                       ],
-                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                     },
                     "estimates": {
                       "type": "array",
@@ -51617,7 +51617,7 @@
                               "learning",
                               "customer_time"
                             ],
-                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                           },
                           "bestWorkflowSlug": {
                             "type": "string",
@@ -51851,7 +51851,7 @@
                         "learning",
                         "customer_time"
                       ],
-                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                     },
                     "estimates": {
                       "type": "array",
@@ -52002,7 +52002,7 @@
                               "learning",
                               "customer_time"
                             ],
-                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                           },
                           "bestWorkflowSlug": {
                             "type": "string",
@@ -52307,7 +52307,7 @@
                         "learning",
                         "customer_time"
                       ],
-                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                     },
                     "estimates": {
                       "type": "array",
@@ -52458,7 +52458,7 @@
                               "learning",
                               "customer_time"
                             ],
-                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                           },
                           "bestWorkflowSlug": {
                             "type": "string",
@@ -54529,7 +54529,7 @@
                               "learning",
                               "customer_time"
                             ],
-                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                           },
                           "expected": {
                             "type": "object",
@@ -54581,7 +54581,7 @@
                               "basis",
                               "unavailableReason"
                             ],
-                            "description": "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: mature workflow > seeded default > market benchmark > its early flash figure > another channel's mature price on the same leg (the highest); the customer's team costs 0. Leg rate: the path's (brand measured / stated > fleet median > default) > entry default. On a measured/estimated funnel it equals `costUsd`/`roi`."
+                            "description": "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: mature workflow > seeded default > market benchmark > its early flash figure > another channel's mature price on the same leg (the highest); the customer's team costs 0. Leg rate: the path's (brand measured / stated > default) > entry default. On a measured/estimated funnel it equals `costUsd`/`roi`."
                           },
                           "runnable": {
                             "type": "boolean",
@@ -55023,7 +55023,7 @@
                               "offer_stated",
                               "offer_team_measured"
                             ],
-                            "description": "`fleet_median` = median of the rates brands STATED (>= 5 brands); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion; per-offer read only: `offer_measured` (the brand's own measured rate) / `offer_stated` (the rate it stated) / `offer_team_measured` (a leg its own team works, measured on its tools' history through crm-service, when neither of the first two exists). Null on the entry leg (not used by the cost)."
+                            "description": "`fleet_median` = RETIRED 2026-10-14, never served (nobody is priced on other clients' stated rates); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion; per-offer read only: `offer_measured` (the brand's own measured rate) / `offer_stated` (the rate it stated) / `offer_team_measured` (a leg its own team works, measured on its tools' history through crm-service, when neither of the first two exists). Null on the entry leg (not used by the cost)."
                           },
                           "rateMeasured": {
                             "type": "boolean"
@@ -55085,7 +55085,7 @@
                                   "learning",
                                   "customer_time"
                                 ],
-                                "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                                "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                               }
                             },
                             "required": [
@@ -55148,7 +55148,7 @@
                         "learning",
                         "customer_time"
                       ],
-                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                     },
                     "estimates": {
                       "type": "array",
@@ -55316,7 +55316,7 @@
                         "lifetimeRevenueBasis",
                         "legs"
                       ],
-                      "description": "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: mature workflow > seeded default > market benchmark > its early flash figure > another channel's mature price on the same leg (the highest); the customer's team costs 0. Leg rate: the path's (brand measured / stated > fleet median > default) > entry default. On a measured/estimated funnel it equals `costUsd`/`roi`."
+                      "description": "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: mature workflow > seeded default > market benchmark > its early flash figure > another channel's mature price on the same leg (the highest); the customer's team costs 0. Leg rate: the path's (brand measured / stated > default) > entry default. On a measured/estimated funnel it equals `costUsd`/`roi`."
                     },
                     "costUnit": {
                       "type": "string",
@@ -55550,7 +55550,7 @@
                               "offer_stated",
                               "offer_team_measured"
                             ],
-                            "description": "`fleet_median` = median of the rates brands STATED (>= 5 brands); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion; per-offer read only: `offer_measured` (the brand's own measured rate) / `offer_stated` (the rate it stated) / `offer_team_measured` (a leg its own team works, measured on its tools' history through crm-service, when neither of the first two exists). Null on the entry leg (not used by the cost)."
+                            "description": "`fleet_median` = RETIRED 2026-10-14, never served (nobody is priced on other clients' stated rates); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion; per-offer read only: `offer_measured` (the brand's own measured rate) / `offer_stated` (the rate it stated) / `offer_team_measured` (a leg its own team works, measured on its tools' history through crm-service, when neither of the first two exists). Null on the entry leg (not used by the cost)."
                           },
                           "rateMeasured": {
                             "type": "boolean"
@@ -55612,7 +55612,7 @@
                                   "learning",
                                   "customer_time"
                                 ],
-                                "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                                "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                               }
                             },
                             "required": [
@@ -55675,7 +55675,7 @@
                         "learning",
                         "customer_time"
                       ],
-                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                     },
                     "estimates": {
                       "type": "array",
@@ -55843,7 +55843,7 @@
                         "lifetimeRevenueBasis",
                         "legs"
                       ],
-                      "description": "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: mature workflow > seeded default > market benchmark > its early flash figure > another channel's mature price on the same leg (the highest); the customer's team costs 0. Leg rate: the path's (brand measured / stated > fleet median > default) > entry default. On a measured/estimated funnel it equals `costUsd`/`roi`."
+                      "description": "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: mature workflow > seeded default > market benchmark > its early flash figure > another channel's mature price on the same leg (the highest); the customer's team costs 0. Leg rate: the path's (brand measured / stated > default) > entry default. On a measured/estimated funnel it equals `costUsd`/`roi`."
                     },
                     "costUnit": {
                       "type": "string",
@@ -56135,7 +56135,7 @@
                               "offer_stated",
                               "offer_team_measured"
                             ],
-                            "description": "`fleet_median` = median of the rates brands STATED (>= 5 brands); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion; per-offer read only: `offer_measured` (the brand's own measured rate) / `offer_stated` (the rate it stated) / `offer_team_measured` (a leg its own team works, measured on its tools' history through crm-service, when neither of the first two exists). Null on the entry leg (not used by the cost)."
+                            "description": "`fleet_median` = RETIRED 2026-10-14, never served (nobody is priced on other clients' stated rates); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion; per-offer read only: `offer_measured` (the brand's own measured rate) / `offer_stated` (the rate it stated) / `offer_team_measured` (a leg its own team works, measured on its tools' history through crm-service, when neither of the first two exists). Null on the entry leg (not used by the cost)."
                           },
                           "rateMeasured": {
                             "type": "boolean"
@@ -56197,7 +56197,7 @@
                                   "learning",
                                   "customer_time"
                                 ],
-                                "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                                "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                               }
                             },
                             "required": [
@@ -56260,7 +56260,7 @@
                         "learning",
                         "customer_time"
                       ],
-                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                     },
                     "estimates": {
                       "type": "array",
@@ -56428,7 +56428,7 @@
                         "lifetimeRevenueBasis",
                         "legs"
                       ],
-                      "description": "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: mature workflow > seeded default > market benchmark > its early flash figure > another channel's mature price on the same leg (the highest); the customer's team costs 0. Leg rate: the path's (brand measured / stated > fleet median > default) > entry default. On a measured/estimated funnel it equals `costUsd`/`roi`."
+                      "description": "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: mature workflow > seeded default > market benchmark > its early flash figure > another channel's mature price on the same leg (the highest); the customer's team costs 0. Leg rate: the path's (brand measured / stated > default) > entry default. On a measured/estimated funnel it equals `costUsd`/`roi`."
                     },
                     "costUnit": {
                       "type": "string",
@@ -56750,7 +56750,7 @@
                               "learning",
                               "customer_time"
                             ],
-                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                           },
                           "runnable": {
                             "type": "boolean",
@@ -56954,7 +56954,7 @@
                         "learning",
                         "customer_time"
                       ],
-                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                     },
                     "estimates": {
                       "type": "array",
@@ -57364,7 +57364,7 @@
                               "learning",
                               "customer_time"
                             ],
-                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                           },
                           "runnable": {
                             "type": "boolean",
@@ -59187,7 +59187,7 @@
                               "learning",
                               "customer_time"
                             ],
-                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                           },
                           "bestWorkflowSlug": {
                             "type": "string",
@@ -59386,7 +59386,7 @@
                         "learning",
                         "customer_time"
                       ],
-                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                     },
                     "bestWorkflowSlug": {
                       "type": "string",
@@ -59598,7 +59598,7 @@
                         "learning",
                         "customer_time"
                       ],
-                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                     },
                     "bestWorkflowSlug": {
                       "type": "string",
@@ -59848,7 +59848,7 @@
                         "learning",
                         "customer_time"
                       ],
-                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                     },
                     "bestWorkflowSlug": {
                       "type": "string",
@@ -59957,7 +59957,7 @@
                               "learning",
                               "customer_time"
                             ],
-                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                           },
                           "isDefaultPlayPick": {
                             "type": "boolean",
@@ -60027,7 +60027,7 @@
                             "learning",
                             "customer_time"
                           ],
-                          "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                          "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                         }
                       },
                       "required": [
@@ -60272,7 +60272,7 @@
                         "learning",
                         "customer_time"
                       ],
-                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                     },
                     "bestWorkflowSlug": {
                       "type": "string",
@@ -60523,7 +60523,7 @@
                               "learning",
                               "customer_time"
                             ],
-                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
                           },
                           "expected": {
                             "type": "object",
@@ -60575,7 +60575,7 @@
                               "basis",
                               "unavailableReason"
                             ],
-                            "description": "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: mature workflow > seeded default > market benchmark > its early flash figure > another channel's mature price on the same leg (the highest); the customer's team costs 0. Leg rate: the path's (brand measured / stated > fleet median > default) > entry default. On a measured/estimated funnel it equals `costUsd`/`roi`."
+                            "description": "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: mature workflow > seeded default > market benchmark > its early flash figure > another channel's mature price on the same leg (the highest); the customer's team costs 0. Leg rate: the path's (brand measured / stated > default) > entry default. On a measured/estimated funnel it equals `costUsd`/`roi`."
                           },
                           "runnable": {
                             "type": "boolean",

@@ -17,7 +17,6 @@ const model = buildCatalogueModel({
   publishedPipeIds: new Set(channels.flatMap((c) => c.stepTransitions.map((t) => `${c.slug}|${servedLegKeyOf(c.slug, t.legKey)}`))),
   declaredSteps: [],
   measurements: new Map(),
-  fleetMedians: new Map(),
   lifetimeRevenueUsd: null,
 });
 const read = (v: ReturnType<typeof funnelPathView>) => v.items.map((i) => (i.kind === "step" ? i.label : i.kind === "trigger" ? `⚡${i.name}` : `[${i.name}]`));

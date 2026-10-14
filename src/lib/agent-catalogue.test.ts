@@ -58,7 +58,6 @@ const inputs = (over: Partial<CatalogueInputs> = {}): CatalogueInputs => ({
     ["lead-sourcing|start_to_lead_found", mature(0.5, 100)],
     ["sourcing-apollo-cold-filters|start_to_lead_found", mature(0.2, 100)],
   ]),
-  fleetMedians: new Map(),
   lifetimeRevenueUsd: 3000,
   ...over,
 });
@@ -166,10 +165,12 @@ describe("the agent catalogue model", () => {
         ]),
       }),
     );
+    // Website-visit legs convert at the 0.2% cold-click benchmark (owner 2026-10-14): the reply pipe is the best overall...
     const all = channelEconomics(m, "sales-cold-email-outreach");
-    expect(all.bestPipeId).toBe("sales-cold-email-outreach|lead_found_to_website_visit");
-    const onReplyPath = channelEconomics(m, "sales-cold-email-outreach", new Set(["lead_found_to_conversation"]));
-    expect(onReplyPath).toMatchObject({ costUsd: 40, bestPipeId: "sales-cold-email-outreach|lead_found_to_conversation" });
+    expect(all.bestPipeId).toBe("sales-cold-email-outreach|lead_found_to_conversation");
+    // ...yet a path that only walks the visit leg is figured on the visit pipe, never on the reply one it does not use.
+    const onVisitPath = channelEconomics(m, "sales-cold-email-outreach", new Set(["lead_found_to_website_visit"]));
+    expect(onVisitPath).toMatchObject({ costUsd: 3, bestPipeId: "sales-cold-email-outreach|lead_found_to_website_visit" });
   });
 
   it("matches a query word by word, case-insensitive", () => {

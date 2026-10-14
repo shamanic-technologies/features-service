@@ -10,7 +10,10 @@
  */
 import { offerLifetimeRevenue } from "../lib/offer-lifetime-revenue.js";
 import { StoreNotComputedError } from "../lib/await-warm-store.js";
+import { createHash } from "node:crypto";
 import { Router } from "express";
+import { buildScopeKey, sendSnapshotJson, servedCachedJson } from "../lib/view-cache.js";
+import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import { apiKeyAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import { loadChannelCatalogue } from "../lib/channel-declarations-store.js";
 import { fetchBrandLegEconomics } from "../lib/brand-leg-economics-client.js";
@@ -113,15 +116,16 @@ export async function computeOfferSalesPathsModel(args: {
   scope: SalesPathScope;
   legKeysOverride?: readonly string[];
   fleetWaitMs?: number;
+  /** The campaign rows and offer terms when the caller already read them (the route keys its cell on them). */
+  read?: { rows: Awaited<ReturnType<typeof fetchBrandCampaignRows>>; legEconomics: Awaited<ReturnType<typeof fetchBrandLegEconomics>> };
 }): Promise<OfferSalesPathsModel | null> {
   const { identity, offerId, brandId, scope, legKeysOverride, fleetWaitMs } = args;
   // HOW THE OFFER SELLS is read off its SALES FUNNEL CAMPAIGNS (owner 2026-10-10, `lib/offer-funnel-campaigns.ts`):
   // the legs of every funnel it has a campaign on, the funnels whose campaign is on as its selection. brand-service's
   // per-offer ticked legs, accepted channels and ticked paths are retired; the catalogue scope lists the shortlist.
-  const [rows, legEconomics] = await Promise.all([
-    fetchBrandCampaignRows(brandId, undefined, identity),
-    fetchBrandLegEconomics(brandId, identity.orgId),
-  ]);
+  const [rows, legEconomics] = args.read
+    ? [args.read.rows, args.read.legEconomics]
+    : await Promise.all([fetchBrandCampaignRows(brandId, undefined, identity), fetchBrandLegEconomics(brandId, identity.orgId)]);
   const fromFunnels = offerFunnelSelection(rows, offerId, legEconomics.offers.length === 1);
   const statedSalesPath = fromFunnels.salesPath;
   const statedSelectedPaths = fromFunnels.selected;
@@ -215,6 +219,50 @@ export async function computeOfferSalesPathsModel(args: {
   return { body, selectedPaths, published, lifetimeRevenue, rates: rates.legs, prices, fleetPrices };
 }
 
+/** A short, order-stable digest of a JSON value (a cell key part). */
+function fingerprint(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value ?? null)).digest("hex").slice(0, 16);
+}
+
+class OfferNotFoundError extends Error {}
+
+/** The whole `GET /offers/:offerId/sales-paths` body (what its Gold cell holds). */
+async function computeSalesPathsBody(args: {
+  identity: { orgId: string; userId: string; runId: string };
+  offerId: string;
+  brandId: string;
+  scope: SalesPathScope;
+  creditUsd: number;
+  read: NonNullable<Parameters<typeof computeOfferSalesPathsModel>[0]["read"]>;
+}) {
+  const { identity, offerId, brandId, scope, creditUsd, read } = args;
+  // The offer's SOURCE CAMPAIGNS read the same Gold cell as `/offers/:id/sourcing?pricing=net` (started now,
+  // awaited last). A failure lists the source campaigns with null figures (`sourcing_unavailable`), loudly:
+  // the paths and the outreach campaigns never depend on it.
+  const sourcingP: Promise<OfferSourcingPayload | null> = readOfferSourcing({ offerId, brandId, pricing: "net", identity }).catch((error) => {
+    console.error(`[features-service] sales-paths for offer ${offerId}: source campaigns unreadable (sourcing_unavailable): ${(error as Error).message}`);
+    return null;
+  });
+  const model = await computeOfferSalesPathsModel({ identity, offerId, brandId, scope, read });
+  if (model === null) {
+    // Consume the sourcing read so a rejection never goes unhandled.
+    void sourcingP;
+    throw new OfferNotFoundError(`offer ${offerId} is not an offer of brand ${brandId}`);
+  }
+  const { body, selectedPaths, published, lifetimeRevenue } = model;
+  // Every row's name, shared across clients and stable forever: assigned on first sight, in rank order.
+  const names = await salesPathNamesFor(body.paths.map((p) => p.combinationKey));
+  // Every campaign (channel × leg) with its ROI and what `creditUsd` buys of its outcome, read off the paths the customer selected.
+  const withRois = withCampaignRois(withSalesPathNames(body, names, campaignNamesOf(published)), selectedPaths, creditUsd);
+  // Then the source campaigns beside them (named from the same pool, in catalogue order), and `fedBy` on the outreach ones.
+  const sourcing = await sourcingP;
+  const sourceNames = await salesPathNamesFor(sourceCampaignNameKeys(sourceCampaignOrigins(sourcing)));
+  return {
+    ...withSourceCampaigns(withRois, buildSourceCampaigns({ sourcing, names: sourceNames }), sourceOverlapOf(sourcing)),
+    lifetimeRevenueSource: lifetimeRevenue.source,
+  };
+}
+
 router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
   const req = rawReq as AuthenticatedRequest;
   const offerId = req.params.offerId as string;
@@ -232,32 +280,37 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
   }
   const identity = { orgId: req.orgId, userId: req.userId, runId: req.runId };
 
-  // The offer's SOURCE CAMPAIGNS read the same Gold cell as `/offers/:id/sourcing?pricing=net` (started now,
-  // awaited last). A failure lists the source campaigns with null figures (`sourcing_unavailable`), loudly:
-  // the paths and the outreach campaigns never depend on it.
-  const sourcingP: Promise<OfferSourcingPayload | null> = readOfferSourcing({ offerId, brandId, pricing: "net", identity }).catch((error) => {
-    console.error(`[features-service] sales-paths for offer ${offerId}: source campaigns unreadable (sourcing_unavailable): ${(error as Error).message}`);
-    return null;
-  });
-
   try {
-    const model = await computeOfferSalesPathsModel({ identity, offerId, brandId, scope });
-    if (model === null) {
-      return res.status(404).json({ error: `offer ${offerId} is not an offer of brand ${brandId}`, reason: "offer_not_found" });
-    }
-    const { body, selectedPaths, published, lifetimeRevenue } = model;
-    // Every row's name, shared across clients and stable forever: assigned on first sight, in rank order.
-    const names = await salesPathNamesFor(body.paths.map((p) => p.combinationKey));
-    // Every campaign (channel × leg) with its ROI and what `creditUsd` buys of its outcome, read off the paths the customer selected.
-    const withRois = withCampaignRois(withSalesPathNames(body, names, campaignNamesOf(published)), selectedPaths, creditUsd);
-    // Then the source campaigns beside them (named from the same pool, in catalogue order), and `fedBy` on the outreach ones.
-    const sourcing = await sourcingP;
-    const sourceNames = await salesPathNamesFor(sourceCampaignNameKeys(sourceCampaignOrigins(sourcing)));
-    return res.json({
-      ...withSourceCampaigns(withRois, buildSourceCampaigns({ sourcing, names: sourceNames }), sourceOverlapOf(sourcing)),
-      lifetimeRevenueSource: lifetimeRevenue.source,
+    // SERVED FROM ITS GOLD CELL (DASH-LATENCY-1014): every dashboard v2 brand page polls this read every 5 s,
+    // and computing it live cost 1.7-2.3 s warm (one leg-keyed ladder per managed leg, the catalogue, the fleet
+    // prices). The cell is the exact response body; the request inputs and the two inputs a customer WRITES (the
+    // offer's terms, the funnels its campaigns run) ride the key, so a terms or campaign write lands on a new
+    // cell (the previous one served meanwhile, `econ`/`decl` are fingerprint parts) and everything else (rates,
+    // ladders, fleet prices, sourcing) refreshes behind the answer like every other money view.
+    const [rows, legEconomics] = await Promise.all([
+      fetchBrandCampaignRows(brandId, undefined, identity),
+      fetchBrandLegEconomics(brandId, identity.orgId),
+    ]);
+    const selection = offerFunnelSelection(rows, offerId, legEconomics.offers.length === 1);
+    const payload = await servedCachedJson({
+      view: "offer-sales-paths",
+      responseShape: routeResponseShapeFingerprint("/offers/{offerId}/sales-paths"),
+      scopeKey: buildScopeKey(offerId, {
+        orgId: identity.orgId,
+        brandId,
+        scope,
+        creditUsd: String(creditUsd),
+        econ: fingerprint(legEconomics),
+        decl: fingerprint(selection),
+      }),
+      orgId: identity.orgId,
+      compute: () => computeSalesPathsBody({ identity, offerId, brandId, scope, creditUsd, read: { rows, legEconomics } }),
     });
+    return sendSnapshotJson(res, payload);
   } catch (error) {
+    if (error instanceof OfferNotFoundError) {
+      return res.status(404).json({ error: error.message, reason: "offer_not_found" });
+    }
     if (error instanceof StoreNotComputedError) {
       console.error(`[features-service] sales-paths for offer ${offerId}: ${error.message}`);
       res.setHeader("Retry-After", "60");
