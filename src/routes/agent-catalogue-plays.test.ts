@@ -128,7 +128,7 @@ process.env.NODE_ENV = "test";
 process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 
 const app = (await import("../index.js")).default;
-const { __setCatalogueMeasurementsForTest } = await import("./agent-catalogue.js");
+const { __setCatalogueMeasurementsForTest, __awaitCatalogueMeasurementsForTest } = await import("./agent-catalogue.js");
 const { FAMILY_WORDS } = await import("../lib/sales-path-names.js");
 const { PIPE_BIRD_WORDS, PATH_RIVER_WORDS } = await import("../lib/catalogue-names.js");
 
@@ -184,10 +184,25 @@ vi.mock("../lib/plays-store.js", async () => {
   };
 });
 
+// The figures build prices each play on its first ALLOWED dynasty among nova (a catch-all copy) then orion.
+vi.mock("./public.js", async (importOriginal) => {
+  const price = (w: string | null) => ({ basis: "mature", costPerOutcomeUsd: 1, conversionRatePct: 1, workflowDynastySlug: w });
+  const order = ["nova", "orion"];
+  return {
+    ...(await importOriginal<typeof import("./public.js")>()),
+    fleetLegPrice: vi.fn(async () => price(order[0])),
+    fleetPlayPrices: vi.fn(async (_s: string, _l: string, exclusions: (d: readonly string[]) => ReadonlyArray<ReadonlySet<string>>) =>
+      exclusions(order).map((ex) => price(order.find((d) => !ex.has(d)) ?? null)),
+    ),
+  };
+});
+
 const CATCH = `${COLD}~valid-catch-all`;
 const verdict = (slug: string, dynasty: string, follows: boolean) => ({ workflowSlug: slug, tacticId: "catch-all", workflowDynastySlug: dynasty, version: 1, versionActive: true, verdict: follows, probability: follows ? 0.9 : 0.05, model: "m", judgedAt: "" });
 
-beforeEach(() => {
+beforeEach(async () => {
+  // A play write rebuilds the figures behind the request: the previous test's rebuild lands before this one seeds.
+  await __awaitCatalogueMeasurementsForTest();
   names.rows = new Map();
   mem.legs = [];
   mem.steps = [];
@@ -323,6 +338,32 @@ describe("plays (owner 2026-10-13): a pipe x a strategy, ROI per play", () => {
     expect(again.body).toMatchObject({ created: false, defaultChanged: false });
   });
 
+  // RANKING-SOURCE-LEG-1014: Lead Sourcing's default was set to Valid only, yet its row kept `bestWorkflowSlug: samaya`
+  // (the catch-all copy) for up to 15 min, the figures having been priced before the default existed.
+  it("setting a default rebuilds the pipe's figures at once: its best workflow is one the strategy allows", async () => {
+    const VISIT = "sales-cold-email-outreach|lead_found_to_website_visit";
+    mem.assignments.push(
+      { featureSlug: "sales-cold-email-outreach", legKey: "lead_found_to_website_visit", workflowDynastySlug: "orion", state: "active", decidedBy: "t", decidedAt: "", note: null },
+      { featureSlug: "sales-cold-email-outreach", legKey: "lead_found_to_website_visit", workflowDynastySlug: "nova", state: "active", decidedBy: "t", decidedAt: "", note: null },
+    );
+    playState.verdicts.push(verdict("nova-v1", "nova", true));
+    __setCatalogueMeasurementsForTest(new Map([[VISIT, { basis: "mature", costPerOutcomeUsd: 1, conversionRatePct: 1, workflowDynastySlug: "nova" }]]), new Map());
+    const before = (await request(app).get("/internal/catalogue/plays").query({ pipe: VISIT }).set(KEY)).body.rows;
+    expect(before[0].bestWorkflowSlug).toBe("nova");
+
+    const made = await request(app).put(`/internal/catalogue/pipes/${encodeURIComponent(VISIT)}/default-play`).set(KEY).send({ strategyId: "valid-only", decidedBy: "test" });
+    expect(made.status).toBe(200);
+    await __awaitCatalogueMeasurementsForTest();
+    const after = (await request(app).get("/internal/catalogue/plays").query({ pipe: VISIT }).set(KEY)).body.rows;
+    expect(after.map((p: any) => [p.id, p.strategyId, p.bestWorkflowSlug])).toEqual([[VISIT, "valid-only", "orion"]]);
+
+    // The catch-all play, catalogued next, is priced on nova at once too.
+    await request(app).post("/internal/catalogue/plays").set(KEY).send({ pipeId: VISIT, strategyId: "valid-catch-all", createdBy: "test" });
+    await __awaitCatalogueMeasurementsForTest();
+    const plays = (await request(app).get("/internal/catalogue/plays").query({ pipe: VISIT }).set(KEY)).body.rows;
+    expect(plays.map((p: any) => [p.strategyId, p.bestWorkflowSlug])).toEqual([["valid-only", "orion"], ["valid-catch-all", "nova"]]);
+  });
+
   it("the public play create never touches the default", async () => {
     const res = await request(app).post("/internal/catalogue/plays").set(KEY).send({ pipeId: COLD, strategyId: "valid-catch-all", default: true, createdBy: "test" });
     expect(res.status).toBe(200);
@@ -341,13 +382,14 @@ describe("plays (owner 2026-10-13): a pipe x a strategy, ROI per play", () => {
     expect(edited.status).toBe(200);
     expect(edited.body).toMatchObject({ id: "catch-all", name: "Catch-all", description: words, changed: true, updatedBy: "user:u1" });
     expect(edited.body.previousDescription).toContain("Sends to addresses");
-    expect(kick).toHaveBeenCalledTimes(1);
+    // Kicked, then once more (a sweep in flight read the old text), then the pipe figures rebuild.
+    await vi.waitFor(() => expect(kick).toHaveBeenCalledTimes(2));
 
     // The stored text again: nothing to re-judge.
     const same = await request(app).patch(url).set(KEY).send({ description: "Sends to addresses whose mail server accepts every address, so the mailbox cannot be confirmed.", updatedBy: "user:u1" });
     expect(same.status).toBe(200);
     expect(same.body.changed).toBe(false);
-    expect(kick).toHaveBeenCalledTimes(1);
+    expect(kick).toHaveBeenCalledTimes(2);
 
     const taken = await request(app).patch(url).set(KEY).send({ description: "Taken elsewhere.", updatedBy: "user:u1" });
     expect(taken.status).toBe(409);
