@@ -9,6 +9,7 @@ import { vi } from "vitest";
 vi.mock("./lib/fleet-positive-repliers.js", () => ({
   fetchFleetPositiveRepliesBySlug: vi.fn(async () => undefined),
   fetchFleetMatureSlugStats: vi.fn(async () => undefined),
+  fetchFleetContactedBySlug: vi.fn(async () => undefined),
   bucketPopulation: vi.fn(),
   warmFleetPositiveRepliers: vi.fn(async () => undefined),
   __resetFleetPositiveRepliers: vi.fn(),
