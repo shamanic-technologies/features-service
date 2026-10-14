@@ -41,9 +41,11 @@ export { canonicalRequest } from "./view-materializer.js";
  *
  * KEEP FRESH. A held instance whose cell is older than {@link REASK_AFTER_MS} is asked again with
  * `x-view-precompute: refresh`: the refresher computes the stale cells that request reads BEFORE it
- * answers, so the refresh sits inside the keeper's concurrency bound. An ACTIVE brand's (one with a live
- * campaign) missing and day-old cells come first, then every other brand's missing cells, then a few
- * other day-old ones: a customer of an active brand never opens a cell older than a day.
+ * answers, so the refresh sits inside the keeper's concurrency bound.
+ *
+ * ORDER. The requests actually READ in the last 3 days come first, each as itself (missing, then day-old),
+ * most recently read first: they are what pages open. Then at most `VIEW_KEEPER_MAX_MATERIALIZE_PER_ROUND`
+ * never-read instances of ACTIVE brands (live campaign). Nothing else is warmed.
  *
  * HELD MEANS SERVABLE. A cell keyed on a response shape this build no longer computes
  * (`isCurrentShapeKey`) is never served — its read is a miss — so it does not count as held: after a
@@ -65,7 +67,16 @@ export { canonicalRequest } from "./view-materializer.js";
  */
 
 /** A customer read this recent makes its request a shape, fleet-wide. */
-const SHAPE_WINDOW_MS = 14 * 24 * 60 * 60_000;
+const SHAPE_WINDOW_MS = 3 * 24 * 60 * 60_000;
+/**
+ * A request READ this recently is kept warm AS ITSELF, first, before any shape is instantiated for other
+ * scopes. Prod 2026-10-14 after a re-keying deploy: 8 965 instances missing, 60 precomputed per 257 s round
+ * (~8.5 s each on a box at load 35), so the ~470 requests actually read in the last day waited ~12 h behind
+ * instances nobody opens, and every page read missed and computed live.
+ */
+const READ_WINDOW_MS = 3 * 24 * 60 * 60_000;
+/** Shape instances never read as such (a brand's first visit) are materialized at most this many per round. */
+const DEFAULT_KEEPER_MAX_MATERIALIZE_PER_ROUND = 24;
 /** A held cell older than this is asked again (refreshed behind the answer). */
 const REASK_AFTER_MS = 24 * 60 * 60_000;
 const DEFAULT_KEEPER_INTERVAL_MS = 5 * 60_000;
@@ -75,11 +86,6 @@ const DEFAULT_KEEPER_INTERVAL_MS = 5 * 60_000;
  */
 const DEFAULT_KEEPER_MAX_PER_ROUND = 240;
 const DEFAULT_KEEPER_CONCURRENCY = 2;
-/**
- * A stale re-ask answers at once and refreshes BEHIND the answer inside the refresher, so the
- * concurrency bound does not hold it: they get their own, smaller, per-round cap.
- */
-const DEFAULT_KEEPER_MAX_STALE_PER_ROUND = 8;
 const DEFAULT_KEEPER_ROUND_BUDGET_MS = 4 * 60_000;
 /** A precompute the handler refused (e.g. a 404 for a campaign with no funnel) is not retried for this long. */
 const REFUSED_RETRY_MS = 6 * 60 * 60_000;
@@ -101,6 +107,8 @@ export interface PrecomputeReport {
   brands: number;
   /** Brands with a live campaign, and their cells: what a customer opens. */
   active: { brands: number; held: number; missing: number; stale: number };
+  /** The requests actually READ in the last {@link READ_WINDOW_MS}, kept warm as themselves, first. */
+  read: { requests: number; held: number; missing: number; stale: number };
   noIdentity: number;
   instances: number;
   held: number;
@@ -172,6 +180,7 @@ export async function materializeRound(): Promise<PrecomputeReport> {
     shapes: 0,
     brands: 0,
     active: { brands: 0, held: 0, missing: 0, stale: 0 },
+    read: { requests: 0, held: 0, missing: 0, stale: 0 },
     noIdentity: 0,
     instances: 0,
     held: 0,
@@ -194,7 +203,7 @@ export async function materializeRound(): Promise<PrecomputeReport> {
   const cap = positiveNumberEnv("VIEW_KEEPER_MAX_PER_ROUND", DEFAULT_KEEPER_MAX_PER_ROUND);
   const concurrency = positiveNumberEnv("VIEW_KEEPER_CONCURRENCY", DEFAULT_KEEPER_CONCURRENCY);
   const budgetMs = positiveNumberEnv("VIEW_KEEPER_ROUND_BUDGET_MS", DEFAULT_KEEPER_ROUND_BUDGET_MS);
-  const staleCap = positiveNumberEnv("VIEW_KEEPER_MAX_STALE_PER_ROUND", DEFAULT_KEEPER_MAX_STALE_PER_ROUND);
+  const materializeCap = positiveNumberEnv("VIEW_KEEPER_MAX_MATERIALIZE_PER_ROUND", DEFAULT_KEEPER_MAX_MATERIALIZE_PER_ROUND);
 
   const cells = await db
     .select({
@@ -214,7 +223,10 @@ export async function materializeRound(): Promise<PrecomputeReport> {
   const shapes = new Map<string, RequestShape>();
   const identity = new Map<string, { headers: Record<string, string>; at: number }>();
   const brandLastRead = new Map<string, number>();
+  /** Each request read recently: its newest read and the headers that read carried. */
+  const reads = new Map<string, { url: string; orgId: string; headers: Record<string, string>; readMs: number }>();
   const shapeCutoff = began - SHAPE_WINDOW_MS;
+  const readCutoff = began - READ_WINDOW_MS;
   for (const cell of cells) {
     if (!cell.replayUrl) continue;
     const computedMs = new Date(cell.computedAt).getTime();
@@ -232,6 +244,9 @@ export async function materializeRound(): Promise<PrecomputeReport> {
     if (cell.brandId) {
       const k = `${cell.orgId} ${cell.brandId}`;
       brandLastRead.set(k, Math.max(brandLastRead.get(k) ?? 0, readMs));
+    }
+    if (readMs >= readCutoff && readMs > (reads.get(key)?.readMs ?? 0)) {
+      reads.set(key, { url: canonicalRequest(cell.replayUrl), orgId: cell.orgId, headers, readMs });
     }
     if (readMs < shapeCutoff) continue;
     const shape = shapeOf(cell.replayUrl);
@@ -266,6 +281,25 @@ export async function materializeRound(): Promise<PrecomputeReport> {
   for (const [k, until] of refusedUntil) if (until < now) refusedUntil.delete(k);
   for (const [k, until] of doneUntil) if (until < now) doneUntil.delete(k);
 
+  // FIRST: every request read recently, as itself (its own reader's identity when well-formed, else the
+  // org's), most recently read first. These are the cells a page opens; nothing else competes with them.
+  const readMissing: WorkItem[] = [];
+  const readStale: WorkItem[] = [];
+  const readKeys = new Set<string>();
+  for (const [key, r] of [...reads].sort((a, b) => b[1].readMs - a[1].readMs)) {
+    const headers = isReplayableIdentity(r.headers) ? r.headers : identity.get(r.orgId)?.headers;
+    if (!headers) continue;
+    readKeys.add(key);
+    report.read.requests += 1;
+    const computedMs = held.get(key);
+    const state = computedMs === undefined ? "missing" : now - computedMs > REASK_AFTER_MS ? "stale" : "held";
+    report.read[state] += 1;
+    if (state === "held" || refusedUntil.has(key) || doneUntil.has(key)) continue;
+    const { "x-api-key": _drop, ...replay } = headers;
+    const item = { url: r.url, headers: replay, key, stale: state === "stale" };
+    (state === "missing" ? readMissing : readStale).push(item);
+  }
+
   const activeMissing: WorkItem[] = [];
   const activeStale: WorkItem[] = [];
   const missing: WorkItem[] = [];
@@ -290,22 +324,25 @@ export async function materializeRound(): Promise<PrecomputeReport> {
         const computedMs = held.get(key);
         const state = computedMs === undefined ? "missing" : now - computedMs > REASK_AFTER_MS ? "stale" : "held";
         if (active) report.active[state] += 1;
-        if (refusedUntil.has(key) || doneUntil.has(key)) continue;
+        if (state === "held") report.held += 1;
+        // A request read as itself is already queued above, under its own reader.
+        if (state === "held" || readKeys.has(key) || refusedUntil.has(key) || doneUntil.has(key)) continue;
         const item = { url: instance.url, headers: headersFor(target.headers, target.brandId, instance), key, stale: computedMs !== undefined };
         if (state === "missing") (active ? activeMissing : missing).push(item);
-        else if (state === "stale") (active ? activeStale : stale).push(item);
-        else report.held += 1;
+        else (active ? activeStale : stale).push(item);
       }
     }
   }
   report.missing = activeMissing.length + missing.length;
   report.stale = activeStale.length + stale.length;
 
-  // What a customer of an active brand opens first; then a cell any first read would block on; a day-old
-  // cell of another brand is still served at once, so only a few of those per round.
-  const queue = [...activeMissing, ...activeStale, ...missing, ...stale.slice(0, staleCap)];
+  // What pages READ first (missing, then day-old); then a few never-read instances of ACTIVE brands (a first
+  // visit, a campaign just created). Other brands' never-read instances are not warmed: a read of one is a
+  // miss once, then it is in the read set. Day-old instances nobody reads are left to age out.
+  const materialize = [...activeMissing, ...activeStale].slice(0, materializeCap);
+  const queue = [...readMissing, ...readStale, ...materialize];
   const work = queue.slice(0, cap);
-  report.deferred = queue.length - work.length + Math.max(0, stale.length - staleCap);
+  report.deferred = queue.length - work.length + (activeMissing.length + activeStale.length - materialize.length);
   await mapWithConcurrency(work, concurrency, async (item) => {
     if (Date.now() - began > budgetMs) {
       report.deferred += 1;
@@ -338,7 +375,8 @@ export async function materializeRound(): Promise<PrecomputeReport> {
       `${report.instances} cells, ${report.held} held fresh, ${report.missing} missing, ${report.stale} older than a day; ` +
       `${report.computed} precomputed, ${report.refreshedStale} refreshed, ${report.refused.length} refused, ${report.deferred} deferred, ` +
       `${report.errors.length} errors in ${report.durationMs}ms; active brands ${report.active.brands}: ` +
-      `${report.active.held} held fresh, ${report.active.missing} missing, ${report.active.stale} older than a day`,
+      `${report.active.held} held fresh, ${report.active.missing} missing, ${report.active.stale} older than a day; ` +
+      `read in 3 days ${report.read.requests}: ${report.read.held} held fresh, ${report.read.missing} missing, ${report.read.stale} older than a day`,
   );
   return report;
 }
