@@ -111,13 +111,30 @@ export async function insertStrategy(input: { name: string; description: string;
   return strategyOf(row);
 }
 
-/** Catalogue a play on a pipe (the caller checked the pipe exists). Idempotent: an existing play answers `created:false`. */
-export async function insertPlay(input: { pipeId: string; strategyId: string; createdBy: string }): Promise<{ created: boolean }> {
+/**
+ * Catalogue a play on a pipe (the caller checked the pipe exists). Idempotent: an existing play answers `created:false`.
+ * `isDefault` makes it the pipe's DEFAULT play in one transaction (the previous default, if any, stays catalogued as a
+ * non-default play); the caller checked the strategy runs at least one workflow of the pipe.
+ */
+export async function insertPlay(input: { pipeId: string; strategyId: string; createdBy: string; isDefault?: boolean }): Promise<{ created: boolean; defaultChanged: boolean }> {
   const current = await loadPlayCatalogueFresh();
   if (!current.strategies.some((s) => s.id === input.strategyId)) throw new DeclarationError(404, "strategy_not_found", `no strategy ${input.strategyId} (GET /internal/catalogue/strategies)`);
-  const inserted = await db.insert(plays).values({ pipeId: input.pipeId, strategyId: input.strategyId, isDefault: false, createdBy: input.createdBy }).onConflictDoNothing().returning();
+  const result = await db.transaction(async (tx) => {
+    let defaultChanged = false;
+    if (input.isDefault) {
+      // One default per pipe (partial unique index): the previous default steps down before this one steps up.
+      const already = await tx.select().from(plays).where(sql`${plays.pipeId} = ${input.pipeId} AND ${plays.isDefault}`);
+      defaultChanged = !already.some((r) => r.strategyId === input.strategyId);
+      if (defaultChanged) await tx.update(plays).set({ isDefault: false }).where(sql`${plays.pipeId} = ${input.pipeId} AND ${plays.isDefault}`);
+    }
+    const inserted = await tx.insert(plays).values({ pipeId: input.pipeId, strategyId: input.strategyId, isDefault: input.isDefault === true, createdBy: input.createdBy }).onConflictDoNothing().returning();
+    if (input.isDefault && inserted.length === 0 && defaultChanged) {
+      await tx.update(plays).set({ isDefault: true }).where(sql`${plays.pipeId} = ${input.pipeId} AND ${plays.strategyId} = ${input.strategyId}`);
+    }
+    return { created: inserted.length > 0, defaultChanged };
+  });
   invalidatePlayCatalogue();
-  return { created: inserted.length > 0 };
+  return result;
 }
 
 /** The tables as rows, read now (never the 30 s shared copy): a uniqueness check reads what is stored. */
