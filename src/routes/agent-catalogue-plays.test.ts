@@ -144,7 +144,7 @@ const seedPlays = () => [
   { pipeId: "sales-cold-email-outreach|lead_found_to_conversation", strategyId: "valid-only", isDefault: true },
   { pipeId: "sales-cold-email-outreach|lead_found_to_conversation", strategyId: "valid-catch-all", isDefault: false },
 ];
-const playState = vi.hoisted(() => ({ verdicts: [] as any[], added: [] as any[], seeded: [] as any[] }));
+const playState = vi.hoisted(() => ({ verdicts: [] as any[], added: [] as any[], seeded: [] as any[], sweeps: [] as any[] }));
 vi.mock("../lib/plays-store.js", async () => {
   const { buildPlayCatalogue } = await import("../lib/plays.js");
   const tactics = [{ id: "catch-all", name: "Catch-all", description: "Sends to addresses whose mail server accepts every address, so the mailbox cannot be confirmed.", createdBy: "t", createdAt: "" }];
@@ -154,7 +154,7 @@ vi.mock("../lib/plays-store.js", async () => {
   ];
   const plays = playState.seeded;
   return {
-    loadPlayCatalogue: async () => buildPlayCatalogue({ tactics, strategies, plays: [...plays, ...playState.added], verdicts: playState.verdicts }),
+    loadPlayCatalogue: async () => buildPlayCatalogue({ tactics, strategies, plays: [...plays, ...playState.added], verdicts: playState.verdicts, sweeps: playState.sweeps }),
     invalidatePlayCatalogue: () => {},
     listVerdicts: async () => playState.verdicts,
     insertTactic: vi.fn(),
@@ -215,6 +215,7 @@ beforeEach(async () => {
   ];
   playState.verdicts = [verdict("orion-v1", "orion", false)];
   playState.added = [];
+  playState.sweeps = [];
   playState.seeded.splice(0, playState.seeded.length, ...seedPlays());
   __setCatalogueMeasurementsForTest(
     new Map([
@@ -284,6 +285,32 @@ describe("plays (owner 2026-10-13): a pipe x a strategy, ROI per play", () => {
     ]);
     const detail = (await request(app).get(`/internal/catalogue/plays/${encodeURIComponent(CATCH)}`).set(KEY)).body;
     expect(detail.excludedWorkflowDynastySlugs).toEqual(["orion"]);
+  });
+
+  it("a play running nothing says why (judging failing / pending / judged out), and its detail lists the funnels carrying it (owner 2026-10-14)", async () => {
+    const catchRow = async () => (await request(app).get("/internal/catalogue/plays").query({ pipe: COLD }).set(KEY)).body.rows.find((r: any) => r.id === CATCH);
+    // orion is judged NOT catch-all: nothing can ever fit Valid + Catch-all until a workflow following it is built.
+    expect(await catchRow()).toMatchObject({ runnable: false, notRunnableReason: "no_workflow_follows_strategy" });
+    // orion not judged at all, and the last sweep failed: Jev is down, judging resumes by itself.
+    playState.verdicts = [];
+    playState.sweeps = [{ tacticId: "catch-all", judgedDescription: "Sends to addresses whose mail server accepts every address, so the mailbox cannot be confirmed.", sweptAt: "2026-10-14T09:00:00.000Z", versions: 1, judged: 0, failed: 1, lastFailure: "chat-service platform-judgments 502", lastFailureAt: "2026-10-14T09:00:00.000Z" }];
+    const failing = await catchRow();
+    expect(failing).toMatchObject({ runnable: false, notRunnableReason: "judging_failing" });
+    expect(failing.notRunnableDetail).toContain("chat-service platform-judgments 502");
+    const tactic = (await request(app).get("/internal/catalogue/tactics/catch-all").set(KEY)).body;
+    expect(tactic.judging).toMatchObject({ status: "failing", versionsFailed: 1, nextSweepAt: "2026-10-14T09:15:00.000Z" });
+    // Never swept on these words yet: still judging.
+    playState.sweeps = [];
+    expect(await catchRow()).toMatchObject({ notRunnableReason: "judging_pending" });
+    expect((await request(app).get("/internal/catalogue/tactics/catch-all").set(KEY)).body.judging.status).toBe("judging");
+    // The play's detail names the funnels carrying it, runnable or not: an agent never hand-builds a funnel id.
+    const detail = (await request(app).get(`/internal/catalogue/plays/${encodeURIComponent(CATCH)}`).set(KEY)).body;
+    expect(detail.salesFunnels.total).toBeGreaterThan(0);
+    expect(detail.salesFunnels.rows[0].id).toContain("@sales-cold-email-outreach~valid-catch-all");
+    // Mixed funnels are left out (never runnable); each row says why it waits.
+    expect(detail.salesFunnels.rows.every((r: any) => r.runnable === false && r.notRunnableReason === "judging_pending")).toBe(true);
+    const read = await request(app).get(`/internal/catalogue/sales-funnels/${encodeURIComponent(detail.salesFunnels.rows[0].id)}`).set(KEY);
+    expect(read.status).toBe(200);
   });
 
   it("a play is added to a pipe that catalogues none yet: its default stays every assigned workflow, the play narrows it", async () => {

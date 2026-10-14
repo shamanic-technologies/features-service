@@ -91,8 +91,8 @@ import { invalidateChannelCatalogue, fleetLegPrice, fleetPlayPrices, readLegWork
 import type { LegPrice } from "../lib/outcome-prices.js";
 import type { LegAssignmentRow } from "../lib/workflow-leg-assignments.js";
 import { insertPlay, insertStrategy, insertTactic, invalidatePlayCatalogue, listVerdicts, loadPlayCatalogue, updateTacticDescription } from "../lib/plays-store.js";
-import { kickTacticJudgments } from "../lib/tactic-judgments.js";
-import { defaultStrategyOf, excludedDynasties, playIdOf, tacticNameOf, type PlayCatalogue, type Strategy, type Tactic } from "../lib/plays.js";
+import { kickTacticJudgments, SWEEP_EVERY_MS } from "../lib/tactic-judgments.js";
+import { defaultStrategyOf, excludedDynasties, playBlockOf, playIdOf, tacticJudgingOf, tacticNameOf, type PlayCatalogue, type Strategy, type Tactic } from "../lib/plays.js";
 
 /**
  * THE AGENT CATALOGUE (owner 2026-10-10, "chat first"; the model and every formula: `lib/agent-catalogue.ts`).
@@ -452,6 +452,7 @@ const nameKeyOfPipe = (p: Pick<CataloguePipe, "channelSlug" | "legKey">): string
  */
 function playInputsOf(c: PlayCatalogue, assignments: readonly LegAssignmentRow[], byPlay: ReadonlyMap<string, PipeMeasurement>): Map<string, { default: PlayInput | null; others: PlayInput[] }> {
   const nameOf = tacticNameOf(c);
+  const judgingOf = tacticJudgingLookup(c);
   const out = new Map<string, { default: PlayInput | null; others: PlayInput[] }>();
   for (const [pipeId, list] of c.playsByPipe) {
     const [slug, leg] = [pipeId.slice(0, pipeId.indexOf("|")), pipeId.slice(pipeId.indexOf("|") + 1)];
@@ -460,7 +461,9 @@ function playInputsOf(c: PlayCatalogue, assignments: readonly LegAssignmentRow[]
       const st = c.strategies.get(strategyId);
       if (!st) return null;
       const excluded = excludedDynasties(st, onPipe.map((a) => a.workflowDynastySlug), c.tacticsByDynasty, nameOf);
+      const active = onPipe.filter((a) => a.state === "active").map((a) => a.workflowDynastySlug);
       return {
+        block: playBlockOf(st, active, c.tacticsByDynasty, judgingOf, nameOf),
         strategyId,
         strategyName: st.name,
         strategyDescription: st.description,
@@ -896,6 +899,8 @@ function pipeDetail(model: CatalogueModel, p: CataloguePipe, name: string) {
     operatedBy: p.operatedBy,
     managed: p.managed,
     runnable: pipeRunnable(p),
+    notRunnableReason: notRunnableOf(p)?.reason ?? null,
+    notRunnableDetail: notRunnableOf(p)?.detail ?? null,
     draft: !p.published,
     ...econDetail(p.economics, perStep(model, p.toStep)),
     costUnit: "per_outcome",
@@ -923,6 +928,17 @@ const playOf = (p: CataloguePipe) =>
       }
     : null;
 
+/**
+ * Why a pipe object is not runnable, for an agent to act on (owner 2026-10-14): a play blocked on its strategy says
+ * whether Jev is still judging, failing to judge, or judged every workflow out (`lib/plays.ts` `playBlockOf`).
+ */
+function notRunnableOf(p: CataloguePipe): { reason: string; detail: string } | null {
+  if (pipeRunnable(p)) return null;
+  if (!p.published) return { reason: "unpublished", detail: "Staff hid this pipe: nothing runs it." };
+  if (p.play?.block) return p.play.block;
+  return { reason: "no_workflow", detail: "No active workflow of ours works this pipe yet, so a campaign on it cannot be launched." };
+}
+
 /** One play of a pipe as listed: its id (what a sales funnel names), its strategy, its own figures. */
 const playRowOf = (m: CatalogueModel, p: CataloguePipe) => ({
   object: "play" as const,
@@ -937,6 +953,8 @@ const playRowOf = (m: CatalogueModel, p: CataloguePipe) => ({
   measuredBasis: p.measurement?.basis ?? null,
   allowedActiveWorkflowCount: p.play?.allowedActiveWorkflowCount ?? null,
   runnable: pipeRunnable(p),
+  notRunnableReason: notRunnableOf(p)?.reason ?? null,
+  notRunnableDetail: notRunnableOf(p)?.detail ?? null,
 });
 
 /**
@@ -1504,7 +1522,15 @@ const tacticRowOf = (c: PlayCatalogue, t: Tactic) => {
     // On each workflow's CURRENT version (the one a run executes).
     workflowsJudged: judged.length,
     workflowsFollowing: judged.filter((m) => m.get(t.id) === true).length,
+    // Complete, still judging, or FAILING with Jev's reason (owner 2026-10-14): never "pending" forever.
+    judging: tacticJudgingOf(t, c.sweepsByTactic.get(t.id), SWEEP_EVERY_MS),
   };
+};
+
+/** tactic id -> its served judging state (null for an unknown id). */
+const tacticJudgingLookup = (c: PlayCatalogue) => (id: string) => {
+  const t = c.tactics.get(id);
+  return t ? tacticJudgingOf(t, c.sweepsByTactic.get(id), SWEEP_EVERY_MS) : null;
 };
 
 const strategyRowOf = (c: PlayCatalogue, st: Strategy) => ({
@@ -1651,12 +1677,37 @@ router.get("/internal/catalogue/plays", apiKeyOnly, async (req, res) => {
   }
 });
 
+/**
+ * The sales funnels carrying a play (owner 2026-10-14): an agent that just catalogued a play reads the funnels it can
+ * launch on it, runnable or not (the customer lists keep runnable funnels only, so a fresh play's funnels were nowhere
+ * to read and an agent hand-built the id). Mixed funnels left out (never runnable). Best ROI first, at most `limit`.
+ */
+async function funnelsCarrying(model: CatalogueModel, names: Map<string, string>, p: CataloguePipe, limit = 10) {
+  const all = [...model.paths.values()]
+    .filter((path) => path.legKeys.includes(p.legKey))
+    .flatMap((path) => funnelsOfPath(model, path))
+    .filter((f) => f.legs.some((l) => legPipes(l).some((x) => x.id === p.id)))
+    // A MIXED funnel is never runnable, whatever the play: never proposed.
+    .filter((f) => !funnelMixed(f))
+    .sort(byRoi((f: CatalogueFunnel) => f.economics, (f) => f.id, (f) => funnelTypeOf(f)));
+  const shown = all.slice(0, limit);
+  const n = await named(shown.map((f) => f.id), names);
+  return {
+    total: all.length,
+    truncated: all.length > limit,
+    rows: shown.map((f) => {
+      const blocked = funnelPipes(f).map(notRunnableOf).find((x) => x !== null) ?? null;
+      return { id: f.id, name: n.get(f.id)!, line: funnelLine(f), type: funnelTypeOf(f), runnable: funnelRunnable(f), notRunnableReason: funnelRunnable(f) ? null : (blocked?.reason ?? null) };
+    }),
+  };
+}
+
 router.get("/internal/catalogue/plays/:id", apiKeyOnly, async (req, res) => {
   try {
-    const { model } = await loadModel();
+    const { model, names } = await loadModel();
     const p = pipeOrPlayById(model, req.params.id);
     if (!p) return void res.status(404).json({ error: `no play ${req.params.id}`, reason: "play_not_found" });
-    res.json({ ...playRowOf(model, p), learningReason: p.economics.reason, estimates: p.economics.estimates, excludedWorkflowDynastySlugs: p.play?.excludedDynasties ?? [] });
+    res.json({ ...playRowOf(model, p), learningReason: p.economics.reason, estimates: p.economics.estimates, excludedWorkflowDynastySlugs: p.play?.excludedDynasties ?? [], salesFunnels: await funnelsCarrying(model, names, p) });
   } catch (err) {
     fail(res, err, "get play");
   }
@@ -1700,12 +1751,12 @@ router.post("/internal/catalogue/plays", apiKeyOnly, async (req, res) => {
     if (!pipe) throw new DeclarationError(404, "pipe_not_found", `no pipe ${pipeId}`);
     if (pipe.operatedBy !== "platform") throw bad("pipe_not_ours", `${pipeId} is worked by the customer's own team: no workflow of ours runs it, so no strategy chooses one`);
     const { created } = await insertPlay({ pipeId, strategyId, createdBy });
-    const { model } = await loadModel();
+    const { model, names } = await loadModel();
     const play = pipeOrPlayById(model, playIdOf(pipeId, strategyId));
     if (!play) throw new Error(`play ${pipeId}~${strategyId} was stored but is not in the catalogue`);
     console.log(`[features-service] agent catalogue: play ${play.id} ${created ? "declared" : "re-declared"} by ${createdBy}`);
     if (created) void refreshCatalogueMeasurementsAfterPlayWrite();
-    res.status(created ? 201 : 200).json({ created, ...playRowOf(model, play) });
+    res.status(created ? 201 : 200).json({ created, ...playRowOf(model, play), salesFunnels: await funnelsCarrying(model, names, play) });
   } catch (err) {
     fail(res, err, "create play");
   }
