@@ -111,7 +111,7 @@ import type { MeasurementBasis, RateCandidate } from "./effective-conversion-rat
 import { DEFAULT_PRICED_CAUSES, causeByDeliveryRule, type OutcomeCause } from "./outcome-cause.js";
 
 /** Where a leg rate comes from — the effective-rate vocabulary (`lib/effective-conversion-rates.ts`). */
-export type ExplainedRateSource = "measured" | "manual" | "median" | "default";
+export type ExplainedRateSource = "measured" | "manual" | "default";
 
 export interface ExplainedLeg {
   fromStep: { key: ChannelStepKey; label: string };
@@ -140,7 +140,6 @@ export interface StepValueExplanation {
 const SOURCES: Record<string, ExplainedRateSource> = {
   stated_measured: "measured",
   stated_manual: "manual",
-  stated_median: "median",
   stated_default: "default",
 };
 

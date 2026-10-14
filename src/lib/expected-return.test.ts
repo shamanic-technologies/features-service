@@ -14,7 +14,7 @@ import {
 import type { OfferSalesPathsBody, SalesPath } from "./offer-sales-paths.js";
 import type { AudienceStatsEnvelope } from "./audience-stats-compute.js";
 
-type LegIn = { legKey: string; to: string; slug: string | null; cost: number | null; costSource: "workflow" | "fleet_measured" | "default" | null; rateSource: "fleet_median" | "industry_default" | "customer_stated" | "measured_on_our_leads"; reactive?: boolean };
+type LegIn = { legKey: string; to: string; slug: string | null; cost: number | null; costSource: "workflow" | "fleet_measured" | "default" | null; rateSource: "industry_default" | "customer_stated" | "measured_on_our_leads"; reactive?: boolean };
 
 const path = (combinationKey: string, roi: number | null, legs: LegIn[]): SalesPath =>
   ({
@@ -37,7 +37,7 @@ const path = (combinationKey: string, roi: number | null, legs: LegIn[]): SalesP
 const COLD = "sales-cold-email-outreach";
 const reply = path("start_to_conversation@cold+conversation_to_paid_client", 6, [
   { legKey: "start_to_conversation", to: "conversation", slug: COLD, cost: 50, costSource: "default", rateSource: "industry_default" },
-  { legKey: "conversation_to_paid_client", to: "paid_client", slug: null, cost: null, costSource: null, rateSource: "fleet_median" },
+  { legKey: "conversation_to_paid_client", to: "paid_client", slug: null, cost: null, costSource: null, rateSource: "customer_stated" },
 ]);
 const visit = path("start_to_website_visit@cold+website_visit_to_purchase+purchase_to_paid_client", 9, [
   { legKey: "start_to_website_visit", to: "website_visit", slug: COLD, cost: 1.4, costSource: "fleet_measured", rateSource: "industry_default" },
@@ -45,8 +45,8 @@ const visit = path("start_to_website_visit@cold+website_visit_to_purchase+purcha
   { legKey: "purchase_to_paid_client", to: "paid_client", slug: null, cost: null, costSource: null, rateSource: "measured_on_our_leads" },
 ]);
 const reactive = path("conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_paid_client", 40, [
-  { legKey: "conversation_to_meeting_booked", to: "meeting_booked", slug: "ai-meeting-booking", cost: 5, costSource: "workflow", rateSource: "fleet_median", reactive: true },
-  { legKey: "meeting_booked_to_paid_client", to: "paid_client", slug: null, cost: null, costSource: null, rateSource: "fleet_median" },
+  { legKey: "conversation_to_meeting_booked", to: "meeting_booked", slug: "ai-meeting-booking", cost: 5, costSource: "workflow", rateSource: "customer_stated", reactive: true },
+  { legKey: "meeting_booked_to_paid_client", to: "paid_client", slug: null, cost: null, costSource: null, rateSource: "customer_stated" },
 ]);
 const unpriced = path("start_to_conversation@x+conversation_to_paid_client", null, []);
 
@@ -152,7 +152,7 @@ describe("a funnel campaign is priced on ITS OWN path (EXPECTED-ROI-1011 follow-
       r("conversation_to_meeting_booked", 30),
       r("meeting_booked_to_meeting_attended", 75),
       r("meeting_attended_to_paid_client", 20),
-      r("conversation_to_paid_client", 5, "median"),
+      r("conversation_to_paid_client", 5, "manual"),
     ] as never,
     prices: new Map(),
     fleetPrices: new Map([["conversation_to_meeting_booked|ai-meeting-booking", 2]]),

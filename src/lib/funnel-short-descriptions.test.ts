@@ -11,7 +11,7 @@ import { funnelShortDescription, MAX_WORDS, type SummaryChannel } from "./funnel
 
 const channels = buildChannelCatalogue(SEED_FEATURES.filter((f) => f.status === "active"));
 const ids = new Set(channels.flatMap((c) => c.stepTransitions.map((t) => `${c.slug}|${servedLegKeyOf(c.slug, t.legKey)}`)));
-const model = buildCatalogueModel({ channels, publishedPipeIds: ids, declaredSteps: [], measurements: new Map(), fleetMedians: new Map(), lifetimeRevenueUsd: 3000 });
+const model = buildCatalogueModel({ channels, publishedPipeIds: ids, declaredSteps: [], measurements: new Map(), lifetimeRevenueUsd: 3000 });
 const all = [...model.paths.values()].flatMap((p) => funnelsOfPath(model, p));
 const byId = (id: string) => {
   const f = all.find((x) => x.id === id);

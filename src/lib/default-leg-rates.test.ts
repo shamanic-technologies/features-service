@@ -37,13 +37,12 @@ describe("every leg always has a conversion rate", () => {
     expect(Object.keys(DEFAULT_LEG_RATE_PCT)).toContain("booking_call>meeting_booked");
   });
 
-  it("a brand that stated nothing, measured nothing and has no fleet median reads a default on EVERY leg, labelled as one", () => {
+  it("a brand that stated nothing and measured nothing reads a default on EVERY leg, labelled as one", () => {
     const rates = buildBrandEffectiveRates({
       brandId: "b1",
       funnelKeys: SALES_FUNNEL_KEYS,
       measurement: NOTHING_MEASURED,
       manual: [],
-      medians: new Map(),
     });
     expect(rates.legs.length).toBeGreaterThan(0);
     for (const leg of rates.legs) {
@@ -56,23 +55,22 @@ describe("every leg always has a conversion rate", () => {
     expect(call?.effectiveRatePct).toBe(60);
   });
 
-  it("every leg leaving website_visit defaults to the cold-email-click 0.5% (owner-stated 2026-10-03)", () => {
-    const visitLegs = Object.keys(DEFAULT_LEG_RATE_PCT).filter((k) => k.startsWith("website_visit>") && k !== "website_visit>purchase");
-    expect(visitLegs.sort()).toEqual(["website_visit>form_submitted", "website_visit>meeting_booked", "website_visit>signup"]);
-    for (const leg of visitLegs) expect(DEFAULT_LEG_RATE_PCT[leg as keyof typeof DEFAULT_LEG_RATE_PCT]).toBe(0.5);
+  it("every leg leaving website_visit, purchase included, defaults to 0.2% (owner-stated 2026-10-14)", () => {
+    const visitLegs = Object.keys(DEFAULT_LEG_RATE_PCT).filter((k) => k.startsWith("website_visit>"));
+    expect(visitLegs.sort()).toEqual(["website_visit>form_submitted", "website_visit>meeting_booked", "website_visit>purchase", "website_visit>signup"]);
+    for (const leg of visitLegs) expect(DEFAULT_LEG_RATE_PCT[leg as keyof typeof DEFAULT_LEG_RATE_PCT]).toBe(0.2);
   });
 
-  it("a stated rate still beats the default, and the median beats it too", () => {
+  it("a stated rate beats the default; an unstated leg reads the default, never another brand's rate", () => {
     const rates = buildBrandEffectiveRates({
       brandId: "b1",
       funnelKeys: SALES_FUNNEL_KEYS,
       measurement: NOTHING_MEASURED,
       manual: [{ fromStep: "Positive reply", toStep: "Meeting booked", ratePct: 55, stated: true } as never],
-      medians: new Map([["meeting_booked>meeting_attended", { ratePct: 66, brandCount: 5 }]]),
     });
     const booked = rates.legs.find((l) => l.fromStep === "Positive reply" && l.toStep === "Meeting booked")!;
     expect(booked).toMatchObject({ effectiveRatePct: 55, source: "manual", defaultRatePct: 30 });
     const showUp = rates.legs.find((l) => l.fromStep === "Meeting booked" && l.toStep === "Meeting attended")!;
-    expect(showUp).toMatchObject({ effectiveRatePct: 66, source: "median", defaultRatePct: 75 });
+    expect(showUp).toMatchObject({ effectiveRatePct: 75, source: "default", defaultRatePct: 75, median: { ratePct: null, brandCount: 0 } });
   });
 });

@@ -16,21 +16,15 @@
  *      already merges the customer's own statements, our tracker and their CRM (the same overlays
  *      `funnelSteps` counts on), so this is the brand's reality, not a sample of it.
  *   2. MANUAL — what the brand stated by hand for the leg (brand-service `offer-economics` leg rates).
- *   3. MEDIAN — the cross-org median of what OTHER brands stated for the same leg. Stated
- *      values only: the store has no default behind it, so a brand that stated nothing contributes
- *      nothing. It overrides the default only once at least `MIN_FLEET_MEDIAN_BRANDS` (5) brands
- *      stated the leg (owner rule, 2026-10-03): a median of two customers' guesses is two guesses, and
- *      it once ranked website visit → meeting booked at 4.99% (2 brands) over the 2% benchmark, which
- *      put a path nothing measured first on an offer's Sales paths. Below the bar the default is kept
- *      and served as `source: "default"`; the median still rides along in `median` with its brandCount.
- *      Website-visit legs take the median like every other leg (owner 2026-10-04, superseding the
- *      2026-10-03 exclusion): the stated visit rates that inflated it were corrected AT THE SOURCE (the
- *      six brands stating visit → form were divided by ten in brand-service, after 0 of 461 of our
- *      cold-email clickers converted), never by a factor applied here.
- *
- *   4. DEFAULT — the seeded per-leg industry benchmark (`lib/default-leg-rates.ts`, owner rule
+ *   3. DEFAULT — the seeded per-leg industry benchmark (`lib/default-leg-rates.ts`, owner rule
  *      2026-09-29: every leg is prefilled, none may be empty). Served as `source: "default"`, so a
- *      reader always tells it apart from the brand's own number. Supersedes "null, never a default".
+ *      reader always tells it apart from the brand's own number.
+ *
+ * NO FLEET MEDIAN (owner 2026-10-14, supersedes the 2026-10-03/04 "median over >= 5 brands" rung): a brand
+ * is never priced on what OTHER clients' rows hold. Those stored rates were mostly prefills nobody typed
+ * (a 2026-09-25 migration, bulk staff edits): a brand created the day before read 5% on Website visit ->
+ * Signup, another clients' median, beside a 0.5% benchmark. The `median` block stays on the wire for one
+ * deploy's readers, always `{ ratePct: null, brandCount: 0 }`, and no candidate is ever `median`.
  *
  * Only a leg outside the catalogue with none of the four is `null` + `unresolvedReason`; never a 0, never
  * borrowed from a neighbouring arrow.
@@ -115,15 +109,6 @@ import {
  */
 export const MIN_MEASURED_FROM_REACHED = 10;
 
-/** Brands that must have STATED a leg before their median overrides the leg's industry default (owner
- *  rule, 2026-10-03). Below it the median is still served beside the rate, never used as the rate. */
-export const MIN_FLEET_MEDIAN_BRANDS = 5;
-
-/** PURE: whether the fleet median may stand in for this leg's rate (≥ 5 brands stated it, every leg alike). */
-export function fleetMedianApplies(medianRate: { ratePct: number | null; brandCount: number }): boolean {
-  return medianRate.ratePct !== null && medianRate.brandCount >= MIN_FLEET_MEDIAN_BRANDS;
-}
-
 /**
  * A measured 0% must have SEEN enough attempts to rule out the rate it would replace (owner 2026-10-12, Doc
  * Dinners website visit → meeting booked read 0 of 119 and priced every funnel through the leg as impossible,
@@ -141,7 +126,7 @@ export function zeroIsConclusive(fromReached: number, nextRatePct: number | null
   return Math.pow(1 - nextRatePct / 100, fromReached) <= ZERO_CONCLUSIVE_MAX_CHANCE;
 }
 
-export type EffectiveRateSource = "measured" | "manual" | "median" | "default";
+export type EffectiveRateSource = "measured" | "manual" | "default";
 
 /** Why an arrow's measured rate is not the effective one. */
 export type MeasuredRateGap =
@@ -210,8 +195,9 @@ export interface EffectiveArrowRate {
   measured: MeasuredArrowRate;
   /** What the brand stated by hand for this arrow, or null when it has not. */
   manualRatePct: number | null;
-  /** The cross-org median of what brands stated for this (funnel, arrow), over `brandCount` brands. */
-  median: { ratePct: number | null; brandCount: number };
+  /** RETIRED (owner 2026-10-14: no brand is priced on other clients' rates): always `{ ratePct: null, brandCount: 0 }`,
+   *  kept on the wire for readers that still parse it. */
+  median: { ratePct: null; brandCount: 0 };
   /** The seeded per-leg default (industry benchmark), whether or not it is the effective source. */
   defaultRatePct: number | null;
   /** Every source the precedence weighed for this leg that holds a number, in precedence order, exactly one `kept` (see `RateCandidate`). */
@@ -219,7 +205,7 @@ export interface EffectiveArrowRate {
 }
 
 /** Where a rate candidate comes from: measured on the client's CRM, measured on our leads, or a source of the precedence. */
-export type RateCandidateBasis = "crm" | "our_leads" | "manual" | "median" | "default";
+export type RateCandidateBasis = "crm" | "our_leads" | "manual" | "default";
 
 /**
  * ONE RATE THE PRECEDENCE WEIGHED FOR A LEG (owner 2026-10-08, the step side panel: "Measured in your CRM:
@@ -235,21 +221,21 @@ export interface RateCandidate {
   toReached: number | null;
   /** our_leads only: which outcomes the counts include. Null otherwise. */
   outcomesCounted: MeasuredOutcomes | null;
-  /** median only: over how many brands' statements. Null otherwise. */
-  brandCount: number | null;
+  /** Always null (the fleet median rung is retired, owner 2026-10-14); kept for readers that parse it. */
+  brandCount: null;
   kept: boolean;
   /**
    * Null when kept. Otherwise why not: `outranked` (usable, a source earlier in the precedence won),
    * `below_learning_bar` (fewer than `MIN_MEASURED_FROM_REACHED` at FROM), `to_exceeds_from` (no
-   * probability), `zero_not_conclusive` (0 at TO on too few at FROM to rule out the next source, `zeroIsConclusive`), `too_few_brands` (median over fewer than `MIN_FLEET_MEDIAN_BRANDS`),
+   * probability), `zero_not_conclusive` (0 at TO on too few at FROM to rule out the next source, `zeroIsConclusive`),
    * `crm_measures_this_leg` (our leads, when the client's CRM is where this leg is measured).
    */
-  notKeptReason: "outranked" | "below_learning_bar" | "to_exceeds_from" | "zero_not_conclusive" | "too_few_brands" | "crm_measures_this_leg" | null;
+  notKeptReason: "outranked" | "below_learning_bar" | "to_exceeds_from" | "zero_not_conclusive" | "crm_measures_this_leg" | null;
 }
 
 /** PURE: the candidates of a resolved leg (see `RateCandidate`). `ourLeads` = the our-leads measurement beside a CRM one. */
 export function rateCandidatesOf(
-  leg: Pick<EffectiveArrowRate, "source" | "effectiveRatePct" | "measured" | "manualRatePct" | "median" | "defaultRatePct">,
+  leg: Pick<EffectiveArrowRate, "source" | "effectiveRatePct" | "measured" | "manualRatePct" | "defaultRatePct">,
   ourLeads: MeasuredArrowRate | null,
 ): RateCandidate[] {
   const keptBasis: RateCandidateBasis | null =
@@ -270,9 +256,6 @@ export function rateCandidatesOf(
     push(m.basis, m.ratePct, counts, blocked);
   }
   if (leg.manualRatePct !== null) push("manual", leg.manualRatePct, {}, null);
-  if (leg.median.ratePct !== null) {
-    push("median", leg.median.ratePct, { brandCount: leg.median.brandCount }, fleetMedianApplies(leg.median) ? null : "too_few_brands");
-  }
   if (leg.defaultRatePct !== null) push("default", leg.defaultRatePct, {}, null);
   return out;
 }
@@ -561,7 +544,7 @@ export function crmArrowRate(crm: CrmMeasurement, fromStep: string, toStep: stri
   return fromCounts({ basis: "crm", outcomesCounted: null }, f.contactsAtOrBeyond, t.contactsAtOrBeyond);
 }
 
-// ── MEDIAN: what the fleet stated ────────────────────────────────────────────────────────────
+// ── Leg identity and the fleet's stated lifetime revenue ────────────────────────────────────────────────────────────
 
 /**
  * One key per LEG — the two steps it connects, resolved to our step keys so brand-service's wording
@@ -590,28 +573,6 @@ function defaultRateOfLeg(fromStep: string, toStep: string): number | null {
 const isChannelStepKey = (v: string | undefined): v is ChannelStepKey =>
   v !== undefined && (CHANNEL_STEP_KEYS as readonly string[]).includes(v);
 
-export type FleetArrowMedians = Map<string, { ratePct: number | null; brandCount: number }>;
-
-/** PURE: the median per LEG over the brands that STATED it — one data point per brand. */
-export function buildFleetArrowMedians(perBrand: readonly (readonly BrandLegRate[])[]): FleetArrowMedians {
-  const values = new Map<string, number[]>();
-  for (const legs of perBrand) {
-    const seen = new Set<string>();
-    for (const leg of legs) {
-      if (!leg.stated || leg.ratePct === null) continue;
-      const key = legPairKey(leg.fromStep, leg.toStep);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const list = values.get(key) ?? [];
-      list.push(leg.ratePct);
-      values.set(key, list);
-    }
-  }
-  const out: FleetArrowMedians = new Map();
-  for (const [key, list] of values) out.set(key, { ratePct: median(list), brandCount: list.length });
-  return out;
-}
-
 /**
  * PURE: the fleet median of the lifetime revenues OFFERS stated — one data point per offer (a stated value
  * is > 0 by brand-service's contract; anything else is not a statement). Null when no offer states one.
@@ -636,7 +597,6 @@ export function buildFleetLifetimeRevenueMedian(perBrandOffers: readonly (readon
 }
 
 interface FleetStatedMedians {
-  arrows: FleetArrowMedians;
   lifetimeRevenue: { usd: number | null; offerCount: number };
 }
 
@@ -647,7 +607,7 @@ let fleetMedianCache: { value: FleetStatedMedians; at: number } | null = null;
 let fleetMedianInFlight: Promise<FleetStatedMedians> | null = null;
 
 /** Test seam. */
-export function __resetFleetArrowMediansCache(): void {
+export function __resetFleetStatedMediansCache(): void {
   fleetMedianCache = null;
   fleetMedianInFlight = null;
 }
@@ -660,30 +620,27 @@ async function computeFleetStatedMedians(): Promise<FleetStatedMedians> {
   const orgByBrand = new Map<string, string>();
   for (const m of memberships) if (!orgByBrand.has(m.brandId)) orgByBrand.set(m.brandId, m.orgId);
 
-  // One brand's unreadable statements cost the median ONE data point, loudly — never the whole fleet.
+  // One brand's unreadable offers cost the median ONE data point, loudly — never the whole fleet.
   const perBrand = await mapWithConcurrency([...orgByBrand.entries()], FLEET_BRAND_CONCURRENCY, ([brandId, orgId]) =>
     fetchBrandLegEconomics(brandId, orgId).catch((err) => {
       console.warn(`[features-service] fleet stated median: brand ${brandId} (org ${orgId}) statements unreadable, contributes no data point: ${(err as Error).message}`);
       return { legRates: [], offers: [] } as BrandLegEconomics;
     }),
   );
-  return {
-    arrows: buildFleetArrowMedians(perBrand.map((e) => e.legRates)),
-    lifetimeRevenue: buildFleetLifetimeRevenueMedian(perBrand.map((e) => e.offers)),
-  };
+  return { lifetimeRevenue: buildFleetLifetimeRevenueMedian(perBrand.map((e) => e.offers)) };
 }
 
 /**
- * The fleet medians, off a single-flighted in-memory cell: fresh for 15 minutes (a median over the
- * fleet's hand-stated rates cannot visibly move faster), served stale up to 6 hours while ONE refresh
- * runs behind the read.
+ * The fleet lifetime-revenue median, off a single-flighted in-memory cell: fresh for 15 minutes (a median
+ * over the offers' stated values cannot visibly move faster), served stale up to 6 hours while ONE refresh
+ * runs behind the read. (No leg-rate median: owner 2026-10-14, see the module header.)
  */
 /**
- * Boot warm, after listen() and fire-and-forget: the medians live in memory only, so without it the first
- * priced read of every brand after a deploy waited on the fleet scan (O(brands) leg-economics reads).
+ * Boot warm, after listen() and fire-and-forget: the median lives in memory only, so without it the first
+ * priced read of every unstated offer after a deploy waited on the fleet scan (O(brands) leg-economics reads).
  */
-export function warmFleetArrowMediansOnBoot(): void {
-  getFleetArrowMedians().catch((err) => console.error(`[features-service] fleet conversion-rate median boot warm failed: ${(err as Error).message}`));
+export function warmFleetStatedMediansOnBoot(): void {
+  getFleetStatedMedians().catch((err) => console.error(`[features-service] fleet lifetime-revenue median boot warm failed: ${(err as Error).message}`));
 }
 
 async function getFleetStatedMedians(): Promise<FleetStatedMedians> {
@@ -714,29 +671,27 @@ async function getFleetStatedMedians(): Promise<FleetStatedMedians> {
  * been computed in this process. Kicks the refresh it would need. For a read that must never wait on the
  * fleet sweep (the agent catalogue serves its persisted copy instead).
  */
-export function peekFleetStatedMedians(): { arrows: FleetArrowMedians; lifetimeRevenue: { usd: number | null; offerCount: number } } | null {
+export function peekFleetStatedMedians(): FleetStatedMedians | null {
   getFleetStatedMedians().catch((err) => console.error(`[features-service] fleet stated median refresh failed: ${(err as Error).message}`));
   return fleetMedianCache && Date.now() - fleetMedianCache.at < FLEET_MEDIAN_STALE_MS ? fleetMedianCache.value : null;
 }
 
-export async function getFleetArrowMedians(): Promise<FleetArrowMedians> {
-  return (await getFleetStatedMedians()).arrows;
-}
-
-/** The fleet median of the offers' stated lifetime revenues (same sweep, same cell as the leg medians). */
+/** The fleet median of the offers' stated lifetime revenues (one single-flighted cell). */
 export async function getFleetLifetimeRevenueMedian(): Promise<{ usd: number | null; offerCount: number }> {
   return (await getFleetStatedMedians()).lifetimeRevenue;
 }
 
 // ── Resolution ────────────────────────────────────────────────────────────────────────────────
 
-/** PURE: resolve one arrow from its sources, in order (a fleet median counts only over ≥ MIN_FLEET_MEDIAN_BRANDS brands). */
+/** The retired fleet-median block, served as-is so a reader parsing it keeps parsing (owner 2026-10-14). */
+const RETIRED_MEDIAN = { ratePct: null, brandCount: 0 } as const;
+
+/** PURE: resolve one arrow from its sources, in order: measured > manual > default (no fleet median, owner 2026-10-14). */
 export function resolveArrow(
   fromStep: string,
   toStep: string,
   measured: MeasuredArrowRate,
   manualRatePct: number | null,
-  medianRate: { ratePct: number | null; brandCount: number },
   defaultRatePct: number | null = null,
   /** The our-leads measurement when `measured` is the CRM's: a candidate shown beside it, never weighed. */
   ourLeadsMeasured: MeasuredArrowRate | null = null,
@@ -747,9 +702,6 @@ export function resolveArrow(
   if (manualRatePct !== null) {
     effectiveRatePct = manualRatePct;
     source = "manual";
-  } else if (medianRate.ratePct !== null && fleetMedianApplies(medianRate)) {
-    effectiveRatePct = medianRate.ratePct;
-    source = "median";
   } else if (defaultRatePct !== null) {
     effectiveRatePct = defaultRatePct;
     source = "default";
@@ -771,7 +723,7 @@ export function resolveArrow(
     unresolvedReason: effectiveRatePct === null ? ("no_rate_available" as const) : null,
     measured,
     manualRatePct,
-    median: medianRate,
+    median: RETIRED_MEDIAN,
     defaultRatePct,
   };
   return { ...resolved, candidates: rateCandidatesOf(resolved, measured.basis === "crm" ? ourLeadsMeasured : null) };
@@ -787,7 +739,6 @@ export function buildBrandEffectiveRates(input: {
   funnelKeys: readonly SalesFunnelKey[];
   measurement: BrandStepMeasurement | BrandStepCounts;
   manual: readonly BrandLegRate[];
-  medians: FleetArrowMedians;
 }): BrandEffectiveRates {
   const measurement = summariseMeasurement(input.measurement);
   const manualByLeg = new Map<string, number>();
@@ -826,7 +777,6 @@ export function buildBrandEffectiveRates(input: {
       label.toStep,
       measured,
       manualByLeg.get(key) ?? null,
-      input.medians.get(key) ?? { ratePct: null, brandCount: 0 },
       defaultRateOfLeg(fromStep, toStep),
       ourLeads,
     );
@@ -883,7 +833,7 @@ export function getBrandStepCounts(brandId: string, orgId: string): Promise<Bran
 }
 
 /**
- * The brand's effective rates: the cached measurement, the fleet medians, and the brand's OWN leg
+ * The brand's effective rates: the cached measurement and the brand's OWN leg
  * statements read LIVE on every call. The statements are what a person just edited, so they must never
  * come off a snapshot. `legEconomics` lets a caller that already read the statements pass them in.
  */
@@ -892,10 +842,9 @@ export async function getBrandEffectiveRates(
   orgId: string,
   legEconomics?: BrandLegEconomics,
 ): Promise<BrandEffectiveRates> {
-  const [measurement, statements, medians] = await Promise.all([
+  const [measurement, statements] = await Promise.all([
     getBrandStepCounts(brandId, orgId),
     legEconomics ? Promise.resolve(legEconomics) : fetchBrandLegEconomics(brandId, orgId),
-    getFleetArrowMedians(),
   ]);
-  return buildBrandEffectiveRates({ brandId, funnelKeys: SALES_FUNNEL_KEYS, measurement, manual: statements.legRates, medians });
+  return buildBrandEffectiveRates({ brandId, funnelKeys: SALES_FUNNEL_KEYS, measurement, manual: statements.legRates });
 }

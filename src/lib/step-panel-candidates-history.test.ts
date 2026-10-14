@@ -25,13 +25,12 @@ const measured = (basis: "crm" | "our_leads", from: number, to: number): Measure
 
 describe("rate candidates per leg (owner 2026-10-08, the step side panel)", () => {
   it("a leg kept from the CRM lists our leads' measurement and the client's value beside it, one kept", () => {
-    const leg = resolveArrow("Meeting attended", "Paid client", measured("crm", 43, 28), 32, { ratePct: 20, brandCount: 2 }, 15, measured("our_leads", 4, 1));
+    const leg = resolveArrow("Meeting attended", "Paid client", measured("crm", 43, 28), 32, 15, measured("our_leads", 4, 1));
     expect(leg.source).toBe("measured");
     expect(leg.candidates.map((c) => [c.basis, c.kept, c.notKeptReason])).toEqual([
       ["crm", true, null],
       ["our_leads", false, "crm_measures_this_leg"],
       ["manual", false, "outranked"],
-      ["median", false, "too_few_brands"],
       ["default", false, "outranked"],
     ]);
     const kept = leg.candidates.filter((c) => c.kept);
@@ -42,7 +41,7 @@ describe("rate candidates per leg (owner 2026-10-08, the step side panel)", () =
   });
 
   it("a measurement below the bar is listed, not kept: the client's value is", () => {
-    const leg = resolveArrow("Positive reply", "Meeting booked", measured("our_leads", 4, 1), 32, { ratePct: null, brandCount: 0 }, 15);
+    const leg = resolveArrow("Positive reply", "Meeting booked", measured("our_leads", 4, 1), 32, 15);
     expect(leg.source).toBe("manual");
     expect(leg.candidates.map((c) => [c.basis, c.kept, c.notKeptReason])).toEqual([
       ["our_leads", false, "below_learning_bar"],
@@ -52,8 +51,8 @@ describe("rate candidates per leg (owner 2026-10-08, the step side panel)", () =
   });
 
   it("precedence untouched: the effective rate is byte-same with or without the our-leads measurement", () => {
-    const a = resolveArrow("A", "B", measured("crm", 43, 28), 32, { ratePct: 20, brandCount: 9 }, 15);
-    const b = resolveArrow("A", "B", measured("crm", 43, 28), 32, { ratePct: 20, brandCount: 9 }, 15, measured("our_leads", 40, 10));
+    const a = resolveArrow("A", "B", measured("crm", 43, 28), 32, 15);
+    const b = resolveArrow("A", "B", measured("crm", 43, 28), 32, 15, measured("our_leads", 40, 10));
     expect([b.effectiveRatePct, b.source]).toEqual([a.effectiveRatePct, a.source]);
   });
 
@@ -62,7 +61,7 @@ describe("rate candidates per leg (owner 2026-10-08, the step side panel)", () =
       funnelKeys: ["sales_meetings_from_conversation"],
       lifetimeRevenueUsd: 1000,
       rateOf: (from, to) => {
-        const leg = resolveArrow(from, to, measured("crm", 43, 28), 32, { ratePct: null, brandCount: 0 }, 15, measured("our_leads", 4, 1));
+        const leg = resolveArrow(from, to, measured("crm", 43, 28), 32, 15, measured("our_leads", 4, 1));
         return { ratePct: leg.effectiveRatePct, provenance: `stated_${leg.source}`, measured: leg.measured, candidates: leg.candidates };
       },
     });

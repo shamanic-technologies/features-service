@@ -17,7 +17,8 @@ vi.mock("./brand-leg-economics-client.js", () => ({
 
 vi.mock("./feature-memberships-client.js", () => ({ fetchFeatureMemberships: vi.fn(async () => []) }));
 
-const { getBrandEffectiveRates, __resetFleetArrowMediansCache } = await import("./effective-conversion-rates.js");
+// The real resolution (src/vitest.setup.ts defaults it to unreadable for the route suites).
+const { getBrandEffectiveRates, __resetFleetStatedMediansCache } = await vi.importActual<typeof import("./effective-conversion-rates.js")>("./effective-conversion-rates.js");
 const { ALL_STEP_EVIDENCE } = await import("./funnel-steps.js");
 
 const COUNTS = {
@@ -48,7 +49,7 @@ const statement = (ratePct: number) => ({
 
 describe("getBrandEffectiveRates — the brand's statements are read live, never off a snapshot", () => {
   beforeEach(() => {
-    __resetFleetArrowMediansCache();
+    __resetFleetStatedMediansCache();
     servedCached.mockReset();
     servedCached.mockResolvedValue(COUNTS);
     fetchBrandLegEconomics.mockReset();

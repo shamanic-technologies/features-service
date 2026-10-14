@@ -40,7 +40,7 @@ const arrow = (fromStep: string, toStep: string, pct: number, source: EffectiveA
 const RATES: EffectiveArrowRate[] = [
   arrow("Positive reply", "Meeting booked", 50),
   arrow("Meeting booked", "Meeting attended", 80, "default"),
-  arrow("Meeting attended", "Paid client", 25, "median"),
+  arrow("Meeting attended", "Paid client", 25, "manual"),
   arrow("Positive reply", "Paid client", 5),
   arrow("Website visit", "Signup", 10),
   arrow("Signup", "Paid client", 20),
@@ -140,7 +140,8 @@ describe("buildOfferSalesPaths", () => {
     expect(meeting.legs[2].workedBy).toBe("human");
     expect(meeting.legs[2].costPerPayingClientUsd).toBeNull();
     expect(meeting.legs[2].rateSource).toBe("industry_default");
-    expect(meeting.legs[3].rateSource).toBe("fleet_median");
+    expect(meeting.legs[3].rateSource).toBe("customer_stated");
+    expect(meeting.legs[3].rateInputs!.fleetMedian).toEqual({ ratePct: null, brandCount: 0 });
     expect(meeting.entryToPayingClientPct).toBeCloseTo(10, 9);
     // Direct close: 20 replies × $10 = $200. Signup path: 50 visits × $1 = $50 → best.
     expect(body.paths[0].pathKey).toBe("start_to_website_visit+website_visit_to_signup+signup_to_paid_client");

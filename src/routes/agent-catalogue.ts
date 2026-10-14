@@ -77,7 +77,7 @@ import { LEAD_SOURCING_SLUG, SOURCE_LEG_KEY } from "../lib/sourcing-origins.js";
 /** The Lead Sourcing pipe, named in the one-channel-per-leg refusal. */
 const LEAD_SOURCING_PIPE_ID = `${LEAD_SOURCING_SLUG}|${SOURCE_LEG_KEY}`;
 import { campaignNameKeyOf } from "../lib/offer-sales-paths.js";
-import { getBrandEffectiveRates, getFleetArrowMedians, getFleetLifetimeRevenueMedian, legPairKey, peekFleetStatedMedians, type FleetArrowMedians } from "../lib/effective-conversion-rates.js";
+import { getBrandEffectiveRates, getFleetLifetimeRevenueMedian, legPairKey, peekFleetStatedMedians } from "../lib/effective-conversion-rates.js";
 import { fetchBrandLegEconomics } from "../lib/brand-leg-economics-client.js";
 import { fetchTeamCrmLegRates } from "../lib/team-crm-leg-rates.js";
 import { fetchOfferSteps, OfferStepsOfferNotFoundError, OfferStepsUnreadableError, type OfferSteps } from "../lib/offer-steps-client.js";
@@ -130,9 +130,10 @@ interface MeasurementStore {
   /** Pipes whose fleet read failed: served `learning` with reason `measurement_unreadable`, logged loud. */
   unreadable: Set<string>;
   computedAt: string;
-  /** The fleet medians the figures were built with, kept beside them so a fresh process can serve them
-   *  before its own fleet sweep ends (null on a store built before this field existed). */
-  fleet: { arrows: FleetArrowMedians; lifetimeRevenue: { usd: number | null; offerCount: number } } | null;
+  /** The fleet lifetime-revenue median the figures were built with, kept beside them so a fresh process can serve
+   *  it before its own fleet sweep ends (null on a store built before this field existed). No leg-rate median
+   *  since 2026-10-14 (a stored copy still carrying `arrows` has them ignored). */
+  fleet: { lifetimeRevenue: { usd: number | null; offerCount: number } } | null;
 }
 
 /**
@@ -149,7 +150,7 @@ interface StoredFigures {
   byPipe: Array<[string, PipeMeasurement]>;
   byPlay?: Array<[string, PipeMeasurement]>;
   unreadable: string[];
-  fleet: { arrows: Array<[string, { ratePct: number | null; brandCount: number }]>; lifetimeRevenue: { usd: number | null; offerCount: number } } | null;
+  fleet: { lifetimeRevenue: { usd: number | null; offerCount: number } } | null;
 }
 
 export function serializeFigures(v: MeasurementStore): string {
@@ -158,7 +159,7 @@ export function serializeFigures(v: MeasurementStore): string {
     byPipe: [...v.byPipe],
     byPlay: [...v.byPlay],
     unreadable: [...v.unreadable],
-    fleet: v.fleet ? { arrows: [...v.fleet.arrows], lifetimeRevenue: v.fleet.lifetimeRevenue } : null,
+    fleet: v.fleet ? { lifetimeRevenue: v.fleet.lifetimeRevenue } : null,
   };
   return JSON.stringify(out);
 }
@@ -171,7 +172,7 @@ export function parseFigures(text: string): MeasurementStore {
     byPlay: new Map(s.byPlay ?? []),
     unreadable: new Set(s.unreadable),
     computedAt: s.computedAt,
-    fleet: s.fleet ? { arrows: new Map(s.fleet.arrows), lifetimeRevenue: s.fleet.lifetimeRevenue } : null,
+    fleet: s.fleet ? { lifetimeRevenue: s.fleet.lifetimeRevenue } : null,
   };
 }
 
@@ -257,9 +258,9 @@ async function computeMeasurements(): Promise<MeasurementStore> {
       console.error(`[features-service] agent catalogue: fleet measurement of pipe ${p.id} failed; it reads learning (measurement_unreadable):`, error);
     }
   });
-  // The medians beside the figures (a background build may wait on the fleet sweep; a read never does).
-  const [arrows, lifetimeRevenue] = await Promise.all([getFleetArrowMedians(), getFleetLifetimeRevenueMedian()]);
-  return { byPipe, byPlay, unreadable, computedAt: new Date().toISOString(), fleet: { arrows, lifetimeRevenue } };
+  // The median beside the figures (a background build may wait on the fleet sweep; a read never does).
+  const lifetimeRevenue = await getFleetLifetimeRevenueMedian();
+  return { byPipe, byPlay, unreadable, computedAt: new Date().toISOString(), fleet: { lifetimeRevenue } };
 }
 
 /** Rebuild in the background when absent or past its fresh window (single-flight). */
@@ -327,14 +328,13 @@ interface Loaded {
   cat: LoadedCatalogue;
 }
 
-/** The fleet medians a read prices on: this process's own when computed, else the stored copy's, else (the
- *  very first boot only) the sweep itself. */
+/** The fleet lifetime-revenue median a read prices on: this process's own when computed, else the stored copy's,
+ *  else (the very first boot only) the sweep itself. */
 async function fleetMediansFor(stored: MeasurementStore["fleet"]): Promise<NonNullable<MeasurementStore["fleet"]>> {
   const own = peekFleetStatedMedians();
-  if (own) return { arrows: own.arrows, lifetimeRevenue: own.lifetimeRevenue };
-  if (stored) return stored;
-  const [arrows, lifetimeRevenue] = await Promise.all([getFleetArrowMedians(), getFleetLifetimeRevenueMedian()]);
-  return { arrows, lifetimeRevenue };
+  if (own) return { lifetimeRevenue: own.lifetimeRevenue };
+  if (stored) return { lifetimeRevenue: stored.lifetimeRevenue };
+  return { lifetimeRevenue: await getFleetLifetimeRevenueMedian() };
 }
 
 /**
@@ -422,7 +422,7 @@ async function loadModel(offer: OfferContext | null = null): Promise<Loaded> {
     loadPlayCatalogue(),
   ]);
   const workflowPipeKeys = new Set(assignments.filter((a) => a.state === "active").map((a) => `${a.featureSlug}|${pipeLegKeyOf(a.featureSlug, a.legKey)}`));
-  const { arrows: medians, lifetimeRevenue: ltr } = await fleetMediansFor(measurements.fleet);
+  const { lifetimeRevenue: ltr } = await fleetMediansFor(measurements.fleet);
   const publishedPipeIds = new Set(pub.channels.flatMap((c) => c.stepTransitions.map((t) => pipeIdOf(c.slug, servedPipeLegKey(c.slug, t.legKey)))));
   const model = buildCatalogueModel({
     channels: all.channels,
@@ -430,7 +430,6 @@ async function loadModel(offer: OfferContext | null = null): Promise<Loaded> {
     workflowPipeKeys,
     declaredSteps,
     measurements: measurements.byPipe,
-    fleetMedians: medians,
     lifetimeRevenueUsd: offer ? offer.lifetimeRevenueUsd : ltr.usd,
     lifetimeRevenueBasis: offer?.lifetimeRevenueSource === "offer_stated" ? "stated" : "fleet",
     ...(offer ? { offerRates: offer.rates } : {}),
@@ -1402,9 +1401,9 @@ router.post("/internal/catalogue/pipes", apiKeyOnly, async (req, res) => {
     const slug = (channel?.slug ?? declaredChannel?.slug)!;
     const operatedBy = (channel?.operatedBy ?? declaredChannel?.operatedBy)!;
     const input = parseLegInput(body, { slug, managed: channel?.managed ?? false, operatedBy, legKeys: new Set((channel?.stepTransitions ?? []).map((t) => t.legKey)) }, triggers);
-    // A leg out of a real step converts at a rate: the fleet's or the seeded default, else the caller states it.
+    // A leg out of a real step converts at a rate: the seeded default, else the caller states it.
     let statedRate: number | null = null;
-    if (input.fromStep !== null && input.fromStep !== "lead_found" && legRateOf(new Map(), input.fromStep, input.toStep).ratePct === null) {
+    if (input.fromStep !== null && input.fromStep !== "lead_found" && legRateOf(input.fromStep, input.toStep).ratePct === null) {
       if (body.conversionRatePct === undefined) {
         throw bad("conversion_rate_required", `no rate is known for ${input.fromStep} -> ${input.toStep}: state conversionRatePct (the share of people at ${input.fromStep} who reach ${input.toStep})`);
       }
@@ -1889,7 +1888,7 @@ router.get("/public/catalogue/steps", async (_req, res) => {
       listDeclaredSteps(),
     ]);
     const publishedPipeIds = new Set(pub.channels.flatMap((c) => c.stepTransitions.map((t) => pipeIdOf(c.slug, servedPipeLegKey(c.slug, t.legKey)))));
-    const model = buildCatalogueModel({ channels: all.channels, publishedPipeIds, declaredSteps, measurements: new Map(), fleetMedians: new Map(), lifetimeRevenueUsd: null });
+    const model = buildCatalogueModel({ channels: all.channels, publishedPipeIds, declaredSteps, measurements: new Map(), lifetimeRevenueUsd: null });
     const rows = [...model.steps.values()].sort((a, b) => a.key.localeCompare(b.key)).map((s) => ({ key: s.key, name: s.label, icon: s.icon }));
     res.set("Cache-Control", "public, max-age=300").json({ object: "step", total: rows.length, rows });
   } catch (err) {
@@ -2022,7 +2021,6 @@ export async function funnelCopiesFor(ids: readonly string[]): Promise<{
     publishedPipeIds,
     declaredSteps,
     measurements: new Map(),
-    fleetMedians: new Map(),
     lifetimeRevenueUsd: null,
     triggers,
     plays: playInputsOf(playCatalogue, assignments, new Map()),
@@ -2091,7 +2089,7 @@ export async function catalogueForLivedPaths(): Promise<{
   } catch (error) {
     console.error(`[features-service] lived sales paths: catalogue economics unreadable, expected figures omitted: ${(error as Error).message}`);
     const [all, declaredSteps] = await Promise.all([loadChannelCatalogue({ publishedOnly: false }), listDeclaredSteps()]);
-    const model = buildCatalogueModel({ channels: all.channels, publishedPipeIds: new Set(), declaredSteps, measurements: new Map(), fleetMedians: new Map(), lifetimeRevenueUsd: null, triggers: [] });
+    const model = buildCatalogueModel({ channels: all.channels, publishedPipeIds: new Set(), declaredSteps, measurements: new Map(), lifetimeRevenueUsd: null, triggers: [] });
     return {
       stepKeys: [...model.steps.keys()],
       expectedOf: () => null,
