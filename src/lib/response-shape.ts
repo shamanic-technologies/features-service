@@ -101,3 +101,40 @@ export function withoutResponseShape(key: string): string {
   params.delete(SHAPE_KEY_PART);
   return `${key.slice(0, bar)}|${params.toString()}`;
 }
+
+let currentMemo: Set<string> | undefined;
+
+/**
+ * Every fingerprint a cell may be keyed on in THIS build: the whole document's, and each route's (every
+ * method). A cell under any other 12-hex fingerprint was keyed by an earlier build and is never served
+ * by this one (its read is a miss), so the keeper must not count it as held.
+ */
+export function currentShapeFingerprints(document: unknown = openApiDocument): Set<string> {
+  if (document === openApiDocument && currentMemo) return currentMemo;
+  const out = new Set<string>([shapeFingerprint(document)]);
+  const doc = document as { paths?: Record<string, Record<string, { responses?: unknown }>> };
+  for (const [path, operations] of Object.entries(doc.paths ?? {})) {
+    for (const [method, operation] of Object.entries(operations ?? {})) {
+      if (operation && typeof operation === "object" && "responses" in operation && operation.responses) {
+        out.add(routeResponseShapeFingerprint(path, method, document));
+      }
+    }
+  }
+  if (document === openApiDocument) currentMemo = out;
+  return out;
+}
+
+const FINGERPRINT_TOKEN = /[0-9a-f]{12}/g;
+
+/**
+ * Whether a stored cell's key is servable by this build: its `_shape` part names only fingerprints this
+ * build computes (a manual marker such as `internal-measurement` carries none and is always current).
+ */
+export function isCurrentShapeKey(scopeKey: string, current: Set<string> = currentShapeFingerprints()): boolean {
+  const bar = scopeKey.indexOf("|");
+  if (bar < 0) return true;
+  const shape = new URLSearchParams(scopeKey.slice(bar + 1)).get(SHAPE_KEY_PART);
+  if (!shape) return true;
+  const tokens = shape.match(FINGERPRINT_TOKEN) ?? [];
+  return tokens.every((t) => current.has(t));
+}

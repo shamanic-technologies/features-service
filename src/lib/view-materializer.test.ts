@@ -35,6 +35,9 @@ describe("shapeOf", () => {
     expect(shapeOf(`/features/s/pipeline-activity?brandId=${B}&days=7&timezone=Asia%2FAlmaty`)).toBeNull();
     expect(shapeOf(`/public/stats/return-on-spend?featureSlug=s`)).toBeNull();
     expect(shapeOf(`/features/s/stats?campaignId=x`)).toBeNull();
+    // One record's read (prod 2026-10-14: asked of all 126 brands, 404 each time).
+    expect(shapeOf(`/brands/${B}/sales-funnel-campaigns/05e6a895-f57a-48f4-887e-79cd8a68ec02/activity`)).toBeNull();
+    expect(shapeOf(`/brands/${B}/sales-funnel-campaigns?pricing=net`)!.kind).toBe("brandPath");
   });
 });
 
