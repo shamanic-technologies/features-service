@@ -568,7 +568,7 @@ export const strategies = pgTable("strategies", {
   excludesTacticIds: text("excludes_tactic_ids").array().notNull().default([]),
   createdBy: text("created_by").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  /** Who last edited requires / excludes / description, and when (migration 0033); null = never edited. */
+  /** Who last edited requires / excludes / description, and when (migration 0032); null = never edited. */
   updatedBy: text("updated_by"),
   updatedAt: timestamp("updated_at", { withTimezone: true }),
 });
