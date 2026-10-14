@@ -5470,7 +5470,7 @@ const channelCatalogueResponseSchema = registry.register(
           coded: z.boolean().describe("A service fires it today. False = declared, not fired yet: no channel we run names it."),
           origin: z.enum(["code", "declared"]).describe("`code`: stated in this service's code. `declared`: created at run time through POST /internal/declarations/trigger-types (never coded until a service runs a generic detector for its `kind`)."),
           kind: z.enum(["event", "delay", "poll", "reported", "github_issue_in_prod"]).describe("`event`: a service detects something on a lead. `delay`: N days after a step, if nothing happened. `poll`: a new item appeared at a source. `reported`: a caller reports each occurrence to campaign-service's trigger-events record route (`params.reportedBy` names who). `github_issue_in_prod`: campaign-service's detector sees the GitHub issue a campaign waits on (stated per campaign at campaign-service) reach production."),
-          params: z.record(z.unknown()).nullable().describe("The kind's parameters: `delay` `{afterStep, days}`, `poll` `{source, everyMinutes}`, `reported` `{reportedBy}` on a declared one; null on an event and on a coded trigger."),
+          params: z.record(z.unknown()).nullable().describe("The kind's parameters: `delay` `{afterStep, days | minutes, unlessStep?}`, `poll` `{source, everyMinutes}`, `reported` `{reportedBy}` on a declared one; null on an event and on a coded trigger."),
         }),
       )
       .describe("THE TRIGGER TYPES (owner 2026-10-09): every kind of event that runs a REACTIVE leg, one row each in this service's database, the same for every client. The events themselves (one per occurrence, fired or skipped, per org x brand x offer) and each campaign's On/Off live in campaign-service."),
@@ -6543,7 +6543,7 @@ registry.registerPath({
             kind: z.enum(["event", "delay", "poll", "reported", "github_issue_in_prod"]),
             fromStep: z.string().nullable().optional().describe("`event` / `reported` only: the step a lead reached (event) or stands at (reported) when it fires."),
             firedBy: z.string().optional().describe("`event` only: the service that would detect it (default `not_built`)."),
-            params: z.record(z.unknown()).optional().describe("`reported`: `{reportedBy}` (required: the service that reports each occurrence, e.g. `chat-service`). `delay`: `{afterStep, days}` (a step key; days >= 1). `poll`: `{source, everyMinutes}` (everyMinutes >= 5); `source` = ONE treg call, object or JSON text, `{endpoint, method? GET|POST, query? (strings), body? (object), items (dot path, '' = the answer), itemId? (dot path), maxMicro (1..1000000 micro-USD per call)}`, stored as JSON text."),
+            params: z.record(z.unknown()).optional().describe("`reported`: `{reportedBy}` (required: the service that reports each occurrence, e.g. `chat-service`). `delay`: `{afterStep, days | minutes, unlessStep?}` (a step key; EXACTLY ONE of days >= 1 or minutes >= 5; optional unlessStep = another step: the occurrence is cancelled when the person reached it by the due time, e.g. `{afterStep: signup, minutes: 30, unlessStep: paid_client}`). `poll`: `{source, everyMinutes}` (everyMinutes >= 5); `source` = ONE treg call, object or JSON text, `{endpoint, method? GET|POST, query? (strings), body? (object), items (dot path, '' = the answer), itemId? (dot path), maxMicro (1..1000000 micro-USD per call)}`, stored as JSON text."),
             createdBy: z.string(),
             ...actorFields,
           }),

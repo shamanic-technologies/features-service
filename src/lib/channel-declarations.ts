@@ -119,14 +119,42 @@ export const POLL_MAX_MICRO_CEILING = 1_000_000;
 
 const badParams = (reason: string, message: string) => new DeclarationError(400, reason, message);
 
-/** PURE: `delay` params `{afterStep, days}`, the shape campaign-service's `parseDelayParams` reads. */
-export function parseDelayParams(raw: unknown): { afterStep: ChannelStepKey; days: number } {
-  if (!isRecord(raw)) throw badParams("params_required", "a delay trigger states params {afterStep, days}");
+/** campaign-service's floor on a minutes delay (`DELAY_MIN_MINUTES`): its detector loop ticks every 5 minutes. */
+export const DELAY_MIN_MINUTES = 5;
+
+export type DelayParams = { afterStep: ChannelStepKey; unlessStep?: ChannelStepKey } & ({ days: number } | { minutes: number });
+
+/**
+ * PURE: `delay` params `{afterStep, days?, minutes?, unlessStep?}`, the shape campaign-service's `parseDelayParams`
+ * reads (FACT-NOT-FOLLOWED-1014, LOCKED): EXACTLY ONE of `days` (whole number >= 1) or `minutes` (whole number >= 5);
+ * optional `unlessStep` = a step other than `afterStep`: the occurrence is cancelled when the person has EVER
+ * reached it by the due time ("a signup not followed by a paid client within 30 minutes"). `{afterStep, days}`
+ * declarations read exactly as before. Unknown fields are refused (the detector would ignore them silently).
+ */
+export function parseDelayParams(raw: unknown): DelayParams {
+  if (!isRecord(raw)) throw badParams("params_required", "a delay trigger states params {afterStep, days | minutes, unlessStep?}");
+  const extra = Object.keys(raw).filter((k) => !["afterStep", "days", "minutes", "unlessStep"].includes(k));
+  if (extra.length > 0) throw badParams("params_invalid", `params has unknown fields: ${extra.join(", ")}`);
   const afterStep = step(raw.afterStep, "params.afterStep");
-  if (typeof raw.days !== "number" || !Number.isInteger(raw.days) || raw.days < 1) {
-    throw badParams("delay_days_invalid", "params.days must be a whole number of days >= 1");
+  const hasDays = raw.days !== undefined;
+  const hasMinutes = raw.minutes !== undefined;
+  if (hasDays === hasMinutes) throw badParams("delay_unit_invalid", "a delay states exactly one of params.days or params.minutes");
+  let delay: { days: number } | { minutes: number };
+  if (hasDays) {
+    if (typeof raw.days !== "number" || !Number.isInteger(raw.days) || raw.days < 1) {
+      throw badParams("delay_days_invalid", "params.days must be a whole number of days >= 1");
+    }
+    delay = { days: raw.days };
+  } else {
+    if (typeof raw.minutes !== "number" || !Number.isInteger(raw.minutes) || raw.minutes < DELAY_MIN_MINUTES) {
+      throw badParams("delay_minutes_invalid", `params.minutes must be a whole number of minutes >= ${DELAY_MIN_MINUTES}`);
+    }
+    delay = { minutes: raw.minutes };
   }
-  return { afterStep, days: raw.days };
+  if (raw.unlessStep === undefined) return { afterStep, ...delay };
+  const unlessStep = step(raw.unlessStep, "params.unlessStep");
+  if (unlessStep === afterStep) throw badParams("delay_unless_step_invalid", "params.unlessStep must be a step other than params.afterStep");
+  return { afterStep, ...delay, unlessStep };
 }
 
 /**

@@ -207,6 +207,20 @@ describe("/internal/declarations: a staff caller declares a channel, a reactive 
     expect(bad.status).toBe(400);
     expect(bad.body.reason).toBe("delay_days_invalid");
     expect(mem.triggers.some((x) => x.id === "broken_delay")).toBe(false);
+
+    // FACT-NOT-FOLLOWED-1014: a fact NOT followed by another within N minutes is a delay too, coded alike.
+    const notFollowed = await request(app)
+      .post("/internal/declarations/trigger-types")
+      .set(KEY)
+      .send({ id: "signup_not_paid_30_min", label: "Signup Not Paid In 30 Min", description: "x", icon: "timer", kind: "delay", params: { afterStep: "signup", minutes: 30, unlessStep: "paid_client" }, createdBy: "kevin@distribute.you" });
+    expect(notFollowed.status).toBe(201);
+    expect(notFollowed.body).toMatchObject({ kind: "delay", coded: true, fromStep: "signup", params: { afterStep: "signup", minutes: 30, unlessStep: "paid_client" } });
+    const both = await request(app)
+      .post("/internal/declarations/trigger-types")
+      .set(KEY)
+      .send({ id: "broken_unit", label: "Broken unit", description: "x", icon: "clock", kind: "delay", params: { afterStep: "signup", days: 1, minutes: 30 }, createdBy: "kevin@distribute.you" });
+    expect(both.status).toBe(400);
+    expect(both.body.reason).toBe("delay_unit_invalid");
   });
 
   it("a trigger REPORTED by a caller is coded and starts a leg of the AI Follow-up Email (owner 2026-10-11)", async () => {
