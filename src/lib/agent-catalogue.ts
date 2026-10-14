@@ -55,8 +55,8 @@
  *
  *   value(Paid client)  = the fleet median lifetime revenue of an offer (`lib/offer-lifetime-revenue.ts`)
  *   value(step s)       = max over the legs s -> t of  rate(s -> t)/100 x value(t)
- *                         rate = fleet median of the stated rates (when >= MIN_FLEET_MEDIAN_BRANDS brands)
- *                         > seeded industry default (`lib/default-leg-rates.ts`, + declared leg rates);
+ *                         rate = seeded industry default (never a fleet median of other clients' stated rates,
+ *                         owner 2026-10-14) (`lib/default-leg-rates.ts`, + declared leg rates);
  *                         an entry leg out of Lead found has no stated rate: the best MATURE pipe's measured
  *                         conversion (outcomes / people worked) prices it.
  *   PIPE   cost = the best workflow's MATURE fleet cost per outcome of the leg's step (`lib/maturity.ts`,
@@ -74,7 +74,7 @@
  * ── MEASURED vs ESTIMATED (owner 2026-10-10: we sell a MEASURED cost per outcome, never an invented one) ──
  *
  *   A figure is MEASURED only when every input is a measured fleet outcome. Everything else it rests on is
- *   listed in `estimates` (`rate:<legKey>` for a leg rate that is a stated fleet median, an industry default
+ *   listed in `estimates` (`rate:<legKey>` for a leg rate that is an industry default
  *   or a declared rate; `lifetime_revenue` for the fleet median of STATED lifetime revenues; `step_value` for
  *   a step's value, which always ends on that stated lifetime revenue).
  *   FUNNEL / PATH  `status: "estimated"` as soon as one rate the cost per paying client uses is not measured
@@ -89,7 +89,7 @@
  *                            > market benchmark (`benchmark`, default) > the pipe's early flash figure (`flash`,
  *                            fleet) > another channel's mature price on the same leg, the highest (`same_leg_fleet`,
  *                            fleet). The customer's own team costs nothing. One rule for every pipe, no slug.
- *     leg rate               the path's rate (brand measured / stated > fleet median > default, measured pipe)
+ *     leg rate               the path's rate (brand measured / stated > default, measured pipe)
  *                            > an entry leg's cold-email default (`DEFAULT_ENTRY_RATE_PCT`) > the seeded leg default.
  *     lifetime revenue       the offer's stated value (stated) or the fleet median (fleet).
  *   `basis` = the weakest input. Null only with a named `unavailableReason`. The measured/estimated figures above
@@ -104,7 +104,6 @@ import { CHANNEL_STEPS, isDeclaredStepKey, type ChannelStepKey } from "./acquisi
 import type { PublicChannel } from "./channel-catalogue.js";
 import { DEFAULT_ENTRY_RATE_PCT, defaultLegRatePct } from "./default-leg-rates.js";
 import type { ExpectedBasis } from "./expected-return.js";
-import { fleetMedianApplies, legPairKey, type FleetArrowMedians } from "./effective-conversion-rates.js";
 import { FUNNEL_LEGS, legacyFunnelIdAliasOf, pipeLegKeyOf, servedLegKeyOf, storedLegKeyOf } from "./funnel-legs.js";
 import { DEFAULT_COST_PER_OUTCOME_USD, combinationKeyOf } from "./offer-sales-paths.js";
 import { SALES_PATH_COST_BENCHMARKS } from "./sales-path-cost-benchmarks.js";
@@ -219,7 +218,6 @@ export interface CatalogueInputs {
   declaredSteps: readonly DeclaredStepInput[];
   /** Pipe id -> fleet measurement. Absent = nothing measured. */
   measurements: ReadonlyMap<string, PipeMeasurement>;
-  fleetMedians: FleetArrowMedians;
   /** The fleet median lifetime revenue of an offer, USD (or ONE offer's own, on a per-offer read). Null = nothing anywhere states one. */
   lifetimeRevenueUsd: number | null;
   /** What that lifetime revenue rests on: `stated` (the offer's own) or `fleet` (a fleet median). Default `fleet`. */
@@ -551,16 +549,15 @@ function buildPlayVariants(inputs: CatalogueInputs, pipes: ReadonlyMap<string, C
   return out;
 }
 
-/** PURE: the rate of a non-entry leg between two steps (fleet median > default incl. declared). */
-/** Where a leg rate comes from. `offer_*` only on a per-offer read (the offer's brand's own rate). */
-export type CatalogueRateSource = "fleet_median" | "default" | "measured_pipe" | "offer_measured" | "offer_stated" | "offer_team_measured" | null;
+/** Where a leg rate comes from. `offer_*` only on a per-offer read (the offer's brand's own rate). No `fleet_median`:
+ *  owner 2026-10-14, nobody is priced on other clients' stated rates. */
+export type CatalogueRateSource = "default" | "measured_pipe" | "offer_measured" | "offer_stated" | "offer_team_measured" | null;
 
 /** A rate that is a measured outcome (never an estimate): the fleet's measured conversion, or the brand's own measured one. */
 export const isMeasuredRate = (source: CatalogueRateSource): boolean => source === "measured_pipe" || source === "offer_measured" || source === "offer_team_measured";
 
-export function legRateOf(medians: FleetArrowMedians, from: string, to: string): { ratePct: number | null; source: "fleet_median" | "default" | null } {
-  const median = medians.get(legPairKey(from, to));
-  if (median && fleetMedianApplies(median) && median.ratePct !== null) return { ratePct: median.ratePct, source: "fleet_median" };
+/** PURE: the rate of a non-entry leg between two steps: the seeded default (incl. declared), never a fleet median. */
+export function legRateOf(from: string, to: string): { ratePct: number | null; source: "default" | null } {
   const def = defaultLegRatePct(from as ChannelStepKey, to as ChannelStepKey);
   return def === null ? { ratePct: null, source: null } : { ratePct: def, source: "default" };
 }
@@ -607,9 +604,7 @@ export const rateBasisOf = (source: CatalogueRateSource | "default_entry"): Expe
     ? "measured"
     : source === "offer_stated"
       ? "stated"
-      : source === "fleet_median"
-        ? "fleet"
-        : source === "default" || source === "default_entry"
+      : source === "default" || source === "default_entry"
           ? "default"
           : null;
 
@@ -704,7 +699,7 @@ const neededAtTakeover = (legs: readonly ExpectedFunnelLeg[]): number => {
 export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
   // A per-offer read prices a leg on the offer's brand's own rate where it has one, else the fleet's.
   const rateOf = (from: string, to: string): { ratePct: number | null; source: CatalogueRateSource } =>
-    inputs.offerRates?.get(`${from}>${to}`) ?? legRateOf(inputs.fleetMedians, from, to);
+    inputs.offerRates?.get(`${from}>${to}`) ?? legRateOf(from, to);
   // Step defs: coded + declared (registered into CHANNEL_STEPS by the catalogue load).
   const declared = new Map(inputs.declaredSteps.map((d) => [d.key, d]));
   const stepKeys = new Set<string>([...Object.keys(CHANNEL_STEPS), ...declared.keys()]);
@@ -903,7 +898,7 @@ export function funnelEconomics(
     if (i === first) break;
     const rate = path.rates[i].ratePct;
     if (!usable(rate)) return LEARNING(`leg_unrated:${path.legKeys[i]}`);
-    // Only a measured fleet conversion is a measured rate; a stated median, a default or a declared rate is not.
+    // Only a measured fleet conversion is a measured rate; a default or a declared rate is not.
     if (!isMeasuredRate(path.rates[i].source)) estimates.unshift(`rate:${path.legKeys[i]}`);
     needed /= rate / 100;
   }

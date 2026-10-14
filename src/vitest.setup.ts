@@ -46,9 +46,19 @@ vi.mock("./lib/leg-fleet-evidence.js", () => ({
  * (no offer in the fleet states one), so a fixture's unstated offer stays unpriced as it states. Suites
  * asserting the fleet-median default set their own return.
  */
+/**
+ * Suite-wide default, too: the brand's EFFECTIVE leg rates are UNREADABLE, so pricing reads fall back to the
+ * fixture's stated leg rates (`fetchPricingFunnels`' fail-soft path). That is the state every route suite's
+ * hand-derived figures were written against: until 2026-10-14 the read swept the fleet median through the DB
+ * no route fixture answers and threw. Suites about the resolution itself (`effective-conversion-rates*.test.ts`,
+ * `routes/conversion-rates.test.ts`) use the real function (`vi.importActual`) or their own mock.
+ */
 vi.mock("./lib/effective-conversion-rates.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/effective-conversion-rates.js")>()),
   getFleetLifetimeRevenueMedian: vi.fn(async () => ({ usd: null, offerCount: 0 })),
+  getBrandEffectiveRates: vi.fn(async () => {
+    throw new Error("suite default: effective conversion rates not mocked (see src/vitest.setup.ts)");
+  }),
 }));
 
 /**

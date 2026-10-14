@@ -126,7 +126,7 @@ describe("a fresh process (every deploy) serves the stored catalogue figures, ne
       byPipe: new Map([[COLD, { basis: "mature" as const, costPerOutcomeUsd: 40, conversionRatePct: 1, workflowDynastySlug: "orion" }]]),
       byPlay: new Map(), unreadable: new Set(["x|y"]),
       computedAt: "2026-10-10T10:00:00.000Z",
-      fleet: { arrows: new Map([["conversation>paid_client", { ratePct: 5, brandCount: 7 }]]), lifetimeRevenue: { usd: 2500, offerCount: 9 } },
+      fleet: { lifetimeRevenue: { usd: 2500, offerCount: 9 } },
     };
     expect(parseFigures(serializeFigures(v))).toEqual(v);
   });
@@ -138,7 +138,7 @@ describe("a fresh process (every deploy) serves the stored catalogue figures, ne
         byPipe: new Map([[COLD, { basis: "mature", costPerOutcomeUsd: 40, conversionRatePct: 1, workflowDynastySlug: "orion" }]]),
         byPlay: new Map(), unreadable: new Set(),
         computedAt: "2026-10-10T10:00:00.000Z",
-        fleet: { arrows: new Map(), lifetimeRevenue: { usd: 3000, offerCount: 12 } },
+        fleet: { lifetimeRevenue: { usd: 3000, offerCount: 12 } },
       }),
     });
     const started = Date.now();
@@ -156,7 +156,7 @@ describe("a fresh process (every deploy) serves the stored catalogue figures, ne
         byPipe: new Map([[COLD, { basis: "mature", costPerOutcomeUsd: 40, conversionRatePct: 1, workflowDynastySlug: "orion" }]]),
         byPlay: new Map(), unreadable: new Set(),
         computedAt: "2026-10-10T10:00:00.000Z",
-        fleet: { arrows: new Map(), lifetimeRevenue: { usd: 3000, offerCount: 12 } },
+        fleet: { lifetimeRevenue: { usd: 3000, offerCount: 12 } },
       }),
     });
     fleet.fails = true;

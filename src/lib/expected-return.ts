@@ -99,7 +99,6 @@ const RATE_BASIS: Record<SalesPathRateSource, ExpectedBasis> = {
   crm_measured: "measured",
   measured_on_our_leads: "measured",
   customer_stated: "stated",
-  fleet_median: "fleet",
   industry_default: "default",
 };
 const COST_BASIS: Record<SalesPathCostSource, ExpectedBasis> = {
@@ -232,7 +231,6 @@ export function expectedForCombination(m: OfferExpectedModel, salesFunnelId: str
 const RATE_WORD: Record<EffectiveRateSource, { basis: ExpectedBasis; source: (r: EffectiveArrowRate) => string }> = {
   measured: { basis: "measured", source: (r) => (r.measured.basis === "crm" ? "crm_measured" : "measured_on_our_leads") },
   manual: { basis: "stated", source: () => "customer_stated" },
-  median: { basis: "fleet", source: () => "fleet_median" },
   default: { basis: "default", source: () => "industry_default" },
 };
 

@@ -104,8 +104,6 @@ export type SalesPathRateSource =
   | "measured_on_our_leads"
   /** The value the customer stated for the leg. */
   | "customer_stated"
-  /** The median of what other brands stated for the leg. */
-  | "fleet_median"
   /** The seeded industry benchmark for the leg. */
   | "industry_default";
 
@@ -217,7 +215,8 @@ export interface SalesPathLeg {
       sufficient: boolean;
     };
     customerStatedPct: number | null;
-    fleetMedian: { ratePct: number | null; brandCount: number };
+    /** RETIRED (owner 2026-10-14): always `{ ratePct: null, brandCount: 0 }`, kept for readers that parse it. */
+    fleetMedian: { ratePct: null; brandCount: 0 };
     industryDefaultPct: number | null;
   } | null;
   /** `platform`: a platform channel works this leg in this combination. `human`: the customer's team does
@@ -416,8 +415,6 @@ function rateSourceOf(arrow: EffectiveArrowRate): SalesPathRateSource | null {
       return arrow.measured.basis === "crm" ? "crm_measured" : "measured_on_our_leads";
     case "manual":
       return "customer_stated";
-    case "median":
-      return "fleet_median";
     case "default":
       return "industry_default";
     default:
