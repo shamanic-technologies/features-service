@@ -5518,6 +5518,41 @@ const channelCatalogueResponseSchema = registry.register(
         unavailableReason: z.enum(["not_enough_meetings", "lead_service_unavailable"]).nullable(),
       })
       .describe("AI MEETING BOOKING GAIN (owner 2026-10-13): Positive reply -> Meeting booked rate with AI Meeting Booking vs with the client's own team, both populations served; the gain only once both sides are measured."),
+    meetingBookingBeforeAfter: (() => {
+      const window = z
+        .object({
+          positiveReplyPeople: z.number().int().describe("People whose FIRST positive reply falls in this window (the rate's population)."),
+          bookedPeople: z.number().int().describe("Of them, people who booked a meeting at or after that reply, whoever booked it (a person who replied before go-live and booked after stays in `before`)."),
+          ratePct: z.number().nullable().describe("bookedPeople / positiveReplyPeople x 100, 2 decimals; null when nobody. Open window: recent repliers have had less time to book, compare on `sameHorizon`."),
+          bookedBy: z
+            .object({ aiMeetingBooking: z.number().int(), yourTeamMeetingBooking: z.number().int(), other: z.number().int(), unknown: z.number().int() })
+            .describe("Who booked each booked person's first meeting (lead-service's attribution; `unknown` is never given to a side)."),
+          sameHorizon: z
+            .object({ days: z.number().int(), positiveReplyPeople: z.number().int(), bookedPeople: z.number().int(), ratePct: z.number().nullable() })
+            .describe("Same horizon for both windows: people whose first positive reply is at least `days` old, booked within `days` of it. The change is taken on this block."),
+        });
+      const change = {
+        changePctPoints: z.number().nullable().describe("After rate minus before rate on the same horizon, in percentage points. Null with `unavailableReason`."),
+        relativeChangePct: z.number().nullable().describe("(after rate / before rate - 1) x 100 on the same horizon (the '+50%' kind of figure). Null with `unavailableReason`, or when the before rate is 0."),
+        bookedRequiredPerWindow: z.number().int().describe("The leg's maturity bar: meetings EACH window must have booked (same horizon) before the change is served."),
+        unavailableReason: z.enum(["not_enough_meetings", "no_before_history"]).nullable().describe("`not_enough_meetings`: a window booked under the bar, the change would be noise, read the populations. `no_before_history`: AI was on from the brand's first positive reply."),
+      };
+      return z
+        .object({
+          legKey: z.literal("conversation_to_meeting_booked"),
+          basis: z.literal("positive_repliers_by_first_reply_vs_ai_go_live").describe("Each person sits in the window of their FIRST positive reply: before = strictly before the brand's AI Meeting Booking go-live (its first AI Meeting Booking act, never a creation date), after = at or after. Attribution and go-live are lead-service's."),
+          brands: z
+            .array(z.object({ brandId: z.string(), goLiveAt: z.string().describe("When AI Meeting Booking first acted for the brand."), before: window, after: window, ...change }))
+            .nullable()
+            .describe("One row per brand whose AI Meeting Booking went live, most positive repliers first. Null when lead-service is unreadable."),
+          fleet: z
+            .object({ brandCount: z.number().int(), before: window, after: window, ...change })
+            .nullable()
+            .describe("Sum over those brands. Null when lead-service is unreadable."),
+          unavailableReason: z.enum(["lead_service_unavailable"]).nullable(),
+        })
+        .describe("AI MEETING BOOKING BEFORE vs AFTER (2026-10-14): per brand that turned AI Meeting Booking on, the Positive reply -> Meeting booked rate before it went live vs after, both populations, plus the fleet; the change only once each window booked the bar, else the populations and `not_enough_meetings`.");
+    })(),
   }),
 );
 
