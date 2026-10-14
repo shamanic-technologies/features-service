@@ -1,8 +1,9 @@
 /**
  * WHAT STARTS A REACTIVE SALES FUNNEL, in customer words (owner 2026-10-10/11: the Campaigns page shows it as a
  * tag, e.g. "Positive replies"). Read by the catalogue funnel rows and the funnel campaign read. The one-sentence
- * funnel description shipped 2026-10-11 was withdrawn by the owner the same day (the page shows the funnel's
- * path instead); its stored column `sales_path_combination_names.description` stays, unused.
+ * funnel description shipped 2026-10-11 was withdrawn by the owner the same day for its length; its stored column
+ * `sales_path_combination_names.description` stays, unused. The SHORT sentence served since 2026-10-14 is
+ * `lib/funnel-short-descriptions.ts`.
  */
 import type { CatalogueFunnel } from "./agent-catalogue.js";
 import { triggerForStep } from "./channel-triggers.js";
