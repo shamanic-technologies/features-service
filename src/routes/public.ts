@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { fetchFleetEmailDelivery, type FleetEmailDelivery } from "../lib/fleet-email-delivery.js";
 import { fetchMeetingBookingGain, type MeetingBookingGain } from "../lib/meeting-booking-gain.js";
+import { fetchMeetingBookingBeforeAfter, type MeetingBookingBeforeAfter } from "../lib/meeting-booking-before-after.js";
 import { awaitWarmStore } from "../lib/await-warm-store.js";
 import { loadFleetCell, storeFleetCell } from "../lib/fleet-cell-store.js";
 import { eq } from "drizzle-orm";
@@ -3326,6 +3327,8 @@ interface ChannelCataloguePayload {
   emailDelivery: FleetEmailDelivery;
   /** AI Meeting Booking vs the client's own team on Positive reply -> Meeting booked (`lib/meeting-booking-gain.ts`). */
   meetingBookingGain: MeetingBookingGain;
+  /** AI Meeting Booking before vs after go-live, per brand + fleet (`lib/meeting-booking-before-after.ts`). */
+  meetingBookingBeforeAfter: MeetingBookingBeforeAfter;
   channels: PublicChannel[];
   /** EVERY declared sales funnel, mirrored from brand-service, whether or not a channel sells it today.
    *  Each states the STEP IT STARTS ON in the same vocabulary a channel's `producibleSteps` use, so
@@ -3402,6 +3405,7 @@ export async function handlePublicChannels(res: import("express").Response): Pro
       triggers: await loadChannelTriggers(),
       emailDelivery: await fetchFleetEmailDelivery(),
       meetingBookingGain: await fetchMeetingBookingGain(),
+      meetingBookingBeforeAfter: await fetchMeetingBookingBeforeAfter(),
       };
     },
   });
