@@ -584,6 +584,24 @@ export const plays = pgTable(
 );
 
 /**
+ * The LAST full Jev sweep, per tactic (migration 0031): how many workflow versions it covered, how many stand judged on
+ * the description it read, how many Jev could not judge and why. Served as the tactic's `judging` state, so an agent
+ * tells "Jev is still working" from "Jev keeps failing" (owner 2026-10-14: a failing judge looked pending forever).
+ * One row per tactic, overwritten by every full sweep (a register kick narrowed to a few dynasties writes none).
+ */
+export const tacticJudgingSweeps = pgTable("tactic_judging_sweeps", {
+  tacticId: text("tactic_id").primaryKey(),
+  /** The description that sweep judged on (a later edit means the row describes older words). */
+  judgedDescription: text("judged_description").notNull(),
+  sweptAt: timestamp("swept_at", { withTimezone: true }).notNull(),
+  versions: integer("versions").notNull(),
+  judged: integer("judged").notNull(),
+  failed: integer("failed").notNull(),
+  lastFailure: text("last_failure"),
+  lastFailureAt: timestamp("last_failure_at", { withTimezone: true }),
+});
+
+/**
  * One Jev verdict per (workflow VERSION, tactic), judged once per tactic DESCRIPTION (`judged_description`, migration
  * 0030): an edited description re-judges the row in place; `version_active` is refreshed on every sweep.
  */

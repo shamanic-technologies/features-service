@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildPlayCatalogue, currentTacticsByDynasty, idOfName, resolvePlay, splitPlayId, strategyOfFunnelLeg, strategyVerdict, type Strategy, type TacticVerdictRow } from "./plays.js";
+import { buildPlayCatalogue, currentTacticsByDynasty, idOfName, playBlockOf, resolvePlay, splitPlayId, strategyOfFunnelLeg, strategyVerdict, tacticJudgingOf, type Strategy, type TacticJudgingSweep, type TacticVerdictRow } from "./plays.js";
 
 const V = (slug: string, dynasty: string, version: number, active: boolean, verdict: boolean): TacticVerdictRow => ({
   workflowSlug: slug, tacticId: "catch-all", workflowDynastySlug: dynasty, version, versionActive: active, verdict, probability: verdict ? 0.9 : 0.1, model: "m", judgedAt: "",
@@ -54,5 +54,34 @@ describe("plays (owner 2026-10-13)", () => {
     expect(resolvePlay(c, "p|l", "telepathy")).toMatchObject({ known: false });
     expect(resolvePlay(c, "q|l", null)).toMatchObject({ known: true, isDefault: true, strategy: null });
     expect(c.playsByPipe.get("p|l")![0].isDefault).toBe(true);
+  });
+});
+
+describe("judging state and why a play runs nothing (owner 2026-10-14)", () => {
+  const T = { name: "Catch-all", description: "Sends to catch-all addresses." };
+  const sweep = (over: Partial<TacticJudgingSweep> = {}): TacticJudgingSweep => ({ tacticId: "catch-all", judgedDescription: T.description, sweptAt: "2026-10-14T09:00:00.000Z", versions: 822, judged: 0, failed: 822, lastFailure: "chat-service platform-judgments 502", lastFailureAt: "2026-10-14T09:00:00.000Z", ...over });
+  const EVERY = 15 * 60_000;
+
+  it("never swept, or swept on older words = judging; failures = failing with the reason and the next sweep; else complete", () => {
+    expect(tacticJudgingOf(T, null, EVERY).status).toBe("judging");
+    expect(tacticJudgingOf(T, sweep({ judgedDescription: "Old words." }), EVERY).status).toBe("judging");
+    const failing = tacticJudgingOf(T, sweep(), EVERY);
+    expect(failing).toMatchObject({ status: "failing", versions: 822, versionsFailed: 822, nextSweepAt: "2026-10-14T09:15:00.000Z", lastFailure: "chat-service platform-judgments 502" });
+    expect(failing.detail).toContain("retries them by itself");
+    expect(tacticJudgingOf(T, sweep({ judged: 822, failed: 0, lastFailure: null, lastFailureAt: null }), EVERY).status).toBe("complete");
+  });
+
+  it("a play blocked on an unjudged tactic says judging_failing / judging_pending; all judged out = no_workflow_follows_strategy", () => {
+    const failing = () => tacticJudgingOf(T, sweep(), EVERY);
+    const pending = () => tacticJudgingOf(T, null, EVERY);
+    const unjudged = new Map<string, Map<string, boolean>>();
+    expect(playBlockOf(CATCH, ["orion"], unjudged, failing, name)?.reason).toBe("judging_failing");
+    expect(playBlockOf(CATCH, ["orion"], unjudged, failing, name)?.detail).toContain("chat-service platform-judgments 502");
+    expect(playBlockOf(CATCH, ["orion"], unjudged, pending, name)?.reason).toBe("judging_pending");
+    const judgedNo = new Map([["orion", new Map([["catch-all", false]])]]);
+    expect(playBlockOf(CATCH, ["orion"], judgedNo, failing, name)?.reason).toBe("no_workflow_follows_strategy");
+    const judgedYes = new Map([["orion", new Map([["catch-all", true]])]]);
+    expect(playBlockOf(CATCH, ["orion"], judgedYes, failing, name)).toBeNull();
+    expect(playBlockOf(CATCH, [], unjudged, failing, name)).toBeNull();
   });
 });

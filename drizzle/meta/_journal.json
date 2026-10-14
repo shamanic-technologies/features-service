@@ -218,6 +218,13 @@
       "when": 1792368000000,
       "tag": "0030_tactic_description_edits",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1792454400000,
+      "tag": "0031_tactic_judging_sweeps",
+      "breakpoints": true
     }
   ]
 }

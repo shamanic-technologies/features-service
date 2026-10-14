@@ -15,18 +15,20 @@
  * Runs off the request path: ~60 s after boot, then every 15 min, single-flight; kicked again when a tactic is
  * declared or edited and when a workflow is registered on a pipe, so a new version is judged within minutes of its birth.
  * Each item has its own try/catch and timeout; one failure leaves only that (version, tactic) unjudged for the
- * next sweep. Fail LOUD in the log, never a default verdict.
+ * next sweep. Fail LOUD in the log, never a default verdict. Every FULL sweep records, per tactic, how many versions it
+ * covered, how many stand judged and how many Jev could not judge and why (`tactic_judging_sweeps`): the tactic serves it
+ * as `judging` (owner 2026-10-14: Jev out of credits looked "pending" forever to a client's agent).
  */
 import { fetchWithRetry } from "./fetch-retry.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { listLegAssignments } from "./workflow-leg-assignments.js";
-import { insertVerdict, invalidatePlayCatalogue, listVerdicts, loadPlayCatalogue, refreshVersionActive } from "./plays-store.js";
-import type { Tactic } from "./plays.js";
+import { insertVerdict, invalidatePlayCatalogue, listVerdicts, loadPlayCatalogue, recordJudgingSweeps, refreshVersionActive } from "./plays-store.js";
+import type { Tactic, TacticJudgingSweep } from "./plays.js";
 import { fetchWorkflowDefinitions, type WorkflowDefinition } from "./workflow-definitions-client.js";
 
 const JUDGE_CONCURRENCY = 4;
 const JUDGE_TIMEOUT_MS = 60_000;
-const SWEEP_EVERY_MS = 15 * 60_000;
+export const SWEEP_EVERY_MS = 15 * 60_000;
 const FIRST_SWEEP_AFTER_MS = 60_000;
 /** A DAG is sent whole up to this size (every cold email DAG today is under 13k characters). */
 const MAX_DAG_CHARS = 60_000;
@@ -91,9 +93,11 @@ export interface SweepResult {
  * picked among every measured workflow, so each one needs its verdict) x every tactic, judging what is not stored.
  * `onlyDynasties` narrows the sweep to those dynasties (a registration kick). Exported for tests and the staff kick route.
  */
-export async function sweepTacticJudgments(deps: { judge?: typeof judgeTactic; definitions?: typeof fetchWorkflowDefinitions } = {}, onlyDynasties: ReadonlySet<string> | null = null): Promise<SweepResult> {
+export async function sweepTacticJudgments(deps: { judge?: typeof judgeTactic; definitions?: typeof fetchWorkflowDefinitions; record?: typeof recordJudgingSweeps; now?: () => Date } = {}, onlyDynasties: ReadonlySet<string> | null = null): Promise<SweepResult> {
   const judge = deps.judge ?? judgeTactic;
   const definitions = deps.definitions ?? fetchWorkflowDefinitions;
+  const record = deps.record ?? recordJudgingSweeps;
+  const startedAt = (deps.now ?? (() => new Date()))();
   const [assignments, catalogue, stored] = await Promise.all([listLegAssignments(), loadPlayCatalogue(), listVerdicts()]);
   const tactics = [...catalogue.tactics.values()];
   const result: SweepResult = { versions: 0, judged: 0, failed: 0, alreadyJudged: 0 };
@@ -110,6 +114,13 @@ export async function sweepTacticJudgments(deps: { judge?: typeof judgeTactic; d
   const done = new Set(stored.filter((v) => v.judgedDescription === descriptionOf.get(v.tacticId)).map((v) => `${v.workflowSlug}|${v.tacticId}`));
   const activeBySlug = new Map(stored.map((v) => [v.workflowSlug, v.versionActive]));
   const todo: Array<{ t: Tactic; w: WorkflowDefinition; featureSlug: string }> = [];
+  // Per tactic: what this sweep saw (versions covered, judged, failed, the last reason Jev or a read gave).
+  const perTactic = new Map(tactics.map((t) => [t.id, { versions: 0, judged: 0, failed: 0, lastFailure: null as string | null }]));
+  const failOn = (tacticId: string, reason: string) => {
+    const x = perTactic.get(tacticId)!;
+    x.failed += 1;
+    x.lastFailure = reason.slice(0, 300);
+  };
   for (const [featureSlug, dynasties] of dynastiesByFeature) {
     let versions: WorkflowDefinition[];
     try {
@@ -117,14 +128,18 @@ export async function sweepTacticJudgments(deps: { judge?: typeof judgeTactic; d
     } catch (error) {
       console.error(`[features-service] tactic judgments: workflow definitions of ${featureSlug} unreadable, judged next sweep:`, error);
       result.failed += 1;
+      for (const t of tactics) failOn(t.id, `the workflows of ${featureSlug} could not be read: ${(error as Error).message}`);
       continue;
     }
     for (const w of versions) {
       result.versions += 1;
       if (activeBySlug.has(w.workflowSlug) && activeBySlug.get(w.workflowSlug) !== w.versionActive) await refreshVersionActive(w.workflowSlug, w.versionActive);
       for (const t of tactics) {
-        if (done.has(`${w.workflowSlug}|${t.id}`)) result.alreadyJudged += 1;
-        else todo.push({ t, w, featureSlug });
+        perTactic.get(t.id)!.versions += 1;
+        if (done.has(`${w.workflowSlug}|${t.id}`)) {
+          result.alreadyJudged += 1;
+          perTactic.get(t.id)!.judged += 1;
+        } else todo.push({ t, w, featureSlug });
       }
     }
   }
@@ -133,11 +148,26 @@ export async function sweepTacticJudgments(deps: { judge?: typeof judgeTactic; d
       const j = await judge(t, w);
       await insertVerdict({ workflowSlug: w.workflowSlug, tacticId: t.id, workflowDynastySlug: w.workflowDynastySlug, featureSlug, version: w.version, versionActive: w.versionActive, verdict: j.verdict, probability: j.probability, model: j.model, judgedDescription: t.description });
       result.judged += 1;
+      perTactic.get(t.id)!.judged += 1;
     } catch (error) {
       result.failed += 1;
+      failOn(t.id, (error as Error).message);
       console.error(`[features-service] tactic judgments: ${w.workflowSlug} x ${t.id} not judged (next sweep retries):`, (error as Error).message);
     }
   });
+  // A FULL sweep states each tactic's judging; a kick narrowed to a few dynasties covers too little to.
+  if (!onlyDynasties) {
+    const sweptAt = startedAt.toISOString();
+    const rows: TacticJudgingSweep[] = tactics.map((t) => {
+      const x = perTactic.get(t.id)!;
+      return { tacticId: t.id, judgedDescription: t.description, sweptAt, versions: x.versions, judged: x.judged, failed: x.failed, lastFailure: x.failed > 0 ? x.lastFailure : null, lastFailureAt: x.failed > 0 ? sweptAt : null };
+    });
+    try {
+      await record(rows);
+    } catch (error) {
+      console.error("[features-service] tactic judgments: the sweep's per-tactic outcome could not be recorded:", error);
+    }
+  }
   invalidatePlayCatalogue();
   return result;
 }

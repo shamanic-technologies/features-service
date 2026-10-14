@@ -6662,6 +6662,15 @@ const catalogueChannelDetail = z.object({
   operatedBy: z.enum(["platform", "customer"]), performedBy: z.enum(["software", "person"]), managed: z.boolean(), ...catalogueRunnableField,
   ...catalogueEconDetail, costUnit: z.literal("per_outcome"), bestPipeId: z.string().nullable(), pipes: z.array(cataloguePipeRow),
 });
+const catalogueNotRunnable = {
+  notRunnableReason: z
+    .enum(["judging_failing", "judging_pending", "no_workflow_follows_strategy", "unpublished", "no_workflow"])
+    .nullable()
+    .describe(
+      "Why nothing runs it (null when `runnable`). Owner 2026-10-14: a play blocked on its strategy says whether Jev is still judging (`judging_pending`), FAILING to judge (`judging_failing`: retried by every sweep, so it resumes by itself), or judged every active workflow out (`no_workflow_follows_strategy`: a workflow following it must be built). `no_workflow`: no active workflow works the pipe; `unpublished`: hidden by staff.",
+    ),
+  notRunnableDetail: z.string().nullable().describe("The reason in one plain sentence an agent can relay."),
+};
 const catalogueTacticPlayRow = z.object({
   object: z.literal("play"),
   id: z.string().describe("The play id a sales funnel names: the bare pipe id for the default play, `<pipe id>~<strategy id>` for another (`POST /internal/catalogue/sales-funnels` takes either in `pipeIds`). In a funnel id the leg reads `<leg>@<channel slug>~<strategy id>`."),
@@ -6678,11 +6687,12 @@ const catalogueTacticPlayRow = z.object({
   measuredBasis: z.enum(["mature", "flash"]).nullable(),
   allowedActiveWorkflowCount: z.number().int().nullable(),
   ...catalogueRunnableField,
+  ...catalogueNotRunnable,
 });
 const cataloguePipeDetail = z.object({
   object: z.literal("pipe"), id: z.string(), name: z.string(), icon: z.string(), color: z.string(), line: z.string(), channelSlug: z.string(), channelName: z.string(),
   legKey: z.string(), fromStep: z.string().nullable(), toStep: z.string(), mode: z.enum(["proactive", "reactive"]), triggerId: z.string().nullable(),
-  operatedBy: z.enum(["platform", "customer"]), managed: z.boolean(), ...catalogueRunnableField, draft: z.boolean(),
+  operatedBy: z.enum(["platform", "customer"]), managed: z.boolean(), ...catalogueRunnableField, ...catalogueNotRunnable, draft: z.boolean(),
   ...catalogueEconDetail, costUnit: z.literal("per_outcome"), toStepValueUsd: z.number().nullable(), bestWorkflowSlug: z.string().nullable(),
   measuredBasis: z.enum(["mature", "flash"]).nullable(), conversionRatePct: z.number().nullable(),
   play: z
@@ -6985,6 +6995,13 @@ const catalogueTriggerRow = z.object({
 catalogueRead("/internal/catalogue/triggers", "List triggers: what starts a reactive pipe (internal, api-key)", { q: catalogueQ, limit: catalogueLimit }, z.object({ object: z.literal("trigger"), order: z.literal("catalogue"), total: z.number().int(), truncated: z.boolean(), rows: z.array(catalogueTriggerRow) }));
 catalogueRead("/internal/catalogue/triggers/{id}", "One trigger and the reactive pipes it starts (internal, api-key)", {}, catalogueTriggerRow.extend({ object: z.literal("trigger"), params: z.record(z.unknown()).nullable().describe("A declared delay/poll trigger's parameters."), pipes: z.array(cataloguePipeRow).describe("The reactive pipes naming it, best ROI first.") }), idParam("A trigger id"));
 
+const catalogueFunnelsCarryingPlay = z
+  .object({
+    total: z.number().int(),
+    truncated: z.boolean(),
+    rows: z.array(z.object({ id: z.string().describe("The funnel id to launch (`POST /v1/sales-funnel-campaigns`)."), name: z.string(), line: z.string(), type: z.enum(["proactive", "reactive"]), runnable: z.boolean(), notRunnableReason: catalogueNotRunnable.notRunnableReason })),
+  })
+  .describe("Owner 2026-10-14: the sales funnels carrying this play, RUNNABLE OR NOT (the customer funnel lists keep runnable ones only), best ROI first, at most 10; mixed funnels left out (never runnable). An agent that just catalogued a play reads here the funnel it launches, never builds an id by hand.");
 const catalogueTacticRow = z.object({
   object: z.literal("tactic"),
   id: z.string(),
@@ -6992,6 +7009,19 @@ const catalogueTacticRow = z.object({
   description: z.string().describe("Unique (case-insensitive). What Jev judges every workflow version against: as precise as possible."),
   workflowsJudged: z.number().int().describe("Workflows (current version) Jev judged on it."),
   workflowsFollowing: z.number().int().describe("Of them, those judged to follow it."),
+  judging: z
+    .object({
+      status: z.enum(["judging", "failing", "complete"]).describe("`judging`: no full sweep has run on the CURRENT description yet (just created or edited). `failing`: the last sweep could not judge `versionsFailed` versions (`lastFailure` says why); every sweep retries them, so judging resumes by itself once Jev answers (`nextSweepAt`). `complete`: every version the last sweep covered stands judged."),
+      versions: z.number().int().nullable().describe("Workflow versions the last sweep covered (null while `judging`)."),
+      versionsJudged: z.number().int().nullable(),
+      versionsFailed: z.number().int().nullable(),
+      lastSweepAt: z.string().nullable(),
+      nextSweepAt: z.string().nullable().describe("When the next sweep is due (every 15 min)."),
+      lastFailure: z.string().nullable().describe("The last reason Jev (or a workflow read) gave in that sweep."),
+      lastFailureAt: z.string().nullable(),
+      detail: z.string().describe("One plain sentence an agent can relay."),
+    })
+    .describe("Owner 2026-10-14: whether Jev's judging of this tactic is complete, still running, or failing (never \"pending\" forever)."),
 });
 const catalogueStrategyRow = z.object({
   object: z.literal("strategy"),
@@ -6999,7 +7029,7 @@ const catalogueStrategyRow = z.object({
   name: z.string().describe("Unique (case-insensitive)."),
   description: z.string().describe("Unique (case-insensitive)."),
   requires: z.array(catalogueStepRef).describe("Tactics a workflow must follow (judged yes) to run under it."),
-  excludes: z.array(catalogueStepRef).describe("Tactics a workflow must not follow (judged yes = ruled out; not judged yet = allowed)."),
+  excludes: z.array(catalogueStepRef).describe("Tactics a workflow must not follow (judged yes = ruled out; not judged yet = ruled out too until Jev answers)."),
   pipeIds: z.array(z.string()).describe("Pipes cataloguing a play on it."),
 });
 const tacticsNote = "Owner 2026-10-13: a TACTIC is a yes/no tag Jev puts on every workflow version (judged once per description, re-judged when the description is edited); a STRATEGY requires and excludes tactics; a PLAY is a pipe x a strategy, catalogued per pipe. Inside a play the workflow is still picked by ROI, among those the strategy allows. Not the dashboard's Strategy page.";
@@ -7029,7 +7059,7 @@ catalogueRead(
   "/internal/catalogue/plays/{id}",
   "One play (internal, api-key)",
   {},
-  catalogueTacticPlayRow.extend({ learningReason: z.string().nullable(), estimates: z.array(z.string()), excludedWorkflowDynastySlugs: z.array(z.string()) }),
+  catalogueTacticPlayRow.extend({ learningReason: z.string().nullable(), estimates: z.array(z.string()), excludedWorkflowDynastySlugs: z.array(z.string()), salesFunnels: catalogueFunnelsCarryingPlay }),
   idParam("A play id (`<pipe id>` or `<pipe id>~<strategy id>`)"),
 );
 
@@ -7102,7 +7132,7 @@ catalogueCreate(
   "Catalogue a play on a pipe (internal, api-key)",
   "A pipe x a strategy, catalogued per pipe so its ROI compares across clients (never invented per campaign). The pipe must be a platform pipe (400 `pipe_not_ours`); a pipe that catalogues no play yet takes one too (its default play stays every assigned workflow, the new play narrows it). Idempotent: an existing play answers 200 `created: false`. A pipe's DEFAULT play is staff-only: PUT /internal/catalogue/pipes/{pipeId}/default-play.",
   z.object({ pipeId: z.string(), strategyId: z.string(), createdBy: z.string() }),
-  catalogueTacticPlayRow.extend({ created: z.boolean() }),
+  catalogueTacticPlayRow.extend({ created: z.boolean(), salesFunnels: catalogueFunnelsCarryingPlay }),
 );
 
 registry.registerPath({

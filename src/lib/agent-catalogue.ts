@@ -110,7 +110,7 @@ import { DEFAULT_COST_PER_OUTCOME_USD, combinationKeyOf } from "./offer-sales-pa
 import { SALES_PATH_COST_BENCHMARKS } from "./sales-path-cost-benchmarks.js";
 import { faceOf, stableHash, type Face } from "./catalogue-faces.js";
 import { STEP_SIGNAL } from "./value-added.js";
-import { PLAY_SEPARATOR, playIdOf, splitPlayId, splitPlaySlug } from "./plays.js";
+import { PLAY_SEPARATOR, playIdOf, splitPlayId, splitPlaySlug, type PlayBlock } from "./plays.js";
 import { CHANNEL_TRIGGER_TYPES, INLINE_TRIGGER_IDS } from "./channel-triggers.js";
 import { LEAD_SOURCING_SLUG, SOURCE_LEG_KEY, SOURCING_ORIGINS_BY_CHANNEL, isSourcingChannel } from "./sourcing-origins.js";
 
@@ -253,6 +253,8 @@ export interface PlayInput {
   allowedActiveWorkflowCount: number;
   /** Dynasty slugs the strategy excludes on this pipe. */
   excludedDynasties: readonly string[];
+  /** Why the play allows no active workflow (`lib/plays.ts` `playBlockOf`); null when one is allowed. */
+  block?: PlayBlock | null;
 }
 
 /** The play a pipe object stands for (null = a pipe cataloguing no play: every assigned workflow). */
@@ -265,6 +267,7 @@ export interface CataloguePlayInfo {
   isDefault: boolean;
   allowedActiveWorkflowCount: number;
   excludedDynasties: readonly string[];
+  block: PlayBlock | null;
 }
 
 /** A trigger as a reactive path or funnel starts with it: its unique slug and unique name. */
@@ -495,6 +498,7 @@ const playInfoOf = (basePipeId: string, p: PlayInput, isDefault: boolean): Catal
   isDefault,
   allowedActiveWorkflowCount: p.allowedActiveWorkflowCount,
   excludedDynasties: p.excludedDynasties,
+  block: p.block ?? null,
 });
 
 /** PURE: a pipe's (or a play's) economics from its best workflow's measurement (see the header). */
