@@ -43,6 +43,9 @@ export interface Strategy {
   excludesTacticIds: string[];
   createdBy: string;
   createdAt: string;
+  /** Who last edited the rule or the description, and when; null = never edited. */
+  updatedBy?: string | null;
+  updatedAt?: string | null;
 }
 
 export interface PlayRecord {
