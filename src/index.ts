@@ -45,7 +45,7 @@ import { migrateOutboundLegKeys } from "./lib/outbound-leg-key-migration.js";
 import { migrateLeadSourcingFunnelKeys } from "./lib/lead-sourcing-key-migration.js";
 import { renamePipesToBirds } from "./lib/sales-path-names.js";
 import { listLegAssignments } from "./lib/workflow-leg-assignments.js";
-import { storedLegKeyOf } from "./lib/funnel-legs.js";
+import { pipeLegKeyOf } from "./lib/funnel-legs.js";
 import { startViewKeeper } from "./lib/view-keeper.js";
 import {
   announceViewRefresherReady,
@@ -193,7 +193,7 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
           .then((rows) => {
             for (const key of new Set(rows.map((r) => `${r.featureSlug}\u0000${r.legKey}`))) {
               const [featureSlug, legKey] = key.split("\u0000");
-              void warmLegWorkflowRanking(featureSlug, storedLegKeyOf(legKey));
+              void warmLegWorkflowRanking(featureSlug, pipeLegKeyOf(featureSlug, legKey));
             }
           })
           .catch((err) => console.error("[features-service] leg workflow ranking boot warm: assignments unreadable:", err));

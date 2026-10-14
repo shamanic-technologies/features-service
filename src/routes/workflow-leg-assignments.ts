@@ -4,7 +4,8 @@ import { eq } from "drizzle-orm";
 import { apiKeyOnly } from "../middleware/auth.js";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
-import { funnelLeg, matchChannelLegKey, servedLegKeyOf, storedLegKeyOf } from "../lib/funnel-legs.js";
+import { pipeLegKeyOf, servedLegKeyOf } from "../lib/funnel-legs.js";
+import { resolvePipeLegKey } from "../lib/unpriced-pipes.js";
 import { loadChannelCatalogue } from "../lib/channel-declarations-store.js";
 import { fetchPublicWorkflows } from "../lib/public-stats-clients.js";
 import { invalidateChannelCatalogue } from "./public.js";
@@ -26,7 +27,7 @@ const router = Router();
 router.get("/internal/workflow-leg-assignments", apiKeyOnly, async (req, res) => {
   const featureSlug = typeof req.query.featureSlug === "string" ? req.query.featureSlug : undefined;
   // Both spellings of an outbound leg name the same rows, stored in the new one (wave 2, `lib/funnel-legs.ts`).
-  const legKey = typeof req.query.legKey === "string" ? storedLegKeyOf(req.query.legKey) : undefined;
+  const legKey = typeof req.query.legKey === "string" ? pipeLegKeyOf(featureSlug, req.query.legKey) : undefined;
   try {
     res.json({ assignments: await listLegAssignments({ featureSlug, legKey }) });
   } catch (err) {
@@ -42,7 +43,7 @@ router.get("/internal/workflow-leg-assignments/history", apiKeyOnly, async (req,
     return;
   }
   try {
-    res.json({ changes: await listLegAssignmentChanges({ featureSlug, legKey: storedLegKeyOf(legKey), workflowDynastySlug }) });
+    res.json({ changes: await listLegAssignmentChanges({ featureSlug, legKey: pipeLegKeyOf(featureSlug, legKey), workflowDynastySlug }) });
   } catch (err) {
     console.error("[features-service] workflow-leg-assignments history failed:", err);
     res.status(500).json({ error: "Internal server error" });
@@ -62,8 +63,17 @@ router.put("/internal/workflow-leg-assignments", apiKeyOnly, async (req, res) =>
   }
   // The stored spelling: the new outbound spelling (`lead_found_to_*`) of an outbound channel writes the
   // same row as the legacy one; the row is stored in the new spelling (wave 2, `lib/workflow-leg-assignments.ts`).
-  const legKey = typeof rawLegKey === "string" ? matchChannelLegKey(featureSlug, rawLegKey) : null;
-  if (typeof rawLegKey !== "string" || !legKey || !funnelLeg(legKey)) {
+  // Any leg the channel performs (`resolvePipeLegKey`): a funnel leg, else the channel's own published pipe leg (a
+  // non-outbound channel's `lead_found_to_conversation`, AI Follow-up Email, is no funnel-catalogue spelling of it).
+  let legKey: string | null;
+  try {
+    legKey = typeof rawLegKey === "string" ? await resolvePipeLegKey(featureSlug, rawLegKey) : null;
+  } catch (err) {
+    console.error("[features-service] workflow-leg-assignments: reading the channel catalogue failed:", err);
+    res.status(502).json({ error: (err as Error).message });
+    return;
+  }
+  if (typeof rawLegKey !== "string" || !legKey) {
     res.status(400).json({ error: `legKey must be a leg of the funnel catalogue, got ${JSON.stringify(rawLegKey)}`, reason: "leg_unrecognised" });
     return;
   }
@@ -152,8 +162,9 @@ router.post("/internal/workflow-leg-assignments/register", apiKeyOnly, async (re
   try {
     const cat = await loadChannelCatalogue({ publishedOnly: false });
     const channel = cat.channels.find((c) => c.slug === featureSlug);
-    const computed = storedLegKeyOf(rawLeg);
-    const transition = channel?.stepTransitions.find((t) => t.legKey === computed || t.legKey === rawLeg);
+    // The channel's OWN leg: `rawLeg` verbatim first, the other outbound spelling only on an outbound channel.
+    const computed = pipeLegKeyOf(featureSlug, rawLeg);
+    const transition = channel?.stepTransitions.find((t) => t.legKey === rawLeg) ?? channel?.stepTransitions.find((t) => t.legKey === computed);
     if (!channel || !transition) {
       res.status(404).json({ error: `no pipe ${pipeId}: the channel does not perform that leg`, reason: "pipe_not_found" });
       return;

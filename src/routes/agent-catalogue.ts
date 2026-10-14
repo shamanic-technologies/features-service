@@ -85,7 +85,7 @@ import { offerLifetimeRevenue } from "../lib/offer-lifetime-revenue.js";
 import { loadFleetCell, storeFleetCell } from "../lib/fleet-cell-store.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
 import { awaitWarmStore, StoreNotComputedError } from "../lib/await-warm-store.js";
-import { servedLegKeyOf, storedCombinationKeyOf, storedLegKeyOf } from "../lib/funnel-legs.js";
+import { pipeLegKeyOf, servedLegKeyOf, storedCombinationKeyOf, storedLegKeyOf } from "../lib/funnel-legs.js";
 import { listLegAssignments } from "../lib/workflow-leg-assignments.js";
 import { invalidateChannelCatalogue, fleetLegPrice, fleetPlayPrices, readLegWorkflowRanking } from "./public.js";
 import type { LegPrice } from "../lib/outcome-prices.js";
@@ -420,7 +420,7 @@ async function loadModel(offer: OfferContext | null = null): Promise<Loaded> {
     listLegAssignments(),
     loadPlayCatalogue(),
   ]);
-  const workflowPipeKeys = new Set(assignments.filter((a) => a.state === "active").map((a) => `${a.featureSlug}|${storedLegKeyOf(a.legKey)}`));
+  const workflowPipeKeys = new Set(assignments.filter((a) => a.state === "active").map((a) => `${a.featureSlug}|${pipeLegKeyOf(a.featureSlug, a.legKey)}`));
   const { arrows: medians, lifetimeRevenue: ltr } = await fleetMediansFor(measurements.fleet);
   const publishedPipeIds = new Set(pub.channels.flatMap((c) => c.stepTransitions.map((t) => pipeIdOf(c.slug, servedPipeLegKey(c.slug, t.legKey)))));
   const model = buildCatalogueModel({
@@ -456,7 +456,7 @@ function playInputsOf(c: PlayCatalogue, assignments: readonly LegAssignmentRow[]
   const out = new Map<string, { default: PlayInput | null; others: PlayInput[] }>();
   for (const [pipeId, list] of c.playsByPipe) {
     const [slug, leg] = [pipeId.slice(0, pipeId.indexOf("|")), pipeId.slice(pipeId.indexOf("|") + 1)];
-    const onPipe = assignments.filter((a) => a.featureSlug === slug && storedLegKeyOf(a.legKey) === storedLegKeyOf(leg));
+    const onPipe = assignments.filter((a) => a.featureSlug === slug && pipeLegKeyOf(slug, a.legKey) === pipeLegKeyOf(slug, leg));
     const inputOf = (strategyId: string): PlayInput | null => {
       const st = c.strategies.get(strategyId);
       if (!st) return null;
@@ -1805,7 +1805,7 @@ async function assertDefaultPlayRuns(pipeId: string, strategyId: string): Promis
 /** Refused 409 `default_play_runs_nothing` while `st` allows none of the pipe's ACTIVE workflows, judged now. */
 function assertStrategyRunsOnPipe(c: PlayCatalogue, assignments: readonly LegAssignmentRow[], pipeId: string, st: Strategy, consequence: string): void {
   const [slug, leg] = [pipeId.slice(0, pipeId.indexOf("|")), pipeId.slice(pipeId.indexOf("|") + 1)];
-  const active = assignments.filter((a) => a.featureSlug === slug && storedLegKeyOf(a.legKey) === storedLegKeyOf(leg) && a.state === "active").map((a) => a.workflowDynastySlug);
+  const active = assignments.filter((a) => a.featureSlug === slug && pipeLegKeyOf(slug, a.legKey) === pipeLegKeyOf(slug, leg) && a.state === "active").map((a) => a.workflowDynastySlug);
   const excluded = excludedDynasties(st, active, c.tacticsByDynasty, tacticNameOf(c));
   if (active.every((d) => excluded.has(d))) {
     throw new DeclarationError(
