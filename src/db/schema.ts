@@ -434,7 +434,7 @@ export const channelTriggerTypes = pgTable("channel_trigger_types", {
   origin: text("origin").notNull().default("code"),
   /** `event` (a service detects it), `delay` (N days after a step, if nothing happened), `poll` (a new item at a source). */
   kind: text("kind").notNull().default("event"),
-  /** The kind's parameters (`delay`: `{afterStep, days}`; `poll`: `{source, everyMinutes}`); null on an event. */
+  /** The kind's parameters (`delay`: `{afterStep, days | minutes, unlessStep?}`; `poll`: `{source, everyMinutes}`); null on an event. */
   params: jsonb("params"),
   createdBy: text("created_by"),
   requestedByOrgId: text("requested_by_org_id"),

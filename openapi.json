@@ -28358,7 +28358,7 @@
                   "additionalProperties": {
                     "nullable": true
                   },
-                  "description": "The kind's parameters: `delay` `{afterStep, days}`, `poll` `{source, everyMinutes}`, `reported` `{reportedBy}` on a declared one; null on an event and on a coded trigger."
+                  "description": "The kind's parameters: `delay` `{afterStep, days | minutes, unlessStep?}`, `poll` `{source, everyMinutes}`, `reported` `{reportedBy}` on a declared one; null on an event and on a coded trigger."
                 }
               },
               "required": [
@@ -48050,7 +48050,7 @@
                     "additionalProperties": {
                       "nullable": true
                     },
-                    "description": "`reported`: `{reportedBy}` (required: the service that reports each occurrence, e.g. `chat-service`). `delay`: `{afterStep, days}` (a step key; days >= 1). `poll`: `{source, everyMinutes}` (everyMinutes >= 5); `source` = ONE treg call, object or JSON text, `{endpoint, method? GET|POST, query? (strings), body? (object), items (dot path, '' = the answer), itemId? (dot path), maxMicro (1..1000000 micro-USD per call)}`, stored as JSON text."
+                    "description": "`reported`: `{reportedBy}` (required: the service that reports each occurrence, e.g. `chat-service`). `delay`: `{afterStep, days | minutes, unlessStep?}` (a step key; EXACTLY ONE of days >= 1 or minutes >= 5; optional unlessStep = another step: the occurrence is cancelled when the person reached it by the due time, e.g. `{afterStep: signup, minutes: 30, unlessStep: paid_client}`). `poll`: `{source, everyMinutes}` (everyMinutes >= 5); `source` = ONE treg call, object or JSON text, `{endpoint, method? GET|POST, query? (strings), body? (object), items (dot path, '' = the answer), itemId? (dot path), maxMicro (1..1000000 micro-USD per call)}`, stored as JSON text."
                   },
                   "createdBy": {
                     "type": "string"

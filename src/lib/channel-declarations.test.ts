@@ -205,6 +205,25 @@ describe("declared trigger types are never coded on their own say-so", () => {
     expect(parseTriggerInput(pollBody({ source: JSON.stringify(SOURCE), everyMinutes: 5 }), TRIGGERS).params).toEqual(t.params && { ...t.params, everyMinutes: 5 });
   });
 
+  it("a delay may count MINUTES and be cancelled by a later step (FACT-NOT-FOLLOWED-1014), `{afterStep, days}` unchanged", () => {
+    expect(parseTriggerInput(delayBody({ afterStep: "lead_found", days: 3 }), TRIGGERS).params).toEqual({ afterStep: "lead_found", days: 3 });
+    const visit = parseTriggerInput(delayBody({ afterStep: "website_visit", minutes: 30, unlessStep: "signup" }), TRIGGERS);
+    expect(visit).toMatchObject({ kind: "delay", fromStep: "website_visit", firedBy: "campaign-service", params: { afterStep: "website_visit", minutes: 30, unlessStep: "signup" } });
+    expect(parseTriggerInput(delayBody({ afterStep: "signup", days: 1, unlessStep: "paid_client" }), TRIGGERS).params).toEqual({ afterStep: "signup", days: 1, unlessStep: "paid_client" });
+    expect(parseTriggerInput(delayBody({ afterStep: "signup", minutes: 5 }), TRIGGERS).params).toEqual({ afterStep: "signup", minutes: 5 });
+  });
+
+  it("refuses a delay stating both or neither unit, too few minutes, or an unless step that is no step or the same step", () => {
+    refused(() => parseTriggerInput(delayBody({ afterStep: "signup" }), TRIGGERS), 400, "delay_unit_invalid");
+    refused(() => parseTriggerInput(delayBody({ afterStep: "signup", days: 1, minutes: 30 }), TRIGGERS), 400, "delay_unit_invalid");
+    refused(() => parseTriggerInput(delayBody({ afterStep: "signup", minutes: 4 }), TRIGGERS), 400, "delay_minutes_invalid");
+    refused(() => parseTriggerInput(delayBody({ afterStep: "signup", minutes: 30.5 }), TRIGGERS), 400, "delay_minutes_invalid");
+    refused(() => parseTriggerInput(delayBody({ afterStep: "signup", minutes: "30" }), TRIGGERS), 400, "delay_minutes_invalid");
+    refused(() => parseTriggerInput(delayBody({ afterStep: "signup", minutes: 30, unlessStep: "nowhere" }), TRIGGERS), 400, "step_unrecognised");
+    refused(() => parseTriggerInput(delayBody({ afterStep: "signup", minutes: 30, unlessStep: "signup" }), TRIGGERS), 400, "delay_unless_step_invalid");
+    refused(() => parseTriggerInput(delayBody({ afterStep: "signup", minutes: 30, unless: "paid_client" }), TRIGGERS), 400, "params_invalid");
+  });
+
   it("refuses malformed delay / poll params with a named error, so no detector ever reads them", () => {
     refused(() => parseTriggerInput(delayBody(undefined), TRIGGERS), 400, "params_required");
     refused(() => parseTriggerInput(delayBody({ afterStep: "nowhere", days: 3 }), TRIGGERS), 400, "step_unrecognised");
