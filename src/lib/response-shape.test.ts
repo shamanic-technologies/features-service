@@ -134,6 +134,7 @@ describe("dashboard views keyed on their OWN route's shape", () => {
     ["stats.ts", "/features/{featureSlug}/stats"],
     ["revenue.ts", "/features/{featureSlug}/revenue"],
     ["workflow-projection.ts", "/features/{featureSlug}/workflow-projection"],
+    ["offer-sales-paths.ts", "/offers/{offerId}/sales-paths"],
   ])("%s keys on %s", (file, path) => {
     expect(read(file)).toContain(`routeResponseShapeFingerprint("${path}")`);
     expect(() => routeResponseShapeFingerprint(path)).not.toThrow();
