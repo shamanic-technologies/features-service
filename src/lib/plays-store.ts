@@ -5,9 +5,9 @@
  */
 import { sql } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { plays, strategies, tactics, workflowTacticVerdicts } from "../db/schema.js";
+import { plays, strategies, tacticJudgingSweeps, tactics, workflowTacticVerdicts } from "../db/schema.js";
 import { DeclarationError } from "./channel-declarations.js";
-import { buildPlayCatalogue, idOfName, type PlayCatalogue, type PlayRecord, type Strategy, type Tactic, type TacticVerdictRow } from "./plays.js";
+import { buildPlayCatalogue, idOfName, type PlayCatalogue, type PlayRecord, type Strategy, type Tactic, type TacticJudgingSweep, type TacticVerdictRow } from "./plays.js";
 
 const SHARE_MS = 30_000;
 let shared: { at: number; value: Promise<PlayCatalogue> } | null = null;
@@ -20,17 +20,19 @@ export function invalidatePlayCatalogue(): void {
 export function loadPlayCatalogue(): Promise<PlayCatalogue> {
   if (shared && Date.now() - shared.at < SHARE_MS) return shared.value;
   const value = (async () => {
-    const [t, s, p, v] = await Promise.all([
+    const [t, s, p, v, w] = await Promise.all([
       db.select().from(tactics),
       db.select().from(strategies),
       db.select().from(plays),
       db.select().from(workflowTacticVerdicts),
+      db.select().from(tacticJudgingSweeps),
     ]);
     return buildPlayCatalogue({
       tactics: t.map(tacticOf).sort((a, b) => (a.id < b.id ? -1 : 1)),
       strategies: s.map(strategyOf).sort((a, b) => (a.id < b.id ? -1 : 1)),
       plays: p.map((r): PlayRecord => ({ pipeId: r.pipeId, strategyId: r.strategyId, isDefault: r.isDefault })),
       verdicts: v.map(verdictOf),
+      sweeps: w.map(sweepOf),
     });
   })();
   shared = { at: Date.now(), value };
@@ -58,6 +60,34 @@ const strategyOf = (r: typeof strategies.$inferSelect): Strategy => ({
   createdBy: r.createdBy,
   createdAt: r.createdAt.toISOString(),
 });
+const sweepOf = (r: typeof tacticJudgingSweeps.$inferSelect): TacticJudgingSweep => ({
+  tacticId: r.tacticId,
+  judgedDescription: r.judgedDescription,
+  sweptAt: r.sweptAt.toISOString(),
+  versions: r.versions,
+  judged: r.judged,
+  failed: r.failed,
+  lastFailure: r.lastFailure,
+  lastFailureAt: r.lastFailureAt?.toISOString() ?? null,
+});
+
+/** Record one full sweep's outcome per tactic (one row per tactic, overwritten). */
+export async function recordJudgingSweeps(rows: readonly TacticJudgingSweep[]): Promise<void> {
+  for (const r of rows) {
+    const values = {
+      judgedDescription: r.judgedDescription,
+      sweptAt: new Date(r.sweptAt),
+      versions: r.versions,
+      judged: r.judged,
+      failed: r.failed,
+      lastFailure: r.lastFailure,
+      lastFailureAt: r.lastFailureAt ? new Date(r.lastFailureAt) : null,
+    };
+    await db.insert(tacticJudgingSweeps).values({ tacticId: r.tacticId, ...values }).onConflictDoUpdate({ target: tacticJudgingSweeps.tacticId, set: values });
+  }
+  invalidatePlayCatalogue();
+}
+
 /** A stored verdict and the tactic description Jev judged it on (an edited description re-judges it). */
 export type StoredVerdict = TacticVerdictRow & { judgedDescription: string };
 

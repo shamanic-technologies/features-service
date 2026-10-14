@@ -123,6 +123,120 @@ export function currentTacticsByDynasty(rows: readonly TacticVerdictRow[]): Map<
   return out;
 }
 
+/** The last FULL Jev sweep of one tactic (`tactic_judging_sweeps`, written by `lib/tactic-judgments.ts`). */
+export interface TacticJudgingSweep {
+  tacticId: string;
+  judgedDescription: string;
+  sweptAt: string;
+  /** Workflow versions the sweep covered. */
+  versions: number;
+  /** Versions standing judged on `judgedDescription` once the sweep ended (judged before or by it). */
+  judged: number;
+  /** Versions Jev could not judge in that sweep (retried by the next one). */
+  failed: number;
+  lastFailure: string | null;
+  lastFailureAt: string | null;
+}
+
+/**
+ * A tactic's judging as an agent reads it (owner 2026-10-14: a judge failing for hours looked "pending" forever):
+ * - `judging`: no full sweep has run on the tactic's CURRENT description yet (just created or edited): Jev is on it.
+ * - `failing`: the last sweep could not judge `versionsFailed` versions (`lastFailure` says why). Nothing to do: every
+ *   sweep retries them, so judging resumes by itself once Jev answers again (`nextSweepAt`).
+ * - `complete`: every version the last sweep covered stands judged.
+ */
+export type TacticJudgingStatus = "judging" | "failing" | "complete";
+
+export interface TacticJudging {
+  status: TacticJudgingStatus;
+  versions: number | null;
+  versionsJudged: number | null;
+  versionsFailed: number | null;
+  lastSweepAt: string | null;
+  /** When the next sweep is due (the loop runs every `sweepEveryMs`; a deploy restarts it a minute after boot). */
+  nextSweepAt: string | null;
+  lastFailure: string | null;
+  lastFailureAt: string | null;
+  /** One plain sentence an agent can relay. */
+  detail: string;
+}
+
+/** PURE: the served judging state of one tactic from its last full sweep (null = never swept). */
+export function tacticJudgingOf(t: Pick<Tactic, "name" | "description">, sweep: TacticJudgingSweep | null | undefined, sweepEveryMs: number): TacticJudging {
+  if (!sweep || sweep.judgedDescription !== t.description) {
+    return {
+      status: "judging",
+      versions: null,
+      versionsJudged: null,
+      versionsFailed: null,
+      lastSweepAt: sweep?.sweptAt ?? null,
+      nextSweepAt: null,
+      lastFailure: null,
+      lastFailureAt: null,
+      detail: `Jev is judging every workflow version on the tactic "${t.name}" as it reads now; this takes a few minutes.`,
+    };
+  }
+  const nextSweepAt = new Date(Date.parse(sweep.sweptAt) + sweepEveryMs).toISOString();
+  const base = { versions: sweep.versions, versionsJudged: sweep.judged, versionsFailed: sweep.failed, lastSweepAt: sweep.sweptAt, nextSweepAt, lastFailure: sweep.lastFailure, lastFailureAt: sweep.lastFailureAt };
+  if (sweep.failed > 0) {
+    return {
+      status: "failing",
+      ...base,
+      detail:
+        `Jev could not judge ${sweep.failed} of ${sweep.versions} workflow versions on the tactic "${t.name}" at the last sweep (${sweep.lastFailure ?? "no reason recorded"}). ` +
+        `Every sweep retries them by itself (next one due ${nextSweepAt}); until then a strategy naming this tactic allows none of the workflows still unjudged.`,
+    };
+  }
+  return { status: "complete", ...base, detail: `Every one of the ${sweep.versions} workflow versions stands judged on the tactic "${t.name}".` };
+}
+
+/**
+ * Why a play allows no ACTIVE workflow of its pipe (so nothing may run it), in a reason an agent can act on:
+ * - `judging_failing` / `judging_pending`: some active workflow is not judged yet on a tactic the strategy names (a
+ *   workflow never judged is never allowed), and that tactic's judging is failing / still running: the play may become
+ *   runnable by itself once Jev answers.
+ * - `no_workflow_follows_strategy`: every active workflow is judged and none fits the strategy: a workflow following
+ *   it must be built (or the strategy changed).
+ * Null when at least one active workflow is allowed, or the pipe holds no active workflow at all.
+ */
+export interface PlayBlock {
+  reason: "judging_failing" | "judging_pending" | "no_workflow_follows_strategy";
+  detail: string;
+}
+
+export function playBlockOf(strategy: Strategy, activeDynasties: readonly string[], tacticsByDynasty: ReadonlyMap<string, ReadonlyMap<string, boolean>>, judgingOf: (tacticId: string) => TacticJudging | null, nameOf: (tacticId: string) => string): PlayBlock | null {
+  if (activeDynasties.length === 0) return null;
+  if (activeDynasties.some((d) => strategyVerdict(strategy, tacticsByDynasty.get(d), nameOf).allowed)) return null;
+  // A workflow judging could still let in: no named tactic judged AGAINST the strategy, at least one not judged yet.
+  const unjudgedOf = (d: string): string[] => {
+    const m = tacticsByDynasty.get(d);
+    const against = strategy.requiresTacticIds.some((t) => m?.get(t) === false) || strategy.excludesTacticIds.some((t) => m?.get(t) === true);
+    return against ? [] : [...strategy.requiresTacticIds, ...strategy.excludesTacticIds].filter((t) => m?.get(t) === undefined);
+  };
+  const waiting = activeDynasties.filter((d) => unjudgedOf(d).length > 0);
+  if (waiting.length > 0) {
+    const tacticIds = [...new Set(waiting.flatMap(unjudgedOf))];
+    const failing = tacticIds.find((t) => judgingOf(t)?.status === "failing");
+    if (failing) {
+      const j = judgingOf(failing)!;
+      return {
+        reason: "judging_failing",
+        detail:
+          `${waiting.length} of the ${activeDynasties.length} active workflow(s) of this pipe are not judged yet on the tactic "${nameOf(failing)}", and Jev is failing to judge it (${j.lastFailure ?? "no reason recorded"}). ` +
+          `Judging resumes by itself (next sweep due ${j.nextSweepAt}); the play becomes runnable once a workflow is judged to fit the strategy.`,
+      };
+    }
+    return {
+      reason: "judging_pending",
+      detail: `${waiting.length} of the ${activeDynasties.length} active workflow(s) of this pipe are not judged yet on the tactic "${nameOf(tacticIds[0])}": Jev is on it, and the play becomes runnable once a workflow is judged to fit the strategy.`,
+    };
+  }
+  return {
+    reason: "no_workflow_follows_strategy",
+    detail: `Every one of the ${activeDynasties.length} active workflow(s) of this pipe is judged, and none fits the strategy "${strategy.name}": a workflow following it must be built before the play can run.`,
+  };
+}
+
 export interface StrategyVerdict {
   allowed: boolean;
   /** Why not, in a sentence a human reads. Null when allowed. */
@@ -181,9 +295,11 @@ export interface PlayCatalogue {
   playsByPipe: Map<string, PlayRecord[]>;
   /** dynasty -> tactic id -> verdict on its current version. */
   tacticsByDynasty: Map<string, Map<string, boolean>>;
+  /** tactic id -> its last full Jev sweep (absent = never swept). */
+  sweepsByTactic: Map<string, TacticJudgingSweep>;
 }
 
-export function buildPlayCatalogue(input: { tactics: readonly Tactic[]; strategies: readonly Strategy[]; plays: readonly PlayRecord[]; verdicts: readonly TacticVerdictRow[] }): PlayCatalogue {
+export function buildPlayCatalogue(input: { tactics: readonly Tactic[]; strategies: readonly Strategy[]; plays: readonly PlayRecord[]; verdicts: readonly TacticVerdictRow[]; sweeps?: readonly TacticJudgingSweep[] }): PlayCatalogue {
   const playsByPipe = new Map<string, PlayRecord[]>();
   for (const p of input.plays) playsByPipe.set(p.pipeId, [...(playsByPipe.get(p.pipeId) ?? []), p]);
   for (const list of playsByPipe.values()) list.sort((a, b) => Number(b.isDefault) - Number(a.isDefault) || (a.strategyId < b.strategyId ? -1 : 1));
@@ -192,6 +308,7 @@ export function buildPlayCatalogue(input: { tactics: readonly Tactic[]; strategi
     strategies: new Map(input.strategies.map((s) => [s.id, s])),
     playsByPipe,
     tacticsByDynasty: currentTacticsByDynasty(input.verdicts),
+    sweepsByTactic: new Map((input.sweeps ?? []).map((w) => [w.tacticId, w])),
   };
 }
 

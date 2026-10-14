@@ -50773,6 +50773,23 @@
                       "type": "boolean",
                       "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
                     },
+                    "notRunnableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "judging_failing",
+                        "judging_pending",
+                        "no_workflow_follows_strategy",
+                        "unpublished",
+                        "no_workflow"
+                      ],
+                      "description": "Why nothing runs it (null when `runnable`). Owner 2026-10-14: a play blocked on its strategy says whether Jev is still judging (`judging_pending`), FAILING to judge (`judging_failing`: retried by every sweep, so it resumes by itself), or judged every active workflow out (`no_workflow_follows_strategy`: a workflow following it must be built). `no_workflow`: no active workflow works the pipe; `unpublished`: hidden by staff."
+                    },
+                    "notRunnableDetail": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The reason in one plain sentence an agent can relay."
+                    },
                     "draft": {
                       "type": "boolean"
                     },
@@ -50981,6 +50998,23 @@
                           "runnable": {
                             "type": "boolean",
                             "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
+                          },
+                          "notRunnableReason": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "judging_failing",
+                              "judging_pending",
+                              "no_workflow_follows_strategy",
+                              "unpublished",
+                              "no_workflow"
+                            ],
+                            "description": "Why nothing runs it (null when `runnable`). Owner 2026-10-14: a play blocked on its strategy says whether Jev is still judging (`judging_pending`), FAILING to judge (`judging_failing`: retried by every sweep, so it resumes by itself), or judged every active workflow out (`no_workflow_follows_strategy`: a workflow following it must be built). `no_workflow`: no active workflow works the pipe; `unpublished`: hidden by staff."
+                          },
+                          "notRunnableDetail": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The reason in one plain sentence an agent can relay."
                           }
                         },
                         "required": [
@@ -50999,7 +51033,9 @@
                           "bestWorkflowSlug",
                           "measuredBasis",
                           "allowedActiveWorkflowCount",
-                          "runnable"
+                          "runnable",
+                          "notRunnableReason",
+                          "notRunnableDetail"
                         ]
                       },
                       "description": "ROI PER PLAY (owner 2026-10-13): every play of the pipe, default first, each priced on its best ALLOWED workflow (same pick as the pipe: cheapest mature, else cheapest flash). The default play's figures are the pipe's own. A pipe cataloguing no play lists itself alone (`strategyId` null)."
@@ -51022,6 +51058,8 @@
                     "operatedBy",
                     "managed",
                     "runnable",
+                    "notRunnableReason",
+                    "notRunnableDetail",
                     "draft",
                     "costUsd",
                     "costPer",
@@ -51111,6 +51149,23 @@
                       "type": "boolean",
                       "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
                     },
+                    "notRunnableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "judging_failing",
+                        "judging_pending",
+                        "no_workflow_follows_strategy",
+                        "unpublished",
+                        "no_workflow"
+                      ],
+                      "description": "Why nothing runs it (null when `runnable`). Owner 2026-10-14: a play blocked on its strategy says whether Jev is still judging (`judging_pending`), FAILING to judge (`judging_failing`: retried by every sweep, so it resumes by itself), or judged every active workflow out (`no_workflow_follows_strategy`: a workflow following it must be built). `no_workflow`: no active workflow works the pipe; `unpublished`: hidden by staff."
+                    },
+                    "notRunnableDetail": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The reason in one plain sentence an agent can relay."
+                    },
                     "draft": {
                       "type": "boolean"
                     },
@@ -51319,6 +51374,23 @@
                           "runnable": {
                             "type": "boolean",
                             "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
+                          },
+                          "notRunnableReason": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "judging_failing",
+                              "judging_pending",
+                              "no_workflow_follows_strategy",
+                              "unpublished",
+                              "no_workflow"
+                            ],
+                            "description": "Why nothing runs it (null when `runnable`). Owner 2026-10-14: a play blocked on its strategy says whether Jev is still judging (`judging_pending`), FAILING to judge (`judging_failing`: retried by every sweep, so it resumes by itself), or judged every active workflow out (`no_workflow_follows_strategy`: a workflow following it must be built). `no_workflow`: no active workflow works the pipe; `unpublished`: hidden by staff."
+                          },
+                          "notRunnableDetail": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The reason in one plain sentence an agent can relay."
                           }
                         },
                         "required": [
@@ -51337,7 +51409,9 @@
                           "bestWorkflowSlug",
                           "measuredBasis",
                           "allowedActiveWorkflowCount",
-                          "runnable"
+                          "runnable",
+                          "notRunnableReason",
+                          "notRunnableDetail"
                         ]
                       },
                       "description": "ROI PER PLAY (owner 2026-10-13): every play of the pipe, default first, each priced on its best ALLOWED workflow (same pick as the pipe: cheapest mature, else cheapest flash). The default play's figures are the pipe's own. A pipe cataloguing no play lists itself alone (`strategyId` null)."
@@ -51360,6 +51434,8 @@
                     "operatedBy",
                     "managed",
                     "runnable",
+                    "notRunnableReason",
+                    "notRunnableDetail",
                     "draft",
                     "costUsd",
                     "costPer",
@@ -51520,6 +51596,23 @@
                       "type": "boolean",
                       "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
                     },
+                    "notRunnableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "judging_failing",
+                        "judging_pending",
+                        "no_workflow_follows_strategy",
+                        "unpublished",
+                        "no_workflow"
+                      ],
+                      "description": "Why nothing runs it (null when `runnable`). Owner 2026-10-14: a play blocked on its strategy says whether Jev is still judging (`judging_pending`), FAILING to judge (`judging_failing`: retried by every sweep, so it resumes by itself), or judged every active workflow out (`no_workflow_follows_strategy`: a workflow following it must be built). `no_workflow`: no active workflow works the pipe; `unpublished`: hidden by staff."
+                    },
+                    "notRunnableDetail": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The reason in one plain sentence an agent can relay."
+                    },
                     "draft": {
                       "type": "boolean"
                     },
@@ -51728,6 +51821,23 @@
                           "runnable": {
                             "type": "boolean",
                             "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
+                          },
+                          "notRunnableReason": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "judging_failing",
+                              "judging_pending",
+                              "no_workflow_follows_strategy",
+                              "unpublished",
+                              "no_workflow"
+                            ],
+                            "description": "Why nothing runs it (null when `runnable`). Owner 2026-10-14: a play blocked on its strategy says whether Jev is still judging (`judging_pending`), FAILING to judge (`judging_failing`: retried by every sweep, so it resumes by itself), or judged every active workflow out (`no_workflow_follows_strategy`: a workflow following it must be built). `no_workflow`: no active workflow works the pipe; `unpublished`: hidden by staff."
+                          },
+                          "notRunnableDetail": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The reason in one plain sentence an agent can relay."
                           }
                         },
                         "required": [
@@ -51746,7 +51856,9 @@
                           "bestWorkflowSlug",
                           "measuredBasis",
                           "allowedActiveWorkflowCount",
-                          "runnable"
+                          "runnable",
+                          "notRunnableReason",
+                          "notRunnableDetail"
                         ]
                       },
                       "description": "ROI PER PLAY (owner 2026-10-13): every play of the pipe, default first, each priced on its best ALLOWED workflow (same pick as the pipe: cheapest mature, else cheapest flash). The default play's figures are the pipe's own. A pipe cataloguing no play lists itself alone (`strategyId` null)."
@@ -53526,6 +53638,8 @@
                     "operatedBy",
                     "managed",
                     "runnable",
+                    "notRunnableReason",
+                    "notRunnableDetail",
                     "draft",
                     "costUsd",
                     "costPer",
@@ -56763,6 +56877,67 @@
                           "workflowsFollowing": {
                             "type": "integer",
                             "description": "Of them, those judged to follow it."
+                          },
+                          "judging": {
+                            "type": "object",
+                            "properties": {
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "judging",
+                                  "failing",
+                                  "complete"
+                                ],
+                                "description": "`judging`: no full sweep has run on the CURRENT description yet (just created or edited). `failing`: the last sweep could not judge `versionsFailed` versions (`lastFailure` says why); every sweep retries them, so judging resumes by itself once Jev answers (`nextSweepAt`). `complete`: every version the last sweep covered stands judged."
+                              },
+                              "versions": {
+                                "type": "integer",
+                                "nullable": true,
+                                "description": "Workflow versions the last sweep covered (null while `judging`)."
+                              },
+                              "versionsJudged": {
+                                "type": "integer",
+                                "nullable": true
+                              },
+                              "versionsFailed": {
+                                "type": "integer",
+                                "nullable": true
+                              },
+                              "lastSweepAt": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "nextSweepAt": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "When the next sweep is due (every 15 min)."
+                              },
+                              "lastFailure": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "The last reason Jev (or a workflow read) gave in that sweep."
+                              },
+                              "lastFailureAt": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "detail": {
+                                "type": "string",
+                                "description": "One plain sentence an agent can relay."
+                              }
+                            },
+                            "required": [
+                              "status",
+                              "versions",
+                              "versionsJudged",
+                              "versionsFailed",
+                              "lastSweepAt",
+                              "nextSweepAt",
+                              "lastFailure",
+                              "lastFailureAt",
+                              "detail"
+                            ],
+                            "description": "Owner 2026-10-14: whether Jev's judging of this tactic is complete, still running, or failing (never \"pending\" forever)."
                           }
                         },
                         "required": [
@@ -56771,7 +56946,8 @@
                           "name",
                           "description",
                           "workflowsJudged",
-                          "workflowsFollowing"
+                          "workflowsFollowing",
+                          "judging"
                         ]
                       }
                     }
@@ -56865,6 +57041,67 @@
                     "workflowsFollowing": {
                       "type": "integer",
                       "description": "Of them, those judged to follow it."
+                    },
+                    "judging": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "judging",
+                            "failing",
+                            "complete"
+                          ],
+                          "description": "`judging`: no full sweep has run on the CURRENT description yet (just created or edited). `failing`: the last sweep could not judge `versionsFailed` versions (`lastFailure` says why); every sweep retries them, so judging resumes by itself once Jev answers (`nextSweepAt`). `complete`: every version the last sweep covered stands judged."
+                        },
+                        "versions": {
+                          "type": "integer",
+                          "nullable": true,
+                          "description": "Workflow versions the last sweep covered (null while `judging`)."
+                        },
+                        "versionsJudged": {
+                          "type": "integer",
+                          "nullable": true
+                        },
+                        "versionsFailed": {
+                          "type": "integer",
+                          "nullable": true
+                        },
+                        "lastSweepAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "nextSweepAt": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "When the next sweep is due (every 15 min)."
+                        },
+                        "lastFailure": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "The last reason Jev (or a workflow read) gave in that sweep."
+                        },
+                        "lastFailureAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "detail": {
+                          "type": "string",
+                          "description": "One plain sentence an agent can relay."
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "versions",
+                        "versionsJudged",
+                        "versionsFailed",
+                        "lastSweepAt",
+                        "nextSweepAt",
+                        "lastFailure",
+                        "lastFailureAt",
+                        "detail"
+                      ],
+                      "description": "Owner 2026-10-14: whether Jev's judging of this tactic is complete, still running, or failing (never \"pending\" forever)."
                     }
                   },
                   "required": [
@@ -56873,7 +57110,8 @@
                     "name",
                     "description",
                     "workflowsJudged",
-                    "workflowsFollowing"
+                    "workflowsFollowing",
+                    "judging"
                   ]
                 }
               }
@@ -56910,6 +57148,67 @@
                     "workflowsFollowing": {
                       "type": "integer",
                       "description": "Of them, those judged to follow it."
+                    },
+                    "judging": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "judging",
+                            "failing",
+                            "complete"
+                          ],
+                          "description": "`judging`: no full sweep has run on the CURRENT description yet (just created or edited). `failing`: the last sweep could not judge `versionsFailed` versions (`lastFailure` says why); every sweep retries them, so judging resumes by itself once Jev answers (`nextSweepAt`). `complete`: every version the last sweep covered stands judged."
+                        },
+                        "versions": {
+                          "type": "integer",
+                          "nullable": true,
+                          "description": "Workflow versions the last sweep covered (null while `judging`)."
+                        },
+                        "versionsJudged": {
+                          "type": "integer",
+                          "nullable": true
+                        },
+                        "versionsFailed": {
+                          "type": "integer",
+                          "nullable": true
+                        },
+                        "lastSweepAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "nextSweepAt": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "When the next sweep is due (every 15 min)."
+                        },
+                        "lastFailure": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "The last reason Jev (or a workflow read) gave in that sweep."
+                        },
+                        "lastFailureAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "detail": {
+                          "type": "string",
+                          "description": "One plain sentence an agent can relay."
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "versions",
+                        "versionsJudged",
+                        "versionsFailed",
+                        "lastSweepAt",
+                        "nextSweepAt",
+                        "lastFailure",
+                        "lastFailureAt",
+                        "detail"
+                      ],
+                      "description": "Owner 2026-10-14: whether Jev's judging of this tactic is complete, still running, or failing (never \"pending\" forever)."
                     }
                   },
                   "required": [
@@ -56918,7 +57217,8 @@
                     "name",
                     "description",
                     "workflowsJudged",
-                    "workflowsFollowing"
+                    "workflowsFollowing",
+                    "judging"
                   ]
                 }
               }
@@ -56994,6 +57294,67 @@
                       "type": "integer",
                       "description": "Of them, those judged to follow it."
                     },
+                    "judging": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "judging",
+                            "failing",
+                            "complete"
+                          ],
+                          "description": "`judging`: no full sweep has run on the CURRENT description yet (just created or edited). `failing`: the last sweep could not judge `versionsFailed` versions (`lastFailure` says why); every sweep retries them, so judging resumes by itself once Jev answers (`nextSweepAt`). `complete`: every version the last sweep covered stands judged."
+                        },
+                        "versions": {
+                          "type": "integer",
+                          "nullable": true,
+                          "description": "Workflow versions the last sweep covered (null while `judging`)."
+                        },
+                        "versionsJudged": {
+                          "type": "integer",
+                          "nullable": true
+                        },
+                        "versionsFailed": {
+                          "type": "integer",
+                          "nullable": true
+                        },
+                        "lastSweepAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "nextSweepAt": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "When the next sweep is due (every 15 min)."
+                        },
+                        "lastFailure": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "The last reason Jev (or a workflow read) gave in that sweep."
+                        },
+                        "lastFailureAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "detail": {
+                          "type": "string",
+                          "description": "One plain sentence an agent can relay."
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "versions",
+                        "versionsJudged",
+                        "versionsFailed",
+                        "lastSweepAt",
+                        "nextSweepAt",
+                        "lastFailure",
+                        "lastFailureAt",
+                        "detail"
+                      ],
+                      "description": "Owner 2026-10-14: whether Jev's judging of this tactic is complete, still running, or failing (never \"pending\" forever)."
+                    },
                     "createdBy": {
                       "type": "string"
                     },
@@ -57065,6 +57426,7 @@
                     "description",
                     "workflowsJudged",
                     "workflowsFollowing",
+                    "judging",
                     "createdBy",
                     "createdAt",
                     "updatedBy",
@@ -57163,6 +57525,67 @@
                       "type": "integer",
                       "description": "Of them, those judged to follow it."
                     },
+                    "judging": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "judging",
+                            "failing",
+                            "complete"
+                          ],
+                          "description": "`judging`: no full sweep has run on the CURRENT description yet (just created or edited). `failing`: the last sweep could not judge `versionsFailed` versions (`lastFailure` says why); every sweep retries them, so judging resumes by itself once Jev answers (`nextSweepAt`). `complete`: every version the last sweep covered stands judged."
+                        },
+                        "versions": {
+                          "type": "integer",
+                          "nullable": true,
+                          "description": "Workflow versions the last sweep covered (null while `judging`)."
+                        },
+                        "versionsJudged": {
+                          "type": "integer",
+                          "nullable": true
+                        },
+                        "versionsFailed": {
+                          "type": "integer",
+                          "nullable": true
+                        },
+                        "lastSweepAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "nextSweepAt": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "When the next sweep is due (every 15 min)."
+                        },
+                        "lastFailure": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "The last reason Jev (or a workflow read) gave in that sweep."
+                        },
+                        "lastFailureAt": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "detail": {
+                          "type": "string",
+                          "description": "One plain sentence an agent can relay."
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "versions",
+                        "versionsJudged",
+                        "versionsFailed",
+                        "lastSweepAt",
+                        "nextSweepAt",
+                        "lastFailure",
+                        "lastFailureAt",
+                        "detail"
+                      ],
+                      "description": "Owner 2026-10-14: whether Jev's judging of this tactic is complete, still running, or failing (never \"pending\" forever)."
+                    },
                     "changed": {
                       "type": "boolean",
                       "description": "false = the description was already this text (nothing re-judged)."
@@ -57186,6 +57609,7 @@
                     "description",
                     "workflowsJudged",
                     "workflowsFollowing",
+                    "judging",
                     "changed",
                     "previousDescription",
                     "updatedBy",
@@ -57325,7 +57749,7 @@
                                 "name"
                               ]
                             },
-                            "description": "Tactics a workflow must not follow (judged yes = ruled out; not judged yet = allowed)."
+                            "description": "Tactics a workflow must not follow (judged yes = ruled out; not judged yet = ruled out too until Jev answers)."
                           },
                           "pipeIds": {
                             "type": "array",
@@ -57479,7 +57903,7 @@
                           "name"
                         ]
                       },
-                      "description": "Tactics a workflow must not follow (judged yes = ruled out; not judged yet = allowed)."
+                      "description": "Tactics a workflow must not follow (judged yes = ruled out; not judged yet = ruled out too until Jev answers)."
                     },
                     "pipeIds": {
                       "type": "array",
@@ -57564,7 +57988,7 @@
                           "name"
                         ]
                       },
-                      "description": "Tactics a workflow must not follow (judged yes = ruled out; not judged yet = allowed)."
+                      "description": "Tactics a workflow must not follow (judged yes = ruled out; not judged yet = ruled out too until Jev answers)."
                     },
                     "pipeIds": {
                       "type": "array",
@@ -57687,7 +58111,7 @@
                           "name"
                         ]
                       },
-                      "description": "Tactics a workflow must not follow (judged yes = ruled out; not judged yet = allowed)."
+                      "description": "Tactics a workflow must not follow (judged yes = ruled out; not judged yet = ruled out too until Jev answers)."
                     },
                     "pipeIds": {
                       "type": "array",
@@ -57876,6 +58300,23 @@
                           "runnable": {
                             "type": "boolean",
                             "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
+                          },
+                          "notRunnableReason": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "judging_failing",
+                              "judging_pending",
+                              "no_workflow_follows_strategy",
+                              "unpublished",
+                              "no_workflow"
+                            ],
+                            "description": "Why nothing runs it (null when `runnable`). Owner 2026-10-14: a play blocked on its strategy says whether Jev is still judging (`judging_pending`), FAILING to judge (`judging_failing`: retried by every sweep, so it resumes by itself), or judged every active workflow out (`no_workflow_follows_strategy`: a workflow following it must be built). `no_workflow`: no active workflow works the pipe; `unpublished`: hidden by staff."
+                          },
+                          "notRunnableDetail": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The reason in one plain sentence an agent can relay."
                           }
                         },
                         "required": [
@@ -57894,7 +58335,9 @@
                           "bestWorkflowSlug",
                           "measuredBasis",
                           "allowedActiveWorkflowCount",
-                          "runnable"
+                          "runnable",
+                          "notRunnableReason",
+                          "notRunnableDetail"
                         ]
                       }
                     }
@@ -58048,8 +58491,90 @@
                       "type": "boolean",
                       "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
                     },
+                    "notRunnableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "judging_failing",
+                        "judging_pending",
+                        "no_workflow_follows_strategy",
+                        "unpublished",
+                        "no_workflow"
+                      ],
+                      "description": "Why nothing runs it (null when `runnable`). Owner 2026-10-14: a play blocked on its strategy says whether Jev is still judging (`judging_pending`), FAILING to judge (`judging_failing`: retried by every sweep, so it resumes by itself), or judged every active workflow out (`no_workflow_follows_strategy`: a workflow following it must be built). `no_workflow`: no active workflow works the pipe; `unpublished`: hidden by staff."
+                    },
+                    "notRunnableDetail": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The reason in one plain sentence an agent can relay."
+                    },
                     "created": {
                       "type": "boolean"
+                    },
+                    "salesFunnels": {
+                      "type": "object",
+                      "properties": {
+                        "total": {
+                          "type": "integer"
+                        },
+                        "truncated": {
+                          "type": "boolean"
+                        },
+                        "rows": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "description": "The funnel id to launch (`POST /v1/sales-funnel-campaigns`)."
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "line": {
+                                "type": "string"
+                              },
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "proactive",
+                                  "reactive"
+                                ]
+                              },
+                              "runnable": {
+                                "type": "boolean"
+                              },
+                              "notRunnableReason": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "judging_failing",
+                                  "judging_pending",
+                                  "no_workflow_follows_strategy",
+                                  "unpublished",
+                                  "no_workflow"
+                                ],
+                                "description": "Why nothing runs it (null when `runnable`). Owner 2026-10-14: a play blocked on its strategy says whether Jev is still judging (`judging_pending`), FAILING to judge (`judging_failing`: retried by every sweep, so it resumes by itself), or judged every active workflow out (`no_workflow_follows_strategy`: a workflow following it must be built). `no_workflow`: no active workflow works the pipe; `unpublished`: hidden by staff."
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name",
+                              "line",
+                              "type",
+                              "runnable",
+                              "notRunnableReason"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "total",
+                        "truncated",
+                        "rows"
+                      ],
+                      "description": "Owner 2026-10-14: the sales funnels carrying this play, RUNNABLE OR NOT (the customer funnel lists keep runnable ones only), best ROI first, at most 10; mixed funnels left out (never runnable). An agent that just catalogued a play reads here the funnel it launches, never builds an id by hand."
                     }
                   },
                   "required": [
@@ -58069,7 +58594,10 @@
                     "measuredBasis",
                     "allowedActiveWorkflowCount",
                     "runnable",
-                    "created"
+                    "notRunnableReason",
+                    "notRunnableDetail",
+                    "created",
+                    "salesFunnels"
                   ]
                 }
               }
@@ -58166,8 +58694,90 @@
                       "type": "boolean",
                       "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
                     },
+                    "notRunnableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "judging_failing",
+                        "judging_pending",
+                        "no_workflow_follows_strategy",
+                        "unpublished",
+                        "no_workflow"
+                      ],
+                      "description": "Why nothing runs it (null when `runnable`). Owner 2026-10-14: a play blocked on its strategy says whether Jev is still judging (`judging_pending`), FAILING to judge (`judging_failing`: retried by every sweep, so it resumes by itself), or judged every active workflow out (`no_workflow_follows_strategy`: a workflow following it must be built). `no_workflow`: no active workflow works the pipe; `unpublished`: hidden by staff."
+                    },
+                    "notRunnableDetail": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The reason in one plain sentence an agent can relay."
+                    },
                     "created": {
                       "type": "boolean"
+                    },
+                    "salesFunnels": {
+                      "type": "object",
+                      "properties": {
+                        "total": {
+                          "type": "integer"
+                        },
+                        "truncated": {
+                          "type": "boolean"
+                        },
+                        "rows": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "description": "The funnel id to launch (`POST /v1/sales-funnel-campaigns`)."
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "line": {
+                                "type": "string"
+                              },
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "proactive",
+                                  "reactive"
+                                ]
+                              },
+                              "runnable": {
+                                "type": "boolean"
+                              },
+                              "notRunnableReason": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "judging_failing",
+                                  "judging_pending",
+                                  "no_workflow_follows_strategy",
+                                  "unpublished",
+                                  "no_workflow"
+                                ],
+                                "description": "Why nothing runs it (null when `runnable`). Owner 2026-10-14: a play blocked on its strategy says whether Jev is still judging (`judging_pending`), FAILING to judge (`judging_failing`: retried by every sweep, so it resumes by itself), or judged every active workflow out (`no_workflow_follows_strategy`: a workflow following it must be built). `no_workflow`: no active workflow works the pipe; `unpublished`: hidden by staff."
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name",
+                              "line",
+                              "type",
+                              "runnable",
+                              "notRunnableReason"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "total",
+                        "truncated",
+                        "rows"
+                      ],
+                      "description": "Owner 2026-10-14: the sales funnels carrying this play, RUNNABLE OR NOT (the customer funnel lists keep runnable ones only), best ROI first, at most 10; mixed funnels left out (never runnable). An agent that just catalogued a play reads here the funnel it launches, never builds an id by hand."
                     }
                   },
                   "required": [
@@ -58187,7 +58797,10 @@
                     "measuredBasis",
                     "allowedActiveWorkflowCount",
                     "runnable",
-                    "created"
+                    "notRunnableReason",
+                    "notRunnableDetail",
+                    "created",
+                    "salesFunnels"
                   ]
                 }
               }
@@ -58322,6 +58935,23 @@
                       "type": "boolean",
                       "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
                     },
+                    "notRunnableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "judging_failing",
+                        "judging_pending",
+                        "no_workflow_follows_strategy",
+                        "unpublished",
+                        "no_workflow"
+                      ],
+                      "description": "Why nothing runs it (null when `runnable`). Owner 2026-10-14: a play blocked on its strategy says whether Jev is still judging (`judging_pending`), FAILING to judge (`judging_failing`: retried by every sweep, so it resumes by itself), or judged every active workflow out (`no_workflow_follows_strategy`: a workflow following it must be built). `no_workflow`: no active workflow works the pipe; `unpublished`: hidden by staff."
+                    },
+                    "notRunnableDetail": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The reason in one plain sentence an agent can relay."
+                    },
                     "learningReason": {
                       "type": "string",
                       "nullable": true
@@ -58337,6 +58967,71 @@
                       "items": {
                         "type": "string"
                       }
+                    },
+                    "salesFunnels": {
+                      "type": "object",
+                      "properties": {
+                        "total": {
+                          "type": "integer"
+                        },
+                        "truncated": {
+                          "type": "boolean"
+                        },
+                        "rows": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "description": "The funnel id to launch (`POST /v1/sales-funnel-campaigns`)."
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "line": {
+                                "type": "string"
+                              },
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "proactive",
+                                  "reactive"
+                                ]
+                              },
+                              "runnable": {
+                                "type": "boolean"
+                              },
+                              "notRunnableReason": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "judging_failing",
+                                  "judging_pending",
+                                  "no_workflow_follows_strategy",
+                                  "unpublished",
+                                  "no_workflow"
+                                ],
+                                "description": "Why nothing runs it (null when `runnable`). Owner 2026-10-14: a play blocked on its strategy says whether Jev is still judging (`judging_pending`), FAILING to judge (`judging_failing`: retried by every sweep, so it resumes by itself), or judged every active workflow out (`no_workflow_follows_strategy`: a workflow following it must be built). `no_workflow`: no active workflow works the pipe; `unpublished`: hidden by staff."
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name",
+                              "line",
+                              "type",
+                              "runnable",
+                              "notRunnableReason"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "total",
+                        "truncated",
+                        "rows"
+                      ],
+                      "description": "Owner 2026-10-14: the sales funnels carrying this play, RUNNABLE OR NOT (the customer funnel lists keep runnable ones only), best ROI first, at most 10; mixed funnels left out (never runnable). An agent that just catalogued a play reads here the funnel it launches, never builds an id by hand."
                     }
                   },
                   "required": [
@@ -58356,9 +59051,12 @@
                     "measuredBasis",
                     "allowedActiveWorkflowCount",
                     "runnable",
+                    "notRunnableReason",
+                    "notRunnableDetail",
                     "learningReason",
                     "estimates",
-                    "excludedWorkflowDynastySlugs"
+                    "excludedWorkflowDynastySlugs",
+                    "salesFunnels"
                   ]
                 }
               }
@@ -58512,6 +59210,23 @@
                       "type": "boolean",
                       "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
                     },
+                    "notRunnableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "judging_failing",
+                        "judging_pending",
+                        "no_workflow_follows_strategy",
+                        "unpublished",
+                        "no_workflow"
+                      ],
+                      "description": "Why nothing runs it (null when `runnable`). Owner 2026-10-14: a play blocked on its strategy says whether Jev is still judging (`judging_pending`), FAILING to judge (`judging_failing`: retried by every sweep, so it resumes by itself), or judged every active workflow out (`no_workflow_follows_strategy`: a workflow following it must be built). `no_workflow`: no active workflow works the pipe; `unpublished`: hidden by staff."
+                    },
+                    "notRunnableDetail": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The reason in one plain sentence an agent can relay."
+                    },
                     "created": {
                       "type": "boolean",
                       "description": "true when the play was catalogued by this write."
@@ -58538,6 +59253,8 @@
                     "measuredBasis",
                     "allowedActiveWorkflowCount",
                     "runnable",
+                    "notRunnableReason",
+                    "notRunnableDetail",
                     "created",
                     "defaultChanged"
                   ]
