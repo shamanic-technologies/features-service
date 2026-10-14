@@ -5,6 +5,8 @@ const READ_BRAND = "f4d73dab-1f9d-49b2-b16e-63ecde76a5eb";
 const NEVER_READ_ORG_BRAND = "11111111-1111-4111-8111-111111111111";
 
 let cells: Record<string, unknown>[] = [];
+/** Brands whose campaigns are all stopped (no live campaign: not an ACTIVE brand). */
+const stoppedBrands = new Set<string>();
 vi.mock("../db/index.js", () => ({
   db: { select: () => ({ from: () => ({ where: async () => cells }) }) },
   sql: {},
@@ -18,7 +20,7 @@ vi.mock("./feature-memberships-client.js", () => ({
 }));
 vi.mock("./campaign-identity-client.js", () => ({
   fetchBrandCampaignRows: async (brandId: string) => [
-    { id: `${brandId.slice(0, 4)}-c1`, orgId: "org-a", brandId, featureSlug: "sales-cold-email-outreach", acquisitionChannel: "email", offerId: "off", legKey: "start_to_conversation", status: "ongoing", createdAt: "2026-09-01" },
+    { id: `${brandId.slice(0, 4)}-c1`, orgId: "org-a", brandId, featureSlug: "sales-cold-email-outreach", acquisitionChannel: "email", offerId: "off", legKey: "start_to_conversation", status: stoppedBrands.has(brandId) ? "stopped" : "ongoing", createdAt: "2026-09-01" },
   ],
 }));
 
@@ -38,6 +40,8 @@ describe("materializeRound", () => {
   const asked: { url: string; headers: Record<string, string> }[] = [];
   beforeEach(() => {
     asked.length = 0;
+    stoppedBrands.clear();
+    delete process.env.VIEW_KEEPER_MAX_MATERIALIZE_PER_ROUND;
     __resetKeeperStateForTest();
     process.env.VIEW_REFRESHER_PORT = "9999";
     process.env.FEATURES_SERVICE_API_KEY = "svc-key";
@@ -113,6 +117,31 @@ describe("materializeRound", () => {
     expect(urls).toContain(`/brands/${READ_BRAND}/revenue?pricing=net`);
     expect(urls).not.toContain(`/features/sales-cold-email-outreach/revenue?brandId=${READ_BRAND}&campaignId=f4d7-c1&pricing=net`);
     expect(report.held).toBe(1);
+  });
+
+  it("warms what pages READ first, as itself, then at most the materialize cap of never-read instances", async () => {
+    // Two reads with no current cell (a re-keying deploy): a brand page and a one-off drill-down that is no shape.
+    const oldShape = (await import("./response-shape.js")).withResponseShape("k|x=1", "0123456789ab");
+    const drill = `/features/sales-cold-email-outreach/revenue?brandId=${READ_BRAND}&pricing=net&workflow=w`;
+    cells = [
+      { ...cells[0], scopeKey: oldShape },
+      { replayUrl: drill, replayHeaders: HEADERS, orgId: "org-a", brandId: READ_BRAND, lastReadAt: recent, computedAt: recent, scopeKey: oldShape },
+    ];
+    process.env.VIEW_KEEPER_MAX_MATERIALIZE_PER_ROUND = "1";
+    const report = await materializeRound();
+    const urls = asked.map((a) => a.url.replace("http://127.0.0.1:9999", ""));
+    // The two reads first (most recent first is not asserted: same instant), as their own requests.
+    expect(urls.slice(0, 2).sort()).toEqual([`/brands/${READ_BRAND}/revenue?pricing=net`, drill].sort());
+    // Then ONE never-read instance (the cap), never the whole fleet expansion.
+    expect(urls).toHaveLength(3);
+    expect(report.read).toEqual({ requests: 2, held: 0, missing: 2, stale: 0 });
+  });
+
+  it("does not warm a never-read instance of a brand with no live campaign", async () => {
+    stoppedBrands.add(B);
+    await materializeRound();
+    const urls = asked.map((a) => a.url.replace("http://127.0.0.1:9999", ""));
+    expect(urls.some((u) => u.includes(B))).toBe(false);
   });
 
   it("never replays the org under a MALFORMED identity a probe left on a cell (prod 2026-10-09, x-user-id: x)", async () => {
