@@ -621,6 +621,8 @@ export const workflowTacticVerdicts = pgTable(
     probability: doublePrecision("probability").notNull(),
     model: text("model").notNull(),
     judgedDescription: text("judged_description").notNull(),
+    /** How Jev read the workflow (migration 0033): `whole-in-parts` reads every step; `truncated-60k` (before 2026-10-14) cut a big DAG at 60,000 characters. */
+    judgeRule: text("judge_rule").notNull().default("truncated-60k"),
     judgedAt: timestamp("judged_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.workflowSlug, t.tacticId] })],

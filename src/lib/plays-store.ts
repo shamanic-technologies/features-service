@@ -91,7 +91,7 @@ export async function recordJudgingSweeps(rows: readonly TacticJudgingSweep[]): 
 }
 
 /** A stored verdict and the tactic description Jev judged it on (an edited description re-judges it). */
-export type StoredVerdict = TacticVerdictRow & { judgedDescription: string };
+export type StoredVerdict = TacticVerdictRow & { judgedDescription: string; judgeRule: string };
 
 const verdictOf = (r: typeof workflowTacticVerdicts.$inferSelect): StoredVerdict => ({
   workflowSlug: r.workflowSlug,
@@ -103,6 +103,7 @@ const verdictOf = (r: typeof workflowTacticVerdicts.$inferSelect): StoredVerdict
   probability: r.probability,
   model: r.model,
   judgedDescription: r.judgedDescription,
+  judgeRule: r.judgeRule,
   judgedAt: r.judgedAt.toISOString(),
 });
 
@@ -260,8 +261,9 @@ async function loadPlayCatalogueFresh(): Promise<{ tactics: Tactic[]; strategies
 }
 
 /**
- * Store one verdict, judged once per tactic DESCRIPTION: a row judged on the same text is never overwritten; a row
- * judged on an older text (the tactic was edited) is replaced in place by the new judgment.
+ * Store one verdict, judged once per tactic DESCRIPTION and judge rule: a row judged on the same text and rule is never
+ * overwritten; a row judged on an older text (the tactic was edited) or an older rule (a big DAG read cut short) is
+ * replaced in place by the new judgment.
  */
 export async function insertVerdict(row: Omit<StoredVerdict, "judgedAt"> & { featureSlug: string }): Promise<void> {
   await db
@@ -277,6 +279,7 @@ export async function insertVerdict(row: Omit<StoredVerdict, "judgedAt"> & { fea
       probability: row.probability,
       model: row.model,
       judgedDescription: row.judgedDescription,
+      judgeRule: row.judgeRule,
     })
     .onConflictDoUpdate({
       target: [workflowTacticVerdicts.workflowSlug, workflowTacticVerdicts.tacticId],
@@ -289,9 +292,10 @@ export async function insertVerdict(row: Omit<StoredVerdict, "judgedAt"> & { fea
         probability: row.probability,
         model: row.model,
         judgedDescription: row.judgedDescription,
+        judgeRule: row.judgeRule,
         judgedAt: new Date(),
       },
-      setWhere: sql`${workflowTacticVerdicts.judgedDescription} IS DISTINCT FROM ${row.judgedDescription}`,
+      setWhere: sql`${workflowTacticVerdicts.judgedDescription} IS DISTINCT FROM ${row.judgedDescription} OR ${workflowTacticVerdicts.judgeRule} IS DISTINCT FROM ${row.judgeRule}`,
     });
   invalidatePlayCatalogue();
 }
