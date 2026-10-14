@@ -278,9 +278,35 @@ export function warmCatalogueMeasurements(): Promise<void> {
   return measurementWarm;
 }
 
+/**
+ * A play write (a play catalogued, a pipe's default set) changes which workflows a play may pick, so the figures priced
+ * on the previous plays are stale: rebuild them now (behind the served copy), never 15 min later. A build already in
+ * flight read the OLD plays, so the rebuild waits for it and runs after (RANKING-SOURCE-LEG-1014: Lead Sourcing's
+ * default read `bestWorkflowSlug: samaya` while its new strategy allowed only scheat).
+ */
+let playWriteRefresh: Promise<void> | null = null;
+export function refreshCatalogueMeasurementsAfterPlayWrite(): Promise<void> {
+  const stale = () => {
+    if (measurementStore) measurementStore = { ...measurementStore, at: 0 };
+  };
+  stale();
+  const refresh = (measurementWarm ?? Promise.resolve()).then(() => {
+    stale();
+    return warmCatalogueMeasurements();
+  });
+  const tracked: Promise<void> = refresh.finally(() => {
+    if (playWriteRefresh === tracked) playWriteRefresh = null;
+  });
+  playWriteRefresh = tracked;
+  return tracked;
+}
+
 /** Test seams. */
 export function __setCatalogueMeasurementsForTest(byPipe: Map<string, PipeMeasurement>, byPlay?: Map<string, PipeMeasurement>): void {
   measurementStore = { value: { byPipe, byPlay: byPlay ?? new Map(), unreadable: new Set(), computedAt: new Date(0).toISOString(), fleet: null }, at: Date.now() };
+}
+export async function __awaitCatalogueMeasurementsForTest(): Promise<void> {
+  while (playWriteRefresh || measurementWarm) await (playWriteRefresh ?? measurementWarm);
 }
 export function __resetCatalogueMeasurements(): void {
   measurementStore = null;
@@ -1652,6 +1678,7 @@ router.post("/internal/catalogue/plays", apiKeyOnly, async (req, res) => {
     const play = pipeOrPlayById(model, playIdOf(pipeId, strategyId));
     if (!play) throw new Error(`play ${pipeId}~${strategyId} was stored but is not in the catalogue`);
     console.log(`[features-service] agent catalogue: play ${play.id} ${created ? "declared" : "re-declared"} by ${createdBy}`);
+    if (created) void refreshCatalogueMeasurementsAfterPlayWrite();
     res.status(created ? 201 : 200).json({ created, ...playRowOf(model, play) });
   } catch (err) {
     fail(res, err, "create play");
@@ -1680,6 +1707,7 @@ router.put("/internal/catalogue/pipes/:pipeId/default-play", apiKeyOnly, async (
     const play = model.pipes.get(pipeId);
     if (!play) throw new Error(`pipe ${pipeId} vanished from the catalogue`);
     console.log(`[features-service] agent catalogue: ${pipeId} default play ${defaultChanged ? "set to" : "already"} ${strategyId} by ${decidedBy}${created ? " (play catalogued)" : ""}`);
+    if (created || defaultChanged) void refreshCatalogueMeasurementsAfterPlayWrite();
     res.json({ created, defaultChanged, ...playRowOf(model, play) });
   } catch (err) {
     fail(res, err, "create play");
