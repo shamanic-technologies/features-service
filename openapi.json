@@ -28530,6 +28530,192 @@
             ],
             "description": "FLEET EMAIL DELIVERY (owner 2026-10-13): the share of every email our sending inboxes sent that the recipient's server accepted, since inception. Served here so no consumer computes it."
           },
+          "emailDeliveryByVerdict": {
+            "type": "object",
+            "properties": {
+              "basis": {
+                "type": "string",
+                "enum": [
+                  "sequences"
+                ],
+                "description": "Unit = a SEQUENCE (one address emailed under one campaign, counted once its first real email left), fleet-wide since inception, bucketed two ways by the verdict of our verifier (BounceVerify via apollo-service): at send (`byVerdictAtSend`) and on record today (`byLatestVerdict`). Measured by instantly-service. Not the email grain of `emailDelivery`."
+              },
+              "since": {
+                "type": "string",
+                "nullable": true,
+                "description": "First real email of the earliest counted sequence."
+              },
+              "sentThrough": {
+                "type": "string",
+                "nullable": true,
+                "description": "Sequences first sent after this instant are not counted yet."
+              },
+              "verificationsSince": {
+                "type": "string",
+                "nullable": true,
+                "description": "Earliest verification on record: sequences sent before it can only be `never_verified`."
+              },
+              "byVerdictAtSend": {
+                "type": "array",
+                "nullable": true,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "verdict": {
+                      "type": "string",
+                      "enum": [
+                        "valid",
+                        "catch_all",
+                        "unknown",
+                        "invalid",
+                        "risky",
+                        "no_verdict",
+                        "never_verified"
+                      ],
+                      "description": "The verdict the address had at send. `no_verdict`: the only verifications before the send returned none. `never_verified`: no verification before the send (most sends before the verification gate)."
+                    },
+                    "sent": {
+                      "type": "integer",
+                      "description": "Sequences whose first real email left (one address emailed under one campaign)."
+                    },
+                    "delivered": {
+                      "type": "integer",
+                      "description": "Of them, sequences with no bounce on any step."
+                    },
+                    "bounced": {
+                      "type": "integer",
+                      "description": "Of them, sequences where a step bounced. delivered + bounced = sent."
+                    },
+                    "deliveryRatePct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "delivered / sent x 100, 2 decimals. Null when nothing was sent."
+                    },
+                    "bounceRatePct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "bounced / sent x 100, 2 decimals. Null when nothing was sent."
+                    }
+                  },
+                  "required": [
+                    "verdict",
+                    "sent",
+                    "delivered",
+                    "bounced",
+                    "deliveryRatePct",
+                    "bounceRatePct"
+                  ]
+                },
+                "description": "AT SEND: all 7 verdicts, always present (zero when empty), in this order; they partition `total`. Verification started 2026-09-25, so most of the history is `never_verified`. Null with `unavailableReason`."
+              },
+              "byLatestVerdict": {
+                "type": "array",
+                "nullable": true,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "verdict": {
+                      "type": "string",
+                      "enum": [
+                        "valid",
+                        "catch_all",
+                        "unknown",
+                        "invalid",
+                        "risky",
+                        "no_verdict",
+                        "never_verified"
+                      ]
+                    },
+                    "sent": {
+                      "type": "integer",
+                      "description": "Sequences whose first real email left (one address emailed under one campaign)."
+                    },
+                    "delivered": {
+                      "type": "integer",
+                      "description": "Of them, sequences with no bounce on any step."
+                    },
+                    "bounced": {
+                      "type": "integer",
+                      "description": "Of them, sequences where a step bounced. delivered + bounced = sent."
+                    },
+                    "deliveryRatePct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "delivered / sent x 100, 2 decimals. Null when nothing was sent."
+                    },
+                    "bounceRatePct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "bounced / sent x 100, 2 decimals. Null when nothing was sent."
+                    }
+                  },
+                  "required": [
+                    "verdict",
+                    "sent",
+                    "delivered",
+                    "bounced",
+                    "deliveryRatePct",
+                    "bounceRatePct"
+                  ]
+                },
+                "description": "LATEST: the SAME sequences by the verdict on record TODAY, verifications made after the send included. Answers 'how do addresses our verifier calls X fare', NOT 'what we knew when sending'. Same 7 verdicts, same total. Null with `unavailableReason`."
+              },
+              "total": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "sent": {
+                    "type": "integer",
+                    "description": "Sequences whose first real email left (one address emailed under one campaign)."
+                  },
+                  "delivered": {
+                    "type": "integer",
+                    "description": "Of them, sequences with no bounce on any step."
+                  },
+                  "bounced": {
+                    "type": "integer",
+                    "description": "Of them, sequences where a step bounced. delivered + bounced = sent."
+                  },
+                  "deliveryRatePct": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "delivered / sent x 100, 2 decimals. Null when nothing was sent."
+                  },
+                  "bounceRatePct": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "bounced / sent x 100, 2 decimals. Null when nothing was sent."
+                  }
+                },
+                "required": [
+                  "sent",
+                  "delivered",
+                  "bounced",
+                  "deliveryRatePct",
+                  "bounceRatePct"
+                ]
+              },
+              "unavailableReason": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "instantly_service_unavailable",
+                  "verification_history_not_synced"
+                ]
+              }
+            },
+            "required": [
+              "basis",
+              "since",
+              "sentThrough",
+              "verificationsSince",
+              "byVerdictAtSend",
+              "byLatestVerdict",
+              "total",
+              "unavailableReason"
+            ],
+            "description": "EMAIL DELIVERY BY VERIFICATION VERDICT (2026-10-14): every address is checked by our verifier before we send; delivery since inception split by the verdict the address had at send time, with populations. Served here so no consumer computes it."
+          },
           "meetingBookingGain": {
             "type": "object",
             "properties": {
@@ -29055,6 +29241,7 @@
           "triggers",
           "legKeyCorrespondence",
           "emailDelivery",
+          "emailDeliveryByVerdict",
           "meetingBookingGain",
           "meetingBookingBeforeAfter"
         ]
