@@ -225,6 +225,13 @@
       "when": 1792454400000,
       "tag": "0031_tactic_judging_sweeps",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1792540800000,
+      "tag": "0032_strategy_edits",
+      "breakpoints": true
     }
   ]
 }

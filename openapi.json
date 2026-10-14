@@ -58125,6 +58125,15 @@
                     },
                     "createdAt": {
                       "type": "string"
+                    },
+                    "updatedBy": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Who last edited the rule or description; null = never edited."
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "nullable": true
                     }
                   },
                   "required": [
@@ -58136,7 +58145,9 @@
                     "excludes",
                     "pipeIds",
                     "createdBy",
-                    "createdAt"
+                    "createdAt",
+                    "updatedBy",
+                    "updatedAt"
                   ]
                 }
               }
@@ -58153,6 +58164,236 @@
           },
           "503": {
             "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+          }
+        }
+      },
+      "patch": {
+        "summary": "Edit a strategy's rule or description (internal, api-key, staff)",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`). STRATEGY-EDIT-PUBLIC-1014 (2026-10-14): a strategy names only the tactics it knew when it was declared, so a new tactic (`unknown-email`) leaks into it: a workflow following the new tactic satisfies the old rule. An edit sets `requires` and/or `excludes` (each the FULL new list; absent = unchanged) and/or `description`. It changes what every campaign of every play on the strategy runs, so the gateway mounts it staff-only. Same rules as a create: every tactic known (404 `tactic_not_found`), never both required and excluded (400 `tactic_required_and_excluded`), at least one named (400 `strategy_empty`), description and rule unique among the OTHER strategies (409 `strategy_description_taken` / `strategy_rule_taken`). Name and id never move. Refused 409 `default_play_runs_nothing` when the strategy is a pipe's DEFAULT play and the new rule allows none of the pipe's active workflows, judged now. The plays' allowed workflows rebuild at once, their figures right behind. Nothing new = 200 `changed: false`.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "A strategy id"
+            },
+            "required": true,
+            "description": "A strategy id",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "requires": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Tactic ids a workflow must follow: the FULL new list (absent = unchanged)."
+                  },
+                  "excludes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Tactic ids a workflow must not follow: the FULL new list (absent = unchanged)."
+                  },
+                  "description": {
+                    "type": "string",
+                    "description": "<= 500 characters (absent = unchanged)."
+                  },
+                  "updatedBy": {
+                    "type": "string",
+                    "description": "Who makes the edit (the gateway sets it from the authenticated staff member)."
+                  }
+                },
+                "required": [
+                  "updatedBy"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The strategy after the edit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "enum": [
+                        "strategy"
+                      ]
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string",
+                      "description": "Unique (case-insensitive)."
+                    },
+                    "description": {
+                      "type": "string",
+                      "description": "Unique (case-insensitive)."
+                    },
+                    "requires": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "description": "Step key."
+                          },
+                          "name": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name"
+                        ]
+                      },
+                      "description": "Tactics a workflow must follow (judged yes) to run under it."
+                    },
+                    "excludes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "description": "Step key."
+                          },
+                          "name": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name"
+                        ]
+                      },
+                      "description": "Tactics a workflow must not follow (judged yes = ruled out; not judged yet = ruled out too until Jev answers)."
+                    },
+                    "pipeIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Pipes cataloguing a play on it."
+                    },
+                    "changed": {
+                      "type": "boolean",
+                      "description": "false = the strategy already held this rule and description (nothing stored)."
+                    },
+                    "previous": {
+                      "type": "object",
+                      "properties": {
+                        "requires": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "description": "Step key."
+                              },
+                              "name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name"
+                            ]
+                          }
+                        },
+                        "excludes": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "description": "Step key."
+                              },
+                              "name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name"
+                            ]
+                          }
+                        },
+                        "description": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "requires",
+                        "excludes",
+                        "description"
+                      ],
+                      "description": "The rule and description before this edit."
+                    },
+                    "createdBy": {
+                      "type": "string"
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "updatedBy": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "object",
+                    "id",
+                    "name",
+                    "description",
+                    "requires",
+                    "excludes",
+                    "pipeIds",
+                    "changed",
+                    "previous",
+                    "createdBy",
+                    "createdAt",
+                    "updatedBy",
+                    "updatedAt"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`edit_empty` (nothing to change sent), `requires_invalid` / `excludes_invalid`, `description_too_long`, `updatedBy_required`, `tactic_required_and_excluded`, `strategy_empty`."
+          },
+          "401": {
+            "description": "Missing or wrong service key."
+          },
+          "404": {
+            "description": "`strategy_not_found` or `tactic_not_found`."
+          },
+          "409": {
+            "description": "`strategy_description_taken`, `strategy_rule_taken` or `default_play_runs_nothing`."
           }
         }
       }
