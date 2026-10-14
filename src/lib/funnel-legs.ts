@@ -217,6 +217,16 @@ export function storedLegKeyOf(raw: string): string {
 }
 
 /**
+ * A leg key of ONE CHANNEL's pipe as COMPUTED on: an outbound channel's two spellings are one leg (`storedLegKeyOf`),
+ * any other channel's key is its own, VERBATIM. A non-outbound channel may perform BOTH `lead_found_to_conversation`
+ * and `start_to_conversation` as two pipes (AI Follow-up Email, NEVER-NO-FOLLOWUP-1014): collapsing them filed a
+ * workflow registered on one under the other. Use this wherever the channel is known.
+ */
+export function pipeLegKeyOf(featureSlug: string | null | undefined, raw: string): string {
+  return isOutboundChannel(featureSlug) ? storedLegKeyOf(raw) : raw;
+}
+
+/**
  * A combination key (`lib/offer-sales-paths.ts` `combinationKeyOf`: legs `+`-joined, a platform leg
  * `@<slug>`) as COMPUTED on: each leg's key resolved through `storedLegKeyOf`, so a combination a
  * caller spells with the new outbound keys names the same row, name and selection as the legacy one.
