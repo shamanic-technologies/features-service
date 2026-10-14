@@ -65,7 +65,7 @@ const FRESH_CAMPAIGN_MS = 15 * 60_000;
  */
 export function funnelCampaignCopyRow(
   r: SalesFunnelCampaignRow,
-  copy: Pick<FunnelCopy, "type" | "triggerLabel"> | null,
+  copy: Pick<FunnelCopy, "type" | "triggerLabel" | "shortDescription" | "shortDescriptionUnavailableReason"> | null,
   path: FunnelPathView | null,
 ) {
   return {
@@ -82,6 +82,9 @@ export function funnelCampaignCopyRow(
     triggerLabel: copy?.triggerLabel ?? null,
     // The Type column (owner 2026-10-11): "Daily" for a proactive funnel, its trigger for a reactive one.
     typeLabel: copy ? (copy.type === "proactive" ? "Daily" : copy.triggerLabel) : null,
+    // One short sentence of what we do in this campaign (owner 2026-10-14), shown under the name in place of the path.
+    shortDescription: copy?.shortDescription ?? null,
+    shortDescriptionUnavailableReason: copy ? copy.shortDescriptionUnavailableReason : ("sales_funnel_not_in_catalogue" as const),
     // The path the dashboard draws in place of the sentence (owner 2026-10-11), structured: never parsed from an id.
     // One channel per leg (owner 2026-10-11): the funnel's own path.
     path: copy ? path : null,

@@ -26,7 +26,7 @@ vi.mock("./agent-catalogue.js", () => ({
         id === "unknown"
           ? null
           : id === REACTIVE
-            ? { name: "Motivate", face: "/f", type: "reactive", triggerLabel: "Positive replies", firstStep: "conversation", path: { items: [], legs: [] } }
+            ? { name: "Motivate", face: "/f", type: "reactive", triggerLabel: "Positive replies", shortDescription: "We book meetings with buyers who reply with interest.", shortDescriptionUnavailableReason: null, firstStep: "conversation", path: { items: [], legs: [] } }
             : { name: "Bliss", face: "/f", type: "proactive", triggerLabel: null, firstStep: "lead_found", path: { items: [{ kind: "step", key: "lead_found", label: "Lead found" }], legs: [] } },
       ]),
     ),
