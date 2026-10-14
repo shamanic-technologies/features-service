@@ -490,6 +490,31 @@ describe("a campaign's PLAY decides which workflows may run (owner 2026-10-13, l
     expect(rowOf(res.body, "neon").modelEligibility.eligible).toBe(false);
   });
 
+  it("a pipe cataloguing only a NON-default play keeps running every assigned workflow on its default (2026-10-14: 7 live campaigns held)", async () => {
+    // A client added "Valid + Catch-all" to a pipe that had no default strategy: campaigns naming no strategy
+    // must keep their pre-play behaviour (every assigned workflow), never "every workflow ruled out".
+    const { loadPlayCatalogue } = await import("../lib/plays-store.js");
+    const { buildPlayCatalogue } = await import("../lib/plays.js");
+    const current = await loadPlayCatalogue();
+    vi.mocked(loadPlayCatalogue).mockResolvedValue(
+      buildPlayCatalogue({
+        tactics: [...current.tactics.values()],
+        strategies: [...current.strategies.values()],
+        plays: [{ pipeId: PIPE, strategyId: "valid-catch-all", isDefault: false }],
+        verdicts: [
+          { workflowSlug: "wf-lithium-v1", tacticId: "catch-all", workflowDynastySlug: "lithium", version: 1, versionActive: true, verdict: false, probability: 0.02, model: "m", judgedAt: "" },
+          { workflowSlug: "wf-sodium-v1", tacticId: "catch-all", workflowDynastySlug: "sodium", version: 1, versionActive: true, verdict: true, probability: 0.97, model: "m", judgedAt: "" },
+        ],
+      }),
+    );
+    const def = await get("leg=start_to_conversation&campaignId=unit-default");
+    expect(def.status).toBe(200);
+    expect(selectableSet(def.body)).toEqual(["lithium", "sodium"]);
+    expect(def.body.recommendedWorkflowDynastySlug).not.toBeNull();
+    const catchAll = await get("leg=start_to_conversation&campaignId=unit-catch");
+    expect(selectableSet(catchAll.body)).toEqual(["sodium"]);
+  });
+
   it("nothing allowed = nothing recommended, stated (campaign-service holds, never falls back)", async () => {
     const { loadPlayCatalogue } = await import("../lib/plays-store.js");
     const current = await loadPlayCatalogue();
