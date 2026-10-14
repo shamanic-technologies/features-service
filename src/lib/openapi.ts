@@ -5495,6 +5495,38 @@ const channelCatalogueResponseSchema = registry.register(
         unavailableReason: z.enum(["email_gateway_unavailable", "no_email_sent"]).nullable().describe("Why the rate is null; null when it is served."),
       })
       .describe("FLEET EMAIL DELIVERY (owner 2026-10-13): the share of every email our sending inboxes sent that the recipient's server accepted, since inception. Served here so no consumer computes it."),
+    emailDeliveryByVerdict: (() => {
+      const figures = {
+        sent: z.number().int().describe("Sequences whose first real email left (one address emailed under one campaign)."),
+        delivered: z.number().int().describe("Of them, sequences with no bounce on any step."),
+        bounced: z.number().int().describe("Of them, sequences where a step bounced. delivered + bounced = sent."),
+        deliveryRatePct: z.number().nullable().describe("delivered / sent x 100, 2 decimals. Null when nothing was sent."),
+        bounceRatePct: z.number().nullable().describe("bounced / sent x 100, 2 decimals. Null when nothing was sent."),
+      };
+      return z
+        .object({
+          basis: z.literal("sequences").describe("Unit = a SEQUENCE (one address emailed under one campaign, counted once its first real email left), fleet-wide since inception, bucketed two ways by the verdict of our verifier (BounceVerify via apollo-service): at send (`byVerdictAtSend`) and on record today (`byLatestVerdict`). Measured by instantly-service. Not the email grain of `emailDelivery`."),
+          since: z.string().nullable().describe("First real email of the earliest counted sequence."),
+          sentThrough: z.string().nullable().describe("Sequences first sent after this instant are not counted yet."),
+          verificationsSince: z.string().nullable().describe("Earliest verification on record: sequences sent before it can only be `never_verified`."),
+          byVerdictAtSend: z
+            .array(
+              z.object({
+                verdict: z.enum(["valid", "catch_all", "unknown", "invalid", "risky", "no_verdict", "never_verified"]).describe("The verdict the address had at send. `no_verdict`: the only verifications before the send returned none. `never_verified`: no verification before the send (most sends before the verification gate)."),
+                ...figures,
+              }),
+            )
+            .nullable()
+            .describe("AT SEND: all 7 verdicts, always present (zero when empty), in this order; they partition `total`. Verification started 2026-09-25, so most of the history is `never_verified`. Null with `unavailableReason`."),
+          byLatestVerdict: z
+            .array(z.object({ verdict: z.enum(["valid", "catch_all", "unknown", "invalid", "risky", "no_verdict", "never_verified"]), ...figures }))
+            .nullable()
+            .describe("LATEST: the SAME sequences by the verdict on record TODAY, verifications made after the send included. Answers 'how do addresses our verifier calls X fare', NOT 'what we knew when sending'. Same 7 verdicts, same total. Null with `unavailableReason`."),
+          total: z.object(figures).nullable(),
+          unavailableReason: z.enum(["instantly_service_unavailable", "verification_history_not_synced"]).nullable(),
+        })
+        .describe("EMAIL DELIVERY BY VERIFICATION VERDICT (2026-10-14): every address is checked by our verifier before we send; delivery since inception split by the verdict the address had at send time, with populations. Served here so no consumer computes it.");
+    })(),
     meetingBookingGain: z
       .object({
         legKey: z.literal("conversation_to_meeting_booked"),

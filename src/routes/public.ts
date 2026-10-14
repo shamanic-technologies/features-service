@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { fetchFleetEmailDelivery, type FleetEmailDelivery } from "../lib/fleet-email-delivery.js";
+import { fetchEmailDeliveryByVerdict, type EmailDeliveryByVerdict } from "../lib/email-delivery-by-verdict.js";
 import { fetchMeetingBookingGain, type MeetingBookingGain } from "../lib/meeting-booking-gain.js";
 import { fetchMeetingBookingBeforeAfter, type MeetingBookingBeforeAfter } from "../lib/meeting-booking-before-after.js";
 import { awaitWarmStore } from "../lib/await-warm-store.js";
@@ -3325,6 +3326,8 @@ async function loadPublishedChannels(): Promise<PublicChannel[]> {
 interface ChannelCataloguePayload {
   /** Fleet email delivery (`lib/fleet-email-delivery.ts`): the share of our sent emails the recipient server accepted. */
   emailDelivery: FleetEmailDelivery;
+  /** Delivery split by the verifier verdict the address had at send (`lib/email-delivery-by-verdict.ts`). */
+  emailDeliveryByVerdict: EmailDeliveryByVerdict;
   /** AI Meeting Booking vs the client's own team on Positive reply -> Meeting booked (`lib/meeting-booking-gain.ts`). */
   meetingBookingGain: MeetingBookingGain;
   /** AI Meeting Booking before vs after go-live, per brand + fleet (`lib/meeting-booking-before-after.ts`). */
@@ -3404,6 +3407,7 @@ export async function handlePublicChannels(res: import("express").Response): Pro
       legKeyCorrespondence: OUTBOUND_LEG_KEY_CORRESPONDENCE,
       triggers: await loadChannelTriggers(),
       emailDelivery: await fetchFleetEmailDelivery(),
+      emailDeliveryByVerdict: await fetchEmailDeliveryByVerdict(),
       meetingBookingGain: await fetchMeetingBookingGain(),
       meetingBookingBeforeAfter: await fetchMeetingBookingBeforeAfter(),
       };
