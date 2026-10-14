@@ -469,6 +469,7 @@ function playInputsOf(c: PlayCatalogue, assignments: readonly LegAssignmentRow[]
         strategyDescription: st.description,
         measurement: byPlay.get(playIdOf(pipeId, strategyId)) ?? null,
         allowedActiveWorkflowCount: onPipe.filter((a) => a.state === "active" && !excluded.has(a.workflowDynastySlug)).length,
+        allowedActiveDynasties: [...new Set(onPipe.filter((a) => a.state === "active" && !excluded.has(a.workflowDynastySlug)).map((a) => a.workflowDynastySlug))].sort(),
         excludedDynasties: [...excluded.keys()].sort(),
       };
     };
@@ -952,6 +953,9 @@ const playRowOf = (m: CatalogueModel, p: CataloguePipe) => ({
   bestWorkflowSlug: p.measurement?.workflowDynastySlug ?? null,
   measuredBasis: p.measurement?.basis ?? null,
   allowedActiveWorkflowCount: p.play?.allowedActiveWorkflowCount ?? null,
+  // WHICH active workflows the play may run (owner ask 2026-10-14: an agent learned it only after launching). Null on a
+  // pipe cataloguing no play (every assigned workflow).
+  allowedWorkflowDynastySlugs: p.play ? [...p.play.allowedActiveDynasties] : null,
   runnable: pipeRunnable(p),
   notRunnableReason: notRunnableOf(p)?.reason ?? null,
   notRunnableDetail: notRunnableOf(p)?.detail ?? null,
@@ -1753,12 +1757,33 @@ async function funnelsCarrying(model: CatalogueModel, names: Map<string, string>
   };
 }
 
+/**
+ * The workflows a play may run, each with its fleet figure on the pipe's leg (mature cost per outcome, else learning),
+ * and the pipe DEFAULT play's pick beside it (owner ask 2026-10-14): an agent sees what the play would run, and how it
+ * compares with what the pipe runs today, before it launches anything. A workflow with no fleet history on the leg reads
+ * `learning` / `no_outcome_yet`. Null `allowedWorkflows` on a pipe cataloguing no play; a ranking not computed yet
+ * leaves the figures out (`figuresUnavailableReason`), never the list.
+ */
+async function allowedWorkflowsOf(model: CatalogueModel, p: CataloguePipe) {
+  const base = model.pipes.get(p.play?.basePipeId ?? p.id) ?? p;
+  const defaultPick = { playId: base.id, bestWorkflowSlug: base.measurement?.workflowDynastySlug ?? null, measuredBasis: base.measurement?.basis ?? null, ...econWire(base.economics, perStep(model, base.toStep)) };
+  if (!p.play) return { allowedWorkflows: null, defaultPlayPick: defaultPick, figuresUnavailableReason: null };
+  const rows = p.operatedBy === "customer" ? [] : await workflowRows(model, p);
+  const byDynasty = new Map((rows ?? []).map((x) => [x.r.workflowDynastySlug, x]));
+  const allowedWorkflows = p.play.allowedActiveDynasties.map((d) => {
+    const x = byDynasty.get(d);
+    const e: Economics = x?.e ?? { status: "learning", costUsd: null, roi: null, reason: "no_outcome_yet", estimates: [] };
+    return { id: d, name: x?.name ?? d, ...econWire(e, perStep(model, p.toStep)), isDefaultPlayPick: d === defaultPick.bestWorkflowSlug };
+  });
+  return { allowedWorkflows, defaultPlayPick: defaultPick, figuresUnavailableReason: rows === null ? "workflow_ranking_not_computed_yet" : null };
+}
+
 router.get("/internal/catalogue/plays/:id", apiKeyOnly, async (req, res) => {
   try {
     const { model, names } = await loadModel();
     const p = pipeOrPlayById(model, req.params.id);
     if (!p) return void res.status(404).json({ error: `no play ${req.params.id}`, reason: "play_not_found" });
-    res.json({ ...playRowOf(model, p), learningReason: p.economics.reason, estimates: p.economics.estimates, excludedWorkflowDynastySlugs: p.play?.excludedDynasties ?? [], salesFunnels: await funnelsCarrying(model, names, p) });
+    res.json({ ...playRowOf(model, p), learningReason: p.economics.reason, estimates: p.economics.estimates, excludedWorkflowDynastySlugs: p.play?.excludedDynasties ?? [], ...(await allowedWorkflowsOf(model, p)), salesFunnels: await funnelsCarrying(model, names, p) });
   } catch (err) {
     fail(res, err, "get play");
   }

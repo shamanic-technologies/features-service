@@ -50995,6 +50995,14 @@
                             "type": "integer",
                             "nullable": true
                           },
+                          "allowedWorkflowDynastySlugs": {
+                            "type": "array",
+                            "nullable": true,
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "WHICH active workflows (dynasty slugs) the play may run, sorted. Null on a pipe cataloguing no play (every assigned workflow runs)."
+                          },
                           "runnable": {
                             "type": "boolean",
                             "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
@@ -51033,6 +51041,7 @@
                           "bestWorkflowSlug",
                           "measuredBasis",
                           "allowedActiveWorkflowCount",
+                          "allowedWorkflowDynastySlugs",
                           "runnable",
                           "notRunnableReason",
                           "notRunnableDetail"
@@ -51371,6 +51380,14 @@
                             "type": "integer",
                             "nullable": true
                           },
+                          "allowedWorkflowDynastySlugs": {
+                            "type": "array",
+                            "nullable": true,
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "WHICH active workflows (dynasty slugs) the play may run, sorted. Null on a pipe cataloguing no play (every assigned workflow runs)."
+                          },
                           "runnable": {
                             "type": "boolean",
                             "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
@@ -51409,6 +51426,7 @@
                           "bestWorkflowSlug",
                           "measuredBasis",
                           "allowedActiveWorkflowCount",
+                          "allowedWorkflowDynastySlugs",
                           "runnable",
                           "notRunnableReason",
                           "notRunnableDetail"
@@ -51818,6 +51836,14 @@
                             "type": "integer",
                             "nullable": true
                           },
+                          "allowedWorkflowDynastySlugs": {
+                            "type": "array",
+                            "nullable": true,
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "WHICH active workflows (dynasty slugs) the play may run, sorted. Null on a pipe cataloguing no play (every assigned workflow runs)."
+                          },
                           "runnable": {
                             "type": "boolean",
                             "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
@@ -51856,6 +51882,7 @@
                           "bestWorkflowSlug",
                           "measuredBasis",
                           "allowedActiveWorkflowCount",
+                          "allowedWorkflowDynastySlugs",
                           "runnable",
                           "notRunnableReason",
                           "notRunnableDetail"
@@ -58538,6 +58565,14 @@
                             "type": "integer",
                             "nullable": true
                           },
+                          "allowedWorkflowDynastySlugs": {
+                            "type": "array",
+                            "nullable": true,
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "WHICH active workflows (dynasty slugs) the play may run, sorted. Null on a pipe cataloguing no play (every assigned workflow runs)."
+                          },
                           "runnable": {
                             "type": "boolean",
                             "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
@@ -58576,6 +58611,7 @@
                           "bestWorkflowSlug",
                           "measuredBasis",
                           "allowedActiveWorkflowCount",
+                          "allowedWorkflowDynastySlugs",
                           "runnable",
                           "notRunnableReason",
                           "notRunnableDetail"
@@ -58728,6 +58764,14 @@
                       "type": "integer",
                       "nullable": true
                     },
+                    "allowedWorkflowDynastySlugs": {
+                      "type": "array",
+                      "nullable": true,
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "WHICH active workflows (dynasty slugs) the play may run, sorted. Null on a pipe cataloguing no play (every assigned workflow runs)."
+                    },
                     "runnable": {
                       "type": "boolean",
                       "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
@@ -58834,6 +58878,7 @@
                     "bestWorkflowSlug",
                     "measuredBasis",
                     "allowedActiveWorkflowCount",
+                    "allowedWorkflowDynastySlugs",
                     "runnable",
                     "notRunnableReason",
                     "notRunnableDetail",
@@ -58931,6 +58976,14 @@
                       "type": "integer",
                       "nullable": true
                     },
+                    "allowedWorkflowDynastySlugs": {
+                      "type": "array",
+                      "nullable": true,
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "WHICH active workflows (dynasty slugs) the play may run, sorted. Null on a pipe cataloguing no play (every assigned workflow runs)."
+                    },
                     "runnable": {
                       "type": "boolean",
                       "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
@@ -59037,6 +59090,7 @@
                     "bestWorkflowSlug",
                     "measuredBasis",
                     "allowedActiveWorkflowCount",
+                    "allowedWorkflowDynastySlugs",
                     "runnable",
                     "notRunnableReason",
                     "notRunnableDetail",
@@ -59172,6 +59226,14 @@
                       "type": "integer",
                       "nullable": true
                     },
+                    "allowedWorkflowDynastySlugs": {
+                      "type": "array",
+                      "nullable": true,
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "WHICH active workflows (dynasty slugs) the play may run, sorted. Null on a pipe cataloguing no play (every assigned workflow runs)."
+                    },
                     "runnable": {
                       "type": "boolean",
                       "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
@@ -59208,6 +59270,143 @@
                       "items": {
                         "type": "string"
                       }
+                    },
+                    "allowedWorkflows": {
+                      "type": "array",
+                      "nullable": true,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "description": "Dynasty slug."
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "costUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured or estimated."
+                          },
+                          "costPer": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The unit of `costUsd` in words, on every row: `per <outcome step>` for a step, pipe, channel (its best pipe's step) or workflow (its pipe's step), e.g. `per positive reply`; `per paying client` for a sales path or funnel. Quote it with the figure. Null when `costUsd` is null."
+                          },
+                          "roi": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Average fleet return multiple. Null unless measured or estimated."
+                          },
+                          "roiBasis": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "measured",
+                              "estimated"
+                            ],
+                            "description": "`estimated` when anything the ROI rests on is not a measured fleet outcome: every ROI today, since it divides a step value or a lifetime revenue that ends on the fleet median of STATED lifetime revenues. Null with no roi."
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "measured",
+                              "estimated",
+                              "learning",
+                              "customer_time"
+                            ],
+                            "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                          },
+                          "isDefaultPlayPick": {
+                            "type": "boolean",
+                            "description": "The workflow the pipe's DEFAULT play runs today."
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "costUsd",
+                          "costPer",
+                          "roi",
+                          "roiBasis",
+                          "status",
+                          "isDefaultPlayPick"
+                        ]
+                      },
+                      "description": "Owner ask 2026-10-14: each workflow the play may run, with its fleet figure on the leg (`measured` = mature cost per outcome; `learning` otherwise). Null on a pipe cataloguing no play."
+                    },
+                    "defaultPlayPick": {
+                      "type": "object",
+                      "properties": {
+                        "playId": {
+                          "type": "string"
+                        },
+                        "bestWorkflowSlug": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "measuredBasis": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "mature",
+                            "flash"
+                          ]
+                        },
+                        "costUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured or estimated."
+                        },
+                        "costPer": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "The unit of `costUsd` in words, on every row: `per <outcome step>` for a step, pipe, channel (its best pipe's step) or workflow (its pipe's step), e.g. `per positive reply`; `per paying client` for a sales path or funnel. Quote it with the figure. Null when `costUsd` is null."
+                        },
+                        "roi": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Average fleet return multiple. Null unless measured or estimated."
+                        },
+                        "roiBasis": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "measured",
+                            "estimated"
+                          ],
+                          "description": "`estimated` when anything the ROI rests on is not a measured fleet outcome: every ROI today, since it divides a step value or a lifetime revenue that ends on the fleet median of STATED lifetime revenues. Null with no roi."
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "measured",
+                            "estimated",
+                            "learning",
+                            "customer_time"
+                          ],
+                          "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (a stated fleet median, an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                        }
+                      },
+                      "required": [
+                        "playId",
+                        "bestWorkflowSlug",
+                        "measuredBasis",
+                        "costUsd",
+                        "costPer",
+                        "roi",
+                        "roiBasis",
+                        "status"
+                      ],
+                      "description": "What the pipe's DEFAULT play runs today, to compare with."
+                    },
+                    "figuresUnavailableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "workflow_ranking_not_computed_yet"
+                      ]
                     },
                     "salesFunnels": {
                       "type": "object",
@@ -59291,12 +59490,16 @@
                     "bestWorkflowSlug",
                     "measuredBasis",
                     "allowedActiveWorkflowCount",
+                    "allowedWorkflowDynastySlugs",
                     "runnable",
                     "notRunnableReason",
                     "notRunnableDetail",
                     "learningReason",
                     "estimates",
                     "excludedWorkflowDynastySlugs",
+                    "allowedWorkflows",
+                    "defaultPlayPick",
+                    "figuresUnavailableReason",
                     "salesFunnels"
                   ]
                 }
@@ -59447,6 +59650,14 @@
                       "type": "integer",
                       "nullable": true
                     },
+                    "allowedWorkflowDynastySlugs": {
+                      "type": "array",
+                      "nullable": true,
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "WHICH active workflows (dynasty slugs) the play may run, sorted. Null on a pipe cataloguing no play (every assigned workflow runs)."
+                    },
                     "runnable": {
                       "type": "boolean",
                       "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
@@ -59493,6 +59704,7 @@
                     "bestWorkflowSlug",
                     "measuredBasis",
                     "allowedActiveWorkflowCount",
+                    "allowedWorkflowDynastySlugs",
                     "runnable",
                     "notRunnableReason",
                     "notRunnableDetail",

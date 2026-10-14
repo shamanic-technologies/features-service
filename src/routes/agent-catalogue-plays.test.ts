@@ -305,8 +305,16 @@ describe("plays (owner 2026-10-13): a pipe x a strategy, ROI per play", () => {
       [COLD, 1, true],
       [CATCH, 1, true],
     ]);
+    // WHICH workflows each play may run, on every row (owner ask 2026-10-14).
+    expect(plays.map((p: any) => [p.id, p.allowedWorkflowDynastySlugs])).toEqual([
+      [COLD, ["orion"]],
+      [CATCH, ["nova"]],
+    ]);
     const detail = (await request(app).get(`/internal/catalogue/plays/${encodeURIComponent(CATCH)}`).set(KEY)).body;
     expect(detail.excludedWorkflowDynastySlugs).toEqual(["orion"]);
+    // Each allowed workflow with its fleet figure, beside what the pipe's default play runs today.
+    expect(detail.allowedWorkflows.map((w: any) => [w.id, typeof w.status, w.isDefaultPlayPick])).toEqual([["nova", "string", false]]);
+    expect(detail.defaultPlayPick).toMatchObject({ playId: COLD, bestWorkflowSlug: "orion" });
   });
 
   it("a play running nothing says why (judging failing / pending / judged out), and its detail lists the funnels carrying it (owner 2026-10-14)", async () => {
