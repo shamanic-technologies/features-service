@@ -605,6 +605,33 @@ describe("servedCached with the view refresher", () => {
     }
   });
 
+  it("REFRESHER role, keeper refresh (x-view-precompute: refresh): a day-old cell is computed BEFORE the answer; a plain precompute serves it", async () => {
+    try {
+      process.env.VIEW_CACHE_ROLE = "refresher";
+      const key = buildScopeKey("b1", { orgId: "o" });
+      const dayOld = new Date(Date.now() - 26 * 3_600_000);
+      storedRow = { view: "v", scopeKey: withResponseShape(key), orgId: "o", body: { pipeline: 7 }, computedAt: dayOld, refreshingAt: new Date() };
+      // A plain precompute (a missing cell's door) serves what is stored and refreshes behind it.
+      const plain = vi.fn().mockResolvedValue({ pipeline: 8 });
+      const served = await inRequest(() => servedCached({ view: "v", scopeKey: key, orgId: "o", compute: plain }), { "x-view-precompute": "1" });
+      expect(served).toEqual({ pipeline: 7 });
+      // The keeper's refresh computes before answering, inside the keeper's concurrency bound.
+      storedRow = { view: "v", scopeKey: withResponseShape(key), orgId: "o", body: { pipeline: 7 }, computedAt: dayOld, refreshingAt: new Date() };
+      const compute = vi.fn().mockResolvedValue({ pipeline: 42 });
+      const body = await inRequest(() => servedCached({ view: "v", scopeKey: key, orgId: "o", compute }), { "x-view-precompute": "refresh" });
+      expect(body).toEqual({ pipeline: 42 });
+      expect(compute).toHaveBeenCalledTimes(1);
+      expect(storedRow?.body).toEqual({ pipeline: 42 });
+      // A cell computed a minute ago is ANSWERED as stored, even to the keeper's refresh (the ordinary
+      // stale-while-revalidate path, facts-gated, takes it from there).
+      const again = vi.fn().mockResolvedValue({ pipeline: 99 });
+      storedRow = { ...storedRow!, computedAt: new Date(Date.now() - 60_000) };
+      expect(await inRequest(() => servedCached({ view: "v", scopeKey: key, orgId: "o", compute: again }), { "x-view-precompute": "refresh" })).toEqual({ pipeline: 42 });
+    } finally {
+      restore();
+    }
+  });
+
   it("REFRESHER role: a target reached AFTER the handler already answered neither throws nor degrades (#1166)", async () => {
     try {
       process.env.VIEW_CACHE_ROLE = "refresher";

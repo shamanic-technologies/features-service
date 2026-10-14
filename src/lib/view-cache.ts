@@ -8,6 +8,7 @@ import {
   computeViaRefresher,
   currentRequestReplay,
   forcedRefresh,
+  keeperRefreshesStale,
   refresherDelegation,
   viewCacheRole,
 } from "./view-refresher.js";
@@ -523,6 +524,11 @@ async function serveCell(
     }
     if (ageMs >= maxStale) {
       return computeAndPersistSingleFlight(view, scopeKey, orgId, compute, meta);
+    }
+    // The keeper refreshing a cell nobody read for a day: compute it now, inside the keeper's own
+    // concurrency bound (lib/view-keeper.ts), rather than behind an answer nobody waits for.
+    if (keeperRefreshesStale() && ageMs >= factsGateMaxMs()) {
+      return computeAndPersistSingleFlight(view, scopeKey, orgId, compute, meta, await currentFingerprint(meta).catch(() => null));
     }
     // Stale hit — serve immediately, refresh in the background (single-flight across replicas). The
     // background refresh first asks whether the brand's FACTS moved (lib/view-facts.ts) and skips the

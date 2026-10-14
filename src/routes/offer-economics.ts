@@ -68,6 +68,7 @@
  * prevent. So the channel list is resolved here and the breakdown ships in the SAME response as the
  * total: a row for one channel and the total above it are visibly one statement at two grains.
  */
+import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import { Router } from "express";
 import { computeRevenueWindow, parseWindowDays, WINDOW_DAYS_ERROR, type WindowDays } from "../lib/revenue-window.js";
 import { FUNNEL_RETIRED_BODY, namesRetiredFunnel } from "../lib/retired-funnel-param.js";
@@ -315,6 +316,7 @@ export async function offerRevenueJson(args: OfferRevenueArgs): Promise<Snapshot
 
   return servedCachedJson({
     view: "offer-revenue",
+    responseShape: routeResponseShapeFingerprint("/offers/{offerId}/revenue"),
     // Keyed on the offer, never on a feature — and on the CHANNEL SET too, because a newly funded
     // channel changes every figure while none of the other key parts moves.
     scopeKey: buildScopeKey(offerId, {

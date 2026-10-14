@@ -6,6 +6,7 @@
  * median), and the catalogue's step keys + expected path economics. Every read is fail-loud except the
  * catalogue's EXPECTED figures (named reason; the lived figures never wait on the fleet build).
  */
+import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import { Router } from "express";
 import { apiKeyAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import { parsePricing } from "../lib/pricing.js";
@@ -120,6 +121,7 @@ router.get("/brands/:brandId/lived-sales-paths", apiKeyAuth, async (req, res) =>
     await assertBrandHeld(brandId, headers);
     const body = await servedCachedJson({
       view: "lived-sales-paths",
+      responseShape: routeResponseShapeFingerprint("/brands/{brandId}/lived-sales-paths"),
       scopeKey: buildScopeKey(brandId, { orgId: r.orgId, offerId: offerId ?? undefined, pricing }),
       orgId: r.orgId,
       compute: () => computeLivedSalesPaths(brandId, offerId, headers, pricing),
