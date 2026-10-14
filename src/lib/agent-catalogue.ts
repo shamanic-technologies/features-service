@@ -105,7 +105,7 @@ import type { PublicChannel } from "./channel-catalogue.js";
 import { DEFAULT_ENTRY_RATE_PCT, defaultLegRatePct } from "./default-leg-rates.js";
 import type { ExpectedBasis } from "./expected-return.js";
 import { fleetMedianApplies, legPairKey, type FleetArrowMedians } from "./effective-conversion-rates.js";
-import { FUNNEL_LEGS, legacyFunnelIdAliasOf, servedLegKeyOf, storedLegKeyOf } from "./funnel-legs.js";
+import { FUNNEL_LEGS, legacyFunnelIdAliasOf, pipeLegKeyOf, servedLegKeyOf, storedLegKeyOf } from "./funnel-legs.js";
 import { DEFAULT_COST_PER_OUTCOME_USD, combinationKeyOf } from "./offer-sales-paths.js";
 import { SALES_PATH_COST_BENCHMARKS } from "./sales-path-cost-benchmarks.js";
 import { faceOf, stableHash, type Face } from "./catalogue-faces.js";
@@ -481,7 +481,7 @@ function buildPipes(inputs: CatalogueInputs, valueOf: (step: string) => number |
         triggerId: t.triggerId,
         operatedBy: c.operatedBy,
         managed: c.managed,
-        hasWorkflow: inputs.workflowPipeKeys?.has(`${c.slug}|${storedLegKeyOf(t.legKey)}`) ?? false,
+        hasWorkflow: inputs.workflowPipeKeys?.has(`${c.slug}|${pipeLegKeyOf(c.slug, t.legKey)}`) ?? false,
         published: inputs.publishedPipeIds.has(id),
         economics,
         measurement,

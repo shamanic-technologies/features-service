@@ -32,6 +32,7 @@ import {
   funnelsContainingLeg,
   matchFunnelLegKey,
   matchChannelLegKey,
+  pipeLegKeyOf,
   servedLegKeyOf,
   storedLegKeyOf,
   type FunnelLegDef,
@@ -1315,7 +1316,7 @@ export async function playOfLegRead(
   const plays = await loadPlayCatalogue();
   const pipeId = pipeIdOf(featureSlug, servedLegKeyOf(featureSlug, legKey));
   if (!plays.playsByPipe.has(pipeId)) return null;
-  const sameLeg = (a: string, b: string) => storedLegKeyOf(a) === storedLegKeyOf(b);
+  const sameLeg = (a: string, b: string) => pipeLegKeyOf(featureSlug, a) === pipeLegKeyOf(featureSlug, b);
   const named = salesFunnelId ? strategyOfFunnelLeg(salesFunnelId, featureSlug, legKey, sameLeg) : null;
   const resolved = resolvePlay(plays, pipeId, named);
   const source = named ? ("sales_funnel" as const) : ("pipe_default" as const);
