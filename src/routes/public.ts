@@ -105,7 +105,8 @@ import { matureBasisOf, type CostEconomics } from "../lib/cost-economics.js";
 import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel } from "./revenue.js";
 import { distinctChannelFunnels } from "./offer-economics.js";
 import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
-import { FUNNEL_LEG_KEYS, funnelLeg, matchChannelLegKey, matchFunnelLegKey, OUTBOUND_LEG_KEY_CORRESPONDENCE } from "../lib/funnel-legs.js";
+import { FUNNEL_LEG_KEYS, funnelLeg, matchFunnelLegKey, OUTBOUND_LEG_KEY_CORRESPONDENCE } from "../lib/funnel-legs.js";
+import { resolvePipeLegKey } from "../lib/unpriced-pipes.js";
 import { withChannelType } from "../lib/channel-types.js";
 import { fetchFleetLegCampaigns, type FleetLegCampaign } from "../lib/fleet-leg-campaigns.js";
 import { computeWorkflowRevenueGroups } from "../lib/workflow-revenue.js";
@@ -4385,9 +4386,9 @@ export async function handleWorkflowReturnHistory(
   // `?leg=` restricts BOTH legs of the curve to the campaigns performing that leg. Empty = not named.
   let legKey: string | undefined;
   if (legParam != null && legParam !== "") {
-    const matched = matchChannelLegKey(featureSlug, legParam);
+    const matched = await resolvePipeLegKey(featureSlug, legParam);
     if (!matched) {
-      res.status(400).json({ error: `leg must be one of: ${FUNNEL_LEG_KEYS.join(", ")}`, reason: "leg_unrecognised" });
+      res.status(400).json({ error: `leg must be one of: ${FUNNEL_LEG_KEYS.join(", ")}, or a leg of the channel's own`, reason: "leg_unrecognised" });
       return;
     }
     legKey = matched;
@@ -4549,7 +4550,7 @@ router.get("/public/stats/workflow-cost-per-outcome", async (req, res) => {
 // the gateway does not proxy it. Computes in whichever process answers.
 router.get("/internal/fleet-leg-maturity", apiKeyOnly, async (req, res) => {
   const featureSlug = req.query.featureSlug as string | undefined;
-  const legKey = matchChannelLegKey(featureSlug, String(req.query.legKey ?? ""));
+  const legKey = await resolvePipeLegKey(featureSlug, String(req.query.legKey ?? ""));
   if (!featureSlug || !legKey) {
     res.status(400).json({ error: "featureSlug and a known legKey are required" });
     return;
@@ -4952,9 +4953,10 @@ export function __resetLegWorkflowRanking(): void {
 
 router.get("/public/stats/leg-workflow-ranking", async (req, res) => {
   const featureSlug = req.query.featureSlug as string | undefined;
-  const legKey = matchChannelLegKey(featureSlug, String(req.query.leg ?? ""));
+  // Every pipe's leg, sourcing (`start_to_lead_found`) included: one resolver, no special case (RANKING-SOURCE-LEG-1014).
+  const legKey = await resolvePipeLegKey(featureSlug, String(req.query.leg ?? ""));
   if (!featureSlug || !legKey) {
-    res.status(400).json({ error: `featureSlug and leg are required; leg must be one of: ${FUNNEL_LEG_KEYS.join(", ")}` });
+    res.status(400).json({ error: `featureSlug and leg are required; leg must be one of: ${FUNNEL_LEG_KEYS.join(", ")}, or a leg of the channel's own` });
     return;
   }
   try {

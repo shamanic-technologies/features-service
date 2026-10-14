@@ -5176,7 +5176,7 @@ registry.registerPath({
   request: {
     query: z.object({
       featureSlug: z.string().describe("Feature slug (required)."),
-      leg: z.string().describe("A funnel leg key, e.g. start_to_conversation (required)."),
+      leg: z.string().describe("Any pipe's leg key (required): a funnel leg (e.g. start_to_conversation, an outbound channel's lead_found_to_*) or a leg of the channel's own no funnel walks, e.g. the sourcing leg start_to_lead_found (ranked on Lead found). A word naming no leg of the channel = 400."),
     }),
   },
   responses: {

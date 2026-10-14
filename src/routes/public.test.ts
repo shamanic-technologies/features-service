@@ -22,6 +22,11 @@ vi.mock("../lib/env.js", () => ({
 }));
 
 vi.mock("../instrument.js", () => ({}));
+// A leg naming no funnel leg reads the channel's published legs (`resolvePipeLegKey`): none published here.
+vi.mock("../lib/channel-declarations-store.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/channel-declarations-store.js")>()),
+  loadChannelCatalogue: vi.fn(async () => ({ channels: [] })),
+}));
 vi.mock("@sentry/node", () => ({
   default: { setupExpressErrorHandler: vi.fn() },
   setupExpressErrorHandler: vi.fn(),
