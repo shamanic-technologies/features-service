@@ -20460,6 +20460,20 @@
                   ],
                   "description": "The funnel's PATH as structured data (owner 2026-10-11: the Campaigns table shows it under the name). Null only with `copyUnavailableReason`."
                 },
+                "shortDescription": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "ONE short customer sentence of what we do in this campaign (owner 2026-10-14: the Campaigns table shows it under the name in place of `path`), e.g. \"We email new buyers until they reply with interest.\" At most 12 words, English, no dash; composed from the funnel's legs (the client's own team steps left out), never stored. Null only with `shortDescriptionUnavailableReason`."
+                },
+                "shortDescriptionUnavailableReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "sales_funnel_not_in_catalogue",
+                    "no_step_run_by_us"
+                  ],
+                  "description": "Why `shortDescription` is null: `sales_funnel_not_in_catalogue` (the funnel id is not in this service's catalogue, as `copyUnavailableReason`), `no_step_run_by_us` (the client's own team works every step of the funnel: nothing of ours to describe). Null when it is served."
+                },
                 "copyUnavailableReason": {
                   "type": "string",
                   "nullable": true,
@@ -20825,6 +20839,8 @@
                 "triggerLabel",
                 "typeLabel",
                 "path",
+                "shortDescription",
+                "shortDescriptionUnavailableReason",
                 "copyUnavailableReason",
                 "units",
                 "investedUsd",
@@ -20925,6 +20941,20 @@
                   "type": "string",
                   "nullable": true,
                   "description": "The Campaigns table's Type column (owner 2026-10-11): \"Daily\" for a proactive funnel, `triggerLabel` for a reactive one. Null only with `copyUnavailableReason`."
+                },
+                "shortDescription": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "ONE short customer sentence of what we do in this campaign (owner 2026-10-14: the Campaigns table shows it under the name in place of `path`), e.g. \"We email new buyers until they reply with interest.\" At most 12 words, English, no dash; composed from the funnel's legs (the client's own team steps left out), never stored. Null only with `shortDescriptionUnavailableReason`."
+                },
+                "shortDescriptionUnavailableReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "sales_funnel_not_in_catalogue",
+                    "no_step_run_by_us"
+                  ],
+                  "description": "Why `shortDescription` is null: `sales_funnel_not_in_catalogue` (the funnel id is not in this service's catalogue, as `copyUnavailableReason`), `no_step_run_by_us` (the client's own team works every step of the funnel: nothing of ours to describe). Null when it is served."
                 },
                 "path": {
                   "type": "object",
@@ -21138,6 +21168,8 @@
                 "type",
                 "triggerLabel",
                 "typeLabel",
+                "shortDescription",
+                "shortDescriptionUnavailableReason",
                 "path",
                 "copyUnavailableReason",
                 "units"

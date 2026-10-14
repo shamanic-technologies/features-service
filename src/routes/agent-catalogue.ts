@@ -71,6 +71,7 @@ import {
 import { actorOf, DeclarationError, parseLegInput, requestedByOrgIdOf, type TriggerTypeRecord } from "../lib/channel-declarations.js";
 import { allNamesByKey, salesPathNamesFor, SalesPathNamePoolExhaustedError } from "../lib/sales-path-names.js";
 import { funnelTriggerLabel } from "../lib/funnel-descriptions.js";
+import { funnelShortDescription, type ShortDescriptionUnavailableReason } from "../lib/funnel-short-descriptions.js";
 import { LEAD_SOURCING_SLUG, SOURCE_LEG_KEY } from "../lib/sourcing-origins.js";
 
 /** The Lead Sourcing pipe, named in the one-channel-per-leg refusal. */
@@ -1916,6 +1917,10 @@ export interface FunnelCopy {
   face: string | null;
   type: "proactive" | "reactive";
   triggerLabel: string | null;
+  /** One short customer sentence: what we do in this funnel (owner 2026-10-14, `lib/funnel-short-descriptions.ts`);
+   *  null + `shortDescriptionUnavailableReason` when no leg of it is ours. */
+  shortDescription: string | null;
+  shortDescriptionUnavailableReason: ShortDescriptionUnavailableReason | null;
   path: FunnelPathView;
   /** The step the funnel's first leg starts from (null = from nothing): where a campaign on it takes people over
    *  unless one of its own units produces that step (`lib/value-added.ts`). */
@@ -1977,6 +1982,23 @@ export function funnelPathView(model: CatalogueModel, f: CatalogueFunnel): Funne
   return { items, legs };
 }
 
+/** PURE: the funnel's short customer sentence, read off its path view (one channel per leg). */
+export function funnelShortDescriptionOf(model: CatalogueModel, f: CatalogueFunnel): ReturnType<typeof funnelShortDescription> {
+  const view = funnelPathView(model, f);
+  const bySlug = new Map(model.channels.map((c) => [c.slug, c] as const));
+  const first = f.legs[0]?.pipe ?? null;
+  return funnelShortDescription({
+    reactive: first?.mode === "reactive",
+    triggerId: first?.mode === "reactive" ? first.triggerId : null,
+    legs: view.legs.map((l) => ({
+      fromStep: l.fromStep === "start" ? null : l.fromStep,
+      toStep: l.toStep,
+      channel: l.channelSlug ? (bySlug.get(l.channelSlug) ?? null) : null,
+      runByUs: l.runByUs,
+    })),
+  });
+}
+
 export async function funnelCopiesFor(ids: readonly string[]): Promise<{
   copies: Map<string, FunnelCopy | null>;
   pipeSteps: Map<string, { fromStep: string | null; toStep: string }>;
@@ -2012,7 +2034,17 @@ export async function funnelCopiesFor(ids: readonly string[]): Promise<{
   const out = new Map<string, FunnelCopy | null>(ids.map((id) => [id, null]));
   for (const [id, f] of found) {
     const name = names.get(f.id) ?? null;
-    out.set(id, { name, face: name ? faceOf(name).svgPath : null, type: funnelTypeOf(f), triggerLabel: funnelTriggerLabel(f, (k) => stepLabel(model, k), (id) => model.triggers.get(id)?.name ?? null), path: funnelPathView(model, f), firstStep: funnelFirstStep(f.legs) });
+    const short = funnelShortDescriptionOf(model, f);
+    out.set(id, {
+      name,
+      face: name ? faceOf(name).svgPath : null,
+      type: funnelTypeOf(f),
+      triggerLabel: funnelTriggerLabel(f, (k) => stepLabel(model, k), (id) => model.triggers.get(id)?.name ?? null),
+      shortDescription: short.shortDescription,
+      shortDescriptionUnavailableReason: short.reason,
+      path: funnelPathView(model, f),
+      firstStep: funnelFirstStep(f.legs),
+    });
   }
   // Every pipe's steps, so a caller knows which step each of a campaign's units produces (`lib/value-added.ts`).
   const pipeSteps = new Map([...model.pipes.values()].map((p) => [p.id, { fromStep: p.fromStep, toStep: p.toStep }] as const));
