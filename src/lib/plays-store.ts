@@ -40,7 +40,15 @@ export function loadPlayCatalogue(): Promise<PlayCatalogue> {
   return value;
 }
 
-const tacticOf = (r: typeof tactics.$inferSelect): Tactic => ({ id: r.id, name: r.name, description: r.description, createdBy: r.createdBy, createdAt: r.createdAt.toISOString() });
+const tacticOf = (r: typeof tactics.$inferSelect): Tactic => ({
+  id: r.id,
+  name: r.name,
+  description: r.description,
+  createdBy: r.createdBy,
+  createdAt: r.createdAt.toISOString(),
+  updatedBy: r.updatedBy,
+  updatedAt: r.updatedAt?.toISOString() ?? null,
+});
 const strategyOf = (r: typeof strategies.$inferSelect): Strategy => ({
   id: r.id,
   name: r.name,
@@ -50,7 +58,10 @@ const strategyOf = (r: typeof strategies.$inferSelect): Strategy => ({
   createdBy: r.createdBy,
   createdAt: r.createdAt.toISOString(),
 });
-const verdictOf = (r: typeof workflowTacticVerdicts.$inferSelect): TacticVerdictRow => ({
+/** A stored verdict and the tactic description Jev judged it on (an edited description re-judges it). */
+export type StoredVerdict = TacticVerdictRow & { judgedDescription: string };
+
+const verdictOf = (r: typeof workflowTacticVerdicts.$inferSelect): StoredVerdict => ({
   workflowSlug: r.workflowSlug,
   tacticId: r.tacticId,
   workflowDynastySlug: r.workflowDynastySlug,
@@ -59,11 +70,12 @@ const verdictOf = (r: typeof workflowTacticVerdicts.$inferSelect): TacticVerdict
   verdict: r.verdict,
   probability: r.probability,
   model: r.model,
+  judgedDescription: r.judgedDescription,
   judgedAt: r.judgedAt.toISOString(),
 });
 
 /** Every stored verdict of one tactic (the sweep's "already judged" set and the tactic detail). */
-export async function listVerdicts(tacticId?: string): Promise<TacticVerdictRow[]> {
+export async function listVerdicts(tacticId?: string): Promise<StoredVerdict[]> {
   const rows = tacticId ? await db.select().from(workflowTacticVerdicts).where(sql`${workflowTacticVerdicts.tacticId} = ${tacticId}`) : await db.select().from(workflowTacticVerdicts);
   return rows.map(verdictOf);
 }
@@ -84,6 +96,28 @@ export async function insertTactic(input: { name: string; description: string; c
   const [row] = await db.insert(tactics).values({ id, name: input.name, description: input.description, createdBy: input.createdBy }).returning();
   invalidatePlayCatalogue();
   return tacticOf(row);
+}
+
+/**
+ * Edit a tactic's description (owner 2026-10-14). Unique like a new one (409 `tactic_description_taken`, case-insensitive,
+ * against the OTHER tactics). The stored verdicts are kept: each names the description it was judged on, so the sweep
+ * re-judges every one of them in place and the old verdict serves until its replacement lands. `changed:false` when the
+ * text is the stored one (nothing to re-judge).
+ */
+export async function updateTacticDescription(input: { id: string; description: string; updatedBy: string }): Promise<{ tactic: Tactic; changed: boolean; previousDescription: string }> {
+  const all = (await loadPlayCatalogueFresh()).tactics;
+  const current = all.find((t) => t.id === input.id);
+  if (!current) throw new DeclarationError(404, "tactic_not_found", `no tactic ${input.id} (GET /internal/catalogue/tactics)`);
+  if (current.description === input.description) return { tactic: current, changed: false, previousDescription: current.description };
+  const taken = all.find((t) => t.id !== input.id && t.description.toLowerCase() === input.description.toLowerCase());
+  if (taken) throw new DeclarationError(409, "tactic_description_taken", `the tactic ${taken.id} already has this description`);
+  const [row] = await db
+    .update(tactics)
+    .set({ description: input.description, updatedBy: input.updatedBy, updatedAt: new Date() })
+    .where(sql`${tactics.id} = ${input.id}`)
+    .returning();
+  invalidatePlayCatalogue();
+  return { tactic: tacticOf(row), changed: true, previousDescription: current.description };
 }
 
 export async function insertStrategy(input: { name: string; description: string; requiresTacticIds: string[]; excludesTacticIds: string[]; createdBy: string }): Promise<Strategy> {
@@ -143,8 +177,11 @@ async function loadPlayCatalogueFresh(): Promise<{ tactics: Tactic[]; strategies
   return { tactics: t.map(tacticOf), strategies: s.map(strategyOf) };
 }
 
-/** Store one verdict (judged once: an existing row is never overwritten). */
-export async function insertVerdict(row: Omit<TacticVerdictRow, "judgedAt"> & { featureSlug: string }): Promise<void> {
+/**
+ * Store one verdict, judged once per tactic DESCRIPTION: a row judged on the same text is never overwritten; a row
+ * judged on an older text (the tactic was edited) is replaced in place by the new judgment.
+ */
+export async function insertVerdict(row: Omit<StoredVerdict, "judgedAt"> & { featureSlug: string }): Promise<void> {
   await db
     .insert(workflowTacticVerdicts)
     .values({
@@ -157,8 +194,23 @@ export async function insertVerdict(row: Omit<TacticVerdictRow, "judgedAt"> & { 
       verdict: row.verdict,
       probability: row.probability,
       model: row.model,
+      judgedDescription: row.judgedDescription,
     })
-    .onConflictDoNothing();
+    .onConflictDoUpdate({
+      target: [workflowTacticVerdicts.workflowSlug, workflowTacticVerdicts.tacticId],
+      set: {
+        workflowDynastySlug: row.workflowDynastySlug,
+        featureSlug: row.featureSlug,
+        version: row.version,
+        versionActive: row.versionActive,
+        verdict: row.verdict,
+        probability: row.probability,
+        model: row.model,
+        judgedDescription: row.judgedDescription,
+        judgedAt: new Date(),
+      },
+      setWhere: sql`${workflowTacticVerdicts.judgedDescription} IS DISTINCT FROM ${row.judgedDescription}`,
+    });
   invalidatePlayCatalogue();
 }
 

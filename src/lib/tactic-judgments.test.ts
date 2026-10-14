@@ -31,7 +31,7 @@ beforeEach(() => {
 
 describe("Jev judges every assigned workflow version on every tactic, once", () => {
   it("judges each unjudged version, skips stored ones and unassigned dynasties, stores p and the model", async () => {
-    state.stored = [{ workflowSlug: "orion-v1", tacticId: "catch-all", workflowDynastySlug: "orion", version: 1, versionActive: false, verdict: false, probability: 0.1, model: "m", judgedAt: "" }];
+    state.stored = [{ workflowSlug: "orion-v1", tacticId: "catch-all", workflowDynastySlug: "orion", version: 1, versionActive: false, verdict: false, probability: 0.1, model: "m", judgedDescription: "Sends to catch-all addresses.", judgedAt: "" }];
     const judge = vi.fn(async (_t: any, w: any) => ({ verdict: w.workflowDynastySlug === "nova", probability: w.workflowDynastySlug === "nova" ? 0.93 : 0.04, model: "typesafe-x" }));
     const r = await sweepTacticJudgments({
       judge,
@@ -58,6 +58,20 @@ describe("Jev judges every assigned workflow version on every tactic, once", () 
     expect(q.instructions).toContain("Sends to catch-all addresses.");
     expect(q.instructions).toContain("Ignore its name");
     expect(judgedState(def("orion-v2", "orion", 2, true) as any)).toMatchObject({ definition: { nodes: [{ id: "serve" }] } });
+  });
+});
+
+describe("an edited description re-judges every version in place (owner 2026-10-14)", () => {
+  it("re-asks a verdict judged on an older text and stores the new text with it; a current one is skipped", async () => {
+    state.stored = [
+      { workflowSlug: "orion-v2", tacticId: "catch-all", workflowDynastySlug: "orion", version: 2, versionActive: true, verdict: true, probability: 0.56, model: "m", judgedDescription: "Old words.", judgedAt: "" },
+      { workflowSlug: "nova-v1", tacticId: "catch-all", workflowDynastySlug: "nova", version: 1, versionActive: true, verdict: false, probability: 0.1, model: "m", judgedDescription: "Sends to catch-all addresses.", judgedAt: "" },
+    ];
+    const judge = vi.fn(async (t: any) => ({ verdict: true, probability: 0.95, model: "m2", seen: t.description }));
+    const r = await sweepTacticJudgments({ judge, definitions: async () => [def("orion-v2", "orion", 2, true), def("nova-v1", "nova", 1, true)] });
+    expect(r).toEqual({ versions: 2, judged: 1, failed: 0, alreadyJudged: 1 });
+    expect(judge.mock.calls[0][0].description).toBe("Sends to catch-all addresses.");
+    expect(state.inserted.map((x) => [x.workflowSlug, x.verdict, x.probability, x.judgedDescription])).toEqual([["orion-v2", true, 0.95, "Sends to catch-all addresses."]]);
   });
 });
 
