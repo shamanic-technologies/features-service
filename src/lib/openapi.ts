@@ -5455,18 +5455,25 @@ const publicSalesFunnelSchema = z.object({
   entryLegKey: z.string().describe("The entry leg's canonical identifier, so the same join can be keyed on the leg vocabulary rather than on a `start_to_<step>` string the consumer composes itself."),
 });
 
+const triggerVocabularyFields = {
+  type: z.enum(["outcome", "condition"]).describe("Owner 2026-10-15 (outcomes and triggers are two catalogues). `outcome`: '⚡ <outcome>' (⚡ = the trigger glyph, never in the name), fired the moment a person reaches `outcomeKey`, exactly one per outcome, named by that outcome's label. `condition`: computed by us (an outcome + a delay + 'still not' another, a polled source, an integration state such as a GitHub issue in prod)."),
+  outcomeKey: z.string().nullable().describe("The outcome (`outcomes[].key`) an outcome trigger reports. Null on a condition trigger (its `fromStep` is only the step its rule starts from)."),
+  callable: z.boolean().describe("A caller (API / MCP / Copilot) may fire it through campaign-service's one trigger door. True on every outcome trigger and on the triggers a caller reports today (`kind` event or reported); false on what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`)."),
+};
+
 const channelCatalogueResponseSchema = registry.register(
   "ChannelCatalogueResponse",
   z.object({
     channels: z.array(publicChannelSchema),
     funnels: z.array(publicSalesFunnelSchema).describe("EVERY declared sales funnel, mirrored from brand-service, in the catalogue's canonical order and whether or not a channel sells it today — so a funnel's absence from a channel's list is readable as a restriction rather than as a catalogue we never published. Each states the STEP IT STARTS ON in the SAME vocabulary a channel's `producibleSteps` use, which is what makes 'which funnels does this outcome lead into' a lookup in this payload (`funnels.filter(f => f.entryStep.key === step.key)`) instead of a translation table the consumer keeps and lets go stale."),
     legs: z.array(funnelLegSchema).describe("The LEG vocabulary — every leg of every declared sales funnel, each with its single canonical identifier, the two steps it connects, and the funnels it is a leg of. Published so a consumer never derives a leg from a pair of steps and never hardcodes the list. A leg usually belongs to SEVERAL funnels (a booked meeting becomes an attended meeting in both meeting funnels), which is exactly why a campaign is bought per LEG rather than per funnel — and why two funnels' figures OVERLAP on their shared legs and must never be summed. The two OUTBOUND legs (`lead_found_to_conversation` / `lead_found_to_website_visit`, wave 2 of the outbound leg rename) are appended after the funnel legs: same funnels and maturity rule as the funnel entry leg each feeds, `fromStep` = Lead found, proactive."),
-    steps: z.array(channelStepSchema).describe("The step vocabulary itself, published so a consumer never hardcodes it to join a channel's legs against a funnel's. It spans EVERY step of every funnel, not only the ones a funnel can start from — a channel performing an internal leg names the step it moves a lead OUT of, and that step is never one a funnel starts at. `lead_found` ('Lead found') is a normal step since 2026-10-09: the sourcing channels move a lead from nothing to it; no declared funnel names it yet."),
+    outcomes: z.array(channelStepSchema.extend({ pluralLabel: z.string().describe("The label's plural for counts: 'Leads', 'Positive replies', 'Meetings booked'.") })).describe("THE OUTCOME CATALOGUE (owner 2026-10-15): the same rows as `steps` (a valued result a person reaches: Lead, Positive reply, Meeting booked, Paid client...), each with its plural label. Keys never move; only labels do (`lead_found` reads 'Lead' since 2026-10-15). Every outcome has exactly one outcome trigger in `triggers` (`type: outcome`, `outcomeKey` = its key)."),
+    steps: z.array(channelStepSchema.extend({ pluralLabel: z.string() })).describe("Same rows as `outcomes` (kept for its readers). The step vocabulary itself, published so a consumer never hardcodes it to join a channel's legs against a funnel's. It spans EVERY step of every funnel, not only the ones a funnel can start from — a channel performing an internal leg names the step it moves a lead OUT of, and that step is never one a funnel starts at. `lead_found` ('Lead' since 2026-10-15, 'Lead found' before) is a normal step since 2026-10-09: the sourcing channels move a lead from nothing to it; no declared funnel names it yet."),
     triggers: z
       .array(
         z.object({
           id: z.string().describe("The trigger's id, what `stepTransitions[].triggerId` names. Stable."),
-          label: z.string().describe("Customer-facing name, e.g. 'Positive reply', 'Lead requested'."),
+          label: z.string().describe("Customer-facing name, unique. An outcome trigger is named by its outcome's label ('Positive reply', 'Lead'), drawn with the ⚡ trigger glyph; a condition trigger has its own ('Signup Not Paid In 24 Hours')."),
           description: z.string().describe("One line a customer reads under the label."),
           icon: z.string().describe("Icon token (Phosphor name), like a channel's `icon`."),
           fromStep: z.string().nullable().describe("The step a lead reached that fires it (`steps[].key`); null when it is not a step (a campaign asking for a lead)."),
@@ -5475,9 +5482,10 @@ const channelCatalogueResponseSchema = registry.register(
           origin: z.enum(["code", "declared"]).describe("`code`: stated in this service's code. `declared`: created at run time through POST /internal/declarations/trigger-types (never coded until a service runs a generic detector for its `kind`)."),
           kind: z.enum(["event", "delay", "poll", "reported", "github_issue_in_prod"]).describe("`event`: a service detects something on a lead. `delay`: N days after a step, if nothing happened. `poll`: a new item appeared at a source. `reported`: a caller reports each occurrence to campaign-service's trigger-events record route (`params.reportedBy` names who). `github_issue_in_prod`: campaign-service's detector sees the GitHub issue a campaign waits on (stated per campaign at campaign-service) reach production."),
           params: z.record(z.unknown()).nullable().describe("The kind's parameters: `delay` `{afterStep, days | minutes, unlessStep?}`, `poll` `{source, everyMinutes}`, `reported` `{reportedBy}` on a declared one; null on an event and on a coded trigger."),
+          ...triggerVocabularyFields,
         }),
       )
-      .describe("THE TRIGGER TYPES (owner 2026-10-09): every kind of event that runs a REACTIVE leg, one row each in this service's database, the same for every client. The events themselves (one per occurrence, fired or skipped, per org x brand x offer) and each campaign's On/Off live in campaign-service."),
+      .describe("THE TRIGGER CATALOGUE (owner 2026-10-09, typed 2026-10-15): every kind of event that runs a REACTIVE leg, one row each in this service's database, the same for every client. The events themselves (one per occurrence, fired or skipped, per org x brand x offer) and each campaign's On/Off live in campaign-service."),
     legKeyCorrespondence: z
       .array(
         z.object({
@@ -6310,6 +6318,7 @@ const triggerTypeViewSchema = z.object({
   origin: z.enum(["code", "declared"]),
   kind: z.enum(["event", "delay", "poll", "reported", "github_issue_in_prod"]),
   params: z.record(z.unknown()).nullable(),
+  ...triggerVocabularyFields,
   displayOrder: z.number().int(),
   createdBy: z.string().nullable(),
   requestedByOrgId: z.string().nullable(),
@@ -6674,7 +6683,7 @@ const catalogueErrors = {
   503: { description: "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`." },
 };
 
-const catalogueStepRow = z.object({ id: z.string(), name: z.string(), icon: z.string().describe("Phosphor icon name."), line: z.string(), valueUsd: z.number().nullable().describe("What reaching the step is worth on the way to a paid client (fleet). Use it for an endpoint's ROI: value / cost of the call."), ...catalogueEcon, declared: z.boolean().optional().describe("Present (true) on a step declared at run time.") });
+const catalogueStepRow = z.object({ id: z.string(), name: z.string(), pluralName: z.string().describe("The name's plural for counts ('Leads')."), icon: z.string().describe("Phosphor icon name."), line: z.string(), valueUsd: z.number().nullable().describe("What reaching the step is worth on the way to a paid client (fleet). Use it for an endpoint's ROI: value / cost of the call."), ...catalogueEcon, declared: z.boolean().optional().describe("Present (true) on a step declared at run time.") });
 const catalogueTriggerField = { trigger: z.object({ slug: z.string(), name: z.string() }).nullable().describe("A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."), };
 const catalogueGlyphRow = z.object({ id: z.string(), name: z.string(), icon: z.string().describe("The family glyph (Phosphor): `waves` (sales path), `bird` (pipe), `flow-arrow` (workflow)."), color: z.string().describe("`#RRGGBB`, derived from the name."), line: z.string(), ...catalogueEcon, runnable: z.boolean().optional().describe("Sales path rows: at least one of its funnels is runnable. Absent on workflow rows."), type: z.enum(["proactive", "reactive"]).describe("`proactive`: starts at Start, on a leg from nothing (an outbound path on Start -> Lead found; owner 2026-10-11, the id it had from `lead_found_to_*` still resolves). `reactive` (owner 2026-10-10): starts on a TRIGGER step through a reactive pipe (Positive reply -> Meeting booked -> ... -> Paid client); its cost per paying client leaves out what produced the trigger, so a reactive path ranks after the proactive ones of its status tier.").optional().describe("Sales path rows only."), trigger: catalogueTriggerField.trigger.optional() });
 const cataloguePipeRow = catalogueGlyphRow.extend({ mode: z.enum(["proactive", "reactive"]), ...catalogueRunnableField, draft: z.boolean().optional() });
@@ -6717,7 +6726,7 @@ const catalogueFunnelRow = z.object({ ...catalogueFunnelCopy, id: z.string(), na
 const catalogueFace = z.object({ animal: z.string(), color: z.string(), eyes: z.string(), mouth: z.string(), accessory: z.string(), svgPath: z.string() });
 
 const catalogueStepDetail = z.object({
-  object: z.literal("step"), id: z.string(), name: z.string(), icon: z.string(), description: z.string(), line: z.string(), declared: z.boolean(),
+  object: z.literal("step"), id: z.string(), name: z.string(), pluralName: z.string(), icon: z.string(), description: z.string(), line: z.string(), declared: z.boolean(),
   producedBy: z.string().nullable().describe("What produces it (an endpoint, a service), as declared."),
   valueUsd: z.number().nullable(), valueVia: z.object({ toStep: z.string(), toStepName: z.string(), ratePct: z.number() }).nullable(), valueBasis: z.string(), lifetimeRevenueUsd: z.number().nullable(),
   ...catalogueEconDetail, costUnit: z.literal("per_outcome"), producingPipeIds: z.array(z.string()), salesPathCount: z.number().int(),
@@ -7051,7 +7060,9 @@ catalogueRead("/internal/catalogue/workflows", "List the workflows of one pipe (
 catalogueRead("/internal/catalogue/workflows/{id}", "One workflow on one pipe (internal, api-key)", { pipe: z.string().describe("The pipe id (required).") }, catalogueWorkflowDetail, idParam("A workflow dynasty slug"));
 const catalogueTriggerRow = z.object({
   id: z.string().describe("The trigger id a reactive pipe names (`triggerId`)."),
-  name: z.string().describe("The trigger's label, unique."),
+  name: z.string().describe("The trigger's label, unique (an outcome trigger is named by its outcome: 'Positive reply')."),
+  ...triggerVocabularyFields,
+  valueUsd: z.number().nullable().describe("A trigger can carry a value (owner 2026-10-15): an outcome trigger's is its outcome's fleet value (`/internal/catalogue/steps` `valueUsd`); null on a condition trigger and on an unvalued outcome."),
   icon: z.literal("lightning").describe("The family glyph (Phosphor)."),
   color: z.string().describe("`#RRGGBB`, derived from the name."),
   eventIcon: z.string().describe("The trigger type's own Phosphor icon (e.g. `thumbs-up`)."),
@@ -7345,7 +7356,7 @@ registry.registerPath({
           schema: z.object({
             object: z.literal("step"),
             total: z.number().int(),
-            rows: z.array(z.object({ key: z.string().describe("Canonical step key (`lead_found`, `conversation`, ...)."), name: z.string(), icon: z.string().describe("Phosphor icon name (`chat-circle-text`, ...).") })),
+            rows: z.array(z.object({ key: z.string().describe("Canonical step key (`lead_found`, `conversation`, ...)."), name: z.string(), pluralName: z.string().describe("The name's plural for counts ('Leads', 'Positive replies')."), icon: z.string().describe("Phosphor icon name (`chat-circle-text`, ...).") })),
           }),
         },
       },

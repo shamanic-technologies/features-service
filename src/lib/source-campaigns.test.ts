@@ -70,7 +70,7 @@ describe("source campaign identity (the contract campaign-service and billing ke
       managed: true,
       operatedBy: "platform",
       fromStep: null,
-      toStep: { key: "lead_found", label: "Lead found" },
+      toStep: { key: "lead_found", label: "Lead" },
       provider: { name: "Apollo", domain: "apollo.io" },
       roiBasis: "measured",
     });
@@ -78,7 +78,7 @@ describe("source campaign identity (the contract campaign-service and billing ke
 
   it("lead_found is a normal step of the vocabulary (2026-10-09), same copy, and no funnel leg moves", () => {
     expect(LEAD_FOUND_STEP.key).toBe("lead_found");
-    expect(LEAD_FOUND_STEP.label).toBe("Lead found");
+    expect(LEAD_FOUND_STEP.label).toBe("Lead");
     expect((CHANNEL_STEP_KEYS as readonly string[]).includes("lead_found")).toBe(true);
     expect(FUNNEL_LEG_KEYS.some((k) => k.includes("lead_found"))).toBe(false);
   });

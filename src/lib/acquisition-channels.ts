@@ -140,7 +140,8 @@ export const CHANNEL_STEPS: Record<ChannelStepKey, ChannelStepDef> = {
     // re-keyed (wave 2, `lib/leg-key-correspondence.ts`). No declared funnel names it yet, so no funnel
     // leg starts or ends on it and nothing on a funnel read moves. Same copy `/public/sourcing-origins`
     // has served as `leadFoundStep` since 2026-10-07.
-    label: "Lead found",
+    // "Lead" (owner 2026-10-15: "Lead est un outcome", standard CRM lifecycle word). The KEY stays `lead_found`.
+    label: "Lead",
     description: "A person who matches your target is found, with a verified email.",
     shortDescription: "Finds the right people",
   },
@@ -383,7 +384,8 @@ export const FUNNEL_STEP_LABEL_TO_KEY: Record<string, ChannelStepKey> = {
   "Form filled": "form_submitted",
   "Lead form submitted": "form_submitted",
   "Paid client": "paid_client",
-  // No deployed funnel names it yet; a funnel that does resolves here (2026-10-09).
+  // No deployed funnel names it yet; a funnel that does resolves here (2026-10-09). "Lead" since 2026-10-15.
+  Lead: "lead_found",
   "Lead found": "lead_found",
 };
 

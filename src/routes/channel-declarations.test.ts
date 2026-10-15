@@ -28,6 +28,7 @@ vi.mock("../lib/channel-declarations-store.js", async () => {
   const seeded = SEED_FEATURES.filter((f) => f.status === "active");
   return {
     listTriggerTypes: async () => mem.triggers,
+    listTriggerCatalogue: async () => (await import("../lib/outcome-vocabulary.js")).withOutcomeTriggers(mem.triggers, [], (g: any) => g),
     registerStepDeclarations: async () => ({ steps: [], rates: [] }),
     listDeclaredChannels: async () => mem.channels,
     listDeclaredLegs: async () => mem.legs,
@@ -285,5 +286,26 @@ describe("/internal/declarations: a staff caller declares a channel, a reactive 
     expect(res.body.reason).toBe("channel_coded");
     const list = await request(app).get("/internal/declarations/channels").set(KEY);
     expect(list.body.channels.find((c: { slug: string }) => c.slug === "sales-cold-email-outreach")).toMatchObject({ declared: false, published: true, visibleToClients: true });
+  });
+});
+
+describe("/public/channels serves the outcome and trigger catalogues (owner 2026-10-15)", () => {
+  it("outcomes beside steps, the Lead label, a plural, and every trigger typed", async () => {
+    const { CHANNEL_TRIGGER_TYPES } = await import("../lib/channel-triggers.js");
+    mem.triggers.push(
+      ...CHANNEL_TRIGGER_TYPES.map((t, i) => ({ ...t, origin: "code", kind: t.kind ?? "event", params: null, displayOrder: i, createdBy: null, requestedByOrgId: null })),
+      { id: "signup_not_paid_24_hours", label: "Signup Not Paid In 24 Hours", description: "x", icon: "clock", fromStep: "signup", firedBy: "campaign-service", coded: false, origin: "declared", kind: "delay", params: { minutes: 1440, afterStep: "signup", unlessStep: "paid_client" }, displayOrder: 99, createdBy: "staff", requestedByOrgId: null },
+    );
+    __resetChannelCatalogueCache();
+    const res = await request(app).get("/public/channels");
+    expect(res.status).toBe(200);
+    expect(res.body.outcomes).toEqual(res.body.steps);
+    expect(res.body.outcomes.find((o: { key: string }) => o.key === "lead_found")).toMatchObject({ label: "Lead", pluralLabel: "Leads" });
+    const byId = new Map((res.body.triggers as Array<{ id: string }>).map((t) => [t.id, t]));
+    expect(byId.get("positive_reply_received")).toMatchObject({ label: "Positive reply", type: "outcome", outcomeKey: "conversation", callable: true });
+    expect(byId.get("lead_found")).toMatchObject({ label: "Lead", type: "outcome", outcomeKey: "lead_found", callable: true });
+    expect(byId.get("signup_not_paid_24_hours")).toMatchObject({ type: "condition", outcomeKey: null, callable: false });
+    expect(byId.get("lead_requested")).toMatchObject({ type: "condition", callable: true });
+    expect(byId.get("follow_up_due")).toMatchObject({ type: "condition", callable: true });
   });
 });

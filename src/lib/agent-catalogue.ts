@@ -100,6 +100,7 @@
  *
  * Pure: no IO, no clock.
  */
+import { TRIGGER_GLYPH } from "./outcome-vocabulary.js";
 import { CHANNEL_STEPS, isDeclaredStepKey, type ChannelStepKey } from "./acquisition-channels.js";
 import type { PublicChannel } from "./channel-catalogue.js";
 import { DEFAULT_ENTRY_RATE_PCT, defaultLegRatePct } from "./default-leg-rates.js";
@@ -1154,15 +1155,15 @@ export function funnelTrigger(model: CatalogueModel, f: Pick<CatalogueFunnel, "p
   return pipeTrigger(model, first);
 }
 
-/** PURE: "Start -> Lead found -> Positive reply -> Paid client"; a reactive path starts with its trigger
- *  ("Positive Reply -> Meeting booked -> ..."), in place of its trigger step. */
+/** PURE: "Start -> Lead -> Positive reply -> Paid client"; a reactive path starts with its trigger, drawn with the
+ *  trigger glyph ("⚡ Positive reply -> Meeting booked -> ..."), in place of its trigger step. */
 export const pathLine = (model: CatalogueModel, path: CataloguePath): string => {
   const trigger = pathTrigger(model, path);
   const steps = path.steps.map((s) => stepLabel(model, s));
   // A reactive path out of a trigger STEP replaces that step with the trigger; one out of nothing (a step-less
   // trigger, "Email Pushed Via API -> Positive reply -> ...") puts the trigger in place of Start.
   const fromStep = legStepsOf(model, path.legKeys[0]).fromStep;
-  return (trigger ? [trigger.name, ...(fromStep === null ? steps : steps.slice(1))] : ["Start", ...steps]).join(" → ");
+  return (trigger ? [`${TRIGGER_GLYPH} ${trigger.name}`, ...(fromStep === null ? steps : steps.slice(1))] : ["Start", ...steps]).join(" → ");
 };
 
 /** PURE: "Cold Email: Lead found -> Positive reply". */

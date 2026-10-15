@@ -52,9 +52,13 @@ export interface ChannelTriggerType {
 
 /**
  * Every trigger has a UNIQUE slug (`id`) AND a unique NAME (`label`, case-insensitive; owner 2026-10-11): a reactive
- * sales path or funnel STARTS with its trigger, shown by name ("Positive Reply"), so two triggers may never read
+ * sales path or funnel STARTS with its trigger, shown by name ("Positive reply", drawn with the ⚡ trigger glyph), so two triggers may never read
  * alike. Enforced by the unique index `channel_trigger_types_label_lower_unique` (migration 0026) and refused on
- * create / rename (409 `trigger_name_taken`, `lib/channel-declarations.ts`). Names are Title Case, like a channel's.
+ * create / rename (409 `trigger_name_taken`, `lib/channel-declarations.ts`).
+ *
+ * An OUTCOME trigger (`lib/outcome-vocabulary.ts`, owner 2026-10-15) has no name of its own: its outcome's served
+ * label, one per outcome (guard `outcome-vocabulary.test.ts`); "⚡" is the glyph a trigger is drawn with, never part of
+ * its name. A condition trigger keeps its own Title Case name.
  */
 export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
   {
@@ -86,7 +90,7 @@ export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
   },
   {
     id: "positive_reply_received",
-    label: "Positive Reply",
+    label: "Positive reply",
     description: "A prospect replied with interest.",
     icon: "thumbs-up",
     fromStep: "conversation",
@@ -96,7 +100,7 @@ export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
   },
   {
     id: "website_visited",
-    label: "Website Visit",
+    label: "Website visit",
     description: "A prospect clicked through to your site.",
     icon: "cursor-click",
     fromStep: "website_visit",
@@ -105,7 +109,7 @@ export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
   },
   {
     id: "booking_call_started",
-    label: "Booking Call",
+    label: "Booking call",
     description: "A prospect was put on a call with your sales rep.",
     icon: "phone-call",
     fromStep: "booking_call",
@@ -114,7 +118,7 @@ export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
   },
   {
     id: "meeting_booked",
-    label: "Meeting Booked",
+    label: "Meeting booked",
     description: "A prospect booked a meeting.",
     icon: "calendar-check",
     fromStep: "meeting_booked",
@@ -123,7 +127,7 @@ export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
   },
   {
     id: "meeting_attended",
-    label: "Meeting Attended",
+    label: "Meeting attended",
     description: "A booked meeting was held.",
     icon: "handshake",
     fromStep: "meeting_attended",
@@ -146,7 +150,7 @@ export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
     // meeting booking's `form_submitted_to_meeting_booked`) answers within minutes. A calendar's own booking form is
     // the booking, never this trigger.
     id: "form_submitted",
-    label: "Form Submitted",
+    label: "Form submitted",
     description: "A prospect filled in a form.",
     icon: "clipboard-text",
     fromStep: "form_submitted",
@@ -155,11 +159,31 @@ export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
   },
   {
     id: "purchase_made",
-    label: "Purchase",
+    label: "Direct purchase",
     description: "A prospect bought on your site.",
     icon: "shopping-cart",
     fromStep: "purchase",
     firedBy: "lead-service",
+    coded: false,
+  },
+  {
+    // OUTCOME TRIGGERS of the two outcomes that had none (owner 2026-10-15: one trigger per outcome, no exception).
+    // A caller (API / MCP / Copilot) reports the fact through campaign-service's door; no detector of ours fires it yet.
+    id: "lead_found",
+    label: "Lead",
+    description: "A person matching your target was found.",
+    icon: "identification-card",
+    fromStep: "lead_found",
+    firedBy: "lead-service",
+    coded: false,
+  },
+  {
+    id: "paid_client",
+    label: "Paid client",
+    description: "A prospect became a paying client.",
+    icon: "currency-dollar",
+    fromStep: "paid_client",
+    firedBy: "crm-service",
     coded: false,
   },
   {

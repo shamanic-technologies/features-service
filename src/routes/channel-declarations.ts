@@ -27,6 +27,7 @@ import {
   insertTrigger,
   listDeclaredSalesPaths,
   listTriggerTypes,
+  listTriggerCatalogue,
   loadChannelCatalogue,
   registerStepDeclarations,
   takenChannelIdentities,
@@ -35,6 +36,7 @@ import {
   updateTrigger,
   type LoadedCatalogue,
 } from "../lib/channel-declarations-store.js";
+import { isTriggerCallable, triggerOutcomeKeyOf, triggerTypeOf } from "../lib/outcome-vocabulary.js";
 import { combinationKeyOf } from "../lib/offer-sales-paths.js";
 import { salesPathNamesFor } from "../lib/sales-path-names.js";
 import { isOutboundChannel } from "../lib/channel-types.js";
@@ -122,7 +124,16 @@ async function channelView(slug: string): Promise<ChannelView | null> {
   return (await loadViews()).views.find((v) => v.slug === slug) ?? null;
 }
 
-const triggerView = (t: TriggerTypeRecord) => ({ ...t, coded: isTriggerCoded(t) });
+/** A trigger type as listed: its record, whether a service fires it, and its type (owner 2026-10-15,
+ *  `lib/outcome-vocabulary.ts`): `outcome` ("⚡ <outcome>") or `condition`, the outcome it reports, and whether a
+ *  caller may fire it through campaign-service's door. */
+const triggerView = (t: TriggerTypeRecord) => ({
+  ...t,
+  coded: isTriggerCoded(t),
+  type: triggerTypeOf(t),
+  outcomeKey: triggerOutcomeKeyOf(t),
+  callable: isTriggerCallable(t),
+});
 
 function fail(res: Response, err: unknown, what: string): void {
   if (err instanceof DeclarationError) {
@@ -213,7 +224,7 @@ router.post("/internal/declarations/channels/:slug/legs", apiKeyOnly, async (req
   try {
     const createdBy = actorOf(body);
     const requestedByOrgId = requestedByOrgIdOf(body);
-    const [{ views }, triggers] = await Promise.all([loadViews(), listTriggerTypes()]);
+    const [{ views }, triggers] = await Promise.all([loadViews(), listTriggerCatalogue()]);
     const view = views.find((v) => v.slug === req.params.slug);
     if (!view) return void res.status(404).json({ error: `no channel ${req.params.slug}`, reason: "channel_not_found" });
     const operatedBy = (view.channel?.operatedBy ?? view.declaration?.operatedBy)!;
@@ -231,7 +242,7 @@ router.patch("/internal/declarations/channels/:slug/legs/:legKey", apiKeyOnly, a
   const body = (req.body ?? {}) as Body;
   try {
     const updatedBy = actorOf(body, "updatedBy");
-    const [{ views, cat }, triggers] = await Promise.all([loadViews(), listTriggerTypes()]);
+    const [{ views, cat }, triggers] = await Promise.all([loadViews(), listTriggerCatalogue()]);
     const view = views.find((v) => v.slug === req.params.slug);
     if (!view) return void res.status(404).json({ error: `no channel ${req.params.slug}`, reason: "channel_not_found" });
     const legKey = isOutboundChannel(view.slug) ? storedLegKeyOf(req.params.legKey) : req.params.legKey;
@@ -270,7 +281,7 @@ router.patch("/internal/declarations/channels/:slug/legs/:legKey", apiKeyOnly, a
 
 router.get("/internal/declarations/trigger-types", apiKeyOnly, async (_req, res) => {
   try {
-    res.json({ triggerTypes: (await listTriggerTypes()).map(triggerView) });
+    res.json({ triggerTypes: (await listTriggerCatalogue()).map(triggerView) });
   } catch (err) {
     fail(res, err, "list trigger types");
   }
@@ -278,7 +289,7 @@ router.get("/internal/declarations/trigger-types", apiKeyOnly, async (_req, res)
 
 router.get("/internal/declarations/trigger-types/:id", apiKeyOnly, async (req, res) => {
   try {
-    const t = (await listTriggerTypes()).find((x) => x.id === req.params.id);
+    const t = (await listTriggerCatalogue()).find((x) => x.id === req.params.id);
     if (!t) return void res.status(404).json({ error: `no trigger type ${req.params.id}`, reason: "trigger_not_found" });
     res.json(triggerView(t));
   } catch (err) {
