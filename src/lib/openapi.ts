@@ -5458,7 +5458,7 @@ const publicSalesFunnelSchema = z.object({
 const triggerVocabularyFields = {
   type: z.enum(["outcome", "condition"]).describe("Owner 2026-10-15 (outcomes and triggers are two catalogues). `outcome`: '⚡ <outcome>' (⚡ = the trigger glyph, never in the name), fired the moment a person reaches `outcomeKey`, exactly one per outcome, named by that outcome's label. `condition`: computed by us (an outcome + a delay + 'still not' another, a polled source, an integration state such as a GitHub issue in prod)."),
   outcomeKey: z.string().nullable().describe("The outcome (`outcomes[].key`) an outcome trigger reports. Null on a condition trigger (its `fromStep` is only the step its rule starts from)."),
-  callable: z.boolean().describe("A caller (API / MCP / Copilot) may fire it through campaign-service's one trigger door. True on every outcome trigger and on the triggers a caller reports today (`kind` event or reported); false on what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`)."),
+  callable: z.boolean().describe("An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger and on the triggers a caller reports today (`kind` reported: follow_up_due, email_pushed_via_api, follow_up_date_reached, parked); false on what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`) and on the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."),
 };
 
 const channelCatalogueResponseSchema = registry.register(

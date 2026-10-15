@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CHANNEL_STEPS, CHANNEL_STEP_KEYS } from "./acquisition-channels.js";
-import { CHANNEL_TRIGGER_TYPES } from "./channel-triggers.js";
+import { CHANNEL_TRIGGER_TYPES, triggerCallable } from "./channel-triggers.js";
 import {
   isTriggerCallable,
   outcomeTriggerLabel,
@@ -66,12 +66,15 @@ describe("outcome vocabulary (owner 2026-10-15)", () => {
     expect(triggerOutcomeKeyOf(source({ kind: "delay", fromStep: "signup" }))).toBeNull();
   });
 
-  it("keeps every trigger a caller reports today callable, and refuses only what we compute", () => {
+  it("keeps every trigger a caller reports today callable, and refuses what we compute and our inline requests", () => {
     const byId = new Map(CHANNEL_TRIGGER_TYPES.map((t) => [t.id, t]));
-    for (const id of ["positive_reply_received", "form_submitted", "lead_found", "lead_requested", "follow_up_due"]) {
-      expect(isTriggerCallable(byId.get(id)!), id).toBe(true);
+    for (const id of ["positive_reply_received", "form_submitted", "lead_found", "follow_up_due"]) {
+      expect(triggerCallable(byId.get(id)!), id).toBe(true);
     }
-    expect(isTriggerCallable(byId.get("github_issue_in_prod")!)).toBe(false);
+    expect(triggerCallable(byId.get("github_issue_in_prod")!)).toBe(false);
+    // An INLINE trigger is one of our services asking another inside a run, never a fact a client holds.
+    expect(triggerCallable(byId.get("lead_requested")!)).toBe(false);
+    expect(triggerCallable(byId.get("on_demand")!)).toBe(false);
     expect(isTriggerCallable(source({ kind: "delay" }))).toBe(false);
     expect(isTriggerCallable(source({ kind: "poll" }))).toBe(false);
     expect(isTriggerCallable(source({ kind: "reported" }))).toBe(true);

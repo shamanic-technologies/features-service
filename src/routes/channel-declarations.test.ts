@@ -305,7 +305,8 @@ describe("/public/channels serves the outcome and trigger catalogues (owner 2026
     expect(byId.get("positive_reply_received")).toMatchObject({ label: "Positive reply", type: "outcome", outcomeKey: "conversation", callable: true });
     expect(byId.get("lead_found")).toMatchObject({ label: "Lead", type: "outcome", outcomeKey: "lead_found", callable: true });
     expect(byId.get("signup_not_paid_24_hours")).toMatchObject({ type: "condition", outcomeKey: null, callable: false });
-    expect(byId.get("lead_requested")).toMatchObject({ type: "condition", callable: true });
+    expect(byId.get("lead_requested")).toMatchObject({ type: "condition", callable: false });
+    expect(byId.get("on_demand")).toMatchObject({ type: "condition", callable: false });
     expect(byId.get("follow_up_due")).toMatchObject({ type: "condition", callable: true });
   });
 });

@@ -23,6 +23,7 @@
  * DECLARED at run time is refused at creation on any trigger nothing fires (409 `trigger_not_fired`).
  */
 import type { ChannelStepKey } from "./acquisition-channels.js";
+import { isTriggerCallable } from "./outcome-vocabulary.js";
 
 export const LEG_MODES = ["proactive", "reactive"] as const;
 export type LegMode = (typeof LEG_MODES)[number];
@@ -266,3 +267,8 @@ export function assertLegTriggersDeclared(
 
 /** The triggers answered INSIDE the run that fires them (`ChannelTriggerType.inline`). */
 export const INLINE_TRIGGER_IDS: ReadonlySet<string> = new Set(CHANNEL_TRIGGER_TYPES.filter((t) => t.inline === true).map((t) => t.id));
+
+/** Whether an outside caller may fire this trigger type (`isTriggerCallable`, `lib/outcome-vocabulary.ts`): one rule
+ *  for every read serving `callable`, the inline flag read off the coded list. */
+export const triggerCallable = (t: { id: string; kind?: string | null }): boolean =>
+  isTriggerCallable({ kind: t.kind, inline: INLINE_TRIGGER_IDS.has(t.id) });
