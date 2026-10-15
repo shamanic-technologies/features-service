@@ -85,6 +85,7 @@ vi.mock("../lib/channel-declarations-store.js", async () => {
   };
   return {
     listTriggerTypes: async () => mem.triggers,
+    listTriggerCatalogue: async () => (await import("../lib/outcome-vocabulary.js")).withOutcomeTriggers(mem.triggers, mem.steps ?? [], (g: any) => g),
     listDeclaredChannels: async () => [],
     listDeclaredLegs: async () => mem.legs,
     listDeclaredSalesPaths: async () => mem.paths,
@@ -191,7 +192,7 @@ describe("agent catalogue lists (context-window sized)", () => {
       expect(r.icon).toBe("waves");
     }
     // The priced path ranks first (its cost per paying client rests on default rates: estimated; learning last).
-    expect(res.body.rows[0]).toMatchObject({ status: "estimated", roiBasis: "estimated", line: "Start → Lead found → Positive reply → Meeting booked → Meeting attended → Paid client" });
+    expect(res.body.rows[0]).toMatchObject({ status: "estimated", roiBasis: "estimated", line: "Start → Lead → Positive reply → Meeting booked → Meeting attended → Paid client" });
     expect(res.body.rows[0].name).toBe("Danube");
   });
 
@@ -433,11 +434,13 @@ describe("agent catalogue lists (context-window sized)", () => {
     expect(pub.body.object).toBe("step");
     const internal = await request(app).get("/internal/catalogue/steps").query({ limit: 25 }).set(KEY);
     expect(internal.body.truncated).toBe(false);
-    const staff = new Map(internal.body.rows.map((r: { id: string; name: string; icon: string }) => [r.id, { key: r.id, name: r.name, icon: r.icon }]));
+    const staff = new Map(internal.body.rows.map((r: { id: string; name: string; pluralName: string; icon: string }) => [r.id, { key: r.id, name: r.name, pluralName: r.pluralName, icon: r.icon }]));
     expect(pub.body.total).toBe(staff.size);
     expect(pub.body.rows).toHaveLength(staff.size);
     for (const r of pub.body.rows) expect(r).toEqual(staff.get(r.key));
     expect(pub.body.rows.find((r: { key: string }) => r.key === "conversation")).toMatchObject({ icon: "chat-circle-text" });
+    // Owner 2026-10-15: the outcome "Lead" (key unchanged) and a plural for counts.
+    expect(pub.body.rows.find((r: { key: string }) => r.key === "lead_found")).toMatchObject({ name: "Lead", pluralName: "Leads" });
     expect(JSON.stringify(pub.body)).not.toMatch(/valueUsd|costUsd|roi/);
   });
 
@@ -581,8 +584,8 @@ describe("agent catalogue creates (data, never a PR)", () => {
     );
     const meeting = reactive.find((r: { id: string }) => r.id.startsWith("conversation_to_meeting_booked"));
     // A reactive path starts with its TRIGGER, by name (owner 2026-10-11), in place of its trigger step.
-    expect(meeting.line).toBe("Positive Reply → Meeting booked → Meeting attended → Paid client");
-    expect(meeting.trigger).toEqual({ slug: "positive_reply_received", name: "Positive Reply" });
+    expect(meeting.line).toBe("⚡ Positive reply → Meeting booked → Meeting attended → Paid client");
+    expect(meeting.trigger).toEqual({ slug: "positive_reply_received", name: "Positive reply" });
     expect(paths.body.rows.filter((r: { type: string }) => r.type === "proactive").every((r: { trigger: unknown }) => r.trigger === null)).toBe(true);
 
     for (const pipeIds of [
@@ -655,7 +658,7 @@ describe("agent catalogue creates (data, never a PR)", () => {
 });
 
 describe("agent catalogue triggers (owner 2026-10-11, the staff Triggers section)", () => {
-  const record = (t: (typeof CHANNEL_TRIGGER_TYPES)[number], i: number) => ({ ...t, origin: "code", kind: "event", params: null, displayOrder: i, createdBy: null, requestedByOrgId: null });
+  const record = (t: (typeof CHANNEL_TRIGGER_TYPES)[number], i: number) => ({ ...t, origin: "code", kind: t.kind ?? "event", params: null, displayOrder: i, createdBy: null, requestedByOrgId: null });
   beforeEach(() => {
     mem.triggers = CHANNEL_TRIGGER_TYPES.map(record);
   });
@@ -672,9 +675,14 @@ describe("agent catalogue triggers (owner 2026-10-11, the staff Triggers section
     const names = r.body.rows.map((x: { name: string }) => x.name);
     expect(new Set(names).size).toBe(names.length);
     const reply = r.body.rows.find((x: { id: string }) => x.id === "positive_reply_received");
-    expect(reply).toMatchObject({ name: "Positive Reply", icon: "lightning", eventIcon: "thumbs-up", fromStep: "conversation", coded: true });
+    expect(reply).toMatchObject({ name: "Positive reply", icon: "lightning", eventIcon: "thumbs-up", fromStep: "conversation", coded: true });
     expect(reply.color).toMatch(/^#[0-9A-F]{6}$/i);
     expect(reply.pipeCount).toBeGreaterThan(0);
+    // Owner 2026-10-15: an outcome trigger reports its outcome, is callable and carries the outcome's value.
+    expect(reply).toMatchObject({ type: "outcome", outcomeKey: "conversation", callable: true });
+    expect(reply.valueUsd).toBeTypeOf("number");
+    expect(r.body.rows.find((x: { id: string }) => x.id === "lead_found")).toMatchObject({ name: "Lead", type: "outcome", outcomeKey: "lead_found", callable: true, coded: false });
+    expect(r.body.rows.find((x: { id: string }) => x.id === "github_issue_in_prod")).toMatchObject({ type: "condition", outcomeKey: null, callable: false, valueUsd: null });
   });
 
   it("searches and pages", async () => {
@@ -685,7 +693,7 @@ describe("agent catalogue triggers (owner 2026-10-11, the staff Triggers section
   it("one trigger: the reactive pipes it starts, named", async () => {
     const r = await request(app).get("/internal/catalogue/triggers/positive_reply_received").set(KEY);
     expect(r.status).toBe(200);
-    expect(r.body).toMatchObject({ object: "trigger", id: "positive_reply_received", name: "Positive Reply" });
+    expect(r.body).toMatchObject({ object: "trigger", id: "positive_reply_received", name: "Positive reply" });
     const ids = r.body.pipes.map((p: { id: string }) => p.id);
     expect(ids).toContain(MEET);
     expect(r.body.pipes.find((p: { id: string }) => p.id === MEET)).toMatchObject({ name: "Prism", mode: "reactive" });

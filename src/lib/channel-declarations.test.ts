@@ -189,8 +189,8 @@ describe("declared trigger types are never coded on their own say-so", () => {
   });
 
   it("refuses a trigger NAME another trigger has, case-insensitive, on create and on rename (owner 2026-10-11)", () => {
-    refused(() => parseTriggerInput({ id: "new_one", label: "positive reply ", description: "x", icon: "x", kind: "delay", params: { afterStep: "lead_found", days: 2 } }, TRIGGERS), 409, "trigger_name_taken");
-    refused(() => parseTriggerPatch({ label: "Positive Reply" }, delayTrigger, TRIGGERS), 409, "trigger_name_taken");
+    refused(() => parseTriggerInput({ id: "new_one", label: "positive REPLY ", description: "x", icon: "x", kind: "delay", params: { afterStep: "lead_found", days: 2 } }, TRIGGERS), 409, "trigger_name_taken");
+    refused(() => parseTriggerPatch({ label: "Positive reply" }, delayTrigger, TRIGGERS), 409, "trigger_name_taken");
     expect(parseTriggerPatch({ label: delayTrigger.label.toUpperCase() }, delayTrigger, TRIGGERS)).toEqual({ label: delayTrigger.label.toUpperCase() });
   });
 

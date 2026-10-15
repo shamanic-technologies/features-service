@@ -28291,6 +28291,51 @@
             },
             "description": "The LEG vocabulary — every leg of every declared sales funnel, each with its single canonical identifier, the two steps it connects, and the funnels it is a leg of. Published so a consumer never derives a leg from a pair of steps and never hardcodes the list. A leg usually belongs to SEVERAL funnels (a booked meeting becomes an attended meeting in both meeting funnels), which is exactly why a campaign is bought per LEG rather than per funnel — and why two funnels' figures OVERLAP on their shared legs and must never be summed. The two OUTBOUND legs (`lead_found_to_conversation` / `lead_found_to_website_visit`, wave 2 of the outbound leg rename) are appended after the funnel legs: same funnels and maturity rule as the funnel entry leg each feeds, `fromStep` = Lead found, proactive."
           },
+          "outcomes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "enum": [
+                    "lead_found",
+                    "conversation",
+                    "website_visit",
+                    "booking_call",
+                    "meeting_booked",
+                    "meeting_attended",
+                    "signup",
+                    "form_submitted",
+                    "purchase",
+                    "paid_client"
+                  ]
+                },
+                "label": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "shortDescription": {
+                  "type": "string",
+                  "description": "A 3-to-5-word caption printed under the step's label (onboarding cards, the offer's sales-path cards) and read by the AI that pre-ticks a visitor's steps, so every consumer reads the same words. Example: 'Buys online, no sales call' under 'Direct purchase'."
+                },
+                "pluralLabel": {
+                  "type": "string",
+                  "description": "The label's plural for counts: 'Leads', 'Positive replies', 'Meetings booked'."
+                }
+              },
+              "required": [
+                "key",
+                "label",
+                "description",
+                "shortDescription",
+                "pluralLabel"
+              ]
+            },
+            "description": "THE OUTCOME CATALOGUE (owner 2026-10-15): the same rows as `steps` (a valued result a person reaches: Lead, Positive reply, Meeting booked, Paid client...), each with its plural label. Keys never move; only labels do (`lead_found` reads 'Lead' since 2026-10-15). Every outcome has exactly one outcome trigger in `triggers` (`type: outcome`, `outcomeKey` = its key)."
+          },
           "steps": {
             "type": "array",
             "items": {
@@ -28320,16 +28365,20 @@
                 "shortDescription": {
                   "type": "string",
                   "description": "A 3-to-5-word caption printed under the step's label (onboarding cards, the offer's sales-path cards) and read by the AI that pre-ticks a visitor's steps, so every consumer reads the same words. Example: 'Buys online, no sales call' under 'Direct purchase'."
+                },
+                "pluralLabel": {
+                  "type": "string"
                 }
               },
               "required": [
                 "key",
                 "label",
                 "description",
-                "shortDescription"
+                "shortDescription",
+                "pluralLabel"
               ]
             },
-            "description": "The step vocabulary itself, published so a consumer never hardcodes it to join a channel's legs against a funnel's. It spans EVERY step of every funnel, not only the ones a funnel can start from — a channel performing an internal leg names the step it moves a lead OUT of, and that step is never one a funnel starts at. `lead_found` ('Lead found') is a normal step since 2026-10-09: the sourcing channels move a lead from nothing to it; no declared funnel names it yet."
+            "description": "Same rows as `outcomes` (kept for its readers). The step vocabulary itself, published so a consumer never hardcodes it to join a channel's legs against a funnel's. It spans EVERY step of every funnel, not only the ones a funnel can start from — a channel performing an internal leg names the step it moves a lead OUT of, and that step is never one a funnel starts at. `lead_found` ('Lead' since 2026-10-15, 'Lead found' before) is a normal step since 2026-10-09: the sourcing channels move a lead from nothing to it; no declared funnel names it yet."
           },
           "triggers": {
             "type": "array",
@@ -28342,7 +28391,7 @@
                 },
                 "label": {
                   "type": "string",
-                  "description": "Customer-facing name, e.g. 'Positive reply', 'Lead requested'."
+                  "description": "Customer-facing name, unique. An outcome trigger is named by its outcome's label ('Positive reply', 'Lead'), drawn with the ⚡ trigger glyph; a condition trigger has its own ('Signup Not Paid In 24 Hours')."
                 },
                 "description": {
                   "type": "string",
@@ -28391,6 +28440,23 @@
                     "nullable": true
                   },
                   "description": "The kind's parameters: `delay` `{afterStep, days | minutes, unlessStep?}`, `poll` `{source, everyMinutes}`, `reported` `{reportedBy}` on a declared one; null on an event and on a coded trigger."
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "outcome",
+                    "condition"
+                  ],
+                  "description": "Owner 2026-10-15 (outcomes and triggers are two catalogues). `outcome`: '⚡ <outcome>' (⚡ = the trigger glyph, never in the name), fired the moment a person reaches `outcomeKey`, exactly one per outcome, named by that outcome's label. `condition`: computed by us (an outcome + a delay + 'still not' another, a polled source, an integration state such as a GitHub issue in prod)."
+                },
+                "outcomeKey": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The outcome (`outcomes[].key`) an outcome trigger reports. Null on a condition trigger (its `fromStep` is only the step its rule starts from)."
+                },
+                "callable": {
+                  "type": "boolean",
+                  "description": "A caller (API / MCP / Copilot) may fire it through campaign-service's one trigger door. True on every outcome trigger and on the triggers a caller reports today (`kind` event or reported); false on what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`)."
                 }
               },
               "required": [
@@ -28403,10 +28469,13 @@
                 "coded",
                 "origin",
                 "kind",
-                "params"
+                "params",
+                "type",
+                "outcomeKey",
+                "callable"
               ]
             },
-            "description": "THE TRIGGER TYPES (owner 2026-10-09): every kind of event that runs a REACTIVE leg, one row each in this service's database, the same for every client. The events themselves (one per occurrence, fired or skipped, per org x brand x offer) and each campaign's On/Off live in campaign-service."
+            "description": "THE TRIGGER CATALOGUE (owner 2026-10-09, typed 2026-10-15): every kind of event that runs a REACTIVE leg, one row each in this service's database, the same for every client. The events themselves (one per occurrence, fired or skipped, per org x brand x offer) and each campaign's On/Off live in campaign-service."
           },
           "legKeyCorrespondence": {
             "type": "array",
@@ -29269,6 +29338,7 @@
           "channels",
           "funnels",
           "legs",
+          "outcomes",
           "steps",
           "triggers",
           "legKeyCorrespondence",
@@ -47993,6 +48063,23 @@
                               "nullable": true
                             }
                           },
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "outcome",
+                              "condition"
+                            ],
+                            "description": "Owner 2026-10-15 (outcomes and triggers are two catalogues). `outcome`: '⚡ <outcome>' (⚡ = the trigger glyph, never in the name), fired the moment a person reaches `outcomeKey`, exactly one per outcome, named by that outcome's label. `condition`: computed by us (an outcome + a delay + 'still not' another, a polled source, an integration state such as a GitHub issue in prod)."
+                          },
+                          "outcomeKey": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The outcome (`outcomes[].key`) an outcome trigger reports. Null on a condition trigger (its `fromStep` is only the step its rule starts from)."
+                          },
+                          "callable": {
+                            "type": "boolean",
+                            "description": "A caller (API / MCP / Copilot) may fire it through campaign-service's one trigger door. True on every outcome trigger and on the triggers a caller reports today (`kind` event or reported); false on what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`)."
+                          },
                           "displayOrder": {
                             "type": "integer"
                           },
@@ -48016,6 +48103,9 @@
                           "origin",
                           "kind",
                           "params",
+                          "type",
+                          "outcomeKey",
+                          "callable",
                           "displayOrder",
                           "createdBy",
                           "requestedByOrgId"
@@ -48160,6 +48250,23 @@
                         "nullable": true
                       }
                     },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "outcome",
+                        "condition"
+                      ],
+                      "description": "Owner 2026-10-15 (outcomes and triggers are two catalogues). `outcome`: '⚡ <outcome>' (⚡ = the trigger glyph, never in the name), fired the moment a person reaches `outcomeKey`, exactly one per outcome, named by that outcome's label. `condition`: computed by us (an outcome + a delay + 'still not' another, a polled source, an integration state such as a GitHub issue in prod)."
+                    },
+                    "outcomeKey": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The outcome (`outcomes[].key`) an outcome trigger reports. Null on a condition trigger (its `fromStep` is only the step its rule starts from)."
+                    },
+                    "callable": {
+                      "type": "boolean",
+                      "description": "A caller (API / MCP / Copilot) may fire it through campaign-service's one trigger door. True on every outcome trigger and on the triggers a caller reports today (`kind` event or reported); false on what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`)."
+                    },
                     "displayOrder": {
                       "type": "integer"
                     },
@@ -48183,6 +48290,9 @@
                     "origin",
                     "kind",
                     "params",
+                    "type",
+                    "outcomeKey",
+                    "callable",
                     "displayOrder",
                     "createdBy",
                     "requestedByOrgId"
@@ -48275,6 +48385,23 @@
                         "nullable": true
                       }
                     },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "outcome",
+                        "condition"
+                      ],
+                      "description": "Owner 2026-10-15 (outcomes and triggers are two catalogues). `outcome`: '⚡ <outcome>' (⚡ = the trigger glyph, never in the name), fired the moment a person reaches `outcomeKey`, exactly one per outcome, named by that outcome's label. `condition`: computed by us (an outcome + a delay + 'still not' another, a polled source, an integration state such as a GitHub issue in prod)."
+                    },
+                    "outcomeKey": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The outcome (`outcomes[].key`) an outcome trigger reports. Null on a condition trigger (its `fromStep` is only the step its rule starts from)."
+                    },
+                    "callable": {
+                      "type": "boolean",
+                      "description": "A caller (API / MCP / Copilot) may fire it through campaign-service's one trigger door. True on every outcome trigger and on the triggers a caller reports today (`kind` event or reported); false on what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`)."
+                    },
                     "displayOrder": {
                       "type": "integer"
                     },
@@ -48298,6 +48425,9 @@
                     "origin",
                     "kind",
                     "params",
+                    "type",
+                    "outcomeKey",
+                    "callable",
                     "displayOrder",
                     "createdBy",
                     "requestedByOrgId"
@@ -48408,6 +48538,23 @@
                         "nullable": true
                       }
                     },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "outcome",
+                        "condition"
+                      ],
+                      "description": "Owner 2026-10-15 (outcomes and triggers are two catalogues). `outcome`: '⚡ <outcome>' (⚡ = the trigger glyph, never in the name), fired the moment a person reaches `outcomeKey`, exactly one per outcome, named by that outcome's label. `condition`: computed by us (an outcome + a delay + 'still not' another, a polled source, an integration state such as a GitHub issue in prod)."
+                    },
+                    "outcomeKey": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The outcome (`outcomes[].key`) an outcome trigger reports. Null on a condition trigger (its `fromStep` is only the step its rule starts from)."
+                    },
+                    "callable": {
+                      "type": "boolean",
+                      "description": "A caller (API / MCP / Copilot) may fire it through campaign-service's one trigger door. True on every outcome trigger and on the triggers a caller reports today (`kind` event or reported); false on what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`)."
+                    },
                     "displayOrder": {
                       "type": "integer"
                     },
@@ -48431,6 +48578,9 @@
                     "origin",
                     "kind",
                     "params",
+                    "type",
+                    "outcomeKey",
+                    "callable",
                     "displayOrder",
                     "createdBy",
                     "requestedByOrgId"
@@ -48986,6 +49136,10 @@
                           "name": {
                             "type": "string"
                           },
+                          "pluralName": {
+                            "type": "string",
+                            "description": "The name's plural for counts ('Leads')."
+                          },
                           "icon": {
                             "type": "string",
                             "description": "Phosphor icon name."
@@ -49040,6 +49194,7 @@
                         "required": [
                           "id",
                           "name",
+                          "pluralName",
                           "icon",
                           "line",
                           "valueUsd",
@@ -49310,6 +49465,9 @@
                     "name": {
                       "type": "string"
                     },
+                    "pluralName": {
+                      "type": "string"
+                    },
                     "icon": {
                       "type": "string"
                     },
@@ -49424,6 +49582,7 @@
                     "object",
                     "id",
                     "name",
+                    "pluralName",
                     "icon",
                     "description",
                     "line",
@@ -57112,7 +57271,29 @@
                           },
                           "name": {
                             "type": "string",
-                            "description": "The trigger's label, unique."
+                            "description": "The trigger's label, unique (an outcome trigger is named by its outcome: 'Positive reply')."
+                          },
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "outcome",
+                              "condition"
+                            ],
+                            "description": "Owner 2026-10-15 (outcomes and triggers are two catalogues). `outcome`: '⚡ <outcome>' (⚡ = the trigger glyph, never in the name), fired the moment a person reaches `outcomeKey`, exactly one per outcome, named by that outcome's label. `condition`: computed by us (an outcome + a delay + 'still not' another, a polled source, an integration state such as a GitHub issue in prod)."
+                          },
+                          "outcomeKey": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The outcome (`outcomes[].key`) an outcome trigger reports. Null on a condition trigger (its `fromStep` is only the step its rule starts from)."
+                          },
+                          "callable": {
+                            "type": "boolean",
+                            "description": "A caller (API / MCP / Copilot) may fire it through campaign-service's one trigger door. True on every outcome trigger and on the triggers a caller reports today (`kind` event or reported); false on what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`)."
+                          },
+                          "valueUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "A trigger can carry a value (owner 2026-10-15): an outcome trigger's is its outcome's fleet value (`/internal/catalogue/steps` `valueUsd`); null on a condition trigger and on an unvalued outcome."
                           },
                           "icon": {
                             "type": "string",
@@ -57169,6 +57350,10 @@
                         "required": [
                           "id",
                           "name",
+                          "type",
+                          "outcomeKey",
+                          "callable",
+                          "valueUsd",
                           "icon",
                           "color",
                           "eventIcon",
@@ -57243,7 +57428,29 @@
                     },
                     "name": {
                       "type": "string",
-                      "description": "The trigger's label, unique."
+                      "description": "The trigger's label, unique (an outcome trigger is named by its outcome: 'Positive reply')."
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "outcome",
+                        "condition"
+                      ],
+                      "description": "Owner 2026-10-15 (outcomes and triggers are two catalogues). `outcome`: '⚡ <outcome>' (⚡ = the trigger glyph, never in the name), fired the moment a person reaches `outcomeKey`, exactly one per outcome, named by that outcome's label. `condition`: computed by us (an outcome + a delay + 'still not' another, a polled source, an integration state such as a GitHub issue in prod)."
+                    },
+                    "outcomeKey": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The outcome (`outcomes[].key`) an outcome trigger reports. Null on a condition trigger (its `fromStep` is only the step its rule starts from)."
+                    },
+                    "callable": {
+                      "type": "boolean",
+                      "description": "A caller (API / MCP / Copilot) may fire it through campaign-service's one trigger door. True on every outcome trigger and on the triggers a caller reports today (`kind` event or reported); false on what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`)."
+                    },
+                    "valueUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "A trigger can carry a value (owner 2026-10-15): an outcome trigger's is its outcome's fleet value (`/internal/catalogue/steps` `valueUsd`); null on a condition trigger and on an unvalued outcome."
                     },
                     "icon": {
                       "type": "string",
@@ -57427,6 +57634,10 @@
                   "required": [
                     "id",
                     "name",
+                    "type",
+                    "outcomeKey",
+                    "callable",
+                    "valueUsd",
                     "icon",
                     "color",
                     "eventIcon",
@@ -60662,6 +60873,10 @@
                           "name": {
                             "type": "string"
                           },
+                          "pluralName": {
+                            "type": "string",
+                            "description": "The name's plural for counts ('Leads', 'Positive replies')."
+                          },
                           "icon": {
                             "type": "string",
                             "description": "Phosphor icon name (`chat-circle-text`, ...)."
@@ -60670,6 +60885,7 @@
                         "required": [
                           "key",
                           "name",
+                          "pluralName",
                           "icon"
                         ]
                       }

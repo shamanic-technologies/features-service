@@ -14,6 +14,7 @@
  * published back when producing an entry step was the only thing a channel could do.
  */
 
+import { pluralLabelOf } from "./outcome-vocabulary.js";
 import {
   CHANNEL_FAMILIES,
   CHANNEL_OPERATORS,
@@ -404,10 +405,18 @@ export function funnelLegCatalogue(channels: readonly Pick<PublicChannel, "stepT
   return [...funnelLegs, ...outboundLegs, ...pipeLegs];
 }
 
-/** The step vocabulary itself, published beside the channels so a consumer never has to hardcode it. */
-export function channelStepCatalogue(): ChannelStepDefWire[] {
+/** One outcome (step) of the published vocabulary, with its plural for counts ("12 Leads"). */
+export interface OutcomeDefWire extends ChannelStepDefWire {
+  pluralLabel: string;
+}
+
+/** The step (outcome) vocabulary itself, published beside the channels so a consumer never has to hardcode it. */
+export function channelStepCatalogue(): OutcomeDefWire[] {
   // Steps declared at run time follow the coded ones, so a published leg on one always names a listed step.
-  return [...CHANNEL_STEP_KEYS, ...(declaredStepKeys() as ChannelStepKey[])].map(stepWire);
+  return [...CHANNEL_STEP_KEYS, ...(declaredStepKeys() as ChannelStepKey[])].map((k) => {
+    const w = stepWire(k);
+    return { ...w, pluralLabel: pluralLabelOf(w.label) };
+  });
 }
 
 /** One sales funnel, published in its own right rather than only nested inside the channels that sell

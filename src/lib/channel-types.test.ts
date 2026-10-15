@@ -83,7 +83,7 @@ describe("the sourcing features are channels like any other", () => {
       expect(t.legKey).toBe("start_to_lead_found");
       expect(t.from).toBeNull();
       expect(t.to.key).toBe("lead_found");
-      expect(t.to.label).toBe("Lead found");
+      expect(t.to.label).toBe("Lead");
       // Proactive (owner 2026-10-12): every pipe is independent, a source finds leads on its own.
       expect(t.reactive).toBe(false);
       expect(t.mode).toBe("proactive");

@@ -63,7 +63,7 @@ import {
   listDeclaredSalesPathChains,
   listDeclaredSalesPaths,
   listDeclaredSteps,
-  listTriggerTypes,
+  listTriggerCatalogue,
   loadChannelCatalogue,
   registerStepDeclarations,
   type LoadedCatalogue,
@@ -71,6 +71,7 @@ import {
 import { actorOf, DeclarationError, parseLegInput, requestedByOrgIdOf, type TriggerTypeRecord } from "../lib/channel-declarations.js";
 import { allNamesByKey, salesPathNamesFor, SalesPathNamePoolExhaustedError } from "../lib/sales-path-names.js";
 import { funnelTriggerLabel } from "../lib/funnel-descriptions.js";
+import { isTriggerCallable, pluralLabelOf, triggerOutcomeKeyOf, triggerTypeOf } from "../lib/outcome-vocabulary.js";
 import { funnelShortDescription, type ShortDescriptionUnavailableReason } from "../lib/funnel-short-descriptions.js";
 import { LEAD_SOURCING_SLUG, SOURCE_LEG_KEY } from "../lib/sourcing-origins.js";
 
@@ -417,7 +418,7 @@ async function loadModel(offer: OfferContext | null = null): Promise<Loaded> {
     loadChannelCatalogue({ publishedOnly: true }),
     listDeclaredSteps(),
     allNamesByKey(),
-    listTriggerTypes(),
+    listTriggerCatalogue(),
     listLegAssignments(),
     loadPlayCatalogue(),
   ]);
@@ -639,7 +640,7 @@ router.get("/internal/catalogue/steps", apiKeyOnly, async (req, res) => {
       .filter((s) => matchesQuery(q, [s.label, s.key, s.shortDescription, s.description, s.producedBy]))
       .map((s) => ({ s, e: stepEconomics(model, s.key) }))
       .sort((a, b) => (b.s.valueUsd ?? -1) - (a.s.valueUsd ?? -1) || a.s.key.localeCompare(b.s.key))
-      .map(({ s, e }) => ({ id: s.key, name: s.label, icon: s.icon, line: s.shortDescription, valueUsd: s.valueUsd, ...econWire(e, perStep(model, s.key)), ...(s.declared ? { declared: true } : {}) }));
+      .map(({ s, e }) => ({ id: s.key, name: s.label, pluralName: pluralLabelOf(s.label), icon: s.icon, line: s.shortDescription, valueUsd: s.valueUsd, ...econWire(e, perStep(model, s.key)), ...(s.declared ? { declared: true } : {}) }));
     res.json({ object: "step", costUnit: "per_outcome", order: "value_desc", ...page(rows, limit) });
   } catch (err) {
     fail(res, err, "list steps");
@@ -658,6 +659,7 @@ router.get("/internal/catalogue/steps/:id", apiKeyOnly, async (req, res) => {
       object: "step",
       id: s.key,
       name: s.label,
+      pluralName: pluralLabelOf(s.label),
       icon: s.icon,
       description: s.description,
       line: s.shortDescription,
@@ -1279,6 +1281,15 @@ router.get("/internal/catalogue/workflows/:id", apiKeyOnly, async (req, res) => 
 const triggerRowOf = (m: CatalogueModel, t: TriggerTypeRecord, pipeCount: number) => ({
   id: t.id,
   name: t.label,
+  // Owner 2026-10-15 (`lib/outcome-vocabulary.ts`): an OUTCOME trigger reports `outcomeKey` and carries that outcome's
+  // value; a CONDITION trigger is computed by us (no outcome of its own, no value). `callable` = a caller may fire it.
+  type: triggerTypeOf(t),
+  outcomeKey: triggerOutcomeKeyOf(t),
+  callable: isTriggerCallable(t),
+  valueUsd: (() => {
+    const k = triggerOutcomeKeyOf(t);
+    return k === null ? null : (m.steps.get(k)?.valueUsd ?? null);
+  })(),
   icon: FAMILY_GLYPHS.trigger,
   color: glyphColorOf(t.label),
   eventIcon: phosphorIconOf(t.icon),
@@ -1299,7 +1310,7 @@ router.get("/internal/catalogue/triggers", apiKeyOnly, async (req, res) => {
   try {
     const limit = limitOf(req);
     const q = qOf(req);
-    const [{ model }, triggers] = await Promise.all([loadModel(), listTriggerTypes()]);
+    const [{ model }, triggers] = await Promise.all([loadModel(), listTriggerCatalogue()]);
     const rows = triggers
       .filter((t) => matchesQuery(q, [t.label, t.id, t.description, t.firedBy, t.fromStep ? stepLabel(model, t.fromStep) : null]))
       .map((t) => triggerRowOf(model, t, pipesOfTrigger(model, t.id).length));
@@ -1311,7 +1322,7 @@ router.get("/internal/catalogue/triggers", apiKeyOnly, async (req, res) => {
 
 router.get("/internal/catalogue/triggers/:id", apiKeyOnly, async (req, res) => {
   try {
-    const [{ model, names }, triggers] = await Promise.all([loadModel(), listTriggerTypes()]);
+    const [{ model, names }, triggers] = await Promise.all([loadModel(), listTriggerCatalogue()]);
     const t = triggers.find((x) => x.id === req.params.id);
     if (!t) return void res.status(404).json({ error: `no trigger ${req.params.id}`, reason: "trigger_not_found" });
     const pipes = pipesOfTrigger(model, t.id);
@@ -1394,7 +1405,7 @@ router.post("/internal/catalogue/pipes", apiKeyOnly, async (req, res) => {
     const requestedByOrgId = requestedByOrgIdOf(body);
     if (typeof body.channelSlug !== "string") throw bad("channel_slug_required", "channelSlug is required");
     await registerStepDeclarations();
-    const [cat, triggers] = await Promise.all([loadChannelCatalogue({ publishedOnly: false }), listTriggerTypes()]);
+    const [cat, triggers] = await Promise.all([loadChannelCatalogue({ publishedOnly: false }), listTriggerCatalogue()]);
     const channel = cat.channels.find((c) => c.slug === body.channelSlug);
     const declaredChannel = cat.declared.channels.find((c) => c.slug === body.channelSlug);
     if (!channel && !declaredChannel) return void res.status(404).json({ error: `no channel ${body.channelSlug}`, reason: "channel_not_found" });
@@ -1889,7 +1900,7 @@ router.get("/public/catalogue/steps", async (_req, res) => {
     ]);
     const publishedPipeIds = new Set(pub.channels.flatMap((c) => c.stepTransitions.map((t) => pipeIdOf(c.slug, servedPipeLegKey(c.slug, t.legKey)))));
     const model = buildCatalogueModel({ channels: all.channels, publishedPipeIds, declaredSteps, measurements: new Map(), lifetimeRevenueUsd: null });
-    const rows = [...model.steps.values()].sort((a, b) => a.key.localeCompare(b.key)).map((s) => ({ key: s.key, name: s.label, icon: s.icon }));
+    const rows = [...model.steps.values()].sort((a, b) => a.key.localeCompare(b.key)).map((s) => ({ key: s.key, name: s.label, pluralName: pluralLabelOf(s.label), icon: s.icon }));
     res.set("Cache-Control", "public, max-age=300").json({ object: "step", total: rows.length, rows });
   } catch (err) {
     fail(res, err, "list public steps");
@@ -2009,7 +2020,7 @@ export async function funnelCopiesFor(ids: readonly string[]): Promise<{
     loadChannelCatalogue({ publishedOnly: true }),
     listDeclaredSteps(),
     allNamesByKey(),
-    listTriggerTypes(),
+    listTriggerCatalogue(),
     listLegAssignments(),
     loadPlayCatalogue(),
   ]);

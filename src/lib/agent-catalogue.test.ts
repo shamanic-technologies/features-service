@@ -78,7 +78,7 @@ describe("the agent catalogue model", () => {
     // An outbound path starts Start -> Lead found; its former id resolves to it.
     const old = "lead_found_to_conversation+conversation_to_paid_client";
     expect(pathById(model, old)?.id).toBe(`start_to_lead_found+${old}`);
-    expect(pathLine(model, pathById(model, old)!)).toBe("Start → Lead found → Positive reply → Paid client");
+    expect(pathLine(model, pathById(model, old)!)).toBe("Start → Lead → Positive reply → Paid client");
     // The funnel named Victory is one of them: its stored id resolves to its Lead Sourcing funnel (one channel per leg).
     const victory = "lead_found_to_conversation@sales-cold-email-outreach+conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client";
     expect(funnelById(model, victory)?.id).toBe(`start_to_lead_found@lead-sourcing+${victory}`);
@@ -131,7 +131,7 @@ describe("the agent catalogue model", () => {
 
   it("serves a path its best measured funnel, a channel its best measured pipe, a step its cheapest producing pipe", () => {
     const path = pathById(model, "lead_found_to_conversation+conversation_to_meeting_booked+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client")!;
-    expect(pathLine(model, path)).toBe("Start → Lead found → Positive reply → Meeting booked → Meeting attended → Paid client");
+    expect(pathLine(model, path)).toBe("Start → Lead → Positive reply → Meeting booked → Meeting attended → Paid client");
     const e = pathEconomics(model, path);
     expect(e.status).toBe("estimated");
     expect(e.bestFunnelId).toContain("@sales-cold-email-outreach");

@@ -8,7 +8,8 @@ import { loadFleetCell, storeFleetCell } from "../lib/fleet-cell-store.js";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features, type Feature } from "../db/schema.js";
-import { listTriggerTypes, loadChannelCatalogue } from "../lib/channel-declarations-store.js";
+import { listTriggerCatalogue, loadChannelCatalogue } from "../lib/channel-declarations-store.js";
+import { isTriggerCallable, triggerOutcomeKeyOf, triggerTypeOf, type TriggerType } from "../lib/outcome-vocabulary.js";
 import { isTriggerCoded } from "../lib/channel-declarations.js";
 import { STATS_REGISTRY } from "../lib/stats-registry.js";
 import {
@@ -3347,12 +3348,16 @@ interface ChannelCataloguePayload {
    *  funnel's. It spans EVERY step of every funnel, not only the ones a funnel can start from — a channel
    *  that performs an internal leg names the step it moves a lead OUT of, and that step is never one. */
   steps: ReturnType<typeof channelStepCatalogue>;
+  /** THE OUTCOME CATALOGUE (owner 2026-10-15, `lib/outcome-vocabulary.ts`): the same rows as `steps` (a valued result
+   *  a person reaches), each with its plural label. `steps` stays for its readers until they move. */
+  outcomes: ReturnType<typeof channelStepCatalogue>;
   /** The LOCKED outbound leg rename (`lib/funnel-legs.ts`): legacy key <-> new key, outbound channels only.
    *  Wave 2: an outbound channel's leg is stored and served in the new key (`lib/served-leg-keys.ts`); a
    *  consumer joining a key from campaign-service or billing still matches both spellings through this list. */
   legKeyCorrespondence: typeof OUTBOUND_LEG_KEY_CORRESPONDENCE;
-  /** The TRIGGER TYPES (`lib/channel-triggers.ts`), read from `channel_trigger_types`: what a reactive leg's
-   *  `triggerId` names, with its label and icon. */
+  /** THE TRIGGER CATALOGUE (`lib/channel-triggers.ts` + `channel_trigger_types` + one generated "⚡ <outcome>" per
+   *  outcome lacking one, `listTriggerCatalogue`): what a reactive leg's `triggerId` names, with its label, icon, type
+   *  (`outcome` | `condition`), the outcome it reports and whether a caller may fire it. */
   triggers: PublicChannelTrigger[];
 }
 
@@ -3369,10 +3374,16 @@ interface PublicChannelTrigger {
   /** `event` | `delay` (N days after a step, if nothing happened) | `poll` (a new item at a source) | `reported` (a caller reports it). */
   kind: "event" | "delay" | "poll" | "reported" | "github_issue_in_prod";
   params: Record<string, unknown> | null;
+  /** `outcome` ("⚡ <outcome>": a person just reached `outcomeKey`) or `condition` (computed by us). */
+  type: TriggerType;
+  /** The outcome an outcome trigger reports; null on a condition trigger. */
+  outcomeKey: string | null;
+  /** A caller (API / MCP / Copilot) may fire it through campaign-service's door. False only for what we compute. */
+  callable: boolean;
 }
 
 async function loadChannelTriggers(): Promise<PublicChannelTrigger[]> {
-  return (await listTriggerTypes()).map((t) => ({
+  return (await listTriggerCatalogue()).map((t) => ({
     id: t.id,
     label: t.label,
     description: t.description,
@@ -3383,6 +3394,9 @@ async function loadChannelTriggers(): Promise<PublicChannelTrigger[]> {
     origin: t.origin ?? "code",
     kind: t.kind ?? "event",
     params: t.params ?? null,
+    type: triggerTypeOf(t),
+    outcomeKey: triggerOutcomeKeyOf(t),
+    callable: isTriggerCallable(t),
   }));
 }
 
@@ -3404,6 +3418,7 @@ export async function handlePublicChannels(res: import("express").Response): Pro
       funnels: salesFunnelCatalogue(),
       legs: funnelLegCatalogue(channels),
       steps: channelStepCatalogue(),
+      outcomes: channelStepCatalogue(),
       legKeyCorrespondence: OUTBOUND_LEG_KEY_CORRESPONDENCE,
       triggers: await loadChannelTriggers(),
       emailDelivery: await fetchFleetEmailDelivery(),
