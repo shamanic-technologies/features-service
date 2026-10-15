@@ -6688,7 +6688,11 @@ const catalogueTriggerField = { trigger: z.object({ slug: z.string(), name: z.st
 const catalogueGlyphRow = z.object({ id: z.string(), name: z.string(), icon: z.string().describe("The family glyph (Phosphor): `waves` (sales path), `bird` (pipe), `flow-arrow` (workflow)."), color: z.string().describe("`#RRGGBB`, derived from the name."), line: z.string(), ...catalogueEcon, runnable: z.boolean().optional().describe("Sales path rows: at least one of its funnels is runnable. Absent on workflow rows."), type: z.enum(["proactive", "reactive"]).describe("`proactive`: starts at Start, on a leg from nothing (an outbound path on Start -> Lead found; owner 2026-10-11, the id it had from `lead_found_to_*` still resolves). `reactive` (owner 2026-10-10): starts on a TRIGGER step through a reactive pipe (Positive reply -> Meeting booked -> ... -> Paid client); its cost per paying client leaves out what produced the trigger, so a reactive path ranks after the proactive ones of its status tier.").optional().describe("Sales path rows only."), trigger: catalogueTriggerField.trigger.optional() });
 const cataloguePipeRow = catalogueGlyphRow.extend({ mode: z.enum(["proactive", "reactive"]), ...catalogueRunnableField, draft: z.boolean().optional() });
 const catalogueChannelRow = z.object({ id: z.string().describe("The channel slug."), name: z.string(), icon: z.string(), line: z.string(), ...catalogueEcon, ...catalogueRunnableField });
-const catalogueFunnelCopy = { ...catalogueTriggerField, triggerLabel: z.string().nullable().describe("A REACTIVE funnel: the customer label of what starts it (e.g. `Positive replies`), shown as a tag. Null on a proactive funnel.") };
+const catalogueFunnelCopy = {
+  ...catalogueTriggerField,
+  triggerLabel: z.string().nullable().describe("A REACTIVE funnel: the customer label of what starts it (e.g. `Positive replies`), shown as a tag. Null on a proactive funnel."),
+  type: z.enum(["proactive", "reactive"]).describe("`proactive` when at least one pipe is proactive (own budget, worked every tick), else `reactive`. A funnel HEADED by a trigger (id `trigger:<id>+...`, owner 2026-10-15) is always `reactive`: every pipe answers its trigger, proactive pipes included. Campaign-service and billing relay it; nobody re-grades pipe modes."),
+};
 const catalogueExpectedBasis = z.enum(["measured", "stated", "fleet", "default"]);
 const catalogueExpectedRow = z
   .object({
