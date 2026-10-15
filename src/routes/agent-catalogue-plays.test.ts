@@ -85,6 +85,7 @@ vi.mock("../lib/channel-declarations-store.js", async () => {
   };
   return {
     listTriggerTypes: async () => mem.triggers,
+    listTriggerCatalogue: async () => (await import("../lib/outcome-vocabulary.js")).withOutcomeTriggers(mem.triggers, mem.steps ?? [], (g: any) => g),
     listDeclaredChannels: async () => [],
     listDeclaredLegs: async () => mem.legs,
     listDeclaredSalesPaths: async () => mem.paths,

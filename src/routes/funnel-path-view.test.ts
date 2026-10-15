@@ -30,7 +30,7 @@ describe("funnelPathView", () => {
     const v = funnelPathView(model, funnelById(model, BLISS)!);
     expect(read(v)).toEqual([
       "Start", "[Lead Sourcing]",
-      "Lead found", "[Sales Cold Email Outreach]", "Positive reply",
+      "Lead", "[Sales Cold Email Outreach]", "Positive reply",
       "[Your Team Meeting Booking]", "Meeting booked",
       "[Your Team Meeting Attendance]", "Meeting attended",
       "[Your Team Closing Calls]", "Paid client",
@@ -43,18 +43,18 @@ describe("funnelPathView", () => {
 
   it("a single-source funnel reads its one source on the sourcing leg", () => {
     const v = funnelPathView(model, funnelById(model, `start_to_lead_found@sourcing-apollo-cold-filters+${BLISS}`)!);
-    expect(read(v).slice(0, 3)).toEqual(["Start", "[Apollo Cold Filters]", "Lead found"]);
+    expect(read(v).slice(0, 3)).toEqual(["Start", "[Apollo Cold Filters]", "Lead"]);
   });
 
   it("Moving and Motivate, reactive funnels, start with their TRIGGER (owner 2026-10-11); Moving's booking call leg is the customer's team's", () => {
     const moving = funnelPathView(model, funnelById(model, MOVING)!);
-    expect(moving.items[0]).toEqual({ kind: "trigger", slug: "positive_reply_received", name: "Positive Reply" });
+    expect(moving.items[0]).toEqual({ kind: "trigger", slug: "positive_reply_received", name: "Positive reply" });
     expect(read(moving)).toEqual([
-      "⚡Positive Reply", "[AI Instant Call]", "Booking call", "[Your Team Booking Calls]", "Meeting booked",
+      "⚡Positive reply", "[AI Instant Call]", "Booking call", "[Your Team Booking Calls]", "Meeting booked",
       "[Your Team Meeting Attendance]", "Meeting attended", "[Your Team Closing Calls]", "Paid client",
     ]);
     expect(read(funnelPathView(model, funnelById(model, MOTIVATE)!))).toEqual([
-      "⚡Positive Reply", "[AI Meeting Booking]", "Meeting booked", "[Your Team Meeting Attendance]", "Meeting attended", "[Your Team Closing Calls]", "Paid client",
+      "⚡Positive reply", "[AI Meeting Booking]", "Meeting booked", "[Your Team Meeting Attendance]", "Meeting attended", "[Your Team Closing Calls]", "Paid client",
     ]);
   });
 

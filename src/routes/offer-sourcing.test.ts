@@ -30,7 +30,7 @@ describe("GET /public/sourcing-origins", () => {
     expect(provider["sourcing-crm-contacts"]).toBeNull();
     for (const o of res.body.origins) expect(o).toHaveProperty("provider");
     // the source-campaign contract: the step every source ends on, the leg key, each origin's campaign key
-    expect(res.body.leadFoundStep).toMatchObject({ key: "lead_found", label: "Lead found" });
+    expect(res.body.leadFoundStep).toMatchObject({ key: "lead_found", label: "Lead" });
     expect(res.body.sourceLegKey).toBe("start_to_lead_found");
     for (const o of res.body.origins) expect(o.sourceCampaignKey).toBe(`campaign:${o.slug}|start_to_lead_found`);
   });

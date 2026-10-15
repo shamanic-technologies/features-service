@@ -17,6 +17,7 @@ import {
   features,
 } from "../db/schema.js";
 import { registerDeclaredSteps, type ChannelStepKey } from "./acquisition-channels.js";
+import { withOutcomeTriggers } from "./outcome-vocabulary.js";
 import { registerDeclaredLegRates } from "./default-leg-rates.js";
 import { buildChannelCatalogue, type PublicChannel } from "./channel-catalogue.js";
 import { channelShortDescription } from "./channel-short-descriptions.js";
@@ -272,6 +273,16 @@ export interface DeclaredSalesPathChain {
 
 export async function listDeclaredSteps(): Promise<DeclaredStep[]> {
   return (await db.select().from(declaredSteps).orderBy(asc(declaredSteps.createdAt))).map((r) => ({ ...r, createdAt: r.createdAt.toISOString() }));
+}
+
+/**
+ * THE TRIGGER CATALOGUE (owner 2026-10-15, `lib/outcome-vocabulary.ts`): every stored trigger type plus the generated
+ * OUTCOME trigger of an outcome declared at run time that has none. Every read that lists or validates a trigger reads
+ * this, so "⚡ <outcome>" exists for every outcome wherever triggers are listed.
+ */
+export async function listTriggerCatalogue(): Promise<TriggerTypeRecord[]> {
+  const [triggers, steps] = await Promise.all([listTriggerTypes(), listDeclaredSteps()]);
+  return withOutcomeTriggers(triggers, steps, (g) => ({ ...g, kind: g.kind as TriggerTypeRecord["kind"] }));
 }
 
 export async function listDeclaredLegRates(): Promise<DeclaredLegRate[]> {
