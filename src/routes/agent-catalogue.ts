@@ -72,8 +72,10 @@ import {
   listTriggerCatalogue,
   loadChannelCatalogue,
   registerStepDeclarations,
+  retireLeg,
   type LoadedCatalogue,
 } from "../lib/channel-declarations-store.js";
+import { fetchFleetLegCampaignsFor } from "../lib/fleet-leg-campaigns.js";
 import { actorOf, DeclarationError, parseLegInput, requestedByOrgIdOf, type TriggerTypeRecord } from "../lib/channel-declarations.js";
 import { allNamesByKey, salesPathNamesFor, SalesPathNamePoolExhaustedError } from "../lib/sales-path-names.js";
 import { funnelTriggerLabel } from "../lib/funnel-descriptions.js";
@@ -1478,6 +1480,58 @@ router.post("/internal/catalogue/pipes", apiKeyOnly, async (req, res) => {
     res.status(201).json(pipeDetail(after.model, pipe, n.get(nameKeyOfPipe(pipe))!));
   } catch (err) {
     fail(res, err, "create pipe");
+  }
+});
+
+/**
+ * RETIRE A PIPE CREATED BY MISTAKE (MCP-PIPE-GAPS-1015): a DECLARED pipe no campaign uses and no declared sales funnel
+ * names leaves every catalogue read (its row kept: who created it, who retired it, why). Refused, never forced: a pipe
+ * stated in code (409 `pipe_coded`), a pipe any campaign of any org runs or ran (409 `pipe_in_use`, every status: a
+ * stopped campaign can be restarted), a pipe a declared sales funnel names (409 `pipe_in_sales_funnel`). The campaign
+ * read is FAIL-LOUD (502): an unreadable answer never retires. Declaring the same leg again revives it.
+ */
+router.post("/internal/catalogue/pipes/:id/retire", apiKeyOnly, async (req, res) => {
+  const body = (req.body ?? {}) as Body;
+  try {
+    const retiredBy = actorOf(body, "retiredBy");
+    if (body.note !== undefined && body.note !== null && (typeof body.note !== "string" || body.note.trim().length > 500)) throw bad("note_invalid", "note must be a string of at most 500 characters");
+    const note = typeof body.note === "string" && body.note.trim() !== "" ? body.note.trim() : null;
+    const { model, names, cat } = await loadModel();
+    const p = model.pipes.get(req.params.id);
+    if (!p) return void res.status(404).json({ error: `no pipe ${req.params.id} (a play id is not a pipe: retire its pipe)`, reason: "pipe_not_found" });
+    const stored = cat.declared.legs.find((l) => l.channelSlug === p.channelSlug && pipeLegKeyOf(l.channelSlug, l.legKey) === p.computedLegKey);
+    if (!stored) throw new DeclarationError(409, "pipe_coded", `${p.id} is stated in code, not declared: it cannot be retired here`);
+    const funnels = (await listDeclaredSalesPaths())
+      .map((d) => servedCombinationKeyOf(d.combinationKey))
+      .filter((key) =>
+        key.split("+").some((part) => {
+          const at = part.indexOf("@");
+          if (at < 0) return false;
+          const slug = part.slice(at + 1).split("~")[0];
+          return slug === p.channelSlug && pipeLegKeyOf(slug, part.slice(0, at)) === p.computedLegKey;
+        }),
+      );
+    if (funnels.length > 0) {
+      throw new DeclarationError(409, "pipe_in_sales_funnel", `${p.id} is a leg of ${funnels.length} declared sales funnel(s) (${funnels.slice(0, 3).join(", ")}): it stays`);
+    }
+    let campaigns: Awaited<ReturnType<typeof fetchFleetLegCampaignsFor>>[number];
+    try {
+      [campaigns] = await fetchFleetLegCampaignsFor([[{ channelSlug: p.channelSlug, computedLegKey: p.computedLegKey }]]);
+    } catch (err) {
+      console.error(`[features-service] agent catalogue: retire ${p.id} refused, campaign read failed:`, err);
+      return void res.status(502).json({ error: `could not read which campaigns use ${p.id}, so it is not retired`, reason: "campaigns_unreadable" });
+    }
+    if (campaigns.length > 0) {
+      throw new DeclarationError(409, "pipe_in_use", `${p.id} is used by ${campaigns.length} campaign(s) (${campaigns.slice(0, 3).map((c) => c.campaignId).join(", ")}): a pipe a campaign uses is never retired`);
+    }
+    const done = await retireLeg(stored.channelSlug, stored.legKey, retiredBy, note);
+    if (!done) throw new Error(`[features-service] declared leg ${stored.channelSlug} ${stored.legKey} vanished while being retired`);
+    invalidateChannelCatalogue();
+    const name = names.get(nameKeyOfPipe(p)) ?? null;
+    console.log(`[features-service] agent catalogue: pipe ${p.id} (${name}) retired by ${retiredBy}${note ? `: ${note}` : ""}`);
+    res.json({ object: "pipe", id: p.id, name, retired: true, retiredAt: done.retiredAt, retiredBy, note });
+  } catch (err) {
+    fail(res, err, "retire pipe");
   }
 });
 

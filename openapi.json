@@ -51447,7 +51447,7 @@
       },
       "post": {
         "summary": "Declare a pipe (internal, api-key)",
-        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`). One leg on one channel (a declared leg, `POST /internal/declarations/channels/{slug}/legs` rules: a reactive pipe names a trigger something fires, unless it is a customer-team pipe or a draft). A leg out of a step nothing rates states `conversionRatePct` (400 `conversion_rate_required`). Named with a never-given bird. Created live (owner 2026-10-12): clients see it at once.",
+        "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`). One leg on one channel (a declared leg, `POST /internal/declarations/channels/{slug}/legs` rules: a reactive pipe names a trigger something fires, unless it is a customer-team pipe or a draft). WHERE A PIPE ON A TRIGGER STARTS: at Start (`fromStep: null`, leg `start_to_<toStep>`), the trigger starts it, like every running reactive campaign; or out of a real step a trigger stands for (Positive reply, Form submitted...). NEVER at Lead found: that is where a source hands its leads to a proactive pipe, those leads never fire a trigger, so no sales funnel could take the pipe (400 `reactive_pipe_from_lead_found`, naming the entry leg to declare). A trigger's `fromStep` is where a lead stands when it fires, not where a reactive pipe starts: to reuse a proactive pipe leaving that step, head a sales funnel with the trigger (`POST /internal/catalogue/sales-funnels` `triggerId`). A leg out of a step nothing rates states `conversionRatePct` (400 `conversion_rate_required`). Named with a never-given bird. Created live (owner 2026-10-12): clients see it at once. A pipe created by mistake: `POST /internal/catalogue/pipes/{id}/retire`.",
         "tags": [
           "Internal"
         ],
@@ -57361,7 +57361,7 @@
                           "fromStep": {
                             "type": "string",
                             "nullable": true,
-                            "description": "The step a lead reached that fires it; null when it is not a step (`on_demand`)."
+                            "description": "The step a lead stands at when it fires; null when it is not a step (`on_demand`). NOT where a reactive pipe on it starts: a pipe on a trigger standing at Lead found starts at Start (`fromStep: null`, `start_to_<step>`); or head a sales funnel with the trigger over the pipes leaving this step (`POST /internal/catalogue/sales-funnels` `triggerId`)."
                           },
                           "fromStepName": {
                             "type": "string",
@@ -57518,7 +57518,7 @@
                     "fromStep": {
                       "type": "string",
                       "nullable": true,
-                      "description": "The step a lead reached that fires it; null when it is not a step (`on_demand`)."
+                      "description": "The step a lead stands at when it fires; null when it is not a step (`on_demand`). NOT where a reactive pipe on it starts: a pipe on a trigger standing at Lead found starts at Start (`fromStep: null`, `start_to_<step>`); or head a sales funnel with the trigger over the pipes leaving this step (`POST /internal/catalogue/sales-funnels` `triggerId`)."
                     },
                     "fromStepName": {
                       "type": "string",
@@ -60413,6 +60413,117 @@
           },
           "503": {
             "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+          }
+        }
+      }
+    },
+    "/internal/catalogue/pipes/{id}/retire": {
+      "post": {
+        "summary": "Retire a pipe created by mistake (internal, api-key, staff)",
+        "description": "Takes a DECLARED pipe no campaign uses out of every catalogue read (pipes, sales paths and funnels built on it, the channel's legs); the row is kept (who created it, who retired it, why) and its name is never given to another pipe. Declaring the same leg again (`POST /internal/catalogue/pipes`) revives it under the same id and name. Refused, never forced: 409 `pipe_coded` (a pipe stated in code), `pipe_in_use` (any campaign of any org runs or ran it, stopped ones included), `pipe_in_sales_funnel` (a declared sales funnel names it); 502 `campaigns_unreadable` (the campaign read failed: nothing retired).",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "A pipe id (`<channel slug>|<leg key>`), URL-encoded. A play id is refused 404: retire its pipe."
+            },
+            "required": true,
+            "description": "A pipe id (`<channel slug>|<leg key>`), URL-encoded. A play id is refused 404: retire its pipe.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "retiredBy": {
+                    "type": "string",
+                    "description": "Who retires it (staff identity)."
+                  },
+                  "note": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Why, at most 500 characters."
+                  }
+                },
+                "required": [
+                  "retiredBy"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Retired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "enum": [
+                        "pipe"
+                      ]
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "retired": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    },
+                    "retiredAt": {
+                      "type": "string"
+                    },
+                    "retiredBy": {
+                      "type": "string"
+                    },
+                    "note": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "object",
+                    "id",
+                    "name",
+                    "retired",
+                    "retiredAt",
+                    "retiredBy",
+                    "note"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`retiredBy_required` or `note_invalid`."
+          },
+          "401": {
+            "description": "Missing or wrong service key."
+          },
+          "404": {
+            "description": "`pipe_not_found` (unknown, already retired, or a play id)."
+          },
+          "409": {
+            "description": "`pipe_coded`, `pipe_in_use` or `pipe_in_sales_funnel`."
+          },
+          "502": {
+            "description": "`campaigns_unreadable`."
           }
         }
       }

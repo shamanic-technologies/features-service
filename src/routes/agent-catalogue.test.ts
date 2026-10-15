@@ -69,6 +69,15 @@ vi.mock("../lib/workflow-leg-assignments.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   listLegAssignments: async () => mem.assignments,
 }));
+// Every org's campaigns (campaign-service /campaigns/list), per pipe group.
+const fleetCampaigns = vi.hoisted(() => ({ rows: [] as Array<{ campaignId: string; orgId: string; brandId: string | null; channelSlug: string; legKey: string }>, fail: false }));
+vi.mock("../lib/fleet-leg-campaigns.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  fetchFleetLegCampaignsFor: async (groups: Array<Array<{ channelSlug: string; computedLegKey: string }>>) => {
+    if (fleetCampaigns.fail) throw new Error("campaign-service /campaigns/list failed (503): down");
+    return groups.map((g) => fleetCampaigns.rows.filter((c) => g.some((p) => p.channelSlug === c.channelSlug && p.computedLegKey === c.legKey)));
+  },
+}));
 vi.mock("../lib/channel-declarations-store.js", async () => {
   const { mergeDeclarations } = await import("../lib/channel-declarations.js");
   const { buildChannelCatalogue } = await import("../lib/channel-catalogue.js");
@@ -103,6 +112,12 @@ vi.mock("../lib/channel-declarations-store.js", async () => {
       const row = { channelSlug, ...input, published: true, createdBy, requestedByOrgId: null, createdAt: "", updatedAt: "" };
       mem.legs.push(row);
       return row;
+    },
+    retireLeg: async (channelSlug: string, legKey: string) => {
+      const i = mem.legs.findIndex((l) => l.channelSlug === channelSlug && l.legKey === legKey);
+      if (i < 0) return null;
+      mem.legs.splice(i, 1);
+      return { retiredAt: "2026-10-15T20:00:00.000Z" };
     },
     insertLegRate: async (rate: any) => void mem.rates.push(rate),
     insertStep: async (input: any) => {
@@ -145,6 +160,8 @@ beforeEach(() => {
     ["campaign:ai-meeting-booking|conversation_to_meeting_booked", "Prism"],
   ]);
   mem.legs = [];
+  fleetCampaigns.rows = [];
+  fleetCampaigns.fail = false;
   mem.steps = [];
   mem.rates = [];
   mem.chains = [];
@@ -742,5 +759,72 @@ describe("agent catalogue triggers (owner 2026-10-11, the staff Triggers section
     const r = await request(app).get("/internal/catalogue/triggers/nope").set(KEY);
     expect(r.status).toBe(404);
     expect(r.body.reason).toBe("trigger_not_found");
+  });
+});
+
+describe("MCP-PIPE-GAPS-1015: where a pipe on a trigger starts, and retiring a pipe created by mistake", () => {
+  const WA_ENTRY = "cold-whatsapp-outreach|start_to_signup";
+
+  it("refuses a pipe on a trigger out of Lead found, naming the entry leg to declare instead", async () => {
+    const r = await request(app)
+      .post("/internal/catalogue/pipes")
+      .set(KEY)
+      .send({ channelSlug: "cold-whatsapp-outreach", fromStep: "lead_found", toStep: "signup", mode: "reactive", triggerId: "positive_reply_received", createdBy: "agent" });
+    expect(r.status).toBe(400);
+    expect(r.body.reason).toBe("reactive_pipe_from_lead_found");
+    expect(r.body.error).toContain("fromStep null");
+    expect(r.body.error).toContain(WA_ENTRY);
+    expect(mem.legs).toEqual([]);
+  });
+
+  it("still takes a PROACTIVE pipe out of Lead found, and a pipe on a trigger out of Start", async () => {
+    const entry = await request(app)
+      .post("/internal/catalogue/pipes")
+      .set(KEY)
+      .send({ channelSlug: "cold-whatsapp-outreach", fromStep: null, toStep: "signup", mode: "reactive", triggerId: "positive_reply_received", createdBy: "agent" });
+    expect(entry.status).toBe(201);
+    expect(entry.body.id).toBe(WA_ENTRY);
+  });
+
+  it("retires an unused declared pipe: gone from the catalogue reads, then declared again under the same id", async () => {
+    await request(app).post("/internal/catalogue/pipes").set(KEY).send({ channelSlug: "cold-whatsapp-outreach", fromStep: null, toStep: "signup", mode: "reactive", triggerId: "positive_reply_received", createdBy: "agent" });
+    const name = (await request(app).get(`/internal/catalogue/pipes/${encodeURIComponent(WA_ENTRY)}`).set(KEY)).body.name;
+    const r = await request(app).post(`/internal/catalogue/pipes/${encodeURIComponent(WA_ENTRY)}/retire`).set(KEY).send({ retiredBy: "staff@distribute.you", note: "created by mistake" });
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ object: "pipe", id: WA_ENTRY, name, retired: true, retiredBy: "staff@distribute.you", note: "created by mistake" });
+    expect((await request(app).get(`/internal/catalogue/pipes/${encodeURIComponent(WA_ENTRY)}`).set(KEY)).status).toBe(404);
+    const listed = await request(app).get("/internal/catalogue/pipes").query({ channels: "cold-whatsapp-outreach", limit: 25 }).set(KEY);
+    expect(listed.body.rows.map((p: { id: string }) => p.id)).not.toContain(WA_ENTRY);
+    const again = await request(app).post(`/internal/catalogue/pipes/${encodeURIComponent(WA_ENTRY)}/retire`).set(KEY).send({ retiredBy: "staff@distribute.you" });
+    expect(again.status).toBe(404);
+  });
+
+  it("never retires a pipe a campaign uses (any status), nor one stated in code, nor when campaigns cannot be read", async () => {
+    await request(app).post("/internal/catalogue/pipes").set(KEY).send({ channelSlug: "cold-whatsapp-outreach", fromStep: null, toStep: "signup", mode: "reactive", triggerId: "positive_reply_received", createdBy: "agent" });
+    const url = `/internal/catalogue/pipes/${encodeURIComponent(WA_ENTRY)}/retire`;
+    fleetCampaigns.fail = true;
+    const unreadable = await request(app).post(url).set(KEY).send({ retiredBy: "staff@distribute.you" });
+    expect(unreadable.status).toBe(502);
+    expect(unreadable.body.reason).toBe("campaigns_unreadable");
+    fleetCampaigns.fail = false;
+    fleetCampaigns.rows = [{ campaignId: "camp-1", orgId: "org-1", brandId: "brand-1", channelSlug: "cold-whatsapp-outreach", legKey: "start_to_signup" }];
+    const used = await request(app).post(url).set(KEY).send({ retiredBy: "staff@distribute.you" });
+    expect(used.status).toBe(409);
+    expect(used.body.reason).toBe("pipe_in_use");
+    expect(mem.legs.map((l) => l.legKey)).toContain("start_to_signup");
+    const coded = await request(app).post(`/internal/catalogue/pipes/${encodeURIComponent(MEET)}/retire`).set(KEY).send({ retiredBy: "staff@distribute.you" });
+    expect(coded.status).toBe(409);
+    expect(coded.body.reason).toBe("pipe_coded");
+    const noActor = await request(app).post(url).set(KEY).send({});
+    expect(noActor.status).toBe(400);
+    expect(noActor.body.reason).toBe("retiredBy_required");
+  });
+
+  it("never retires a pipe a declared sales funnel names", async () => {
+    await request(app).post("/internal/catalogue/pipes").set(KEY).send({ channelSlug: "cold-whatsapp-outreach", fromStep: null, toStep: "signup", mode: "reactive", triggerId: "positive_reply_received", createdBy: "agent" });
+    mem.paths.push({ combinationKey: "start_to_signup@cold-whatsapp-outreach+signup_to_paid_client@your-team-signup-conversion", legs: [], createdBy: "agent", requestedByOrgId: null, createdAt: "" });
+    const r = await request(app).post(`/internal/catalogue/pipes/${encodeURIComponent(WA_ENTRY)}/retire`).set(KEY).send({ retiredBy: "staff@distribute.you" });
+    expect(r.status).toBe(409);
+    expect(r.body.reason).toBe("pipe_in_sales_funnel");
   });
 });

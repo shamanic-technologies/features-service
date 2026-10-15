@@ -7071,7 +7071,7 @@ const catalogueTriggerRow = z.object({
   color: z.string().describe("`#RRGGBB`, derived from the name."),
   eventIcon: z.string().describe("The trigger type's own Phosphor icon (e.g. `thumbs-up`)."),
   line: z.string().describe("What happened, in one line."),
-  fromStep: z.string().nullable().describe("The step a lead reached that fires it; null when it is not a step (`on_demand`)."),
+  fromStep: z.string().nullable().describe("The step a lead stands at when it fires; null when it is not a step (`on_demand`). NOT where a reactive pipe on it starts: a pipe on a trigger standing at Lead found starts at Start (`fromStep: null`, `start_to_<step>`); or head a sales funnel with the trigger over the pipes leaving this step (`POST /internal/catalogue/sales-funnels` `triggerId`)."),
   fromStepName: z.string().nullable(),
   firedBy: z.string().describe("The service that detects the event."),
   coded: z.boolean().describe("A service fires it today."),
@@ -7188,7 +7188,7 @@ catalogueCreate(
 catalogueCreate(
   "/internal/catalogue/pipes",
   "Declare a pipe (internal, api-key)",
-  "One leg on one channel (a declared leg, `POST /internal/declarations/channels/{slug}/legs` rules: a reactive pipe names a trigger something fires, unless it is a customer-team pipe or a draft). A leg out of a step nothing rates states `conversionRatePct` (400 `conversion_rate_required`). Named with a never-given bird. Created live (owner 2026-10-12): clients see it at once.",
+  "One leg on one channel (a declared leg, `POST /internal/declarations/channels/{slug}/legs` rules: a reactive pipe names a trigger something fires, unless it is a customer-team pipe or a draft). WHERE A PIPE ON A TRIGGER STARTS: at Start (`fromStep: null`, leg `start_to_<toStep>`), the trigger starts it, like every running reactive campaign; or out of a real step a trigger stands for (Positive reply, Form submitted...). NEVER at Lead found: that is where a source hands its leads to a proactive pipe, those leads never fire a trigger, so no sales funnel could take the pipe (400 `reactive_pipe_from_lead_found`, naming the entry leg to declare). A trigger's `fromStep` is where a lead stands when it fires, not where a reactive pipe starts: to reuse a proactive pipe leaving that step, head a sales funnel with the trigger (`POST /internal/catalogue/sales-funnels` `triggerId`). A leg out of a step nothing rates states `conversionRatePct` (400 `conversion_rate_required`). Named with a never-given bird. Created live (owner 2026-10-12): clients see it at once. A pipe created by mistake: `POST /internal/catalogue/pipes/{id}/retire`.",
   z.object({ channelSlug: z.string(), fromStep: z.string().nullable().describe("null = from nothing."), toStep: z.string(), mode: z.enum(["proactive", "reactive"]), triggerId: z.string().nullable().optional(), conversionRatePct: z.number().optional(), published: z.boolean().optional().describe("Default true (live). false = a DRAFT (owner 2026-10-12): internal reads only, never runnable; the only way a PLATFORM leg may name a trigger nothing fires yet (a proposal). Publishing it later re-checks the trigger (409 `trigger_not_fired`)."), ...catalogueActor }),
   cataloguePipeDetail,
 );
@@ -7301,6 +7301,27 @@ registry.registerPath({
     401: { description: "Missing or wrong service key." },
     404: { description: "`strategy_not_found` or `tactic_not_found`." },
     409: { description: "`strategy_description_taken`, `strategy_rule_taken` or `default_play_runs_nothing`." },
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/internal/catalogue/pipes/{id}/retire",
+  summary: "Retire a pipe created by mistake (internal, api-key, staff)",
+  description:
+    "Takes a DECLARED pipe no campaign uses out of every catalogue read (pipes, sales paths and funnels built on it, the channel's legs); the row is kept (who created it, who retired it, why) and its name is never given to another pipe. Declaring the same leg again (`POST /internal/catalogue/pipes`) revives it under the same id and name. Refused, never forced: 409 `pipe_coded` (a pipe stated in code), `pipe_in_use` (any campaign of any org runs or ran it, stopped ones included), `pipe_in_sales_funnel` (a declared sales funnel names it); 502 `campaigns_unreadable` (the campaign read failed: nothing retired).",
+  tags: ["Internal"],
+  request: {
+    params: z.object({ id: z.string().describe("A pipe id (`<channel slug>|<leg key>`), URL-encoded. A play id is refused 404: retire its pipe.") }),
+    body: { content: { "application/json": { schema: z.object({ retiredBy: z.string().describe("Who retires it (staff identity)."), note: z.string().nullable().optional().describe("Why, at most 500 characters.") }) } } },
+  },
+  responses: {
+    200: { description: "Retired.", content: { "application/json": { schema: z.object({ object: z.literal("pipe"), id: z.string(), name: z.string().nullable(), retired: z.literal(true), retiredAt: z.string(), retiredBy: z.string(), note: z.string().nullable() }) } } },
+    400: { description: "`retiredBy_required` or `note_invalid`." },
+    401: { description: "Missing or wrong service key." },
+    404: { description: "`pipe_not_found` (unknown, already retired, or a play id)." },
+    409: { description: "`pipe_coded`, `pipe_in_use` or `pipe_in_sales_funnel`." },
+    502: { description: "`campaigns_unreadable`." },
   },
 });
 
