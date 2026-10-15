@@ -77,7 +77,8 @@ import {
 import { actorOf, DeclarationError, parseLegInput, requestedByOrgIdOf, type TriggerTypeRecord } from "../lib/channel-declarations.js";
 import { allNamesByKey, salesPathNamesFor, SalesPathNamePoolExhaustedError } from "../lib/sales-path-names.js";
 import { funnelTriggerLabel } from "../lib/funnel-descriptions.js";
-import { isTriggerCallable, pluralLabelOf, triggerOutcomeKeyOf, triggerTypeOf } from "../lib/outcome-vocabulary.js";
+import { pluralLabelOf, triggerOutcomeKeyOf, triggerTypeOf } from "../lib/outcome-vocabulary.js";
+import { triggerCallable } from "../lib/channel-triggers.js";
 import { funnelShortDescription, type ShortDescriptionUnavailableReason } from "../lib/funnel-short-descriptions.js";
 import { LEAD_SOURCING_SLUG, SOURCE_LEG_KEY } from "../lib/sourcing-origins.js";
 
@@ -1330,7 +1331,7 @@ const triggerRowOf = (m: CatalogueModel, t: TriggerTypeRecord, pipeCount: number
   // value; a CONDITION trigger is computed by us (no outcome of its own, no value). `callable` = a caller may fire it.
   type: triggerTypeOf(t),
   outcomeKey: triggerOutcomeKeyOf(t),
-  callable: isTriggerCallable(t),
+  callable: triggerCallable(t),
   valueUsd: (() => {
     const k = triggerOutcomeKeyOf(t);
     return k === null ? null : (m.steps.get(k)?.valueUsd ?? null);

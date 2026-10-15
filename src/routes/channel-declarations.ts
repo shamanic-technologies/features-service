@@ -36,7 +36,8 @@ import {
   updateTrigger,
   type LoadedCatalogue,
 } from "../lib/channel-declarations-store.js";
-import { isTriggerCallable, triggerOutcomeKeyOf, triggerTypeOf } from "../lib/outcome-vocabulary.js";
+import { triggerOutcomeKeyOf, triggerTypeOf } from "../lib/outcome-vocabulary.js";
+import { triggerCallable } from "../lib/channel-triggers.js";
 import { combinationKeyOf } from "../lib/offer-sales-paths.js";
 import { salesPathNamesFor } from "../lib/sales-path-names.js";
 import { isOutboundChannel } from "../lib/channel-types.js";
@@ -132,7 +133,7 @@ const triggerView = (t: TriggerTypeRecord) => ({
   coded: isTriggerCoded(t),
   type: triggerTypeOf(t),
   outcomeKey: triggerOutcomeKeyOf(t),
-  callable: isTriggerCallable(t),
+  callable: triggerCallable(t),
 });
 
 function fail(res: Response, err: unknown, what: string): void {
