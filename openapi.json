@@ -54646,6 +54646,14 @@
                             "nullable": true,
                             "description": "A REACTIVE funnel: the customer label of what starts it (e.g. `Positive replies`), shown as a tag. Null on a proactive funnel."
                           },
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "proactive",
+                              "reactive"
+                            ],
+                            "description": "`proactive` when at least one pipe is proactive (own budget, worked every tick), else `reactive`. A funnel HEADED by a trigger (id `trigger:<id>+...`, owner 2026-10-15) is always `reactive`: every pipe answers its trigger, proactive pipes included. Campaign-service and billing relay it; nobody re-grades pipe modes."
+                          },
                           "id": {
                             "type": "string"
                           },
@@ -54761,6 +54769,7 @@
                         "required": [
                           "trigger",
                           "triggerLabel",
+                          "type",
                           "id",
                           "name",
                           "face",
@@ -55053,6 +55062,14 @@
                       "nullable": true,
                       "description": "A REACTIVE funnel: the customer label of what starts it (e.g. `Positive replies`), shown as a tag. Null on a proactive funnel."
                     },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "proactive",
+                        "reactive"
+                      ],
+                      "description": "`proactive` when at least one pipe is proactive (own budget, worked every tick), else `reactive`. A funnel HEADED by a trigger (id `trigger:<id>+...`, owner 2026-10-15) is always `reactive`: every pipe answers its trigger, proactive pipes included. Campaign-service and billing relay it; nobody re-grades pipe modes."
+                    },
                     "object": {
                       "type": "string",
                       "enum": [
@@ -55523,6 +55540,7 @@
                   "required": [
                     "trigger",
                     "triggerLabel",
+                    "type",
                     "object",
                     "id",
                     "name",
@@ -55580,6 +55598,14 @@
                       "nullable": true,
                       "description": "A REACTIVE funnel: the customer label of what starts it (e.g. `Positive replies`), shown as a tag. Null on a proactive funnel."
                     },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "proactive",
+                        "reactive"
+                      ],
+                      "description": "`proactive` when at least one pipe is proactive (own budget, worked every tick), else `reactive`. A funnel HEADED by a trigger (id `trigger:<id>+...`, owner 2026-10-15) is always `reactive`: every pipe answers its trigger, proactive pipes included. Campaign-service and billing relay it; nobody re-grades pipe modes."
+                    },
                     "object": {
                       "type": "string",
                       "enum": [
@@ -56050,6 +56076,7 @@
                   "required": [
                     "trigger",
                     "triggerLabel",
+                    "type",
                     "object",
                     "id",
                     "name",
@@ -56164,6 +56191,14 @@
                       "type": "string",
                       "nullable": true,
                       "description": "A REACTIVE funnel: the customer label of what starts it (e.g. `Positive replies`), shown as a tag. Null on a proactive funnel."
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "proactive",
+                        "reactive"
+                      ],
+                      "description": "`proactive` when at least one pipe is proactive (own budget, worked every tick), else `reactive`. A funnel HEADED by a trigger (id `trigger:<id>+...`, owner 2026-10-15) is always `reactive`: every pipe answers its trigger, proactive pipes included. Campaign-service and billing relay it; nobody re-grades pipe modes."
                     },
                     "object": {
                       "type": "string",
@@ -56752,6 +56787,7 @@
                   "required": [
                     "trigger",
                     "triggerLabel",
+                    "type",
                     "object",
                     "id",
                     "name",
@@ -60696,6 +60732,14 @@
                             "nullable": true,
                             "description": "A REACTIVE funnel: the customer label of what starts it (e.g. `Positive replies`), shown as a tag. Null on a proactive funnel."
                           },
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "proactive",
+                              "reactive"
+                            ],
+                            "description": "`proactive` when at least one pipe is proactive (own budget, worked every tick), else `reactive`. A funnel HEADED by a trigger (id `trigger:<id>+...`, owner 2026-10-15) is always `reactive`: every pipe answers its trigger, proactive pipes included. Campaign-service and billing relay it; nobody re-grades pipe modes."
+                          },
                           "id": {
                             "type": "string"
                           },
@@ -60811,6 +60855,7 @@
                         "required": [
                           "trigger",
                           "triggerLabel",
+                          "type",
                           "id",
                           "name",
                           "face",
