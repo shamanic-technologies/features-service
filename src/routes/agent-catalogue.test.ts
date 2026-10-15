@@ -573,6 +573,44 @@ describe("agent catalogue creates (data, never a PR)", () => {
     expect((await request(app).get(`/internal/catalogue/pipes/${encodeURIComponent(id)}`).set(KEY)).body.runnable).toBe(true);
   });
 
+  it("a funnel HEADED by a trigger reuses the proactive pipes and their workflows (owner 2026-10-15)", async () => {
+    const pipeIds = ["sales-cold-email-outreach|lead_found_to_conversation", "your-team-reply-closing|conversation_to_paid_client"];
+    const f = await request(app).post("/internal/catalogue/sales-funnels").set(KEY).send({ pipeIds, triggerId: "lead_found", createdBy: "agent" });
+    expect(f.status).toBe(201);
+    expect(f.body.id).toBe("trigger:lead_found+lead_found_to_conversation@sales-cold-email-outreach+conversation_to_paid_client");
+    // Every pipe answers the trigger, the proactive cold email included: the funnel is reactive, never "mixed".
+    expect(f.body).toMatchObject({ type: "reactive", trigger: { slug: "lead_found", name: "Lead" }, triggerLabel: "Lead", mixed: false });
+    expect(FAMILY_WORDS.sales_funnel).toContain(f.body.name);
+    // Stated, it reads back by id and lists under its path.
+    const again = await request(app).get(`/internal/catalogue/sales-funnels/${encodeURIComponent(f.body.id)}`).set(KEY);
+    expect(again.status).toBe(200);
+    expect(again.body).toMatchObject({ id: f.body.id, type: "reactive", trigger: { slug: "lead_found" } });
+    const path = await request(app).get(`/internal/catalogue/sales-paths/${encodeURIComponent("trigger:lead_found+lead_found_to_conversation+conversation_to_paid_client")}`).set(KEY);
+    expect(path.status).toBe(200);
+    expect(path.body.line).toBe("⚡ Lead → Positive reply → Paid client");
+    // The same legs without a trigger are still the proactive funnel's legs (no existing id moves).
+    const plain = await request(app).post("/internal/catalogue/sales-funnels").set(KEY).send({ pipeIds: ["sourcing-apollo-cold-filters|start_to_lead_found", ...pipeIds], createdBy: "agent" });
+    expect(plain.body.id).toBe("start_to_lead_found@sourcing-apollo-cold-filters+lead_found_to_conversation@sales-cold-email-outreach+conversation_to_paid_client");
+    expect(plain.body.type).toBe("proactive");
+  });
+
+  it("a trigger head is refused when the first leg does not leave from its step, or it has no step; a reactive pipe on that same trigger keeps its own id", async () => {
+    const tail = ["your-team-reply-closing|conversation_to_paid_client"];
+    const mismatch = await request(app).post("/internal/catalogue/sales-funnels").set(KEY).send({ pipeIds: ["sales-cold-email-outreach|lead_found_to_conversation", ...tail], triggerId: "signed_up", createdBy: "agent" });
+    expect(mismatch.status).toBe(400);
+    expect(mismatch.body.reason).toBe("trigger_step_mismatch");
+    const stepless = await request(app).post("/internal/catalogue/sales-funnels").set(KEY).send({ pipeIds: ["sales-cold-email-outreach|lead_found_to_conversation", ...tail], triggerId: "follow_up_due", createdBy: "agent" });
+    expect(stepless.status).toBe(400);
+    expect(stepless.body.reason).toBe("trigger_without_step");
+    const unknown = await request(app).post("/internal/catalogue/sales-funnels").set(KEY).send({ pipeIds: ["sales-cold-email-outreach|lead_found_to_conversation", ...tail], triggerId: "nope", createdBy: "agent" });
+    expect(unknown.status).toBe(404);
+    const same = await request(app)
+      .post("/internal/catalogue/sales-funnels")
+      .set(KEY)
+      .send({ pipeIds: ["ai-meeting-booking|conversation_to_meeting_booked", "your-team-meeting-attendance|meeting_booked_to_meeting_attended", "your-team-closing-calls|meeting_attended_to_paid_client"], triggerId: "positive_reply_received", createdBy: "agent" });
+    expect(same.body.id).toBe("conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client");
+  });
+
   it("a REACTIVE-only funnel starts on a trigger step: the two campaign-service converts are creatable (owner 2026-10-10)", async () => {
     const paths = await request(app).get("/internal/catalogue/sales-paths").query({ containsSteps: "conversation", limit: 25 }).set(KEY);
     const reactive = paths.body.rows.filter((r: { type: string }) => r.type === "reactive");
