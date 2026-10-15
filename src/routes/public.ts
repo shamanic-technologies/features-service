@@ -9,7 +9,8 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features, type Feature } from "../db/schema.js";
 import { listTriggerCatalogue, loadChannelCatalogue } from "../lib/channel-declarations-store.js";
-import { isTriggerCallable, triggerOutcomeKeyOf, triggerTypeOf, type TriggerType } from "../lib/outcome-vocabulary.js";
+import { triggerOutcomeKeyOf, triggerTypeOf, type TriggerType } from "../lib/outcome-vocabulary.js";
+import { triggerCallable } from "../lib/channel-triggers.js";
 import { isTriggerCoded } from "../lib/channel-declarations.js";
 import { STATS_REGISTRY } from "../lib/stats-registry.js";
 import {
@@ -3396,7 +3397,7 @@ async function loadChannelTriggers(): Promise<PublicChannelTrigger[]> {
     params: t.params ?? null,
     type: triggerTypeOf(t),
     outcomeKey: triggerOutcomeKeyOf(t),
-    callable: isTriggerCallable(t),
+    callable: triggerCallable(t),
   }));
 }
 

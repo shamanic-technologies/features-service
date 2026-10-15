@@ -11,8 +11,8 @@
  *      `condition` computed by us: an outcome + a delay + "still not" another (`delay`), a source polled (`poll`), an
  *                  integration state (`github_issue_in_prod`). Never callable: we already hold the fact.
  *    Legacy exceptions, PARKED by the owner (C3 / D): the `reported` triggers (`follow_up_due`, `email_pushed_via_api`,
- *    `follow_up_date_reached`) and the step-less `event` triggers (`lead_requested`, `on_demand`) are typed `condition`
- *    but stay callable, because a caller reports each occurrence through the door today (campaign-service, 2026-10-15).
+ *    `follow_up_date_reached`) are typed `condition` but stay callable, because a caller reports each occurrence through
+ *    the door today (campaign-service, 2026-10-15). The INLINE ones (`on_demand`, `lead_requested`) are never callable.
  *  - A trigger can carry a VALUE: an outcome trigger's is its outcome's (`lib/agent-catalogue.ts` step value).
  *
  * A NEW outcome or trigger is a FEATURE REQUEST built with the backend that fills it (owner C1), never a bare row.
@@ -32,8 +32,13 @@ export const triggerTypeOf = (t: { kind?: string | null; fromStep: string | null
 export const triggerOutcomeKeyOf = (t: { kind?: string | null; fromStep: string | null }): string | null =>
   triggerTypeOf(t) === "outcome" ? t.fromStep : null;
 
-/** PURE: may a caller fire it through campaign-service's door? False only for what we compute ourselves. */
-export const isTriggerCallable = (t: { kind?: string | null }): boolean => DOOR_KINDS.has(t.kind ?? "event");
+/**
+ * PURE: may an OUTSIDE caller (API / MCP / Copilot, through campaign-service's public door) fire it? False for what we
+ * compute ourselves (`delay`, `poll`, `github_issue_in_prod`) and for an INLINE trigger (`on_demand`, `lead_requested`:
+ * one of our services asking another inside a run, never a fact a client holds). Our own services keep the internal
+ * door for every declared trigger.
+ */
+export const isTriggerCallable = (t: { kind?: string | null; inline?: boolean }): boolean => t.inline !== true && DOOR_KINDS.has(t.kind ?? "event");
 
 /** The glyph a trigger is DRAWN with in a text line ("⚡ Positive reply → Meeting booked"); never part of its name (the
  *  dashboard draws its own lightning icon beside the name). */
