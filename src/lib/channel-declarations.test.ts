@@ -125,7 +125,9 @@ describe("a leg can only name a trigger something FIRES, checked at creation (ow
   });
 
   it("accepts a reactive leg on a declared delay or poll trigger: campaign-service fires both kinds (#601)", () => {
-    expect(parseLegInput({ fromStep: "lead_found", toStep: "conversation", mode: "reactive", triggerId: "no_reply_after_3_days" }, channel, TRIGGERS).triggerId).toBe("no_reply_after_3_days");
+    expect(parseLegInput({ fromStep: null, toStep: "conversation", mode: "reactive", triggerId: "no_reply_after_3_days" }, channel, TRIGGERS).triggerId).toBe("no_reply_after_3_days");
+    // MCP-PIPE-GAPS-1015: never out of Lead found (a source's leads fire no trigger), whatever the trigger.
+    refused(() => parseLegInput({ fromStep: "lead_found", toStep: "conversation", mode: "reactive", triggerId: "no_reply_after_3_days" }, channel, TRIGGERS), 400, "reactive_pipe_from_lead_found");
     const poll: TriggerTypeRecord = { ...delayTrigger, id: "new_job_post", kind: "poll", fromStep: null, params: { source: "{}", everyMinutes: 60 } };
     expect(parseLegInput({ fromStep: null, toStep: "lead_found", mode: "reactive", triggerId: "new_job_post" }, channel, [...TRIGGERS, poll]).triggerId).toBe("new_job_post");
   });

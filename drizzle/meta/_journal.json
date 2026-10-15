@@ -239,6 +239,13 @@
       "when": 1792627200000,
       "tag": "0033_tactic_verdict_judge_rule",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1792713600000,
+      "tag": "0034_retired_declared_legs",
+      "breakpoints": true
     }
   ]
 }

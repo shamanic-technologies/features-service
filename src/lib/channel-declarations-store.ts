@@ -4,7 +4,7 @@
  * is built by the same `buildChannelCatalogue` as a seeded one. Every read orders its rows (deterministic
  * catalogue, and the shape route suites mock).
  */
-import { asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import {
   channelTriggerTypes,
@@ -53,7 +53,7 @@ const channelOf = (r: ChannelRow): DeclaredChannel => ({
   updatedAt: r.updatedAt.toISOString(),
 });
 
-const legOf = (r: LegRow): DeclaredLeg => ({
+const legOf = ({ retiredAt: _retiredAt, retiredBy: _retiredBy, retireNote: _retireNote, ...r }: LegRow): DeclaredLeg => ({
   ...r,
   fromStep: r.fromStep as DeclaredLeg["fromStep"],
   toStep: r.toStep as DeclaredLeg["toStep"],
@@ -88,8 +88,9 @@ export async function listDeclaredChannels(): Promise<DeclaredChannel[]> {
   return (await db.select().from(declaredChannels).orderBy(asc(declaredChannels.displayOrder))).map(channelOf);
 }
 
+/** Every declared leg still in the catalogue: a RETIRED one is out of every read. */
 export async function listDeclaredLegs(): Promise<DeclaredLeg[]> {
-  return (await db.select().from(declaredChannelLegs).orderBy(asc(declaredChannelLegs.createdAt))).map(legOf);
+  return (await db.select().from(declaredChannelLegs).orderBy(asc(declaredChannelLegs.createdAt))).filter((r) => r.retiredAt == null).map(legOf);
 }
 
 export async function listDeclaredSalesPaths(): Promise<DeclaredSalesPath[]> {
@@ -175,12 +176,30 @@ export async function updateChannel(slug: string, patch: ChannelPatch, updatedBy
   return channelOf(row);
 }
 
+/** Declares a leg; the same leg declared again after it was RETIRED revives its row (same pipe id, same name). */
 export async function insertLeg(channelSlug: string, input: LegInput, createdBy: string, requestedByOrgId: string | null): Promise<DeclaredLeg> {
+  const values = { channelSlug, ...input, createdBy, requestedByOrgId };
   const [row] = await db
     .insert(declaredChannelLegs)
-    .values({ channelSlug, ...input, createdBy, requestedByOrgId })
+    .values(values)
+    .onConflictDoUpdate({
+      target: [declaredChannelLegs.channelSlug, declaredChannelLegs.legKey],
+      set: { ...values, createdAt: new Date(), updatedAt: new Date(), retiredAt: null, retiredBy: null, retireNote: null },
+      setWhere: sql`${declaredChannelLegs.retiredAt} IS NOT NULL`,
+    })
     .returning();
+  if (!row) throw new Error(`[features-service] declared leg ${channelSlug} ${input.legKey} exists and is not retired, yet the catalogue did not list it`);
   return legOf(row);
+}
+
+/** RETIRES a declared leg (MCP-PIPE-GAPS-1015): out of every catalogue read, the row kept. Null when no live row. */
+export async function retireLeg(channelSlug: string, legKey: string, retiredBy: string, note: string | null): Promise<{ retiredAt: string } | null> {
+  const [row] = await db
+    .update(declaredChannelLegs)
+    .set({ retiredAt: new Date(), retiredBy, retireNote: note, updatedAt: new Date() })
+    .where(and(eq(declaredChannelLegs.channelSlug, channelSlug), eq(declaredChannelLegs.legKey, legKey), isNull(declaredChannelLegs.retiredAt)))
+    .returning();
+  return row?.retiredAt ? { retiredAt: row.retiredAt.toISOString() } : null;
 }
 
 export async function updateLeg(
