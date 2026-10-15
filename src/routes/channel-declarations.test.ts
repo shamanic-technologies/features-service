@@ -196,9 +196,9 @@ describe("/internal/declarations: a staff caller declares a channel, a reactive 
     const onDelay = await request(app)
       .post(`/internal/declarations/channels/${SLUG}/legs`)
       .set(KEY)
-      .send({ fromStep: "lead_found", toStep: "conversation", mode: "reactive", triggerId: "no_reply_after_3_days", createdBy: "kevin@distribute.you" });
+      .send({ fromStep: null, toStep: "conversation", mode: "reactive", triggerId: "no_reply_after_3_days", createdBy: "kevin@distribute.you" });
     expect(onDelay.status).toBe(201);
-    expect(onDelay.body.leg).toMatchObject({ legKey: "lead_found_to_conversation", mode: "reactive", triggerId: "no_reply_after_3_days" });
+    expect(onDelay.body.leg).toMatchObject({ legKey: "start_to_conversation", mode: "reactive", triggerId: "no_reply_after_3_days" });
 
     // Malformed params never reach a detector.
     const bad = await request(app)

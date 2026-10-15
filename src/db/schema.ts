@@ -483,6 +483,11 @@ export const declaredChannelLegs = pgTable(
     requestedByOrgId: text("requested_by_org_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    // RETIRED (MCP-PIPE-GAPS-1015): a pipe created by mistake that no campaign uses, out of every catalogue read.
+    // The row stays (who created it, who retired it, why); declaring the same leg again revives it.
+    retiredAt: timestamp("retired_at", { withTimezone: true }),
+    retiredBy: text("retired_by"),
+    retireNote: text("retire_note"),
   },
   (t) => [primaryKey({ columns: [t.channelSlug, t.legKey] })],
 );

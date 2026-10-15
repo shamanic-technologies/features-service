@@ -9,6 +9,7 @@ import {
   parseChannelInput,
   parseChannelPatch,
   parseLegInput,
+  checkReactiveEntry,
   parseSalesPathInput,
   parseTriggerInput,
   parseTriggerPatch,
@@ -265,7 +266,10 @@ router.patch("/internal/declarations/channels/:slug/legs/:legKey", apiKeyOnly, a
       const operatedBy = (view.channel?.operatedBy ?? view.declaration?.operatedBy)!;
       const published = patch.published ?? stored.published;
       const run = checkLegRun(body.mode ?? stored.mode, body.triggerId === undefined ? stored.triggerId : body.triggerId, triggers, { unfiredAllowed: operatedBy === "customer" || !published });
-      if (body.mode !== undefined || body.triggerId !== undefined) Object.assign(patch, run);
+      if (body.mode !== undefined || body.triggerId !== undefined) {
+        checkReactiveEntry(view.slug, stored.fromStep, stored.toStep, run);
+        Object.assign(patch, run);
+      }
     }
     if (Object.keys(patch).length === 0) throw new DeclarationError(400, "nothing_to_update", "the body changes nothing");
     await updateLeg(view.slug, legKey, patch);

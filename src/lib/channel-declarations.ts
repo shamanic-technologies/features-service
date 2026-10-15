@@ -284,7 +284,7 @@ function icon(body: Body, field = "icon"): string {
 }
 
 /** Who made the write: a staff identity, recorded on every row. */
-export function actorOf(body: Body, field: "createdBy" | "updatedBy" = "createdBy"): string {
+export function actorOf(body: Body, field: "createdBy" | "updatedBy" | "retiredBy" = "createdBy"): string {
   return text(body, field, 200);
 }
 
@@ -549,6 +549,24 @@ export function checkLegRun(
   return { mode: "reactive", triggerId };
 }
 
+/**
+ * WHERE A PIPE ON A TRIGGER STARTS (MCP-PIPE-GAPS-1015): never at Lead found. Lead found is where a SOURCE hands the
+ * leads it found to the proactive pipe after it, every tick; those leads never fire a trigger, and a reactive path
+ * never starts there (`buildCatalogueModel` walks reactive paths from every other trigger step). So a reactive pipe
+ * out of Lead found is in no sales funnel anybody can run: refused at creation, with the entry leg to declare instead
+ * (from nothing: the trigger starts it, like every running reactive campaign), or the trigger-headed funnel that
+ * reuses the proactive pipes. Generic: keyed on the step, never on a trigger or a channel.
+ */
+export function checkReactiveEntry(slug: string, fromStep: string | null, toStep: string, run: { mode: LegMode; triggerId: string | null }): void {
+  if (run.mode !== "reactive" || fromStep !== "lead_found") return;
+  throw bad(
+    "reactive_pipe_from_lead_found",
+    `a pipe on a trigger never starts at Lead found (the leads a source finds there never fire ${run.triggerId}), so no sales funnel could take it. ` +
+      `A pipe on a trigger is an ENTRY step: declare fromStep null (pipe ${slug}|start_to_${toStep}), the trigger starts it. ` +
+      `To reuse a proactive pipe and its workflows instead, head a sales funnel with the trigger (POST sales-funnels {triggerId: "${run.triggerId}", pipeIds}) over pipes leaving the trigger's step`,
+  );
+}
+
 /** PURE: read a create-leg body for `channel`. */
 export function parseLegInput(body: Body, channel: LegChannelContext, triggers: readonly TriggerTypeRecord[]): LegInput {
   const fromStep = body.fromStep === null ? null : body.fromStep === undefined ? undefined : step(body.fromStep, "fromStep");
@@ -559,6 +577,7 @@ export function parseLegInput(body: Body, channel: LegChannelContext, triggers: 
   if (body.published !== undefined && typeof body.published !== "boolean") throw bad("published_invalid", "published must be a boolean (false = a draft)");
   const published = body.published !== false;
   const run = checkLegRun(body.mode, body.triggerId, triggers, { unfiredAllowed: channel.operatedBy === "customer" || !published });
+  checkReactiveEntry(channel.slug, fromStep, toStep, run);
   const legKey = legKeyFor({ from: fromStep, to: toStep });
   // An outbound channel's `lead_found_to_*` IS its computed `start_to_*` entry leg (wave 2).
   const computed = isOutboundChannel(channel.slug) ? storedLegKeyOf(legKey) : legKey;
