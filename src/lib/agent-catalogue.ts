@@ -231,7 +231,13 @@ export interface CatalogueInputs {
   offerRates?: ReadonlyMap<string, { ratePct: number; source: "offer_measured" | "offer_stated" | "offer_team_measured" }>;
   /** The trigger types stored (`channel_trigger_types`: the coded ones and those declared at run time). The coded
    *  list (`lib/channel-triggers.ts`) is read in any case: it is what boot upserts. */
-  triggers?: ReadonlyArray<{ id: string; label: string }>;
+  triggers?: ReadonlyArray<{ id: string; label: string; fromStep?: string | null }>;
+  /**
+   * TRIGGER-HEADED paths stated through the catalogue creates (owner 2026-10-15: the trigger sits at the FUNNEL head, so
+   * a reactive funnel reuses the proactive pipes and their workflows): each a trigger + the legs from its step to Paid
+   * client. Listed like any path once stated; an invalid one (trigger gone, a leg no pipe performs) is skipped loudly.
+   */
+  triggerHeadedPaths?: ReadonlyArray<{ triggerId: string; legKeys: readonly string[] }>;
   /**
    * PLAYS (owner 2026-10-13, `lib/plays.ts`): per pipe id that catalogues plays, its DEFAULT play (what its bare id
    * runs) and its other plays, each with the measurement of its best allowed workflow. A pipe absent here has no play
@@ -362,6 +368,9 @@ export interface CataloguePath {
   type: "proactive" | "reactive";
   /** The rate of each leg (null on an entry leg out of nothing). */
   rates: Array<{ legKey: string; ratePct: number | null; source: CatalogueRateSource }>;
+  /** The trigger at the HEAD of a trigger-headed path (id `trigger:<id>+<legs>`, `triggerHeadedPathId`); absent on every
+   *  other path (a reactive one's trigger is its first pipe's, `pathTrigger`). */
+  triggerId?: string;
 }
 
 /** One leg of a funnel: the ONE pipe working it (owner 2026-10-11: one channel per leg, the sourcing leg included). */
@@ -396,6 +405,9 @@ export function pipeFeeds(p: CataloguePipe, next: CataloguePipe): boolean {
 export interface CatalogueFunnel {
   id: string;
   pathId: string;
+  /** The trigger at the head of a trigger-headed funnel (its path's `triggerId`): every pipe of it then answers that
+   *  trigger, proactive pipes included. Null on every other funnel. */
+  headTriggerId: string | null;
   legs: FunnelLeg[];
   channelSlugs: string[];
   economics: Economics;
@@ -438,6 +450,11 @@ export interface CatalogueModel {
   pathAliases: Map<string, string>;
   /** Trigger slug -> its slug and name. */
   triggers: Map<string, TriggerRef>;
+  /** Trigger slug -> the step its rule starts from (an outcome trigger's outcome; a delay trigger's anchor); null on a
+   *  step-less trigger. What a trigger-headed path's first leg must leave from. */
+  triggerSteps: Map<string, string | null>;
+  /** PURE: a chain's leg rates, the same rule every path of the model uses (a trigger-headed path built on demand). */
+  ratesOfChain: (chain: ReadonlyArray<{ legKey: string; fromStep: string | null; toStep: string }>) => CataloguePath["rates"];
   lifetimeRevenueUsd: number | null;
   lifetimeRevenueBasis: ExpectedBasis;
   channels: readonly PublicChannel[];
@@ -790,6 +807,20 @@ export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
     const on = [...pipes.values()].filter((p) => p.legKey === legKey);
     return on.length > 0 && on.every((p) => p.mode === "reactive");
   };
+  const ratesOfChain = (chain: ReadonlyArray<PathLeg>): CataloguePath["rates"] =>
+    chain.map((l, i) => {
+      if (i === 0) return { legKey: l.legKey, ratePct: null, source: null };
+      // A leg out of Lead found: the brand's own rate (per-offer read) where it has one, else the best mature
+      // pipe's measured conversion.
+      if (l.fromStep === SOURCED_STEP) {
+        const own = inputs.offerRates?.get(`${l.fromStep}>${l.toStep}`);
+        if (own) return { legKey: l.legKey, ratePct: own.ratePct, source: own.source };
+        const r = measuredEntryRate(pipes.values(), l.legKey);
+        return { legKey: l.legKey, ratePct: r, source: r === null ? null : ("measured_pipe" as const) };
+      }
+      const r = rateOf(l.fromStep!, l.toStep);
+      return { legKey: l.legKey, ratePct: r.ratePct, source: r.source };
+    });
   const walk = (step: string, chain: PathLeg[], seen: Set<string>, type: CataloguePath["type"] = "proactive") => {
     if (step === "paid_client") {
       // A path out of nothing whose first leg only reactive pipes work starts on their trigger: it is reactive.
@@ -802,19 +833,7 @@ export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
         legKeys,
         type,
         steps: [chain[0].fromStep ?? "start", ...chain.map((l) => l.toStep)].filter((s) => s !== "start"),
-        rates: chain.map((l, i) => {
-          if (i === 0) return { legKey: l.legKey, ratePct: null, source: null };
-          // A leg out of Lead found: the brand's own rate (per-offer read) where it has one, else the best mature
-          // pipe's measured conversion.
-          if (l.fromStep === SOURCED_STEP) {
-            const own = inputs.offerRates?.get(`${l.fromStep}>${l.toStep}`);
-            if (own) return { legKey: l.legKey, ratePct: own.ratePct, source: own.source };
-            const r = measuredEntryRate(pipes.values(), l.legKey);
-            return { legKey: l.legKey, ratePct: r, source: r === null ? null : ("measured_pipe" as const) };
-          }
-          const r = rateOf(l.fromStep!, l.toStep);
-          return { legKey: l.legKey, ratePct: r.ratePct, source: r.source };
-        }),
+        rates: ratesOfChain(chain),
       });
       return;
     }
@@ -834,19 +853,90 @@ export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
     walk(p.toStep, [first], new Set([p.fromStep, p.toStep]), "reactive");
   }
 
-  const triggers = new Map<string, TriggerRef>(
-    [...CHANNEL_TRIGGER_TYPES, ...(inputs.triggers ?? [])].map((t) => [t.id, { slug: t.id, name: t.label }]),
-  );
-  return {
+  const triggerTypes = [...CHANNEL_TRIGGER_TYPES, ...(inputs.triggers ?? [])];
+  const triggers = new Map<string, TriggerRef>(triggerTypes.map((t) => [t.id, { slug: t.id, name: t.label }]));
+  const triggerSteps = new Map<string, string | null>(triggerTypes.map((t) => [t.id, t.fromStep ?? null]));
+  const model: CatalogueModel = {
     steps,
     pipes,
     paths,
     pathAliases,
     triggers,
+    triggerSteps,
+    ratesOfChain,
     lifetimeRevenueUsd: inputs.lifetimeRevenueUsd,
     lifetimeRevenueBasis: inputs.lifetimeRevenueBasis ?? "fleet",
     channels: inputs.channels,
     plays,
+  };
+  // Trigger-headed paths stated through the creates (owner 2026-10-15): listed like any path.
+  for (const h of inputs.triggerHeadedPaths ?? []) {
+    const path = triggerHeadedPath(model, h.triggerId, h.legKeys);
+    if (path) paths.set(path.id, path);
+    else console.warn(`[features-service] catalogue: stated trigger-headed path ${triggerHeadedPathId(h.triggerId, h.legKeys)} is no longer valid (trigger or a leg gone), skipped`);
+  }
+  return model;
+}
+
+// ── Trigger-headed paths (owner 2026-10-15) ──────────────────────────────────────────────────────
+
+/**
+ * THE TRIGGER SITS AT THE FUNNEL HEAD (owner 2026-10-15, standard-vocabulary MUST-HAVE 4): "⚡ Lead -> [Cold Email] ->
+ * Positive reply -> ..." reuses the proactive cold email pipe and its workflows, instead of a reactive twin of the pipe
+ * that has no workflow of its own. A trigger-headed path is the trigger + the legs from the trigger's step to Paid
+ * client; its id is `trigger:<trigger id>+<legs>` (this service mints the format, so reading it back is not splitting
+ * someone else's identifier). Additive: every existing path and funnel (a reactive pipe naming its trigger) keeps its
+ * id; the legacy funnels with no Start leg and the reactive pipes on a fake leg are PARKED (owner, item D).
+ */
+export const TRIGGER_HEAD = "trigger:";
+
+/** PURE: the id of the path a trigger heads. */
+export const triggerHeadedPathId = (triggerId: string, legKeys: readonly string[]): string => `${TRIGGER_HEAD}${triggerId}+${pathIdOf(legKeys)}`;
+
+/** PURE: a trigger-headed id read back into its trigger and the rest (`+`-joined legs or funnel parts), or null. */
+export function triggerHeadOf(id: string): { triggerId: string; rest: string } | null {
+  if (!id.startsWith(TRIGGER_HEAD)) return null;
+  const plus = id.indexOf("+");
+  if (plus < 0) return null;
+  return { triggerId: id.slice(TRIGGER_HEAD.length, plus), rest: id.slice(plus + 1) };
+}
+
+/** Why a trigger cannot head these legs; null when it can. */
+export type TriggerHeadRefusal = "trigger_not_found" | "trigger_without_step" | "trigger_step_mismatch" | "path_invalid";
+
+/** PURE: why `triggerId` cannot head `legKeys` (see `triggerHeadedPath`), or null. */
+export function triggerHeadRefusal(model: CatalogueModel, triggerId: string, legKeys: readonly string[]): TriggerHeadRefusal | null {
+  if (!model.triggers.has(triggerId)) return "trigger_not_found";
+  const step = model.triggerSteps.get(triggerId) ?? null;
+  // A step-less trigger (Follow-up Due, Email Pushed Via API) heads no path here: re-anchoring those is parked (D).
+  if (step === null) return "trigger_without_step";
+  const legs = legKeys.map((k) => pipesOnLeg(model, k)[0] ?? null);
+  if (legs.length === 0 || legs.some((l) => l === null)) return "path_invalid";
+  if (legs[0]!.fromStep !== step) return "trigger_step_mismatch";
+  for (let i = 1; i < legs.length; i += 1) if (legs[i]!.fromStep !== legs[i - 1]!.toStep) return "path_invalid";
+  const steps = [step, ...legs.map((l) => l!.toStep)];
+  if (new Set(steps).size !== steps.length || legs[legs.length - 1]!.toStep !== "paid_client") return "path_invalid";
+  return null;
+}
+
+/**
+ * PURE: the path `triggerId` heads over `legKeys`: the legs chain from the trigger's step (an outcome trigger's outcome,
+ * a delay trigger's anchor) to Paid client, no step twice, each leg performed by a pipe (proactive ones included: that
+ * is the point). Reactive: its value is what it ADDS over the trigger's step. Null when refused (`triggerHeadRefusal`).
+ */
+export function triggerHeadedPath(model: CatalogueModel, triggerId: string, legKeys: readonly string[]): CataloguePath | null {
+  if (triggerHeadRefusal(model, triggerId, legKeys) !== null) return null;
+  const chain = legKeys.map((legKey) => {
+    const p = pipesOnLeg(model, legKey)[0]!;
+    return { legKey, fromStep: p.fromStep, toStep: p.toStep };
+  });
+  return {
+    id: triggerHeadedPathId(triggerId, legKeys),
+    legKeys: [...legKeys],
+    type: "reactive",
+    steps: [chain[0].fromStep!, ...chain.map((l) => l.toStep)],
+    rates: model.ratesOfChain(chain),
+    triggerId,
   };
 }
 
@@ -979,21 +1069,25 @@ function canonicalFunnelId(model: CatalogueModel, id: string): string {
  * pipe works makes no funnel. Capped at `cap`.
  */
 export function funnelsOfPath(model: CatalogueModel, path: CataloguePath, cap = 2000): CatalogueFunnel[] {
-  const options: FunnelLeg[][] = path.legKeys.map((legKey) => {
+  const head = path.triggerId ?? null;
+  const options: FunnelLeg[][] = path.legKeys.map((legKey, legIndex) => {
     const onLeg = pipesOnLeg(model, legKey);
     const platform = onLeg.filter((p) => p.operatedBy === "platform");
     // Every non-default play of a platform pipe is its own option on the leg: a funnel differing only by a strategy
     // is another funnel (owner 2026-10-13).
     const variants = [...model.plays.values()].filter((v) => v.legKey === legKey).sort((a, b) => (a.id < b.id ? -1 : 1));
     const customer = onLeg.filter((p) => p.operatedBy === "customer").slice(0, 1);
-    return [...platform, ...variants, ...customer].map((pipe) => ({ legKey, pipe }));
+    // A trigger-headed funnel whose first pipe already answers that same trigger IS the existing reactive funnel
+    // (its own id): never listed twice.
+    const all = [...platform, ...variants, ...customer].filter((p) => !(head && legIndex === 0 && p.triggerId === head));
+    return all.map((pipe) => ({ legKey, pipe }));
   });
   if (options.some((o) => o.length === 0)) return [];
   const out = new Map<string, CatalogueFunnel>();
   const walk = (i: number, acc: FunnelLeg[]) => {
     if (out.size >= cap) return;
     if (i === options.length) {
-      const id = funnelIdOf(acc);
+      const id = head ? `${TRIGGER_HEAD}${head}+${funnelIdOf(acc)}` : funnelIdOf(acc);
       if (!out.has(id)) {
         const slugs = [...new Set(acc.flatMap((l) => legPipes(l).map((p) => p.channelSlug)))];
         const takeover = funnelFirstStep(acc);
@@ -1001,6 +1095,7 @@ export function funnelsOfPath(model: CatalogueModel, path: CataloguePath, cap = 
         out.set(id, {
           id,
           pathId: path.id,
+          headTriggerId: head,
           legs: acc,
           channelSlugs: slugs,
           economics: funnelEconomics(path, acc, model.lifetimeRevenueUsd, takeoverValue),
@@ -1037,8 +1132,9 @@ export const pipeRunnable = (p: CataloguePipe): boolean =>
  * Served on every funnel row and detail so campaign-service / billing relay it and nobody re-grades pipe modes.
  */
 export type FunnelType = "proactive" | "reactive";
-export const funnelTypeOf = (f: Pick<CatalogueFunnel, "legs">): FunnelType =>
-  f.legs.some((l) => legPipes(l).some((p) => p.mode === "proactive")) ? "proactive" : "reactive";
+export const funnelTypeOf = (f: Pick<CatalogueFunnel, "legs"> & { headTriggerId?: string | null }): FunnelType =>
+  // A trigger-headed funnel answers its trigger with every pipe, proactive pipes included (owner 2026-10-15).
+  f.headTriggerId ? "reactive" : f.legs.some((l) => legPipes(l).some((p) => p.mode === "proactive")) ? "proactive" : "reactive";
 
 /**
  * PURE: a MIXED funnel (owner 2026-10-10): a proactive pipe AND a reactive pipe WE run (platform-operated,
@@ -1047,7 +1143,8 @@ export const funnelTypeOf = (f: Pick<CatalogueFunnel, "legs">): FunnelType =>
  */
 // A pipe answering an INLINE trigger is not counted: a source answers the outreach run's request for a lead inside
 // that run and spends no budget of its own, so it cannot starve the proactive part.
-export const funnelMixed = (f: Pick<CatalogueFunnel, "legs">): boolean =>
+export const funnelMixed = (f: Pick<CatalogueFunnel, "legs"> & { headTriggerId?: string | null }): boolean =>
+  !f.headTriggerId &&
   f.legs.some((l) => l.pipe?.mode === "proactive") &&
   f.legs.some((l) => l.pipe?.mode === "reactive" && l.pipe.operatedBy === "platform" && !answersInline(l.pipe));
 
@@ -1072,6 +1169,14 @@ export const pathById = (model: CatalogueModel, id: string): CataloguePath | nul
  * the funnel returned carries its CURRENT id.
  */
 export function funnelById(model: CatalogueModel, id: string): CatalogueFunnel | null {
+  const head = triggerHeadOf(id);
+  if (head) {
+    const rest = canonicalFunnelId(model, head.rest);
+    const path = model.paths.get(triggerHeadedPathId(head.triggerId, rest.split("+").map((part) => part.split("@")[0])));
+    if (!path) return null;
+    const full = `${TRIGGER_HEAD}${head.triggerId}+${rest}`;
+    return funnelsOfPath(model, path).find((f) => f.id === full) ?? null;
+  }
   const exact = (key: string): CatalogueFunnel | null => {
     const legKeys = key.split("+").map((part) => part.split("@")[0]);
     const path = model.paths.get(pathIdOf(legKeys));
@@ -1138,6 +1243,7 @@ export function pipeTrigger(model: CatalogueModel, pipe: CataloguePipe): Trigger
 
 /** PURE: the trigger a REACTIVE path starts with (the one its first leg's pipes answer); null on a proactive path. */
 export function pathTrigger(model: CatalogueModel, path: CataloguePath): TriggerRef | null {
+  if (path.triggerId) return model.triggers.get(path.triggerId) ?? null;
   if (path.type !== "reactive") return null;
   const first = pipesOnLeg(model, path.legKeys[0]).find((p) => p.mode === "reactive" && p.triggerId !== null);
   if (!first) throw new Error(`[features-service] catalogue: reactive path ${path.id} has no reactive pipe on its first leg`);
@@ -1149,7 +1255,8 @@ export function pathTrigger(model: CatalogueModel, path: CataloguePath): Trigger
  * of Start whose leg this funnel works with a reactive pipe: "Email Pushed Via API -> Email Sending -> Positive reply",
  * on the leg organic publishing works proactively); null when its first pipe is proactive.
  */
-export function funnelTrigger(model: CatalogueModel, f: Pick<CatalogueFunnel, "pathId" | "legs">): TriggerRef | null {
+export function funnelTrigger(model: CatalogueModel, f: Pick<CatalogueFunnel, "pathId" | "legs"> & { headTriggerId?: string | null }): TriggerRef | null {
+  if (f.headTriggerId) return model.triggers.get(f.headTriggerId) ?? null;
   const first = f.legs[0]?.pipe;
   if (!model.paths.get(f.pathId) || !first || first.mode !== "reactive") return null;
   return pipeTrigger(model, first);
