@@ -90,7 +90,7 @@ export async function listDeclaredChannels(): Promise<DeclaredChannel[]> {
 
 /** Every declared leg still in the catalogue: a RETIRED one is out of every read. */
 export async function listDeclaredLegs(): Promise<DeclaredLeg[]> {
-  return (await db.select().from(declaredChannelLegs).where(isNull(declaredChannelLegs.retiredAt)).orderBy(asc(declaredChannelLegs.createdAt))).map(legOf);
+  return (await db.select().from(declaredChannelLegs).orderBy(asc(declaredChannelLegs.createdAt))).filter((r) => r.retiredAt == null).map(legOf);
 }
 
 export async function listDeclaredSalesPaths(): Promise<DeclaredSalesPath[]> {
