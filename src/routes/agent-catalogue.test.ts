@@ -766,7 +766,7 @@ describe("agent catalogue triggers (owner 2026-10-11, the staff Triggers section
     // Owner 2026-10-15: an outcome trigger reports its outcome, is callable and carries the outcome's value.
     expect(reply).toMatchObject({ type: "outcome", outcomeKey: "conversation", callable: true });
     expect(reply.valueUsd).toBeTypeOf("number");
-    expect(r.body.rows.find((x: { id: string }) => x.id === "lead_found")).toMatchObject({ name: "Lead", type: "outcome", outcomeKey: "lead_found", callable: true, coded: false });
+    expect(r.body.rows.find((x: { id: string }) => x.id === "lead_found")).toMatchObject({ name: "Lead", type: "outcome", outcomeKey: "lead_found", callable: true, coded: true });
     expect(r.body.rows.find((x: { id: string }) => x.id === "github_issue_in_prod")).toMatchObject({ type: "condition", outcomeKey: null, callable: false, valueUsd: null });
   });
 
