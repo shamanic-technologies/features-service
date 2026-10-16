@@ -13,6 +13,7 @@
  */
 
 import { fetchWithRetry } from "./fetch-retry.js";
+import { gatewayAcceptedEmails } from "./gateway-email.js";
 import { emailFingerprints, fingerprintScopeKey, liveLeadCopyRequested } from "./lead-copy.js";
 
 interface StatusScope {
@@ -120,7 +121,10 @@ export async function fetchEmailOutcomes(
 
   // Filtering is driven by body fields (campaignId takes precedence over brandId, per the
   // email-gateway /orgs/status contract). Campaign scope → send campaignId; else send brandId.
-  const body: Record<string, unknown> = { items: emails.map((email) => ({ email })) };
+  // Only addresses email-gateway accepts: one it refuses fails the whole batch (lib/gateway-email.ts).
+  const asked = gatewayAcceptedEmails(emails, `email outcomes (brand ${brandId})`);
+  if (asked.length === 0) return result;
+  const body: Record<string, unknown> = { items: asked.map((email) => ({ email })) };
   if (campaignScoped) body.campaignId = scopeCampaignId;
   else body.brandId = brandId;
 
@@ -266,7 +270,10 @@ async function fetchEventTimestampsFor(
   if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
 
   // Filtering is driven by body fields (campaignId takes precedence over brandId).
-  const body: Record<string, unknown> = { items: emails.map((email) => ({ email })) };
+  // Only addresses email-gateway accepts: one it refuses fails the whole batch (lib/gateway-email.ts).
+  const asked = gatewayAcceptedEmails(emails, `event timestamps (brand ${brandId})`);
+  if (asked.length === 0) return result;
+  const body: Record<string, unknown> = { items: asked.map((email) => ({ email })) };
   if (campaignId) body.campaignId = campaignId;
   else body.brandId = brandId;
 
