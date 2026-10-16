@@ -60,7 +60,7 @@ import {
   type ChannelPerformer,
   type ChannelStepKey,
 } from "./acquisition-channels.js";
-import { CHANNEL_TRIGGER_TYPES, LEG_MODES, channelTriggerType, type LegMode } from "./channel-triggers.js";
+import { CHANNEL_TRIGGER_TYPES, LEG_MODES, canonicalTriggerId, channelTriggerType, type LegMode } from "./channel-triggers.js";
 import { legKeyFor, storedLegKeyOf } from "./funnel-legs.js";
 import { CHANNEL_TYPES, isOutboundChannel, type ChannelType } from "./channel-types.js";
 import type { CatalogueFeatureRow, PublicChannel } from "./channel-catalogue.js";
@@ -450,6 +450,9 @@ export function parseTriggerInput(body: Body, existing: readonly TriggerTypeReco
   if (existing.some((t) => t.id === id) || CHANNEL_TRIGGER_TYPES.some((t) => t.id === id)) {
     throw new DeclarationError(409, "trigger_exists", `a trigger type ${id} already exists`);
   }
+  if (canonicalTriggerId(id) !== id) {
+    throw new DeclarationError(409, "trigger_exists", `${id} was merged into ${canonicalTriggerId(id)}: name that trigger`);
+  }
   if (body.coded !== undefined) throw bad("coded_not_declarable", "coded is not declared: a trigger is coded once a service fires its kind");
   const kind = body.kind;
   if (!(TRIGGER_KINDS as readonly unknown[]).includes(kind)) throw bad("trigger_kind_unrecognised", `kind must be one of ${TRIGGER_KINDS.join(", ")}`);
@@ -542,16 +545,18 @@ export interface LegInput {
  */
 export function checkLegRun(
   mode: unknown,
-  triggerId: unknown,
+  rawTriggerId: unknown,
   triggers: readonly TriggerTypeRecord[],
   opts: { unfiredAllowed: boolean } = { unfiredAllowed: false },
 ): { mode: LegMode; triggerId: string | null } {
   if (!(LEG_MODES as readonly unknown[]).includes(mode)) throw bad("mode_unrecognised", `mode must be one of ${LEG_MODES.join(", ")}`);
   if (mode === "proactive") {
-    if (triggerId != null) throw bad("proactive_leg_has_trigger", "a proactive leg runs on its own budget and names no trigger");
+    if (rawTriggerId != null) throw bad("proactive_leg_has_trigger", "a proactive leg runs on its own budget and names no trigger");
     return { mode: "proactive", triggerId: null };
   }
-  if (typeof triggerId !== "string" || triggerId === "") throw bad("trigger_required", "a reactive leg names the trigger that asks for it (triggerId)");
+  if (typeof rawTriggerId !== "string" || rawTriggerId === "") throw bad("trigger_required", "a reactive leg names the trigger that asks for it (triggerId)");
+  // A merged id names its target (`TRIGGER_ID_MERGES`): the leg is stored on the one trigger of that fact.
+  const triggerId = canonicalTriggerId(rawTriggerId);
   const codedType = channelTriggerType(triggerId);
   const trigger = codedType ? { kind: "event" as const, origin: "code" as const, coded: codedType.coded } : triggers.find((t) => t.id === triggerId);
   if (!trigger) throw new DeclarationError(404, "trigger_not_found", `no trigger type ${triggerId}`);

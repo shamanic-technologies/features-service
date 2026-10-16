@@ -5485,7 +5485,15 @@ const channelCatalogueResponseSchema = registry.register(
           ...triggerVocabularyFields,
         }),
       )
-      .describe("THE TRIGGER CATALOGUE (owner 2026-10-09, typed 2026-10-15): every kind of event that runs a REACTIVE leg, one row each in this service's database, the same for every client. The events themselves (one per occurrence, fired or skipped, per org x brand x offer) and each campaign's On/Off live in campaign-service."),
+      .describe("THE TRIGGER CATALOGUE (owner 2026-10-09, typed 2026-10-15): every kind of event that runs a REACTIVE leg, one row each in this service's database, the same for every client. The events themselves (one per occurrence, fired or skipped, per org x brand x offer) and each campaign's On/Off live in campaign-service. A condition `delay` instance (\"outcome X reached, still not Y after N\": `params {afterStep, minutes|days, unlessStep}`) is a declared row computed by campaign-service's generic detector: a new one is declared, never coded."),
+    triggerAliases: z
+      .array(
+        z.object({
+          id: z.string().describe("A trigger id MERGED into another (frozen key, keeps resolving): `follow_up_date_reached`."),
+          mergedInto: z.string().describe("The one trigger of that fact, the id served everywhere: `follow_up_due`."),
+        }),
+      )
+      .describe("ONE TRIGGER PER FACT (owner 2026-10-16): merged trigger ids. Never listed in `triggers[]` nor named by a pipe; an occurrence reported under the old id is recorded and fired as `mergedInto` by campaign-service."),
     legKeyCorrespondence: z
       .array(
         z.object({

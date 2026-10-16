@@ -39,7 +39,7 @@ import {
   type LoadedCatalogue,
 } from "../lib/channel-declarations-store.js";
 import { triggerOutcomeKeyOf, triggerTypeOf } from "../lib/outcome-vocabulary.js";
-import { IncludeInlineQueryError, includeInlineOf, isEntryDoor, triggerCallable } from "../lib/channel-triggers.js";
+import { canonicalTriggerId, IncludeInlineQueryError, includeInlineOf, isEntryDoor, triggerCallable } from "../lib/channel-triggers.js";
 import { combinationKeyOf } from "../lib/offer-sales-paths.js";
 import { salesPathNamesFor } from "../lib/sales-path-names.js";
 import { isOutboundChannel } from "../lib/channel-types.js";
@@ -305,7 +305,8 @@ router.get("/internal/declarations/trigger-types", apiKeyOnly, async (req, res) 
 
 router.get("/internal/declarations/trigger-types/:id", apiKeyOnly, async (req, res) => {
   try {
-    const t = (await listTriggerCatalogue()).find((x) => x.id === req.params.id);
+    // A merged id (`TRIGGER_ID_MERGES`) answers the one trigger of its fact.
+    const t = (await listTriggerCatalogue()).find((x) => x.id === canonicalTriggerId(req.params.id));
     if (!t) return void res.status(404).json({ error: `no trigger type ${req.params.id}`, reason: "trigger_not_found" });
     res.json(triggerView(t));
   } catch (err) {
