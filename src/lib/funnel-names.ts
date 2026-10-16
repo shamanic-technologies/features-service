@@ -24,6 +24,8 @@
  * agency, catch-all). Guard: `lib/funnel-names.test.ts`.
  */
 
+import { triggerCondition } from "./trigger-conditions.js";
+
 /** One leg of a combination key: `<from>_to_<to>` and, when a channel of ours works it, `@<slug>[~<strategy>]`. */
 export interface KeyLeg {
   fromStep: string;
@@ -164,14 +166,19 @@ const ANSWERS: Readonly<Record<string, string>> = {
   purchase: "Buyer",
 };
 
-/** Who a reactive funnel answers when its first pipe runs on a trigger that is not its step's own (one word). */
+/** Who a reactive funnel answers when its first pipe runs on a trigger that is not its step's own (one word). A
+ *  CONDITION instance ("X reached, still not Y after N") is never listed here: it answers the people of its `afterStep`
+ *  (`answersOfTrigger`, `lib/trigger-conditions.ts`), so a new instance is named with no code. */
 const TRIGGER_ANSWERS: Readonly<Record<string, string>> = {
   github_issue_in_prod: "Release",
   email_pushed_via_api: "API",
-  website_visit_no_signup_30_min: "Visitor",
-  signup_not_paid_30_min: "Signup",
-  signup_not_paid_24_hours: "Signup",
 };
+
+/** Who a funnel's first trigger answers (one word), undefined when the trigger says nothing more than its step. */
+function answersOfTrigger(triggerId: string): string | undefined {
+  const condition = triggerCondition(triggerId);
+  return condition ? ANSWERS[condition.afterStep] : TRIGGER_ANSWERS[triggerId];
+}
 
 /** The trigger a pipe answers (`<channel slug>|<leg key>` -> trigger id), null when proactive or unknown. */
 export type PipeTriggerOf = (channelSlug: string, legKey: string) => string | null;
@@ -265,7 +272,7 @@ export function funnelNameCandidates(key: string, triggerOf: PipeTriggerOf = () 
     if (second) for (const r of results) add(action, actionOf(second.channel!), r);
   } else {
     const firstTrigger = legs[0]?.channel ? triggerOf(legs[0].channel, `${legs[0].fromStep}_to_${legs[0].toStep}`) : null;
-    const answers = (firstTrigger ? TRIGGER_ANSWERS[firstTrigger] : undefined) ?? ANSWERS[reactiveHead ?? startsAt] ?? "Lead";
+    const answers = (firstTrigger ? answersOfTrigger(firstTrigger) : undefined) ?? ANSWERS[reactiveHead ?? startsAt] ?? "Lead";
     add(strategyWho, answers, action);
     add(answers, action);
     add(answers, action, result);

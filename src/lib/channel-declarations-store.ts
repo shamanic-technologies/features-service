@@ -17,6 +17,8 @@ import {
   features,
 } from "../db/schema.js";
 import { registerDeclaredSteps, type ChannelStepKey } from "./acquisition-channels.js";
+import { canonicalTriggerId } from "./channel-triggers.js";
+import { registerTriggerConditions } from "./trigger-conditions.js";
 import { withOutcomeTriggers } from "./outcome-vocabulary.js";
 import { registerDeclaredLegRates } from "./default-leg-rates.js";
 import { buildChannelCatalogue, type PublicChannel } from "./channel-catalogue.js";
@@ -81,7 +83,10 @@ const triggerOf = (r: TriggerRow): TriggerTypeRecord => ({
 // ── Reads ───────────────────────────────────────────────────────────────────────────────────────────
 
 export async function listTriggerTypes(): Promise<TriggerTypeRecord[]> {
-  return (await db.select().from(channelTriggerTypes).orderBy(asc(channelTriggerTypes.displayOrder))).map(triggerOf);
+  const triggers = (await db.select().from(channelTriggerTypes).orderBy(asc(channelTriggerTypes.displayOrder))).map(triggerOf);
+  // Every reader composing words out of a condition instance reads its parameters from here (`lib/trigger-conditions.ts`).
+  registerTriggerConditions(triggers);
+  return triggers;
 }
 
 export async function listDeclaredChannels(): Promise<DeclaredChannel[]> {
@@ -90,7 +95,11 @@ export async function listDeclaredChannels(): Promise<DeclaredChannel[]> {
 
 /** Every declared leg still in the catalogue: a RETIRED one is out of every read. */
 export async function listDeclaredLegs(): Promise<DeclaredLeg[]> {
-  return (await db.select().from(declaredChannelLegs).orderBy(asc(declaredChannelLegs.createdAt))).filter((r) => r.retiredAt == null).map(legOf);
+  // A leg naming a MERGED trigger is served on the one it was merged into (`TRIGGER_ID_MERGES`, `lib/channel-triggers.ts`).
+  return (await db.select().from(declaredChannelLegs).orderBy(asc(declaredChannelLegs.createdAt)))
+    .filter((r) => r.retiredAt == null)
+    .map(legOf)
+    .map((l) => (l.triggerId === null ? l : { ...l, triggerId: canonicalTriggerId(l.triggerId) }));
 }
 
 export async function listDeclaredSalesPaths(): Promise<DeclaredSalesPath[]> {
@@ -300,7 +309,9 @@ export async function listDeclaredSteps(): Promise<DeclaredStep[]> {
  * this, so "⚡ <outcome>" exists for every outcome wherever triggers are listed.
  */
 export async function listTriggerCatalogue(): Promise<TriggerTypeRecord[]> {
-  const [triggers, steps] = await Promise.all([listTriggerTypes(), listDeclaredSteps()]);
+  const [stored, steps] = await Promise.all([listTriggerTypes(), listDeclaredSteps()]);
+  // ONE trigger per fact: a merged id is never listed (it resolves to its target, `canonicalTriggerId`).
+  const triggers = stored.filter((t) => canonicalTriggerId(t.id) === t.id);
   return withOutcomeTriggers(triggers, steps, (g) => ({ ...g, kind: g.kind as TriggerTypeRecord["kind"] }));
 }
 

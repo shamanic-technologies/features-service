@@ -80,7 +80,7 @@ import { actorOf, DeclarationError, parseLegInput, requestedByOrgIdOf, type Trig
 import { allNamesByKey, renameFunnelsToDescriptiveNames, salesPathNamesFor, SalesPathNamePoolExhaustedError, seedPipeTriggerOf } from "../lib/sales-path-names.js";
 import { funnelTriggerLabel } from "../lib/funnel-descriptions.js";
 import { pluralLabelOf, triggerOutcomeKeyOf, triggerTypeOf } from "../lib/outcome-vocabulary.js";
-import { triggerCallable } from "../lib/channel-triggers.js";
+import { canonicalTriggerId, triggerCallable } from "../lib/channel-triggers.js";
 import { funnelShortDescription, type ShortDescriptionUnavailableReason } from "../lib/funnel-short-descriptions.js";
 import { LEAD_SOURCING_SLUG, SOURCE_LEG_KEY } from "../lib/sourcing-origins.js";
 
@@ -1371,7 +1371,8 @@ router.get("/internal/catalogue/triggers", apiKeyOnly, async (req, res) => {
 router.get("/internal/catalogue/triggers/:id", apiKeyOnly, async (req, res) => {
   try {
     const [{ model, names }, triggers] = await Promise.all([loadModel(), listTriggerCatalogue()]);
-    const t = triggers.find((x) => x.id === req.params.id);
+    // A merged id (`TRIGGER_ID_MERGES`) answers the one trigger of its fact.
+    const t = triggers.find((x) => x.id === canonicalTriggerId(req.params.id));
     if (!t) return void res.status(404).json({ error: `no trigger ${req.params.id}`, reason: "trigger_not_found" });
     const pipes = pipesOfTrigger(model, t.id);
     const n = await named(pipes.map(nameKeyOfPipe), names);

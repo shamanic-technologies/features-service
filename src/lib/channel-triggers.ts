@@ -220,6 +220,26 @@ export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
   },
 ];
 
+/**
+ * ONE TRIGGER PER FACT (owner 2026-10-16, STD-VOCAB-CONDITION-1016): a trigger id MERGED into another. Keys are frozen
+ * (only labels move), so a merged id keeps RESOLVING forever, to the one trigger every read serves:
+ *  - `follow_up_date_reached` (declared 2026-10-14, reported by workflow-service's prospect follow-up after each send)
+ *    said the same fact as `follow_up_due` ("a follow-up planned for one person is due", the Copilot's): one trigger.
+ * Served: a pipe naming a merged id is served on its target (`listDeclaredLegs`), the trigger lists serve only the
+ * target, and `/public/channels` `triggerAliases[]` publishes this table so campaign-service records and fires an
+ * occurrence reported under the old id as the target (its pending occurrences included). A merged id is never declared
+ * again (`parseTriggerInput`). Same kind of table as the LOCKED outbound leg rename (`lib/funnel-legs.ts`).
+ */
+export const TRIGGER_ID_MERGES: Readonly<Record<string, string>> = {
+  follow_up_date_reached: "follow_up_due",
+};
+
+/** PURE: the trigger id every read serves for `id` (itself unless merged into another). */
+export const canonicalTriggerId = (id: string): string => TRIGGER_ID_MERGES[id] ?? id;
+
+/** The merged ids, as `/public/channels` serves them. */
+export const TRIGGER_ALIASES: ReadonlyArray<{ id: string; mergedInto: string }> = Object.entries(TRIGGER_ID_MERGES).map(([id, mergedInto]) => ({ id, mergedInto }));
+
 const BY_ID: ReadonlyMap<string, ChannelTriggerType> = new Map(CHANNEL_TRIGGER_TYPES.map((t) => [t.id, t]));
 const BY_FROM_STEP: ReadonlyMap<ChannelStepKey, ChannelTriggerType> = new Map(
   CHANNEL_TRIGGER_TYPES.filter((t) => t.fromStep !== null).map((t) => [t.fromStep as ChannelStepKey, t]),

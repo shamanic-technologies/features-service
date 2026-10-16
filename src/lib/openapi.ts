@@ -5458,7 +5458,7 @@ const publicSalesFunnelSchema = z.object({
 const triggerVocabularyFields = {
   type: z.enum(["outcome", "condition"]).describe("Owner 2026-10-15 (outcomes and triggers are two catalogues). `outcome`: '⚡ <outcome>' (⚡ = the trigger glyph, never in the name), fired the moment a person reaches `outcomeKey`, exactly one per outcome, named by that outcome's label. `condition`: computed by us (an outcome + a delay + 'still not' another, a polled source, an integration state such as a GitHub issue in prod)."),
   outcomeKey: z.string().nullable().describe("The outcome (`outcomes[].key`) an outcome trigger reports. Null on a condition trigger (its `fromStep` is only the step its rule starts from)."),
-  callable: z.boolean().describe("An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger and on the triggers a caller reports today (`kind` reported: follow_up_due, email_pushed_via_api, follow_up_date_reached, parked); false on what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`) and on the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."),
+  callable: z.boolean().describe("An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger and on the triggers a caller reports today (`kind` reported: follow_up_due, email_pushed_via_api, parked); false on what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`) and on the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."),
 };
 
 const channelCatalogueResponseSchema = registry.register(
@@ -5485,7 +5485,15 @@ const channelCatalogueResponseSchema = registry.register(
           ...triggerVocabularyFields,
         }),
       )
-      .describe("THE TRIGGER CATALOGUE (owner 2026-10-09, typed 2026-10-15): every kind of event that runs a REACTIVE leg, one row each in this service's database, the same for every client. The events themselves (one per occurrence, fired or skipped, per org x brand x offer) and each campaign's On/Off live in campaign-service."),
+      .describe("THE TRIGGER CATALOGUE (owner 2026-10-09, typed 2026-10-15): every kind of event that runs a REACTIVE leg, one row each in this service's database, the same for every client. The events themselves (one per occurrence, fired or skipped, per org x brand x offer) and each campaign's On/Off live in campaign-service. A condition `delay` instance (\"outcome X reached, still not Y after N\": `params {afterStep, minutes|days, unlessStep}`) is a declared row computed by campaign-service's generic detector: a new one is declared, never coded."),
+    triggerAliases: z
+      .array(
+        z.object({
+          id: z.string().describe("A trigger id MERGED into another (frozen key, keeps resolving): `follow_up_date_reached`."),
+          mergedInto: z.string().describe("The one trigger of that fact, the id served everywhere: `follow_up_due`."),
+        }),
+      )
+      .describe("ONE TRIGGER PER FACT (owner 2026-10-16): merged trigger ids. Never listed in `triggers[]` nor named by a pipe; an occurrence reported under the old id is recorded and fired as `mergedInto` by campaign-service."),
     legKeyCorrespondence: z
       .array(
         z.object({

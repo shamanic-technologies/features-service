@@ -10,7 +10,7 @@ import { db } from "../db/index.js";
 import { features, type Feature } from "../db/schema.js";
 import { listTriggerCatalogue, loadChannelCatalogue } from "../lib/channel-declarations-store.js";
 import { triggerOutcomeKeyOf, triggerTypeOf, type TriggerType } from "../lib/outcome-vocabulary.js";
-import { triggerCallable } from "../lib/channel-triggers.js";
+import { TRIGGER_ALIASES, triggerCallable } from "../lib/channel-triggers.js";
 import { isTriggerCoded } from "../lib/channel-declarations.js";
 import { STATS_REGISTRY } from "../lib/stats-registry.js";
 import {
@@ -3360,6 +3360,10 @@ interface ChannelCataloguePayload {
    *  outcome lacking one, `listTriggerCatalogue`): what a reactive leg's `triggerId` names, with its label, icon, type
    *  (`outcome` | `condition`), the outcome it reports and whether a caller may fire it. */
   triggers: PublicChannelTrigger[];
+  /** ONE TRIGGER PER FACT (`TRIGGER_ID_MERGES`, `lib/channel-triggers.ts`): a merged trigger id and the one trigger it
+   *  resolves to. Never in `triggers[]` and never on a pipe; a caller reporting an occurrence under the old id is
+   *  recorded and fired as the target (campaign-service). */
+  triggerAliases: ReadonlyArray<{ id: string; mergedInto: string }>;
 }
 
 interface PublicChannelTrigger {
@@ -3422,6 +3426,7 @@ export async function handlePublicChannels(res: import("express").Response): Pro
       outcomes: channelStepCatalogue(),
       legKeyCorrespondence: OUTBOUND_LEG_KEY_CORRESPONDENCE,
       triggers: await loadChannelTriggers(),
+      triggerAliases: TRIGGER_ALIASES,
       emailDelivery: await fetchFleetEmailDelivery(),
       emailDeliveryByVerdict: await fetchEmailDeliveryByVerdict(),
       meetingBookingGain: await fetchMeetingBookingGain(),

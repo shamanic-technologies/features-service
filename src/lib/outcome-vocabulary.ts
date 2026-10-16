@@ -10,8 +10,8 @@
  *                  campaign-service's one door; our own detectors ring the same door.
  *      `condition` computed by us: an outcome + a delay + "still not" another (`delay`), a source polled (`poll`), an
  *                  integration state (`github_issue_in_prod`). Never callable: we already hold the fact.
- *    Legacy exceptions, PARKED by the owner (C3 / D): the `reported` triggers (`follow_up_due`, `email_pushed_via_api`,
- *    `follow_up_date_reached`) are typed `condition` but stay callable, because a caller reports each occurrence through
+ *    Legacy exceptions, PARKED by the owner (C3 / D): the `reported` triggers (`follow_up_due`, `email_pushed_via_api`;
+ *    `follow_up_date_reached` was merged into `follow_up_due` 2026-10-16, `TRIGGER_ID_MERGES`) are typed `condition` but stay callable, because a caller reports each occurrence through
  *    the door today (campaign-service, 2026-10-15). The INLINE ones (`on_demand`, `lead_requested`) are never callable.
  *  - A trigger can carry a VALUE: an outcome trigger's is its outcome's (`lib/agent-catalogue.ts` step value).
  *
