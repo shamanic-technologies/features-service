@@ -29,8 +29,10 @@
  * no workflow at all (drmorley@: replied 2026-09-21 to ballad-v4's email, row says miaplacidus). When the
  * timeline states the person's sends (`emailSends`, one per campaign x sending workflow), the person is
  * RE-ATTRIBUTED, for every partitioned count, to the send its outcome followed:
- *   - a positive reply (then a click) resolves to the latest send BEFORE it under its thread's campaign, or,
- *     naming no campaign (CRM date), the latest send before it under any campaign of the scope;
+ *   - the person's LATEST positive reply (then click) that followed a send resolves to the latest send BEFORE
+ *     it under its thread's campaign, or, naming no campaign (CRM date), under any campaign of the scope (one
+ *     person, one workflow: jerryclark@ replied to ballad in July, then in Belel's own thread in October, and
+ *     is Belel's: the conversation that is live now);
  *   - a person with no such outcome goes to its latest send (contacted);
  *   - only sends under the read's campaign scope are candidates (a campaign / offer grain never moves a
  *     person outside itself). With no candidate send, the serve-row rule above stands.
@@ -173,9 +175,9 @@ function sendFollowed(e: DatedEvidence, sends: readonly Send[]): Send | null {
   return e.campaignId !== null ? latest([...pool].reverse(), (s) => -(s.first ?? Infinity)) : null;
 }
 
-/** The first of `evidence` (date order, undated last) that follows one of `sends`. */
-function firstSendFollowed(evidence: readonly DatedEvidence[], sends: readonly Send[]): Send | null {
-  const ordered = [...evidence].sort((a, b) => (a.at ?? Infinity) - (b.at ?? Infinity));
+/** The send followed by the LATEST of `evidence` that follows one (dated latest first, undated last). */
+function lastSendFollowed(evidence: readonly DatedEvidence[], sends: readonly Send[]): Send | null {
+  const ordered = [...evidence].sort((a, b) => (b.at ?? -Infinity) - (a.at ?? -Infinity));
   for (const e of ordered) {
     const send = sendFollowed(e, sends);
     if (send) return send;
@@ -193,8 +195,8 @@ export function creditPerson<T extends EnginePerson>(person: T, timeline: Person
   const own = person.signals;
   const crmAt = ms(person.crmPositiveReplyAt ?? person.signalDates?.positiveReply ?? null);
   const replies = crmAt !== null ? [...timeline.replies, { campaignId: null, at: crmAt }] : timeline.replies;
-  const replyTo = own.positiveReply ? firstSendFollowed(replies, sends) : null;
-  const clickTo = own.clicked ? firstSendFollowed(timeline.clicks, sends) : null;
+  const replyTo = own.positiveReply ? lastSendFollowed(replies, sends) : null;
+  const clickTo = own.clicked ? lastSendFollowed(timeline.clicks, sends) : null;
   const to = replyTo ?? clickTo ?? latest(sends, (s) => s.last ?? s.first ?? -Infinity);
   const credit: ServingRowCredit = {
     contacted: Boolean(own.contacted),

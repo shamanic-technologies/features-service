@@ -174,6 +174,8 @@ describe("sender attribution: an outcome counts for the workflow that SENT the e
     { leadId: "between", offerId: "o", facts: [reply("C-R", "2026-05-15T00:00:00Z")], acts: [email("C-R", "2026-05-01T00:00:00Z")], emailSends: [send("C-R", "wf-a", "2026-05-01T00:00:00Z"), send("C-R", "wf-c", "2026-06-01T00:00:00Z")] },
     // Contacted only (no reply): the latest send's workflow, not the serve row's.
     { leadId: "contacted-only", offerId: "o", facts: [], acts: [email("C-R", "2026-05-01T00:00:00Z")], emailSends: [send("C-R", "wf-a", "2026-05-01T00:00:00Z"), send("C-R", "wf-c", "2026-06-01T00:00:00Z")] },
+    // jerryclark@ (prod): replied to ballad in July, then in Belel's own thread minutes after Belel's send in October.
+    { leadId: "two-replies", offerId: "o", facts: [reply("C-A", "2026-07-08T15:01:52Z"), reply("C-B", "2026-10-12T23:13:23Z")], acts: [email("C-A", "2026-07-08T13:09:02Z"), email("C-B", "2026-10-12T23:11:34Z")], emailSends: [send("C-A", "wf-a", "2026-07-08T13:09:02Z"), send("C-B", "wf-b", "2026-10-12T23:11:34Z")] },
     // Replied BEFORE any send: no workflow earned it, the person stays contacted under the latest send.
     { leadId: "reply-before-send", offerId: "o", facts: [], acts: [email("C-A", "2026-06-01T00:00:00Z")], emailSends: [send("C-A", "wf-a", "2026-06-01T00:00:00Z")] },
   ];
@@ -184,6 +186,7 @@ describe("sender attribution: an outcome counts for the workflow that SENT the e
     person("two-senders", "C-R", "wf-serve", { contacted: true, positiveReply: true }),
     person("between", "C-R", "wf-serve", { contacted: true, positiveReply: true }),
     person("contacted-only", "C-R", "wf-serve", { contacted: true }),
+    person("two-replies", "C-B", "wf-b", { contacted: true, positiveReply: true }),
     person("reply-before-send", "C-A", "wf-a", { contacted: true, positiveReply: true }, { crmPositiveReplyAt: "2026-05-01T00:00:00Z" }),
   ];
   const credited = creditServingRows(rows(), sent);
@@ -208,17 +211,22 @@ describe("sender attribution: an outcome counts for the workflow that SENT the e
     expect(byId("contacted-only")).toMatchObject({ workflowSlug: "wf-c", servingRowCredit: { contacted: true, positiveReply: false } });
   });
 
+  it("a person who replied to two senders belongs to the one their LATEST reply answered", () => {
+    expect(byId("two-replies")).toMatchObject({ campaignId: "C-B", workflowSlug: "wf-b", servingRowCredit: { positiveReply: true } });
+  });
+
   it("a reply before every send is no workflow's, the person stays contacted", () => {
     expect(byId("reply-before-send")).toMatchObject({ workflowSlug: "wf-a", servingRowCredit: { contacted: true, positiveReply: false } });
   });
 
   it("every partitioned grain reads the sender; brand totals do not move", () => {
-    expect(crmRepliesBySlug(positiveRepliersOf(credited))).toEqual(new Map([["wf-a", 3], ["wf-c", 2]]));
-    expect(matureSlugStats(credited, null).get("wf-b")).toBeUndefined();
+    expect(crmRepliesBySlug(positiveRepliersOf(credited))).toEqual(new Map([["wf-a", 3], ["wf-c", 2], ["wf-b", 1]]));
+    expect(matureSlugStats(credited, null).get("wf-b")).toEqual({ recipientsContacted: 1, recipientsClicked: 0, recipientsRepliesPositive: 1 });
+    expect(matureSlugStats(credited, null).get("wf-serve")).toBeUndefined();
     expect(contactedPersonsBySlug(credited).get("wf-c")).toBe(3);
     expect(bucketPopulation(credited).buckets.get("C-A\twf-a\t2026-05-16")).toEqual([2, 0, 2]);
     expect(credited.filter((p) => p.signals.positiveReply)).toHaveLength(rows().filter((p) => p.signals.positiveReply).length);
-    expect(positiveRepliersOf(credited)).toHaveLength(6);
+    expect(positiveRepliersOf(credited)).toHaveLength(7);
   });
 
   it("the per-workflow pipeline groups the person under the sender with the reply it earned", () => {
