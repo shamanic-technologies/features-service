@@ -62,8 +62,10 @@ describe("the name families (owner 2026-10-10)", () => {
   });
 
   it("hand each key the next free name of ITS family, and fail loud when a family runs out", () => {
-    const names = nextNamesForKeys(["campaign:a|x", "path:p", "f1", "campaign:b|y"], new Set([PIPE_BIRD_WORDS[0], "Victory"]));
-    expect(names).toEqual([PIPE_BIRD_WORDS[1], PATH_RIVER_WORDS[0], "Sol", PIPE_BIRD_WORDS[2]]);
+    const funnel = "start_to_lead_found@lead-sourcing+lead_found_to_conversation@sales-cold-email-outreach+conversation_to_paid_client";
+    const names = nextNamesForKeys(["campaign:a|x", "path:p", funnel, "campaign:b|y"], new Set([PIPE_BIRD_WORDS[0], "Victory"]));
+    // A sales funnel's name is composed from what it does (owner 2026-10-16), never a word of the pool.
+    expect(names).toEqual([PIPE_BIRD_WORDS[1], PATH_RIVER_WORDS[0], "Cold Email Replies", PIPE_BIRD_WORDS[2]]);
     const everything = new Set([...familyNameCandidates("sales_path", PATH_RIVER_WORDS)]);
     expect(() => nextNamesForKeys(["path:q"], everything)).toThrow(SalesPathNamePoolExhaustedError);
   });

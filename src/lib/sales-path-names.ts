@@ -23,6 +23,10 @@
  * UNIQUE across the whole table, so a campaign and a path never share a name — not even a one-leg path
  * on the same channel.
  *
+ * SUPERSEDED FOR FUNNELS 2026-10-16 (owner, FUNNEL-NAMES-1016): a funnel's name says what it does, composed from its
+ * key (`lib/funnel-names.ts`); every word-named funnel was renamed (`renameFunnelsToDescriptiveNames`) and its word
+ * retired. Pipes and paths keep their families below.
+ *
  * The pool is curated: English, one word, optimistic (success, height, glory, abundance, joy). Its size is
  * guarded against every combination the catalogue can form (`offer-sales-paths.test.ts`); an exhausted
  * pool throws `SalesPathNamePoolExhaustedError` — loud, never a reused or invented name.
@@ -34,6 +38,8 @@ import type { ChannelStepTransitionWire, PublicChannel } from "./channel-catalog
 import { campaignNameKeyOf } from "./offer-sales-paths.js";
 import { servedNameKeyOf } from "./funnel-legs.js";
 import { FUNNEL_EXTRA_WORDS, PATH_RIVER_WORDS, PIPE_BIRD_WORDS, familyNameCandidates, nameFamilyOfKey, type NameFamily } from "./catalogue-names.js";
+import { funnelNamingOrder, isComposedNameOf, nextFunnelName, type PipeTriggerOf } from "./funnel-names.js";
+import { SEED_FEATURES } from "../seed/features.js";
 
 /** Append-only in spirit: add words at the END; a word already given stays given whatever happens here. */
 export const SALES_PATH_NAME_POOL: readonly string[] = [
@@ -82,24 +88,45 @@ export function nextUnusedNames(pool: readonly string[], used: ReadonlySet<strin
   return free.slice(0, count);
 }
 
-/** Each family's single words (`lib/catalogue-names.ts`): a sales funnel's are the original pool, then the extra words. */
+/**
+ * Each family's single words (`lib/catalogue-names.ts`). A sales funnel no longer takes a word (owner 2026-10-16,
+ * `lib/funnel-names.ts`): its words stay listed only because the names already given from them stay given.
+ */
 export const FAMILY_WORDS: Readonly<Record<NameFamily, readonly string[]>> = {
   sales_funnel: [...SALES_PATH_NAME_POOL, ...FUNNEL_EXTRA_WORDS],
   pipe: PIPE_BIRD_WORDS,
   sales_path: PATH_RIVER_WORDS,
 };
 
+let seedTriggers: Map<string, string> | null = null;
+/** The trigger each SEEDED reactive pipe answers when it is not its step's own (a declared pipe: `loadPipeTriggerOf`). */
+export const seedPipeTriggerOf: PipeTriggerOf = (channelSlug, legKey) => {
+  seedTriggers ??= new Map(
+    SEED_FEATURES.flatMap((f) =>
+      (f.acquisitionChannel?.stepTransitions ?? []).flatMap((t) => (t.triggerId ? [[`${f.slug}|${t.from}_to_${t.to}`, t.triggerId] as const] : [])),
+    ),
+  );
+  return seedTriggers.get(`${channelSlug}|${legKey}`) ?? null;
+};
+
 /**
  * PURE: one new name per key, in key order, each from the key's OWN family (`nameFamilyOfKey`), never one
- * `used` holds nor one given earlier in the same call. Throws when a family is exhausted.
+ * `used` holds nor one given earlier in the same call. A sales funnel's name is composed from its key
+ * (`nextFunnelName`); a pipe or path family that is exhausted throws.
  */
-export function nextNamesForKeys(keys: readonly string[], used: ReadonlySet<string>): string[] {
+export function nextNamesForKeys(keys: readonly string[], used: ReadonlySet<string>, triggerOf: PipeTriggerOf = seedPipeTriggerOf): string[] {
   const taken = new Set(used);
   const iterators = new Map<NameFamily, Generator<string>>();
   const missingByFamily = new Map<NameFamily, number>();
   const out: string[] = [];
   for (const key of keys) {
     const family = nameFamilyOfKey(key);
+    if (family === "sales_funnel") {
+      const name = nextFunnelName(key, taken, triggerOf);
+      taken.add(name);
+      out.push(name);
+      continue;
+    }
     let it = iterators.get(family);
     if (!it) {
       it = familyNameCandidates(family, FAMILY_WORDS[family]);
@@ -201,6 +228,66 @@ export async function renamePipesToBirds(): Promise<Array<{ combinationKey: stri
     }
     console.log(`[features-service] pipe names: renamed to birds ${out.map((r) => `${r.from}->${r.to}`).join(", ")}`);
     return out;
+  });
+}
+
+export interface FunnelRename {
+  combinationKey: string;
+  from: string;
+  to: string;
+}
+
+/**
+ * PURE: the new name of every sales funnel whose name is not composed from its key (`lib/funnel-names.ts`), in
+ * naming order: `firstKeys` first (in that order), then the plainest funnels, then by assignment date. `held` = every
+ * name that stays (pipes, paths, retired names, funnels already composed).
+ */
+export function planFunnelRenames(
+  rows: ReadonlyArray<{ combinationKey: string; name: string; assignedAt: Date }>,
+  held: ReadonlySet<string>,
+  firstKeys: readonly string[],
+  triggerOf: PipeTriggerOf,
+): FunnelRename[] {
+  const funnels = rows.filter((r) => nameFamilyOfKey(r.combinationKey) === "sales_funnel");
+  const todo = funnels.filter((r) => !isComposedNameOf(r.combinationKey, r.name, triggerOf));
+  const taken = new Set(held);
+  for (const r of funnels) if (!todo.includes(r)) taken.add(r.name);
+  const firstRank = new Map(firstKeys.map((k, i) => [k, i] as const));
+  const byDate = [...todo].sort((a, b) => a.assignedAt.getTime() - b.assignedAt.getTime() || a.combinationKey.localeCompare(b.combinationKey));
+  const ranked = byDate.map((r, i) => ({ key: r.combinationKey, rank: i, row: r }));
+  const ordered = [
+    ...funnelNamingOrder(ranked.filter((r) => firstRank.has(r.key)).map((r) => ({ ...r, rank: firstRank.get(r.key)! }))),
+    ...funnelNamingOrder(ranked.filter((r) => !firstRank.has(r.key))),
+  ];
+  return ordered.map(({ row }) => {
+    const to = nextFunnelName(row.combinationKey, taken, triggerOf);
+    taken.add(to);
+    return { combinationKey: row.combinationKey, from: row.name, to };
+  });
+}
+
+/**
+ * OWNER 2026-10-16 (FUNNEL-NAMES-1016): every sales funnel still named with a word ("Victory", "Epiphany") takes the
+ * name that says what it does; the old word is RETIRED (`retired_names`, reason `funnel_renamed_descriptive`), never
+ * given again. Idempotent (a composed name stays), under the assignment lock. Dry run unless `apply`. `firstKeys`: the
+ * funnels customers run, named first so they get the plain name (the caller reads them from campaign-service).
+ */
+export async function renameFunnelsToDescriptiveNames(opts: { apply: boolean; firstKeys: readonly string[]; triggerOf: PipeTriggerOf }): Promise<FunnelRename[]> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(${NAME_ASSIGNMENT_LOCK})`);
+    const rows = await tx
+      .select({ combinationKey: salesPathCombinationNames.combinationKey, name: salesPathCombinationNames.name, assignedAt: salesPathCombinationNames.assignedAt })
+      .from(salesPathCombinationNames);
+    const retired = await tx.select({ name: retiredNames.name }).from(retiredNames);
+    const held = new Set([...rows.filter((r) => nameFamilyOfKey(r.combinationKey) !== "sales_funnel").map((r) => r.name), ...retired.map((r) => r.name)]);
+    const plan = planFunnelRenames(rows, held, opts.firstKeys, opts.triggerOf);
+    if (!opts.apply || plan.length === 0) return plan;
+    for (const r of plan) {
+      await tx.insert(retiredNames).values({ name: r.from, combinationKey: r.combinationKey, replacedBy: r.to, reason: "funnel_renamed_descriptive" });
+      await tx.update(salesPathCombinationNames).set({ name: r.to }).where(eq(salesPathCombinationNames.combinationKey, r.combinationKey));
+    }
+    console.log(`[features-service] funnel names: renamed ${plan.length} funnels to descriptive names`);
+    return plan;
   });
 }
 
