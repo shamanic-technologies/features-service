@@ -49,7 +49,14 @@ const fetchWithRetry = vi.fn();
 vi.mock("../lib/fetch-retry.js", () => ({ fetchWithRetry: (...a: unknown[]) => fetchWithRetry(...a) }));
 const warmFunnelCampaignReads = vi.fn(async () => ({ urls: [], skippedReason: null }));
 vi.mock("../lib/funnel-campaign-warm.js", () => ({ warmFunnelCampaignReads: (...a: unknown[]) => warmFunnelCampaignReads(...(a as [])) }));
-vi.mock("../lib/view-cache.js", () => ({ servedCached: async (a: { compute: () => unknown }) => a.compute(), buildScopeKey: () => "k" }));
+const servedCachedArgs: Array<{ view: string; responseShape?: string }> = [];
+vi.mock("../lib/view-cache.js", () => ({
+  servedCached: async (a: { view: string; responseShape?: string; compute: () => unknown }) => {
+    servedCachedArgs.push(a);
+    return a.compute();
+  },
+  buildScopeKey: () => "k",
+}));
 
 process.env.FEATURES_SERVICE_API_KEY = "test-key";
 process.env.CAMPAIGN_SERVICE_URL = "http://campaign:3000";
@@ -115,6 +122,18 @@ describe("GET /brands/:brandId/sales-funnel-campaigns", () => {
     expect(a).toMatchObject({ funnel, funnelUnavailableReason: null, investedUsd: 2.24 });
     expect(funnelCampaignActivity.mock.calls[0][3]).toBe("net");
     expect(b).toMatchObject({ funnel: null, funnelUnavailableReason: "funnel_steps_unreadable", investedUsd: 2.24 });
+  });
+
+  it("the money cell is keyed on THIS route's response shape, so a deploy changing another route keeps it warm (SFC-MONEY-SLOW-1016)", async () => {
+    servedCachedArgs.length = 0;
+    fetchWithRetry.mockResolvedValue(new Response(JSON.stringify({ salesFunnelCampaigns: [FC("fc1", "f1", [unit("c1", "sourcing-apollo-cold-filters", "start_to_lead_found")])] })));
+    distinctChannelFunnels.mockReturnValue([{ key: "sales" }]);
+    computeFeatureRevenue.mockResolvedValue({ headline: null, costEconomics: { committedCostUsd: 1, roiMultiple: null, unmeasuredReason: null }, maturity: null });
+    await request(app).get("/brands/b1/sales-funnel-campaigns?pricing=net").set(AUTH);
+    const { routeResponseShapeFingerprint, responseShapeFingerprint } = await import("../lib/response-shape.js");
+    const money = servedCachedArgs.find((a) => a.view === "sales-funnel-campaign-money");
+    expect(money?.responseShape).toBe(routeResponseShapeFingerprint("/brands/{brandId}/sales-funnel-campaigns"));
+    expect(money?.responseShape).not.toBe(responseShapeFingerprint());
   });
 
   it("units pricing on two funnel definitions: invested served, ROI null with a reason (never one funnel picked)", async () => {
