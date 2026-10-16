@@ -1,0 +1,35 @@
+/**
+ * A brand's timeline journeys, read for `lib/serving-row-credit.ts` (which row earned which signal). One
+ * read per (org, brand), shared by every scope read in the same moment (a workflow-projection read asks the
+ * brand, campaign and offer scopes at once) and held 60 s. FAIL-LOUD: the caller fails the way it fails on
+ * its lead walk; never a silent return to the brand-wide attribution.
+ */
+
+import { fetchBrandJourneys } from "./brand-journeys-client.js";
+import type { Journey } from "./lived-sales-paths.js";
+
+const HOLD_MS = 60_000;
+const held = new Map<string, { at: number; journeys: Promise<Journey[]> }>();
+
+export function fetchServingRowJourneys(
+  brandId: string,
+  identity: { orgId: string; userId?: string; runId?: string },
+): Promise<Journey[]> {
+  const key = `${identity.orgId}:${brandId}`;
+  const now = Date.now();
+  const entry = held.get(key);
+  if (entry && now - entry.at < HOLD_MS) return entry.journeys;
+  const journeys = fetchBrandJourneys(brandId, identity);
+  held.set(key, { at: now, journeys });
+  journeys.catch(() => {
+    if (held.get(key)?.journeys === journeys) held.delete(key);
+  });
+  // Bound the map: drop entries past their hold.
+  for (const [k, v] of held) if (now - v.at >= HOLD_MS) held.delete(k);
+  return journeys;
+}
+
+/** Test seam. */
+export function __resetServingRowJourneys(): void {
+  held.clear();
+}

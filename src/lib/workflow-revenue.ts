@@ -70,6 +70,8 @@
  * never a floored estimate. Projection per workflow already has its own surface:
  * `/workflow-projection`.
  */
+import { asServingRowEarned, creditServingRows } from "./serving-row-credit.js";
+import { fetchServingRowJourneys } from "./serving-row-journeys.js";
 import { applyDisqualifiedMarks, deferLoud, fetchDisqualifiedLeadIds } from "./disqualification-marks.js";
 import { contactedPricingSoft } from "../routes/contacted-value.js";
 import type { ContactedPricing, TimeSeriesPoint } from "./revenue-engine.js";
@@ -246,8 +248,11 @@ export function buildWorkflowRevenueGroups(input: {
   }
 
   const personsByDynasty = new Map<string, EnginePerson[]>();
-  for (const person of persons) {
-    if (!person.workflowSlug) continue;
+  for (const stated of persons) {
+    // A workflow prices only what its own row EARNED (lib/serving-row-credit.ts): a reply to another
+    // campaign, before this one wrote, is never this workflow's pipeline.
+    const person = asServingRowEarned(stated);
+    if (!person || !person.workflowSlug) continue;
     const dynasty = dynastyOf(person.workflowSlug);
     (slugsByDynasty.get(dynasty) ?? slugsByDynasty.set(dynasty, new Set()).get(dynasty)!).add(person.workflowSlug);
     const bucket = personsByDynasty.get(dynasty);
@@ -466,12 +471,14 @@ export async function computeWorkflowRevenueGroups(input: {
             console.error(`[features-service] workflow maturity spend split unreadable for brand ${brandId} (pairs absent): ${err.message}`);
             return null;
           });
-  const [costCentsBySlug, persons, workflows, maturity, contacted, maturitySplit] = await Promise.all([
+  const [costCentsBySlug, persons, workflows, journeys, maturity, contacted, maturitySplit] = await Promise.all([
     fetchRunsCostCentsByWorkflowSlug(brandId, featureSlug, headers, pricing, campaignScope),
     // The workflow grain PARTITIONS the leads of its scope: brand-wide by default, the campaign's own
     // rows when one is named. Never narrower than the scope, never wider.
     fetchLeadsForRevenue(brandId, campaignScope, headers),
     fetchWorkflowMetadataSoft(featureSlug),
+    // Which of each person's signals the row it is attributed to EARNED (lib/serving-row-credit.ts).
+    fetchServingRowJourneys(brandId, headers),
     maturityPromise,
     // The brand read's own contacted-lead pricing, so a workflow row prices a contacted lead the same.
     contactedPricingSoft(brandId, headers),
@@ -501,6 +508,7 @@ export async function computeWorkflowRevenueGroups(input: {
   ]);
   applySignalOverlays(persons, timestamps, observed?.byEmail ?? null, quals, priced?.pricedFunnelKeys ?? [], causes);
   applyDisqualifiedMarks(persons, await disqualifiedRead());
+  creditServingRows(persons, journeys);
 
   return buildWorkflowRevenueGroups({
     persons,

@@ -12,6 +12,7 @@
  */
 import type { EnginePerson } from "./revenue-engine.js";
 import { servedInMatureCohort } from "./maturity.js";
+import { creditedSignal } from "./serving-row-credit.js";
 
 /** The three counted signals a grain observes, for one group of persons. */
 export interface PersonCounts {
@@ -31,10 +32,11 @@ export function serveDatesStated(persons: readonly EnginePerson[]): boolean {
   return persons.every((p) => p.servedAt !== undefined);
 }
 
+/** Counts on the person's attributed (campaign, workflow): only what that row EARNED (lib/serving-row-credit.ts). */
 function countInto(counts: PersonCounts, p: EnginePerson): void {
-  if (p.signals.contacted) counts.contacted += 1;
-  if (p.signals.clicked) counts.clicks += 1;
-  if (p.signals.positiveReply) counts.replies += 1;
+  if (creditedSignal(p, "contacted")) counts.contacted += 1;
+  if (creditedSignal(p, "clicked")) counts.clicks += 1;
+  if (creditedSignal(p, "positiveReply")) counts.replies += 1;
 }
 
 /**

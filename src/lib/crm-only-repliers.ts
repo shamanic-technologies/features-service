@@ -11,13 +11,23 @@
  * this module holds no second definition of a positive reply.
  *
  * A person is attributed to the WORKFLOW the lead-service row it survived dedup on was served under — the
- * attribution lead-service froze at serve time, the same key `?groupBy=workflow` partitions leads on.
- * A row stating no workflow belongs to no workflow grain, exactly like an untagged send.
+ * attribution lead-service froze at serve time, the same key `?groupBy=workflow` partitions leads on —
+ * ONLY when that row's campaign earned the reply (`lib/serving-row-credit.ts`: it contacted the person and
+ * the reply answered that contact). An unearned reply, like a row stating no workflow, belongs to no
+ * workflow or campaign grain (it stays the brand's).
  */
+
+/** The workflow + campaign a person's positive reply is credited to: the row's, or none when unearned. */
+function replyAttribution(p: EnginePerson): { campaignId: string | null; workflowSlug: string | null } {
+  if (!creditedSignal(p, "positiveReply")) return { campaignId: null, workflowSlug: null };
+  return { campaignId: p.campaignId ?? null, workflowSlug: p.workflowSlug ?? null };
+}
 
 import type { CampaignFilter } from "./campaign-scope.js";
 import { fetchLeadsForRevenue } from "./leads-client.js";
 import { dedupPersonsByLead, type EnginePerson } from "./revenue-engine.js";
+import { creditServingRows, creditedSignal } from "./serving-row-credit.js";
+import { fetchServingRowJourneys } from "./serving-row-journeys.js";
 
 export interface CrmOnlyReplier {
   leadId: string;
@@ -37,15 +47,14 @@ export async function fetchCrmOnlyRepliers(
   campaignScope: CampaignFilter,
   identity: { orgId: string; userId?: string; runId?: string; featureSlug?: string },
 ): Promise<CrmOnlyReplier[]> {
-  const persons = dedupPersonsByLead(await fetchLeadsForRevenue(brandId, campaignScope, identity));
+  const persons = await fetchScopePersons(brandId, campaignScope, identity);
   const out: CrmOnlyReplier[] = [];
   for (const p of persons) {
     if (!p.crmPositiveReplyAt || !p.signals.positiveReply) continue;
     out.push({
       leadId: p.leadId,
       email: p.email ? p.email.trim().toLowerCase() : null,
-      campaignId: p.campaignId ?? null,
-      workflowSlug: p.workflowSlug ?? null,
+      ...replyAttribution(p),
     });
   }
   return out;
@@ -75,14 +84,19 @@ export async function fetchPositiveRepliers(
 /**
  * A brand's (or one campaign scope's) lead population, one entry per PERSON (deduped by lead) — the
  * person set every per-person count of this module is taken on. Each person keeps the campaign, the
- * workflow, the serve date and the serve audience of the row it survived dedup on. Fails loud.
+ * workflow, the serve date and the serve audience of the row it survived dedup on, and is stamped with
+ * which of its signals THAT row earned (`servingRowCredit`, from the brand's timeline). Fails loud.
  */
 export async function fetchScopePersons(
   brandId: string,
   campaignScope: CampaignFilter,
   identity: { orgId: string; userId?: string; runId?: string; featureSlug?: string },
 ): Promise<EnginePerson[]> {
-  return dedupPersonsByLead(await fetchLeadsForRevenue(brandId, campaignScope, identity));
+  const [rows, journeys] = await Promise.all([
+    fetchLeadsForRevenue(brandId, campaignScope, identity),
+    fetchServingRowJourneys(brandId, identity),
+  ]);
+  return creditServingRows(dedupPersonsByLead(rows), journeys);
 }
 
 /** PURE. The positive repliers among deduped persons — by EITHER witness, one per person. */
@@ -93,8 +107,7 @@ export function positiveRepliersOf(persons: readonly EnginePerson[]): PositiveRe
     out.push({
       leadId: p.leadId,
       email: p.email ? p.email.trim().toLowerCase() : null,
-      campaignId: p.campaignId ?? null,
-      workflowSlug: p.workflowSlug ?? null,
+      ...replyAttribution(p),
       crmOnly: Boolean(p.crmPositiveReplyAt),
     });
   }

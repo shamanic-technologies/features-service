@@ -31,6 +31,7 @@ import { outsideInteractiveView } from "./lead-copy.js";
 import { claimFleetCellBuild, loadFleetCell, storeFleetCell } from "./fleet-cell-store.js";
 import { matureSlugStats, serveDatesStated } from "./mature-evidence.js";
 import type { EnginePerson } from "./revenue-engine.js";
+import { creditedSignal } from "./serving-row-credit.js";
 
 const FRESH_MS = 15 * 60_000;
 const STALE_MS = 6 * 60 * 60_000;
@@ -63,13 +64,17 @@ const BUCKET_SEP = "\t";
 export function bucketPopulation(persons: readonly EnginePerson[]): PairPopulation {
   const buckets = new Map<string, [number, number, number]>();
   for (const p of persons) {
-    if (!p.signals.contacted && !p.signals.clicked && !p.signals.positiveReply) continue;
+    // Only what the person's row EARNED lands in its (campaign, workflow) bucket (lib/serving-row-credit.ts).
+    const contacted = creditedSignal(p, "contacted");
+    const clicked = creditedSignal(p, "clicked");
+    const replied = creditedSignal(p, "positiveReply");
+    if (!contacted && !clicked && !replied) continue;
     const day = p.servedAt ? p.servedAt.slice(0, 10) : "";
     const key = [p.campaignId ?? "", p.workflowSlug ?? "", day].join(BUCKET_SEP);
     const b = buckets.get(key) ?? [0, 0, 0];
-    if (p.signals.contacted) b[0] += 1;
-    if (p.signals.clicked) b[1] += 1;
-    if (p.signals.positiveReply) b[2] += 1;
+    if (contacted) b[0] += 1;
+    if (clicked) b[1] += 1;
+    if (replied) b[2] += 1;
     buckets.set(key, b);
   }
   return { serveDatesStated: serveDatesStated(persons), buckets };
@@ -101,7 +106,8 @@ async function buildCell(featureSlug: string): Promise<FleetCell> {
 }
 
 /** The stored cell's key: the channel, and the stored FORMAT (bump it when {@link encodeCell} changes). */
-const storeKeyOf = (featureSlug: string) => `${featureSlug}|cell=v1`;
+// v2 (OUTCOME-BEFORE-WORKFLOW-1015): buckets hold only what each row EARNED; a v1 cell is never adopted.
+const storeKeyOf = (featureSlug: string) => `${featureSlug}|cell=v2`;
 /** How long one process may hold a rebuild before another takes over (a build walks the fleet: minutes). */
 const BUILD_CLAIM_MS = 10 * 60_000;
 /** How often a process whose cell has gone stale looks for a newer one another process stored. */
