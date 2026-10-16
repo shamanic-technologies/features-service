@@ -231,7 +231,7 @@ export interface CatalogueInputs {
   offerRates?: ReadonlyMap<string, { ratePct: number; source: "offer_measured" | "offer_stated" | "offer_team_measured" }>;
   /** The trigger types stored (`channel_trigger_types`: the coded ones and those declared at run time). The coded
    *  list (`lib/channel-triggers.ts`) is read in any case: it is what boot upserts. */
-  triggers?: ReadonlyArray<{ id: string; label: string; fromStep?: string | null }>;
+  triggers?: ReadonlyArray<{ id: string; label: string; fromStep?: string | null; kind?: string | null }>;
   /**
    * TRIGGER-HEADED paths stated through the catalogue creates (owner 2026-10-15: the trigger sits at the FUNNEL head, so
    * a reactive funnel reuses the proactive pipes and their workflows): each a trigger + the legs from its step to Paid
@@ -453,6 +453,9 @@ export interface CatalogueModel {
   /** Trigger slug -> the step its rule starts from (an outcome trigger's outcome; a delay trigger's anchor); null on a
    *  step-less trigger. What a trigger-headed path's first leg must leave from. */
   triggerSteps: Map<string, string | null>;
+  /** The `any_of` triggers (`lead_event`): they stand at EVERY step (any fact about a person), so a path they head may
+   *  start on any leg, Start included. Absent = none. */
+  anyStepTriggers?: ReadonlySet<string>;
   /** PURE: a chain's leg rates, the same rule every path of the model uses (a trigger-headed path built on demand). */
   ratesOfChain: (chain: ReadonlyArray<{ legKey: string; fromStep: string | null; toStep: string }>) => CataloguePath["rates"];
   lifetimeRevenueUsd: number | null;
@@ -856,6 +859,7 @@ export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
   const triggerTypes = [...CHANNEL_TRIGGER_TYPES, ...(inputs.triggers ?? [])];
   const triggers = new Map<string, TriggerRef>(triggerTypes.map((t) => [t.id, { slug: t.id, name: t.label }]));
   const triggerSteps = new Map<string, string | null>(triggerTypes.map((t) => [t.id, t.fromStep ?? null]));
+  const anyStepTriggers = new Set(triggerTypes.filter((t) => t.kind === "any_of").map((t) => t.id));
   const model: CatalogueModel = {
     steps,
     pipes,
@@ -863,6 +867,7 @@ export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
     pathAliases,
     triggers,
     triggerSteps,
+    anyStepTriggers,
     ratesOfChain,
     lifetimeRevenueUsd: inputs.lifetimeRevenueUsd,
     lifetimeRevenueBasis: inputs.lifetimeRevenueBasis ?? "fleet",
@@ -907,14 +912,17 @@ export type TriggerHeadRefusal = "trigger_not_found" | "trigger_without_step" | 
 /** PURE: why `triggerId` cannot head `legKeys` (see `triggerHeadedPath`), or null. */
 export function triggerHeadRefusal(model: CatalogueModel, triggerId: string, legKeys: readonly string[]): TriggerHeadRefusal | null {
   if (!model.triggers.has(triggerId)) return "trigger_not_found";
+  // An `any_of` trigger (Lead event) stands at every step: whatever fact happened, the first leg takes the person from
+  // there (or from Start); who is worth acting on is the pipe's tactic/strategy (LEAD-EVENT-TRIGGER-1016).
+  const anyStep = model.anyStepTriggers?.has(triggerId) === true;
   const step = model.triggerSteps.get(triggerId) ?? null;
   // A step-less trigger (Follow-up Due, Email Pushed Via API) heads no path here: re-anchoring those is parked (D).
-  if (step === null) return "trigger_without_step";
+  if (step === null && !anyStep) return "trigger_without_step";
   const legs = legKeys.map((k) => pipesOnLeg(model, k)[0] ?? null);
   if (legs.length === 0 || legs.some((l) => l === null)) return "path_invalid";
-  if (legs[0]!.fromStep !== step) return "trigger_step_mismatch";
+  if (!anyStep && legs[0]!.fromStep !== step) return "trigger_step_mismatch";
   for (let i = 1; i < legs.length; i += 1) if (legs[i]!.fromStep !== legs[i - 1]!.toStep) return "path_invalid";
-  const steps = [step, ...legs.map((l) => l!.toStep)];
+  const steps = [...(anyStep ? [legs[0]!.fromStep ?? "start"] : [step]), ...legs.map((l) => l!.toStep)];
   if (new Set(steps).size !== steps.length || legs[legs.length - 1]!.toStep !== "paid_client") return "path_invalid";
   return null;
 }
@@ -934,7 +942,7 @@ export function triggerHeadedPath(model: CatalogueModel, triggerId: string, legK
     id: triggerHeadedPathId(triggerId, legKeys),
     legKeys: [...legKeys],
     type: "reactive",
-    steps: [chain[0].fromStep!, ...chain.map((l) => l.toStep)],
+    steps: [chain[0].fromStep ?? "start", ...chain.map((l) => l.toStep)].filter((s) => s !== "start"),
     rates: model.ratesOfChain(chain),
     triggerId,
   };

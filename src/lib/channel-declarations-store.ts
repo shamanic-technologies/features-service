@@ -17,7 +17,7 @@ import {
   features,
 } from "../db/schema.js";
 import { registerDeclaredSteps, type ChannelStepKey } from "./acquisition-channels.js";
-import { canonicalTriggerId } from "./channel-triggers.js";
+import { canonicalTriggerId, withAnyOfMembers } from "./channel-triggers.js";
 import { registerTriggerConditions } from "./trigger-conditions.js";
 import { withOutcomeTriggers } from "./outcome-vocabulary.js";
 import { registerDeclaredLegRates } from "./default-leg-rates.js";
@@ -353,7 +353,8 @@ export async function listTriggerCatalogue(): Promise<TriggerTypeRecord[]> {
   const [stored, steps] = await Promise.all([listTriggerTypes(), listDeclaredSteps()]);
   // ONE trigger per fact: a merged id is never listed (it resolves to its target, `canonicalTriggerId`).
   const triggers = stored.filter((t) => canonicalTriggerId(t.id) === t.id);
-  return withOutcomeTriggers(triggers, steps, (g) => ({ ...g, kind: g.kind as TriggerTypeRecord["kind"] }));
+  // An `any_of` trigger (`lead_event`) names its members, every fact trigger listed here, generated outcome ones included.
+  return withAnyOfMembers(withOutcomeTriggers(triggers, steps, (g) => ({ ...g, kind: g.kind as TriggerTypeRecord["kind"] })));
 }
 
 export async function listDeclaredLegRates(): Promise<DeclaredLegRate[]> {

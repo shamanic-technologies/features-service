@@ -112,7 +112,7 @@ vi.mock("../lib/channel-declarations-store.js", async () => {
       mem.paths.splice(i, 1);
       return { retiredAt: "2026-10-16T10:00:00.000Z" };
     },
-    listTriggerCatalogue: async () => (await import("../lib/outcome-vocabulary.js")).withOutcomeTriggers(mem.triggers, mem.steps ?? [], (g: any) => g),
+    listTriggerCatalogue: async () => (await import("../lib/channel-triggers.js")).withAnyOfMembers((await import("../lib/outcome-vocabulary.js")).withOutcomeTriggers(mem.triggers, mem.steps ?? [], (g: any) => g)),
     listDeclaredChannels: async () => [],
     listDeclaredLegs: async () => mem.legs,
     listDeclaredSalesPaths: async () => mem.paths,
@@ -713,6 +713,31 @@ describe("agent catalogue creates (data, never a PR)", () => {
       .set(KEY)
       .send({ pipeIds: ["ai-meeting-booking|conversation_to_meeting_booked", "your-team-meeting-attendance|meeting_booked_to_meeting_attended", "your-team-closing-calls|meeting_attended_to_paid_client"], triggerId: "positive_reply_received", createdBy: "agent" });
     expect(same.body.id).toBe("conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client");
+  });
+
+  it("LEAD EVENT heads a funnel from ANY step, Start included, reusing existing pipes (LEAD-EVENT-TRIGGER-1016)", async () => {
+    // Lead event -> AI follow-up -> Paid client, on the declared Start -> Paid client follow-up pipe.
+    mem.legs.push({ channelSlug: "ai-follow-up-email", legKey: "start_to_paid_client", fromStep: null, toStep: "paid_client", mode: "reactive", triggerId: "follow_up_due", published: true, createdBy: "s", requestedByOrgId: null, createdAt: "", updatedAt: "" });
+    const followUp = await request(app).post("/internal/catalogue/sales-funnels").set(KEY).send({ pipeIds: ["ai-follow-up-email|start_to_paid_client"], triggerId: "lead_event", createdBy: "agent" });
+    expect(followUp.status).toBe(201);
+    expect(followUp.body.id).toBe("trigger:lead_event+start_to_paid_client@ai-follow-up-email");
+    expect(followUp.body).toMatchObject({ type: "reactive", trigger: { slug: "lead_event", name: "Lead event" }, triggerLabel: "Lead event", mixed: false });
+    // Lead event -> AI Instant Call -> Booking call -> ... -> Paid client: the first leg leaves from Positive reply.
+    const call = await request(app)
+      .post("/internal/catalogue/sales-funnels")
+      .set(KEY)
+      .send({
+        pipeIds: ["ai-instant-call|conversation_to_booking_call", "your-team-booking-calls|booking_call_to_meeting_booked", "your-team-meeting-attendance|meeting_booked_to_meeting_attended", "your-team-closing-calls|meeting_attended_to_paid_client"],
+        triggerId: "lead_event",
+        createdBy: "agent",
+      });
+    expect(call.status).toBe(201);
+    expect(call.body.id).toBe("trigger:lead_event+conversation_to_booking_call@ai-instant-call+booking_call_to_meeting_booked+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client");
+    expect(call.body.trigger).toEqual({ slug: "lead_event", name: "Lead event" });
+    // Both read back by id; the chain rule still holds (a broken chain is refused).
+    expect((await request(app).get(`/internal/catalogue/sales-funnels/${encodeURIComponent(call.body.id)}`).set(KEY)).status).toBe(200);
+    const broken = await request(app).post("/internal/catalogue/sales-funnels").set(KEY).send({ pipeIds: ["ai-instant-call|conversation_to_booking_call", "your-team-closing-calls|meeting_attended_to_paid_client"], triggerId: "lead_event", createdBy: "agent" });
+    expect(broken.status).toBe(400);
   });
 
   it("a REACTIVE-only funnel starts on a trigger step: the two campaign-service converts are creatable (owner 2026-10-10)", async () => {

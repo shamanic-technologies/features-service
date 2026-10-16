@@ -28429,9 +28429,10 @@
                     "delay",
                     "poll",
                     "reported",
-                    "github_issue_in_prod"
+                    "github_issue_in_prod",
+                    "any_of"
                   ],
-                  "description": "`event`: a service detects something on a lead. `delay`: N days after a step, if nothing happened. `poll`: a new item appeared at a source. `reported`: a caller reports each occurrence to campaign-service's trigger-events record route (`params.reportedBy` names who). `github_issue_in_prod`: campaign-service's detector sees the GitHub issue a campaign waits on (stated per campaign at campaign-service) reach production."
+                  "description": "`event`: a service detects something on a lead. `delay`: N days after a step, if nothing happened. `poll`: a new item appeared at a source. `reported`: a caller reports each occurrence to campaign-service's trigger-events record route (`params.reportedBy` names who). `github_issue_in_prod`: campaign-service's detector sees the GitHub issue a campaign waits on (stated per campaign at campaign-service) reach production. `any_of`: fires whenever any of its member triggers fires (`params.memberTriggerIds`); ONE such trigger, `lead_event` (\"Lead event\": any fact about a person), computed by campaign-service from its members, never callable, never declarable."
                 },
                 "params": {
                   "type": "object",
@@ -28439,7 +28440,7 @@
                   "additionalProperties": {
                     "nullable": true
                   },
-                  "description": "The kind's parameters: `delay` `{afterStep, days | minutes, unlessStep?}`, `poll` `{source, everyMinutes}`, `reported` `{reportedBy}` on a declared one; null on an event and on a coded trigger."
+                  "description": "The kind's parameters: `delay` `{afterStep, days | minutes, unlessStep?}`, `poll` `{source, everyMinutes}`, `reported` `{reportedBy}` on a declared one; `any_of` `{memberTriggerIds: string[]}` = the canonical trigger ids it fires on (every fact about a person: every entry-door trigger but our own actions `lead_found`, `email_sent`, `email_pushed_via_api` and our requests `follow_up_due`, `github_issue_in_prod`; a fact trigger declared later joins by itself); null on an event and on another coded trigger."
                 },
                 "type": {
                   "type": "string",
@@ -48118,7 +48119,8 @@
                               "delay",
                               "poll",
                               "reported",
-                              "github_issue_in_prod"
+                              "github_issue_in_prod",
+                              "any_of"
                             ]
                           },
                           "params": {
@@ -48223,7 +48225,8 @@
                       "delay",
                       "poll",
                       "reported",
-                      "github_issue_in_prod"
+                      "github_issue_in_prod",
+                      "any_of"
                     ]
                   },
                   "fromStep": {
@@ -48312,7 +48315,8 @@
                         "delay",
                         "poll",
                         "reported",
-                        "github_issue_in_prod"
+                        "github_issue_in_prod",
+                        "any_of"
                       ]
                     },
                     "params": {
@@ -48447,7 +48451,8 @@
                         "delay",
                         "poll",
                         "reported",
-                        "github_issue_in_prod"
+                        "github_issue_in_prod",
+                        "any_of"
                       ]
                     },
                     "params": {
@@ -48600,7 +48605,8 @@
                         "delay",
                         "poll",
                         "reported",
-                        "github_issue_in_prod"
+                        "github_issue_in_prod",
+                        "any_of"
                       ]
                     },
                     "params": {
@@ -50135,7 +50141,7 @@
                   },
                   "triggerId": {
                     "type": "string",
-                    "description": "A trigger at the HEAD (owner 2026-10-15: the trigger sits at the funnel head, so a reactive funnel reuses the proactive pipes and their workflows): the first leg must leave from the trigger's step (an outcome trigger's outcome, a delay trigger's anchor). The id becomes `trigger:<triggerId>+<legs>`. 404 `trigger_not_found`, 400 `trigger_without_step` (a step-less trigger heads nothing here), `trigger_step_mismatch`, `path_invalid`. A sales funnel whose first pipe already answers that trigger is the existing reactive funnel (its own id)."
+                    "description": "A trigger at the HEAD (owner 2026-10-15: the trigger sits at the funnel head, so a reactive funnel reuses the proactive pipes and their workflows): the first leg must leave from the trigger's step (an outcome trigger's outcome, a delay trigger's anchor); an `any_of` trigger (`lead_event`) stands at every step, so its first leg may leave from any step or from Start. The id becomes `trigger:<triggerId>+<legs>`. 404 `trigger_not_found`, 400 `trigger_without_step` (a step-less trigger heads nothing here), `trigger_step_mismatch`, `path_invalid`. A sales funnel whose first pipe already answers that trigger is the existing reactive funnel (its own id)."
                   },
                   "createdBy": {
                     "type": "string",
@@ -55109,7 +55115,7 @@
                   },
                   "triggerId": {
                     "type": "string",
-                    "description": "A trigger at the HEAD (owner 2026-10-15: the trigger sits at the funnel head, so a reactive funnel reuses the proactive pipes and their workflows): the first leg must leave from the trigger's step (an outcome trigger's outcome, a delay trigger's anchor). The id becomes `trigger:<triggerId>+<legs>`. 404 `trigger_not_found`, 400 `trigger_without_step` (a step-less trigger heads nothing here), `trigger_step_mismatch`, `path_invalid`. A sales funnel whose first pipe already answers that trigger is the existing reactive funnel (its own id)."
+                    "description": "A trigger at the HEAD (owner 2026-10-15: the trigger sits at the funnel head, so a reactive funnel reuses the proactive pipes and their workflows): the first leg must leave from the trigger's step (an outcome trigger's outcome, a delay trigger's anchor); an `any_of` trigger (`lead_event`) stands at every step, so its first leg may leave from any step or from Start. The id becomes `trigger:<triggerId>+<legs>`. 404 `trigger_not_found`, 400 `trigger_without_step` (a step-less trigger heads nothing here), `trigger_step_mismatch`, `path_invalid`. A sales funnel whose first pipe already answers that trigger is the existing reactive funnel (its own id)."
                   },
                   "createdBy": {
                     "type": "string",
