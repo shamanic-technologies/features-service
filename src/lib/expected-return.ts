@@ -368,14 +368,29 @@ const FRESH_MS = 120_000;
 const STALE_MS = 30 * 60_000;
 /** How long a cold read waits on the first computation before answering `expected_model_computing`. */
 const COLD_WAIT_MS = 25_000;
+/**
+ * How long a read that SHOWS a table of rows (the Campaigns table, one model read per row) waits on a cold model:
+ * the row answers `expected_model_computing` past it and the next poll reads the memo. Waiting `COLD_WAIT_MS` per
+ * row made the table answer in 20-40 s whenever the model could not finish (prod 2026-10-16, SFC-MONEY-SLOW-1016).
+ */
+export const TABLE_COLD_WAIT_MS = 1_000;
 /** How long the model waits on the fleet-cost build right after a boot. */
 const FLEET_WAIT_MS = 20_000;
+/**
+ * How long a FAILED model computation is remembered (SFC-MONEY-SLOW-1016). Without it every read restarted the
+ * computation and waited on it again: with the fleet-cost build failing (a sibling cutting its stream), each
+ * Campaigns read waited 20 s per batch of rows, and the second read was no faster than the first. Within the hold
+ * a read answers the failure at once (`expected_model_unavailable`, logged once per computation, never a figure).
+ */
+const FAILURE_HOLD_MS = 60_000;
 const MAX_ENTRIES = 2_000;
 
 interface Entry {
   at: number;
   value?: OfferExpectedModel | null;
   pending?: Promise<OfferExpectedModel | null>;
+  /** The last computation failed (no value to serve): when, and why. */
+  failed?: { at: number; error: Error };
 }
 const entries = new Map<string, Entry>();
 
@@ -411,7 +426,12 @@ async function computeModel(identity: ExpectedIdentity, brandId: string, offerId
  * One offer's model, memoized (fresh 2 min, served stale up to 30 min while recomputed). Null = the offer is not
  * the brand's. Throws `ExpectedModelComputing` when a cold computation outlasts `COLD_WAIT_MS` (it keeps going).
  */
-export async function offerExpectedModel(identity: ExpectedIdentity, brandId: string, offerId: string): Promise<OfferExpectedModel | null> {
+export async function offerExpectedModel(
+  identity: ExpectedIdentity,
+  brandId: string,
+  offerId: string,
+  coldWaitMs: number = COLD_WAIT_MS,
+): Promise<OfferExpectedModel | null> {
   const key = `${identity.orgId}|${brandId}|${offerId}`;
   const now = Date.now();
   const entry = entries.get(key);
@@ -429,7 +449,7 @@ export async function offerExpectedModel(identity: ExpectedIdentity, brandId: st
         const prev = entries.get(key);
         if (prev?.pending === pending) {
           if ("value" in prev) entries.set(key, { at: prev.at, value: prev.value });
-          else entries.delete(key);
+          else entries.set(key, { at: 0, failed: { at: Date.now(), error: error as Error } });
         }
       },
     );
@@ -443,13 +463,17 @@ export async function offerExpectedModel(identity: ExpectedIdentity, brandId: st
       return entry.value!;
     }
   }
+  if (entry?.failed && !entry.pending && now - entry.failed.at < FAILURE_HOLD_MS) throw entry.failed.error;
+  // A table read (short wait) never waits on a computation an EARLIER read started: it answers
+  // `expected_model_computing` at once and a later poll reads the memo (SFC-MONEY-SLOW-1016).
+  const waitMs = entry?.pending && coldWaitMs < COLD_WAIT_MS ? 0 : coldWaitMs;
   const pending = entry?.pending ?? start();
   let timer: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([
       pending,
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new ExpectedModelComputing(offerId)), COLD_WAIT_MS);
+        timer = setTimeout(() => reject(new ExpectedModelComputing(offerId)), waitMs);
       }),
     ]);
   } finally {
@@ -474,8 +498,8 @@ async function soft(what: string, run: () => Promise<ExpectedReturn>): Promise<E
   }
 }
 
-const modelOrThrow = async (identity: ExpectedIdentity, brandId: string, offerId: string): Promise<OfferExpectedModel> => {
-  const m = await offerExpectedModel(identity, brandId, offerId);
+const modelOrThrow = async (identity: ExpectedIdentity, brandId: string, offerId: string, coldWaitMs?: number): Promise<OfferExpectedModel> => {
+  const m = await offerExpectedModel(identity, brandId, offerId, coldWaitMs);
   if (m === null) throw new Error(`offer ${offerId} is not an offer of brand ${brandId}`);
   return m;
 };
@@ -485,16 +509,17 @@ export function expectedReturnForOffer(identity: ExpectedIdentity, brandId: stri
   return soft(`offer ${offerId}`, async () => withMeasuredReturn(expectedForOffer(await modelOrThrow(identity, brandId, offerId)), measured));
 }
 
-/** A sales funnel campaign row. */
+/** A sales funnel campaign row (a table row: a cold model waits `TABLE_COLD_WAIT_MS` unless told otherwise). */
 export function expectedReturnForFunnelCampaign(
   identity: ExpectedIdentity,
   brandId: string,
   offerId: string,
   salesFunnelId: string,
   measured: MeasuredReturnPair | null | undefined,
+  coldWaitMs: number = TABLE_COLD_WAIT_MS,
 ): Promise<ExpectedReturn> {
   return soft(`funnel campaign ${salesFunnelId}`, async () =>
-    withMeasuredReturn(expectedForCombination(await modelOrThrow(identity, brandId, offerId), salesFunnelId), measured),
+    withMeasuredReturn(expectedForCombination(await modelOrThrow(identity, brandId, offerId, coldWaitMs), salesFunnelId), measured),
   );
 }
 

@@ -21,6 +21,7 @@ import { fetchSalesFunnelCampaigns, type SalesFunnelUnitRow, type SalesFunnelCam
 import { funnelCopiesFor } from "./agent-catalogue.js";
 import { assertBrandHeld, BrandOwnershipError } from "../lib/brand-ownership.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
+import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import { fetchLeadBucketCounts, type LeadBucketCounts } from "../lib/lead-bucket-counts-client.js";
 import { fetchFollowupActionRows, type FollowupActionRow } from "../lib/followup-actions-client.js";
 import { fetchStepOutcomes } from "../lib/step-outcomes-client.js";
@@ -113,6 +114,8 @@ export function funnelCampaignActivity(row: SalesFunnelCampaignRow, brandId: str
       pricing,
     }),
     orgId: headers.orgId,
+    // This route's own response shape (SFC-MONEY-SLOW-1016): a deploy changing another route keeps the cell warm.
+    responseShape: routeResponseShapeFingerprint("/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/activity"),
     compute: async () => {
       const { copies, pipeSteps } = await funnelCopiesFor([row.salesFunnelId]);
       const copy = copies.get(row.salesFunnelId) ?? null;
