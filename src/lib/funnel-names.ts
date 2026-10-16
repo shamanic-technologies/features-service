@@ -272,7 +272,10 @@ export function funnelNameCandidates(key: string, triggerOf: PipeTriggerOf = () 
     if (second) for (const r of results) add(action, actionOf(second.channel!), r);
   } else {
     const firstTrigger = legs[0]?.channel ? triggerOf(legs[0].channel, `${legs[0].fromStep}_to_${legs[0].toStep}`) : null;
-    const answers = (firstTrigger ? answersOfTrigger(firstTrigger) : undefined) ?? ANSWERS[reactiveHead ?? startsAt] ?? "Lead";
+    // A funnel HEADED by a condition instance answers the people of its condition (`trigger:<instance>+...`).
+    const headCondition = headTrigger !== null ? triggerCondition(headTrigger) : null;
+    const answers = (headCondition ? ANSWERS[headCondition.afterStep] : undefined)
+      ?? (firstTrigger ? answersOfTrigger(firstTrigger) : undefined) ?? ANSWERS[reactiveHead ?? startsAt] ?? "Lead";
     add(strategyWho, answers, action);
     add(answers, action);
     add(answers, action, result);

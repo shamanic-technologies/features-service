@@ -82,6 +82,7 @@ import { funnelTriggerLabel } from "../lib/funnel-descriptions.js";
 import { pluralLabelOf, triggerOutcomeKeyOf, triggerTypeOf, triggerValueOf } from "../lib/outcome-vocabulary.js";
 import { canonicalTriggerId, IncludeInlineQueryError, includeInlineOf, isEntryDoor, triggerCallable } from "../lib/channel-triggers.js";
 import { funnelShortDescription, type ShortDescriptionUnavailableReason } from "../lib/funnel-short-descriptions.js";
+import { triggerCondition } from "../lib/trigger-conditions.js";
 import { LEAD_SOURCING_SLUG, SOURCE_LEG_KEY } from "../lib/sourcing-origins.js";
 
 /** The Lead Sourcing pipe, named in the one-channel-per-leg refusal. */
@@ -2171,9 +2172,12 @@ export function funnelShortDescriptionOf(model: CatalogueModel, f: CatalogueFunn
   const view = funnelPathView(model, f);
   const bySlug = new Map(model.channels.map((c) => [c.slug, c] as const));
   const first = f.legs[0]?.pipe ?? null;
+  // A funnel HEADED by a condition instance answers the people of that condition, whatever its first pipe answers
+  // ("trigger:signup_not_paid_5_min+signup_to_paid_client@ai-follow-up-email": signups who have not paid yet).
+  const headCondition = f.headTriggerId && triggerCondition(f.headTriggerId) ? f.headTriggerId : null;
   return funnelShortDescription({
-    reactive: first?.mode === "reactive",
-    triggerId: first?.mode === "reactive" ? first.triggerId : null,
+    reactive: headCondition !== null || first?.mode === "reactive",
+    triggerId: headCondition ?? (first?.mode === "reactive" ? first.triggerId : null),
     legs: view.legs.map((l) => ({
       fromStep: l.fromStep === "start" ? null : l.fromStep,
       toStep: l.toStep,
