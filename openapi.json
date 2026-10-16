@@ -28456,7 +28456,7 @@
                 },
                 "callable": {
                   "type": "boolean",
-                  "description": "An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger and on the triggers a caller reports today (`kind` reported: follow_up_due, email_pushed_via_api, parked); false on what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`) and on the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."
+                  "description": "An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger; on a condition trigger ONLY for the closed legacy list (follow_up_due, email_pushed_via_api, follow_up_date_reached; parked C3/D). False on every other condition: what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`), a fact our own services detect in data we hold (`whatsapp_number_given`, crm-service's phone watch), and the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."
                 }
               },
               "required": [
@@ -43596,9 +43596,25 @@
         "tags": [
           "Public"
         ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "Absent or `false` = ENTRY DOORS only (2026-10-16): the triggers a reactive campaign is offered on. `true` adds the INLINE triggers (`on_demand`, `lead_requested`: one of our services asking another inside a run, never offered to a client), for our own services. Anything else = 400 `include_inline_unrecognised`. A read by id answers every declared trigger."
+            },
+            "required": false,
+            "description": "Absent or `false` = ENTRY DOORS only (2026-10-16): the triggers a reactive campaign is offered on. `true` adds the INLINE triggers (`on_demand`, `lead_requested`: one of our services asking another inside a run, never offered to a client), for our own services. Anything else = 400 `include_inline_unrecognised`. A read by id answers every declared trigger.",
+            "name": "includeInline",
+            "in": "query"
+          }
+        ],
         "responses": {
           "200": {
-            "description": "The acquisition-channel catalogue",
+            "description": "The acquisition-channel catalogue (`triggers[]`: entry doors only unless `includeInline=true`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -43606,6 +43622,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "`include_inline_unrecognised`."
           }
         }
       }
@@ -47365,6 +47384,10 @@
                     "type": "string",
                     "description": "The staff identity making the write."
                   },
+                  "runnableOnly": {
+                    "type": "boolean",
+                    "description": "True when the write acts for a CUSTOMER (the gateway sets it for a non-staff key, 2026-10-16): a new channel is staff only, 403 `staff_only` (a new one is a feature request). Absent or false = staff. Anything else = 400 `runnable_only_invalid`."
+                  },
                   "requestedByOrgId": {
                     "type": "string",
                     "nullable": true,
@@ -47704,6 +47727,10 @@
                   "createdBy": {
                     "type": "string"
                   },
+                  "runnableOnly": {
+                    "type": "boolean",
+                    "description": "True when the write acts for a CUSTOMER (the gateway sets it for a non-staff key, 2026-10-16): a new pipe is staff only, 403 `staff_only` (a new one is a feature request). Absent or false = staff. Anything else = 400 `runnable_only_invalid`."
+                  },
                   "requestedByOrgId": {
                     "type": "string",
                     "nullable": true,
@@ -48020,10 +48047,26 @@
     },
     "/internal/declarations/trigger-types": {
       "get": {
-        "summary": "List every trigger type (internal, api-key)",
+        "summary": "List the trigger types: entry doors only unless includeInline=true (internal, api-key)",
         "description": "RUN-TIME DECLARATIONS (owner 2026-10-09: a declaration is DATA, never a PR). A staff caller (the dashboard Copilot through the gateway) creates channels, legs on a channel, trigger types and sales paths. Service-key only: a channel is shared by every client, so a write changes what every org can buy; `requestedByOrgId` records which client asked (provenance, never scope). A declared channel or leg is LIVE the moment it is created, for every client (owner 2026-10-12: never a draft waiting on staff publish); whether a pipe can RUN follows from facts (`runnable`: the customer's own team always, a platform pipe on a managed channel or holding an active workflow). Staff may still set `published: false` to hide one. Every write states `createdBy` / `updatedBy`. Errors answer `{error, reason}` with a named `reason`.",
         "tags": [
           "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "Absent or `false` = ENTRY DOORS only (2026-10-16): the triggers a reactive campaign is offered on. `true` adds the INLINE triggers (`on_demand`, `lead_requested`: one of our services asking another inside a run, never offered to a client), for our own services. Anything else = 400 `include_inline_unrecognised`. A read by id answers every declared trigger."
+            },
+            "required": false,
+            "description": "Absent or `false` = ENTRY DOORS only (2026-10-16): the triggers a reactive campaign is offered on. `true` adds the INLINE triggers (`on_demand`, `lead_requested`: one of our services asking another inside a run, never offered to a client), for our own services. Anything else = 400 `include_inline_unrecognised`. A read by id answers every declared trigger.",
+            "name": "includeInline",
+            "in": "query"
+          }
         ],
         "responses": {
           "200": {
@@ -48100,7 +48143,7 @@
                           },
                           "callable": {
                             "type": "boolean",
-                            "description": "An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger and on the triggers a caller reports today (`kind` reported: follow_up_due, email_pushed_via_api, parked); false on what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`) and on the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."
+                            "description": "An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger; on a condition trigger ONLY for the closed legacy list (follow_up_due, email_pushed_via_api, follow_up_date_reached; parked C3/D). False on every other condition: what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`), a fact our own services detect in data we hold (`whatsapp_number_given`, crm-service's phone watch), and the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."
                           },
                           "displayOrder": {
                             "type": "integer"
@@ -48141,6 +48184,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "`include_inline_unrecognised`."
           }
         }
       },
@@ -48198,6 +48244,10 @@
                   },
                   "createdBy": {
                     "type": "string"
+                  },
+                  "runnableOnly": {
+                    "type": "boolean",
+                    "description": "True when the write acts for a CUSTOMER (the gateway sets it for a non-staff key, 2026-10-16): a new trigger is staff only, 403 `staff_only` (a new one is a feature request). Absent or false = staff. Anything else = 400 `runnable_only_invalid`."
                   },
                   "requestedByOrgId": {
                     "type": "string",
@@ -48287,7 +48337,7 @@
                     },
                     "callable": {
                       "type": "boolean",
-                      "description": "An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger and on the triggers a caller reports today (`kind` reported: follow_up_due, email_pushed_via_api, parked); false on what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`) and on the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."
+                      "description": "An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger; on a condition trigger ONLY for the closed legacy list (follow_up_due, email_pushed_via_api, follow_up_date_reached; parked C3/D). False on every other condition: what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`), a fact our own services detect in data we hold (`whatsapp_number_given`, crm-service's phone watch), and the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."
                     },
                     "displayOrder": {
                       "type": "integer"
@@ -48422,7 +48472,7 @@
                     },
                     "callable": {
                       "type": "boolean",
-                      "description": "An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger and on the triggers a caller reports today (`kind` reported: follow_up_due, email_pushed_via_api, parked); false on what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`) and on the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."
+                      "description": "An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger; on a condition trigger ONLY for the closed legacy list (follow_up_due, email_pushed_via_api, follow_up_date_reached; parked C3/D). False on every other condition: what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`), a fact our own services detect in data we hold (`whatsapp_number_given`, crm-service's phone watch), and the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."
                     },
                     "displayOrder": {
                       "type": "integer"
@@ -48575,7 +48625,7 @@
                     },
                     "callable": {
                       "type": "boolean",
-                      "description": "An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger and on the triggers a caller reports today (`kind` reported: follow_up_due, email_pushed_via_api, parked); false on what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`) and on the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."
+                      "description": "An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger; on a condition trigger ONLY for the closed legacy list (follow_up_due, email_pushed_via_api, follow_up_date_reached; parked C3/D). False on every other condition: what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`), a fact our own services detect in data we hold (`whatsapp_number_given`, crm-service's phone watch), and the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."
                     },
                     "displayOrder": {
                       "type": "integer"
@@ -49297,6 +49347,10 @@
                     "nullable": true,
                     "description": "The endpoint or service producing it."
                   },
+                  "runnableOnly": {
+                    "type": "boolean",
+                    "description": "True when the write acts for a CUSTOMER (the gateway sets it for a non-staff key, 2026-10-16): a new outcome is staff only, 403 `staff_only` (a new one is a feature request). Absent or false = staff. Anything else = 400 `runnable_only_invalid`."
+                  },
                   "createdBy": {
                     "type": "string",
                     "description": "Who makes the write (staff identity or the agent)."
@@ -49435,6 +49489,9 @@
           },
           "401": {
             "description": "Missing or wrong service key."
+          },
+          "403": {
+            "description": "`staff_only`: a customer write (`runnableOnly: true`) on what a customer never creates (a pipe, an outcome)."
           },
           "404": {
             "description": "A referenced object does not exist (`*_not_found`)."
@@ -50072,6 +50129,10 @@
                       "type": "string"
                     }
                   },
+                  "runnableOnly": {
+                    "type": "boolean",
+                    "description": "True when the write acts for a CUSTOMER (the gateway sets it for a non-staff key, 2026-10-16): every leg must be worked by at least one pipe we run today (`runnable`), else 400 `leg_not_runnable` naming the leg. Absent or false = staff, any leg. Anything else = 400 `runnable_only_invalid`."
+                  },
                   "triggerId": {
                     "type": "string",
                     "description": "A trigger at the HEAD (owner 2026-10-15: the trigger sits at the funnel head, so a reactive funnel reuses the proactive pipes and their workflows): the first leg must leave from the trigger's step (an outcome trigger's outcome, a delay trigger's anchor). The id becomes `trigger:<triggerId>+<legs>`. 404 `trigger_not_found`, 400 `trigger_without_step` (a step-less trigger heads nothing here), `trigger_step_mismatch`, `path_invalid`. A sales funnel whose first pipe already answers that trigger is the existing reactive funnel (its own id)."
@@ -50316,6 +50377,9 @@
           },
           "401": {
             "description": "Missing or wrong service key."
+          },
+          "403": {
+            "description": "`staff_only`: a customer write (`runnableOnly: true`) on what a customer never creates (a pipe, an outcome)."
           },
           "404": {
             "description": "A referenced object does not exist (`*_not_found`)."
@@ -51508,6 +51572,10 @@
                     "type": "boolean",
                     "description": "Default true (live). false = a DRAFT (owner 2026-10-12): internal reads only, never runnable; the only way a PLATFORM leg may name a trigger nothing fires yet (a proposal). Publishing it later re-checks the trigger (409 `trigger_not_fired`)."
                   },
+                  "runnableOnly": {
+                    "type": "boolean",
+                    "description": "True when the write acts for a CUSTOMER (the gateway sets it for a non-staff key, 2026-10-16): a new pipe is staff only, 403 `staff_only` (a new one is a feature request). Absent or false = staff. Anything else = 400 `runnable_only_invalid`."
+                  },
                   "createdBy": {
                     "type": "string",
                     "description": "Who makes the write (staff identity or the agent)."
@@ -52305,6 +52373,9 @@
           },
           "401": {
             "description": "Missing or wrong service key."
+          },
+          "403": {
+            "description": "`staff_only`: a customer write (`runnableOnly: true`) on what a customer never creates (a pipe, an outcome)."
           },
           "404": {
             "description": "A referenced object does not exist (`*_not_found`)."
@@ -55032,6 +55103,10 @@
                       "type": "string"
                     }
                   },
+                  "runnableOnly": {
+                    "type": "boolean",
+                    "description": "True when the write acts for a CUSTOMER (the gateway sets it for a non-staff key; owner 2026-10-16): every pipe must be one we run today (the `runnable` every catalogue read serves), else 400 `pipe_not_runnable` naming the pipe and why. Absent or false = staff, any pipe. Anything else = 400 `runnable_only_invalid`."
+                  },
                   "triggerId": {
                     "type": "string",
                     "description": "A trigger at the HEAD (owner 2026-10-15: the trigger sits at the funnel head, so a reactive funnel reuses the proactive pipes and their workflows): the first leg must leave from the trigger's step (an outcome trigger's outcome, a delay trigger's anchor). The id becomes `trigger:<triggerId>+<legs>`. 404 `trigger_not_found`, 400 `trigger_without_step` (a step-less trigger heads nothing here), `trigger_step_mismatch`, `path_invalid`. A sales funnel whose first pipe already answers that trigger is the existing reactive funnel (its own id)."
@@ -56132,6 +56207,9 @@
           },
           "401": {
             "description": "Missing or wrong service key."
+          },
+          "403": {
+            "description": "`staff_only`: a customer write (`runnableOnly: true`) on what a customer never creates (a pipe, an outcome)."
           },
           "404": {
             "description": "A referenced object does not exist (`*_not_found`)."
@@ -57273,7 +57351,7 @@
     },
     "/internal/catalogue/triggers": {
       "get": {
-        "summary": "List triggers: what starts a reactive pipe (internal, api-key)",
+        "summary": "List triggers: the entry doors a reactive campaign starts on (internal, api-key)",
         "description": "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, sales funnels by what they do, in 2 or 3 plain words composed from their legs (\"Cold Email Meetings\", \"Reply Booking\"; owner 2026-10-16), pipes birds, sales paths rivers; never a name twice (a funnel whose candidates are all held is numbered, \"Cold Email Meetings 2\"), never a workflow dynasty word; a pipe or path family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`).",
         "tags": [
           "Internal"
@@ -57298,11 +57376,25 @@
             "description": "1..25, default 10.",
             "name": "limit",
             "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "Absent or `false` = ENTRY DOORS only (2026-10-16): the triggers a reactive campaign is offered on. `true` adds the INLINE triggers (`on_demand`, `lead_requested`: one of our services asking another inside a run, never offered to a client), for our own services. Anything else = 400 `include_inline_unrecognised`. A read by id answers every declared trigger."
+            },
+            "required": false,
+            "description": "Absent or `false` = ENTRY DOORS only (2026-10-16): the triggers a reactive campaign is offered on. `true` adds the INLINE triggers (`on_demand`, `lead_requested`: one of our services asking another inside a run, never offered to a client), for our own services. Anything else = 400 `include_inline_unrecognised`. A read by id answers every declared trigger.",
+            "name": "includeInline",
+            "in": "query"
           }
         ],
         "responses": {
           "200": {
-            "description": "List triggers: what starts a reactive pipe (internal, api-key)",
+            "description": "List triggers: the entry doors a reactive campaign starts on (internal, api-key)",
             "content": {
               "application/json": {
                 "schema": {
@@ -57354,12 +57446,22 @@
                           },
                           "callable": {
                             "type": "boolean",
-                            "description": "An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger and on the triggers a caller reports today (`kind` reported: follow_up_due, email_pushed_via_api, parked); false on what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`) and on the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."
+                            "description": "An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger; on a condition trigger ONLY for the closed legacy list (follow_up_due, email_pushed_via_api, follow_up_date_reached; parked C3/D). False on every other condition: what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`), a fact our own services detect in data we hold (`whatsapp_number_given`, crm-service's phone watch), and the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."
                           },
                           "valueUsd": {
                             "type": "number",
                             "nullable": true,
-                            "description": "A trigger can carry a value (owner 2026-10-15): an outcome trigger's is its outcome's fleet value (`/internal/catalogue/steps` `valueUsd`); null on a condition trigger and on an unvalued outcome."
+                            "description": "A trigger can carry a value (owner 2026-10-15): an outcome trigger's is its outcome's fleet value (`/internal/catalogue/steps` `valueUsd`). Null exactly when `valueUnavailableReason` is set."
+                          },
+                          "valueUnavailableReason": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "condition_trigger",
+                              "outcome_not_in_catalogue",
+                              "no_route_to_paid_client"
+                            ],
+                            "description": "Why `valueUsd` is null: `condition_trigger` (computed by us, no outcome of its own), `outcome_not_in_catalogue` (its outcome is missing from the step catalogue it was valued on), `no_route_to_paid_client` (no rated leg leads from its outcome to a paid client). Null when `valueUsd` is served."
                           },
                           "icon": {
                             "type": "string",
@@ -57420,6 +57522,7 @@
                           "outcomeKey",
                           "callable",
                           "valueUsd",
+                          "valueUnavailableReason",
                           "icon",
                           "color",
                           "eventIcon",
@@ -57511,12 +57614,22 @@
                     },
                     "callable": {
                       "type": "boolean",
-                      "description": "An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger and on the triggers a caller reports today (`kind` reported: follow_up_due, email_pushed_via_api, parked); false on what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`) and on the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."
+                      "description": "An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger; on a condition trigger ONLY for the closed legacy list (follow_up_due, email_pushed_via_api, follow_up_date_reached; parked C3/D). False on every other condition: what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`), a fact our own services detect in data we hold (`whatsapp_number_given`, crm-service's phone watch), and the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."
                     },
                     "valueUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "A trigger can carry a value (owner 2026-10-15): an outcome trigger's is its outcome's fleet value (`/internal/catalogue/steps` `valueUsd`); null on a condition trigger and on an unvalued outcome."
+                      "description": "A trigger can carry a value (owner 2026-10-15): an outcome trigger's is its outcome's fleet value (`/internal/catalogue/steps` `valueUsd`). Null exactly when `valueUnavailableReason` is set."
+                    },
+                    "valueUnavailableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "condition_trigger",
+                        "outcome_not_in_catalogue",
+                        "no_route_to_paid_client"
+                      ],
+                      "description": "Why `valueUsd` is null: `condition_trigger` (computed by us, no outcome of its own), `outcome_not_in_catalogue` (its outcome is missing from the step catalogue it was valued on), `no_route_to_paid_client` (no rated leg leads from its outcome to a paid client). Null when `valueUsd` is served."
                     },
                     "icon": {
                       "type": "string",
@@ -57704,6 +57817,7 @@
                     "outcomeKey",
                     "callable",
                     "valueUsd",
+                    "valueUnavailableReason",
                     "icon",
                     "color",
                     "eventIcon",
@@ -58174,6 +58288,9 @@
           },
           "401": {
             "description": "Missing or wrong service key."
+          },
+          "403": {
+            "description": "`staff_only`: a customer write (`runnableOnly: true`) on what a customer never creates (a pipe, an outcome)."
           },
           "404": {
             "description": "A referenced object does not exist (`*_not_found`)."
@@ -58961,6 +59078,9 @@
           },
           "401": {
             "description": "Missing or wrong service key."
+          },
+          "403": {
+            "description": "`staff_only`: a customer write (`runnableOnly: true`) on what a customer never creates (a pipe, an outcome)."
           },
           "404": {
             "description": "A referenced object does not exist (`*_not_found`)."
@@ -60024,6 +60144,9 @@
           },
           "401": {
             "description": "Missing or wrong service key."
+          },
+          "403": {
+            "description": "`staff_only`: a customer write (`runnableOnly: true`) on what a customer never creates (a pipe, an outcome)."
           },
           "404": {
             "description": "A referenced object does not exist (`*_not_found`)."

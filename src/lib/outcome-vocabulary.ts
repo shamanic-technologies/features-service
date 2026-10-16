@@ -9,20 +9,23 @@
  *                  The fact can happen outside our system, so it is CALLABLE (API / MCP / Copilot) through
  *                  campaign-service's one door; our own detectors ring the same door.
  *      `condition` computed by us: an outcome + a delay + "still not" another (`delay`), a source polled (`poll`), an
- *                  integration state (`github_issue_in_prod`). Never callable: we already hold the fact.
- *    Legacy exceptions, PARKED by the owner (C3 / D): the `reported` triggers (`follow_up_due`, `email_pushed_via_api`;
- *    `follow_up_date_reached` was merged into `follow_up_due` 2026-10-16, `TRIGGER_ID_MERGES`) are typed `condition` but stay callable, because a caller reports each occurrence through
- *    the door today (campaign-service, 2026-10-15). The INLINE ones (`on_demand`, `lead_requested`) are never callable.
- *  - A trigger can carry a VALUE: an outcome trigger's is its outcome's (`lib/agent-catalogue.ts` step value).
+ *                  integration state (`github_issue_in_prod`), a fact one of our services detects in data we
+ *                  already hold (`whatsapp_number_given`: crm-service's phone watch over the brand's connectors). Never
+ *                  callable: we already hold the fact (our detectors use the internal door).
+ *    Legacy exceptions, PARKED by the owner (C3 / D), the CLOSED list `LEGACY_CALLABLE_CONDITION_IDS`: the `reported`
+ *    triggers (`follow_up_due`, `email_pushed_via_api`, `follow_up_date_reached`, the last one merged into `follow_up_due`
+ *    2026-10-16, `TRIGGER_ID_MERGES`) stay callable, because a caller
+ *    reports each occurrence through the door today (campaign-service, 2026-10-15), plus `lead_requested`, which is
+ *    INLINE and so never callable anyway (`on_demand` too). Any other condition is never callable, whatever its kind:
+ *    a fact a client legitimately pushes is modelled as an OUTCOME (TRIGGER-CATALOGUE-GAPS-1016).
+ *  - A trigger can carry a VALUE: an outcome trigger's is its outcome's (`lib/agent-catalogue.ts` step value), else
+ *    null with a stated reason (`triggerValueOf`).
  *
  * A NEW outcome or trigger is a FEATURE REQUEST built with the backend that fills it (owner C1), never a bare row.
  *
  * Imports nothing: `lib/channel-triggers.ts` (loaded by `lib/acquisition-channels.ts`) reads it at module load.
  */
 export type TriggerType = "outcome" | "condition";
-
-/** The kinds a caller reports through the door (`event`: a service detects it; `reported`: a caller states it). */
-const DOOR_KINDS: ReadonlySet<string> = new Set(["event", "reported"]);
 
 /** PURE: an OUTCOME trigger is fired the moment a person reaches its step (`kind: event` + a `fromStep`). */
 export const triggerTypeOf = (t: { kind?: string | null; fromStep: string | null }): TriggerType =>
@@ -32,13 +35,45 @@ export const triggerTypeOf = (t: { kind?: string | null; fromStep: string | null
 export const triggerOutcomeKeyOf = (t: { kind?: string | null; fromStep: string | null }): string | null =>
   triggerTypeOf(t) === "outcome" ? t.fromStep : null;
 
+/** The ONLY condition triggers a caller may fire (owner-approved legacy exception, PARKED C3 / D). Closed: never add
+ *  one; a fact a client pushes is an outcome. `lead_requested` is listed by the owner but INLINE, so not callable. */
+export const LEGACY_CALLABLE_CONDITION_IDS: ReadonlySet<string> = new Set([
+  "follow_up_due",
+  "email_pushed_via_api",
+  "follow_up_date_reached",
+  "lead_requested",
+]);
+
 /**
- * PURE: may an OUTSIDE caller (API / MCP / Copilot, through campaign-service's public door) fire it? False for what we
- * compute ourselves (`delay`, `poll`, `github_issue_in_prod`) and for an INLINE trigger (`on_demand`, `lead_requested`:
- * one of our services asking another inside a run, never a fact a client holds). Our own services keep the internal
- * door for every declared trigger.
+ * PURE: may an OUTSIDE caller (API / MCP / Copilot, through campaign-service's public door) fire it? Every OUTCOME
+ * trigger, and a condition only in the closed legacy list. Never an INLINE trigger (`on_demand`, `lead_requested`: one
+ * of our services asking another inside a run, never a fact a client holds). Our own services keep the internal door
+ * for every declared trigger, so a detector (crm-service's `whatsapp_number_given`) is never refused.
  */
-export const isTriggerCallable = (t: { kind?: string | null; inline?: boolean }): boolean => t.inline !== true && DOOR_KINDS.has(t.kind ?? "event");
+export const isTriggerCallable = (t: { id: string; kind?: string | null; fromStep: string | null; inline?: boolean }): boolean => {
+  if (t.inline === true) return false;
+  return triggerTypeOf(t) === "outcome" || LEGACY_CALLABLE_CONDITION_IDS.has(t.id);
+};
+
+/** Why a trigger serves no value: a condition has no outcome of its own; an outcome is missing from the catalogue the
+ *  value was read from; or no rated route leads from it to a paid client. */
+export type TriggerValueUnavailableReason = "condition_trigger" | "outcome_not_in_catalogue" | "no_route_to_paid_client";
+
+/**
+ * PURE: a trigger's VALUE (owner 2026-10-15, MUST-HAVE 5): an outcome trigger carries its outcome's value; null always
+ * comes with a reason. `valueOfOutcome` returns undefined for an outcome it does not know, null for one it cannot value.
+ */
+export function triggerValueOf(
+  t: { kind?: string | null; fromStep: string | null },
+  valueOfOutcome: (outcomeKey: string) => number | null | undefined,
+): { valueUsd: number | null; valueUnavailableReason: TriggerValueUnavailableReason | null } {
+  const key = triggerOutcomeKeyOf(t);
+  if (key === null) return { valueUsd: null, valueUnavailableReason: "condition_trigger" };
+  const v = valueOfOutcome(key);
+  if (v === undefined) return { valueUsd: null, valueUnavailableReason: "outcome_not_in_catalogue" };
+  if (v === null) return { valueUsd: null, valueUnavailableReason: "no_route_to_paid_client" };
+  return { valueUsd: v, valueUnavailableReason: null };
+}
 
 /** The glyph a trigger is DRAWN with in a text line ("⚡ Positive reply → Meeting booked"); never part of its name (the
  *  dashboard draws its own lightning icon beside the name). */

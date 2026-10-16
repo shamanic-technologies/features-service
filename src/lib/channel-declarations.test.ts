@@ -50,7 +50,9 @@ const delayTrigger: TriggerTypeRecord = {
   createdBy: "kevin",
   requestedByOrgId: null,
 };
-const TRIGGERS = [...codeTriggers, delayTrigger];
+// A declared EVENT nothing fires (every outcome trigger in code is fired since STD-VOCAB-1016): the unfired case.
+const unfiredEvent: TriggerTypeRecord = { ...delayTrigger, id: "webinar_joined", label: "Webinar joined", kind: "event", params: null, fromStep: null, firedBy: "not_built", displayOrder: 8 };
+const TRIGGERS = [...codeTriggers, delayTrigger, unfiredEvent];
 
 const channelBody = {
   slug: "whatsapp-concierge",
@@ -117,8 +119,7 @@ describe("a leg can only name a trigger something FIRES, checked at creation (ow
   const channel = { slug: "whatsapp-concierge", managed: false, operatedBy: "platform" as const, legKeys: new Set<string>() };
 
   it("refuses a reactive leg on a trigger nothing fires, with a named 409", () => {
-    // `meeting_booked` is coded in the list but no service fires it yet.
-    refused(() => parseLegInput({ fromStep: "meeting_booked", toStep: "meeting_attended", mode: "reactive", triggerId: "meeting_booked" }, channel, TRIGGERS), 409, "trigger_not_fired");
+    refused(() => parseLegInput({ fromStep: "meeting_booked", toStep: "meeting_attended", mode: "reactive", triggerId: "webinar_joined" }, channel, TRIGGERS), 409, "trigger_not_fired");
     // A declared EVENT trigger: no generic detector can fire an arbitrary event.
     const declaredEvent: TriggerTypeRecord = { ...delayTrigger, id: "invoice_paid", kind: "event", params: null, fromStep: null };
     refused(() => parseLegInput({ fromStep: "lead_found", toStep: "conversation", mode: "reactive", triggerId: "invoice_paid" }, channel, [...TRIGGERS, declaredEvent]), 409, "trigger_not_fired");
@@ -144,14 +145,14 @@ describe("a leg can only name a trigger something FIRES, checked at creation (ow
   });
 
   it("lets nothing of ours wait on an unfired trigger: a customer-team leg, or a platform DRAFT (owner 2026-10-12, PIPE-FORM-TO-MEETING)", () => {
-    const leg = { fromStep: "signup", toStep: "paid_client", mode: "reactive", triggerId: "signed_up" };
+    const leg = { fromStep: "signup", toStep: "paid_client", mode: "reactive", triggerId: "webinar_joined" };
     // Their team acts on the step itself, like the seeded your-team-* legs.
-    expect(parseLegInput(leg, { ...channel, slug: "your-team-signup-conversion", operatedBy: "customer" }, TRIGGERS)).toMatchObject({ triggerId: "signed_up", published: true });
+    expect(parseLegInput(leg, { ...channel, slug: "your-team-signup-conversion", operatedBy: "customer" }, TRIGGERS)).toMatchObject({ triggerId: "webinar_joined", published: true });
     // A platform pipe on it is a DRAFT (a proposal staff shows), never published while nothing fires it.
-    expect(parseLegInput({ ...leg, published: false }, { ...channel, slug: "ai-meeting-booking", managed: true }, TRIGGERS)).toMatchObject({ triggerId: "signed_up", published: false });
+    expect(parseLegInput({ ...leg, published: false }, { ...channel, slug: "ai-meeting-booking", managed: true }, TRIGGERS)).toMatchObject({ triggerId: "webinar_joined", published: false });
     refused(() => parseLegInput(leg, { ...channel, slug: "ai-meeting-booking", managed: true }, TRIGGERS), 409, "trigger_not_fired");
     refused(() => parseLegInput({ ...leg, published: "no" }, channel, TRIGGERS), 400, "published_invalid");
-    refused(() => checkLegRun("reactive", "signed_up", TRIGGERS, { unfiredAllowed: false }), 409, "trigger_not_fired");
+    refused(() => checkLegRun("reactive", "webinar_joined", TRIGGERS, { unfiredAllowed: false }), 409, "trigger_not_fired");
   });
 
   it("publishes AI meeting booking's form leg once crm-service fires form_submitted (owner 2026-10-12, FORM-SUBMITTED-TRIGGER-1012)", () => {
@@ -296,7 +297,7 @@ describe("a declared channel", () => {
   });
 
   it("the catalogue build still refuses a stored leg naming a trigger nothing fires on a channel we run", () => {
-    const bad = declaredLeg({ channelSlug: "ai-meeting-booking", legKey: "meeting_booked_to_meeting_attended", fromStep: "meeting_booked", toStep: "meeting_attended", triggerId: "meeting_booked", published: true });
+    const bad = declaredLeg({ channelSlug: "ai-meeting-booking", legKey: "meeting_booked_to_meeting_attended", fromStep: "meeting_booked", toStep: "meeting_attended", triggerId: "webinar_joined", published: true });
     expect(() => build([], [bad], true)).toThrow(/nothing fires yet/);
     // The same leg as a DRAFT (never runnable) is a proposal: the full catalogue holds it, the client one does not.
     const draft = { ...bad, published: false };

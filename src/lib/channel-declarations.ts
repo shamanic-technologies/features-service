@@ -240,7 +240,7 @@ export interface DeclaredSalesPath {
 /** A refused declaration: the HTTP status and the named reason the route answers with. */
 export class DeclarationError extends Error {
   constructor(
-    readonly status: 400 | 404 | 409,
+    readonly status: 400 | 403 | 404 | 409,
     readonly reason: string,
     message: string,
   ) {
@@ -286,6 +286,22 @@ function icon(body: Body, field = "icon"): string {
 /** Who made the write: a staff identity, recorded on every row. */
 export function actorOf(body: Body, field: "createdBy" | "updatedBy" | "retiredBy" = "createdBy"): string {
   return text(body, field, 200);
+}
+
+/**
+ * `runnableOnly: true` = the caller acts for a CUSTOMER (set by the gateway for a non-staff key, owner 2026-10-16): a
+ * customer composes only what we run today, and never creates a pipe, an outcome or a trigger (a new one is a feature
+ * request built with the backend that fills it). Absent or `false` = staff, unchanged. WHAT runs is decided here.
+ */
+export function runnableOnlyOf(body: Body): boolean {
+  if (body.runnableOnly === undefined || body.runnableOnly === false) return false;
+  if (body.runnableOnly === true) return true;
+  throw new DeclarationError(400, "runnable_only_invalid", "runnableOnly must be true or false");
+}
+
+/** A catalogue write a customer never makes: 403 `staff_only`, naming what to do instead. */
+export function refuseCustomer(body: Body, what: string, instead: string): void {
+  if (runnableOnlyOf(body)) throw new DeclarationError(403, "staff_only", `${what} is staff only: ${instead}`);
 }
 
 export function requestedByOrgIdOf(body: Body): string | null {

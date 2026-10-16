@@ -76,11 +76,11 @@ import {
   type LoadedCatalogue,
 } from "../lib/channel-declarations-store.js";
 import { fetchFleetLegCampaignsFor } from "../lib/fleet-leg-campaigns.js";
-import { actorOf, DeclarationError, parseLegInput, requestedByOrgIdOf, type TriggerTypeRecord } from "../lib/channel-declarations.js";
+import { actorOf, DeclarationError, parseLegInput, refuseCustomer, requestedByOrgIdOf, runnableOnlyOf, type TriggerTypeRecord } from "../lib/channel-declarations.js";
 import { allNamesByKey, renameFunnelsToDescriptiveNames, salesPathNamesFor, SalesPathNamePoolExhaustedError, seedPipeTriggerOf } from "../lib/sales-path-names.js";
 import { funnelTriggerLabel } from "../lib/funnel-descriptions.js";
-import { pluralLabelOf, triggerOutcomeKeyOf, triggerTypeOf } from "../lib/outcome-vocabulary.js";
-import { canonicalTriggerId, triggerCallable } from "../lib/channel-triggers.js";
+import { pluralLabelOf, triggerOutcomeKeyOf, triggerTypeOf, triggerValueOf } from "../lib/outcome-vocabulary.js";
+import { canonicalTriggerId, IncludeInlineQueryError, includeInlineOf, isEntryDoor, triggerCallable } from "../lib/channel-triggers.js";
 import { funnelShortDescription, type ShortDescriptionUnavailableReason } from "../lib/funnel-short-descriptions.js";
 import { LEAD_SOURCING_SLUG, SOURCE_LEG_KEY } from "../lib/sourcing-origins.js";
 
@@ -623,6 +623,7 @@ function fail(res: Response, err: unknown, what: string): void {
   if (err instanceof OfferStepsOfferNotFoundError) return void res.status(404).json({ error: err.message, reason: "offer_not_found" });
   if (err instanceof PipeStatsUnreadableError) return void res.status(502).json({ error: err.message, reason: "pipe_stats_unreadable" });
   if (err instanceof BadQuery) return void res.status(400).json({ error: err.message, reason: err.reason });
+  if (err instanceof IncludeInlineQueryError) return void res.status(400).json({ error: err.message, reason: err.reason });
   if (err instanceof DeclarationError) return void res.status(err.status).json({ error: err.message, reason: err.reason });
   if (err instanceof StoreNotComputedError) return void res.status(503).json({ error: err.message, reason: "catalogue_economics_not_computed_yet" });
   if (err instanceof SalesPathNamePoolExhaustedError) return void res.status(502).json({ error: err.message, reason: "name_family_exhausted" });
@@ -1334,10 +1335,8 @@ const triggerRowOf = (m: CatalogueModel, t: TriggerTypeRecord, pipeCount: number
   type: triggerTypeOf(t),
   outcomeKey: triggerOutcomeKeyOf(t),
   callable: triggerCallable(t),
-  valueUsd: (() => {
-    const k = triggerOutcomeKeyOf(t);
-    return k === null ? null : (m.steps.get(k)?.valueUsd ?? null);
-  })(),
+  // Null always with a reason (TRIGGER-CATALOGUE-GAPS-1016): a condition, an outcome the model lacks, or no rated route.
+  ...triggerValueOf(t, (k) => m.steps.get(k)?.valueUsd),
   icon: FAMILY_GLYPHS.trigger,
   color: glyphColorOf(t.label),
   eventIcon: phosphorIconOf(t.icon),
@@ -1358,8 +1357,11 @@ router.get("/internal/catalogue/triggers", apiKeyOnly, async (req, res) => {
   try {
     const limit = limitOf(req);
     const q = qOf(req);
+    const includeInline = includeInlineOf(req.query.includeInline);
     const [{ model }, triggers] = await Promise.all([loadModel(), listTriggerCatalogue()]);
     const rows = triggers
+      // Entry doors only (`isEntryDoor`): an inline trigger is our services asking each other, never offered.
+      .filter((t) => includeInline || isEntryDoor(t))
       .filter((t) => matchesQuery(q, [t.label, t.id, t.description, t.firedBy, t.fromStep ? stepLabel(model, t.fromStep) : null]))
       .map((t) => triggerRowOf(model, t, pipesOfTrigger(model, t.id).length));
     res.json({ object: "trigger", order: "catalogue", ...page(rows, limit) });
@@ -1408,6 +1410,7 @@ function ratePct(raw: unknown, field: string): number {
 router.post("/internal/catalogue/steps", apiKeyOnly, async (req, res) => {
   const body = (req.body ?? {}) as Body;
   try {
+    refuseCustomer(body, "a new outcome", "a new outcome is a feature request, built with the backend that fills it");
     const createdBy = actorOf(body);
     const requestedByOrgId = requestedByOrgIdOf(body);
     const key = text(body, "key", 48);
@@ -1450,6 +1453,7 @@ router.post("/internal/catalogue/steps", apiKeyOnly, async (req, res) => {
 router.post("/internal/catalogue/pipes", apiKeyOnly, async (req, res) => {
   const body = (req.body ?? {}) as Body;
   try {
+    refuseCustomer(body, "a new pipe", "a customer composes the pipes we run (GET /internal/catalogue/pipes?runnable=true); a new one is a feature request");
     const createdBy = actorOf(body);
     const requestedByOrgId = requestedByOrgIdOf(body);
     if (typeof body.channelSlug !== "string") throw bad("channel_slug_required", "channelSlug is required");
@@ -1584,6 +1588,13 @@ router.post("/internal/catalogue/sales-paths", apiKeyOnly, async (req, res) => {
     if (!path) {
       throw bad("path_invalid", `${pathIdOf(raw as string[])} is not a sales path: the legs must chain from Start (a leg from nothing) to paid_client, or from a trigger step through a reactive pipe (a reactive path), each performed by a channel (GET /internal/catalogue/pipes)`);
     }
+    // A CUSTOMER path (`runnableOnly`): every leg is worked by at least one pipe we run today, else nothing could run it.
+    if (runnableOnlyOf(body)) {
+      const idle = path.legKeys.find((k) => !pipesOnLeg(model, k).some(pipeRunnable));
+      if (idle !== undefined) {
+        throw bad("leg_not_runnable", `${idle}: no pipe we run today works this leg, so a customer sales path cannot use it (GET /internal/catalogue/pipes?runnable=true&legKeys=${idle}); ask for it with a feature request`);
+      }
+    }
     const { id, legKeys } = path;
     const declared = await listDeclaredSalesPathChains();
     const existed = declared.some((d) => d.pathId === id) || names.has(salesPathNameKeyOf(id));
@@ -1619,6 +1630,20 @@ router.post("/internal/catalogue/sales-funnels", apiKeyOnly, async (req, res) =>
       if (!p) throw new DeclarationError(404, "pipe_not_found", `pipeIds[${i}]: no pipe or play ${entry} (GET /internal/catalogue/plays?pipe=)`);
       return p;
     });
+    // A CUSTOMER composes only what we run today (owner 2026-10-16, standard vocabulary: an outside agent on a
+    // customer key does what the Copilot does). The caller says who it acts for (`runnableOnly: true`, set by the
+    // gateway for a non-staff key); WHAT runs is decided here, by the same `pipeRunnable` every list filters on.
+    if (runnableOnlyOf(body)) {
+      const notRun = picked.findIndex((p) => !pipeRunnable(p));
+      if (notRun >= 0) {
+        const why = notRunnableOf(picked[notRun])!;
+        throw new DeclarationError(
+          400,
+          "pipe_not_runnable",
+          `pipeIds[${notRun}]: ${picked[notRun].id} is not something we run today (${why.reason}: ${why.detail}). A customer sales funnel uses only runnable pipes (GET /internal/catalogue/pipes?runnable=true); ask for this one with a feature request`,
+        );
+      }
+    }
     // ONE CHANNEL PER LEG (owner 2026-10-11): a sales funnel is a straight line. Two pipes on one leg, or a leg of
     // the path no pipe names (the sourcing leg included), is refused, never completed or pooled for the caller.
     const twice = picked.findIndex((p, i) => picked.findIndex((q) => q.legKey === p.legKey) !== i);

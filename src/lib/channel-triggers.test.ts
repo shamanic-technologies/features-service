@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertLegTriggersDeclared, CHANNEL_TRIGGER_TYPES, UndeclaredLegTriggerError } from "./channel-triggers.js";
+import { assertLegTriggersDeclared, CHANNEL_TRIGGER_TYPES, channelTriggerType, UndeclaredLegTriggerError } from "./channel-triggers.js";
 import { buildChannelCatalogue } from "./channel-catalogue.js";
 import { SEED_FEATURES } from "../seed/features.js";
 import { isReplayableIdentity } from "./identity-headers.js";
@@ -42,8 +42,11 @@ describe("every leg states proactive or reactive, and a reactive leg names one d
     expect(() => assertLegTriggersDeclared([{ ...leg, mode: "reactive", triggerId: "nope" }])).toThrow(UndeclaredLegTriggerError);
     expect(() => assertLegTriggersDeclared([{ ...leg, mode: "reactive", triggerId: null }])).toThrow(UndeclaredLegTriggerError);
     expect(() => assertLegTriggersDeclared([{ ...leg, mode: "proactive", triggerId: "lead_requested" }])).toThrow(UndeclaredLegTriggerError);
-    expect(() => assertLegTriggersDeclared([{ ...leg, managed: true, mode: "reactive", triggerId: "meeting_booked" }])).toThrow(UndeclaredLegTriggerError);
-    expect(() => assertLegTriggersDeclared([{ ...leg, mode: "reactive", triggerId: "meeting_booked" }])).not.toThrow();
+    // Every trigger in code is fired (STD-VOCAB-1016): an uncoded one comes from a run-time declaration.
+    const withUnfired = (id: string) => (id === "webinar_joined" ? { coded: false } : channelTriggerType(id));
+    expect(() => assertLegTriggersDeclared([{ ...leg, managed: true, mode: "reactive", triggerId: "webinar_joined" }], withUnfired)).toThrow(UndeclaredLegTriggerError);
+    expect(() => assertLegTriggersDeclared([{ ...leg, mode: "reactive", triggerId: "webinar_joined" }], withUnfired)).not.toThrow();
+    expect(() => assertLegTriggersDeclared([{ ...leg, managed: true, mode: "reactive", triggerId: "meeting_booked" }])).not.toThrow();
   });
 
   it("every icon is a REAL Phosphor icon name (verified against @phosphor-icons/core 2.x assets, 2026-10-09)", () => {

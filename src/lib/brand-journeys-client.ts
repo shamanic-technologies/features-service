@@ -21,11 +21,18 @@ interface RawAct {
   firstAt?: unknown;
   kind?: unknown;
 }
+interface RawEmailSend {
+  campaignId?: unknown;
+  workflowSlug?: unknown;
+  firstSentAt?: unknown;
+  lastSentAt?: unknown;
+}
 interface RawJourney {
   leadId?: unknown;
   offerId?: unknown;
   facts?: RawFact[];
   acts?: RawAct[];
+  emailSends?: RawEmailSend[];
 }
 
 const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
@@ -54,6 +61,17 @@ export function toJourney(raw: RawJourney): Journey {
       const kind = str(a.kind);
       return { campaignId: str(a.campaignId), firstActedAt: str(a.firstAt), ...(kind ? { kind } : {}) };
     }),
+    // Absent stays absent (never `[]`): "no send stated" must not read as "never emailed".
+    ...(Array.isArray(raw.emailSends)
+      ? {
+          emailSends: raw.emailSends.map((e) => ({
+            campaignId: str(e.campaignId),
+            workflowSlug: str(e.workflowSlug),
+            firstSentAt: str(e.firstSentAt),
+            lastSentAt: str(e.lastSentAt),
+          })),
+        }
+      : {}),
   };
 }
 

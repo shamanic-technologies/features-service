@@ -5,6 +5,7 @@ import {
   actorOf,
   checkLegRun,
   DeclarationError,
+  refuseCustomer,
   legPricingOf,
   parseChannelInput,
   parseChannelPatch,
@@ -38,7 +39,7 @@ import {
   type LoadedCatalogue,
 } from "../lib/channel-declarations-store.js";
 import { triggerOutcomeKeyOf, triggerTypeOf } from "../lib/outcome-vocabulary.js";
-import { canonicalTriggerId, triggerCallable } from "../lib/channel-triggers.js";
+import { canonicalTriggerId, IncludeInlineQueryError, includeInlineOf, isEntryDoor, triggerCallable } from "../lib/channel-triggers.js";
 import { combinationKeyOf } from "../lib/offer-sales-paths.js";
 import { salesPathNamesFor } from "../lib/sales-path-names.js";
 import { isOutboundChannel } from "../lib/channel-types.js";
@@ -174,6 +175,7 @@ router.get("/internal/declarations/channels/:slug", apiKeyOnly, async (req, res)
 router.post("/internal/declarations/channels", apiKeyOnly, async (req, res) => {
   const body = (req.body ?? {}) as Body;
   try {
+    refuseCustomer(body, "a new channel", "a customer composes the pipes we run; a new channel is a feature request");
     const createdBy = actorOf(body);
     const requestedByOrgId = requestedByOrgIdOf(body);
     const taken = await takenChannelIdentities();
@@ -224,6 +226,7 @@ router.get("/internal/declarations/legs", apiKeyOnly, async (req, res) => {
 router.post("/internal/declarations/channels/:slug/legs", apiKeyOnly, async (req, res) => {
   const body = (req.body ?? {}) as Body;
   try {
+    refuseCustomer(body, "a new pipe", "a customer composes the pipes we run (GET /internal/catalogue/pipes?runnable=true); a new one is a feature request");
     const createdBy = actorOf(body);
     const requestedByOrgId = requestedByOrgIdOf(body);
     const [{ views }, triggers] = await Promise.all([loadViews(), listTriggerCatalogue()]);
@@ -284,9 +287,17 @@ router.patch("/internal/declarations/channels/:slug/legs/:legKey", apiKeyOnly, a
 
 // ── Trigger types ───────────────────────────────────────────────────────────────────────────────────
 
-router.get("/internal/declarations/trigger-types", apiKeyOnly, async (_req, res) => {
+router.get("/internal/declarations/trigger-types", apiKeyOnly, async (req, res) => {
   try {
-    res.json({ triggerTypes: (await listTriggerCatalogue()).map(triggerView) });
+    // Entry doors only unless `?includeInline=true` (`isEntryDoor`); `/:id` answers every declared trigger.
+    let includeInline: boolean;
+    try {
+      includeInline = includeInlineOf(req.query.includeInline);
+    } catch (e) {
+      if (e instanceof IncludeInlineQueryError) return void res.status(400).json({ error: e.message, reason: e.reason });
+      throw e;
+    }
+    res.json({ triggerTypes: (await listTriggerCatalogue()).filter((t) => includeInline || isEntryDoor(t)).map(triggerView) });
   } catch (err) {
     fail(res, err, "list trigger types");
   }
@@ -306,6 +317,7 @@ router.get("/internal/declarations/trigger-types/:id", apiKeyOnly, async (req, r
 router.post("/internal/declarations/trigger-types", apiKeyOnly, async (req, res) => {
   const body = (req.body ?? {}) as Body;
   try {
+    refuseCustomer(body, "a new trigger", "a new trigger is a feature request, built with the backend that fills it");
     const createdBy = actorOf(body);
     const requestedByOrgId = requestedByOrgIdOf(body);
     // A `reported` / `event` trigger may stand at a step declared at run time: the step registry must hold it.

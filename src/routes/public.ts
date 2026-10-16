@@ -10,7 +10,7 @@ import { db } from "../db/index.js";
 import { features, type Feature } from "../db/schema.js";
 import { listTriggerCatalogue, loadChannelCatalogue } from "../lib/channel-declarations-store.js";
 import { triggerOutcomeKeyOf, triggerTypeOf, type TriggerType } from "../lib/outcome-vocabulary.js";
-import { TRIGGER_ALIASES, triggerCallable } from "../lib/channel-triggers.js";
+import { IncludeInlineQueryError, includeInlineOf, isEntryDoor, TRIGGER_ALIASES, triggerCallable } from "../lib/channel-triggers.js";
 import { isTriggerCoded } from "../lib/channel-declarations.js";
 import { STATS_REGISTRY } from "../lib/stats-registry.js";
 import {
@@ -35,6 +35,7 @@ import { rankLegWorkflows, type LegWorkflowRankingRow } from "../lib/leg-workflo
 import {
   buildFleetLegMaturity,
   buildFleetMatureBenchmark,
+  rollUpLegEvidenceByDynasty,
   type DynastyLegEvidence,
   type FleetMatureBenchmark,
 } from "../lib/fleet-leg-maturity.js";
@@ -2226,34 +2227,26 @@ export interface FleetLegWorkflowMaturity {
   byDynasty: Array<[string, LegMaturityFigures]>;
 }
 
-/** Roll a leg's per-slug evidence up to workflow dynasties, spend summed EXACTLY. */
+/**
+ * Roll a leg's per-slug evidence up to workflow dynasties, spend summed EXACTLY, on each version's OWN dynasty
+ * (`rollUpLegEvidenceByDynasty`): every version counts, a fully deprecated dynasty included. A cost group no
+ * workflow names is logged LOUD with its spend (it is in no dynasty's figure).
+ */
 function legEvidenceByDynasty(
+  featureSlug: string,
+  legKey: string,
   workflows: WorkflowMetadata[],
   costGroups: CostGroup[],
   emailStats: Map<string, Record<string, number>>,
 ): Map<string, DynastyLegEvidence> {
-  const { costMap, aggregatedOutcomes } = aggregateAcrossDynasties(
-    buildWorkflowDynasties(workflows),
-    costGroups,
-    emailStats,
-    "workflowSlug",
-    { exactCents: true },
-  );
-  const workflowBySlug = new Map(workflows.map((w) => [w.workflowSlug, w]));
-  const out = new Map<string, DynastyLegEvidence>();
-  for (const [slug, cost] of costMap) {
-    const dynasty = workflowBySlug.get(slug)?.workflowDynastySlug;
-    if (!dynasty) continue;
-    const o = aggregatedOutcomes.get(slug) ?? {};
-    const prev = out.get(dynasty) ?? { spentCents: 0, contacted: 0, clicks: 0, replies: 0 };
-    out.set(dynasty, {
-      spentCents: prev.spentCents + cost.totalCostInUsdCents,
-      contacted: prev.contacted + (o.recipientsContacted ?? 0),
-      clicks: prev.clicks + (o.recipientsClicked ?? 0),
-      replies: prev.replies + (o.recipientsRepliesPositive ?? 0),
-    });
+  const { byDynasty, unmapped } = rollUpLegEvidenceByDynasty(workflows, costGroups, emailStats);
+  if (unmapped.length > 0) {
+    const cents = unmapped.reduce((a, u) => a + u.spentCents, 0);
+    console.warn(
+      `[features-service] leg evidence ${featureSlug}|${legKey}: ${unmapped.length} workflow slug(s) no workflow of the feature names, $${(cents / 100).toFixed(2)} in no dynasty: ${unmapped.map((u) => u.workflowSlug).join(",")}`,
+    );
   }
-  return out;
+  return byDynasty;
 }
 
 /** One leg's fleet maturity, computed IN THIS PROCESS (the refresher, or the server when it is off). */
@@ -2273,13 +2266,13 @@ export async function computeFleetLegWorkflowMaturity(featureSlug: string, legKe
   const mature = cutoffIso
     ? await fetchLegFleetMatureEvidence(featureSlug, legKey, "gross", cutoffIso, null, legSet, slugs)
     : { costGroups: flash.costGroups, emailStats: flash.emailStats };
-  const matureBy = mature ? legEvidenceByDynasty(workflows, mature.costGroups, mature.emailStats) : null;
+  const matureBy = mature ? legEvidenceByDynasty(featureSlug, legKey, workflows, mature.costGroups, mature.emailStats) : null;
   const dynastySlugs = [...new Set(workflows.map((w) => w.workflowDynastySlug))];
   return {
     legKey,
     cutoffIso,
     measured: matureBy !== null,
-    byDynasty: [...buildFleetLegMaturity(legKey, dynastySlugs, legEvidenceByDynasty(workflows, flash.costGroups, flash.emailStats), matureBy)],
+    byDynasty: [...buildFleetLegMaturity(legKey, dynastySlugs, legEvidenceByDynasty(featureSlug, legKey, workflows, flash.costGroups, flash.emailStats), matureBy)],
   };
 }
 
@@ -3410,7 +3403,12 @@ export function invalidateChannelCatalogue(): void {
   clearPublicCache(channelCatalogueCache);
 }
 
-export async function handlePublicChannels(res: import("express").Response): Promise<void> {
+/**
+ * `includeInline` (2026-10-16): `triggers[]` lists ENTRY DOORS only (`isEntryDoor`: an outside reader, an agent, the
+ * dashboard is never offered `on_demand` / `lead_requested`); `true` adds the inline ones for our own services
+ * (campaign-service validates every declared trigger at its door). One cached build, filtered at serve.
+ */
+export async function handlePublicChannels(res: import("express").Response, includeInline = false): Promise<void> {
   const payload = await servedPublicCached<ChannelCataloguePayload>({
     cache: channelCatalogueCache,
     key: "catalogue",
@@ -3434,7 +3432,7 @@ export async function handlePublicChannels(res: import("express").Response): Pro
       };
     },
   });
-  res.json(payload);
+  res.json(includeInline ? payload : { ...payload, triggers: payload.triggers.filter(isEntryDoor) });
 }
 
 /** One (channel × funnel) pair. It carries the pair's MINIMUM RUN LENGTH already composed
@@ -3934,9 +3932,16 @@ export async function handleShowcaseOutcomes(res: import("express").Response): P
 
 // ── GET /public/channels ─────────────────────────────────────────────────────
 
-router.get("/public/channels", async (_req, res) => {
+router.get("/public/channels", async (req, res) => {
   try {
-    await handlePublicChannels(res);
+    let includeInline: boolean;
+    try {
+      includeInline = includeInlineOf(req.query.includeInline);
+    } catch (e) {
+      if (e instanceof IncludeInlineQueryError) return void res.status(400).json({ error: e.message, reason: e.reason });
+      throw e;
+    }
+    await handlePublicChannels(res, includeInline);
   } catch (error) {
     console.error("[features-service] Public channels error:", error);
     res.status(500).json({ error: "Internal server error" });
@@ -4623,16 +4628,24 @@ export interface OutcomePricesPayload {
 let outcomePricesStore: { value: OutcomePricesPayload; computedAt: number } | null = null;
 let outcomePricesWarm: Promise<void> | null = null;
 
-/** Every workflow the owner DEPRECATED on the leg — it never competes for the price. */
-async function deprecatedOnLeg(featureSlug: string, legKey: string): Promise<Set<string>> {
-  const rows = await fetchLegAssignments(featureSlug, legKey);
-  return new Set([...rows.values()].filter((r) => r.state === "deprecated").map((r) => r.workflowDynastySlug));
+/**
+ * Every workflow that never competes for the leg's price: the ones the owner DEPRECATED on the leg, and the ones
+ * workflow-service can no longer run (every version retired, `executableDynasties`). The latter now carry their real
+ * figures on the leg (`rollUpLegEvidenceByDynasty`), and a price set by a workflow no run can pick would be a price
+ * nobody can buy. The ranking draws the same line (`selectable`).
+ */
+export async function excludedFromLegPrice(featureSlug: string, legKey: string): Promise<Set<string>> {
+  const [rows, workflows] = await Promise.all([fetchLegAssignments(featureSlug, legKey), fetchPublicWorkflows(featureSlug, "all")]);
+  const runnable = executableDynasties(workflows);
+  const out = new Set([...rows.values()].filter((r) => r.state === "deprecated").map((r) => r.workflowDynastySlug));
+  for (const w of workflows) if (!runnable.has(w.workflowDynastySlug)) out.add(w.workflowDynastySlug);
+  return out;
 }
 
 async function coldEmailLegPrice(legKey: string): Promise<LegPrice> {
   const [maturity, excluded, campaigns] = await Promise.all([
     fetchFleetLegWorkflowMaturity(COLD_EMAIL_FEATURE_SLUG, legKey),
-    deprecatedOnLeg(COLD_EMAIL_FEATURE_SLUG, legKey),
+    excludedFromLegPrice(COLD_EMAIL_FEATURE_SLUG, legKey),
     fetchFleetLegCampaigns(COLD_EMAIL_FEATURE_SLUG, legKey),
   ]);
   return pickLegPrice({
@@ -4652,7 +4665,7 @@ async function coldEmailLegPrice(legKey: string): Promise<LegPrice> {
  */
 export async function fleetLegPrice(featureSlug: string, legKey: string): Promise<LegPrice> {
   // ONE rule for every pipe (`fleetPipeFigures`), the same one the workflow ranking reads.
-  const [figures, excluded] = await Promise.all([fleetPipeFigures(featureSlug, legKey), deprecatedOnLeg(featureSlug, legKey)]);
+  const [figures, excluded] = await Promise.all([fleetPipeFigures(featureSlug, legKey), excludedFromLegPrice(featureSlug, legKey)]);
   return pickLegPrice({ legKey, featureSlug, byDynasty: new Map(figures.byDynasty), excluded, campaignCount: figures.campaignCount });
 }
 
@@ -4666,7 +4679,7 @@ export async function fleetPlayPrices(
   legKey: string,
   strategyExclusions: (dynasties: readonly string[]) => ReadonlyArray<ReadonlySet<string>>,
 ): Promise<LegPrice[]> {
-  const [figures, excluded] = await Promise.all([fleetPipeFigures(featureSlug, legKey), deprecatedOnLeg(featureSlug, legKey)]);
+  const [figures, excluded] = await Promise.all([fleetPipeFigures(featureSlug, legKey), excludedFromLegPrice(featureSlug, legKey)]);
   const byDynasty = new Map(figures.byDynasty);
   return strategyExclusions([...byDynasty.keys()]).map((more) =>
     pickLegPrice({ legKey, featureSlug, byDynasty, excluded: new Set([...excluded, ...more]), campaignCount: figures.campaignCount }),
@@ -4678,7 +4691,7 @@ export async function computeOutcomePrices(): Promise<OutcomePricesPayload> {
     coldEmailLegPrice("start_to_website_visit"),
     coldEmailLegPrice("start_to_conversation"),
     computeMeetingLegFleet(),
-    deprecatedOnLeg(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY),
+    excludedFromLegPrice(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY),
   ]);
   const meetingLeg = pickLegPrice({
     legKey: MEETING_BOOKING_LEG_KEY,
