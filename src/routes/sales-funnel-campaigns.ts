@@ -35,6 +35,7 @@ import { DEFAULT_PRICED_CAUSES } from "../lib/outcome-cause.js";
 import { funnelsContainingLeg, isOutboundLegKeySpelling, storedLegKeyOf } from "../lib/funnel-legs.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
+import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import type { DeclaredSalesFunnel } from "../lib/sales-funnels-client.js";
 import { fetchSalesFunnelCampaigns, type SalesFunnelUnitRow } from "../lib/sales-funnel-campaigns-client.js";
 import { STEP_SIGNAL, takeoverStepOf } from "../lib/value-added.js";
@@ -161,6 +162,11 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
               decl: funnel ? declared.map((f) => f.funnelKey).sort().join("+") || "none" : undefined,
             }),
             orgId: headers.orgId,
+            // Keyed on THIS route's response shape, not the whole build's (SFC-MONEY-SLOW-1016): a deploy changing
+            // another route no longer makes every money cell cold, so the last good value stays servable (stale,
+            // refreshed behind) even while a dependency fails. Measured 2026-10-16: 20-27 key generations per
+            // campaign in one day, each first read a full compute (502 while lead-service failed).
+            responseShape: routeResponseShapeFingerprint("/brands/{brandId}/sales-funnel-campaigns"),
             compute: async () => {
               // A step the engine values nothing at (Lead found) subtracts $0: the engine's own figures ARE the formula.
               if (takeoverStep && STEP_SIGNAL[takeoverStep] && takeoverUnit && takeoverToStep && funnel) {
