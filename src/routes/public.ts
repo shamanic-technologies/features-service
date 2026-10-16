@@ -10,7 +10,7 @@ import { db } from "../db/index.js";
 import { features, type Feature } from "../db/schema.js";
 import { listTriggerCatalogue, loadChannelCatalogue } from "../lib/channel-declarations-store.js";
 import { triggerOutcomeKeyOf, triggerTypeOf, type TriggerType } from "../lib/outcome-vocabulary.js";
-import { triggerCallable } from "../lib/channel-triggers.js";
+import { IncludeInlineQueryError, includeInlineOf, isEntryDoor, triggerCallable } from "../lib/channel-triggers.js";
 import { isTriggerCoded } from "../lib/channel-declarations.js";
 import { STATS_REGISTRY } from "../lib/stats-registry.js";
 import {
@@ -3406,7 +3406,12 @@ export function invalidateChannelCatalogue(): void {
   clearPublicCache(channelCatalogueCache);
 }
 
-export async function handlePublicChannels(res: import("express").Response): Promise<void> {
+/**
+ * `includeInline` (2026-10-16): `triggers[]` lists ENTRY DOORS only (`isEntryDoor`: an outside reader, an agent, the
+ * dashboard is never offered `on_demand` / `lead_requested`); `true` adds the inline ones for our own services
+ * (campaign-service validates every declared trigger at its door). One cached build, filtered at serve.
+ */
+export async function handlePublicChannels(res: import("express").Response, includeInline = false): Promise<void> {
   const payload = await servedPublicCached<ChannelCataloguePayload>({
     cache: channelCatalogueCache,
     key: "catalogue",
@@ -3429,7 +3434,7 @@ export async function handlePublicChannels(res: import("express").Response): Pro
       };
     },
   });
-  res.json(payload);
+  res.json(includeInline ? payload : { ...payload, triggers: payload.triggers.filter(isEntryDoor) });
 }
 
 /** One (channel × funnel) pair. It carries the pair's MINIMUM RUN LENGTH already composed
@@ -3929,9 +3934,16 @@ export async function handleShowcaseOutcomes(res: import("express").Response): P
 
 // ── GET /public/channels ─────────────────────────────────────────────────────
 
-router.get("/public/channels", async (_req, res) => {
+router.get("/public/channels", async (req, res) => {
   try {
-    await handlePublicChannels(res);
+    let includeInline: boolean;
+    try {
+      includeInline = includeInlineOf(req.query.includeInline);
+    } catch (e) {
+      if (e instanceof IncludeInlineQueryError) return void res.status(400).json({ error: e.message, reason: e.reason });
+      throw e;
+    }
+    await handlePublicChannels(res, includeInline);
   } catch (error) {
     console.error("[features-service] Public channels error:", error);
     res.status(500).json({ error: "Internal server error" });

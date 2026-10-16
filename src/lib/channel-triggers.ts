@@ -276,3 +276,24 @@ export const INLINE_TRIGGER_IDS: ReadonlySet<string> = new Set(CHANNEL_TRIGGER_T
  *  for every read serving `callable`, the inline flag read off the coded list. */
 export const triggerCallable = (t: { id: string; kind?: string | null; fromStep: string | null }): boolean =>
   isTriggerCallable({ id: t.id, kind: t.kind, fromStep: t.fromStep, inline: INLINE_TRIGGER_IDS.has(t.id) });
+
+/**
+ * An ENTRY DOOR (owner 2026-10-15/16, standard vocabulary): a trigger a reactive campaign is offered on. Every trigger
+ * but the INLINE ones (`on_demand`, `lead_requested`: one of our services asking another inside a run). Every LIST of
+ * triggers an outside reader or the Copilot gets (`/public/channels` `triggers[]`, `/internal/catalogue/triggers`,
+ * `/internal/declarations/trigger-types`) serves entry doors only; `?includeInline=true` adds the inline ones for our
+ * own services (campaign-service's door validates every declared trigger). A read BY ID always answers, and every
+ * pipe or funnel naming an inline trigger keeps working.
+ */
+export const isEntryDoor = (t: { id: string }): boolean => !INLINE_TRIGGER_IDS.has(t.id);
+
+/** `?includeInline=` on a trigger list: absent or `false` = entry doors only, `true` = every declared trigger. */
+export class IncludeInlineQueryError extends Error {
+  readonly reason = "include_inline_unrecognised";
+}
+
+export function includeInlineOf(raw: unknown): boolean {
+  if (raw === undefined || raw === "false") return false;
+  if (raw === "true") return true;
+  throw new IncludeInlineQueryError("includeInline must be true or false");
+}
