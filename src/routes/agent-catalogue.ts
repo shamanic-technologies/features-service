@@ -1616,6 +1616,22 @@ router.post("/internal/catalogue/sales-funnels", apiKeyOnly, async (req, res) =>
       if (!p) throw new DeclarationError(404, "pipe_not_found", `pipeIds[${i}]: no pipe or play ${entry} (GET /internal/catalogue/plays?pipe=)`);
       return p;
     });
+    // A CUSTOMER composes only what we run today (owner 2026-10-16, standard vocabulary: an outside agent on a
+    // customer key does what the Copilot does). The caller says who it acts for (`runnableOnly: true`, set by the
+    // gateway for a non-staff key); WHAT runs is decided here, by the same `pipeRunnable` every list filters on.
+    if (body.runnableOnly === true) {
+      const notRun = picked.findIndex((p) => !pipeRunnable(p));
+      if (notRun >= 0) {
+        const why = notRunnableOf(picked[notRun])!;
+        throw new DeclarationError(
+          400,
+          "pipe_not_runnable",
+          `pipeIds[${notRun}]: ${picked[notRun].id} is not something we run today (${why.reason}: ${why.detail}). A customer sales funnel uses only runnable pipes (GET /internal/catalogue/pipes?runnable=true); ask for this one with a feature request`,
+        );
+      }
+    } else if (body.runnableOnly !== undefined && body.runnableOnly !== false) {
+      throw bad("runnable_only_invalid", "runnableOnly must be true or false");
+    }
     // ONE CHANNEL PER LEG (owner 2026-10-11): a sales funnel is a straight line. Two pipes on one leg, or a leg of
     // the path no pipe names (the sourcing leg included), is refused, never completed or pooled for the caller.
     const twice = picked.findIndex((p, i) => picked.findIndex((q) => q.legKey === p.legKey) !== i);
