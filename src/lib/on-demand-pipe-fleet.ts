@@ -11,6 +11,12 @@
  *     the serve and everything bought under it carry the unit's campaign), from the first recorded event on, so both
  *     halves cover the SAME window (runs-service `costs/timeseries?groupBy=campaignId&startedAfter=`, incurred basis).
  *   - `contacted` = the outcomes (a lead found is a person in hand: the pipe's conversion is not a rate it chooses).
+ *   - A LEAD KEEPS THE PRICE PAID TO FIND IT (owner 2026-10-17, REUSED-ACQUISITION-COST-1017): what EARLIER runs paid to
+ *     find the leads a unit served (lead-service `GET /internal/source-campaigns/reused-acquisitions`, which asks
+ *     apollo-service) is added to the unit's spend. lead-sourcing-aldhanab served 367 leads another campaign of the
+ *     same org had bought ($32.56) on $1.31 of its own spend and read $0.0034 per lead. A unit whose earlier cost could
+ *     not be read (`unavailableReason`) prices NOTHING (spend and leads left out, `unpricedCampaignIds`, logged), never
+ *     its own spend alone.
  * The leg's maturity rule applies as for any pipe (`lib/maturity.ts`; Start -> Lead found: mature the day it is bought,
  * judged on 10 leads). Held 15 min fresh / 6 h stale, single-flight. FAIL-LOUD on a cold cell.
  */
@@ -31,6 +37,14 @@ export interface OnDemandPipeFleet {
   since: string | null;
   /** Leads found by a unit running no workflow of the channel: counted nowhere, logged. */
   unattributedLeads: number;
+  /** Units left out because what earlier runs paid for their leads could not be read. */
+  unpricedCampaignIds: string[];
+}
+
+/** What earlier runs paid to find the leads one unit served; `earlierCents` null = could not be read. */
+export interface ReusedAcquisition {
+  earlierCents: number | null;
+  unavailableReason: string | null;
 }
 
 /** One unit's ran events (campaign-service). */
@@ -48,17 +62,25 @@ export function onDemandPipeFigures(input: {
   centsByCampaign: ReadonlyMap<string, number>;
   ranCounts: readonly RanCount[];
   workflowOfCampaign: ReadonlyMap<string, string | null>;
-}): { byDynasty: Map<string, LegMaturityFigures>; unattributedLeads: number } {
+  /** Per unit, what earlier runs paid to find the leads it served (absent = none reused). */
+  reusedByCampaign: ReadonlyMap<string, ReusedAcquisition>;
+}): { byDynasty: Map<string, LegMaturityFigures>; unattributedLeads: number; unpricedCampaignIds: string[] } {
+  const unpriced = new Set<string>();
+  for (const [campaignId, r] of input.reusedByCampaign) {
+    if (r.earlierCents === null && input.workflowOfCampaign.has(campaignId)) unpriced.add(campaignId);
+  }
   const dynastyOf = (campaignId: string): string | null | undefined => {
-    if (!input.workflowOfCampaign.has(campaignId)) return undefined; // not a unit of this leg
+    if (!input.workflowOfCampaign.has(campaignId) || unpriced.has(campaignId)) return undefined; // not a unit of this leg, or unpriceable
     const slug = input.workflowOfCampaign.get(campaignId);
     return (slug && input.dynastyOfSlug.get(slug)) || null;
   };
   const cents = new Map<string, number>();
-  for (const [campaignId, c] of input.centsByCampaign) {
+  const addCents = (campaignId: string, c: number): void => {
     const d = dynastyOf(campaignId);
     if (d) cents.set(d, (cents.get(d) ?? 0) + c);
-  }
+  };
+  for (const [campaignId, c] of input.centsByCampaign) addCents(campaignId, c);
+  for (const [campaignId, r] of input.reusedByCampaign) if (r.earlierCents !== null) addCents(campaignId, r.earlierCents);
   const leads = new Map<string, number>();
   let unattributedLeads = 0;
   for (const r of input.ranCounts) {
@@ -77,7 +99,34 @@ export function onDemandPipeFigures(input: {
     // A 0-day leg: the mature evidence IS the evidence (`lib/maturity.ts`).
     byDynasty.set(dynasty, legMaturityFigures(input.legKey, figures, figures));
   }
-  return { byDynasty, unattributedLeads };
+  return { byDynasty, unattributedLeads, unpricedCampaignIds: [...unpriced].sort() };
+}
+
+/**
+ * What EARLIER runs paid to find the leads each source campaign served (lead-service
+ * `GET /internal/source-campaigns/reused-acquisitions`, one call for the fleet). A campaign absent from the answer reused
+ * nothing; `earlierAcquisitionCostInUsdCents: null` + `unavailableReason` = could not be read, kept as null. Fail loud.
+ */
+export async function fetchReusedAcquisitions(): Promise<Map<string, ReusedAcquisition>> {
+  const url = process.env.LEAD_SERVICE_URL;
+  const apiKey = process.env.LEAD_SERVICE_API_KEY;
+  if (!url || !apiKey) throw new Error("LEAD_SERVICE_URL or LEAD_SERVICE_API_KEY not configured");
+  const response = await fetchWithRetry(`${url}/internal/source-campaigns/reused-acquisitions`, { headers: { "x-api-key": apiKey } }, { shareForMs: 15_000 });
+  if (!response.ok) throw new Error(`lead-service reused-acquisitions failed (${response.status}): ${await response.text()}`);
+  const body = (await response.json()) as { counts?: unknown };
+  if (!Array.isArray(body.counts)) throw new Error("lead-service reused-acquisitions returned no counts array");
+  const out = new Map<string, ReusedAcquisition>();
+  for (const c of body.counts) {
+    const row = c as { campaignId?: unknown; earlierAcquisitionCostInUsdCents?: unknown; unavailableReason?: unknown };
+    if (typeof row.campaignId !== "string") continue;
+    const cents = typeof row.earlierAcquisitionCostInUsdCents === "string" ? Number(row.earlierAcquisitionCostInUsdCents) : null;
+    if (cents !== null && !Number.isFinite(cents)) throw new Error(`lead-service reused-acquisitions: unreadable cost for campaign ${row.campaignId}`);
+    out.set(row.campaignId, {
+      earlierCents: cents,
+      unavailableReason: cents === null ? (typeof row.unavailableReason === "string" ? row.unavailableReason : "not_stated") : null,
+    });
+  }
+  return out;
 }
 
 /**
@@ -130,27 +179,33 @@ async function fetchCentsByCampaignSince(featureSlug: string, campaignIds: reado
 }
 
 async function computeOnDemandPipeFleet(featureSlug: string, legKey: string): Promise<OnDemandPipeFleet> {
-  const [campaigns, workflows, found] = await Promise.all([
+  const [campaigns, workflows, found, reusedByCampaign] = await Promise.all([
     fetchFleetLegCampaigns(featureSlug, legKey),
     fetchPublicWorkflows(featureSlug, "all"),
     fetchLeadsFound(),
+    fetchReusedAcquisitions(),
   ]);
   const ranCounts = found.counts;
   const since = found.recordedSince;
   const ids = campaigns.map((c) => c.campaignId);
   const centsByCampaign = since && ids.length > 0 ? await fetchCentsByCampaignSince(featureSlug, ids, since) : new Map<string, number>();
-  const { byDynasty, unattributedLeads } = onDemandPipeFigures({
+  const { byDynasty, unattributedLeads, unpricedCampaignIds } = onDemandPipeFigures({
     legKey,
     dynastyOfSlug: new Map(workflows.map((w) => [w.workflowSlug, w.workflowDynastySlug] as const)),
     dynasties: [...new Set(workflows.map((w) => w.workflowDynastySlug))],
     centsByCampaign,
     ranCounts,
     workflowOfCampaign: new Map(campaigns.map((c) => [c.campaignId, c.workflowSlug ?? null] as const)),
+    reusedByCampaign,
   });
+  if (unpricedCampaignIds.length > 0) {
+    const reasons = unpricedCampaignIds.map((id) => `${id}:${reusedByCampaign.get(id)?.unavailableReason}`).join(", ");
+    console.warn(`[features-service] on-demand pipe ${featureSlug}|${legKey}: ${unpricedCampaignIds.length} unit(s) left out, earlier acquisition cost unreadable (${reasons})`);
+  }
   if (unattributedLeads > 0) {
     console.warn(`[features-service] on-demand pipe ${featureSlug}|${legKey}: ${unattributedLeads} lead(s) found by units running no workflow of the channel are counted nowhere`);
   }
-  return { byDynasty: [...byDynasty], campaignCount: campaigns.length, since, unattributedLeads };
+  return { byDynasty: [...byDynasty], campaignCount: campaigns.length, since, unattributedLeads, unpricedCampaignIds };
 }
 
 const cells = new Map<string, { value: OnDemandPipeFleet; at: number }>();
