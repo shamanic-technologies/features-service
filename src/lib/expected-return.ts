@@ -370,10 +370,11 @@ const STALE_MS = 30 * 60_000;
 const COLD_WAIT_MS = 25_000;
 /**
  * How long a read that SHOWS a table of rows (the Campaigns table, one model read per row) waits on a cold model:
- * the row answers `expected_model_computing` past it and the next poll reads the memo. Waiting `COLD_WAIT_MS` per
- * row made the table answer in 20-40 s whenever the model could not finish (prod 2026-10-16, SFC-MONEY-SLOW-1016).
+ * not at all. The row answers `expected_model_computing` while the model computes behind it and the next poll reads
+ * the memo. Waiting `COLD_WAIT_MS` per row made the table answer in 20-40 s whenever the model could not finish
+ * (prod 2026-10-16, SFC-MONEY-SLOW-1016); a 1 s wait still put 1.1-1.5 s on every read that restarted it.
  */
-export const TABLE_COLD_WAIT_MS = 1_000;
+export const TABLE_COLD_WAIT_MS = 0;
 /** How long the model waits on the fleet-cost build right after a boot. */
 const FLEET_WAIT_MS = 20_000;
 /**
@@ -509,7 +510,7 @@ export function expectedReturnForOffer(identity: ExpectedIdentity, brandId: stri
   return soft(`offer ${offerId}`, async () => withMeasuredReturn(expectedForOffer(await modelOrThrow(identity, brandId, offerId)), measured));
 }
 
-/** A sales funnel campaign row (a table row: a cold model waits `TABLE_COLD_WAIT_MS` unless told otherwise). */
+/** A sales funnel campaign row (a table row: never waits on a cold model unless told otherwise, `TABLE_COLD_WAIT_MS`). */
 export function expectedReturnForFunnelCampaign(
   identity: ExpectedIdentity,
   brandId: string,

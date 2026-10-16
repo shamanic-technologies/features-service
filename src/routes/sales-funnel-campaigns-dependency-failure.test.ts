@@ -103,8 +103,9 @@ describe("the Campaigns table with its dependencies failing (SFC-MONEY-SLOW-1016
     let t0 = Date.now();
     const first = await request(app).get(url).set(AUTH);
     expect(first.status).toBe(200);
-    // The first read waits on the cold expected-return model once (one row), never once per batch of rows.
-    expect(Date.now() - t0).toBeLessThan(2_000);
+    // Not even the first read waits on the cold expected-return model: it computes behind the answer.
+    expect(Date.now() - t0).toBeLessThan(1_000);
+    expect(first.body.salesFunnelCampaigns[0].expectedReturn.unavailableReason).toBe("expected_model_computing");
 
     t0 = Date.now();
     const second = await request(app).get(url).set(AUTH);
